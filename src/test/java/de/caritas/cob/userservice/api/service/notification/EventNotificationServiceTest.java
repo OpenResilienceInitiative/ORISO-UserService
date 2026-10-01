@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.EventNotification;
 import de.caritas.cob.userservice.api.model.Session;
@@ -37,6 +38,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -57,6 +59,12 @@ class EventNotificationServiceTest {
   @Mock private ConsultantRepository consultantRepository;
   @Mock private IdentityTombstoneService identityTombstoneService;
   @Mock private EventNotificationDeduplicationWriter deduplicationWriter;
+
+  // The real rule, not a mock: ConsultantDisplayNameResolver is the single place that decides
+  // which counsellor name may be published (ADR-002 §2).
+  @Spy
+  private ConsultantDisplayNameResolver consultantDisplayNameResolver =
+      new ConsultantDisplayNameResolver();
 
   @Captor private ArgumentCaptor<EventNotification> eventCaptor;
 
@@ -318,8 +326,9 @@ class EventNotificationServiceTest {
             // below stays exhaustive and any NEW unlisted key still fails the test.
             "consultantName",
             "supervisorName",
-            "oldName",
-            "newName");
+            // #1201: the counsellor rename entry carries only when the change happened; the old
+            // and new names are gone from the payload, so no key may reappear here.
+            "changedAt");
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -342,8 +351,7 @@ class EventNotificationServiceTest {
     eventNotificationService.createSupervisorAssignedNotification(session, "consultant-b");
     eventNotificationService.createSupervisorRemovedNotification(
         session, "asker-1", "Sue Pervisor");
-    eventNotificationService.createCounselorRenamedNotification(
-        session, "asker-1", "Old Name", "New Name");
+    eventNotificationService.createCounselorRenamedNotification(session, "asker-1");
     // Envelope-bearing producers emit `matrixEventId` and take the dedup path,
     // so without this call and the second captor below the sweep would never
     // see the one key #924 added.
@@ -451,39 +459,55 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createInquiryAcceptedNotification_usesFullNameWhenDisplayNameIsEncoded() throws Exception {
+  void createInquiryAcceptedNotification_usesTheUsernameWhenTheDisplayNameIsEncoded()
+      throws Exception {
+    // #1201: this test asserted `"Jane Real Name"` before -- an encoded pseudonym renders as noise,
+    // so the ladder skipped it and reached for the real name. The username is the right rung.
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    Consultant consultant = mock(Consultant.class);
-    when(consultant.getDisplayName()).thenReturn("enc.someCrypticallyEncodedValue");
-    when(consultant.getFullName()).thenReturn("Jane Real Name");
+    Consultant consultant =
+        Consultant.builder()
+            .id("counsellor-1")
+            .username("beraterin1")
+            .displayName("enc.someCrypticallyEncodedValue")
+            .firstName("Jane")
+            .lastName("Realname")
+            .email("jane@example.org")
+            .build();
 
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     JsonNode params = objectMapper.readTree(eventCaptor.getValue().getParams());
-    assertEquals("Jane Real Name", params.get("consultantName").asText());
+    assertEquals("beraterin1", params.get("consultantName").asText());
+    assertThat(eventCaptor.getValue().getText()).doesNotContain("Jane", "Realname");
   }
 
   @Test
-  void createInquiryAcceptedNotification_returnsCounselorWhenAllConsultantFieldsAreEncoded()
+  void createInquiryAcceptedNotification_returnsCounselorWhenNoPublishableNameExists()
       throws Exception {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    Consultant consultant = mock(Consultant.class);
-    when(consultant.getDisplayName()).thenReturn("enc.encodedDisplayName");
-    when(consultant.getFullName()).thenReturn("enc.encodedFullName");
-    when(consultant.getUsername()).thenReturn("enc.encodedUsername");
+    Consultant consultant =
+        Consultant.builder()
+            .id("counsellor-1")
+            .username("")
+            .displayName("enc.encodedDisplayName")
+            .firstName("Jane")
+            .lastName("Realname")
+            .email("jane@example.org")
+            .build();
 
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     JsonNode params = objectMapper.readTree(eventCaptor.getValue().getParams());
     assertEquals("Counselor", params.get("consultantName").asText());
+    assertThat(eventCaptor.getValue().getText()).doesNotContain("Jane", "Realname");
   }
 
   // ---------------------------------------------------------------------------
@@ -564,32 +588,97 @@ class EventNotificationServiceTest {
   }
 
   // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1201: resolveConsultantName used to fall back to getFullName(). It feeds three
+  // advice-seeker feeds -- the inquiry.accepted entry, every message notification and every thread
+  // reply -- so the fallback quietly became the real name for every counsellor with no pseudonym.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createInquiryAcceptedNotification_neverFallsBackToTheRealName_When_NoPseudonymIsSet()
+      throws Exception {
+    Session session = sessionMock();
+    User adviceSeeker = mock(User.class);
+    when(adviceSeeker.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(adviceSeeker);
+
+    eventNotificationService.createInquiryAcceptedNotification(
+        session, counsellorWithoutPseudonym());
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    EventNotification saved = eventCaptor.getValue();
+    assertThat(saved.getText()).contains("beraterin1").doesNotContain("Angela", "Musterfrau");
+    JsonNode params = objectMapper.readTree(saved.getParams());
+    assertThat(params.get("consultantName").asText()).isEqualTo("beraterin1");
+  }
+
+  @Test
+  void createMessageNotificationFromRoom_neverFallsBackToTheRealName_When_NoPseudonymIsSet() {
+    // The highest-volume path: the sender label is resolved from the database whenever the Matrix
+    // sync loop delivers a message without a display name.
+    Session session = sessionMock();
+    User adviceSeeker = mock(User.class);
+    when(adviceSeeker.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(adviceSeeker);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("counsellor-1"))
+        .thenReturn(Optional.of(counsellorWithoutPseudonym()));
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        "!room-1:matrix.example", "counsellor-1", "body");
+
+    verify(eventNotificationRepository, org.mockito.Mockito.atLeastOnce())
+        .save(eventCaptor.capture());
+    assertThat(eventCaptor.getAllValues())
+        .allSatisfy(
+            saved -> {
+              assertThat(saved.getText()).doesNotContain("Angela", "Musterfrau");
+              assertThat(saved.getParams()).doesNotContain("Angela", "Musterfrau");
+            });
+  }
+
+  /** A counsellor with a real name and no pseudonym: the username is all that may be published. */
+  private Consultant counsellorWithoutPseudonym() {
+    return Consultant.builder()
+        .id("counsellor-1")
+        .username("beraterin1")
+        .firstName("Angela")
+        .lastName("Musterfrau")
+        .displayName(null)
+        .email("angela@example.org")
+        .build();
+  }
+
+  // ---------------------------------------------------------------------------
   // createCounselorRenamedNotification
   // ---------------------------------------------------------------------------
 
   @Test
-  void createCounselorRenamedNotification_setsOldAndNewNameParams() throws Exception {
-    eventNotificationService.createCounselorRenamedNotification(
-        sessionMock(), "asker-1", "Old Name", "New Name");
+  void createCounselorRenamedNotification_carriesNoCounsellorNameAtAll() throws Exception {
+    // ADR-002 §2 / #1201: the recipient is the advice seeker. The predecessor of this test asserted
+    // that params.oldName and params.newName held both names -- it required the disclosure.
+    eventNotificationService.createCounselorRenamedNotification(sessionMock(), "asker-1");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     EventNotification saved = eventCaptor.getValue();
     assertEquals("counselor.renamed", saved.getEventType());
     JsonNode params = objectMapper.readTree(saved.getParams());
     assertEquals(100L, params.get("sessionId").asLong());
-    assertEquals("Old Name", params.get("oldName").asText());
-    assertEquals("New Name", params.get("newName").asText());
+    assertThat(params.has("oldName")).isFalse();
+    assertThat(params.has("newName")).isFalse();
+    assertThat(saved.getText())
+        .isEqualTo("The name shown for your counselor in chat #100 has changed.");
   }
 
   @Test
   void createCounselorRenamedNotification_doesNothingForNullSession() {
-    eventNotificationService.createCounselorRenamedNotification(null, "user-1", "Old", "New");
+    eventNotificationService.createCounselorRenamedNotification(null, "user-1");
     verify(eventNotificationRepository, never()).save(any());
   }
 
   @Test
   void createCounselorRenamedNotification_doesNothingForBlankRecipient() {
-    eventNotificationService.createCounselorRenamedNotification(sessionMock(), "  ", "Old", "New");
+    eventNotificationService.createCounselorRenamedNotification(sessionMock(), "  ");
     verify(eventNotificationRepository, never()).save(any());
   }
 
@@ -1063,9 +1152,9 @@ class EventNotificationServiceTest {
             .build();
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "someone-else", null, false, "Someone", envelope);
+        "!room-1:matrix.example", "someone-else", null, false, envelope);
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "someone-else", null, false, "Someone", envelope);
+        "!room-1:matrix.example", "someone-else", null, false, envelope);
 
     verify(deduplicationWriter, times(1)).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getDeduplicationKey()).isEqualTo("message.new:$evt-1");
@@ -1091,7 +1180,7 @@ class EventNotificationServiceTest {
             .build();
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "someone-else", null, false, "Someone", envelope);
+        "!room-1:matrix.example", "someone-else", null, false, envelope);
 
     verify(eventNotificationRepository).save(any());
     verify(deduplicationWriter, never()).persistInNewTransaction(any());
@@ -1244,19 +1333,27 @@ class EventNotificationServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void resolveSenderName_usesDisplayNameWhenNotEncoded() {
+  void resolveSenderName_resolvesTheSenderFromTheDatabaseRatherThanFromTheCaller() {
+    // #1201: this test asserted that a caller-supplied "Alice Consultant" reached the stored row.
+    // The parameter it used is gone -- the server identifies the sender itself. The end-to-end
+    // proof that a client cannot smuggle a name in through the REST body lives in
+    // EventNotificationControllerTest.
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
     when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
         .thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender-id"))
+        .thenReturn(Optional.of(counsellorWithoutPseudonym()));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender-id", "msg", false, "Alice Consultant");
+        "!room-1:matrix.example", "sender-id", "msg", false);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
-    assertThat(eventCaptor.getValue().getParams()).contains("Alice Consultant");
+    assertThat(eventCaptor.getValue().getParams())
+        .contains("beraterin1")
+        .doesNotContain("Angela", "Musterfrau");
   }
 
   @Test
@@ -1442,13 +1539,7 @@ class EventNotificationServiceTest {
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
 
     eventNotificationService.createThreadReplyNotificationFromRoom(
-        "!room-1:matrix.example",
-        "sender",
-        "my reply text",
-        "thread-1",
-        false,
-        null,
-        "parent message");
+        "!room-1:matrix.example", "sender", "my reply text", "thread-1", false, "parent message");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
@@ -1710,7 +1801,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope imageEnvelope =
         PrivacyEnvelope.builder().messageId("m1").contentClass("IMAGE").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", null, false, null, imageEnvelope);
+        "!room-1:matrix.example", "sender", null, false, imageEnvelope);
 
     verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("image");
@@ -1732,7 +1823,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope fileEnvelope =
         PrivacyEnvelope.builder().messageId("m2").contentClass("FILE").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", null, false, null, fileEnvelope);
+        "!room-1:matrix.example", "sender", null, false, fileEnvelope);
 
     verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("file");
@@ -1754,7 +1845,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope audioEnvelope =
         PrivacyEnvelope.builder().messageId("m3").contentClass("AUDIO").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", null, false, null, audioEnvelope);
+        "!room-1:matrix.example", "sender", null, false, audioEnvelope);
 
     verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("audio message");
@@ -1776,7 +1867,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope videoEnvelope =
         PrivacyEnvelope.builder().messageId("m4").contentClass("VIDEO").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", null, false, null, videoEnvelope);
+        "!room-1:matrix.example", "sender", null, false, videoEnvelope);
 
     verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("video message");
@@ -1828,7 +1919,7 @@ class EventNotificationServiceTest {
 
     PrivacyEnvelope envelope = PrivacyEnvelope.builder().messageId("evt-123").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", null, false, null, envelope);
+        "!room-1:matrix.example", "sender", null, false, envelope);
 
     verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();

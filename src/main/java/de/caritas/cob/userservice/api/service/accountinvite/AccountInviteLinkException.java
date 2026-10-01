@@ -25,6 +25,10 @@ public class AccountInviteLinkException extends RuntimeException {
     SUPERSEDED,
     /** The invite passed its expiry date. */
     EXPIRED,
+    /** A setup claim is currently changing the bound existing account's password. */
+    SETUP_IN_PROGRESS,
+    /** A password update or finalisation outcome needs explicit operator recovery. */
+    SETUP_OPERATOR_REVIEW_REQUIRED,
     /** The invite is not in a deliverable state (e.g. draft that was never sent). */
     NOT_ACTIVE
   }

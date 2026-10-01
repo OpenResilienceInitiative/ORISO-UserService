@@ -18,8 +18,6 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
 import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
-import org.hibernate.annotations.ParamDef;
 
 /** Auditable record for Security-06 inactivity alerts. */
 @Entity
@@ -30,12 +28,7 @@ import org.hibernate.annotations.ParamDef;
 @Setter
 @Builder
 @ToString
-@FilterDef(
-    name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
-@Filter(
-    name = "tenantFilter",
-    condition = "(tenant_id = :tenantId OR (:tenantId = 1 AND tenant_id IS NULL))")
+@Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION_WITH_LEGACY_ROWS_OF_TENANT_ONE)
 public class InactiveAccountNotificationAuditLog implements TenantAware {
 
   @Id

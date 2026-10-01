@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.NotificationRoomLevel;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
 import jakarta.validation.Valid;
@@ -35,6 +36,7 @@ public class EventNotificationController {
 
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull TeamDiscussionNotificationService teamDiscussionNotificationService;
+  private final @NonNull FeedbackMessageEmailService feedbackMessageEmailService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
@@ -158,6 +160,19 @@ public class EventNotificationController {
       return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
     }
 
+    if (Boolean.TRUE.equals(request.getFeedbackMailIntent())) {
+      if (request.getMatrixEventId() == null
+          || request.getMatrixEventId().isBlank()
+          || Boolean.TRUE.equals(request.getTeamDiscussion())
+          || !authenticatedUser.isConsultant()) {
+        return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+      }
+      // This durable classifier must be saved before acknowledging the browser. The actual
+      // Matrix event and case authority are verified by the retrying mail worker.
+      feedbackMessageEmailService.onFeedbackIntent(
+          request.getRoomId(), request.getMatrixEventId(), authenticatedUser);
+    }
+
     if (request.getTeamDiscussion() != null && request.getTeamDiscussion()) {
       // US#473: team-discussion rooms have no session recipient pair — dedicated hybrid fan-out.
       teamDiscussionNotificationService.createTeamDiscussionNotification(
@@ -191,7 +206,6 @@ public class EventNotificationController {
           request.getMessagePreview(),
           request.getThreadRootId(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
-          request.getSenderDisplayName(),
           request.getThreadParentPreview(),
           envelope);
     } else {
@@ -200,7 +214,6 @@ public class EventNotificationController {
           authenticatedUser.getUserId(),
           request.getMessagePreview(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
-          request.getSenderDisplayName(),
           envelope);
     }
 
@@ -291,11 +304,23 @@ public class EventNotificationController {
   }
 
   public static class MessageEventRequestDTO {
-    @NotBlank private String roomId;
+    @NotBlank
+    @Size(max = 255)
+    private String roomId;
+
     private String messagePreview;
     private String threadRootId;
     private Boolean supervisorMessage;
+    private Boolean feedbackMailIntent;
+
+    /**
+     * ADR-002 §2 / #1201: only the team-discussion branch still reads this, a
+     * consultant-to-consultant surface. The session paths ignore it — a client does not get to
+     * decide what a third party is told the sender is called, and the app sends the real name here
+     * when the counsellor has no pseudonym. Kept on the wire so existing clients keep working.
+     */
     private String senderDisplayName;
+
     private String threadParentPreview;
     private Boolean teamDiscussion;
     private java.util.List<String> mentionedUserIds;
@@ -318,6 +343,14 @@ public class EventNotificationController {
 
     public Boolean getTeamDiscussion() {
       return teamDiscussion;
+    }
+
+    public Boolean getFeedbackMailIntent() {
+      return feedbackMailIntent;
+    }
+
+    public void setFeedbackMailIntent(Boolean feedbackMailIntent) {
+      this.feedbackMailIntent = feedbackMailIntent;
     }
 
     public String getMatrixEventId() {

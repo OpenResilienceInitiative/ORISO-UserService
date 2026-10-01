@@ -49,7 +49,7 @@ public class InactiveAccountNotificationService {
   @Value("${inactive.account.notification.email-dispatch.enabled:false}")
   private boolean emailDispatchEnabled;
 
-  @Value("${inactive.account.notification.app-base-url:${app.base.url}}")
+  @Value("${inactive.account.notification.app-base-url}")
   private String appBaseUrl;
 
   @Transactional

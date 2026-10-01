@@ -513,6 +513,14 @@ components:
         featureGroupChatV2Enabled:
           type: boolean
           example: false
+        featureInternalGroupChatEnabled:
+          type: boolean
+          example: true
+          description: "Internal group chats (counsellors only). Unset falls back to featureGroupChatV2Enabled. On the public agency response this is the effective value: Traeger AND Beratungsstelle; a Traeger 'off' always wins (ADR-013)."
+        featureSelfHelpGroupsEnabled:
+          type: boolean
+          example: true
+          description: "Conversation circles / self-help groups (include advice seekers). Unset falls back to featureGroupChatV2Enabled. On the public agency response this is the effective value: Traeger AND Beratungsstelle; a Traeger 'off' always wins (ADR-013)."
         featureToolsEnabled:
           type: boolean
           example: false

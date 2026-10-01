@@ -144,16 +144,20 @@ public class CaseHandoverPolicyCacheService {
     return policies;
   }
 
-  /** Writes through to TenantService and immediately replaces the local enforcement snapshot. */
+  /**
+   * Writes through to TenantService and immediately replaces the local enforcement snapshot. The
+   * read-modify-write runs with the calling admin's own token, so TenantService decides whether
+   * this admin may change the tenant's settings (ORISO-Helm#367).
+   */
   public CaseHandoverPolicies updateEffective(Long tenantId, CaseHandoverPolicies policies) {
     TenantPermissionPolicies requestedPolicies =
-        tenantPolicyReadClient.getTenantPermissionPolicies(tenantId);
+        tenantPolicyReadClient.getTenantPermissionPoliciesAsCaller(tenantId);
     if (requestedPolicies == null || !tenantId.equals(requestedPolicies.getTenantId())) {
       throw new ServiceUnavailableException("Tenant Case Handover policy update failed");
     }
     requestedPolicies.setCaseHandoverPolicies(policies);
     var resolved =
-        tenantPolicyReadClient.updateTenantPermissionPolicies(tenantId, requestedPolicies);
+        tenantPolicyReadClient.updateTenantPermissionPoliciesAsCaller(tenantId, requestedPolicies);
     if (resolved == null
         || !tenantId.equals(resolved.getTenantId())
         || resolved.getCaseHandoverPolicies() == null) {

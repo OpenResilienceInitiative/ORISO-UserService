@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
@@ -45,6 +44,7 @@ import jakarta.validation.Valid;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -79,6 +79,9 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
   private final @NonNull UserIdentitiesService userIdentitiesService;
+  private final @NonNull de.caritas.cob.userservice.api.service.accountinvite
+          .ExistingAccountSetupIssuer
+      accountSetupIssuer;
 
   /**
    * Creates the root hal based navigation entity.
@@ -122,10 +125,30 @@ public class UserAdminController implements UseradminApi {
     de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(
         createConsultantDTO.getUsername(), null);
 
-    createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase());
+    createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
     var consultant = consultantAdminFacade.createNewConsultant(createConsultantDTO);
+    accountSetupIssuer.issueAfterCreation(
+        de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole.COUNSELLOR,
+        consultant.getEmbedded().getId(),
+        createConsultantDTO.getPassword());
 
     return ResponseEntity.ok(consultant);
+  }
+
+  /**
+   * Completes the chat (Matrix) provisioning of a consultant created while the chat server was
+   * unreachable.
+   *
+   * <p>Idempotent: a consultant that already owns a chat identity is answered {@code 200} and left
+   * unchanged. A chat server that is still down answers {@code 424}.
+   *
+   * @param consultantId the id of the consultant to repair (required)
+   * @return {@link ConsultantAdminResponseDTO} carrying the resulting {@code chatIdentityStatus}
+   */
+  @Override
+  public ResponseEntity<ConsultantAdminResponseDTO> repairConsultantChatIdentity(
+      @PathVariable String consultantId) {
+    return ResponseEntity.ok(this.consultantAdminFacade.repairConsultantChatIdentity(consultantId));
   }
 
   /**
@@ -196,8 +219,6 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> createConsultantAgency(
       @PathVariable String consultantId, CreateConsultantAgencyDTO createConsultantAgencyDTO) {
-    consultantAdminFacade.checkPermissionsToAssignedAgencies(
-        Lists.newArrayList(createConsultantAgencyDTO));
     this.consultantAdminFacade.createNewConsultantAgency(consultantId, createConsultantAgencyDTO);
     return new ResponseEntity<>(HttpStatus.CREATED);
   }
@@ -205,7 +226,6 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> setConsultantAgencies(
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
-    this.consultantAdminFacade.checkPermissionsToAssignedAgencies(agencyList);
     this.consultantAdminFacade.setConsultantAgencies(consultantId, agencyList);
     return ResponseEntity.ok().build();
   }
@@ -285,7 +305,7 @@ public class UserAdminController implements UseradminApi {
   private ConsultantAdminResponseDTO performUpdate(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
     if (updateConsultantDTO.getEmail() != null) {
-      updateConsultantDTO.setEmail(updateConsultantDTO.getEmail().toLowerCase());
+      updateConsultantDTO.setEmail(updateConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
     }
     return consultantAdminFacade.updateConsultant(consultantId, updateConsultantDTO);
   }
@@ -394,7 +414,7 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<AdminResponseDTO> createTenantAdmin(CreateAdminDTO createAgencyAdminDTO) {
-    createAgencyAdminDTO.setEmail(createAgencyAdminDTO.getEmail().toLowerCase());
+    createAgencyAdminDTO.setEmail(createAgencyAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = adminUserFacade.createNewTenantAdmin(createAgencyAdminDTO);
 
     return ResponseEntity.ok(admin);
@@ -402,7 +422,12 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<AdminResponseDTO> createAgencyAdmin(final CreateAdminDTO createAdminDTO) {
-    return ResponseEntity.ok(this.adminUserFacade.createNewAgencyAdmin(createAdminDTO));
+    // Same normalisation as every sibling here. Without it this was the one account path
+    // that stored the address as typed, so the same person could end up with two
+    // differently-cased identities depending on which screen created them.
+    createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase(Locale.ROOT));
+    var admin = this.adminUserFacade.createNewAgencyAdmin(createAdminDTO);
+    return ResponseEntity.ok(admin);
   }
 
   @Override
@@ -422,7 +447,7 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<List<Long>> getAdminAgencies(@PathVariable String adminId) {
-    var adminAgencies = this.adminUserFacade.findAdminUserAgencyIds(adminId);
+    var adminAgencies = this.adminUserFacade.findAgencyIdsOfAdminInCallerScope(adminId);
     return ResponseEntity.ok(adminAgencies);
   }
 
@@ -448,7 +473,7 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<AdminResponseDTO> updateAgencyAdmin(
       final String adminId, UpdateAgencyAdminDTO updateAgencyAdminDTO) {
-    updateAgencyAdminDTO.setEmail(updateAgencyAdminDTO.getEmail().toLowerCase());
+    updateAgencyAdminDTO.setEmail(updateAgencyAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = adminUserFacade.updateAgencyAdmin(adminId, updateAgencyAdminDTO);
 
     return new ResponseEntity<>(admin, HttpStatus.OK);
@@ -457,7 +482,7 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<AdminResponseDTO> updateTenantAdmin(
       final String adminId, UpdateTenantAdminDTO updateTenantAdminDTO) {
-    updateTenantAdminDTO.setEmail(updateTenantAdminDTO.getEmail().toLowerCase());
+    updateTenantAdminDTO.setEmail(updateTenantAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = adminUserFacade.updateTenantAdmin(adminId, updateTenantAdminDTO);
 
     return new ResponseEntity<>(admin, HttpStatus.OK);

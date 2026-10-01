@@ -54,57 +54,63 @@ public class ApplicationSettingsService {
    * deliberately no fallback to the caller's token: a role-dependent result is the bug.
    */
   public Optional<ApplicationSettingsSmtpCredentialsDTO> getGlobalSmtpCredentials() {
-    Optional<String> technicalAccessToken = loginTechnicalUser();
-    if (technicalAccessToken.isEmpty()) {
-      return Optional.empty();
-    }
     try {
-      ApplicationsettingsControllerApi controllerApi =
-          applicationSettingsApiControllerFactory.createControllerApi();
-      HttpHeaders headers =
-          this.securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(technicalAccessToken.get());
-      tenantHeaderSupplier.addTenantHeader(headers);
-      headers.forEach(
-          (key, value) ->
-              controllerApi.getApiClient().addDefaultHeader(key, value.iterator().next()));
-      ApplicationSettingsSmtpCredentialsDTO credentials = controllerApi.getGlobalSmtpCredentials();
-      if (credentials == null
-          || isBlank(credentials.getGlobalSmtpUsername())
-          || isBlank(credentials.getGlobalSmtpPassword())) {
-        // #1006: log the configuration state, never the credential values themselves.
+      Optional<ApplicationSettingsSmtpCredentialsDTO> source = getGlobalSmtpSettingsSnapshot();
+      if (source.isEmpty()
+          || isBlank(source.get().getGlobalSmtpUsername())
+          || isBlank(source.get().getGlobalSmtpPassword())) {
         log.warn(
             "Global SMTP credentials lookup at ConsultingTypeService returned no usable"
                 + " credentials (username or password missing/blank)");
         return Optional.empty();
       }
-      return Optional.of(credentials);
-    } catch (RestClientException ex) {
-      // #1006: this used to be swallowed silently, making "invite mail not sent"
-      // undiagnosable. The lookup stays best-effort, but status and cause must reach the log.
-      // #1160: a 403 here now means the TECHNICAL identity is not accepted by the guarded
-      // credentials endpoint (missing tenantId=0 claim / service authority), not that the
-      // clicking admin lacked a role.
-      String status =
-          ex instanceof RestClientResponseException responseException
-              ? String.valueOf(responseException.getStatusCode())
-              : "no response";
-      // Review 3893332413: attach the exception itself so root cause (TLS vs DNS vs
-      // connection) and stack trace reach the log — context fields stay secret-free.
-      log.warn(
-          "Global SMTP credentials lookup at ConsultingTypeService failed ({}, status: {})",
-          ex.getClass().getSimpleName(),
-          status,
-          ex);
+      return source;
+    } catch (SmtpSettingsUnavailableException exception) {
+      // Preserve the best-effort contract for existing callers. The strict snapshot below
+      // retains availability separately for diagnostics and saved configuration validation.
       return Optional.empty();
     }
   }
 
   /**
-   * #1160: obtains a fresh technical-user access token for the platform-scoped credentials call.
-   * Returns empty (with a WARN naming the configuration state, never a secret) when the technical
-   * user is unconfigured or the login fails.
+   * Reads one uncached Admin SMTP snapshot using only the technical identity. Partial saved values
+   * are retained for validation; an unavailable dependency is never represented as empty settings.
    */
-  private Optional<String> loginTechnicalUser() {
+  public Optional<ApplicationSettingsSmtpCredentialsDTO> getGlobalSmtpSettingsSnapshot() {
+    String technicalAccessToken = loginTechnicalUser();
+    try {
+      ApplicationsettingsControllerApi controllerApi =
+          applicationSettingsApiControllerFactory.createControllerApi();
+      HttpHeaders headers =
+          this.securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(technicalAccessToken);
+      tenantHeaderSupplier.addTenantHeader(headers);
+      headers.forEach(
+          (key, value) ->
+              controllerApi.getApiClient().addDefaultHeader(key, value.iterator().next()));
+      return Optional.ofNullable(controllerApi.getGlobalSmtpCredentials());
+    } catch (RestClientException ex) {
+      String status =
+          ex instanceof RestClientResponseException responseException
+              ? String.valueOf(responseException.getStatusCode())
+              : "no response";
+      // Upstream responses and throwables can contain credentials or full addresses.
+      log.warn(
+          "Global SMTP credentials lookup at ConsultingTypeService failed ({}, status: {})",
+          ex.getClass().getSimpleName(),
+          status);
+      throw new SmtpSettingsUnavailableException();
+    }
+  }
+
+  /** A fixed, credential-safe dependency failure; the upstream throwable is deliberately absent. */
+  public static class SmtpSettingsUnavailableException extends IllegalStateException {
+    public SmtpSettingsUnavailableException() {
+      super(
+          "Platform SMTP Admin Settings are unavailable. Please retry or contact a platform admin.");
+    }
+  }
+
+  private String loginTechnicalUser() {
     TechnicalUserConfig technicalUser = identityClientConfig.getTechnicalUser();
     if (technicalUser == null
         || isBlank(technicalUser.getUsername())
@@ -112,23 +118,23 @@ public class ApplicationSettingsService {
       log.warn(
           "Global SMTP credentials lookup skipped: no technical user configured"
               + " (identity.technical-user.username / .password)");
-      return Optional.empty();
+      throw new SmtpSettingsUnavailableException();
     }
+    de.caritas.cob.userservice.api.port.out.IdentityLogin login;
     try {
-      var login =
+      login =
           identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
-      if (login == null || isBlank(login.accessToken())) {
-        log.warn("Global SMTP credentials lookup skipped: technical user login returned no token");
-        return Optional.empty();
-      }
-      return Optional.of(login.accessToken());
     } catch (RuntimeException ex) {
       log.warn(
           "Global SMTP credentials lookup skipped: technical user login failed ({})",
-          ex.getClass().getSimpleName(),
-          ex);
-      return Optional.empty();
+          ex.getClass().getSimpleName());
+      throw new SmtpSettingsUnavailableException();
     }
+    if (login == null || isBlank(login.accessToken())) {
+      log.warn("Global SMTP credentials lookup skipped: technical user login returned no token");
+      throw new SmtpSettingsUnavailableException();
+    }
+    return login.accessToken();
   }
 
   private void addDefaultHeaders(ApiClient apiClient) {

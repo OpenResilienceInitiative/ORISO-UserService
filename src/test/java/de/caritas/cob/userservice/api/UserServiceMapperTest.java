@@ -58,6 +58,23 @@ class UserServiceMapperTest {
   }
 
   @Test
+  void saveLiveChatViaSidebar() {
+    Map<String, Object> requestData = new HashMap<>();
+    requestData.put("liveChatViaSidebar", true);
+    requestData.put("id", "1");
+    Consultant consultant = new Consultant();
+
+    userServiceMapper.consultantOf(consultant, requestData);
+
+    assertThat(consultant.getLiveChatViaSidebar()).isTrue();
+  }
+
+  @Test
+  void consultantLiveChatViaSidebarDefaultsToFalse() {
+    assertThat(new Consultant().getLiveChatViaSidebar()).isFalse();
+  }
+
+  @Test
   void saveNotificationsEnabled() {
     Map<String, Object> requestData = new HashMap<>();
     NotificationsSettingsDTO allActiveSettings =

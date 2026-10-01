@@ -60,7 +60,9 @@ import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
@@ -351,6 +353,30 @@ public class KeycloakServiceTest {
 
     verify(keycloakClient).get(anyString(), any(), eq(OtpInfoDTO.class));
     verifyNoInteractions(outboundHttpMetrics);
+  }
+
+  @Test
+  public void getOtpCredential_Should_Throw_When_SuccessfulResponseHasNoBody() {
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    for (var status : new HttpStatus[] {HttpStatus.OK, HttpStatus.NO_CONTENT}) {
+      when(keycloakClient.get(anyString(), any(), eq(OtpInfoDTO.class)))
+          .thenReturn(new ResponseEntity<OtpInfoDTO>(status));
+
+      assertThrows(KeycloakException.class, () -> keycloakService.getOtpCredential(USERNAME));
+    }
+    verifyNoInteractions(keycloakMapper);
+  }
+
+  @Test
+  public void getOtpCredential_Should_Preserve_ValidInactiveCredential() {
+    var info = new OtpInfoDTO().otpSetup(false).otpSecret("setup-secret");
+    var credential = new IdentityOtpCredential(false, "setup-secret", null, null);
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    when(keycloakClient.get(anyString(), any(), eq(OtpInfoDTO.class)))
+        .thenReturn(ResponseEntity.ok(info));
+    when(keycloakMapper.identityOtpCredentialOf(info)).thenReturn(credential);
+
+    assertEquals(credential, keycloakService.getOtpCredential(USERNAME));
   }
 
   @Test
@@ -1290,6 +1316,54 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void updateProfile_Should_preserveAttributesKeycloakAlreadyHolds() {
+    setField(keycloakService, "multiTenancyEnabled", true);
+    var existing = new UserRepresentation();
+    existing.setEmail("email");
+    existing.setAttributes(
+        new LinkedHashMap<>(
+            Map.of(
+                "userId", singletonList("8ed43c2c-keycloak-id"),
+                "locale", singletonList("de"),
+                "tenantId", singletonList("1"))));
+    UserResource userResource = givenUserResourceWithRepresentation(existing);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usernameTranscoder.decodeUsername("username")).thenReturn("username");
+    var profile = new IdentityProfileUpdate("username", "email", 2L, "firstName", "lastName");
+
+    this.keycloakService.updateProfile("userId", profile);
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    var attributes = representationCaptor.getValue().getAttributes();
+    assertThat(attributes.get("userId"), is(singletonList("8ed43c2c-keycloak-id")));
+    assertThat(attributes.get("locale"), is(singletonList("de")));
+    assertThat(attributes.get("tenantId"), is(singletonList("2")));
+    assertThat(attributes.get("username"), is(singletonList("username")));
+    setField(keycloakService, "multiTenancyEnabled", false);
+  }
+
+  @Test
+  public void updateDummyEmail_Should_preserveAttributesKeycloakAlreadyHolds() {
+    var existing = new UserRepresentation();
+    existing.setAttributes(new LinkedHashMap<>(Map.of("userId", singletonList("kc-id"))));
+    UserResource userResource = givenUserResourceWithRepresentation(existing);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(userHelper.getDummyEmail("userId")).thenReturn("dummy");
+    when(usernameTranscoder.decodeUsername("encoded-user")).thenReturn("decoded-user");
+
+    keycloakService.updateDummyEmail("userId", new IdentityDummyEmailUpdate("encoded-user", 42L));
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    var attributes = representationCaptor.getValue().getAttributes();
+    assertThat(attributes.get("userId"), is(singletonList("kc-id")));
+    assertThat(attributes.get("username"), is(singletonList("decoded-user")));
+  }
+
+  @Test
   public void rollbackUser_Should_callServicesCorrectly() {
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
@@ -1422,6 +1496,21 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void changeLanguage_Should_setLocale_When_storedUserHasNoAttributeMapAtAll() {
+    var stored = new UserRepresentation();
+    stored.setAttributes(null);
+    UserResource userResource = givenUserResourceWithRepresentation(stored);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.changeLanguage("userId", "en");
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    assertThat(representationCaptor.getValue().getAttributes().get("locale"), is(List.of("en")));
+  }
+
+  @Test
   public void changeLanguage_ShouldChangeLanguageIfLocaleAttributeDoesNotExistInKeycloak() {
     // given
     UserRepresentation userRepresentation = givenUserRepresentation("email");
@@ -1490,6 +1579,23 @@ public class KeycloakServiceTest {
 
     // when, then
     assertThat(this.keycloakService.findById("userId"), equalTo(Optional.empty()));
+  }
+
+  @Test
+  public void requiresPasswordChange_Should_ReadOnlyTheCurrentUpdatePasswordAction() {
+    UserRepresentation user = new UserRepresentation();
+    UserResource resource = mock(UserResource.class);
+    UsersResource users = mock(UsersResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(users);
+    when(users.get("userId")).thenReturn(resource);
+    when(resource.toRepresentation()).thenReturn(user);
+
+    user.setRequiredActions(List.of("CONFIGURE_TOTP", "UPDATE_PASSWORD"));
+    assertTrue(keycloakService.requiresPasswordChange("userId"));
+    user.setRequiredActions(List.of("CONFIGURE_TOTP"));
+    assertFalse(keycloakService.requiresPasswordChange("userId"));
+    user.setRequiredActions(null);
+    assertFalse(keycloakService.requiresPasswordChange("userId"));
   }
 
   /**
@@ -2025,6 +2131,22 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  void adminChosenPasswordIsTemporaryButUserChosenPasswordIsPermanent() {
+    UserResource account = mock(UserResource.class);
+    UsersResource users = givenUsersResourceWithAnyUserId(account);
+    when(keycloakClient.getUsersResource()).thenReturn(users);
+
+    keycloakService.updateTemporaryPassword("userId", "initial-secret");
+    keycloakService.updatePassword("userId", "own-secret");
+
+    var credentials =
+        ArgumentCaptor.forClass(org.keycloak.representations.idm.CredentialRepresentation.class);
+    verify(account, times(2)).resetPassword(credentials.capture());
+    assertTrue(credentials.getAllValues().get(0).isTemporary());
+    assertFalse(credentials.getAllValues().get(1).isTemporary());
+  }
+
+  @Test
   public void
       updatePassword_Should_throwCustomValidationHttpStatusException_When_MessageMentionsPasswordPolicy() {
     givenResetPasswordThrows(new RuntimeException("password policy violation"));
@@ -2216,5 +2338,261 @@ public class KeycloakServiceTest {
     assertThrows(
         org.springframework.web.client.HttpClientErrorException.class,
         () -> keycloakService.setUpOtpCredential(USERNAME, "123456", "secret"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Every Keycloak user update must keep the attributes Keycloak already holds. The userId
+  // attribute feeds the custom userId JWT claim the AgencyService scopes restricted admins by;
+  // losing it turned every agency list of an edited Beratungsstellen-Admin into a 403.
+  // ---------------------------------------------------------------------------
+
+  private UserRepresentation givenStoredUserWithAttributes(String email) {
+    var existing = new UserRepresentation();
+    existing.setId("userId");
+    existing.setEmail(email);
+    existing.setAttributes(
+        new LinkedHashMap<>(
+            Map.of(
+                "userId", singletonList("userId"),
+                "locale", singletonList("de"),
+                "tenantId", singletonList("1"))));
+    return existing;
+  }
+
+  private UserResource givenUserResourceHolding(UserRepresentation existing) {
+    UserResource userResource = givenUserResourceWithRepresentation(existing);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    return userResource;
+  }
+
+  private Map<String, List<String>> attributesSentTo(UserResource userResource) {
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    return representationCaptor.getValue().getAttributes();
+  }
+
+  @Test
+  public void updateProfile_Should_stillUpdate_When_storedUserHasNoAttributes() {
+    var existing = new UserRepresentation();
+    existing.setEmail("email");
+    existing.setAttributes(null);
+    UserResource userResource = givenUserResourceHolding(existing);
+    var profile = new IdentityProfileUpdate("username", "email", null, "firstName", "lastName");
+
+    this.keycloakService.updateProfile("userId", profile);
+
+    var attributes = attributesSentTo(userResource);
+    assertThat(attributes.get("username"), is(singletonList("username")));
+    assertThat(attributes.get("userName"), is(singletonList("username")));
+  }
+
+  @Test
+  public void updateProfile_Should_keepStoredTenantIdAndUserId_When_multiTenancyIsDisabled() {
+    // single-tenant deployments never write tenantId on update; the stored one must survive
+    UserResource userResource = givenUserResourceHolding(givenStoredUserWithAttributes("email"));
+    var profile = new IdentityProfileUpdate("username", "email", 2L, "firstName", "lastName");
+
+    this.keycloakService.updateProfile("userId", profile);
+
+    var attributes = attributesSentTo(userResource);
+    assertThat(attributes.get("userId"), is(singletonList("userId")));
+    assertThat(attributes.get("locale"), is(singletonList("de")));
+    assertThat(attributes.get("tenantId"), is(singletonList("1")));
+  }
+
+  @Test
+  public void updateProfile_Should_keepUserId_When_multiTenancyIsEnabledButProfileHasNoTenant() {
+    setField(keycloakService, "multiTenancyEnabled", true);
+    TenantContext.clear();
+    UserResource userResource = givenUserResourceHolding(givenStoredUserWithAttributes("email"));
+    var profile = new IdentityProfileUpdate("username", "email", null, "firstName", "lastName");
+
+    this.keycloakService.updateProfile("userId", profile);
+
+    var attributes = attributesSentTo(userResource);
+    assertThat(attributes.get("userId"), is(singletonList("userId")));
+    assertThat(attributes.get("tenantId"), is(singletonList("1")));
+    setField(keycloakService, "multiTenancyEnabled", false);
+  }
+
+  @Test
+  public void updateProfile_Should_keepUserId_When_emailChangesAndUsernameIsEncoded() {
+    // the admin services hand over the stored (possibly encoded) username; Keycloak must receive
+    // the decoded one in both username attributes while userId stays untouched
+    when(usernameTranscoder.decodeUsername("enc.nbswy3dp")).thenReturn("hello");
+    UserResource userResource =
+        givenUserResourceHolding(givenStoredUserWithAttributes("old@example.org"));
+    var profile = new IdentityProfileUpdate("enc.nbswy3dp", "new@example.org", 1L, "First", "Last");
+
+    this.keycloakService.updateProfile("userId", profile);
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    var sent = representationCaptor.getValue();
+    assertThat(sent.getUsername(), is("hello"));
+    assertThat(sent.getEmail(), is("new@example.org"));
+    assertThat(sent.getAttributes().get("username"), is(singletonList("hello")));
+    assertThat(sent.getAttributes().get("userName"), is(singletonList("hello")));
+    assertThat(sent.getAttributes().get("userId"), is(singletonList("userId")));
+    assertThat(sent.getAttributes().get("locale"), is(singletonList("de")));
+  }
+
+  @Test
+  public void updateProfile_Should_mergeWithoutTouchingTheStoredMap_When_storedMapIsImmutable() {
+    // Keycloak's client may hand back an unmodifiable map; the merge has to copy, not mutate
+    setField(keycloakService, "multiTenancyEnabled", true);
+    var existing = new UserRepresentation();
+    existing.setEmail("email");
+    Map<String, List<String>> stored =
+        Map.of("userId", singletonList("userId"), "tenantId", singletonList("1"));
+    existing.setAttributes(stored);
+    UserResource userResource = givenUserResourceHolding(existing);
+    var profile = new IdentityProfileUpdate("username", "email", 2L, "firstName", "lastName");
+
+    this.keycloakService.updateProfile("userId", profile);
+
+    var attributes = attributesSentTo(userResource);
+    assertThat(attributes.get("userId"), is(singletonList("userId")));
+    assertThat(attributes.get("tenantId"), is(singletonList("2")));
+    assertThat(stored.get("tenantId"), is(singletonList("1")));
+    setField(keycloakService, "multiTenancyEnabled", false);
+  }
+
+  @Test
+  public void updateDummyEmail_Should_stillUpdate_When_storedUserHasNoAttributes() {
+    var existing = new UserRepresentation();
+    existing.setAttributes(null);
+    UserResource userResource = givenUserResourceHolding(existing);
+    when(userHelper.getDummyEmail("userId")).thenReturn("dummy");
+
+    keycloakService.updateDummyEmail("userId", new IdentityDummyEmailUpdate("username", null));
+
+    var attributes = attributesSentTo(userResource);
+    assertThat(attributes.get("username"), is(singletonList("username")));
+  }
+
+  @Test
+  public void updateDummyEmail_Should_stillUpdate_When_storedUserCannotBeRead() {
+    UserResource userResource = mock(UserResource.class);
+    when(userResource.toRepresentation()).thenThrow(new RuntimeException("keycloak down"));
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(userHelper.getDummyEmail("userId")).thenReturn("dummy");
+
+    var dummyEmail =
+        keycloakService.updateDummyEmail("userId", new IdentityDummyEmailUpdate("username", null));
+
+    assertThat(dummyEmail, is("dummy"));
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    assertThat(representationCaptor.getValue().getEmail(), is("dummy"));
+    assertTrue(
+        logCaptor.contains(Level.WARN, "Could not read current keycloak user before update"));
+  }
+
+  @Test
+  public void updateDummyEmail_Should_keepLocaleAndTenantId_When_storedUserHasThem() {
+    UserResource userResource = givenUserResourceHolding(givenStoredUserWithAttributes(null));
+    when(userHelper.getDummyEmail("userId")).thenReturn("dummy");
+
+    keycloakService.updateDummyEmail("userId", new IdentityDummyEmailUpdate("username", null));
+
+    var attributes = attributesSentTo(userResource);
+    assertThat(attributes.get("userId"), is(singletonList("userId")));
+    assertThat(attributes.get("locale"), is(singletonList("de")));
+    assertThat(attributes.get("tenantId"), is(singletonList("1")));
+  }
+
+  @Test
+  public void changeLanguage_Should_keepOtherAttributes_When_localeIsReplaced() {
+    var existing = givenStoredUserWithAttributes("email");
+    UserResource userResource = givenUserResourceHolding(existing);
+
+    this.keycloakService.changeLanguage("userId", "en");
+
+    var attributes = attributesSentTo(userResource);
+    assertThat(attributes.get("locale"), is(List.of("en")));
+    assertThat(attributes.get("userId"), is(singletonList("userId")));
+    assertThat(attributes.get("tenantId"), is(singletonList("1")));
+  }
+
+  @Test
+  public void updateCurrentUserEmail_Should_keepAttributes_When_emailIsReplaced() {
+    when(authenticatedUser.getUserId()).thenReturn("userId");
+    UserResource userResource =
+        givenUserResourceHolding(givenStoredUserWithAttributes("old@example.org"));
+
+    this.keycloakService.updateCurrentUserEmail("new@example.org");
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    assertThat(representationCaptor.getValue().getEmail(), is("new@example.org"));
+    assertThat(
+        representationCaptor.getValue().getAttributes().get("userId"), is(singletonList("userId")));
+    assertThat(
+        representationCaptor.getValue().getAttributes().get("locale"), is(singletonList("de")));
+  }
+
+  @Test
+  public void updateEmailByUsername_Should_keepAttributes_When_emailIsReplaced() {
+    var existing = givenStoredUserWithAttributes("old@example.org");
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.search(USERNAME)).thenReturn(List.of(existing));
+    UserResource userResource = mock(UserResource.class);
+    when(usersResource.get("userId")).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.updateEmailByUsername(USERNAME, "new@example.org");
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    assertThat(representationCaptor.getValue().getEmail(), is("new@example.org"));
+    assertThat(
+        representationCaptor.getValue().getAttributes().get("userId"), is(singletonList("userId")));
+  }
+
+  @Test
+  public void deactivateUser_Should_keepAttributes_When_userIsDisabled() {
+    UserResource userResource = givenUserResourceHolding(givenStoredUserWithAttributes("email"));
+
+    this.keycloakService.deactivateUser("userId");
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    assertThat(representationCaptor.getValue().isEnabled(), is(false));
+    assertThat(
+        representationCaptor.getValue().getAttributes().get("userId"), is(singletonList("userId")));
+    assertThat(
+        representationCaptor.getValue().getAttributes().get("locale"), is(singletonList("de")));
+  }
+
+  @Test
+  public void
+      createUser_Should_keepAttributesKeycloakWroteOnCreate_When_identityAttributesAreAdded() {
+    // the post-create attribute update must add userId/username without dropping what the
+    // create call already stored (e.g. the locale)
+    var userDTO = new UserDTO();
+    userDTO.setUsername("username");
+    userDTO.setEmail("user@example.org");
+
+    var usersResource = mock(UsersResource.class);
+    var userResource = mock(UserResource.class);
+    var response = mock(Response.class);
+    var storedRepresentation = new UserRepresentation();
+    storedRepresentation.setAttributes(new HashMap<>(Map.of("locale", singletonList("de"))));
+    when(response.getStatus()).thenReturn(HttpStatus.CREATED.value());
+    when(response.getLocation()).thenReturn(createdUserLocation(USER_ID));
+    when(usersResource.create(any())).thenReturn(response);
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    when(userResource.toRepresentation()).thenReturn(storedRepresentation);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    this.keycloakService.createUser(userDTO);
+
+    var attributes = attributesSentTo(userResource);
+    assertThat(attributes.get("locale"), is(singletonList("de")));
+    assertThat(attributes.get("userId"), is(singletonList(USER_ID)));
+    assertThat(attributes.get("username"), is(singletonList("username")));
   }
 }

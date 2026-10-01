@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,10 +56,12 @@ public class DirectSessionMatrixRoomService {
             session.getId());
         return;
       }
-      if (consultant.getMatrixUserId() == null) {
+      if (!ConsultantChatIdentityService.hasChatIdentity(consultant)) {
         log.warn(
-            "Consultant {} has no Matrix account, cannot provision direct-session room",
-            consultant.getUsername());
+            "Cannot provision direct-session room for session {}: {}",
+            session.getId(),
+            ConsultantChatIdentityService.missingChatIdentityMessage(
+                "Consultant", consultant.getId()));
         return;
       }
 

@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.chat;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
+
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -87,6 +89,7 @@ public class GroupChatRoleService {
     actor.setRole(ParticipantRole.CO_MODERATOR);
     target.setRole(ParticipantRole.OWNER);
     series.setChatOwner(newPrimaryOwner);
+    series.setUpdateDate(nowInUtc());
     participantRepository.save(actor);
     participantRepository.save(target);
     chatRepository.save(series);

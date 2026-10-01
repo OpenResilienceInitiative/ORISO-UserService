@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -18,6 +17,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -113,6 +114,10 @@ class UserAdminControllerIT {
 
   @MockitoBean private AdminUserFacade adminUserFacade;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer
+      accountSetupIssuer;
+
   @MockitoBean private AdminDtoMapper adminDtoMapper;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
@@ -206,6 +211,9 @@ class UserAdminControllerIT {
   void createConsultant_Should_returnOk_When_requiredCreateConsultantIsGiven() throws Exception {
     CreateConsultantDTO createConsultantDTO =
         new EasyRandom().nextObject(CreateConsultantDTO.class);
+    when(this.consultantAdminFacade.createNewConsultant(any()))
+        .thenReturn(
+            new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id("consultant-1")));
 
     this.mvc
         .perform(
@@ -278,8 +286,6 @@ class UserAdminControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(agencies)))
         .andExpect(status().isOk());
-
-    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(anyList());
     verify(consultantAdminFacade).setConsultantAgencies(eq(consultantId), anyList());
   }
 
@@ -306,15 +312,13 @@ class UserAdminControllerIT {
     var agencies = givenAgenciesToSet();
     doThrow(new ForbiddenException(""))
         .when(consultantAdminFacade)
-        .checkPermissionsToAssignedAgencies(anyList());
+        .setConsultantAgencies(eq(consultantId), anyList());
 
     mvc.perform(
             put("/useradmin/consultants/{consultantId}/agencies", consultantId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(agencies)))
         .andExpect(status().isForbidden());
-
-    verify(consultantAdminFacade, never()).setConsultantAgencies(any(), anyList());
   }
 
   @Test

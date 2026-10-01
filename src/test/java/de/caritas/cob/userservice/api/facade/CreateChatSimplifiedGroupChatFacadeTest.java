@@ -37,7 +37,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -50,7 +49,7 @@ import org.springframework.http.ResponseEntity;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class CreateChatSimplifiedGroupChatFacadeTest {
 
-  @InjectMocks private CreateChatFacade createChatFacade;
+  private CreateChatFacade createChatFacade;
 
   @Mock private ChatService chatService;
   @Mock private SessionService sessionService;
@@ -58,6 +57,11 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer
+      appointmentEvents;
+
   @Mock private UserRepository userRepository;
 
   @SuppressWarnings("unused")
@@ -70,10 +74,31 @@ class CreateChatSimplifiedGroupChatFacadeTest {
 
   @BeforeEach
   void setup() {
+    var policy = de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy();
+    var realAgencies =
+        (AgencyService)
+            org.springframework.test.util.ReflectionTestUtils.getField(policy, "agencyService");
+    var groupPolicy =
+        new de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy(
+            policy,
+            mock(de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
+            realAgencies);
+    createChatFacade =
+        new CreateChatFacade(
+            chatService,
+            appointmentEvents,
+            sessionService,
+            agencyService,
+            chatConverter,
+            matrixSynapseService,
+            consultantRepository,
+            groupChatParticipantRepository,
+            userRepository,
+            groupPolicy);
     consultant = mock(Consultant.class);
     when(consultant.getId()).thenReturn("creator-consultant-id");
     when(consultant.getMatrixUserId()).thenReturn("@creator:matrix.org");
-    when(consultant.getTenantId()).thenReturn(1L);
+    when(consultant.getTenantId()).thenReturn(41L);
 
     savedChat = mock(Chat.class);
     when(savedChat.getId()).thenReturn(CHAT_ID);
@@ -419,13 +444,13 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
 
     User tenantUser = mock(User.class);
-    when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system-1"))
+    when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system-41"))
         .thenReturn(Optional.of(tenantUser));
 
     createChatFacade.createChatV1(chatDto, consultant);
 
     // Tenant-scoped lookup resolved on first call → generic lookup never needed
-    verify(userRepository).findByUserIdAndDeleteDateIsNull("group-chat-system-1");
+    verify(userRepository).findByUserIdAndDeleteDateIsNull("group-chat-system-41");
     verify(userRepository, never()).findByUserIdAndDeleteDateIsNull("group-chat-system");
   }
 
@@ -439,7 +464,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
 
     User genericUser = mock(User.class);
-    when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system-1"))
+    when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system-41"))
         .thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system"))
         .thenReturn(Optional.of(genericUser));
@@ -458,7 +483,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("token");
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
 
-    when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system-1"))
+    when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system-41"))
         .thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system"))
         .thenReturn(Optional.empty());

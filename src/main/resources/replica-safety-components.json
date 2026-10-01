@@ -285,6 +285,36 @@
       "status": "bounded"
     },
     {
+      "id": "platform-operator-organisation-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/email/sender/PlatformOperatorOrganisationClient.java",
+      "kind": "local-state",
+      "owner": "administration",
+      "risk": "performance",
+      "components": [
+        "cache"
+      ],
+      "decision": "Retain locally with the five-minute TTL; a miss re-reads the operator master data from TenantService, and a replica with an older copy only shows a changed mail-footer sender for at most that TTL.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "traeger-organisation-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/email/sender/TraegerOrganisationClient.java",
+      "kind": "local-state",
+      "owner": "administration",
+      "risk": "performance",
+      "components": [
+        "cache"
+      ],
+      "decision": "Retain locally per tenant with the five-minute TTL; a miss re-reads the tenant from TenantService, and a replica with an older copy only shows a changed Traeger name or address in mail footers for at most that TTL.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "appointment-cleanup-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/Organizer.java",
       "kind": "scheduler",
@@ -310,6 +340,22 @@
         "retryPendingReleases"
       ],
       "decision": "Lease each batch and use idempotent release endpoints plus row locks for safe replay.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
+      "id": "account-invite-expiry-number-release-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/ExpiredInviteReservationSweep.java",
+      "kind": "scheduler",
+      "owner": "agency-tenant",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "expireElapsedInvites"
+      ],
+      "decision": "Lease each run via ScheduledTaskClaimService; expiry is a status transition and every number release is a durable release task, so a replayed batch cannot release a number twice.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
@@ -493,14 +539,34 @@
       "status": "bounded"
     },
     {
+      "id": "email-branding-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/email/layout/EmailBrandingResolver.java",
+      "kind": "local-state",
+      "owner": "agency-tenant",
+      "risk": "performance",
+      "components": [
+        "tenantCache"
+      ],
+      "decision": "Retain one process-local cache of fresh TenantService branding reads. Default TTL is ten seconds, larger configured values are clamped to a ten-second maximum, and cardinality is capped at 1000 tenant/mode keys. A cache miss re-reads TenantService; replica differences are bounded by the TTL and never select another tenant's URL.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "case-handover-policy-cache-refresh",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverPolicyCacheService.java",
       "kind": "scheduler",
       "owner": "agency-tenant",
       "risk": "correctness",
-      "components": ["refreshKnownTenants"],
+      "components": [
+        "refreshKnownTenants"
+      ],
       "decision": "Each tenant refresh is serialized through ScheduledTaskClaimService and keeps enforcing the persisted last-known-good snapshot.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "bounded"
     },
     {
@@ -509,9 +575,14 @@
       "kind": "scheduler",
       "owner": "sessions-matrix",
       "risk": "correctness",
-      "components": ["expireCoAccessSchedule"],
+      "components": [
+        "expireCoAccessSchedule"
+      ],
       "decision": "The sweep uses a shared lease, technical tenant context and pessimistic row locks; database expiry is saved only after Matrix membership is reconciled.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "bounded"
     },
     {
@@ -520,9 +591,30 @@
       "kind": "scheduler",
       "owner": "sessions-matrix",
       "risk": "correctness",
-      "components": ["retryPendingRepairs"],
+      "components": [
+        "retryPendingRepairs"
+      ],
       "decision": "A shared lease serializes retries; the durable task survives the rolled-back handover transaction, Matrix operations are idempotent, and successful reconciliation deletes the task.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "reply-email-delivery-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/ReplyEmailDeliveryScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "deliverPending"
+      ],
+      "decision": "A shared lease selects durable pending claims and a pessimistic row lock prevents concurrent claims if the lease expires mid-batch. Each claim becomes SENDING before SMTP; a stale or ambiguous outcome becomes UNCERTAIN for operator reconciliation rather than automatic replay.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "bounded"
     },
     {
@@ -531,9 +623,14 @@
       "kind": "scheduler",
       "owner": "notifications",
       "risk": "duplicate-side-effect",
-      "components": ["purgeExpiredNotifications"],
+      "components": [
+        "purgeExpiredNotifications"
+      ],
       "decision": "Leases the run through ScheduledTaskClaimService; the purge itself is an idempotent bulk delete of expired rows.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "bounded"
     },
     {
@@ -542,9 +639,14 @@
       "kind": "scheduler",
       "owner": "deletion",
       "risk": "duplicate-side-effect",
-      "components": ["purgeOrphanedDiscussions"],
-      "decision": "Leases the run through ScheduledTaskClaimService; purging a Matrix room is idempotent (a 404 counts as purged) and the row delete is keyed by id, so a second replica finds nothing left to do.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "components": [
+        "purgeOrphanedDiscussions"
+      ],
+      "decision": "Leases the run through ScheduledTaskClaimService; purging a Matrix room is idempotent (a 404 counts as purged), failed losing-room purges retain a durable retry row, and retries refuse to purge a room referenced by a persisted discussion.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "bounded"
     },
     {
@@ -553,9 +655,78 @@
       "kind": "scheduler",
       "owner": "team-discussion",
       "risk": "duplicate-side-effect",
-      "components": ["purgeExpiredDiscussions"],
+      "components": [
+        "purgeExpiredDiscussions"
+      ],
       "decision": "Leases the run through ScheduledTaskClaimService. Each expired discussion is purged from Synapse before its row and participants are deleted in one transaction, so a second replica or a retried run finds either the whole discussion or nothing; a room Synapse no longer knows is treated as already purged.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "team-discussion-access-repair",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/teamdiscussion/TeamDiscussionAccessRepairScheduler.java",
+      "kind": "scheduler",
+      "owner": "team-discussion",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "reconcileAccess"
+      ],
+      "decision": "Uses a database lease and persisted archive/participant rows to retry Matrix read-only enforcement and revoked agency access. Successful removals delete their retry footprint; failed operations remain queryable.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "group-appointment-mail-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/groupchatreminder/scheduler/GroupAppointmentMailScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "deliverDueMail"
+      ],
+      "decision": "Use a committed database claim for each recipient and occurrence revision before transport handoff; reconcile ambiguous outcomes instead of replaying them.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "group-chat-admission-matrix-repair",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/chat/GroupChatAdmissionMatrixRepairScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-group-chat",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryRepairs"
+      ],
+      "decision": "A shared lease and request-row lock serialize reconciliation. A cleanup task is committed before a new Matrix join and removed only with a successful admission; failed removal is retried without revoking admitted members.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "group-chat-admission-retry",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/chat/GroupChatAdmissionScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-group-chat",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryPendingAdmissions"
+      ],
+      "decision": "A shared lease serializes retry batches; each ADMITTING row is durable, Matrix join is retried idempotently, and the participant row is committed only after Matrix confirms membership.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "bounded"
     }
   ]

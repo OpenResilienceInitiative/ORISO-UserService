@@ -1,9 +1,13 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -21,6 +25,10 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   Optional<AccountInvite> findByTokenHash(String tokenHash);
+
+  /** Serializes setup-link reissues for the same existing Keycloak identity. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  Optional<AccountInvite> findByActiveSetupIdentityKey(String activeSetupIdentityKey);
 
   /**
    * Lock-free role probe for the shared public onboarding routes (#1008 review): the route decides
@@ -57,6 +65,173 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
   int claimForAcceptance(
       @Param("id") Long id,
       @Param("acceptedByUserId") String acceptedByUserId,
+      @Param("now") LocalDateTime now);
+
+  /** Reserves a setup token before any external password update; only one caller can win. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.provisioningStatus = :inProgress,"
+          + " i.provisioningFailureReason = NULL, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.purpose = :purpose AND i.status = :sent"
+          + " AND i.provisioningStatus IN :retryable"
+          + " AND i.expiresAt > :now")
+  int claimExistingAccountSetup(
+      @Param("id") Long id,
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("sent") AccountInviteStatus sent,
+      @Param("retryable") Collection<AccountInviteProvisioningStatus> retryable,
+      @Param("inProgress") AccountInviteProvisioningStatus inProgress,
+      @Param("now") LocalDateTime now);
+
+  /** A definitive pre-update/password-policy rejection leaves the same token retryable. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.provisioningStatus = :retryable,"
+          + " i.provisioningFailureReason = :reason, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.purpose = :purpose AND i.status = :sent"
+          + " AND i.provisioningStatus = :inProgress")
+  int releaseExistingAccountSetup(
+      @Param("id") Long id,
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("sent") AccountInviteStatus sent,
+      @Param("inProgress") AccountInviteProvisioningStatus inProgress,
+      @Param("retryable") AccountInviteProvisioningStatus retryable,
+      @Param("reason") String reason,
+      @Param("now") LocalDateTime now);
+
+  /** A stale bound account or role permanently invalidates the old e-mail link. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.status = :revoked, i.activeRecipientKey = NULL,"
+          + " i.activeSetupIdentityKey = NULL,"
+          + " i.initialPasswordVerifier = NULL,"
+          + " i.provisioningFailureReason = :reason, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.purpose = :purpose AND i.status = :sent"
+          + " AND i.provisioningStatus = :inProgress")
+  int revokeStaleExistingAccountSetup(
+      @Param("id") Long id,
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("sent") AccountInviteStatus sent,
+      @Param("inProgress") AccountInviteProvisioningStatus inProgress,
+      @Param("revoked") AccountInviteStatus revoked,
+      @Param("reason") String reason,
+      @Param("now") LocalDateTime now);
+
+  /** Unknown Keycloak outcome: preserve the consumed claim for operator review, never replay it. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.provisioningFailureReason = :reason, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.purpose = :purpose AND i.status = :sent"
+          + " AND i.provisioningStatus = :inProgress")
+  int recordIndeterminateExistingAccountSetup(
+      @Param("id") Long id,
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("sent") AccountInviteStatus sent,
+      @Param("inProgress") AccountInviteProvisioningStatus inProgress,
+      @Param("reason") String reason,
+      @Param("now") LocalDateTime now);
+
+  /** Closes only the setup claim that is still reserved for this immutable existing identity. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.status = :accepted,"
+          + " i.provisioningStatus = :completed, i.emailVerificationStatus = :verified,"
+          + " i.acceptedByUserId = :boundUserId, i.acceptedAt = :now,"
+          + " i.activeRecipientKey = NULL, i.activeSetupIdentityKey = NULL,"
+          + " i.initialPasswordVerifier = NULL,"
+          + " i.provisioningFailureReason = NULL, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.purpose = :purpose AND i.status = :sent"
+          + " AND i.provisioningStatus = :inProgress AND i.provisionedUserId = :boundUserId")
+  int completeExistingAccountSetup(
+      @Param("id") Long id,
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("sent") AccountInviteStatus sent,
+      @Param("inProgress") AccountInviteProvisioningStatus inProgress,
+      @Param("accepted") AccountInviteStatus accepted,
+      @Param("completed") AccountInviteProvisioningStatus completed,
+      @Param("verified") EmailVerificationStatus verified,
+      @Param("boundUserId") String boundUserId,
+      @Param("now") LocalDateTime now);
+
+  /** Waits for a running accept, which holds this row lock while it creates the account. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT i FROM AccountInvite i WHERE i.id = :id")
+  Optional<AccountInvite> findByIdForUpdate(@Param("id") Long id);
+
+  /**
+   * Counterpart of {@link #claimForAcceptance}: of a racing revoke and accept only one changes the
+   * row. Returns 0 when an accept or another revoke came first.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i"
+          + " SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.REVOKED,"
+          + " i.activeRecipientKey = NULL,"
+          + " i.activeSetupIdentityKey = NULL,"
+          + " i.initialPasswordVerifier = NULL,"
+          + " i.revokedAt = :now,"
+          + " i.revokedByUserId = :revokedByUserId,"
+          + " i.updateDate = :now"
+          + " WHERE i.id = :id AND i.status IN :revocable"
+          + " AND (i.purpose <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose.EXISTING_ACCOUNT_SETUP"
+          + " OR i.provisioningStatus <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus.IN_PROGRESS)")
+  int revokeWhileStatusIn(
+      @Param("id") Long id,
+      @Param("revocable") Collection<AccountInviteStatus> revocable,
+      @Param("revokedByUserId") String revokedByUserId,
+      @Param("now") LocalDateTime now);
+
+  /**
+   * Locks the row and proves it still has the status its writer checked; 0 when a revoke or accept
+   * changed it first. Keeps the persistence context so the writer goes on with its entity.
+   */
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.updateDate = :now"
+          + " WHERE i.id = :id AND i.status = :expected")
+  int holdInStatus(
+      @Param("id") Long id,
+      @Param("expected") AccountInviteStatus expected,
+      @Param("now") LocalDateTime now);
+
+  /**
+   * Expires only a still open invite; 0 when an accept or a revoke settled it first. A setup
+   * verifier remains private on EXPIRED so a scoped administrator can replace the dead token
+   * without knowing or resetting the original temporary password. Ordinary invites have no setup
+   * verifier or setup identity key.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i"
+          + " SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.EXPIRED,"
+          + " i.activeRecipientKey = NULL,"
+          + " i.updateDate = :now"
+          + " WHERE i.id = :id AND i.status IN :open"
+          + " AND (i.purpose <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose.EXISTING_ACCOUNT_SETUP"
+          + " OR i.provisioningStatus <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus.IN_PROGRESS)")
+  int expireWhileStatusIn(
+      @Param("id") Long id,
+      @Param("open") Collection<AccountInviteStatus> open,
+      @Param("now") LocalDateTime now);
+
+  /** Marks elapsed setup links unusable while retaining private recovery data for scoped resend. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.status = :expired, i.updateDate = :now"
+          + " WHERE i.purpose = :purpose AND i.status IN :open"
+          + " AND i.expiresAt IS NOT NULL AND i.expiresAt <= :now"
+          + " AND i.provisioningStatus <> :inProgress")
+  int expireElapsedExistingAccountSetup(
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("open") Collection<AccountInviteStatus> open,
+      @Param("expired") AccountInviteStatus expired,
+      @Param("inProgress") AccountInviteProvisioningStatus inProgress,
       @Param("now") LocalDateTime now);
 
   boolean existsByTenantIdAndTargetRoleAndStatusIn(
@@ -132,17 +307,264 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
+  /**
+   * The {@code search} match against recipient email/first/last name and the {@code searchTenantId}
+   * exact tenant-ID match are two independent legs of the same query-box term
+   * (ORISO-UserService#479): the service lower-cases and trims the raw query once for {@code
+   * search}, and additionally parses it as a tenant ID for {@code searchTenantId} when it is purely
+   * numeric. A blank/absent query leaves both null, which short-circuits this clause to true and
+   * preserves the existing result set.
+   */
   @Query(
       "SELECT i FROM AccountInvite i"
           + " WHERE (:tenantId IS NULL OR i.tenantId = :tenantId)"
           + " AND (:targetRole IS NULL OR i.targetRole = :targetRole)"
           + " AND (:status IS NULL OR i.status = :status)"
+          + " AND (:search IS NULL"
+          + "      OR LOWER(i.recipientEmail) LIKE CONCAT('%', :search, '%')"
+          + "      OR LOWER(i.firstName) LIKE CONCAT('%', :search, '%')"
+          + "      OR LOWER(i.lastName) LIKE CONCAT('%', :search, '%')"
+          + "      OR (:searchTenantId IS NOT NULL AND i.tenantId = :searchTenantId))"
           + " ORDER BY i.createDate DESC")
   Page<AccountInvite> findAllByFilters(
       @Param("tenantId") Long tenantId,
       @Param("targetRole") AccountInviteTargetRole targetRole,
       @Param("status") AccountInviteStatus status,
+      @Param("search") String search,
+      @Param("searchTenantId") Long searchTenantId,
       Pageable pageable);
+
+  /** {@link #findAllByFilters} narrowed to the given agencies, which are never empty. */
+  @Query(
+      "SELECT i FROM AccountInvite i"
+          + " WHERE i.agencyId IN :agencyIds"
+          + " AND (:tenantId IS NULL OR i.tenantId = :tenantId)"
+          + " AND (:targetRole IS NULL OR i.targetRole = :targetRole)"
+          + " AND (:status IS NULL OR i.status = :status)"
+          + " AND (:search IS NULL"
+          + "      OR LOWER(i.recipientEmail) LIKE CONCAT('%', :search, '%')"
+          + "      OR LOWER(i.firstName) LIKE CONCAT('%', :search, '%')"
+          + "      OR LOWER(i.lastName) LIKE CONCAT('%', :search, '%')"
+          + "      OR (:searchTenantId IS NOT NULL AND i.tenantId = :searchTenantId))"
+          + " ORDER BY i.createDate DESC")
+  Page<AccountInvite> findAllByFiltersWithinAgencies(
+      @Param("tenantId") Long tenantId,
+      @Param("targetRole") AccountInviteTargetRole targetRole,
+      @Param("status") AccountInviteStatus status,
+      @Param("search") String search,
+      @Param("searchTenantId") Long searchTenantId,
+      @Param("agencyIds") Collection<Long> agencyIds,
+      Pageable pageable);
+
+  /** Null {@code tenantId} matches any tenant; null {@code excludedId} excludes nothing. */
+  @Query(
+      "SELECT i FROM AccountInvite i"
+          + " WHERE i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".AGENCY_ADMIN"
+          + " AND i.agencyId = :agencyId"
+          + " AND (:tenantId IS NULL OR i.tenantId = :tenantId)"
+          + " AND (:excludedId IS NULL OR i.id <> :excludedId)"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)"
+          + " ORDER BY i.createDate ASC")
+  List<AccountInvite> findPendingAgencyAdmins(
+      @Param("agencyId") Long agencyId,
+      @Param("tenantId") Long tenantId,
+      @Param("excludedId") Long excludedId,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** Same for a not-yet-created Träger: its pending TENANT_ADMIN invites. */
+  @Query(
+      "SELECT i FROM AccountInvite i"
+          + " WHERE i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".TENANT_ADMIN"
+          + " AND i.tenantId = :tenantId"
+          + " AND (:excludedId IS NULL OR i.id <> :excludedId)"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)"
+          + " ORDER BY i.createDate ASC")
+  List<AccountInvite> findPendingTenantAdmins(
+      @Param("tenantId") Long tenantId,
+      @Param("excludedId") Long excludedId,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** {@link #findPendingAgencyAdmins} for several agencies in one query, for a whole list. */
+  @Query(
+      "SELECT i FROM AccountInvite i"
+          + " WHERE i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".AGENCY_ADMIN"
+          + " AND i.agencyId IN :agencyIds"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  List<AccountInvite> findPendingAgencyAdminsIn(
+      @Param("agencyIds") Collection<Long> agencyIds,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** {@link #findPendingTenantAdmins} for several Träger in one query, for a whole list. */
+  @Query(
+      "SELECT i FROM AccountInvite i"
+          + " WHERE i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".TENANT_ADMIN"
+          + " AND i.tenantId IN :tenantIds"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  List<AccountInvite> findPendingTenantAdminsIn(
+      @Param("tenantIds") Collection<Long> tenantIds,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /**
+   * The invites waiting for an agency that is about to exist, in its Träger; a null {@code
+   * tenantId} (single-tenant deployment) matches any.
+   */
+  @Query(
+      "SELECT i.id FROM AccountInvite i WHERE i.status = :status"
+          + " AND i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.AGENCY"
+          + " AND i.agencyId = :agencyId"
+          + " AND (:tenantId IS NULL OR i.tenantId = :tenantId) ORDER BY i.createDate ASC")
+  List<Long> findIdsWaitingForAgency(
+      @Param("status") AccountInviteStatus status,
+      @Param("agencyId") Long agencyId,
+      @Param("tenantId") Long tenantId);
+
+  /**
+   * Moves a waiting invite to DRAFT and dates its unit; 0 when another release got there first, so
+   * {@code unitCreatedAt} is written once.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.DRAFT,"
+          + " i.waitingForUnit = NULL, i.expiresAt = :expiresAt, i.updateDate = :now,"
+          + " i.unitCreatedAt = :now"
+          + " WHERE i.id = :id AND i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus"
+          + ".WAITING_FOR_UNIT")
+  int claimWaitingInvite(
+      @Param("id") Long id,
+      @Param("expiresAt") LocalDateTime expiresAt,
+      @Param("now") LocalDateTime now);
+
+  /**
+   * Dates the new Träger on the invites of its admins: the one who created it and the co-founders
+   * still open. Written once.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.unitCreatedAt = :now"
+          + " WHERE i.tenantId = :tenantId AND i.unitCreatedAt IS NULL AND i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".TENANT_ADMIN AND (i.tenantIdAllocationMode IS NULL OR i.tenantIdAllocationMode <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode"
+          + ".EXISTING) AND i.status IN ("
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.DRAFT,"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.EMAIL_SENT,"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.ACCEPTED)")
+  int stampTraegerCreated(@Param("tenantId") Long tenantId, @Param("now") LocalDateTime now);
+
+  /** The invites waiting for a tenant that is about to exist. */
+  @Query(
+      "SELECT i.id FROM AccountInvite i WHERE i.status = :status"
+          + " AND i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT"
+          + " AND i.tenantId = :tenantId ORDER BY i.createDate ASC")
+  List<Long> findIdsWaitingForTenant(
+      @Param("status") AccountInviteStatus status, @Param("tenantId") Long tenantId);
+
+  /** A further admin of the same new agency shares this reservation instead of taking another. */
+  @Query(
+      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".AGENCY_ADMIN"
+          + " AND i.agencyId = :agencyId"
+          + " AND (:tenantId IS NULL OR i.tenantId = :tenantId)"
+          + " AND (:excludedId IS NULL OR i.id <> :excludedId)"
+          + " AND i.agencyIdAllocationMode IN :modes"
+          + " AND (i.waitingForUnit IS NULL)")
+  boolean existsAgencyAdminReservation(
+      @Param("agencyId") Long agencyId,
+      @Param("tenantId") Long tenantId,
+      @Param("excludedId") Long excludedId,
+      @Param("modes") Collection<IdAllocationMode> modes);
+
+  /** A queued invite does not count: it only points at another invite's reservation. */
+  @Query(
+      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.agencyId = :agencyId"
+          + " AND i.agencyIdAllocationMode IN :modes"
+          + " AND i.waitingForUnit IS NULL"
+          + " AND i.status <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus"
+          + ".WAITING_FOR_UNIT")
+  boolean existsReservationHolderForAgency(
+      @Param("agencyId") Long agencyId, @Param("modes") Collection<IdAllocationMode> modes);
+
+  /** Further admins or waiting invites of the same new agency; elapsed invites do not count. */
+  @Query(
+      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.agencyId = :agencyId"
+          + " AND i.id <> :excludedId"
+          + " AND i.agencyIdAllocationMode IN :modes"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  boolean existsPendingInviteOnAgencyNumber(
+      @Param("agencyId") Long agencyId,
+      @Param("excludedId") Long excludedId,
+      @Param("modes") Collection<IdAllocationMode> modes,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** Further admins sharing the reservation or invites waiting for the new Träger. */
+  @Query(
+      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.tenantId = :tenantId"
+          + " AND i.id <> :excludedId"
+          + " AND (i.tenantIdReservationToken IS NOT NULL"
+          + "      OR i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT)"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  boolean existsPendingInviteOnTenantNumber(
+      @Param("tenantId") Long tenantId,
+      @Param("excludedId") Long excludedId,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** Elapsed, unaccepted invites that may still hold a reserved Träger or agency number. */
+  @Query(
+      "SELECT i FROM AccountInvite i WHERE i.status IN :statuses"
+          + " AND i.expiresAt IS NOT NULL AND i.expiresAt <= :now"
+          + " AND (i.tenantIdReservationToken IS NOT NULL OR i.agencyIdAllocationMode IN :modes)"
+          + " ORDER BY i.expiresAt ASC")
+  List<AccountInvite> findElapsedHoldingANumber(
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("modes") Collection<IdAllocationMode> modes,
+      @Param("now") LocalDateTime now,
+      Pageable pageable);
+
+  /** The elapsed address-holding rows {@link #expireElapsedRecipientClaims} is about to expire. */
+  @Query(
+      "SELECT i FROM AccountInvite i WHERE i.activeRecipientKey = :recipientEmail"
+          + " AND i.status IN :statuses"
+          + " AND i.expiresAt IS NOT NULL"
+          + " AND i.expiresAt <= :now")
+  List<AccountInvite> findElapsedRecipientClaims(
+      @Param("recipientEmail") String recipientEmail,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** The newest TENANT_ADMIN invite holding a tenant-ID reservation token for this tenant. */
+  Optional<AccountInvite>
+      findFirstByTargetRoleAndTenantIdAndTenantIdReservationTokenIsNotNullOrderByCreateDateDesc(
+          AccountInviteTargetRole targetRole, Long tenantId);
+
+  boolean existsByTargetRoleAndTenantIdAndStatusAndIdNot(
+      AccountInviteTargetRole targetRole, Long tenantId, AccountInviteStatus status, Long id);
 
   List<AccountInvite> findAllByAcceptedByUserIdAndTwoFactorStatus(
       String acceptedByUserId, TwoFactorGateStatus twoFactorStatus);

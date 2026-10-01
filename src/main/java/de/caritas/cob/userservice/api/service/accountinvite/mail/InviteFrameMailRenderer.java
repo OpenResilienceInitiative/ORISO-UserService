@@ -1,0 +1,259 @@
+package de.caritas.cob.userservice.api.service.accountinvite.mail;
+
+import static org.apache.commons.lang3.StringUtils.isBlank;
+
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.RenderedEmail;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.Tone;
+import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
+import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
+import de.caritas.cob.userservice.api.service.email.layout.EmailContentSanitizer;
+import java.util.Locale;
+import java.util.Map;
+import lombok.NonNull;
+import org.springframework.stereotype.Component;
+
+/**
+ * Renders an operator-authored invite mail inside the ORISO e-mail frame.
+ *
+ * <p>The frame uses the canonical design-system template ({@code
+ * emails/{tone}/einladung-freitext.html}, ADR-020), and the operator's subject and body are the
+ * only content in it. The order inside the card is header → subject → authored body → call to
+ * action → copy-paste fallback line → footer.
+ *
+ * <p><b>Why the body is a fragment and not a value.</b> The authored body is not a string that can
+ * be escaped into the document: it has paragraphs, it may carry the operator's own emphasis, and
+ * its bare URLs must become anchors. {@link EmailContentSanitizer} already turns it into exactly
+ * one safe thing — an allow-listed HTML fragment — so it is handed to the renderer as a fragment
+ * and inserted verbatim. Sanitisation is unchanged, and so is the escaping of every other value.
+ *
+ * <p><b>Why the branding is an overlay.</b> {@link OrisoEmailBrand} is platform-level by contract
+ * (ADR-021) and has no TenantService wiring; {@link EmailBrandingResolver} already resolves the
+ * tenant-varying half — name, absolute logo URL, accent colour, imprint and privacy URLs — with
+ * every fallback the invite path needs, including "the tenant does not exist yet". The overlay
+ * itself lives in {@link TenantEmailBrandValues}, shared with the DPA signing mail, so there is
+ * exactly one implementation of tenant branding in the service rather than two that can disagree.
+ */
+@Component
+public class InviteFrameMailRenderer {
+
+  /** The generic catalogue template: frame plus an empty slot for the operator's text. */
+  static final String TEMPLATE_ID = "einladung-freitext";
+
+  private static final int PREHEADER_LENGTH = 120;
+
+  private final EmailBrandingResolver emailBrandingResolver;
+  private final EmailContentSanitizer sanitizer;
+  private final TenantEmailBrandValues tenantEmailBrandValues;
+  private final OrisoEmailRenderer orisoEmailRenderer;
+
+  public InviteFrameMailRenderer(
+      @NonNull EmailBrandingResolver emailBrandingResolver,
+      @NonNull EmailContentSanitizer sanitizer,
+      @NonNull TenantEmailBrandValues tenantEmailBrandValues,
+      @NonNull OrisoEmailRenderer orisoEmailRenderer) {
+    this.emailBrandingResolver = emailBrandingResolver;
+    this.sanitizer = sanitizer;
+    this.tenantEmailBrandValues = tenantEmailBrandValues;
+    this.orisoEmailRenderer = orisoEmailRenderer;
+  }
+
+  /**
+   * @param subject the operator's subject, placeholders already substituted
+   * @param bodyContent the operator's body, placeholders already substituted; content, not markup
+   * @param primaryActionUrl the accept URL rendered as a button plus a copy-paste fallback line, or
+   *     {@code null} for a mail without an action
+   * @param tenantId tenant whose branding the frame carries, or {@code null} for platform branding
+   * @param language BCP-47 tag selecting the frame wording and tone; {@code null} means German
+   */
+  public BrandedEmail render(
+      String subject, String bodyContent, String primaryActionUrl, Long tenantId, String language) {
+    return render(subject, bodyContent, primaryActionUrl, tenantId, Labels.forLanguage(language));
+  }
+
+  /** As above, with the frame wording already chosen; lets a test reach every catalogue tone. */
+  BrandedEmail render(
+      String subject, String bodyContent, String primaryActionUrl, Long tenantId, Labels labels) {
+    // Keep the invitation's labels in the same approved language as the template frame.
+    labels = Labels.of(orisoEmailRenderer.deliveryTone(labels.tone()));
+    EmailBranding branding = emailBrandingResolver.resolvePendingTenant(tenantId);
+
+    String safeSubject = isBlank(subject) ? "" : subject.trim();
+    String bodyHtml = sanitizer.toContentHtml(bodyContent, branding.linkColor());
+    String bodyText = sanitizer.toPlainText(bodyHtml);
+
+    Map<String, String> values = tenantEmailBrandValues.values(branding, tenantId);
+    values.put("subject", safeSubject);
+    values.put("preheader", preheader(bodyText));
+    values.put("linkColor", branding.linkColor());
+    values.put("actionLabel", labels.ctaLabel());
+    values.put("fallbackHint", labels.fallbackHint());
+    values.put("assurance", labels.assurance());
+    String actionUrl = safeActionUrl(primaryActionUrl);
+    if (actionUrl != null) {
+      values.put("actionUrl", actionUrl);
+    }
+    // Without an action this frame carries a notice, not an invitation (the "contract signed"
+    // mail is one): {{assuranceBlock}} then drops the "do not pass this link on" line, and the
+    // footer must not claim the mail belongs to an invitation either.
+    values.put("footerNote", actionUrl != null ? labels.invitationNote() : labels.neutralNote());
+
+    RenderedEmail rendered =
+        orisoEmailRenderer.render(
+            TEMPLATE_ID, labels.tone(), values, Map.of("bodyHtml", bodyHtml, "bodyText", bodyText));
+
+    // The catalogue subject of this template is {{subject}} itself, so the rendered subject is the
+    // operator's, unchanged — the Admin preview and the sent mail therefore show the same line.
+    String logoUrl = values.get("logoUrl");
+    boolean image = !isBlank(logoUrl);
+    return new BrandedEmail(
+        rendered.subject(),
+        rendered.html(),
+        rendered.text().replaceAll("\n{3,}", "\n\n"),
+        new BrandedEmail.BrandingSnapshot(
+            values.get("platformName"),
+            image ? logoUrl : null,
+            values.get("accentColor"),
+            values.get("primaryColor"),
+            image ? BrandedEmail.LogoRendering.IMAGE : BrandedEmail.LogoRendering.TEXT_WORDMARK));
+  }
+
+  /** The hidden line mail clients show next to the subject in the inbox list. */
+  private String preheader(String bodyText) {
+    String text = bodyText == null ? "" : bodyText.replaceAll("\\s+", " ").trim();
+    return text.length() <= PREHEADER_LENGTH ? text : text.substring(0, PREHEADER_LENGTH) + "…";
+  }
+
+  /**
+   * Only absolute {@code http(s)} URLs become a button. Anything else (relative paths, {@code
+   * javascript:}, {@code data:}) is dropped rather than interpolated into an {@code href} — the
+   * same rule the previous layout applied.
+   */
+  static String safeActionUrl(String url) {
+    if (isBlank(url)) {
+      return null;
+    }
+    String trimmed = url.trim();
+    String lower = trimmed.toLowerCase(Locale.ROOT);
+    return lower.startsWith("http://") || lower.startsWith("https://") ? trimmed : null;
+  }
+
+  /**
+   * Frame wording and tone. Only the frame is localised — the body itself is authored per language
+   * in the {@code InviteEmailTemplate} rows. German is the platform default and resolves to the
+   * formal tone, exactly as the previous layout did; the informal German templates exist in the
+   * catalogue but no invite reaches them yet.
+   *
+   * <p>{@code assurance} and {@code invitationNote} are only true of a mail with an action link;
+   * {@code neutralNote} is the footer line for one without.
+   */
+  record Labels(
+      Tone tone,
+      String ctaLabel,
+      String fallbackHint,
+      String assurance,
+      String invitationNote,
+      String neutralNote) {
+
+    private static final Labels GERMAN =
+        new Labels(
+            Tone.DE_FORMAL,
+            "Einladung annehmen",
+            "Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:",
+            "Wir fragen Sie nie per E-Mail nach Ihrem Passwort. Geben Sie diesen Link an niemanden"
+                + " weiter.",
+            "Diese E-Mail gehört zu Ihrer Einladung und lässt sich nicht abbestellen. Bitte antworten"
+                + " Sie nicht darauf.",
+            "Diese E-Mail wurde automatisch versendet. Bitte antworten Sie nicht darauf.");
+
+    private static final Labels GERMAN_INFORMAL =
+        new Labels(
+            Tone.DE_INFORMAL,
+            "Einladung annehmen",
+            "Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:",
+            "Wir fragen dich nie per E-Mail nach deinem Passwort. Gib diesen Link an niemanden"
+                + " weiter.",
+            "Diese E-Mail gehört zu deiner Einladung und lässt sich nicht abbestellen. Bitte"
+                + " antworte nicht darauf.",
+            "Diese E-Mail wurde automatisch versendet. Bitte antworte nicht darauf.");
+
+    private static final Labels ENGLISH =
+        new Labels(
+            Tone.EN,
+            "Accept invitation",
+            "If the button does not work, copy this link into your browser:",
+            "We will never ask for your password by email. Do not pass this link on to anyone.",
+            "This email is part of your invitation and cannot be unsubscribed from. Please do not"
+                + " reply to it.",
+            "This email was sent automatically. Please do not reply to it.");
+
+    private static final Labels FRENCH =
+        new Labels(
+            Tone.FR,
+            "Accepter l’invitation",
+            "Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :",
+            "Nous ne vous demanderons jamais votre mot de passe par e-mail. Ne transmettez ce lien à personne.",
+            "Cet e-mail fait partie de votre invitation et ne peut pas être désactivé. Merci de ne pas y répondre.",
+            "Cet e-mail a été envoyé automatiquement. Merci de ne pas y répondre.");
+
+    private static final Labels RUSSIAN =
+        new Labels(
+            Tone.RU,
+            "Принять приглашение",
+            "Если кнопка не работает, скопируйте эту ссылку в браузер:",
+            "Мы никогда не запрашиваем ваш пароль по электронной почте. Никому не передавайте эту ссылку.",
+            "Это письмо связано с вашим приглашением, и от него нельзя отписаться. Пожалуйста, не отвечайте на него.",
+            "Это письмо отправлено автоматически. Пожалуйста, не отвечайте на него.");
+
+    private static final Labels TIGRINYA =
+        new Labels(
+            Tone.TI,
+            "ዕድመ ተቐበሉ",
+            "እታ መጠወቒ እንተዘይሰሪሓ፣ ነዚ መላግቦ ናብ መርበብ መርኣዪኹም ቅድሑዎ፦",
+            "ብኢመይል ምስጢራዊ ቃልኩም ፈጺምና ኣይንሓትትን። ነዚ መላግቦ ንኻልእ ሰብ ኣይትሃቡዎ።",
+            "እዛ ኢመይል ናይ ዕድመኹም ኣካል እያ፣ ምስራዛ ኣይከኣልን። በጃኹም ኣይትምልሱላ።",
+            "እዛ ኢመይል ብራስ ሰዲድናያ። በጃኹም ኣይትምልሱላ።");
+
+    private static final Labels TURKISH =
+        new Labels(
+            Tone.TR,
+            "Daveti kabul et",
+            "Düğme çalışmazsa bu bağlantıyı tarayıcınıza kopyalayın:",
+            "Şifrenizi hiçbir zaman e-postayla istemeyiz. Bu bağlantıyı kimseyle paylaşmayın.",
+            "Bu e-posta davetinizin bir parçasıdır ve abonelikten çıkılamaz. Lütfen yanıtlamayın.",
+            "Bu e-posta otomatik olarak gönderildi. Lütfen yanıtlamayın.");
+
+    static Labels of(Tone tone) {
+      return switch (tone) {
+        case EN -> ENGLISH;
+        case FR -> FRENCH;
+        case RU -> RUSSIAN;
+        case TI -> TIGRINYA;
+        case TR -> TURKISH;
+        case DE_INFORMAL -> GERMAN_INFORMAL;
+        case DE_FORMAL -> GERMAN;
+      };
+    }
+
+    static Labels forLanguage(String language) {
+      if (language == null) return GERMAN; // Explicit platform invite default.
+      String normalized = language.trim().toLowerCase(Locale.ROOT);
+      if ("de@informal".equals(normalized)) return GERMAN_INFORMAL;
+      String code = normalized.split("[-@]", 2)[0];
+      return switch (code) {
+        case "de" -> GERMAN;
+        case "en" -> ENGLISH;
+        case "fr" -> FRENCH;
+        case "ru" -> RUSSIAN;
+        case "ti" -> TIGRINYA;
+        case "tr" -> TURKISH;
+        default ->
+            throw new IllegalArgumentException(
+                "Invitation language has no installed template: " + language);
+      };
+    }
+  }
+}

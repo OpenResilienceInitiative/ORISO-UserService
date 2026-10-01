@@ -34,9 +34,7 @@ import lombok.Setter;
 import org.apache.lucene.analysis.core.LowerCaseFilterFactory;
 import org.apache.lucene.analysis.standard.ClassicTokenizerFactory;
 import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.ParamDef;
 import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.search.annotations.Analyzer;
 import org.hibernate.search.annotations.AnalyzerDef;
@@ -71,10 +69,7 @@ import org.springframework.lang.Nullable;
     filters = {
       @TokenFilterDef(factory = LowerCaseFilterFactory.class),
     })
-@FilterDef(
-    name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
-@Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+@Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION)
 public class Consultant implements TenantAware, NotificationsAware {
 
   protected static final String EMAIL_ANALYZER = "emailAnalyzer";
@@ -191,6 +186,18 @@ public class Consultant implements TenantAware, NotificationsAware {
   @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String adminRemarks;
 
+  /**
+   * Counsellor avatar choice (#1046). Both columns are nullable: existing rows carry no choice and
+   * keep rendering the initials fallback, so no migration of existing data is required. Always
+   * written through {@link ConsultantAvatars#apply} so a half choice cannot be persisted.
+   */
+  @Column(name = "avatar_id", length = 64)
+  private String avatarId;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "avatar_kind", length = 16)
+  private ConsultantAvatarKind avatarKind;
+
   @Column(name = "public_slug", length = 128)
   private String publicSlug;
 
@@ -265,6 +272,47 @@ public class Consultant implements TenantAware, NotificationsAware {
 
   @Column(name = "encourage_2fa", nullable = false, columnDefinition = "bit default true")
   private Boolean encourage2fa;
+
+  /**
+   * Whether this counsellor must establish a second factor before using the account. A hard gate,
+   * unlike {@link #encourage2fa}. Set for logins provisioned through the admin API, where the
+   * administrator chooses the initial password. Defaults to false, so it never applies
+   * retroactively.
+   */
+  @Column(name = "two_factor_required", nullable = false, columnDefinition = "bit default false")
+  @Builder.Default
+  private Boolean twoFactorRequired = false;
+
+  /** Column default CREATE keeps the old behaviour for every existing counsellor. */
+  @Enumerated(EnumType.STRING)
+  @Column(
+      name = "topic_permission",
+      nullable = false,
+      length = 32,
+      columnDefinition = "varchar(32) default 'CREATE'")
+  @Builder.Default
+  private TopicPermission topicPermission = TopicPermission.CREATE;
+
+  /**
+   * Whether this counsellor must replace their password before using the account. Set for logins
+   * provisioned through the admin API, where the password is shared with at least one other person.
+   * Cleared when the counsellor changes it. Defaults to false.
+   */
+  @Column(
+      name = "password_change_required",
+      nullable = false,
+      columnDefinition = "bit default false")
+  @Builder.Default
+  private Boolean passwordChangeRequired = false;
+
+  /**
+   * Whether this counsellor controls live-chat availability from the navigation rail instead of My
+   * Profile. A per-counsellor preference, stored here so it follows them across browsers and
+   * devices. Defaults to false.
+   */
+  @Column(name = "live_chat_via_sidebar", nullable = false, columnDefinition = "bit default false")
+  @Builder.Default
+  private Boolean liveChatViaSidebar = false;
 
   @Column(
       name = "magic_link_login_enabled",
