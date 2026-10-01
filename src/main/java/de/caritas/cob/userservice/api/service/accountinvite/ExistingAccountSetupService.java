@@ -252,8 +252,7 @@ public class ExistingAccountSetupService {
     var profile = identities.findById(target.identityId()).orElseThrow(StaleIdentityException::new);
     if (!target.identityId().equals(profile.id())
         || !sameEmail(target.email(), profile.email())
-        || profile.username() == null
-        || !target.username().equals(new UsernameTranscoder().decodeUsername(profile.username()))) {
+        || !sameCanonicalUsername(target.username(), profile.username())) {
       throw new StaleIdentityException();
     }
     String requiredRole =
@@ -272,6 +271,32 @@ public class ExistingAccountSetupService {
       throw new StaleIdentityException("SETUP_TEMPORARY_PASSWORD_REPLACED");
     }
     return profile.username();
+  }
+
+  private boolean sameCanonicalUsername(String savedUsername, String identityUsername) {
+    if (savedUsername == null || identityUsername == null) {
+      return false;
+    }
+    try {
+      var transcoder = new UsernameTranscoder();
+      // Admin rows contain the plain login; counsellor rows contain its encoded form. Keycloak
+      // can return either form. Match the existing UserHelper canonical rule, but require a valid
+      // round trip so a malformed enc.* value cannot authorize a setup link.
+      String saved = canonicalEncodedUsername(transcoder, savedUsername);
+      String current = canonicalEncodedUsername(transcoder, identityUsername);
+      return saved != null && saved.equals(current);
+    } catch (RuntimeException malformedUsername) {
+      return false;
+    }
+  }
+
+  private String canonicalEncodedUsername(UsernameTranscoder transcoder, String username) {
+    String encoded = transcoder.encodeUsername(username);
+    String decoded = transcoder.decodeUsername(encoded);
+    if (decoded.isBlank() || !encoded.equalsIgnoreCase(transcoder.encodeUsername(decoded))) {
+      return null;
+    }
+    return encoded.toLowerCase(Locale.ROOT);
   }
 
   private void requireSameSavedIdentity(SetupTarget target) {

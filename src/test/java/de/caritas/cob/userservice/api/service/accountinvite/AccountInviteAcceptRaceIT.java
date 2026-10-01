@@ -58,6 +58,8 @@ class AccountInviteAcceptRaceIT {
   @Autowired private AccountInviteService service;
   @Autowired private AccountInviteRepository accountInviteRepository;
 
+  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
+
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;

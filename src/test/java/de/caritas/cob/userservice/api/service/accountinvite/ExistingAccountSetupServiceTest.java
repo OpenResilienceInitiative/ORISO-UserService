@@ -11,8 +11,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -49,7 +51,9 @@ class ExistingAccountSetupServiceTest {
 
   @BeforeEach
   void transactionBoundary() {
-    when(transactions.getTransaction(any())).thenAnswer(ignored -> new SimpleTransactionStatus());
+    lenient()
+        .when(transactions.getTransaction(any()))
+        .thenAnswer(ignored -> new SimpleTransactionStatus());
   }
 
   @Test
@@ -77,6 +81,99 @@ class ExistingAccountSetupServiceTest {
             any(),
             eq("admin-11"),
             any());
+  }
+
+  @Test
+  void encodedCounsellorUsernameMatchesTheSameEncodedKeycloakIdentity() {
+    String encoded = new UsernameTranscoder().encodeUsername("counsellor@example.org");
+    givenLiveCounsellor(encoded, encoded);
+
+    service.requireSameCurrentIdentity(
+        "consultant-11",
+        AccountInviteTargetRole.COUNSELLOR,
+        42L,
+        "counsellor@example.org",
+        encoded);
+  }
+
+  @Test
+  void lowercaseEncodedKeycloakUsernameMatchesTheSameCounsellor() {
+    String encoded = new UsernameTranscoder().encodeUsername("counsellor@example.org");
+    givenLiveCounsellor(encoded, encoded.toLowerCase(java.util.Locale.ROOT));
+
+    service.requireSameCurrentIdentity(
+        "consultant-11",
+        AccountInviteTargetRole.COUNSELLOR,
+        42L,
+        "counsellor@example.org",
+        encoded);
+  }
+
+  @Test
+  void rawAdminUsernameMatchesEncodedKeycloakIdentity() {
+    givenLiveAdmin(List.of("tenant-admin"));
+    when(identities.findById("admin-11"))
+        .thenReturn(
+            Optional.of(
+                new IdentityProfile(
+                    "admin-11",
+                    new UsernameTranscoder().encodeUsername("admin@example.org"),
+                    null,
+                    null,
+                    "admin@example.org")));
+
+    service.requireSameCurrentIdentity(
+        "admin-11",
+        AccountInviteTargetRole.TENANT_ADMIN,
+        42L,
+        "admin@example.org",
+        "admin@example.org");
+  }
+
+  @Test
+  void rawAdminUsernameMatchesRawKeycloakIdentity() {
+    givenLiveAdmin();
+
+    service.requireSameCurrentIdentity(
+        "admin-11",
+        AccountInviteTargetRole.TENANT_ADMIN,
+        42L,
+        "admin@example.org",
+        "admin@example.org");
+  }
+
+  @Test
+  void changedKeycloakUsernameCannotAuthorizeCounsellorSetup() {
+    String encoded = new UsernameTranscoder().encodeUsername("counsellor@example.org");
+    String other = new UsernameTranscoder().encodeUsername("other@example.org");
+    givenLiveCounsellor(encoded, other);
+
+    assertThatThrownBy(
+            () ->
+                service.requireSameCurrentIdentity(
+                    "consultant-11",
+                    AccountInviteTargetRole.COUNSELLOR,
+                    42L,
+                    "counsellor@example.org",
+                    encoded))
+        .isInstanceOf(ConflictException.class);
+    verify(passwords, never()).updatePassword(any(), any());
+  }
+
+  @Test
+  void malformedEncodedCounsellorUsernameCannotAuthorizeSetup() {
+    givenLiveCounsellor("enc.***", "enc.***");
+
+    assertThatThrownBy(
+            () ->
+                service.requireSameCurrentIdentity(
+                    "consultant-11",
+                    AccountInviteTargetRole.COUNSELLOR,
+                    42L,
+                    "counsellor@example.org",
+                    "enc.***"))
+        .isInstanceOf(ConflictException.class);
+    verify(passwords, never()).updatePassword(any(), any());
   }
 
   @Test
@@ -284,6 +381,29 @@ class ExistingAccountSetupServiceTest {
                     "admin-11", "admin@example.org", null, null, "admin@example.org")));
     when(roles.findAllByUserId("admin-11")).thenReturn(currentRoles);
     lenient().when(passwordChangeRequirement.requiresPasswordChange("admin-11")).thenReturn(true);
+  }
+
+  private void givenLiveCounsellor(String storedUsername, String keycloakUsername) {
+    when(consultants.findByIdAndDeleteDateIsNull("consultant-11"))
+        .thenReturn(
+            Optional.of(
+                Consultant.builder()
+                    .id("consultant-11")
+                    .tenantId(42L)
+                    .username(storedUsername)
+                    .firstName("C")
+                    .lastName("D")
+                    .email("counsellor@example.org")
+                    .build()));
+    when(identities.findById("consultant-11"))
+        .thenReturn(
+            Optional.of(
+                new IdentityProfile(
+                    "consultant-11", keycloakUsername, null, null, "counsellor@example.org")));
+    lenient().when(roles.findAllByUserId("consultant-11")).thenReturn(List.of("consultant"));
+    lenient()
+        .when(passwordChangeRequirement.requiresPasswordChange("consultant-11"))
+        .thenReturn(true);
   }
 
   private Admin admin(String email) {

@@ -121,6 +121,8 @@ class AccountInviteUnitQueueIT {
   @Autowired private AuthenticatedUser caller;
   @Autowired private org.springframework.transaction.PlatformTransactionManager transactions;
 
+  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
+
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private TenantService tenantService;
