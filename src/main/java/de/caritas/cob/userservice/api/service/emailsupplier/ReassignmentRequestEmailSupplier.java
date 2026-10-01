@@ -39,6 +39,8 @@ public class ReassignmentRequestEmailSupplier implements EmailSupplier {
     } else {
       templateAttributes.addAll(tenantTemplateSupplier.getTemplateAttributes());
     }
+    UnsubscribeLink.forOccasion(templateAttributes, "uebergabe-angefragt")
+        .ifPresent(templateAttributes::add);
 
     return new MailDTO()
         .template(TEMPLATE_REASSIGN_REQUEST_NOTIFICATION)
