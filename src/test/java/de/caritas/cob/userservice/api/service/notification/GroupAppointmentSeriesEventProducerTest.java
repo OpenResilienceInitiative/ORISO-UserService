@@ -24,6 +24,30 @@ class GroupAppointmentSeriesEventProducerTest {
   @InjectMocks GroupAppointmentSeriesEventProducer producer;
 
   @Test
+  void extendingAnExistingSeriesDoesNotConfirmEveryNewDate() {
+    var firstUtc = LocalDateTime.now(java.time.ZoneOffset.UTC).plusDays(5);
+    var series =
+        Chat.builder()
+            .id(42L)
+            .topic("Self-help circle")
+            .initialStartDate(firstUtc)
+            .startDate(firstUtc)
+            .timezone("Europe/Berlin")
+            .repeatCount(4)
+            .chatInterval(ChatInterval.DAILY)
+            .conversationType(ConversationType.SELF_HELP)
+            .build();
+    when(exceptions.findBySeries_Id(42L)).thenReturn(List.of());
+
+    producer.recordAfterEdit(series, 1);
+
+    for (int index = 0; index < 4; index++) {
+      var start = series.occurrenceStart(index);
+      verify(queue).recordOccurrence(series, index, start, start, false);
+    }
+  }
+
+  @Test
   void recordsTheLocalMorningTimeAcrossTheBerlinDstBoundary() {
     var firstUtc = LocalDateTime.parse("2027-03-27T08:00:00");
     var secondUtc = LocalDateTime.parse("2027-03-28T07:00:00");

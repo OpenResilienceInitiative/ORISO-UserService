@@ -203,6 +203,44 @@ class AssignChatFacadeTest {
     verify(chatService, never()).saveUserChatRelation(any());
   }
 
+  @ParameterizedTest
+  @MethodSource("legacyRepeatingSelfHelpGroups")
+  void assignChatBySeriesId_Should_RejectLegacyRepeatingGroupWithWrongToken(Chat legacyGroup) {
+    when(chatService.getChat(legacyGroup.getId())).thenReturn(Optional.of(legacyGroup));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> assignChatFacade.assignChat(legacyGroup.getId(), "wrong-token", authenticatedUser));
+
+    verify(chatService, never()).saveUserChatRelation(any());
+  }
+
+  @Test
+  void assignChatBySeriesId_Should_RejectLegacyOneOffGroupEvenWithMatchingToken() {
+    // Without conversation_type a one-off legacy row is an internal group, not a self-help circle.
+    var legacyOneOffGroup = legacyGroup().repeatCount(1).build();
+    when(chatService.getChat(legacyOneOffGroup.getId())).thenReturn(Optional.of(legacyOneOffGroup));
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            assignChatFacade.assignChat(
+                legacyOneOffGroup.getId(), "link-token", authenticatedUser));
+
+    verify(chatService, never()).saveUserChatRelation(any());
+  }
+
+  @Test
+  void assignChatBySeriesId_Should_ThrowNotFound_When_SeriesDoesNotExist() {
+    when(chatService.getChat(ACTIVE_CHAT.getId())).thenReturn(Optional.empty());
+
+    assertThrows(
+        NotFoundException.class,
+        () -> assignChatFacade.assignChat(ACTIVE_CHAT.getId(), "link-token", authenticatedUser));
+
+    verify(chatService, never()).saveUserChatRelation(any());
+  }
+
   private Chat chatWithToken(ConversationType conversationType, String inviteToken) {
     return Chat.builder()
         .id(ACTIVE_CHAT.getId())

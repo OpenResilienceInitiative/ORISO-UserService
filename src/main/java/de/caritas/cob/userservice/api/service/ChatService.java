@@ -33,6 +33,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
 import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokenService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.time.DateTimeException;
 import java.time.LocalDateTime;
@@ -551,11 +552,15 @@ public class ChatService {
     chat.setGroupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
 
     this.saveChat(chat);
-    appointmentEvents.recordAfterEdit(chat, oldRepeatCount);
-    groupChatParticipantRepository.findBySeriesId(chatId).stream()
-        .map(member -> member.getConsultantId())
-        .filter(id -> !oldCounselorIds.contains(id))
-        .forEach(id -> appointmentEvents.recordMemberJoined(chat, RecipientRole.COUNSELOR, id));
+    Set<GroupAppointmentMailQueue.Member> newlyJoinedMembers =
+        groupChatParticipantRepository.findBySeriesId(chatId).stream()
+            .map(member -> member.getConsultantId())
+            .filter(id -> !oldCounselorIds.contains(id))
+            .map(id -> new GroupAppointmentMailQueue.Member(RecipientRole.COUNSELOR, id))
+            .collect(Collectors.toSet());
+    appointmentEvents.recordAfterEdit(chat, oldRepeatCount, newlyJoinedMembers);
+    newlyJoinedMembers.forEach(
+        member -> appointmentEvents.recordMemberJoined(chat, member.role(), member.id()));
 
     return new UpdateChatResponseDTO().matrixRoomId(chat.getMatrixRoomId());
   }
