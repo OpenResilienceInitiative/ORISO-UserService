@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.auth;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
@@ -147,7 +148,8 @@ public class MagicLinkLoginService {
               user.getUsername(),
               user.getEmail(),
               user.getMagicLinkLoginEnabled(),
-              user.getTenantId()));
+              user.getTenantId(),
+              user.getLanguageCode()));
     }
 
     Optional<Consultant> consultantOptional = consultantService.findConsultantForSignIn(username);
@@ -159,7 +161,8 @@ public class MagicLinkLoginService {
               consultant.getUsername(),
               consultant.getEmail(),
               consultant.getMagicLinkLoginEnabled(),
-              consultant.getTenantId()));
+              consultant.getTenantId(),
+              consultant.getLanguageCode()));
     }
 
     return Optional.empty();
@@ -186,7 +189,7 @@ public class MagicLinkLoginService {
               smtpSettings.getUsername(),
               smtpSettings.getPassword());
 
-      var email = renderMagicLink(magicUrl, target.getTenantId());
+      var email = renderMagicLink(magicUrl, target.getTenantId(), target.getLanguageCode());
       oneTimeTokenStore.store(
           TOKEN_SCOPE,
           oneTimeToken,
@@ -212,16 +215,17 @@ public class MagicLinkLoginService {
    * {@code #f2efef} with {@code #e0dada} — three values that made every ORISO mail look like it
    * came from a different sender.
    *
-   * <p>The mail is German now. The old subject read "Your ORISO magic login link" while the rest of
-   * the platform addresses German-speaking users, which was an accident of the inline copy rather
-   * than a decision.
+   * <p>The sign-in mail follows the recipient's stored language. A missing or unsupported language
+   * fails before a token is issued, so no one receives a sign-in link in the wrong language.
    */
-  private OrisoEmailRenderer.RenderedEmail renderMagicLink(String magicUrl, Long tenantId) {
+  private OrisoEmailRenderer.RenderedEmail renderMagicLink(
+      String magicUrl, Long tenantId, LanguageCode languageCode) {
+    var tone = OrisoEmailRenderer.Tone.of(languageCode);
     Map<String, String> values =
         new LinkedHashMap<>(emailBrand.valuesForTenant(magicLinkFrontendBaseUrl, tenantId));
     values.put("loginUrl", magicUrl);
     values.put("expiryMinutes", String.valueOf(MAGIC_LINK_TOKEN_TTL.toMinutes()));
-    return emailRenderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values);
+    return emailRenderer.render("anmeldelink", tone, values);
   }
 
   private String generateToken() {
@@ -269,6 +273,7 @@ public class MagicLinkLoginService {
     String email;
     Boolean magicLinkLoginEnabled;
     Long tenantId;
+    LanguageCode languageCode;
   }
 
   public enum MagicLinkRequestResult {

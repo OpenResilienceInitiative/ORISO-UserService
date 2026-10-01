@@ -93,6 +93,24 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void requestedContactSheetOmitsUnmaintainedFieldsInEveryLanguage() {
+    for (var tone : OrisoEmailRenderer.Tone.values()) {
+      Map<String, String> values = brand();
+      values.put("consultantName", "Centre");
+      values.put("consultantPhone", "+49 30 123");
+      values.put("consultantHours", "");
+      values.put("consultantEmail", "");
+      values.put("messageUrl", "https://example.org/sessions/user/view/session/42");
+
+      var email = renderer.render("beraterin-kontakt", tone, values);
+
+      assertThat(email.html()).contains("+49 30 123").doesNotContain("{{", "bookingUrl");
+      assertThat(email.text()).contains("+49 30 123").doesNotContain("{{", "bookingUrl");
+      assertThat(email.html().split("class=\"row-value\"", -1)).hasSize(3);
+    }
+  }
+
+  @Test
   void keepsAnUnsuppliedPlaceholderVisibleRatherThanBlankingIt() {
     // A visible {{expiryMinutes}} in a sent mail is a bug report. A silent blank
     // is a mail that quietly says the link expires in "" minutes.
@@ -165,30 +183,43 @@ class OrisoEmailRendererTest {
 
   @Test
   void rendersEveryCallOccasionInEveryToneFromNativeResources() {
+    var devRenderer = new OrisoEmailRenderer(true);
     Map<String, Map<OrisoEmailRenderer.Tone, String>> subjects =
         Map.of(
             "anruf-erinnerung",
                 Map.of(
                     OrisoEmailRenderer.Tone.DE_FORMAL, "Eine Sitzung beginnt bald",
                     OrisoEmailRenderer.Tone.DE_INFORMAL, "Eine Sitzung beginnt bald",
-                    OrisoEmailRenderer.Tone.EN, "A session is starting soon"),
+                    OrisoEmailRenderer.Tone.EN, "A session is starting soon",
+                    OrisoEmailRenderer.Tone.FR, "Une session va bientôt commencer",
+                    OrisoEmailRenderer.Tone.RU, "Сеанс скоро начнётся",
+                    OrisoEmailRenderer.Tone.TI, "እቲ ክፍለ ጊዜ ቀልጢፉ ክጅምር እዩ",
+                    OrisoEmailRenderer.Tone.TR, "Bir oturum yakında başlayacak"),
             "anruf-einladung",
                 Map.of(
                     OrisoEmailRenderer.Tone.DE_FORMAL, "Sie wurden zu einer Sitzung eingeladen",
                     OrisoEmailRenderer.Tone.DE_INFORMAL, "Du wurdest zu einer Sitzung eingeladen",
-                    OrisoEmailRenderer.Tone.EN, "You have been invited to a session"),
+                    OrisoEmailRenderer.Tone.EN, "You have been invited to a session",
+                    OrisoEmailRenderer.Tone.FR, "Vous êtes invité à une session",
+                    OrisoEmailRenderer.Tone.RU, "Вас пригласили на сеанс",
+                    OrisoEmailRenderer.Tone.TI, "ናብ ክፍለ ጊዜ ተዓዲምኩም",
+                    OrisoEmailRenderer.Tone.TR, "Bir oturuma davet edildiniz"),
             "anruf-verpasst",
                 Map.of(
                     OrisoEmailRenderer.Tone.DE_FORMAL, "Sie haben einen Anruf verpasst",
                     OrisoEmailRenderer.Tone.DE_INFORMAL, "Du hast einen Anruf verpasst",
-                    OrisoEmailRenderer.Tone.EN, "You missed a call"));
+                    OrisoEmailRenderer.Tone.EN, "You missed a call",
+                    OrisoEmailRenderer.Tone.FR, "Vous avez manqué un appel",
+                    OrisoEmailRenderer.Tone.RU, "Вы пропустили звонок",
+                    OrisoEmailRenderer.Tone.TI, "ጻውዒት ሓሊፉኩም",
+                    OrisoEmailRenderer.Tone.TR, "Bir aramayı kaçırdınız"));
 
     for (var occasion : subjects.entrySet()) {
       for (var toneAndSubject : occasion.getValue().entrySet()) {
         Map<String, String> values = brand();
         values.put("callUrl", "https://example.org/calls/open?room=alpha&via=matrix");
 
-        var email = renderer.render(occasion.getKey(), toneAndSubject.getKey(), values);
+        var email = devRenderer.render(occasion.getKey(), toneAndSubject.getKey(), values);
 
         assertThat(email.subject()).isEqualTo(toneAndSubject.getValue()).doesNotContain("{{");
         assertThat(email.html())

@@ -5,21 +5,27 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.actions.chat.ChatReCreator;
 import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
+import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /** Facade for capsuling to join a chat. */
@@ -35,6 +41,8 @@ public class JoinAndLeaveChatFacade {
   private final GroupChatMembershipService groupChatMembershipService;
   private final MatrixChatShutdownService matrixChatShutdownService;
   private final GroupChatRoleService groupChatRoleService;
+  private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
+  private final MatrixSynapseService matrixSynapseService;
 
   /**
    * Join a chat.
@@ -48,12 +56,40 @@ public class JoinAndLeaveChatFacade {
 
     requireMatrixRoom(chat);
     String matrixUserId = retrieveMatrixUserId(authenticatedUser);
+    if (!isBlank(matrixUserId)
+        && chat.getConversationType() == ConversationType.SELF_HELP
+        && chat.getCurrentOccurrenceIndex() == 0) {
+      // Assignment does not prove participation. The active first room plus a
+      // current JOIN membership establishes a begun consultation for this caller.
+      var joinedMembers =
+          matrixSynapseService
+              .getRoomMembers(groupChatMembershipService.resolveMatrixRoomId(chat))
+              .orElseThrow(this::unavailableMembership);
+      if (joinedMembers.stream()
+          .anyMatch(
+              member ->
+                  member == null
+                      || !member.startsWith("@")
+                      || member.indexOf(':') < 2
+                      || member.endsWith(":"))) {
+        throw unavailableMembership();
+      }
+      if (joinedMembers.contains(matrixUserId)) {
+        return;
+      }
+      groupCounsellingDpaPolicy.requireNewEnrolment(chat);
+    }
     if (isBlank(matrixUserId) || !groupChatMembershipService.addMemberToRoom(chat, matrixUserId)) {
       throw new InternalServerErrorException(
           String.format(
               "User with id %s could not join the Matrix group chat.",
               authenticatedUser.getUserId()));
     }
+  }
+
+  private CustomValidationHttpStatusException unavailableMembership() {
+    return new CustomValidationHttpStatusException(
+        HttpStatusExceptionReason.DPA_POLICY_UNAVAILABLE, HttpStatus.BAD_GATEWAY);
   }
 
   public void verifyCanModerate(Long chatId) {
