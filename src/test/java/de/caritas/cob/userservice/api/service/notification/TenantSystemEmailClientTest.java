@@ -98,8 +98,10 @@ class TenantSystemEmailClientTest {
     server.verify();
   }
 
-  @Test
-  void replyDeliveryPassesTheStoredCorrelationIdToTheOwnTransport() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"NEW_MESSAGE", "SELF_HELP_APPOINTMENT_REMINDER"})
+  void durableDeliveryPassesTheStoredCorrelationIdToTheOwnTransport(String purpose) {
     UUID correlation = UUID.fromString("ab2e5141-2f26-456a-9e46-0ff642918115");
     server
         .expect(
@@ -107,13 +109,13 @@ class TenantSystemEmailClientTest {
             requestTo(
                 "http://tenantservice.internal:8081/tenant/40/internal/system-email-deliveries"))
         .andExpect(method(HttpMethod.POST))
-        .andExpect(jsonPath("$.purpose").value("NEW_MESSAGE"))
+        .andExpect(jsonPath("$.purpose").value(purpose))
         .andExpect(jsonPath("$.correlationId").value(correlation.toString()))
         .andRespond(withSuccess());
 
     client.deliver(
         40L,
-        "NEW_MESSAGE",
+        purpose,
         "recipient@example.org",
         new OrisoEmailRenderer.RenderedEmail("Subject", "<p>Body</p>", "Body"),
         correlation);

@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
 import de.caritas.cob.userservice.api.service.notification.GroupChatLifecycleNotificationService;
 import de.caritas.cob.userservice.api.service.notification.GroupChatNotificationRecipientService;
 import java.time.LocalDateTime;
@@ -32,6 +33,7 @@ class ChatOccurrenceCommandServiceTest {
   @Mock private GroupChatParticipantRepository participantRepository;
   @Mock private GroupChatLifecycleNotificationService lifecycleNotificationService;
   @Mock private GroupChatNotificationRecipientService notificationRecipientService;
+  @Mock private GroupAppointmentMailQueue appointmentMailQueue;
   @InjectMocks private ChatOccurrenceCommandService service;
 
   @Test
@@ -58,6 +60,8 @@ class ChatOccurrenceCommandServiceTest {
 
     var saved = ArgumentCaptor.forClass(ChatOccurrenceException.class);
     verify(exceptionRepository).save(saved.capture());
+    verify(appointmentMailQueue).seedOccurrence(series, 0, originalStart, originalStart);
+    verify(appointmentMailQueue).recordOccurrence(series, 0, originalStart, null);
     org.assertj.core.api.Assertions.assertThat(saved.getValue().getSeries()).isSameAs(series);
     org.assertj.core.api.Assertions.assertThat(saved.getValue().getOriginalOccurrenceStartUtc())
         .isEqualTo(originalStart);
@@ -72,6 +76,28 @@ class ChatOccurrenceCommandServiceTest {
             null,
             false,
             java.util.List.of("owner", "co-mod", "asker"));
+  }
+
+  @Test
+  void movingOneOccurrenceRecordsItsNewEffectiveTime() {
+    var originalStart = LocalDateTime.parse("2026-10-03T18:00:00");
+    var movedStart = originalStart.plusHours(2);
+    var series =
+        Chat.builder()
+            .id(42L)
+            .topic("Peer group")
+            .initialStartDate(originalStart)
+            .startDate(originalStart)
+            .repeatCount(1)
+            .build();
+    when(chatRepository.findById(42L)).thenReturn(Optional.of(series));
+    when(participantRepository.findBySeriesIdAndConsultantId(42L, "owner"))
+        .thenReturn(Optional.of(participant(ParticipantRole.OWNER)));
+
+    service.override(42L, "owner", originalStart, movedStart, null, null, null);
+
+    verify(appointmentMailQueue).seedOccurrence(series, 0, originalStart, originalStart);
+    verify(appointmentMailQueue).recordOccurrence(series, 0, originalStart, movedStart);
   }
 
   @Test

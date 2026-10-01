@@ -18,6 +18,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ThrowableProxyUtil;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
@@ -89,6 +90,52 @@ class SupervisorAddedEmailNotificationServiceTest {
                     "user", "user@example.com", 1L, null, null, LanguageCode.de))
         .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
         .hasMessageContaining("system.notification.frontend.base-url");
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"de", "en", "fr", "ru", "ti", "tr"})
+  void contactChangeMailShowsTheDecodedLoginAndEscapesItsHtml(String language) {
+    String readableUsername = "<b>Zoë & Jo</b>";
+    String storedUsername = new UsernameTranscoder().encodeUsername(readableUsername);
+    var route = routeSettings();
+    when(emailRoutes.resolve(4L)).thenReturn(Optional.of(route));
+
+    service.notifyEmailAddressChanged(
+        storedUsername, "recipient@example.org", 4L, null, null, LanguageCode.valueOf(language));
+
+    var mail = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(emailDelivery)
+        .send(
+            eq(4L),
+            eq(route),
+            eq(TenantSystemEmailDelivery.Purpose.EMAIL_ADDRESS_CHANGED),
+            eq("recipient@example.org"),
+            mail.capture());
+    assertThat(mail.getValue().html())
+        .contains("&lt;b&gt;Zoë &amp; Jo&lt;/b&gt;")
+        .doesNotContain(storedUsername, readableUsername);
+    assertThat(mail.getValue().text()).contains(readableUsername).doesNotContain(storedUsername);
+  }
+
+  @Test
+  void contactChangeMailKeepsAnAlreadyReadableLongLogin() {
+    String readableUsername = "a-legitimate-long-login-".repeat(12);
+    var route = routeSettings();
+    when(emailRoutes.resolve(4L)).thenReturn(Optional.of(route));
+
+    service.notifyEmailAddressChanged(
+        readableUsername, "recipient@example.org", 4L, null, null, LanguageCode.de);
+
+    var mail = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(emailDelivery)
+        .send(
+            eq(4L),
+            eq(route),
+            eq(TenantSystemEmailDelivery.Purpose.EMAIL_ADDRESS_CHANGED),
+            eq("recipient@example.org"),
+            mail.capture());
+    assertThat(mail.getValue().html()).contains(readableUsername);
+    assertThat(mail.getValue().text()).contains(readableUsername);
   }
 
   // ── notifySupervisorAdded early-return paths ──────────────────────────────
