@@ -212,7 +212,16 @@ public class OrisoEmailRenderer {
    */
   public RenderedEmail render(
       String templateId, Tone tone, Map<String, String> values, Map<String, String> fragments) {
-    tone = deliveryTone(tone);
+    return renderResolved(templateId, deliveryTone(tone), values, fragments);
+  }
+
+  /** Render installed copy for an operator preview; this does not select a delivery locale. */
+  public RenderedEmail renderForPreview(String templateId, Tone tone, Map<String, String> values) {
+    return renderResolved(templateId, installedPreviewTone(tone), values, Map.of());
+  }
+
+  private RenderedEmail renderResolved(
+      String templateId, Tone tone, Map<String, String> values, Map<String, String> fragments) {
     values = withOccasionOnUnsubscribeLink(templateId, values);
     String html =
         substitute(
@@ -226,7 +235,7 @@ public class OrisoEmailRenderer {
                 withConditionalBlocks(read(templateId, tone, "txt"), values, false), values, false),
             values,
             false);
-    String subject = substitute(subjectOf(templateId, tone), values, false);
+    String subject = substitute(catalogueCopyExact(templateId, tone, "subject"), values, false);
     return new RenderedEmail(
         insertFragments(subject, fragments),
         insertFragments(html, fragments),
@@ -263,8 +272,16 @@ public class OrisoEmailRenderer {
     return catalogueCopy(templateId, tone, "preheader");
   }
 
+  /** Trusted installed preheader for an operator preview, independent of delivery gating. */
+  public String preheaderForPreview(String templateId, Tone tone) {
+    return catalogueCopyExact(templateId, installedPreviewTone(tone), "preheader");
+  }
+
   private String catalogueCopy(String templateId, Tone tone, String field) {
-    tone = deliveryTone(tone);
+    return catalogueCopyExact(templateId, deliveryTone(tone), field);
+  }
+
+  private String catalogueCopyExact(String templateId, Tone tone, String field) {
     JsonNode node =
         catalogue.path("mails").path(templateId).path("tones").path(tone.directory()).path(field);
     if (node.isMissingNode() || !isNotBlank(node.asText())) {
@@ -272,6 +289,18 @@ public class OrisoEmailRenderer {
           "no " + field + " for e-mail template '" + templateId + "' in tone " + tone.directory());
     }
     return node.asText();
+  }
+
+  private Tone installedPreviewTone(Tone tone) {
+    if (tone == null) {
+      throw new IllegalArgumentException("Preview e-mail locale is missing");
+    }
+    String release = catalogue.path("locales").path(tone.directory()).path("release").asText();
+    if (!"released".equals(release) && !"pending-human-review".equals(release)) {
+      throw new IllegalStateException(
+          "Unknown e-mail locale release state for " + tone.directory() + ": " + release);
+    }
+    return tone;
   }
 
   public Tone deliveryTone(Tone tone) {

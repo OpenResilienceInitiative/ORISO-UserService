@@ -123,7 +123,6 @@ public class ServiceNoticeDraftService {
             .filter(candidate -> candidate.directory().equals(variant))
             .findFirst()
             .orElseThrow(() -> new IllegalArgumentException("Unsupported email language variant"));
-    var tone = renderer.deliveryTone(requestedTone);
     // A platform notice has no recipient tenant yet. The platform's actual configured branding
     // is resolved once and the same generated plain-dialect renderer used by delivered mail.
     var values = new LinkedHashMap<>(brandValues.values(branding.resolve(0L), null));
@@ -131,10 +130,10 @@ public class ServiceNoticeDraftService {
     values.put("maintenanceStart", draft.getMaintenanceStart().format(TIME));
     values.put("maintenanceEnd", draft.getMaintenanceEnd().format(TIME));
     values.put("statusUrl", draft.getStatusUrl());
-    var rendered = renderer.render("systemhinweis", tone, values);
+    var rendered = renderer.renderForPreview("systemhinweis", requestedTone, values);
     var preheader =
         renderer
-            .preheaderOf("systemhinweis", tone)
+            .preheaderForPreview("systemhinweis", requestedTone)
             .replace("{{maintenanceDate}}", values.get("maintenanceDate"))
             .replace("{{maintenanceStart}}", values.get("maintenanceStart"))
             .replace("{{maintenanceEnd}}", values.get("maintenanceEnd"));
@@ -145,7 +144,12 @@ public class ServiceNoticeDraftService {
       throw new IllegalStateException("Service notice template is incomplete");
     }
     return new Preview(
-        key, tone.directory(), rendered.subject(), preheader, rendered.html(), rendered.text());
+        key,
+        requestedTone.directory(),
+        rendered.subject(),
+        preheader,
+        rendered.html(),
+        rendered.text());
   }
 
   private ServiceNoticeCampaign requireDraft(String key) {

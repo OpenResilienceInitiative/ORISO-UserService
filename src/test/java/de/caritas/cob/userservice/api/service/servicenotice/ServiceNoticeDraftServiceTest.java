@@ -159,6 +159,32 @@ class ServiceNoticeDraftServiceTest {
     verify(branding, org.mockito.Mockito.times(7)).resolve(0L);
   }
 
+  @Test
+  void previewsEveryInstalledVariantWithDefaultDeliveryPolicyWithoutChangingDeliveryFallback() {
+    service.save("maintenance-1", input("https://status.operator.dev/maintenance"), "operator-1");
+    var defaultRenderer = new OrisoEmailRenderer(false);
+    var defaultPreview =
+        new ServiceNoticeDraftService(campaigns, defaultRenderer, branding, brandValues);
+    var optedInPreview =
+        new ServiceNoticeDraftService(
+            campaigns, new OrisoEmailRenderer(true), branding, brandValues);
+
+    for (var tone : OrisoEmailRenderer.Tone.values()) {
+      var actual = defaultPreview.preview("maintenance-1", tone.directory());
+      var installedCopy = optedInPreview.preview("maintenance-1", tone.directory());
+      assertThat(actual.variant()).isEqualTo(tone.directory());
+      assertThat(actual.subject()).isEqualTo(installedCopy.subject());
+      assertThat(actual.preheader()).isEqualTo(installedCopy.preheader());
+      assertThat(actual.html()).isEqualTo(installedCopy.html());
+      assertThat(actual.text()).isEqualTo(installedCopy.text());
+      var htmlLanguage = tone.directory().startsWith("de-") ? "de" : tone.directory();
+      assertThat(actual.html()).contains("<html lang=\"" + htmlLanguage + "\"");
+    }
+
+    assertThat(defaultRenderer.deliveryTone(OrisoEmailRenderer.Tone.FR))
+        .isEqualTo(OrisoEmailRenderer.Tone.DE_FORMAL);
+  }
+
   private static DraftInput input(String statusUrl) {
     return new DraftInput(
         LocalDate.of(2026, 10, 2), LocalTime.of(14, 0), LocalTime.of(15, 0), statusUrl);
