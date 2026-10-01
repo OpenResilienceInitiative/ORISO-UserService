@@ -10,9 +10,12 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.server.ResponseStatusException;
 
 /** Reads maintained contact fields through AgencyService's technical, tenant-scoped endpoint. */
 @Component
@@ -65,7 +68,10 @@ public class AgencyContactDetailsClient {
                   ContactDetails.class)
               .getBody();
     } catch (HttpClientErrorException.NotFound missing) {
-      throw new IllegalStateException("Agency contact details are unavailable", missing);
+      throw new IllegalStateException("Agency contact details are unavailable");
+    } catch (RestClientException unavailable) {
+      throw new ResponseStatusException(
+          HttpStatus.BAD_GATEWAY, "Agency contact details are unavailable");
     }
     if (details == null
         || !Objects.equals(details.agencyId(), agencyId)

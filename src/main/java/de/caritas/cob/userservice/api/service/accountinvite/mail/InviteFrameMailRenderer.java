@@ -19,8 +19,7 @@ import org.springframework.stereotype.Component;
 /**
  * Renders an operator-authored invite mail inside the ORISO e-mail frame.
  *
- * <p>This replaces the hand-written layout under {@code classpath:email/layout/} for the invite
- * path: the frame is now the same design-system template every other ORISO mail uses ({@code
+ * <p>The frame uses the canonical design-system template ({@code
  * emails/{tone}/einladung-freitext.html}, ADR-020), and the operator's subject and body are the
  * only content in it. The order inside the card is header → subject → authored body → call to
  * action → copy-paste fallback line → footer.
@@ -108,8 +107,18 @@ public class InviteFrameMailRenderer {
 
     // The catalogue subject of this template is {{subject}} itself, so the rendered subject is the
     // operator's, unchanged — the Admin preview and the sent mail therefore show the same line.
+    String logoUrl = values.get("logoUrl");
+    boolean image = !isBlank(logoUrl);
     return new BrandedEmail(
-        rendered.subject(), rendered.html(), rendered.text().replaceAll("\n{3,}", "\n\n"));
+        rendered.subject(),
+        rendered.html(),
+        rendered.text().replaceAll("\n{3,}", "\n\n"),
+        new BrandedEmail.BrandingSnapshot(
+            values.get("platformName"),
+            image ? logoUrl : null,
+            values.get("accentColor"),
+            values.get("primaryColor"),
+            image ? BrandedEmail.LogoRendering.IMAGE : BrandedEmail.LogoRendering.TEXT_WORDMARK));
   }
 
   /** The hidden line mail clients show next to the subject in the inbox list. */

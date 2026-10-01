@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -46,6 +47,7 @@ public class CreateChatFacade {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull de.caritas.cob.userservice.api.port.out.UserRepository userRepository;
+  private final @NonNull GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
 
   /**
    * Creates a group chat in MariaDB and Matrix.
@@ -88,10 +90,12 @@ public class CreateChatFacade {
     List<String> participantIds =
         chatDTO.getConsultantIds() == null ? List.of() : chatDTO.getConsultantIds();
     Long agencyId = resolveAgencyId(chatDTO, consultant);
+    groupCounsellingDpaPolicy.requireCreation(chatDTO, agencyId, consultant);
 
     // Create a session for the group (needed for backend logic)
     Session session = new Session();
     session.setConsultant(consultant);
+    session.setTenantId(consultant.getTenantId());
 
     // Use a tenant-scoped system user for group chats (user_id is NOT NULL in database).
     var systemUser = resolveOrCreateGroupChatSystemUser(consultant);

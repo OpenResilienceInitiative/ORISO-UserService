@@ -28,6 +28,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The Admin preview must show what is actually sent (ORISO-UserService#914). The decisive test here
@@ -82,6 +83,64 @@ class InviteEmailPreviewServiceTest {
                 "https://app.example.org/datenschutz"));
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("to@example.org", Instant.now()));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void previewShouldExposeTheBrandingActuallyUsedByItsSingleRender(boolean image) {
+    String logo = image ? "https://app.example.org/service/tenants/42/logo" : null;
+    when(emailBrandingResolver.resolvePendingTenant(42L))
+        .thenReturn(
+            new EmailBranding(
+                "Resolved Nord",
+                logo,
+                "#246b45",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"));
+    var preview =
+        previewService.preview(
+            new PreviewCommand(
+                null,
+                InviteEmailTemplateKind.TENANT_INVITE,
+                "Invitation",
+                "Sample body",
+                42L,
+                "de"));
+    var branding = JsonMapper.builder().build().valueToTree(preview).path("branding");
+    assertThat(branding.path("brandName").asString()).isEqualTo("Resolved Nord");
+    assertThat(branding.path("accentColor").asString()).isEqualTo("#246b45");
+    assertThat(branding.path("primaryColor").asString()).isEqualTo("#246b45");
+    assertThat(branding.path("logoRendering").asString())
+        .isEqualTo(image ? "IMAGE" : "TEXT_WORDMARK");
+    if (image) {
+      assertThat(branding.path("logoUrl").asString()).isEqualTo(logo);
+      assertThat(preview.html()).contains(logo);
+    } else {
+      assertThat(branding.path("logoUrl").isNull()).isTrue();
+      assertThat(preview.html()).contains("Resolved Nord");
+    }
+    verify(emailBrandingResolver).resolvePendingTenant(42L);
+    org.mockito.Mockito.verifyNoMoreInteractions(emailBrandingResolver);
+  }
+
+  @Test
+  void previewShouldReportTheContrastGuardedButtonColourActuallyRendered() {
+    var preview =
+        previewService.preview(
+            new PreviewCommand(
+                null,
+                InviteEmailTemplateKind.TENANT_INVITE,
+                "Invitation",
+                "Sample body",
+                42L,
+                "de"));
+    var branding = JsonMapper.builder().build().valueToTree(preview).path("branding");
+    assertThat(branding.path("accentColor").asString()).isEqualTo("#f8e71c");
+    assertThat(branding.path("primaryColor").asString()).isNotBlank().isNotEqualTo("#f8e71c");
+    assertThat(preview.html())
+        .contains("bgcolor=\"" + branding.path("primaryColor").asString() + "\"");
+    verify(emailBrandingResolver).resolvePendingTenant(42L);
+    org.mockito.Mockito.verifyNoMoreInteractions(emailBrandingResolver);
   }
 
   @Test

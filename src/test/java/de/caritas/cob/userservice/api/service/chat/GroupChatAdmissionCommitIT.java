@@ -505,6 +505,36 @@ class GroupChatAdmissionCommitIT {
   }
 
   @Test
+  void repairClearsTheMatrixJoinOfAnAdmissionHandedBackToModerators() {
+    var request =
+        requests.save(
+            GroupChatJoinRequest.builder()
+                .seriesId(series.getId())
+                .consultantId(requester.getId())
+                .status(Status.PENDING)
+                .requestedAt(CustomLocalDateTime.nowInUtc())
+                .build());
+    var task =
+        repairTasks.save(
+            GroupChatAdmissionMatrixRepairTask.builder()
+                .requestId(request.getId())
+                .seriesId(series.getId())
+                .consultantId(requester.getId())
+                .roomId("!admission-test:matrix.test")
+                .memberId("@admission-test:matrix.test")
+                .createdAt(CustomLocalDateTime.nowInUtc())
+                .build());
+    when(membership.isMemberInRoom("!admission-test:matrix.test", "@admission-test:matrix.test"))
+        .thenReturn(Optional.of(true), Optional.of(false));
+
+    repairService.reconcile(task.getId());
+
+    verify(membership)
+        .removeMemberFromRoom("!admission-test:matrix.test", "@admission-test:matrix.test");
+    assertThat(repairTasks.findById(task.getId())).isEmpty();
+  }
+
+  @Test
   void rollbackDoesNotRemoveAnExistingMatrixMember() {
     when(membership.isMemberInRoom(any(Chat.class), eq("@admission-test:matrix.test")))
         .thenReturn(Optional.of(true));

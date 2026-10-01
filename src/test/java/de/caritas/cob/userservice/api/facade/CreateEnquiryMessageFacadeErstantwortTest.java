@@ -32,7 +32,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -65,13 +64,25 @@ class CreateEnquiryMessageFacadeErstantwortTest {
   @Mock private ErstantwortPayloadBuilder erstantwortPayloadBuilder;
   @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
-  @InjectMocks private CreateEnquiryMessageFacade facade;
+  private CreateEnquiryMessageFacade facade;
 
   private Session session;
   private User user;
 
   @BeforeEach
   void setUp() {
+    facade =
+        new CreateEnquiryMessageFacade(
+            sessionService,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            matrixSynapseService,
+            emailNotificationFacade,
+            consultantAgencyService,
+            topicConsultantRoutingService,
+            eventNotificationService,
+            agencyPreAssignmentRoomService,
+            erstantwortPayloadBuilder,
+            matrixSessionSystemMessageService);
     user = new User();
     user.setUserId("asker-1");
     user.setMatrixUserId("@asker:matrix.test");
