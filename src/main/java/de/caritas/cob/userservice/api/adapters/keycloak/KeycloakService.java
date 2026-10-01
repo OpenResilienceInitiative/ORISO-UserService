@@ -80,7 +80,6 @@ import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.ObjectUtils;
@@ -384,13 +383,7 @@ public class KeycloakService
   }
 
   private static boolean isBearerChallenge(HttpClientErrorException exception) {
-    var headers = exception.getResponseHeaders();
-    if (headers == null) {
-      return false;
-    }
-    var challenge = headers.getFirst(HttpHeaders.WWW_AUTHENTICATE);
-    return StringUtils.equalsIgnoreCase(challenge, "Bearer")
-        || StringUtils.startsWithIgnoreCase(challenge, "Bearer ");
+    return WwwAuthenticateChallenges.containsScheme(exception.getResponseHeaders(), "Bearer");
   }
 
   /**

@@ -1805,6 +1805,56 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void finishEmailVerification_Should_RetryBearerChallenge_When_CombinedInOneField() {
+    var headers = new HttpHeaders();
+    headers.add(HttpHeaders.WWW_AUTHENTICATE, "Basic realm=\"otp, code\", Bearer");
+
+    assertPersistentBearerChallengeIsRetriedOnce(headers);
+  }
+
+  @Test
+  public void finishEmailVerification_Should_RetryBearerChallenge_When_InRepeatedField() {
+    var headers = new HttpHeaders();
+    headers.add(HttpHeaders.WWW_AUTHENTICATE, "Basic realm=\"otp\"");
+    headers.add(HttpHeaders.WWW_AUTHENTICATE, "Bearer realm=\"oriso\"");
+
+    assertPersistentBearerChallengeIsRetriedOnce(headers);
+  }
+
+  private void assertPersistentBearerChallengeIsRetriedOnce(HttpHeaders headers) {
+    var unauthorized =
+        org.springframework.web.client.HttpClientErrorException.create(
+            HttpStatus.UNAUTHORIZED, "Unauthorized", headers, new byte[0], StandardCharsets.UTF_8);
+    when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
+    when(keycloakClient.postForEntity(any(), any(), any(), any())).thenThrow(unauthorized);
+
+    assertThrows(
+        ServiceUnavailableException.class,
+        () -> keycloakService.finishEmailVerification(USERNAME, "valid-code"));
+    verify(keycloakClient, times(2)).postForEntity(any(), any(), any(), any());
+    verify(keycloakClient).refreshAdminSession();
+  }
+
+  @Test
+  public void finishEmailVerification_Should_NotRetry_When_BearerOnlyInsideQuotedValue() {
+    var headers = new HttpHeaders();
+    headers.add(HttpHeaders.WWW_AUTHENTICATE, "Basic realm=\"otp, Bearer\"");
+    var invalidCode =
+        org.springframework.web.client.HttpClientErrorException.create(
+            HttpStatus.UNAUTHORIZED, "Unauthorized", headers, new byte[0], StandardCharsets.UTF_8);
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    when(keycloakClient.postForEntity(any(), any(), any(), any())).thenThrow(invalidCode);
+    var expected = new IdentityEmailVerification(false, false, true, null);
+    when(keycloakMapper.identityEmailVerificationOf(invalidCode)).thenReturn(expected);
+
+    var result = keycloakService.finishEmailVerification(USERNAME, "invalid-code");
+
+    assertThat(result, is(expected));
+    verify(keycloakClient, times(1)).postForEntity(any(), any(), any(), any());
+    verify(keycloakClient, never()).refreshAdminSession();
+  }
+
+  @Test
   public void findByEmail_Should_ReturnTypedOwner_When_ExactMatchFound() {
     var email = "mail@example.com";
     UserRepresentation userRepresentation = mock(UserRepresentation.class);
