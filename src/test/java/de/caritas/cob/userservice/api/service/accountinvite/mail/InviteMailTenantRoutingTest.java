@@ -159,6 +159,21 @@ class InviteMailTenantRoutingTest {
   }
 
   @Test
+  void legacyTenantWithoutSmtpMode_staysOnThePlatformServer() {
+    givenTenant(
+        PLATFORM_TENANT,
+        """
+        {"settings":{"featureSystemNotificationEmailsEnabled":true,
+          "smtp":{"enabled":true,"host":"mail.legacy.example"}}}
+        """);
+
+    invite(PLATFORM_TENANT, "b@example.org");
+
+    tenantService.verify();
+    verify(platformTransport).send(any(), eq("b@example.org"), any(), any(), any());
+  }
+
+  @Test
   void ownTenant_staysOnItsServer_whenNotificationMailsAreSwitchedOff() {
     givenTenant(OWN_TENANT, OWN_SETTINGS.formatted(false, true));
     expectRelay(OWN_TENANT, "ACCOUNT_INVITE", "a@example.org").andRespond(withSuccess());

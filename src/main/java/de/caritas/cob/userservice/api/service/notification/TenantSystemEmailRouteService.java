@@ -40,7 +40,13 @@ public class TenantSystemEmailRouteService {
    */
   public Route resolveTransport(Long tenantId) {
     if (tenantId == null || tenantId <= 0) return new Route(Mode.PLATFORM, null);
-    return route(readSettings(tenantId));
+    Map<?, ?> settings = map(tenantClient.readTenant(tenantId).get("settings"));
+    // TenantService never relays a Träger without an explicit mode (legacy rows keep null until
+    // classified), so these mails stay on the platform server as before.
+    if (settings == null || settings.get("smtpMode") == null) {
+      return new Route(Mode.PLATFORM, null);
+    }
+    return route(settings);
   }
 
   private Map<?, ?> readSettings(long tenantId) {
