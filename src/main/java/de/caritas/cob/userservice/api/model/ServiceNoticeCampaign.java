@@ -14,7 +14,10 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** A platform operator's planned-notice draft. No recipient or delivery is represented here. */
+/**
+ * A platform operator's planned notice: {@code DRAFT} until its creator confirms it, then {@code
+ * CONFIRMED}. Recipients are recorded only at confirmation, in {@link ServiceNoticeRecipient}.
+ */
 @Entity
 @Table(
     name = "service_notice_campaign",
@@ -52,4 +55,10 @@ public class ServiceNoticeCampaign {
 
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt;
+
+  @Column(name = "confirmed_by_user_id", length = 100)
+  private String confirmedByUserId;
+
+  @Column(name = "confirmed_at")
+  private LocalDateTime confirmedAt;
 }
