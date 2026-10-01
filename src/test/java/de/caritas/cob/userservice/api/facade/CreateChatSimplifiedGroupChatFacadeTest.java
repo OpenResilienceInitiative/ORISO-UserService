@@ -86,6 +86,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     createChatFacade =
         new CreateChatFacade(
             chatService,
+            appointmentEvents,
             sessionService,
             agencyService,
             chatConverter,
