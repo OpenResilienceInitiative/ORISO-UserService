@@ -35,6 +35,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
@@ -140,6 +141,26 @@ class GroupChatAdmissionProcessorTest {
     assertThat(request.getStatus()).isEqualTo(Status.ADMITTING);
     assertThat(request.getAdmissionAttemptCount()).isEqualTo(1);
     verify(membership, never()).addMemberToRoom(any(), any());
+    verify(participants, never()).save(any());
+  }
+
+  @Test
+  void anAdmissionThatKeepsFailingIsHandedBackToModeratorsAtTheAttemptLimit() {
+    ReflectionTestUtils.setField(processor, "maxAttempts", 2);
+    request.setDecidedBy("owner");
+    when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.empty());
+
+    processor.process(7L);
+    assertThat(request.getStatus()).isEqualTo(Status.ADMITTING);
+    assertThat(request.getAdmissionAttemptCount()).isEqualTo(1);
+
+    processor.recordFailure(7L);
+
+    assertThat(request.getStatus()).isEqualTo(Status.PENDING);
+    assertThat(request.getAdmissionRequestedAt()).isNull();
+    assertThat(request.getAdmittedRole()).isNull();
+    assertThat(request.getDecidedBy()).isNull();
+    assertThat(request.getAdmissionAttemptCount()).isZero();
     verify(participants, never()).save(any());
   }
 }
