@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
 import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokenService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -58,9 +59,10 @@ class ChatStartTimeContractTest {
   @Mock private ConsultantService consultantService;
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
   @Mock private GroupChatParticipantReconciliationService participantReconciliationService;
-  @Mock private AgencyService agencyService;
+  @Mock private GroupAppointmentSeriesEventProducer appointmentEvents;
   @Mock private GroupChatConsultantAccess groupChatConsultantAccess;
   @Mock private GroupChatInviteTokenService groupChatInviteTokenService;
+  @Mock private AgencyService agencyService;
 
   private final ChatConverter chatConverter = new ChatConverter();
 

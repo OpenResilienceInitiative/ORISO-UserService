@@ -40,6 +40,10 @@ class AssignChatFacadeTest {
 
   @Mock private UserService userService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer
+      appointmentEvents;
+
   @Mock private de.caritas.cob.userservice.api.port.out.UserChatRepository userChats;
 
   @org.junit.jupiter.api.BeforeEach
@@ -54,7 +58,8 @@ class AssignChatFacadeTest {
             org.mockito.Mockito.mock(
                 de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
             realAgencies);
-    assignChatFacade = new AssignChatFacade(chatService, userService, userChats, groupPolicy);
+    assignChatFacade =
+        new AssignChatFacade(chatService, userService, userChats, groupPolicy, appointmentEvents);
   }
 
   @Test

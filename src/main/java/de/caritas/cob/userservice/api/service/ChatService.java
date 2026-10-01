@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserChat;
@@ -32,6 +33,8 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
 import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokenService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -63,6 +66,7 @@ public class ChatService {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull GroupChatParticipantReconciliationService participantReconciliationService;
+  private final @NonNull GroupAppointmentSeriesEventProducer appointmentEvents;
 
   private final @NonNull AgencyService agencyService;
   private final @NonNull GroupChatConsultantAccess groupChatConsultantAccess;
@@ -491,8 +495,12 @@ public class ChatService {
               chatId));
     }
 
-    // Materialize required values before reconciliation can write to Matrix.
-    int duration = chatDTO.getDuration();
+    int oldRepeatCount = appointmentEvents.seedBeforeEdit(chat);
+    Set<String> oldCounselorIds =
+        groupChatParticipantRepository.findBySeriesId(chatId).stream()
+            .map(member -> member.getConsultantId())
+            .collect(Collectors.toSet());
+
     // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
     // one when the client sends it (validated like the create path), and preserve the existing
     // zone when the DTO omits it rather than silently resetting to UTC.
@@ -505,9 +513,10 @@ public class ChatService {
             "Invalid timezone: " + chatDTO.getTimezone(), invalidTimezone);
       }
     }
-    // Same contract as create: the request carries wall-clock time in the chat's zone. Converted
-    // before reconciliation so a missing or non-existent start time fails before Matrix writes.
+    // Materialize required values before reconciliation can write to Matrix. Same contract as
+    // create: the request carries wall-clock time in the chat's zone.
     LocalDateTime startDate = Chat.toUtc(chatDTO.getStartDate(), chatDTO.getStartTime(), zone);
+    int duration = chatDTO.getDuration();
 
     participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
 
@@ -541,6 +550,15 @@ public class ChatService {
     chat.setGroupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
 
     this.saveChat(chat);
+    Set<GroupAppointmentMailQueue.Member> newlyJoinedMembers =
+        groupChatParticipantRepository.findBySeriesId(chatId).stream()
+            .map(member -> member.getConsultantId())
+            .filter(id -> !oldCounselorIds.contains(id))
+            .map(id -> new GroupAppointmentMailQueue.Member(RecipientRole.COUNSELOR, id))
+            .collect(Collectors.toSet());
+    appointmentEvents.recordAfterEdit(chat, oldRepeatCount, newlyJoinedMembers);
+    newlyJoinedMembers.forEach(
+        member -> appointmentEvents.recordMemberJoined(chat, member.role(), member.id()));
 
     return new UpdateChatResponseDTO().matrixRoomId(chat.getMatrixRoomId());
   }

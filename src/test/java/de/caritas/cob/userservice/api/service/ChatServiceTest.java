@@ -42,6 +42,7 @@ import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.UserChat;
@@ -53,6 +54,8 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
 import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokenService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -89,6 +92,8 @@ class ChatServiceTest {
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
 
   @Mock private GroupChatParticipantReconciliationService participantReconciliationService;
+
+  @Mock private GroupAppointmentSeriesEventProducer appointmentEvents;
 
   @Mock private AgencyService agencyService;
 
@@ -494,6 +499,34 @@ class ChatServiceTest {
     verify(chatRepository, times(1)).save(chatArgumentCaptor.capture());
     assertEquals(CHAT_HINT_MESSAGE, chatArgumentCaptor.getValue().getHintMessage());
     verify(participantReconciliationService).reconcile(inactiveChat, CHAT_DTO.getConsultantIds());
+  }
+
+  @Test
+  void updateChatExcludesNewCounselorsFromOldScheduleFanoutBeforeTheirJoinConfirmation() {
+    Chat inactiveChat = new Chat();
+    inactiveChat.setId(CHAT_ID);
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+    var existing = GroupChatParticipant.builder().consultantId("existing").build();
+    var added = GroupChatParticipant.builder().consultantId("added").build();
+    when(groupChatParticipantRepository.findBySeriesId(CHAT_ID))
+        .thenReturn(List.of(existing), List.of(existing, added));
+
+    chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER_CONSULTANT);
+
+    var order = inOrder(appointmentEvents);
+    order.verify(appointmentEvents).seedBeforeEdit(inactiveChat);
+    order
+        .verify(appointmentEvents)
+        .recordAfterEdit(
+            inactiveChat,
+            0,
+            Set.of(new GroupAppointmentMailQueue.Member(RecipientRole.COUNSELOR, "added")));
+    order
+        .verify(appointmentEvents)
+        .recordMemberJoined(inactiveChat, RecipientRole.COUNSELOR, "added");
   }
 
   @Test
