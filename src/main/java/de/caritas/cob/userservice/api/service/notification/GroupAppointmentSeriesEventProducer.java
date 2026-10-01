@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -66,17 +67,30 @@ public class GroupAppointmentSeriesEventProducer {
   }
 
   public void recordAfterEdit(Chat series, int oldRepeatCount) {
+    recordAfterEdit(series, oldRepeatCount, Set.of());
+  }
+
+  public void recordAfterEdit(
+      Chat series, int oldRepeatCount, Set<GroupAppointmentMailQueue.Member> newlyJoinedMembers) {
     if (!isSelfHelp(series)) {
       return;
     }
     var byStart = exceptionsByOriginalStart(series);
     for (int index = 0; index < series.getRepeatCount(); index++) {
       var original = series.occurrenceStart(index);
-      queue.recordOccurrence(
-          series, index, original, effectiveStart(original, byStart.get(original)));
+      var effective = effectiveStart(original, byStart.get(original));
+      if (newlyJoinedMembers.isEmpty()) {
+        queue.recordOccurrence(series, index, original, effective, false);
+      } else {
+        queue.recordOccurrence(series, index, original, effective, false, newlyJoinedMembers);
+      }
     }
     for (int index = series.getRepeatCount(); index < oldRepeatCount; index++) {
-      queue.recordRemovedOccurrence(series, index);
+      if (newlyJoinedMembers.isEmpty()) {
+        queue.recordRemovedOccurrence(series, index);
+      } else {
+        queue.recordRemovedOccurrence(series, index, newlyJoinedMembers);
+      }
     }
   }
 

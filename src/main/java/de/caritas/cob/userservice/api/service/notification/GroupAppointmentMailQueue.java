@@ -82,6 +82,18 @@ public class GroupAppointmentMailQueue {
       LocalDateTime originalStartUtc,
       LocalDateTime effectiveStartUtc,
       boolean notifyInitialDate) {
+    recordOccurrence(
+        series, index, originalStartUtc, effectiveStartUtc, notifyInitialDate, Set.of());
+  }
+
+  @Transactional
+  public void recordOccurrence(
+      Chat series,
+      int index,
+      LocalDateTime originalStartUtc,
+      LocalDateTime effectiveStartUtc,
+      boolean notifyInitialDate,
+      Set<Member> excludedMembers) {
     if (!isSelfHelp(series)) {
       return;
     }
@@ -126,6 +138,9 @@ public class GroupAppointmentMailQueue {
       return;
     }
     for (var member : members(series)) {
+      if (excludedMembers.contains(member)) {
+        continue;
+      }
       if (previous != null || notifyInitialDate) {
         enqueue(series, state, event, member, displayedStart);
       }
@@ -175,6 +190,11 @@ public class GroupAppointmentMailQueue {
   /** A shorter Series cancels dates that no longer have an occurrence index in the new Series. */
   @Transactional
   public void recordRemovedOccurrence(Chat series, int index) {
+    recordRemovedOccurrence(series, index, Set.of());
+  }
+
+  @Transactional
+  public void recordRemovedOccurrence(Chat series, int index, Set<Member> excludedMembers) {
     if (!isSelfHelp(series)) {
       return;
     }
@@ -192,6 +212,9 @@ public class GroupAppointmentMailQueue {
     states.save(state);
     if (oldStart != null && oldStart.isAfter(nowUtc())) {
       for (var member : members(series)) {
+        if (excludedMembers.contains(member)) {
+          continue;
+        }
         enqueue(series, state, EventType.CANCELLED, member, oldStart);
       }
     }
