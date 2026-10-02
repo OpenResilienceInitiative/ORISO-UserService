@@ -2331,9 +2331,9 @@ paths:
               schema: { $ref: '#/components/schemas/ServiceNoticeConfirmed' }
         '400': { description: Recipient count missing }
         '401': { description: Missing or invalid bearer token }
-        '403': { description: Caller is not a platform administrator, or did not create the draft }
+        '403': { description: "Caller is not a platform administrator, or did not create the draft" }
         '404': { description: Draft not found }
-        '409': { description: Audience changed since the dry run, audience empty, or maintenance window already over }
+        '409': { description: "Audience changed since the dry run, audience empty, or maintenance window already over" }
 
   /users/chat-series/{seriesId}/join-requests:
     post:
