@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.servicenotice;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
@@ -13,9 +14,12 @@ import de.caritas.cob.userservice.api.model.ServiceNoticeCampaign;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.ServiceNoticeCampaignRepository;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.Tone;
 import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeAudience.DryRun;
 import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeAudience.MailDecision;
+import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeAudience.MailTarget;
 import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeAudience.Member;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.persistence.EntityManager;
@@ -23,6 +27,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,6 +37,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /** Runs the audience rule against real tables, because the rule is a query, not a calculation. */
 @DataJpaTest
@@ -47,6 +53,7 @@ class ServiceNoticeAudienceIT {
   @Autowired private ConsultantRepository consultants;
   @Autowired private ServiceNoticeCampaignRepository campaigns;
   @Autowired private EntityManager entityManager;
+  @MockitoBean private IdentityLocaleLookup locales;
 
   @BeforeEach
   void startFromAnEmptyAdminTable() {
@@ -150,6 +157,45 @@ class ServiceNoticeAudienceIT {
   void dryRunOfAnUnknownDraftIsRefused() {
     assertThatThrownBy(() -> audience.dryRun("missing-draft"))
         .isInstanceOf(NoSuchElementException.class);
+  }
+
+  @Test
+  void theMailGoesToTheCurrentAddressInTheAccountLanguage() {
+    agencyAdmin("admin-en", 7L, "lead@centre-a.org", 101L);
+    when(locales.findLocaleById("admin-en")).thenReturn(Optional.of("en"));
+    agencyAdmin("admin-unknown", 8L, "lead@centre-b.org", 201L);
+    when(locales.findLocaleById("admin-unknown")).thenReturn(Optional.of("xx"));
+    agencyAdmin("admin-none", 8L, "other@centre-b.org", 202L);
+    when(locales.findLocaleById("admin-none")).thenReturn(Optional.empty());
+
+    assertThat(audience.mailTarget("admin-en"))
+        .contains(new MailTarget("lead@centre-a.org", 7L, Tone.EN));
+    assertThat(audience.mailTarget("admin-unknown"))
+        .contains(new MailTarget("lead@centre-b.org", 8L, Tone.DE_FORMAL));
+    assertThat(audience.mailTarget("admin-none"))
+        .contains(new MailTarget("other@centre-b.org", 8L, Tone.DE_FORMAL));
+  }
+
+  @Test
+  void anAdminWhoAlsoCounselsGetsTheLanguageAndAddressFormOfTheirCounsellorAccount() {
+    agencyAdmin("counselling-admin", 7L, "lead@centre-a.org", 101L);
+    counsellor("counselling-admin", true, "{\"serviceNoticeNotificationEnabled\":true}", null);
+
+    assertThat(audience.mailTarget("counselling-admin"))
+        .contains(new MailTarget("lead@centre-a.org", 7L, Tone.DE_INFORMAL));
+  }
+
+  @Test
+  void noMailTargetOnceTheSwitchIsOffTheAddressIsGoneOrThePersonIsNoLongerAnAgencyAdmin() {
+    agencyAdmin("switched-off", 7L, "lead@centre-a.org", 101L);
+    counsellor("switched-off", true, "{\"serviceNoticeNotificationEnabled\":false}", null);
+    agencyAdmin("dummy-admin", 7L, "abc@dummy.oriso.invalid", 102L);
+    admin("former-agency-admin", Admin.AdminType.AGENCY, 7L, "former@centre-a.org");
+
+    assertThat(audience.mailTarget("switched-off")).isEmpty();
+    assertThat(audience.mailTarget("dummy-admin")).isEmpty();
+    assertThat(audience.mailTarget("former-agency-admin")).isEmpty();
+    assertThat(audience.mailTarget("never-existed")).isEmpty();
   }
 
   private void agencyAdmin(String id, Long tenantId, String email, Long agencyId) {

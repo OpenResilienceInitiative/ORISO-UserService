@@ -31,7 +31,8 @@ public class TenantSystemEmailDelivery {
     SELF_HELP_APPOINTMENT_REMINDER,
     ACCOUNT_INVITE,
     DPA_SIGNING_REQUEST,
-    DPA_SIGNED_NOTICE
+    DPA_SIGNED_NOTICE,
+    SERVICE_NOTICE
   }
 
   private final @NonNull TenantSystemEmailClient tenantClient;
