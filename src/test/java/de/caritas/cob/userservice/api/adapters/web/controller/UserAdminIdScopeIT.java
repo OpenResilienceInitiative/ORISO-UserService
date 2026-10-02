@@ -467,6 +467,19 @@ class UserAdminIdScopeIT {
   }
 
   @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchPlatformAdmins_Should_KeepTenantZeroList_When_FollowingHalPagination()
+      throws Exception {
+    actAsPlatformAdmin();
+    var first = fixtures.admin(0L, AdminType.TENANT);
+    var second = fixtures.admin(0L, AdminType.TENANT);
+    markHalProbe(first, second, ownTenantAdmin);
+
+    assertHalSearchKeepsList(
+        "/useradmin/tenantadmins/search", "&tenantId=0", Set.of(first.getId(), second.getId()));
+  }
+
+  @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void searchAgencyAdmins_Should_KeepAssignedCentreScope_When_FollowingHalPagination()
       throws Exception {

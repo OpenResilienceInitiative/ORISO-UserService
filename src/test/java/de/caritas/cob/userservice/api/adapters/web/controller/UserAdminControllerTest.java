@@ -42,6 +42,7 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
@@ -578,12 +579,14 @@ class UserAdminControllerTest {
     when(adminDtoMapper.mappedFieldOf("email")).thenReturn("email");
     when(adminUserFacade.findTenantAdminsByInfix("jane", SearchFilter.NONE, 0, 20, "email", false))
         .thenReturn(Map.of());
-    when(adminDtoMapper.adminSearchResultOf(any(), any(), any(), any(), any(), any(), any()))
+    when(adminDtoMapper.adminSearchResultOf(
+            any(), any(), any(), any(), any(), any(), any(), eq(Admin.AdminType.TENANT)))
         .thenReturn(new AdminSearchResultDTO());
 
     var response = controller.searchTenantAdmins("jane", 1, 20, "email", "desc", null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getBody());
     verify(adminUserFacade)
         .findTenantAdminsByInfix("jane", SearchFilter.NONE, 0, 20, "email", false);
   }

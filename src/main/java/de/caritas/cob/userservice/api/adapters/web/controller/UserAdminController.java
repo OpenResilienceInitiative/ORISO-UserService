@@ -35,6 +35,7 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
@@ -548,7 +549,8 @@ public class UserAdminController implements UseradminApi {
         adminUserFacade.findTenantAdminsByInfix(
             decodedInfix, filter, page - 1, perPage, mappedField, isAscending);
     var result =
-        adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order, filter);
+        adminDtoMapper.adminSearchResultOf(
+            resultMap, query, page, perPage, field, order, filter, Admin.AdminType.TENANT);
     return ResponseEntity.ok(result);
   }
 

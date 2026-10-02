@@ -56,6 +56,19 @@ public class AdminDtoMapper implements DtoMapperUtils {
       String field,
       String order,
       SearchFilter filter) {
+    return adminSearchResultOf(
+        resultMap, query, page, perPage, field, order, filter, Admin.AdminType.AGENCY);
+  }
+
+  public AdminSearchResultDTO adminSearchResultOf(
+      Map<String, Object> resultMap,
+      String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order,
+      SearchFilter filter,
+      Admin.AdminType adminType) {
     var admins = new ArrayList<AdminResponseDTO>();
 
     var adminMaps = (List<Map<String, Object>>) resultMap.get("admins");
@@ -72,12 +85,13 @@ public class AdminDtoMapper implements DtoMapperUtils {
     result.setEmbedded(admins);
 
     var pagination =
-        new PaginationLinks().self(pageLinkOf(query, page, perPage, field, order, filter));
+        new PaginationLinks()
+            .self(pageLinkOf(query, page, perPage, field, order, filter, adminType));
     if (!(boolean) resultMap.get("isFirstPage")) {
-      pagination.previous(pageLinkOf(query, page - 1, perPage, field, order, filter));
+      pagination.previous(pageLinkOf(query, page - 1, perPage, field, order, filter, adminType));
     }
     if (!(boolean) resultMap.get("isLastPage")) {
-      pagination.next(pageLinkOf(query, page + 1, perPage, field, order, filter));
+      pagination.next(pageLinkOf(query, page + 1, perPage, field, order, filter, adminType));
     }
     result.setLinks(pagination);
 
@@ -108,11 +122,24 @@ public class AdminDtoMapper implements DtoMapperUtils {
   }
 
   private HalLink pageLinkOf(
-      String query, int page, int perPage, String field, String order, SearchFilter filter) {
+      String query,
+      int page,
+      int perPage,
+      String field,
+      String order,
+      SearchFilter filter,
+      Admin.AdminType adminType) {
+    var controller = methodOn(UserAdminController.class);
     var httpEntity =
-        methodOn(UserAdminController.class)
-            .searchAgencyAdmins(
-                query, page, perPage, field, order, filter.tenantId(), filter.agencyIds());
+        switch (adminType) {
+          case TENANT ->
+              controller.searchTenantAdmins(query, page, perPage, field, order, filter.tenantId());
+          case AGENCY ->
+              controller.searchAgencyAdmins(
+                  query, page, perPage, field, order, filter.tenantId(), filter.agencyIds());
+          default ->
+              throw new IllegalArgumentException("unsupported admin search type: " + adminType);
+        };
 
     return expandedHalLinkOf(httpEntity, MethodEnum.GET);
   }
