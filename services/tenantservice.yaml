@@ -1439,9 +1439,21 @@ components:
         primaryColor:
           type: string
           example: '#FFFFFF'
+        accent:
+          type: string
+          example: '#FFB3C7'
+          description: >-
+            The light accent of the tenant seed set. Read from TenantService (ORISO-UserService#1252),
+            not used for mail yet; may be null.
         secondaryColor:
           type: string
           example: '#FFFFFF'
+        signal:
+          type: string
+          example: '#D93025'
+          description: >-
+            Optional signal/attention colour of the tenant seed set. Read from TenantService
+            (ORISO-UserService#1252), not used for mail yet; may be null.
     Content:
       type: object
       required:

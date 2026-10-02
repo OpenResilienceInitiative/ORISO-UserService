@@ -68,6 +68,13 @@ class DpaSignedNoticeFooterTest {
 
   @BeforeEach
   void setUp() {
+    when(tenantService.getPlatformTenantDataFresh())
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(0L)
+                .theming(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Theming()
+                        .primaryColor("#1c4f8f")));
     when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
     when(noticeRepository.save(any(DpaSignedNotice.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));

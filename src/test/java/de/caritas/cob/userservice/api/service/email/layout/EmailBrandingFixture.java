@@ -9,6 +9,9 @@ import static org.mockito.Mockito.mock;
  */
 public final class EmailBrandingFixture {
 
+  /** An arbitrary dark test colour; production code has no built-in brand colour. */
+  public static final String TEST_COLOUR = "#a5000a";
+
   private EmailBrandingFixture() {}
 
   public static EmailBrandingResolver platform() {
@@ -24,19 +27,11 @@ public final class EmailBrandingFixture {
 
   public static EmailBranding resolvedPlatform(String origin) {
     return new EmailBranding(
-        "Online-Beratung",
-        null,
-        EmailColors.PLATFORM_ACCENT_DARK,
-        origin + "/impressum",
-        origin + "/datenschutz");
+        "Online-Beratung", null, TEST_COLOUR, origin + "/impressum", origin + "/datenschutz");
   }
 
   public static EmailBranding neutralWithLinks(String origin) {
     return new EmailBranding(
-        "ORISO",
-        null,
-        EmailColors.PLATFORM_ACCENT_DARK,
-        origin + "/impressum",
-        origin + "/datenschutz");
+        "ORISO", null, TEST_COLOUR, origin + "/impressum", origin + "/datenschutz");
   }
 }

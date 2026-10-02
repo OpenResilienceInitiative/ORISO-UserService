@@ -74,6 +74,13 @@ class DpaSigningMailDesignSystemTest {
 
   @BeforeEach
   void setUp() {
+    when(tenantService.getPlatformTenantDataFresh())
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(0L)
+                .theming(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Theming()
+                        .primaryColor("#1c4f8f")));
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("legal@example.org", Instant.now()));
     when(tenantTemplateSupplier.getTenantBaseUrl(any(RestrictedTenantDTO.class)))

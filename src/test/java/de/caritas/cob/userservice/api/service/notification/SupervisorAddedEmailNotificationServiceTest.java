@@ -876,7 +876,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
-  void aTenantColourThatCannotCarryWhiteTextDoesNotReachTheButton() {
+  void aLightTenantColourReachesTheButtonWithADarkLabel() {
     var tenants = mock(TenantService.class);
     var tenant = new RestrictedTenantDTO();
     tenant.setId(1L);
@@ -903,7 +903,10 @@ class SupervisorAddedEmailNotificationServiceTest {
             1L,
             1L);
 
-    assertThat(email.html()).doesNotContain("#ffd400");
+    assertThat(email.html())
+        .contains("bgcolor=\"#ffd400\"")
+        .contains("color:#231b00;text-decoration:none")
+        .doesNotContain("color:#ffffff;text-decoration:none");
   }
 
   @Test

@@ -5,6 +5,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -136,6 +137,28 @@ public class OrisoEmailRenderer {
   private static final Pattern CONTACT_ROW_TEXT =
       Pattern.compile("(?m)^[^\\n]*\\{\\{(" + OPTIONAL_CONTACT_KEYS + ")}}[^\\n]*(?:\\n|$)");
 
+  /**
+   * The button label in the generated templates is a hardcoded {@code #ffffff} on a cell filled
+   * with {@code {{primaryColor}}}. That only holds for a dark brand colour, so the label colour is
+   * rewritten to {@code {{primaryTextColor}}}: white or a dark tone of the brand hue, derived like
+   * the web app's {@code --m3-on-primary} (ADR-026 amendment 2026-10-02). The generated templates
+   * are never edited here (see the class comment), and the {@code {{ctaBlock}}} markup below must
+   * stay byte-identical to the generated fragment (EmailTemplateIntegrityTest); once the generator
+   * emits the placeholder itself, this rewrite finds nothing to do.
+   */
+  private static final Pattern BUTTON_LABEL_COLOUR =
+      Pattern.compile(
+          "(bgcolor=\"\\{\\{primaryColor}}\"[^>]*>\\s*<a [^>]*?)color:#ffffff",
+          Pattern.CASE_INSENSITIVE);
+
+  /**
+   * A text link coloured {@code {{primaryColor}}} sits on the white card, where the brand colour
+   * itself may be too light to read: it takes {@code {{primaryLinkColor}}}, the brand colour
+   * darkened to 4.5:1.
+   */
+  private static final Pattern BRAND_COLOURED_LINK =
+      Pattern.compile("(?<![-\\w])color:\\{\\{primaryColor}}");
+
   private final Map<String, String> templateCache = new ConcurrentHashMap<>();
 
   private final JsonNode catalogue;
@@ -234,13 +257,14 @@ public class OrisoEmailRenderer {
 
   private RenderedEmail renderResolved(
       String templateId, Tone tone, Map<String, String> values, Map<String, String> fragments) {
-    values = withOccasionOnUnsubscribeLink(templateId, values);
+    values = withDerivedBrandColours(withOccasionOnUnsubscribeLink(templateId, values));
     String html =
         substitute(
             withoutBlankSenderLines(
                 withoutBlankContactRows(
                     templateId,
-                    withConditionalBlocks(read(templateId, tone, "html"), values, true),
+                    withBrandColourRoles(
+                        withConditionalBlocks(read(templateId, tone, "html"), values, true)),
                     values,
                     true),
                 values,
@@ -284,6 +308,30 @@ public class OrisoEmailRenderer {
     Map<String, String> decorated = new LinkedHashMap<>(values);
     decorated.put("unsubscribeUrl", link + (link.contains("?") ? "&" : "?") + "mail=" + templateId);
     return decorated;
+  }
+
+  /**
+   * Supplies {@code primaryTextColor} and {@code primaryLinkColor} from {@code primaryColor} when
+   * the caller did not (callers that go through {@link OrisoEmailBrand} always do). A value map
+   * without a usable {@code primaryColor} is left alone, so a placeholder stays visible as a bug
+   * report instead of a guessed colour.
+   */
+  private static Map<String, String> withDerivedBrandColours(Map<String, String> values) {
+    String primary = EmailColors.normalize(values.get("primaryColor"));
+    if (primary == null
+        || (values.containsKey("primaryTextColor") && values.containsKey("primaryLinkColor"))) {
+      return values;
+    }
+    Map<String, String> derived = new LinkedHashMap<>(values);
+    derived.putIfAbsent("primaryTextColor", EmailColors.onPrimary(primary));
+    derived.putIfAbsent("primaryLinkColor", EmailColors.onLightBackground(primary));
+    return derived;
+  }
+
+  private static String withBrandColourRoles(String htmlTemplate) {
+    String labelled =
+        BUTTON_LABEL_COLOUR.matcher(htmlTemplate).replaceAll("$1color:{{primaryTextColor}}");
+    return BRAND_COLOURED_LINK.matcher(labelled).replaceAll("color:{{primaryLinkColor}}");
   }
 
   /** The subject line, from the generated catalogue rather than from the document. */

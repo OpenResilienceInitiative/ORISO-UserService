@@ -124,7 +124,7 @@ class InviteEmailPreviewServiceTest {
   }
 
   @Test
-  void previewShouldReportTheContrastGuardedButtonColourActuallyRendered() {
+  void previewShouldReportTheButtonAndLabelColoursActuallyRendered() {
     var preview =
         previewService.preview(
             new PreviewCommand(
@@ -136,9 +136,14 @@ class InviteEmailPreviewServiceTest {
                 "de"));
     var branding = JsonMapper.builder().build().valueToTree(preview).path("branding");
     assertThat(branding.path("accentColor").asString()).isEqualTo("#f8e71c");
-    assertThat(branding.path("primaryColor").asString()).isNotBlank().isNotEqualTo("#f8e71c");
+    assertThat(branding.path("primaryColor").asString())
+        .as("a light colour is no longer replaced, the button keeps it")
+        .isEqualTo("#f8e71c");
+    assertThat(branding.path("buttonLabelColor").asString()).isEqualTo("#1f1c00");
     assertThat(preview.html())
-        .contains("bgcolor=\"" + branding.path("primaryColor").asString() + "\"");
+        .contains("bgcolor=\"" + branding.path("primaryColor").asString() + "\"")
+        .contains(
+            "color:" + branding.path("buttonLabelColor").asString() + ";text-decoration:none");
     verify(emailBrandingResolver).resolvePendingTenant(42L);
     org.mockito.Mockito.verifyNoMoreInteractions(emailBrandingResolver);
   }
