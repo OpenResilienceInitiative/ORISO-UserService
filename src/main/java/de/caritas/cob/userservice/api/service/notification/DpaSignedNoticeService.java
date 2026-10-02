@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import jakarta.annotation.PreDestroy;
@@ -67,19 +68,20 @@ public class DpaSignedNoticeService {
   // TenantService timestamps are zoneless UTC; the notice must show German wall-clock time.
   private static final ZoneId MAIL_ZONE = ZoneId.of("Europe/Berlin");
 
-  // Mail copy says "Vertragsunterlagen" / "contract documents", never "AVV" (Frank, 2026-09-23).
-  static final String DEFAULT_SUBJECT_DE = "Vertragsunterlagen unterzeichnet – {{tenantName}}";
-  static final String DEFAULT_SUBJECT_EN = "Contract documents signed – {{tenantName}}";
+  // Mail copy says "Vertragsunterlagen" / "contract documents", never "AVV" (Frank, 2026-09-23),
+  // and "bestätigt" / "confirmed", never "unterzeichnet" (Frank, 2026-09-25).
+  static final String DEFAULT_SUBJECT_DE = "Vertragsunterlagen bestätigt – {{tenantName}}";
+  static final String DEFAULT_SUBJECT_EN = "Contract documents confirmed – {{tenantName}}";
 
   static final String DEFAULT_BODY_DE =
       """
       Guten Tag,
 
-      die Vertragsunterlagen für {{tenantName}} wurden unterzeichnet.
+      die Vertragsunterlagen für {{tenantName}} wurden bestätigt.
 
       Vertragsversion: {{dpaVersion}}
-      Unterzeichnet am: {{signedAt}}
-      Unterzeichnet von: {{signerName}}{{signerPositionSuffix}}
+      Bestätigt am: {{signedAt}}
+      Bestätigt von: {{signerName}}{{signerPositionSuffix}}
 
       Damit ist die rechtliche Freigabe erteilt. Sie können die Einrichtung Ihrer
       Organisation im Admin-Bereich fortsetzen:
@@ -90,11 +92,11 @@ public class DpaSignedNoticeService {
       """
       Hello,
 
-      the contract documents for {{tenantName}} have been signed.
+      the contract documents for {{tenantName}} have been confirmed.
 
       Contract version: {{dpaVersion}}
-      Signed at: {{signedAt}}
-      Signed by: {{signerName}}{{signerPositionSuffix}}
+      Confirmed at: {{signedAt}}
+      Confirmed by: {{signerName}}{{signerPositionSuffix}}
 
       The legal approval is now in place. You can continue setting up your
       organisation in the admin panel:
@@ -201,12 +203,7 @@ public class DpaSignedNoticeService {
    * next collaborator added will not know that rule.
    */
   private void processHint(Long tenantId) {
-    // The dispatch runs on a pooled daemon thread, which starts with no TenantContext. Every
-    // repository call below passes through TenantAspect, and that aspect calls filter.validate()
-    // with TenantContext.getCurrentTenant() — a null tenant either fails the Hibernate filter or
-    // silently filters the forwarding admin away, so the notice would never be sent. Establish the
-    // hinted tenant for the duration of the task, and clear it again because the pool reuses the
-    // thread.
+    // Pooled worker thread: scope it to the hinted tenant and clear it for the next task.
     TenantContext.setCurrentTenant(tenantId);
     try {
       dispatchNotice(tenantId);
@@ -347,7 +344,14 @@ public class DpaSignedNoticeService {
       // the layout would render a second CTA button on top of it. InviteEmailPreviewService passes
       // null for this kind, so passing the Admin URL here made the delivered mail carry a button
       // the operator never saw in the preview.
-      inviteMailDispatchService.send(recipient.email(), subject, body, null, tenantId, language);
+      inviteMailDispatchService.send(
+          recipient.email(),
+          subject,
+          body,
+          null,
+          tenantId,
+          language,
+          InviteMailOrigin.of(tenantId, TenantSystemEmailDelivery.Purpose.DPA_SIGNED_NOTICE));
     } catch (RuntimeException beforeDispatch) {
       // Every failure up to the handoff, not only SmtpSendException: a template load, the
       // tenant-name lookup or the rendering can fail too, and a stranded claim silently disables
@@ -414,8 +418,11 @@ public class DpaSignedNoticeService {
   }
 
   private Optional<InviteEmailTemplate> findActiveTemplate(String language) {
+    // Platform templates only (tenant_id is null): this notice is sent by the platform
+    // operator, so a Träger's own template must never be able to take it over
+    // (ORISO-Admin#1026, template ownership).
     var templates =
-        templateRepository.findByKindAndActiveTrueOrderByCreateDateDesc(
+        templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE);
     return templates.stream()
         .filter(template -> language.equalsIgnoreCase(template.getLanguage()))
@@ -432,9 +439,9 @@ public class DpaSignedNoticeService {
         "tenantName",
         resolveTenantName(tenantId, language),
         "dpaVersion",
-        formatDateTime(signature.getDpaVersion(), language),
+        formatInMailZone(signature.getDpaVersion(), language),
         "signedAt",
-        formatSignedAt(signature.getSignedAt(), language),
+        formatInMailZone(signature.getSignedAt(), language),
         "signerName",
         isBlank(signature.getSignerName()) ? "—" : signature.getSignerName(),
         "signerPosition",
@@ -504,10 +511,10 @@ public class DpaSignedNoticeService {
   }
 
   /**
-   * The version stays verbatim: it is an identifier and must match the label the Admin shows.
-   * signedAt is a moment in time, so the reader gets German wall-clock time.
+   * Version and signedAt are zoneless UTC; the reader gets German wall-clock time, the same the
+   * Admin shows since #1064.
    */
-  private static String formatSignedAt(String value, String language) {
+  private static String formatInMailZone(String value, String language) {
     var parsed = parseDateTime(value);
     if (parsed == null) {
       return formatDateTime(value, language);

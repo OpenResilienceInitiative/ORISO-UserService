@@ -58,7 +58,10 @@ class UserAdminControllerPostUpdateRoutingTest {
             mock(AuthenticatedUser.class),
             mock(GrantConsultantIdentityService.class),
             mock(UserIdentitiesService.class),
-            mock(AdminListPreferenceService.class));
+            mock(AdminListPreferenceService.class),
+            mock(
+                de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer
+                    .class));
 
     mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
   }

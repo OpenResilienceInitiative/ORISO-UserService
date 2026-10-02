@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
@@ -80,7 +81,7 @@ class DpaSignedNoticeServiceTest {
     when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
     when(noticeRepository.save(any(DpaSignedNotice.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(templateRepository.findByKindAndActiveTrueOrderByCreateDateDesc(
+    when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenReturn(List.of());
     when(identityLocaleLookup.findLocaleById(anyString())).thenReturn(Optional.empty());
@@ -173,14 +174,14 @@ class DpaSignedNoticeServiceTest {
             // button the operator never saw in the preview is the drift this asserts against
             isNull(),
             eq(TENANT_ID),
-            eq("en"));
+            eq("en"),
+            any());
     // the account language wins
-    assertTrue(subject.getValue().contains("Contract documents signed"));
+    assertTrue(subject.getValue().contains("Contract documents confirmed"));
     // tenant, version, timestamp and signer as recorded
     assertTrue(body.getValue().contains("Träger Nord e.V."));
-    assertTrue(body.getValue().contains("2026-07-01 12:00"));
-    // signedAt 09:15 UTC is German summer time 11:15; the version is date-formatted like the
-    // Admin's version label but never zone-shifted, so both show the same text for one version
+    // version 12:00 UTC and signedAt 09:15 UTC are shown in German summer time, as in the Admin
+    assertTrue(body.getValue().contains("2026-07-01 14:00"));
     assertTrue(body.getValue().contains("2026-08-14 11:15"));
     assertTrue(body.getValue().contains("Erika Mustermann"));
     assertTrue(body.getValue().contains("Geschäftsführerin"));
@@ -207,10 +208,11 @@ class DpaSignedNoticeServiceTest {
             body.capture(),
             isNull(),
             eq(TENANT_ID),
-            eq("de"));
-    assertThat(subject.getValue()).isEqualTo("Vertragsunterlagen unterzeichnet – Träger Nord e.V.");
+            eq("de"),
+            any());
+    assertThat(subject.getValue()).isEqualTo("Vertragsunterlagen bestätigt – Träger Nord e.V.");
     assertThat(body.getValue())
-        .contains("die Vertragsunterlagen für Träger Nord e.V. wurden unterzeichnet.")
+        .contains("die Vertragsunterlagen für Träger Nord e.V. wurden bestätigt.")
         .doesNotContain("AVV")
         .doesNotContain("Auftragsverarbeitungsvertrag");
   }
@@ -219,9 +221,9 @@ class DpaSignedNoticeServiceTest {
   @Test
   void defaultCopy_saysContractDocuments_inEnglish() {
     assertThat(DpaSignedNoticeService.defaultSubject("en"))
-        .isEqualTo("Contract documents signed – {{tenantName}}");
+        .isEqualTo("Contract documents confirmed – {{tenantName}}");
     assertThat(DpaSignedNoticeService.defaultBody("en"))
-        .contains("the contract documents for {{tenantName}} have been signed.")
+        .contains("the contract documents for {{tenantName}} have been confirmed.")
         .doesNotContainIgnoringCase("data processing agreement");
   }
 
@@ -229,13 +231,20 @@ class DpaSignedNoticeServiceTest {
   @Test
   void onSignatureHint_rendersTheSummerSignatureTimeInGermanLocalTime() {
     assertThat(germanNoticeBodyForSignedAt("2026-09-22T22:45:00"))
-        .contains("Unterzeichnet am: 23.09.2026 00:45 Uhr");
+        .contains("Bestätigt am: 23.09.2026 00:45 Uhr");
+  }
+
+  /** Staging 25.09.: published 09:55 German time, mailed as "07:55 Uhr" (#1064). */
+  @Test
+  void onSignatureHint_rendersTheContractVersionInGermanLocalTime() {
+    assertThat(germanNoticeBodyForSignedAt("2026-09-25T09:14:00"))
+        .contains("Vertragsversion: 01.07.2026 14:00 Uhr");
   }
 
   @Test
   void onSignatureHint_rendersTheWinterSignatureTimeInGermanLocalTime() {
     assertThat(germanNoticeBodyForSignedAt("2027-01-15T22:45:00"))
-        .contains("Unterzeichnet am: 15.01.2027 23:45 Uhr");
+        .contains("Bestätigt am: 15.01.2027 23:45 Uhr");
   }
 
   private String germanNoticeBodyForSignedAt(String utcSignedAt) {
@@ -246,7 +255,16 @@ class DpaSignedNoticeServiceTest {
 
     var body = ArgumentCaptor.forClass(String.class);
     verify(inviteMailDispatchService)
-        .send(eq("toni@example.org"), any(), body.capture(), isNull(), eq(TENANT_ID), eq("de"));
+        .send(
+            eq("toni@example.org"),
+            any(),
+            body.capture(),
+            isNull(),
+            eq(TENANT_ID),
+            eq("de"),
+            eq(
+                InviteMailOrigin.of(
+                    TENANT_ID, TenantSystemEmailDelivery.Purpose.DPA_SIGNED_NOTICE)));
     return body.getValue();
   }
 
@@ -266,7 +284,7 @@ class DpaSignedNoticeServiceTest {
 
     // then: the onboarding contact address, default language
     verify(inviteMailDispatchService)
-        .send(eq("wizard.admin@example.org"), any(), any(), any(), eq(TENANT_ID), eq("de"));
+        .send(eq("wizard.admin@example.org"), any(), any(), any(), eq(TENANT_ID), eq("de"), any());
     verify(adminRepository, never()).findById(anyString());
   }
 
@@ -277,14 +295,15 @@ class DpaSignedNoticeServiceTest {
     // it would make every later hint lose the race and the notice would never be sent
     givenSignatures(forwardedSignature("kc-admin-1"));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
-    when(templateRepository.findByKindAndActiveTrueOrderByCreateDateDesc(
+    when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenThrow(new IllegalStateException("template store unavailable"));
 
     service.onSignatureHint(TENANT_ID);
 
     verify(noticeRepository).delete(any(DpaSignedNotice.class));
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -326,7 +345,7 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(inviteMailDispatchService).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService).send(any(), any(), any(), any(), any(), any(), any());
     verify(noticeRepository, never()).delete(any(DpaSignedNotice.class));
   }
 
@@ -337,7 +356,8 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
     verify(noticeRepository, never()).save(any());
     // the notice chain must only ever stamp verified FORWARDED_EXTERNAL signatures - the
     // self-sign path stamps its own invite at registration
@@ -351,7 +371,8 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
     // a pending forward is NOT a signature: a reordering that stamps before the SIGNED filter
     // would mark unsigned DPAs as signed on the Admin board
     verify(accountInviteRepository, never()).markDpaSigned(any(), any(), any());
@@ -364,7 +385,8 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
     verify(accountInviteRepository, never()).markDpaSigned(any(), any(), any());
   }
 
@@ -378,7 +400,8 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -386,7 +409,7 @@ class DpaSignedNoticeServiceTest {
     // given the SMTP handover fails after the claim was taken
     givenSignatures(forwardedSignature("kc-admin-1"));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
-    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenThrow(new SmtpSendException("smtp down"));
 
     service.onSignatureHint(TENANT_ID);
@@ -405,7 +428,8 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
     verify(noticeRepository, never()).save(any());
   }
 
@@ -504,7 +528,7 @@ class DpaSignedNoticeServiceTest {
             eq(AccountInviteTargetRole.TENANT_ADMIN),
             any(java.time.LocalDateTime.class));
     verify(inviteMailDispatchService, never())
-        .send(anyString(), anyString(), anyString(), any(), anyLong(), anyString());
+        .send(anyString(), anyString(), anyString(), any(), anyLong(), anyString(), any());
   }
 
   @Test
@@ -526,6 +550,6 @@ class DpaSignedNoticeServiceTest {
             eq(AccountInviteTargetRole.TENANT_ADMIN),
             any(java.time.LocalDateTime.class));
     verify(inviteMailDispatchService, never())
-        .send(anyString(), anyString(), anyString(), any(), anyLong(), anyString());
+        .send(anyString(), anyString(), anyString(), any(), anyLong(), anyString(), any());
   }
 }
