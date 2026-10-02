@@ -11,11 +11,15 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.config.observability.DpaSignedNoticeMetrics;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
+import de.caritas.cob.userservice.api.exception.SmtpSendException.Category;
+import de.caritas.cob.userservice.api.exception.SmtpSendException.DeliveryDisposition;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.DpaSignedNotice;
@@ -31,12 +35,15 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigi
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -73,6 +80,11 @@ class DpaSignedNoticeServiceTest {
   @Mock private TenantService tenantService;
   @Mock private PlatformTransactionManager transactionManager;
 
+  // real metrics over an in-memory registry: the counters are part of what #1341 delivers, so the
+  // tests assert them instead of a mock's interactions
+  private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+  private final DpaSignedNoticeMetrics metrics = new DpaSignedNoticeMetrics(meterRegistry);
+
   private DpaSignedNoticeService service;
 
   @BeforeEach
@@ -98,6 +110,7 @@ class DpaSignedNoticeServiceTest {
             inviteMailDispatchService,
             tenantService,
             transactionManager,
+            metrics,
             new AdminPanelUrl("https://admin.example.org"));
     // the endpoint dispatches asynchronously; run it inline so these tests keep asserting the
     // work itself rather than the hand-off
@@ -405,17 +418,139 @@ class DpaSignedNoticeServiceTest {
   }
 
   @Test
-  void onSignatureHint_releasesTheClaim_When_theMailCannotBeSent() {
-    // given the SMTP handover fails after the claim was taken
+  void onSignatureHint_releasesTheClaimOnPurpose_When_theSmtpOutcomeIsUncertain() {
+    // #1341: an uncertain outcome means the mail MAY already be out. We still release the claim, so
+    // a later hint can send the notice again — "better twice than never" (Frank, 2026-10-02). If
+    // this assertion is ever inverted to "keeps the claim", the rule in the DpaSignedNoticeService
+    // javadoc and in the DeliveryDisposition contract must be rewritten in the same change.
     givenSignatures(forwardedSignature("kc-admin-1"));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
     when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
-        .thenThrow(new SmtpSendException("smtp down"));
+        .thenThrow(new SmtpSendException("relay timed out"));
 
     service.onSignatureHint(TENANT_ID);
 
-    // the claim is compensated so a later hint can retry the notice
     verify(noticeRepository).delete(any(DpaSignedNotice.class));
+    assertEquals(1.0, releasedCount("delivery_uncertain"));
+    assertEquals(0.0, releasedCount("confirmed_not_sent"));
+  }
+
+  @Test
+  void onSignatureHint_releasesTheClaim_When_theMailWasConfirmedNotSent() {
+    // the harmless half of the same code path: nothing left the building, so a retry cannot
+    // duplicate anything. It must be counted apart from the uncertain case.
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
+        .thenThrow(
+            new SmtpSendException(Category.SMTP_CREDENTIALS_MISSING, "no credentials for tenant"));
+
+    service.onSignatureHint(TENANT_ID);
+
+    verify(noticeRepository).delete(any(DpaSignedNotice.class));
+    assertEquals(1.0, releasedCount("confirmed_not_sent"));
+    assertEquals(0.0, releasedCount("delivery_uncertain"));
+  }
+
+  @ParameterizedTest
+  @EnumSource(DeliveryDisposition.class)
+  void onSignatureHint_releasesTheClaimForEveryDisposition_AndCountsItUnderItsOwnTag(
+      DeliveryDisposition disposition) {
+    // Guard for a future third disposition: whoever adds one has to come here and state what it
+    // does to the claim, instead of silently inheriting "release".
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
+        .thenThrow(
+            new SmtpSendException(Category.SMTP_TRANSPORT_FAILED, disposition, "handover failed"));
+
+    service.onSignatureHint(TENANT_ID);
+
+    verify(noticeRepository).delete(any(DpaSignedNotice.class));
+    assertEquals(1.0, counter("oriso.dpa_signed_notice.dispatch", "outcome", "released"));
+    assertEquals(1.0, releasedCount(expectedTagFor(disposition)));
+  }
+
+  @Test
+  void onSignatureHint_releasesTheClaimAsNotSent_When_theFailureIsNotAnSmtpFailure() {
+    // a template load, the tenant-name lookup or the rendering can fail too; all of those happen
+    // before the handover, so they can never have sent anything
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(tenantService.getRestrictedTenantData(anyLong()))
+        .thenThrow(new IllegalStateException("tenant lookup down"));
+
+    service.onSignatureHint(TENANT_ID);
+
+    verify(noticeRepository).delete(any(DpaSignedNotice.class));
+    assertEquals(1.0, releasedCount("confirmed_not_sent"));
+  }
+
+  @Test
+  void onSignatureHint_sendsASecondNotice_When_aLaterHintFollowsAnUncertainOutcome() {
+    // the end-to-end shape of the accepted duplicate: first hint uncertain, claim released, second
+    // hint sends again. Exactly one more notice, not a loop.
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
+        .thenThrow(new SmtpSendException("relay timed out"))
+        .thenReturn(null);
+
+    service.onSignatureHint(TENANT_ID);
+    service.onSignatureHint(TENANT_ID);
+
+    verify(inviteMailDispatchService, times(2))
+        .send(any(), any(), any(), any(), any(), any(), any());
+    verify(noticeRepository, times(1)).delete(any(DpaSignedNotice.class));
+    assertEquals(1.0, releasedCount("delivery_uncertain"));
+    assertEquals(1.0, counter("oriso.dpa_signed_notice.dispatch", "outcome", "sent"));
+  }
+
+  @Test
+  void onSignatureHint_keepsTheClaim_When_theMailWasHandedOver() {
+    // the claim is the only thing stopping a second notice, so a successful send must never
+    // release it
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+
+    service.onSignatureHint(TENANT_ID);
+
+    verify(noticeRepository, never()).delete(any(DpaSignedNotice.class));
+    assertEquals(1.0, counter("oriso.dpa_signed_notice.dispatch", "outcome", "sent"));
+    assertEquals(0.0, counter("oriso.dpa_signed_notice.dispatch", "outcome", "released"));
+  }
+
+  @Test
+  void onSignatureHint_countsAStuckClaim_When_theReleaseItselfFails() {
+    // worst case: the notice is dead for this signature and the counter is the only trace
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
+        .thenThrow(new SmtpSendException("relay timed out"));
+    org.mockito.Mockito.doThrow(new IllegalStateException("db gone"))
+        .when(noticeRepository)
+        .delete(any(DpaSignedNotice.class));
+
+    service.onSignatureHint(TENANT_ID);
+
+    assertEquals(1.0, counter("oriso.dpa_signed_notice.dispatch", "outcome", "claim_stuck"));
+    assertEquals(0.0, releasedCount("delivery_uncertain"));
+  }
+
+  private static String expectedTagFor(DeliveryDisposition disposition) {
+    return switch (disposition) {
+      case CONFIRMED_NOT_SENT -> "confirmed_not_sent";
+      case DELIVERY_UNCERTAIN -> "delivery_uncertain";
+    };
+  }
+
+  private double releasedCount(String disposition) {
+    return counter("oriso.dpa_signed_notice.claim.released", "disposition", disposition);
+  }
+
+  private double counter(String name, String tagName, String tagValue) {
+    var found = meterRegistry.find(name).tag(tagName, tagValue).counter();
+    return found == null ? 0.0 : found.count();
   }
 
   @Test
