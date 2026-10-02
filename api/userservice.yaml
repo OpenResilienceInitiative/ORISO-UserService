@@ -1952,6 +1952,8 @@ paths:
           description: TOO MANY REQUESTS - maximum number of attempts has been reached
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
+        503:
+          description: SERVICE UNAVAILABLE - identity provider rejected the service session after one refresh; retry later
       security:
         - Bearer: [ ]
   /users/2fa/app:
