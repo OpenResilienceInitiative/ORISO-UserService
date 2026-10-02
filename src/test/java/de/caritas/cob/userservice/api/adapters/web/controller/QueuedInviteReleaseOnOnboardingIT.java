@@ -134,7 +134,7 @@ class QueuedInviteReleaseOnOnboardingIT {
     when(keycloakService.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(false, "SECRET", "QR", IdentityOtpType.APP));
     when(inviteMailDispatchService.send(
-            anyString(), anyString(), anyString(), anyString(), any(), any()))
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenAnswer(call -> new InviteMailSendReceipt(call.getArgument(0), Instant.now()));
     when(operatorDpaContentClient.fetchPublishedDpa())
         .thenReturn(new OperatorDpa("{\"de\":\"<p>AVV</p>\"}", "1"));
@@ -195,7 +195,14 @@ class QueuedInviteReleaseOnOnboardingIT {
     assertThat(sent.getWaitingForUnit()).isNull();
     assertThat(sent.getExpiresAt()).isAfter(LocalDateTime.now().plusDays(29));
     verify(inviteMailDispatchService)
-        .send(eq(sent.getRecipientEmail()), anyString(), anyString(), anyString(), any(), any());
+        .send(
+            eq(sent.getRecipientEmail()),
+            anyString(),
+            anyString(),
+            anyString(),
+            any(),
+            any(),
+            any());
     assertThat(reload(waitingDraft).getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
   }
 

@@ -97,7 +97,11 @@ class DpaSigningMailDesignSystemTest {
                 "smtp-user", "smtp-pass"),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(
-                brandingResolver, senderOrganisations));
+                brandingResolver, senderOrganisations),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .platformRoutes(),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .unusedRelay());
     dispatch = new DefaultDpaSigningEmailDispatchService(renderer, mailDispatch, CLOCK);
     forward = new DpaForwardEmailService(tenantService, dispatch, APP_ORIGIN);
   }
