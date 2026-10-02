@@ -2494,7 +2494,7 @@ components:
       required: [campaignKey, status, maintenanceDate, maintenanceStart, maintenanceEnd, statusUrl]
       properties:
         campaignKey: { type: string }
-        status: { type: string, enum: [DRAFT, CONFIRMED] }
+        status: { type: string, x-extensible-enum: [DRAFT, CONFIRMED] }
         maintenanceDate: { type: string, format: date }
         maintenanceStart: { type: string }
         maintenanceEnd: { type: string }
