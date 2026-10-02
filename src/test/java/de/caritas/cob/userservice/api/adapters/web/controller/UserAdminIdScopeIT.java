@@ -500,25 +500,27 @@ class UserAdminIdScopeIT {
   private void assertHalSearchKeepsList(String path, String filter, Set<String> expectedIds)
       throws Exception {
     var ids = new ArrayList<String>();
-    String next =
-        path + "?query=halrouteprobe&page=1&perPage=1&field=FIRSTNAME&order=ASC" + filter;
+    String next = path + "?query=halrouteprobe&page=1&perPage=1&field=FIRSTNAME&order=ASC" + filter;
     List<String> previousIds = null;
     var pagesSeen = 0;
     while (next != null) {
       assertThat(++pagesSeen).as("pagination terminates").isLessThanOrEqualTo(expectedIds.size());
       var body = halPage(next, path, expectedIds.size());
-      var pageIds = com.jayway.jsonpath.JsonPath.<List<String>>read(body, "$._embedded[*]._embedded.id");
+      var pageIds =
+          com.jayway.jsonpath.JsonPath.<List<String>>read(body, "$._embedded[*]._embedded.id");
       ids.addAll(pageIds);
 
       var self = com.jayway.jsonpath.JsonPath.<String>read(body, "$._links.self.href");
-      assertThat(com.jayway.jsonpath.JsonPath.<List<String>>read(
-              halPage(self, path, expectedIds.size()), "$._embedded[*]._embedded.id"))
+      assertThat(
+              com.jayway.jsonpath.JsonPath.<List<String>>read(
+                  halPage(self, path, expectedIds.size()), "$._embedded[*]._embedded.id"))
           .as("self keeps the page's rows and filter")
           .containsExactlyElementsOf(pageIds);
       if (previousIds != null) {
         var previous = com.jayway.jsonpath.JsonPath.<String>read(body, "$._links.previous.href");
-        assertThat(com.jayway.jsonpath.JsonPath.<List<String>>read(
-                halPage(previous, path, expectedIds.size()), "$._embedded[*]._embedded.id"))
+        assertThat(
+                com.jayway.jsonpath.JsonPath.<List<String>>read(
+                    halPage(previous, path, expectedIds.size()), "$._embedded[*]._embedded.id"))
             .as("previous keeps the prior page's rows and filter")
             .containsExactlyElementsOf(previousIds);
       }
@@ -531,11 +533,16 @@ class UserAdminIdScopeIT {
   }
 
   private String halPage(String url, String expectedPath, int expectedTotal) throws Exception {
-    assertThat(URI.create(url).getPath()).as("HAL keeps the requested admin list").isEqualTo(expectedPath);
+    assertThat(URI.create(url).getPath())
+        .as("HAL keeps the requested admin list")
+        .isEqualTo(expectedPath);
     var body =
-        mockMvc.perform(withCsrf(get(url)))
+        mockMvc
+            .perform(withCsrf(get(url)))
             .andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString();
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
     assertThat(com.jayway.jsonpath.JsonPath.<Integer>read(body, "$.total"))
         .as("filtered total stays constant")
         .isEqualTo(expectedTotal);
