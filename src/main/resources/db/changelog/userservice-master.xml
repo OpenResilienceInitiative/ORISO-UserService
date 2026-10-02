@@ -222,4 +222,5 @@
   <include file="db/changelog/changeset/20260928_group_chat_admission_matrix_repair/changeSet.xml"/>
   <include file="db/changelog/changeset/20260926_group_appointment_mail_874/changeSet.xml"/>
   <include file="db/changelog/changeset/20261002_service_notice_confirm_876/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261001_invite_email_template_system_default/changeSet.xml"/>
 </databaseChangeLog>
