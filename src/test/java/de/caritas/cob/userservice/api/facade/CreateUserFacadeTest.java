@@ -45,6 +45,8 @@ import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
@@ -69,6 +71,7 @@ import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTe
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -107,7 +110,8 @@ public class CreateUserFacadeTest {
             provisioningCompensator,
             tenantService,
             agencyService,
-            applicationSettingsService);
+            applicationSettingsService,
+            groupInviteRegistration);
     org.mockito.Mockito.lenient()
         .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
@@ -151,6 +155,7 @@ public class CreateUserFacadeTest {
 
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private WelcomeEmailService welcomeEmailService;
+  @Mock private GroupInviteRegistration groupInviteRegistration;
 
   @Spy
   private ProvisioningCompensator provisioningCompensator =
@@ -419,6 +424,121 @@ public class CreateUserFacadeTest {
   // ---------------------------------------------------------------------------
   // Extended coverage — 2026-07-06
   // ---------------------------------------------------------------------------
+
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_LeaveTheGroupBeforeDeletingTheUser_When_GroupJoinFails()
+          throws Exception {
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    givenMatrixProvisioningSucceeds();
+    User user = givenAFullyPersistedUser();
+    Chat group =
+        Chat.builder()
+            .id(4711L)
+            .topic("group")
+            .initialStartDate(LocalDateTime.now())
+            .startDate(LocalDateTime.now())
+            .conversationType(ConversationType.SELF_HELP)
+            .build();
+    when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
+    // The membership row may exist although the call failed, so compensation must still leave.
+    RuntimeException joinFailure = new RuntimeException("membership write failed");
+    doThrow(joinFailure).when(groupInviteRegistration).join(group, user);
+
+    RuntimeException propagated =
+        assertThrows(
+            RuntimeException.class,
+            () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+
+    assertThat(propagated, is(joinFailure));
+    // The membership references the user row, and the user row references the identity.
+    var compensation = inOrder(groupInviteRegistration, userService, identityAccountRemover);
+    compensation.verify(groupInviteRegistration).leave(group, user);
+    compensation.verify(userService).deleteUser(user);
+    compensation.verify(identityAccountRemover).rollbackUser(USER_ID);
+    verify(createNewSessionFacade, never())
+        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+  }
+
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_JoinTheGroupWithoutARegistrationEvent_When_InvitedToAGroup()
+          throws Exception {
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    givenMatrixProvisioningSucceeds();
+    User user = givenAFullyPersistedUser();
+    Chat group =
+        Chat.builder()
+            .id(4711L)
+            .topic("group")
+            .initialStartDate(LocalDateTime.now())
+            .startDate(LocalDateTime.now())
+            .conversationType(ConversationType.SELF_HELP)
+            .build();
+    when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
+    // Without it the event would fail to build and be swallowed, hiding a regression.
+    when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
+
+    Long sessionId =
+        createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+
+    assertThat(sessionId, nullValue());
+    verify(groupInviteRegistration).join(group, user);
+    // The registration event contract requires a session id, which a group join does not have.
+    verify(statisticsService, never()).fireEvent(any());
+    verify(groupInviteRegistration, never()).leave(any(), any());
+  }
+
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_RejectATemporaryAccount_When_NoGroupInviteBacksIt() {
+    // The deletion job removes temporary accounts, so only the invite flow may ask for one.
+    USER_DTO_SUCHT.setTemporary(true);
+    try {
+      assertThrows(
+          BadRequestException.class,
+          () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+    } finally {
+      USER_DTO_SUCHT.setTemporary(false);
+    }
+
+    verify(identityClient, never()).createUser(any());
+    verify(userService, never()).saveUser(any());
+  }
+
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_StoreATemporaryAccount_When_RegisteringThroughAGroupInvite()
+          throws Exception {
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    givenMatrixProvisioningSucceeds();
+    User user = givenAFullyPersistedUser();
+    Chat group =
+        Chat.builder()
+            .id(4711L)
+            .topic("group")
+            .initialStartDate(LocalDateTime.now())
+            .startDate(LocalDateTime.now())
+            .conversationType(ConversationType.SELF_HELP)
+            .build();
+    when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
+
+    USER_DTO_SUCHT.setTemporary(true);
+    try {
+      createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+    } finally {
+      USER_DTO_SUCHT.setTemporary(false);
+    }
+
+    assertThat(user.isTemporaryAccount(), is(true));
+    verify(groupInviteRegistration).join(group, user);
+  }
 
   private User givenAFullyPersistedUser() {
     User user = new User();
