@@ -49,6 +49,8 @@ import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
+import java.net.URI;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -447,6 +449,97 @@ class UserAdminIdScopeIT {
     assertThat(
             searchIds("/useradmin/agencyadmins/search", "&agencyId=" + OTHER_AGENCY_OF_OWN_TENANT))
         .containsExactly(otherAgencyAdmin.getId());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdmins_Should_KeepFilteredTenantList_When_FollowingHalPagination()
+      throws Exception {
+    actAsTenantAdmin();
+    var second = fixtures.admin(OWN_TENANT, AdminType.TENANT);
+    var foreign = fixtures.admin(FOREIGN_TENANT, AdminType.TENANT);
+    markHalProbe(ownTenantAdmin, second, foreign);
+
+    assertHalSearchKeepsList(
+        "/useradmin/tenantadmins/search",
+        "&tenantId=" + OWN_TENANT,
+        Set.of(ownTenantAdmin.getId(), second.getId()));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_KeepAssignedCentreScope_When_FollowingHalPagination()
+      throws Exception {
+    actAsAgencyAdmin();
+    adminAgencyRepository.save(
+        AdminAgency.builder()
+            .admin(callingAgencyAdmin)
+            .agencyId(OTHER_AGENCY_OF_OWN_TENANT)
+            .build());
+    markHalProbe(callingAgencyAdmin, ownAgencyAdmin, otherAgencyAdmin, foreignTenantAgencyAdmin);
+
+    assertHalSearchKeepsList(
+        "/useradmin/agencyadmins/search",
+        "&tenantId=" + OWN_TENANT + "&agencyId=" + OWN_AGENCY,
+        Set.of(callingAgencyAdmin.getId(), ownAgencyAdmin.getId()));
+  }
+
+  private void markHalProbe(Admin... admins) {
+    Tenants.acrossAll(
+        () -> {
+          for (var admin : admins) {
+            var stored = adminRepository.findById(admin.getId()).orElseThrow();
+            stored.setFirstName("halrouteprobe");
+            adminRepository.saveAndFlush(stored);
+          }
+          return null;
+        });
+  }
+
+  /** Follow actual self/next/previous links, with one row per page and foreign probe rows. */
+  private void assertHalSearchKeepsList(String path, String filter, Set<String> expectedIds)
+      throws Exception {
+    var ids = new ArrayList<String>();
+    String next =
+        path + "?query=halrouteprobe&page=1&perPage=1&field=FIRSTNAME&order=ASC" + filter;
+    List<String> previousIds = null;
+    var pagesSeen = 0;
+    while (next != null) {
+      assertThat(++pagesSeen).as("pagination terminates").isLessThanOrEqualTo(expectedIds.size());
+      var body = halPage(next, path, expectedIds.size());
+      var pageIds = com.jayway.jsonpath.JsonPath.<List<String>>read(body, "$._embedded[*]._embedded.id");
+      ids.addAll(pageIds);
+
+      var self = com.jayway.jsonpath.JsonPath.<String>read(body, "$._links.self.href");
+      assertThat(com.jayway.jsonpath.JsonPath.<List<String>>read(
+              halPage(self, path, expectedIds.size()), "$._embedded[*]._embedded.id"))
+          .as("self keeps the page's rows and filter")
+          .containsExactlyElementsOf(pageIds);
+      if (previousIds != null) {
+        var previous = com.jayway.jsonpath.JsonPath.<String>read(body, "$._links.previous.href");
+        assertThat(com.jayway.jsonpath.JsonPath.<List<String>>read(
+                halPage(previous, path, expectedIds.size()), "$._embedded[*]._embedded.id"))
+            .as("previous keeps the prior page's rows and filter")
+            .containsExactlyElementsOf(previousIds);
+      }
+      previousIds = pageIds;
+      Map<String, Map<String, String>> links = com.jayway.jsonpath.JsonPath.read(body, "$._links");
+      next = links.get("next") == null ? null : links.get("next").get("href");
+    }
+    assertThat(pagesSeen).isEqualTo(expectedIds.size());
+    assertThat(ids).containsExactlyInAnyOrderElementsOf(expectedIds);
+  }
+
+  private String halPage(String url, String expectedPath, int expectedTotal) throws Exception {
+    assertThat(URI.create(url).getPath()).as("HAL keeps the requested admin list").isEqualTo(expectedPath);
+    var body =
+        mockMvc.perform(withCsrf(get(url)))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+    assertThat(com.jayway.jsonpath.JsonPath.<Integer>read(body, "$.total"))
+        .as("filtered total stays constant")
+        .isEqualTo(expectedTotal);
+    return body;
   }
 
   private List<String> searchIds(String path, String filter) throws Exception {
