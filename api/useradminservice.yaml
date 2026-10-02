@@ -1732,6 +1732,35 @@ paths:
 
 components:
   schemas:
+    AdminListSortDTO:
+      type: object
+      description: >-
+        One saved list sort. field is FIRSTNAME, LASTNAME, EMAIL or UPDATE_DATE; the
+        tenant-admins and platform-admins tabs also accept TENANT_ID. order is ASC or DESC.
+      required:
+        - field
+        - order
+      properties:
+        field:
+          type: string
+          maxLength: 32
+          example: LASTNAME
+        order:
+          type: string
+          maxLength: 4
+          example: ASC
+
+    AdminListPreferencesDTO:
+      type: object
+      required:
+        - sorts
+      properties:
+        sorts:
+          type: object
+          description: Saved sort per list tab, keyed by tab name.
+          additionalProperties:
+            $ref: '#/components/schemas/AdminListSortDTO'
+
     RootDTO:
       type: object
       required:
@@ -3079,35 +3108,6 @@ components:
             or platform admin;
             INVITE_BUSY - another request (for example the invitee finishing onboarding) is
             changing this invite right now; try again in a moment.
-
-    AdminListSortDTO:
-      type: object
-      description: >-
-        One saved list sort. field is FIRSTNAME, LASTNAME, EMAIL or UPDATE_DATE; the
-        tenant-admins and platform-admins tabs also accept TENANT_ID. order is ASC or DESC.
-      required:
-        - field
-        - order
-      properties:
-        field:
-          type: string
-          maxLength: 32
-          example: LASTNAME
-        order:
-          type: string
-          maxLength: 4
-          example: ASC
-
-    AdminListPreferencesDTO:
-      type: object
-      required:
-        - sorts
-      properties:
-        sorts:
-          type: object
-          description: Saved sort per list tab, keyed by tab name.
-          additionalProperties:
-            $ref: '#/components/schemas/AdminListSortDTO'
 
   securitySchemes:
     Bearer:
