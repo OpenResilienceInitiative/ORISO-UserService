@@ -32,6 +32,15 @@ public class ServiceNoticeRecipient {
   public enum MailStatus {
     /** A mail is due; the sender will check the switch and address again before sending. */
     PENDING,
+    /** Claimed by the sender; committed before the mail is handed to a transport. */
+    SENDING,
+    SENT,
+    /** Not sent: at send time the person no longer wanted or could receive it. */
+    SUPPRESSED,
+    /** The transport failed after handoff; resending could duplicate the mail. */
+    UNCERTAIN,
+    /** Given up after the retry limit; the mail never left. */
+    FAILED,
     NOT_SENT_PREFERENCE_OFF,
     NOT_SENT_NO_ADDRESS,
     NOT_SENT_NO_SENDER_TENANT;

@@ -10,7 +10,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -30,9 +29,7 @@ public class ServiceNoticeDraftService {
       Pattern.compile(
           "(?i)(?=.{4,253}\\.?$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+"
               + "[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?\\.?");
-  private static final Pattern UNRESOLVED =
-      Pattern.compile("\\{\\{[a-zA-Z0-9.]+}}", Pattern.MULTILINE);
-  private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT);
+  private static final Pattern UNRESOLVED = ServiceNoticeContent.UNRESOLVED;
 
   private final ServiceNoticeCampaignRepository campaigns;
   private final OrisoEmailRenderer renderer;
@@ -126,14 +123,11 @@ public class ServiceNoticeDraftService {
     // A platform notice has no recipient tenant yet. The platform's actual configured branding
     // is resolved once and the same generated plain-dialect renderer used by delivered mail.
     var values = new LinkedHashMap<>(brandValues.values(branding.resolve(0L), null));
-    values.put("maintenanceDate", draft.getMaintenanceDate().toString());
-    values.put("maintenanceStart", draft.getMaintenanceStart().format(TIME));
-    values.put("maintenanceEnd", draft.getMaintenanceEnd().format(TIME));
-    values.put("statusUrl", draft.getStatusUrl());
-    var rendered = renderer.renderForPreview("systemhinweis", requestedTone, values);
+    values.putAll(ServiceNoticeContent.maintenanceValues(draft));
+    var rendered = renderer.renderForPreview(ServiceNoticeContent.TEMPLATE, requestedTone, values);
     var preheader =
         renderer
-            .preheaderForPreview("systemhinweis", requestedTone)
+            .preheaderForPreview(ServiceNoticeContent.TEMPLATE, requestedTone)
             .replace("{{maintenanceDate}}", values.get("maintenanceDate"))
             .replace("{{maintenanceStart}}", values.get("maintenanceStart"))
             .replace("{{maintenanceEnd}}", values.get("maintenanceEnd"));

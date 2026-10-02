@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.model.ServiceNoticeRecipient;
 import de.caritas.cob.userservice.api.model.ServiceNoticeRecipient.MailStatus;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.ServiceNoticeCampaignRepository;
 import de.caritas.cob.userservice.api.port.out.ServiceNoticeRecipientRepository;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
@@ -62,6 +63,8 @@ class ServiceNoticeConfirmationIT {
   @Autowired private ServiceNoticeRecipientRepository recipients;
   @Autowired private EntityManager entityManager;
   @MockitoBean private EventNotificationService feed;
+  // The audience reads account languages only for mail; confirmation never needs one.
+  @MockitoBean private IdentityLocaleLookup locales;
 
   @BeforeEach
   void twoCentresWithOneAdminEachAndOneWithoutAnAddress() {
