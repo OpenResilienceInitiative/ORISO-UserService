@@ -32,9 +32,9 @@ import org.springframework.web.client.HttpClientErrorException;
  *       wordmark. Stored inline images are exposed through TenantService's public HTTP asset
  *       endpoint because mail clients block {@code data:} URIs.
  *   <li><b>Brand colour</b> — tenant {@code theming.primaryColor} → platform theming {@code
- *       primaryColor} → named configuration error. The colour is used as configured; the button
- *       label and link colour are derived from it in {@link EmailBranding} (see {@link
- *       #resolveAccentColor(RestrictedTenantDTO)}).
+ *       primaryColor} → neutral installation default {@value #DEFAULT_PRIMARY_COLOR}. The colour is
+ *       used as configured; the button label and link colour are derived from it in {@link
+ *       EmailBranding} (see {@link #resolveAccentColor(RestrictedTenantDTO)}).
  *   <li><b>Footer</b> — the imprint/privacy URLs built from the same tenant resolved above (via
  *       {@link TenantTemplateSupplier#getTenantBaseUrl(RestrictedTenantDTO)}, never from the
  *       ambient {@link TenantContext}). Platform mail uses the configured application URL. Missing
@@ -56,6 +56,12 @@ public class EmailBrandingResolver {
 
   @Value("${multitenancy.enabled}")
   private boolean multitenancyEnabled;
+
+  /**
+   * Neutral installation default, used only when neither tenant nor platform theming has a usable
+   * colour (ADR-026 amendment 2026-10-02). Not a brand colour; exempt from the too-pale rule.
+   */
+  static final String DEFAULT_PRIMARY_COLOR = "#000000";
 
   /** Bound on distinct keys held, so a pathological tenant id space cannot grow this unbounded. */
   private static final int MAX_CACHE_ENTRIES = 1000;
@@ -287,15 +293,17 @@ public class EmailBrandingResolver {
    * 2026-10-02, the same token logic as the web frontend).
    *
    * <p>Chain: the tenant's {@code theming.primaryColor} → the platform tenant's {@code
-   * theming.primaryColor} → a named configuration error. A colour counts as usable under the web
+   * theming.primaryColor} → {@link #DEFAULT_PRIMARY_COLOR}. A colour counts as usable under the web
    * app's own rule, {@link EmailColors#usablePrimary(String)}: a hex colour that is not too pale. A
    * light chromatic colour such as yellow is usable; the button label is derived from it later (see
    * {@link EmailBranding#buttonLabelColor()}), not by rejecting the colour. TenantService already
    * inherits missing theming values from the platform tenant, so the second step only matters for a
    * tenant colour that is present but unusable (near-grey) or a tenant that does not exist yet.
    *
-   * <p>No brand colour is hardcoded here, so an installation without any usable colour stops
-   * instead of sending mail in another installation's red.
+   * <p>The default is pure black, a neutral installation value and not a brand colour, so an
+   * installation without any usable colour sends black mail instead of failing or borrowing another
+   * installation's red. It is chroma 0, so it deliberately bypasses the "too pale" filter; its
+   * button label is white (21:1).
    *
    * <p>{@code theming.accent} and {@code theming.signal} are read from TenantService but not used:
    * mail has no dark rendering yet (the layout opts out with {@code color-scheme: light only}), and
@@ -328,10 +336,11 @@ public class EmailBrandingResolver {
         return inherited;
       }
     }
-    throw new IllegalStateException(
-        "EMAIL_BRANDING_PRIMARY_COLOR is missing: neither the tenant nor the platform theming has a"
-            + " usable primaryColor (a #rrggbb colour that is not near-grey); set the platform"
-            + " theming color before sending email");
+    log.warn(
+        "Neither the tenant nor the platform theming has a usable primaryColor; sending mail with"
+            + " the neutral default {}",
+        DEFAULT_PRIMARY_COLOR);
+    return DEFAULT_PRIMARY_COLOR;
   }
 
   private String resolveFooterUrl(RestrictedTenantDTO tenant, String fallbackPath) {

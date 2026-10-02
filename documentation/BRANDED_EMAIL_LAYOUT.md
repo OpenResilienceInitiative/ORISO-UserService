@@ -35,7 +35,7 @@ targets still come from `InviteAcceptUrlBuilder`.
 |---|---|
 | Brand name | tenant name → configured `email.branding.name`; sending fails clearly if both are absent |
 | Logo | tenant `theming.logo` → tenant `theming.associationLogo` → `email.branding.logo-url` → **text wordmark** |
-| Brand colour | tenant `theming.primaryColor` → platform theming `primaryColor` → named error `EMAIL_BRANDING_PRIMARY_COLOR` (no built-in colour) |
+| Brand colour | tenant `theming.primaryColor` → platform theming `primaryColor` → neutral installation default `#000000` (black, white button label; not a brand colour) |
 | Imprint / privacy | `TenantTemplateSupplier` attributes → `${app.base.url}/impressum`, `/datenschutz` |
 
 Only absolute `http(s)` URLs are accepted as a logo. Tenant theming may store an inline base64
@@ -60,9 +60,10 @@ Mail colours follow the same design-token logic as the web frontend
 - a seed the frontend ignores as **too pale** (near-grey, HCT chroma below 12) is ignored in mail
   too, so both reject the same colours;
 - no usable tenant colour → the platform tenant's `theming.primaryColor` (TenantService already
-  inherits missing theming values) → if that is unusable as well, the mail fails with the named
-  configuration error `EMAIL_BRANDING_PRIMARY_COLOR`, like the organisation name does with
-  `EMAIL_BRANDING_NAME`. No brand colour is hardcoded in the mail code.
+  inherits missing theming values) → if that is unusable as well, the neutral installation default
+  `#000000` (black, white button label). It is the installation value, not a brand colour, and it is
+  exempt from the "too pale" rule that would otherwise reject chroma 0. Platform mail without a
+  configured colour therefore renders black; a warning is logged. No error is raised.
 - `theming.accent` and `theming.signal` are read from TenantService (`services/tenantservice.yaml`)
   but not used yet: mail has no dark rendering.
 

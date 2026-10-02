@@ -10,8 +10,8 @@ package de.caritas.cob.userservice.api.service.email.layout;
  * @param brandName tenant name, falling back to the configured platform name
  * @param logoUrl absolute logo URL, or {@code null} to render the text wordmark instead
  * @param accentColor the tenant's primary colour as configured (ADR-026 amendment 2026-10-02): the
- *     header stripe and the button fill. There is no built-in default; {@link
- *     EmailBrandingResolver} fails with a named configuration error when no colour is usable.
+ *     header stripe and the button fill. When no tenant or platform colour is usable, {@link
+ *     EmailBrandingResolver} supplies the neutral default {@code #000000}.
  * @param imprintUrl legal/imprint pointer for the footer, or {@code null}
  * @param privacyUrl privacy pointer for the footer, or {@code null}
  */

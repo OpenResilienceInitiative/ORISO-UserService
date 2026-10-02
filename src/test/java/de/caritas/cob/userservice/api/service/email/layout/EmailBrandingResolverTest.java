@@ -577,41 +577,57 @@ class EmailBrandingResolverTest {
     assertThat(branding.logoUrl()).isNull();
   }
 
+  /** A near-grey platform colour is unusable under the web rule too; the default takes over. */
   @Test
   void resolve_Should_applyTheWebRuleToThePlatformColourToo() {
     givenNoTemplateAttributes();
     givenPlatformPrimaryColour("#808080");
 
-    assertThatThrownBy(() -> resolver("").resolve(null))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("EMAIL_BRANDING_PRIMARY_COLOR");
+    assertThat(resolver("").resolve(null).accentColor()).isEqualTo("#000000");
   }
 
-  /** No colour anywhere: a named configuration error, never a built-in brand colour. */
+  /** No colour anywhere: the neutral installation default, black with a white label. */
   @Test
-  void resolve_Should_failWithANamedConfigurationError_When_NoTenantNorPlatformColourIsUsable() {
+  void resolve_Should_useTheNeutralDefault_When_NoTenantNorPlatformColourIsUsable() {
     givenNoTemplateAttributes();
     givenPlatformPrimaryColour(null);
     when(tenantService.getRestrictedTenantDataFresh(9L)).thenReturn(tenant("Ost", null));
 
-    assertThatThrownBy(() -> resolver("").resolve(9L))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("EMAIL_BRANDING_PRIMARY_COLOR")
-        .hasMessageContaining("platform");
-    assertThatThrownBy(() -> resolver("").resolve(null))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("EMAIL_BRANDING_PRIMARY_COLOR");
+    EmailBranding tenantMail = resolver("").resolve(9L);
+    EmailBranding platformMail = resolver("").resolve(null);
+
+    assertThat(tenantMail.accentColor()).isEqualTo("#000000");
+    assertThat(tenantMail.buttonLabelColor()).isEqualTo("#ffffff");
+    assertThat(platformMail.accentColor()).isEqualTo("#000000");
+    assertThat(platformMail.buttonLabelColor()).isEqualTo("#ffffff");
   }
 
   @Test
-  void resolve_Should_failWithTheNamedError_When_ThePlatformTenantCannotBeLoaded() {
+  void resolve_Should_useTheNeutralDefault_When_ThePlatformTenantCannotBeLoaded() {
     givenNoTemplateAttributes();
     when(tenantService.getPlatformTenantDataFresh()).thenThrow(new IllegalStateException("down"));
     when(tenantService.getRestrictedTenantDataFresh(9L)).thenReturn(tenant("Ost", null));
 
-    assertThatThrownBy(() -> resolver("").resolve(9L))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("EMAIL_BRANDING_PRIMARY_COLOR");
+    EmailBranding branding = resolver("").resolve(9L);
+
+    assertThat(branding.accentColor()).isEqualTo("#000000");
+    assertThat(branding.buttonLabelColor()).isEqualTo("#ffffff");
+  }
+
+  /** Near-grey tenant colour: platform colour first, then the default, never the grey itself. */
+  @Test
+  void resolve_Should_fallBackToThePlatformThenToTheDefault_When_TenantColourIsNearGrey() {
+    givenNoTemplateAttributes();
+    Theming theming = new Theming();
+    theming.setPrimaryColor("#8a8a8a");
+    when(tenantService.getRestrictedTenantDataFresh(9L)).thenReturn(tenant("Ost", theming));
+
+    assertThat(resolver("").resolve(9L).accentColor()).isEqualTo(PLATFORM_COLOUR);
+
+    givenPlatformPrimaryColour(null);
+    EmailBranding branding = resolver("").resolve(9L);
+    assertThat(branding.accentColor()).isEqualTo("#000000");
+    assertThat(branding.buttonLabelColor()).isEqualTo("#ffffff");
   }
 
   @Test
