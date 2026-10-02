@@ -491,7 +491,7 @@ class UserController2faE2EIT {
 
     var urlSuffix =
         "/auth/realms/test/otp-config/setup-otp-mail/" + keycloakUsername(consultant.getUsername());
-    verify(keycloakRestTemplate, times(2))
+    verify(keycloakRestTemplate, times(1))
         .postForEntity(endsWith(urlSuffix), otpSetupCaptor.capture(), eq(SuccessWithEmail.class));
 
     var otpSetupDTO = otpSetupCaptor.getValue().getBody();

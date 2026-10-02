@@ -43,7 +43,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReserva
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailDelivery;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -187,7 +189,7 @@ class AccountInviteServiceTest {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenAnswer(
             invocation -> "https://app.example.org/account-invite/" + invocation.getArgument(1));
-    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenAnswer(
             invocation ->
                 new InviteMailSendReceipt(
@@ -234,6 +236,57 @@ class AccountInviteServiceTest {
     assertThat(deliveryCaptor.getValue().getBodySnapshot()).doesNotContain(result.rawToken());
     assertThat(deliveryCaptor.getValue().getRecipientSnapshot()).isEqualTo("owner@example.org");
     assertThat(deliveryCaptor.getValue().getStatus()).isEqualTo(InviteEmailDeliveryStatus.SENT);
+  }
+
+  @Test
+  void sendInvite_Should_SendFromTheTraegerOwnTransport_When_TheTenantExists() {
+    var origin = sentOriginFor(null);
+
+    assertThat(origin)
+        .isEqualTo(InviteMailOrigin.of(7L, TenantSystemEmailDelivery.Purpose.ACCOUNT_INVITE));
+  }
+
+  @Test
+  void sendInvite_Should_SendFromThePlatform_When_TheTraegerIsOnlyReserved() {
+    var origin = sentOriginFor("res-token-7");
+
+    assertThat(origin)
+        .isEqualTo(InviteMailOrigin.platform(TenantSystemEmailDelivery.Purpose.ACCOUNT_INVITE));
+  }
+
+  private InviteMailOrigin sentOriginFor(String tenantReservationToken) {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(10L)
+            .tenantId(7L)
+            .tenantIdReservationToken(tenantReservationToken)
+            .recipientEmail("owner@example.org")
+            .firstName("Ada")
+            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(20L)
+            .kind(InviteEmailTemplateKind.TENANT_INVITE)
+            .subject("Welcome {{firstName}}")
+            .body("Use {{inviteLink}}")
+            .active(true)
+            .build();
+    when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    givenSuccessfulDispatch();
+
+    service.sendInvite(new SendInviteCommand(10L, 20L));
+
+    ArgumentCaptor<InviteMailOrigin> origin = ArgumentCaptor.forClass(InviteMailOrigin.class);
+    verify(inviteMailDispatchService)
+        .send(any(), any(), any(), any(), eq(7L), any(), origin.capture());
+    return origin.getValue();
   }
 
   @Test
@@ -411,7 +464,7 @@ class AccountInviteServiceTest {
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://app.example.org/admin/tenant-onboarding/x");
-    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenThrow(new SmtpSendException("SMTP refused the message"));
 
     assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(10L, 20L)))
@@ -440,7 +493,7 @@ class AccountInviteServiceTest {
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any())).thenReturn("https://x/y");
-    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenThrow(new SmtpSendException("SMTP refused the message"));
     org.mockito.Mockito.doThrow(new IllegalStateException("audit down"))
         .when(deliveryFailureRecorder)
@@ -475,7 +528,7 @@ class AccountInviteServiceTest {
     inOrder.verify(accountInviteRepository).saveAndFlush(invite);
     inOrder
         .verify(inviteMailDispatchService)
-        .send(eq("owner@example.org"), any(), any(), any(), any(), any());
+        .send(eq("owner@example.org"), any(), any(), any(), any(), any(), any());
     inOrder.verify(deliveryRepository).save(any());
   }
 
@@ -538,7 +591,7 @@ class AccountInviteServiceTest {
     when(accountInviteRepository.findById(11L))
         .thenAnswer(invocation -> Optional.ofNullable(replacement[0]));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any())).thenReturn("https://x/y");
-    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenThrow(
             new SmtpSendException(
                 SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
@@ -590,7 +643,7 @@ class AccountInviteServiceTest {
     when(accountInviteRepository.findById(11L))
         .thenAnswer(invocation -> Optional.ofNullable(replacement[0]));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any())).thenReturn("https://x/y");
-    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenAnswer(
             invocation -> {
               // An admin revokes the replacement while the mail server refuses the message.
@@ -1617,7 +1670,7 @@ class AccountInviteServiceTest {
         .when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://app.oriso.org/account-invite/token");
     lenient()
-        .when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+        .when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenAnswer(
             invocation ->
                 new InviteMailSendReceipt(
@@ -1996,7 +2049,7 @@ class AccountInviteServiceTest {
     // Removing the token from the body must not remove the link from the mail: the
     // dispatcher still receives the accept URL as the primary action.
     verify(inviteMailDispatchService)
-        .send(any(), any(), any(), eq(result.acceptUrl()), any(), any());
+        .send(any(), any(), any(), eq(result.acceptUrl()), any(), any(), any());
   }
 
   @Test
@@ -2020,7 +2073,7 @@ class AccountInviteServiceTest {
         .thenAnswer(
             invocation ->
                 "https://app.example.org/admin/tenant-onboarding/" + invocation.getArgument(1));
-    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("a@example.org", Instant.now()));
 
     var result = service.sendInvite(new SendInviteCommand(1L, 20L));

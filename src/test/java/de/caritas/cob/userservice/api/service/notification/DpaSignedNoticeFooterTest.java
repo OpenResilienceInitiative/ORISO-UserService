@@ -161,7 +161,11 @@ class DpaSignedNoticeFooterTest {
                 "smtp-user", "smtp-pass"),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(
-                brandingResolver, senderOrganisations));
+                brandingResolver, senderOrganisations),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .platformRoutes(),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .unusedRelay());
     DpaSignedNoticeService service =
         new DpaSignedNoticeService(
             signatureReadClient,
