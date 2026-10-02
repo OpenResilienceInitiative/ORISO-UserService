@@ -14,7 +14,15 @@
   <changeSet id="20261001-invite-email-template-system-defaults-seed" author="oriso">
     <sqlFile path="seed-system-defaults.sql" relativeToChangelogFile="true" encoding="UTF-8"/>
     <rollback>
-      <sql>DELETE FROM invite_email_template WHERE system_default = TRUE AND tenant_id IS NULL</sql>
+      <!-- Only the rows this seed writes, found by their seeded names: a default that already
+           existed (and so was skipped) or was renamed keeps its row, and the column drop turns
+           it into an ordinary platform template. -->
+      <sql>DELETE FROM invite_email_template
+        WHERE system_default = TRUE AND tenant_id IS NULL
+          AND name IN ('Standardvorlage Berater-Einladung (Deutsch)',
+                       'Default counsellor invite (English)',
+                       'Standardvorlage Träger-Einladung (Deutsch)',
+                       'Default organisation invite (English)')</sql>
     </rollback>
   </changeSet>
 </databaseChangeLog>

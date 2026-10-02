@@ -91,6 +91,29 @@ class InviteEmailTemplateSystemDefaultsMigrationTest {
     }
   }
 
+  @Test
+  void rollback_Should_KeepADefaultItDidNotSeed() throws Exception {
+    try (Connection c = newDatabase()) {
+      createTableAsBefore(c);
+      try (var sql = c.createStatement()) {
+        sql.execute(
+            "ALTER TABLE invite_email_template ADD COLUMN system_default BIT NOT NULL DEFAULT 0");
+        sql.execute(
+            "INSERT INTO invite_email_template (kind, name, language, subject, body, active,"
+                + " create_date, system_default) VALUES ('COUNSELLOR_INVITE', 'Edited', 'de',"
+                + " 'Edited subject', 'Edited body', TRUE, CURRENT_TIMESTAMP, TRUE)");
+      }
+      try (var liquibase = liquibase(c)) {
+        liquibase.update(new Contexts(), new LabelExpression());
+        liquibase.rollback(2, new Contexts(), new LabelExpression());
+
+        // The seed skipped this row, so the rollback must not take it with the seeded ones.
+        assertThat(count(c, "1 = 1")).isEqualTo(1);
+        assertThat(count(c, "name = 'Edited'")).isEqualTo(1);
+      }
+    }
+  }
+
   private static Connection newDatabase() throws Exception {
     return DriverManager.getConnection(
         "jdbc:h2:mem:invite-template-defaults-" + UUID.randomUUID() + ";MODE=MariaDB", "sa", "");
