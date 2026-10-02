@@ -17,11 +17,13 @@ import de.caritas.cob.userservice.api.port.out.ServiceNoticeCampaignRepository;
 import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeAudience.DryRun;
 import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeAudience.MailDecision;
 import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeAudience.Member;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.NoSuchElementException;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,10 +50,17 @@ class ServiceNoticeAudienceIT {
 
   @BeforeEach
   void startFromAnEmptyAdminTable() {
+    // A platform admin's request and the scheduler both run in the technical tenant 0.
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
     // The shared test seed contains admins; this test owns the whole population.
     adminAgencies.deleteAll();
     admins.deleteAll();
     entityManager.flush();
+  }
+
+  @AfterEach
+  void clearTenant() {
+    TenantContext.clear();
   }
 
   @Test
