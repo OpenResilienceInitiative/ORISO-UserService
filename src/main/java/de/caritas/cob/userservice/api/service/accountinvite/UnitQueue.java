@@ -13,8 +13,14 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.InviteDelivery.Prepared;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -70,22 +76,75 @@ public class UnitQueue {
 
   /** Derived on read, so the problem clears once a new admin invite exists. */
   public InviteQueueProblem problemOf(AccountInvite invite) {
-    if (invite == null
-        || invite.getStatus() != AccountInviteStatus.WAITING_FOR_UNIT
-        || invite.getWaitingForUnit() == null) {
+    if (invite == null) {
       return null;
     }
-    Long unitId =
-        invite.getWaitingForUnit() == InviteUnitType.AGENCY
-            ? invite.getAgencyId()
-            : invite.getTenantId();
-    if (unitId == null
-        || pendingUnitAdmins(
-                invite.getWaitingForUnit(), unitId, invite.getTenantId(), invite.getId())
-            .isEmpty()) {
-      return InviteQueueProblem.NO_UNIT_ADMIN;
+    return problemsOf(List.of(invite)).get(invite.getId());
+  }
+
+  /**
+   * {@link #problemOf} for a whole list in at most two queries, however long it is. Keyed by invite
+   * ID; invites without a problem are absent.
+   */
+  public Map<Long, InviteQueueProblem> problemsOf(Collection<AccountInvite> invites) {
+    List<AccountInvite> waiting = invites.stream().filter(UnitQueue::waits).toList();
+    LocalDateTime now = LocalDateTime.now();
+    Set<Long> agencyIds = unitIdsOf(waiting, InviteUnitType.AGENCY);
+    Map<Long, List<AccountInvite>> agencyAdmins =
+        agencyIds.isEmpty()
+            ? Map.of()
+            : accountInviteRepository
+                .findPendingAgencyAdminsIn(agencyIds, ReservationLedger.PENDING_STATUSES, now)
+                .stream()
+                .collect(Collectors.groupingBy(AccountInvite::getAgencyId));
+    Set<Long> tenantIds = unitIdsOf(waiting, InviteUnitType.TENANT);
+    Map<Long, List<AccountInvite>> tenantAdmins =
+        tenantIds.isEmpty()
+            ? Map.of()
+            : accountInviteRepository
+                .findPendingTenantAdminsIn(tenantIds, ReservationLedger.PENDING_STATUSES, now)
+                .stream()
+                .collect(Collectors.groupingBy(AccountInvite::getTenantId));
+    Map<Long, InviteQueueProblem> problems = new HashMap<>();
+    for (AccountInvite invite : waiting) {
+      boolean agency = invite.getWaitingForUnit() == InviteUnitType.AGENCY;
+      Long unitId = unitIdOf(invite);
+      List<AccountInvite> admins =
+          unitId == null
+              ? List.of()
+              : (agency ? agencyAdmins : tenantAdmins).getOrDefault(unitId, List.of());
+      boolean hasAdmin =
+          admins.stream()
+              .anyMatch(
+                  admin ->
+                      !Objects.equals(admin.getId(), invite.getId())
+                          && (!agency
+                              || invite.getTenantId() == null
+                              || invite.getTenantId().equals(admin.getTenantId())));
+      if (!hasAdmin) {
+        problems.put(invite.getId(), InviteQueueProblem.NO_UNIT_ADMIN);
+      }
     }
-    return null;
+    return problems;
+  }
+
+  private static boolean waits(AccountInvite invite) {
+    return invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT
+        && invite.getWaitingForUnit() != null;
+  }
+
+  private static Long unitIdOf(AccountInvite invite) {
+    return invite.getWaitingForUnit() == InviteUnitType.AGENCY
+        ? invite.getAgencyId()
+        : invite.getTenantId();
+  }
+
+  private static Set<Long> unitIdsOf(List<AccountInvite> waiting, InviteUnitType unit) {
+    return waiting.stream()
+        .filter(invite -> invite.getWaitingForUnit() == unit)
+        .map(UnitQueue::unitIdOf)
+        .filter(Objects::nonNull)
+        .collect(Collectors.toSet());
   }
 
   /**
@@ -194,11 +253,7 @@ public class UnitQueue {
       invite.setAgencyId(ledger.reserveAgencyOnRelease(invite));
     }
     InviteEmailTemplate template =
-        manualTemplate != null
-            ? manualTemplate
-            : invite.getQueuedTemplateId() == null
-                ? null
-                : templateRepository.findById(invite.getQueuedTemplateId()).orElse(null);
+        manualTemplate != null ? manualTemplate : queuedTemplateOf(invite);
     if (template == null) {
       return new Prepared(
           accountInviteRepository.saveAndFlush(invite), null, null, null, null, null, now);
@@ -210,13 +265,40 @@ public class UnitQueue {
     return prepared.withInvite(accountInviteRepository.saveAndFlush(invite));
   }
 
+  /**
+   * The release runs without a caller, so the stored id is checked against the invite's own Träger:
+   * another Träger's text is not mailed, the invite becomes a DRAFT to be sent by hand.
+   */
+  private InviteEmailTemplate queuedTemplateOf(AccountInvite invite) {
+    if (invite.getQueuedTemplateId() == null) {
+      return null;
+    }
+    InviteEmailTemplate template =
+        templateRepository.findById(invite.getQueuedTemplateId()).orElse(null);
+    if (template != null
+        && template.getTenantId() != null
+        && !template.getTenantId().equals(invite.getTenantId())) {
+      log.warn(
+          "Waiting invite {} names template {} of another Träger; released without mail",
+          invite.getId(),
+          template.getId());
+      return null;
+    }
+    return template;
+  }
+
   /** SMTP confirmed the mail was not sent: a DRAFT without a link, to be sent by hand. */
   private void returnToDraft(Long inviteId, SmtpSendException sendFailure) {
     try {
       newTransaction()
           .executeWithoutResult(
               transaction -> {
-                AccountInvite invite = findInvite(inviteId);
+                AccountInvite invite =
+                    InviteRowHold.lock(accountInviteRepository, inviteId).orElse(null);
+                // A revoke that landed while SMTP was failing wins; the draft must not revive it.
+                if (invite == null || invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
+                  return;
+                }
                 invite.setStatus(AccountInviteStatus.DRAFT);
                 invite.setTokenHash(null);
                 invite.setUpdateDate(LocalDateTime.now());

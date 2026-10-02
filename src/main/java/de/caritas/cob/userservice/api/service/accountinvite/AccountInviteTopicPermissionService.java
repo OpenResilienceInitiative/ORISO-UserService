@@ -38,7 +38,8 @@ public class AccountInviteTopicPermissionService {
     if (inviteId == null) {
       throw new BadRequestException("inviteId is required");
     }
-    AccountInvite invite = accountInviteRepository.findById(inviteId).orElse(null);
+    // Locked, so a racing accept or revoke is waited for and never written over.
+    AccountInvite invite = InviteRowHold.lock(accountInviteRepository, inviteId).orElse(null);
     if (invite == null) {
       accessPolicy.authorizeMissing(inviteId);
       throw new NotFoundException("Account invite not found");

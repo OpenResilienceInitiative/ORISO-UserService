@@ -143,7 +143,7 @@ public class CreateConsultantSagaIT {
         .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
         .when(keycloakService)
-        .updatePassword(any(), any());
+        .updateTemporaryPassword(any(), any());
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setTenantId(TENANT_ID);
     createConsultantDTO.setUsername(VALID_USERNAME);

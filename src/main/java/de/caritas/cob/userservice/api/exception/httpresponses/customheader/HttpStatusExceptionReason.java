@@ -19,6 +19,8 @@ public enum HttpStatusExceptionReason {
   PASSWORD_NOT_VALID,
   CONSULTANT_IDENTITY_ALREADY_GRANTED,
   CHAT_RECOVERY_POLICY_UNAVAILABLE,
+  DPA_NEW_COUNSELLING_NOT_ALLOWED,
+  DPA_POLICY_UNAVAILABLE,
   ROLE_NOT_FOUND,
   /** The admin already holds the role they tried to assign themselves. */
   SELF_ASSIGNMENT_ALREADY_EXISTS,
@@ -35,5 +37,9 @@ public enum HttpStatusExceptionReason {
   /** The change would leave a new unit without any pending admin invite. */
   ONLY_UNIT_ADMIN,
   /** The account already holds that role, or a higher admin role. */
-  ROLE_ALREADY_GRANTED
+  ROLE_ALREADY_GRANTED,
+  /** Another request is changing this invite right now; try again. */
+  INVITE_BUSY,
+  /** The invite changed while the invitee filled in the wizard; reload the link. */
+  INVITE_CHANGED
 }

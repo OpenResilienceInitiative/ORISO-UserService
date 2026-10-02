@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -22,6 +23,9 @@ public class AcceptTimeAgencyCheck {
   private final @NonNull IdentityAuthentication identityAuthentication;
   private final @NonNull IdentityClientConfig identityClientConfig;
 
+  @Value("${multitenancy.enabled}")
+  private boolean multiTenancyEnabled;
+
   /** Logs in the Keycloak technical user and checks with that token. */
   public void requireLiveAgency(AccountInvite invite) {
     requireLiveAgency(invite, serviceToken());
@@ -29,7 +33,8 @@ public class AcceptTimeAgencyCheck {
 
   /**
    * Answers 404 unless the agency exists, is not deleted and belongs to the invite's tenant. The
-   * service token bypasses AgencyService's tenant filter, so the tenant is compared here.
+   * service token bypasses AgencyService's tenant filter, so the tenant is compared here; with
+   * multitenancy an agency without a tenant fails closed.
    */
   public void requireLiveAgency(AccountInvite invite, String serviceToken) {
     TechnicalAccessTokenContext.runWith(
@@ -38,13 +43,18 @@ public class AcceptTimeAgencyCheck {
             agencyFacts
                 .find(invite.getAgencyId())
                 .filter(agency -> !agency.deleted())
-                .filter(
-                    agency ->
-                        agency.tenantId() == null || agency.tenantId().equals(invite.getTenantId()))
+                .filter(agency -> belongsToInviteTenant(agency, invite))
                 .orElseThrow(
                     () ->
                         new NotFoundException(
                             "agencyId " + invite.getAgencyId() + " does not exist")));
+  }
+
+  private boolean belongsToInviteTenant(AgencyFacts.Agency agency, AccountInvite invite) {
+    if (agency.tenantId() == null) {
+      return !multiTenancyEnabled;
+    }
+    return agency.tenantId().equals(invite.getTenantId());
   }
 
   /** The Keycloak technical user's access token; its failure text stays out of the invite. */

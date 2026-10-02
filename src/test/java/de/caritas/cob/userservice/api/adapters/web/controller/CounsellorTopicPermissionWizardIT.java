@@ -41,6 +41,7 @@ import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -93,6 +94,7 @@ class CounsellorTopicPermissionWizardIT {
   @Autowired private TenantFixtures fixtures;
   @Autowired private MockMvc mockMvc;
   @Autowired private AccountInviteRepository accountInviteRepository;
+  private final List<Long> seededInviteIds = new ArrayList<>();
   @Autowired private ConsultantRepository consultantRepository;
 
   @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
@@ -115,7 +117,8 @@ class CounsellorTopicPermissionWizardIT {
         .thenAnswer(
             invocation ->
                 Optional.of(
-                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
+                    new AgencyFacts.Agency(
+                        invocation.getArgument(0), INVITE_TENANT, false, List.of())));
     agencyOffers(AGENCY_TOPIC_A, AGENCY_TOPIC_B);
     when(topicService.getAllActiveTopicsMap())
         .thenReturn(
@@ -136,6 +139,8 @@ class CounsellorTopicPermissionWizardIT {
   @AfterEach
   void removeTheCounsellor() {
     fixtures.removeAll();
+    // The invite table is shared: only the invites this class seeded go.
+    Tenants.acrossAll(() -> seededInviteIds.forEach(accountInviteRepository::deleteById));
   }
 
   // --- resolve -----------------------------------------------------------------------------------
@@ -309,23 +314,25 @@ class CounsellorTopicPermissionWizardIT {
 
   private String seedInvite(TopicPermission topicPermission, Long departmentId) throws Exception {
     String token = "topic-permission-token-" + UUID.randomUUID();
-    accountInviteRepository.save(
-        AccountInvite.builder()
-            .targetRole(AccountInviteTargetRole.COUNSELLOR)
-            .tenantId(INVITE_TENANT)
-            .recipientEmail("topic.permission." + UUID.randomUUID() + "@oriso.org")
-            .firstName("Lisa")
-            .lastName("Simpson")
-            .agencyId(AGENCY_ID)
-            .departmentId(departmentId)
-            .tokenHash(sha256(token))
-            .expiresAt(LocalDateTime.now().plusDays(1))
-            .status(AccountInviteStatus.EMAIL_SENT)
-            .emailVerificationStatus(EmailVerificationStatus.PENDING)
-            .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
-            .topicPermission(topicPermission)
-            .createDate(LocalDateTime.now())
-            .build());
+    AccountInvite invite =
+        accountInviteRepository.save(
+            AccountInvite.builder()
+                .targetRole(AccountInviteTargetRole.COUNSELLOR)
+                .tenantId(INVITE_TENANT)
+                .recipientEmail("topic.permission." + UUID.randomUUID() + "@example.org")
+                .firstName("Lisa")
+                .lastName("Simpson")
+                .agencyId(AGENCY_ID)
+                .departmentId(departmentId)
+                .tokenHash(sha256(token))
+                .expiresAt(LocalDateTime.now().plusDays(1))
+                .status(AccountInviteStatus.EMAIL_SENT)
+                .emailVerificationStatus(EmailVerificationStatus.PENDING)
+                .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+                .topicPermission(topicPermission)
+                .createDate(LocalDateTime.now())
+                .build());
+    seededInviteIds.add(invite.getId());
     return token;
   }
 

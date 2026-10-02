@@ -39,7 +39,18 @@ public class CounsellorInviteProvisioningService {
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
+    return acceptInvite(rawToken, command, WizardAccept.NONE);
+  }
+
+  /** The wizard's routing is re-checked and its Beratungsstelle created while the row is held. */
+  @Transactional(noRollbackFor = RuntimeException.class)
+  public AccountInvite acceptInvite(
+      String rawToken, ProvisionCounsellorCommand command, WizardAccept wizard) {
     AccountInvite invite = accountInviteService.findInviteByToken(rawToken);
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("This link is for existing-account setup");
+    }
+    wizard.requireUnchanged(invite);
     // A counselling agency admin comes here only via the wizard, which asks for the admin grant.
     boolean agencyAdminAlsoCounselling =
         invite.getTargetRole() == AccountInviteTargetRole.AGENCY_ADMIN
@@ -62,6 +73,8 @@ public class CounsellorInviteProvisioningService {
       throw new ConflictException("Account invite provisioning is already in progress");
     }
     validate(command, invite);
+    InviteRowHold.hold(accountInviteRepository, invite, LocalDateTime.now());
+    wizard.createUnit().run();
 
     invite.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
     invite.setProvisioningFailureReason(null);

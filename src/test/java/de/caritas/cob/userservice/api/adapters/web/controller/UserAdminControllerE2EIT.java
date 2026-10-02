@@ -20,6 +20,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
@@ -29,15 +30,21 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.ConsultingTypeServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.AdminAgency;
+import de.caritas.cob.userservice.api.model.ConsultantTopic;
+import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -46,7 +53,9 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
@@ -54,17 +63,33 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup;
 import de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
 import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
+import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.Cookie;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 import net.minidev.json.JSONArray;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -85,7 +110,10 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestTemplate;
 
 @SpringBootTest
@@ -118,7 +146,15 @@ class UserAdminControllerE2EIT {
 
   @Autowired private AdminRepository adminRepository;
 
+  @Autowired private AccountInviteRepository accountInvites;
+
+  @Autowired private PlatformTransactionManager transactions;
+
   @Autowired private JdbcTemplate jdbcTemplate;
+
+  @Autowired private ConsultantRepository consultantRepository;
+
+  @Autowired private EntityManager entityManager;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
 
@@ -139,6 +175,8 @@ class UserAdminControllerE2EIT {
   @Qualifier("topicControllerApiPrimary")
   private TopicControllerApi topicControllerApi;
 
+  @MockitoBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
+
   @MockitoBean
   @Qualifier("mailsControllerApi")
   private MailsControllerApi mailsControllerApi;
@@ -156,6 +194,7 @@ class UserAdminControllerE2EIT {
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityLocaleLookup.class,
+        IdentityPasswordChangeRequirement.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,
@@ -168,11 +207,32 @@ class UserAdminControllerE2EIT {
 
   @MockitoBean TenantService tenantService;
 
+  @MockitoBean private EmailBrandingResolver branding;
+
+  @MockitoBean private TenantEmailBrandValues brandValues;
+
+  @MockitoBean private OrisoEmailRenderer renderer;
+
+  @MockitoBean private InviteMailDispatchService setupMail;
+
+  private String createdIdentityId;
+  private String cleanupIdentityId;
+  private boolean cleanupConsultant;
+
   private User user;
 
   @AfterEach
   void reset() {
-    identityConfig.setDisplayNameAllowedForConsultants(false);
+    try {
+      if (cleanupConsultant) {
+        ExistingAccountSetupFixtureCleanup.consultant(
+            jdbcTemplate, transactions, cleanupIdentityId);
+      } else {
+        ExistingAccountSetupFixtureCleanup.admin(jdbcTemplate, transactions, cleanupIdentityId);
+      }
+    } finally {
+      identityConfig.setDisplayNameAllowedForConsultants(false);
+    }
   }
 
   @BeforeEach
@@ -186,14 +246,71 @@ class UserAdminControllerE2EIT {
     when(consultingTypeServiceApiControllerFactory.createControllerApi())
         .thenReturn(consultingTypeControllerApi);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
+    when(topicServiceApiControllerFactory.createControllerApi()).thenReturn(topicControllerApi);
+    when(topicControllerApi.getApiClient())
+        .thenReturn(new de.caritas.cob.userservice.topicservice.generated.ApiClient());
 
     CreatedIdentity keycloakResponse = new CreatedIdentity();
-    keycloakResponse.setUserId(new EasyRandom().nextObject(String.class));
+    createdIdentityId = UUID.randomUUID().toString();
+    keycloakResponse.setUserId(createdIdentityId);
     when(identityClient.createUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(keycloakResponse);
+    var resolved = new EmailBranding("Test product", null, "#124078", null, null);
+    when(branding.resolve(Mockito.nullable(Long.class))).thenReturn(resolved);
+    when(brandValues.values(Mockito.eq(resolved), Mockito.nullable(Long.class)))
+        .thenReturn(Map.of("platformName", "Test product"));
+    when(renderer.render(Mockito.eq("konto-einrichten"), Mockito.any(), Mockito.any()))
+        .thenReturn(new OrisoEmailRenderer.RenderedEmail("Setup", "<p>Setup</p>", "Setup"));
+    when(setupMail.sendRendered(Mockito.anyString(), Mockito.any(), Mockito.any()))
+        .thenAnswer(
+            invocation -> new InviteMailSendReceipt(invocation.getArgument(0), Instant.now()));
+  }
+
+  private void givenCurrentSetupIdentity(
+      String username, String email, AccountInviteTargetRole role, boolean consultant) {
+    cleanupIdentityId = createdIdentityId;
+    cleanupConsultant = consultant;
+    when(((IdentityProfileLookup) identityClient).findById(createdIdentityId))
+        .thenReturn(
+            Optional.of(
+                new IdentityProfile(
+                    createdIdentityId,
+                    new UsernameTranscoder().encodeUsername(username),
+                    null,
+                    null,
+                    email)));
+    String realmRole =
+        switch (role) {
+          case TENANT_ADMIN -> "tenant-admin";
+          case AGENCY_ADMIN -> "restricted-agency-admin";
+          case COUNSELLOR -> "consultant";
+          default -> throw new IllegalArgumentException("Unsupported test role");
+        };
+    when(((IdentityRoleLookup) identityClient).findAllByUserId(createdIdentityId))
+        .thenReturn(List.of(realmRole));
+    when(((IdentityPasswordChangeRequirement) identityClient)
+            .requiresPasswordChange(createdIdentityId))
+        .thenReturn(true);
+  }
+
+  private void assertIssuedSetup(AccountInviteTargetRole role, Long tenantId) {
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            status -> {
+              var invite =
+                  accountInvites.findByActiveSetupIdentityKey(createdIdentityId).orElseThrow();
+              assertThat(invite.getPurpose())
+                  .isEqualTo(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+              assertThat(invite.getProvisionedUserId()).isEqualTo(createdIdentityId);
+              assertThat(invite.getTargetRole()).isEqualTo(role);
+              assertThat(invite.getTenantId()).isEqualTo(tenantId);
+            });
+    Mockito.verify((IdentityPasswordChangeRequirement) identityClient)
+        .requiresPasswordChange(createdIdentityId);
   }
 
   @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_CREATE})
   void createNewConsultant_Should_returnOk_When_requiredConsultantIsGiven() throws Exception {
     givenNewConsultantIsCreated();
@@ -218,6 +335,7 @@ class UserAdminControllerE2EIT {
   }
 
   @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_CREATE})
   void createNewConsultant_WithAuthorityConsultantCreateUpdate_Should_returnOK() throws Exception {
     givenNewConsultantIsCreated();
@@ -228,6 +346,11 @@ class UserAdminControllerE2EIT {
     CreateConsultantDTO createAdminDTO = new EasyRandom().nextObject(CreateConsultantDTO.class);
     createAdminDTO.setTenantId(1L);
     createAdminDTO.setEmail("consultant@email.com");
+    givenCurrentSetupIdentity(
+        createAdminDTO.getUsername(),
+        createAdminDTO.getEmail(),
+        AccountInviteTargetRole.COUNSELLOR,
+        true);
     // when
     MvcResult mvcResult =
         this.mockMvc
@@ -244,10 +367,120 @@ class UserAdminControllerE2EIT {
             .andExpect(jsonPath("_embedded.email", is("consultant@email.com")))
             .andReturn();
     String content = mvcResult.getResponse().getContentAsString();
+    assertIssuedSetup(AccountInviteTargetRole.COUNSELLOR, 1L);
     return JsonPath.read(content, "_embedded.id");
   }
 
+  private static final String CONSULTANT_WITH_LANGUAGES_ID = "5674839f-d0a3-47e2-8f9c-bb49fc2ddbbe";
+
   @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_UPDATE})
+  void updateConsultant_Should_keepLanguages_When_adminBodyOmitsLanguages() throws Exception {
+    var consultant = consultantRepository.findById(CONSULTANT_WITH_LANGUAGES_ID).orElseThrow();
+    consultant.setLanguages(
+        Set.of(
+            new Language(consultant, LanguageCode.de), new Language(consultant, LanguageCode.en)));
+    consultantRepository.save(consultant);
+    entityManager.flush();
+
+    // The exact key set ORISO-Admin's editCounselorData.ts sends for an untouched edit form:
+    // it has no languages field at all.
+    var body = new LinkedHashMap<String, Object>();
+    body.put("firstname", consultant.getFirstName());
+    body.put("lastname", consultant.getLastName());
+    body.put("formalLanguage", consultant.isLanguageFormal());
+    body.put("email", consultant.getEmail());
+    body.put("absent", consultant.isAbsent());
+    body.put("isSupervisor", consultant.isSupervisor());
+    body.put("topicIds", List.of());
+    body.put("rejectPendingPublicSlug", false);
+
+    this.mockMvc
+        .perform(
+            put(CONSULTANT_PATH + "/" + CONSULTANT_WITH_LANGUAGES_ID)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(body)))
+        .andExpect(status().isOk());
+
+    entityManager.flush();
+    entityManager.clear();
+    assertThat(languageCodesOf(CONSULTANT_WITH_LANGUAGES_ID)).containsExactlyInAnyOrder("de", "en");
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_UPDATE})
+  void updateConsultant_Should_keepTopics_When_adminBodyOmitsTopicIds() throws Exception {
+    givenConsultantWithTopics(CONSULTANT_WITH_LANGUAGES_ID, 1L, 2L);
+    var body = adminEditBodyFor(CONSULTANT_WITH_LANGUAGES_ID);
+
+    putConsultant(CONSULTANT_WITH_LANGUAGES_ID, body).andExpect(status().isOk());
+
+    entityManager.flush();
+    entityManager.clear();
+    assertThat(topicIdsOf(CONSULTANT_WITH_LANGUAGES_ID)).containsExactlyInAnyOrder(1L, 2L);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_UPDATE})
+  void updateConsultant_Should_rejectRemovingEveryTopic_When_adminBodySendsEmptyTopicIds()
+      throws Exception {
+    givenConsultantWithTopics(CONSULTANT_WITH_LANGUAGES_ID, 1L, 2L);
+    var body = adminEditBodyFor(CONSULTANT_WITH_LANGUAGES_ID);
+    body.put("topicIds", List.of());
+
+    putConsultant(CONSULTANT_WITH_LANGUAGES_ID, body).andExpect(status().isBadRequest());
+
+    // Without the flush, a removal the service made before refusing would never reach the table.
+    entityManager.flush();
+    entityManager.clear();
+    assertThat(topicIdsOf(CONSULTANT_WITH_LANGUAGES_ID)).containsExactlyInAnyOrder(1L, 2L);
+  }
+
+  private void givenConsultantWithTopics(String consultantId, Long... topicIds) {
+    var consultant = consultantRepository.findById(consultantId).orElseThrow();
+    consultant.replaceTopics(List.of(topicIds));
+    consultantRepository.save(consultant);
+    entityManager.flush();
+  }
+
+  private LinkedHashMap<String, Object> adminEditBodyFor(String consultantId) {
+    var consultant = consultantRepository.findById(consultantId).orElseThrow();
+    var body = new LinkedHashMap<String, Object>();
+    body.put("firstname", consultant.getFirstName());
+    body.put("lastname", consultant.getLastName());
+    body.put("formalLanguage", consultant.isLanguageFormal());
+    body.put("email", consultant.getEmail());
+    body.put("absent", consultant.isAbsent());
+    body.put("rejectPendingPublicSlug", false);
+    return body;
+  }
+
+  private org.springframework.test.web.servlet.ResultActions putConsultant(
+      String consultantId, Object body) throws Exception {
+    return this.mockMvc.perform(
+        put(CONSULTANT_PATH + "/" + consultantId)
+            .cookie(CSRF_COOKIE)
+            .header(CSRF_HEADER, CSRF_VALUE)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(body)));
+  }
+
+  private Set<Long> topicIdsOf(String consultantId) {
+    return consultantRepository.findById(consultantId).orElseThrow().getConsultantTopics().stream()
+        .map(ConsultantTopic::getTopicId)
+        .collect(Collectors.toSet());
+  }
+
+  private Set<String> languageCodesOf(String consultantId) {
+    return consultantRepository.findById(consultantId).orElseThrow().getLanguages().stream()
+        .map(language -> language.getLanguageCode().name())
+        .collect(Collectors.toSet());
+  }
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void createNewAgencyAdmin_Should_returnOk_When_requiredCreateAgencyAdminIsGiven()
       throws Exception {
@@ -259,6 +492,11 @@ class UserAdminControllerE2EIT {
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(95);
+    givenCurrentSetupIdentity(
+        createAdminDTO.getUsername(),
+        createAdminDTO.getEmail(),
+        AccountInviteTargetRole.AGENCY_ADMIN,
+        false);
 
     // when
 
@@ -278,6 +516,7 @@ class UserAdminControllerE2EIT {
             .andExpect(jsonPath("_embedded.tenantId", is("null")))
             .andReturn();
     String content = mvcResult.getResponse().getContentAsString();
+    assertIssuedSetup(AccountInviteTargetRole.AGENCY_ADMIN, null);
     return JsonPath.read(content, "_embedded.id");
   }
 
@@ -301,12 +540,19 @@ class UserAdminControllerE2EIT {
   }
 
   @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void createNewTenantAdmin_Should_returnOk_When_requiredCreateTenantAdminIsGiven()
       throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
     createAdminDTO.setEmail("valid@email.com");
+    createAdminDTO.setTenantId(1);
+    givenCurrentSetupIdentity(
+        createAdminDTO.getUsername(),
+        createAdminDTO.getEmail(),
+        AccountInviteTargetRole.TENANT_ADMIN,
+        false);
 
     // when
 
@@ -322,6 +568,7 @@ class UserAdminControllerE2EIT {
         .andExpect(jsonPath("_embedded.username", notNullValue()))
         .andExpect(jsonPath("_embedded.lastname", notNullValue()))
         .andExpect(jsonPath("_embedded.email", is("valid@email.com")));
+    assertIssuedSetup(AccountInviteTargetRole.TENANT_ADMIN, 1L);
   }
 
   @Test
@@ -367,6 +614,7 @@ class UserAdminControllerE2EIT {
   }
 
   @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void updateAgencyAdmin_Should_returnOk_When_updateAttemptAsUserAdmin() throws Exception {
     // given
@@ -565,6 +813,7 @@ class UserAdminControllerE2EIT {
   }
 
   @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void updateTenantAdmin_Should_returnOk_When_updateAttemptAsTenantAdmin() throws Exception {
     // given
@@ -1182,6 +1431,7 @@ class UserAdminControllerE2EIT {
   }
 
   @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void deleteTenantAdmin_Should_delete_When_attemptedToDeleteTenantAdminWithTenantAdminAuthority()
       throws Exception {
@@ -1201,6 +1451,12 @@ class UserAdminControllerE2EIT {
   private String givenNewTenantAdminIsCreated() throws Exception {
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
     createAdminDTO.setEmail("valid@email.com");
+    createAdminDTO.setTenantId(1);
+    givenCurrentSetupIdentity(
+        createAdminDTO.getUsername(),
+        createAdminDTO.getEmail(),
+        AccountInviteTargetRole.TENANT_ADMIN,
+        false);
 
     MvcResult result =
         this.mockMvc
@@ -1213,6 +1469,7 @@ class UserAdminControllerE2EIT {
             .andExpect(status().isOk())
             .andReturn();
     String content = result.getResponse().getContentAsString();
+    assertIssuedSetup(AccountInviteTargetRole.TENANT_ADMIN, 1L);
     return JsonPath.read(content, "_embedded.id");
   }
 }

@@ -59,13 +59,18 @@ public class InviteRoleChange {
     if (command == null || command.targetRole() == null) {
       throw new BadRequestException("targetRole is required");
     }
-    AccountInvite invite =
-        accountInviteRepository
-            .findById(inviteId)
-            .orElseThrow(() -> new NotFoundException("Account invite not found"));
+    AccountInvite invite = InviteRowHold.lock(accountInviteRepository, inviteId).orElse(null);
+    if (invite == null) {
+      accessPolicy.authorizeMissing(inviteId);
+      throw new NotFoundException("Account invite not found");
+    }
     accessPolicy.authorizeAccess(invite);
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("Existing-account setup cannot change roles");
+    }
     LocalDateTime now = LocalDateTime.now();
     requirePending(invite, now);
+    InviteRowHold.hold(accountInviteRepository, invite, now);
 
     AccountInviteTargetRole from = invite.getTargetRole();
     AccountInviteTargetRole to = command.targetRole();

@@ -1337,7 +1337,7 @@ paths:
       x-internal: true
       tags:
         - account-invite-controller
-      summary: 'Revokes an invite and gives back a Träger or agency number no other invite needs [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      summary: 'Revokes an invite and gives back a Träger or agency number no other invite needs; 409 INVITE_ALREADY_ACCEPTED once its account exists [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
       operationId: revokeAccountInvite
       parameters:
         - $ref: '#/components/parameters/InviteId'
@@ -1348,10 +1348,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountInvite'
-        400:
-          description: BAD REQUEST - accepted invite
         403:
           description: FORBIDDEN - invite outside the caller's scope
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
       security:
         - Bearer: [ ]
   /useradmin/account-invites/{inviteId}/topic-permission:
@@ -1527,6 +1527,113 @@ paths:
           description: BAD REQUEST - reason missing
         403:
           description: FORBIDDEN - invite outside the caller's scope
+      security:
+        - Bearer: [ ]
+  # The existing account-invite controller owns these routes directly. They stay x-internal so
+  # OpenAPI generation cannot add a second Spring controller for the same paths. Admin calls
+  # the documented HTTP routes directly; x-internal does not create a generated client method.
+  /users/account-invites/{token}/setup:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: Choose a permanent password for the existing account bound to this setup token
+      description: >-
+        Public bootstrap operation, also served with the /service prefix. The opaque mailed token
+        is the only identity input; the request cannot choose an account, tenant, email, or role.
+        Completion returns to ordinary login and its existing two-factor and legal gates.
+      operationId: confirmExistingAccountSetup
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              required: [password]
+              additionalProperties: false
+              properties:
+                password:
+                  type: string
+                  format: password
+      responses:
+        200:
+          description: Permanent password saved; continue through ordinary login
+          content:
+            application/json:
+              schema:
+                type: object
+                x-internal: true
+                required: [phase]
+                properties:
+                  phase:
+                    type: string
+                    enum: [COMPLETED]
+        400:
+          description: Invalid request or chosen password rejected before mutation
+        404:
+          description: Setup token not found
+        410:
+          description: Expired, revoked, in-progress, or operator-review setup token
+  /useradmin/accounts/{identityId}/setup-link:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: Reissue a definitive existing-account setup link within the caller's admin scope
+      description: >-
+        The server rereads the persisted account and rejects in-progress or indeterminate password
+        claims. No raw token or initial password is returned. The mailed setup link replaces the
+        prior link only when its existing-account binding remains unchanged.
+      operationId: reissueExistingAccountSetup
+      parameters:
+        - name: identityId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              required: [targetRole]
+              additionalProperties: false
+              properties:
+                targetRole:
+                  type: string
+                  enum: [TENANT_ADMIN, AGENCY_ADMIN, COUNSELLOR]
+      responses:
+        200:
+          description: Link queued for the saved account email
+          content:
+            application/json:
+              schema:
+                type: object
+                x-internal: true
+                required: [delivery]
+                properties:
+                  delivery:
+                    type: string
+                    enum: [SENT]
+        400:
+          description: Invalid role or request
+        403:
+          description: Account outside the caller's role or tenant scope
+        404:
+          description: Account not found
+        409:
+          description: Link in progress, binding changed, or operator review required
+        502:
+          description: Mail provider unavailable; saved account and setup state remain available
       security:
         - Bearer: [ ]
   /useradmin/self-assignments:
@@ -1864,6 +1971,10 @@ components:
           maxLength: 10000
         languages:
           type: array
+          description: >-
+            Replaces the counsellor's spoken languages when non-empty. Omitted, null or an empty
+            list leave the stored languages untouched (an omitted field arrives as an empty list,
+            so the two cannot be told apart).
           items:
             type: string
             description: each an ISO 639-1 code
@@ -1884,7 +1995,10 @@ components:
           $ref: '#/components/schemas/AssignedSupervisorId'
         topicIds:
           type: array
-          description: replaces the full set of topics assigned to the consultant
+          nullable: true
+          description: >-
+            Replaces the full set of topics assigned to the consultant. Omitted or null keeps the
+            stored topics; an empty list is rejected while the consultant still has topics.
           items:
             type: integer
             format: int64
@@ -2656,6 +2770,10 @@ components:
           format: int64
         targetRole:
           $ref: '#/components/schemas/AccountInviteTargetRole'
+        onboardingPurpose:
+          type: string
+          enum: [INVITE, EXISTING_ACCOUNT_SETUP]
+          description: Server-derived purpose; absent in older clients means an ordinary invite.
         tenantId:
           type: integer
           format: int64
@@ -2688,6 +2806,9 @@ components:
           description: A waiting invite whose unit has no pending admin invite any more; derived on read.
         provisioningStatus:
           type: string
+        setupRecoveryReason:
+          type: string
+          description: Fixed admin-only setup recovery code; absent from the public token response.
         provisionedUserId:
           type: string
         inviteStatus:
@@ -2903,6 +3024,7 @@ components:
               - ROLE_CHANGE_NEEDS_NEW_INVITE
               - ONLY_UNIT_ADMIN
               - ROLE_ALREADY_GRANTED
+              - INVITE_BUSY
           description: >-
             EMAIL_NOT_AVAILABLE - the address has an account or an open invite;
             NO_PENDING_UNIT_ADMIN - a waiting invite needs a pending admin invite for its new unit;
@@ -2916,7 +3038,9 @@ components:
             ONLY_UNIT_ADMIN - the invite is the only pending admin of its new agency, so
             counsellors would wait for nobody: invite another admin first;
             ROLE_ALREADY_GRANTED - the account already administers that agency, or is a Träger
-            or platform admin.
+            or platform admin;
+            INVITE_BUSY - another request (for example the invitee finishing onboarding) is
+            changing this invite right now; try again in a moment.
 
   securitySchemes:
     Bearer:

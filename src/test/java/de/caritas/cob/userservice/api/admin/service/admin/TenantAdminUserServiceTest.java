@@ -418,10 +418,8 @@ class TenantAdminUserServiceTest {
   }
 
   /**
-   * Fail-closed: if the caller has no resolvable tenant (getTenantId() returns null), the search
-   * must still route through the scoped call and return an empty page — never fall back to the
-   * unscoped repository query. Prevents any future change to the branching logic from silently
-   * re-opening #968.
+   * Fail-closed: a caller without a resolvable tenant is refused with 403 before any admin lookup,
+   * never served by an unscoped query. Keeps a future branching change from re-opening #968.
    */
   @Test
   void findTenantAdminsByInfix_Should_Refuse_WhenCallerTenantIsNull() {
@@ -453,6 +451,17 @@ class TenantAdminUserServiceTest {
 
     tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest);
 
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Page<Admin.AdminBase>> mappedPage = ArgumentCaptor.forClass(Page.class);
+    Mockito.verify(userServiceMapper)
+        .mapOfAdmin(
+            mappedPage.capture(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any());
+    assertThat(mappedPage.getValue()).isEmpty();
     Mockito.verify(retrieveAdminService, Mockito.never())
         .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
     Mockito.verify(retrieveAdminService, Mockito.never())
@@ -557,6 +566,66 @@ class TenantAdminUserServiceTest {
     assertThatThrownBy(() -> tenantAdminUserService.updateTenantAdmin("foreign-admin", dto))
         .isInstanceOf(ForbiddenException.class);
     Mockito.verifyNoInteractions(updateAdminService);
+  }
+
+  @Test
+  void updateTenantAdmin_Should_RejectForeignTenantId_WhenCallerIsTenantScoped() {
+    // given a tenant admin of tenant 9 trying to move one of its own admins to tenant 7.
+    // The stored record belongs to the caller; only the requested tenant can stop this move.
+    UpdateTenantAdminDTO dto = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    dto.setTenantId(7);
+    when(retrieveAdminService.findAdmin("own-admin", Admin.AdminType.TENANT))
+        .thenReturn(tenantAdmin("own-admin", 9L));
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+
+    // when, then
+    assertThatThrownBy(() -> tenantAdminUserService.updateTenantAdmin("own-admin", dto))
+        .isInstanceOf(ForbiddenException.class)
+        .hasMessage(AdminScope.OUT_OF_SCOPE_MESSAGE);
+    Mockito.verifyNoInteractions(updateAdminService);
+  }
+
+  @Test
+  void updateTenantAdmin_Should_AllowOwnTenantId_WhenCallerIsTenantScoped() {
+    // given
+    UpdateTenantAdminDTO dto = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    dto.setTenantId(9);
+    Admin ownAdmin = tenantAdmin("own-admin", 9L);
+    when(retrieveAdminService.findAdmin("own-admin", Admin.AdminType.TENANT)).thenReturn(ownAdmin);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    when(updateAdminService.updateTenantAdmin("own-admin", dto)).thenReturn(ownAdmin);
+    when(tenantService.getRestrictedTenantData(9L))
+        .thenReturn(new RestrictedTenantDTO().subdomain("tenant-nine"));
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.updateTenantAdmin("own-admin", dto);
+
+    // then
+    Mockito.verify(updateAdminService).updateTenantAdmin("own-admin", dto);
+    assertThat(response.getEmbedded().getTenantId()).isEqualTo("9");
+  }
+
+  @Test
+  void updateTenantAdmin_Should_AllowForeignTenantId_WhenCallerIsPlatformAdmin() {
+    // given
+    UpdateTenantAdminDTO dto = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    dto.setTenantId(7);
+    Admin movedAdmin = tenantAdmin("moved-admin", 7L);
+    when(retrieveAdminService.findAdmin("moved-admin", Admin.AdminType.TENANT))
+        .thenReturn(tenantAdmin("moved-admin", 9L));
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(updateAdminService.updateTenantAdmin("moved-admin", dto)).thenReturn(movedAdmin);
+    when(tenantService.getRestrictedTenantData(7L))
+        .thenReturn(new RestrictedTenantDTO().subdomain("tenant-seven"));
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.updateTenantAdmin("moved-admin", dto);
+
+    // then
+    Mockito.verify(updateAdminService).updateTenantAdmin("moved-admin", dto);
+    assertThat(response.getEmbedded().getTenantId()).isEqualTo("7");
   }
 
   @Test

@@ -16,6 +16,11 @@ import org.springframework.data.repository.query.Param;
 public interface AdminRepository
     extends JpaRepository<Admin, String>, JpaSpecificationExecutor<Admin> {
 
+  /** Serializes one admin's own changes, e.g. a first self-assignment, which has no row to lock. */
+  @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+  @Query("select a from Admin a where a.id = :id")
+  Optional<Admin> findByIdForUpdate(@Param("id") String id);
+
   @Query(
       value =
           "SELECT a.id as id, a.firstName as firstName, a.lastName as lastName, a.email as email, a.tenantId as tenantId "
@@ -100,9 +105,30 @@ public interface AdminRepository
 
   List<Admin> findByType(Admin.AdminType type);
 
+  /** Admins of the given type that administrate at least one agency, ordered by id. */
+  @Query(
+      "SELECT a FROM Admin a WHERE a.type = :type "
+          + "AND EXISTS (SELECT aa.id FROM AdminAgency aa WHERE aa.admin = a) ORDER BY a.id")
+  List<Admin> findAssignedToAnAgencyByType(@Param("type") Admin.AdminType type);
+
   List<Admin> findAllByIdIn(Set<String> adminIds);
 
   Optional<Admin> findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(String username, String email);
+
+  List<Admin> findAllByUsernameIgnoreCase(String username);
+
+  List<Admin> findAllByEmailIgnoreCase(String email);
+
+  /**
+   * Public password-reset lookup across every Träger: the username first, an e-mail only if exactly
+   * one admin carries it, so a shared address never picks another Träger's admin.
+   */
+  default Optional<Admin> findForSignIn(String usernameOrEmail) {
+    List<Admin> byUsername = findAllByUsernameIgnoreCase(usernameOrEmail);
+    List<Admin> matches =
+        byUsername.isEmpty() ? findAllByEmailIgnoreCase(usernameOrEmail) : byUsername;
+    return matches.size() == 1 ? Optional.of(matches.get(0)) : Optional.empty();
+  }
 
   @Query("SELECT a.id, a.type FROM Admin a WHERE a.id IN :ids")
   List<Object[]> findIdAndTypeByIdIn(@Param("ids") Collection<String> ids);

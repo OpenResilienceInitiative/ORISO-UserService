@@ -15,13 +15,14 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.core.annotation.AnnotatedElementUtils;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.yaml.snakeyaml.Yaml;
 
 /** api/useradminservice.yaml documents the hand-written invite controllers exactly. */
@@ -32,7 +33,9 @@ class AccountInviteApiContractTest {
   @Test
   void everyInviteAndSelfAssignmentRouteIsDocumented() {
     Map<String, Object> paths = map(specification.get("paths"));
-    for (String route : adminRoutes()) {
+    Set<String> routes = adminRoutes();
+    assertThat(routes).as("discovered admin routes").isNotEmpty();
+    for (String route : routes) {
       String[] methodAndPath = route.split(" ", 2);
       assertThat(paths.containsKey(methodAndPath[1])).as(route).isTrue();
       Map<String, Object> operation = map(map(paths.get(methodAndPath[1])).get(methodAndPath[0]));
@@ -78,10 +81,12 @@ class AccountInviteApiContractTest {
             "INVITE_NOT_PENDING",
             "ROLE_CHANGE_NEEDS_NEW_INVITE",
             "ONLY_UNIT_ADMIN",
-            "ROLE_ALREADY_GRANTED")
+            "ROLE_ALREADY_GRANTED",
+            "INVITE_BUSY")
         .allMatch(known::contains);
   }
 
+  /** Merged lookup covers every verb shortcut and a class-level @RequestMapping prefix. */
   private static Set<String> adminRoutes() {
     Set<String> routes = new HashSet<>();
     for (Class<?> controller :
@@ -89,36 +94,36 @@ class AccountInviteApiContractTest {
             AccountInviteController.class,
             AdminSelfAssignmentController.class,
             ConsultantRoleController.class)) {
+      RequestMapping classMapping =
+          AnnotatedElementUtils.findMergedAnnotation(controller, RequestMapping.class);
+      String[] prefixes =
+          classMapping == null || classMapping.path().length == 0
+              ? new String[] {""}
+              : classMapping.path();
       for (Method method : controller.getDeclaredMethods()) {
-        addRoutes(routes, "get", mappingPaths(method.getAnnotation(GetMapping.class)));
-        addRoutes(routes, "post", mappingPaths(method.getAnnotation(PostMapping.class)));
-        addRoutes(routes, "put", mappingPaths(method.getAnnotation(PutMapping.class)));
+        RequestMapping mapping =
+            AnnotatedElementUtils.findMergedAnnotation(method, RequestMapping.class);
+        if (mapping == null) {
+          continue;
+        }
+        for (RequestMethod httpMethod : mapping.method()) {
+          for (String prefix : prefixes) {
+            for (String path : mapping.path().length == 0 ? new String[] {""} : mapping.path()) {
+              addRoute(routes, httpMethod, prefix + path);
+            }
+          }
+        }
       }
     }
     return routes;
   }
 
-  private static void addRoutes(Set<String> routes, String httpMethod, String[] paths) {
-    for (String path : paths) {
-      if (path.startsWith("/useradmin/account-invites")
-          || path.startsWith("/useradmin/self-assignments")
-          || path.startsWith("/useradmin/consultants/")) {
-        routes.add(httpMethod + " " + path);
-      }
+  private static void addRoute(Set<String> routes, RequestMethod httpMethod, String path) {
+    if (path.startsWith("/useradmin/account-invites")
+        || path.startsWith("/useradmin/self-assignments")
+        || path.startsWith("/useradmin/consultants/")) {
+      routes.add(httpMethod.name().toLowerCase(Locale.ROOT) + " " + path);
     }
-  }
-
-  private static String[] mappingPaths(java.lang.annotation.Annotation mapping) {
-    if (mapping instanceof GetMapping get) {
-      return get.value();
-    }
-    if (mapping instanceof PostMapping post) {
-      return post.value();
-    }
-    if (mapping instanceof PutMapping put) {
-      return put.value();
-    }
-    return new String[0];
   }
 
   private static Set<String> properties(Map<String, Object> schemas, String name) {

@@ -400,7 +400,7 @@ public class ConsultantUpdateServiceTest {
 
     ArgumentCaptor<String> displayName = ArgumentCaptor.forClass(String.class);
     verify(this.matrixSynapseService)
-        .updateUserDisplayName(eq("@beraterin1:matrix.oriso.org"), displayName.capture());
+        .updateUserDisplayName(eq("@beraterin1:matrix.example.org"), displayName.capture());
     MatrixRealNameGuard.assertNoRealNameReachedMatrix(
         this.matrixSynapseService, "Angela", "Musterfrau");
     assertThat(displayName.getValue()).isEqualTo("Frau M.");
@@ -418,7 +418,7 @@ public class ConsultantUpdateServiceTest {
 
     ArgumentCaptor<String> displayName = ArgumentCaptor.forClass(String.class);
     verify(this.matrixSynapseService)
-        .updateUserDisplayName(eq("@beraterin1:matrix.oriso.org"), displayName.capture());
+        .updateUserDisplayName(eq("@beraterin1:matrix.example.org"), displayName.capture());
     MatrixRealNameGuard.assertNoRealNameReachedMatrix(
         this.matrixSynapseService, "Angela", "Musterfrau");
     assertThat(displayName.getValue()).isEqualTo("beraterin1");
@@ -462,7 +462,7 @@ public class ConsultantUpdateServiceTest {
 
     ArgumentCaptor<String> displayName = ArgumentCaptor.forClass(String.class);
     verify(this.matrixSynapseService)
-        .updateUserDisplayName(eq("@beraterin1:matrix.oriso.org"), displayName.capture());
+        .updateUserDisplayName(eq("@beraterin1:matrix.example.org"), displayName.capture());
     assertThat(displayName.getValue()).isEqualTo("Frau Neu.");
     // No identity field moved, so nothing else may be pushed on the identity side.
     verify(this.keycloakService, Mockito.never())
@@ -623,7 +623,7 @@ public class ConsultantUpdateServiceTest {
     consultant.setUsername("beraterin1");
     consultant.setDisplayName(publicDisplayName);
     consultant.setInternalDisplayName(null);
-    consultant.setMatrixUserId("@beraterin1:matrix.oriso.org");
+    consultant.setMatrixUserId("@beraterin1:matrix.example.org");
     consultant.setFirstName("Old");
     consultant.setLastName("Name");
     consultant.setEmail("old@address.de");

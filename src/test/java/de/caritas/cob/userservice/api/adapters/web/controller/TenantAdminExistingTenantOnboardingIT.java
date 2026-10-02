@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -30,6 +31,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationSta
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.PublicDpaForwardClient;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantCreationClient;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
@@ -63,6 +65,9 @@ class TenantAdminExistingTenantOnboardingIT {
   private static final String CSRF = "it-csrf-token";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF);
 
+  // Only this class's invites go; seeded rows other classes read stay.
+  private final java.util.List<Long> seededInviteIds = new java.util.ArrayList<>();
+
   /** The public route resolves to the main tenant, as on the single-domain deployment. */
   @MockitoBean private TenantResolverService tenantResolverService;
 
@@ -75,6 +80,7 @@ class TenantAdminExistingTenantOnboardingIT {
   @MockitoBean private KeycloakService keycloakService;
   @MockitoBean private TenantCreationClient tenantCreationClient;
   @MockitoBean private OperatorDpaContentClient operatorDpaContentClient;
+  @MockitoBean private PublicDpaForwardClient publicDpaForwardClient;
 
   private String email;
 
@@ -90,8 +96,11 @@ class TenantAdminExistingTenantOnboardingIT {
 
   @AfterEach
   void cleanUp() {
-    accountInviteRepository.deleteAll();
-    adminRepository.findById(NEW_ADMIN_ID).ifPresent(adminRepository::delete);
+    Tenants.acrossAll(() -> seededInviteIds.forEach(accountInviteRepository::deleteById));
+    Tenants.acrossAll(
+        () -> adminRepository.findById(NEW_ADMIN_ID).ifPresent(adminRepository::delete));
+    // The admin lives in the existing Träger, so only a read across all of them proves it is gone.
+    assertThat(Tenants.acrossAll(() -> adminRepository.findById(NEW_ADMIN_ID))).isEmpty();
   }
 
   @Test
@@ -136,7 +145,7 @@ class TenantAdminExistingTenantOnboardingIT {
     assertThat(admin.getType()).isEqualTo(Admin.AdminType.TENANT);
     assertThat(admin.getTenantId()).isEqualTo(EXISTING_TENANT);
     verify(keycloakService).updatePassword(eq(NEW_ADMIN_ID), eq("Valid-Test-Password-2026!"));
-    AccountInvite invite = accountInviteRepository.findAll().get(0);
+    AccountInvite invite = seededInvite();
     assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
     assertThat(invite.getAcceptedByUserId()).isEqualTo(NEW_ADMIN_ID);
     assertThat(invite.getDpaSignedAt()).isNull();
@@ -153,26 +162,49 @@ class TenantAdminExistingTenantOnboardingIT {
                 .cookie(CSRF_COOKIE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{}"))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isBadRequest())
+        // The existing-tenant guard's reason, so a 400 from binding or validation cannot pass.
+        .andExpect(jsonPath("$.message", containsString("joins an existing tenant")));
+
+    verifyNoInteractions(publicDpaForwardClient, operatorDpaContentClient);
+    AccountInvite invite = seededInvite();
+    assertThat(invite.getDpaForwardCount()).isZero();
+    assertThat(invite.getDpaForwardedAt()).isNull();
+    assertThat(invite.getDpaSignedAt()).isNull();
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+  }
+
+  /**
+   * The invite this test seeded, by id: other classes leave rows in the shared table, and an
+   * accepted invite may no longer carry its token hash. findByTokenHash would also need a lock.
+   */
+  private AccountInvite seededInvite() {
+    Long id = seededInviteIds.get(seededInviteIds.size() - 1);
+    return accountInviteRepository.findAll().stream()
+        .filter(invite -> id.equals(invite.getId()))
+        .findFirst()
+        .orElseThrow();
   }
 
   private String seedExistingTenantInvite() {
     String token = "join-existing-tenant-" + UUID.randomUUID();
-    accountInviteRepository.save(
-        AccountInvite.builder()
-            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
-            .tenantId(EXISTING_TENANT)
-            .tenantIdAllocationMode(IdAllocationMode.EXISTING)
-            .recipientEmail(email)
-            .firstName("Grace")
-            .lastName("Hopper")
-            .tokenHash(AccountInviteService.hash(token))
-            .expiresAt(LocalDateTime.now().plusDays(1))
-            .status(AccountInviteStatus.EMAIL_SENT)
-            .emailVerificationStatus(EmailVerificationStatus.PENDING)
-            .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
-            .createDate(LocalDateTime.now())
-            .build());
+    var invite =
+        accountInviteRepository.save(
+            AccountInvite.builder()
+                .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+                .tenantId(EXISTING_TENANT)
+                .tenantIdAllocationMode(IdAllocationMode.EXISTING)
+                .recipientEmail(email)
+                .firstName("Grace")
+                .lastName("Hopper")
+                .tokenHash(AccountInviteService.hash(token))
+                .expiresAt(LocalDateTime.now().plusDays(1))
+                .status(AccountInviteStatus.EMAIL_SENT)
+                .emailVerificationStatus(EmailVerificationStatus.PENDING)
+                .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+                .createDate(LocalDateTime.now())
+                .build());
+    seededInviteIds.add(invite.getId());
     return token;
   }
 }

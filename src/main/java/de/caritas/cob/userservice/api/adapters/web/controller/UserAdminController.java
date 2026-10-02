@@ -80,6 +80,9 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
   private final @NonNull UserIdentitiesService userIdentitiesService;
+  private final @NonNull de.caritas.cob.userservice.api.service.accountinvite
+          .ExistingAccountSetupIssuer
+      accountSetupIssuer;
 
   /**
    * Creates the root hal based navigation entity.
@@ -125,6 +128,10 @@ public class UserAdminController implements UseradminApi {
 
     createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
     var consultant = consultantAdminFacade.createNewConsultant(createConsultantDTO);
+    accountSetupIssuer.issueAfterCreation(
+        de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole.COUNSELLOR,
+        consultant.getEmbedded().getId(),
+        createConsultantDTO.getPassword());
 
     return ResponseEntity.ok(consultant);
   }
@@ -420,7 +427,8 @@ public class UserAdminController implements UseradminApi {
     // that stored the address as typed, so the same person could end up with two
     // differently-cased identities depending on which screen created them.
     createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase(Locale.ROOT));
-    return ResponseEntity.ok(this.adminUserFacade.createNewAgencyAdmin(createAdminDTO));
+    var admin = this.adminUserFacade.createNewAgencyAdmin(createAdminDTO);
+    return ResponseEntity.ok(admin);
   }
 
   @Override

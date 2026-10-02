@@ -58,28 +58,28 @@ public class HttpTenantFilter extends OncePerRequestFilter {
       HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
       throws ServletException, IOException {
     if (requiresTenantFilterMatcher.matches(request)) {
-      log.debug("Trying to resolve tenant for request coming from URI {}", request.getRequestURI());
-      Long tenantId;
+      // Never log the path: invite routes carry the raw token, the invitee's only credential.
+      log.debug("Resolving the tenant for a {} request", request.getMethod());
+      // Every exit clears the context, so a pooled thread never keeps a tenant from before.
       try {
-        tenantId = tenantResolverService.resolve(request);
-      } catch (AccessDeniedException denied) {
-        // Thrown before ExceptionTranslationFilter, which would otherwise never turn it into a 403.
-        log.warn("Refused request to {}: {}", request.getRequestURI(), denied.getMessage());
-        response.sendError(HttpServletResponse.SC_FORBIDDEN);
-        return;
-      }
-      resolveSubdomain(tenantId);
-      log.debug("Setting current tenant context to: " + tenantId);
-      TenantContext.setCurrentTenant(tenantId);
-      try {
+        Long tenantId;
+        try {
+          tenantId = tenantResolverService.resolve(request);
+        } catch (AccessDeniedException denied) {
+          // Thrown before ExceptionTranslationFilter, which would otherwise never make it a 403.
+          log.warn("Refused a {} request: {}", request.getMethod(), denied.getMessage());
+          response.sendError(HttpServletResponse.SC_FORBIDDEN);
+          return;
+        }
+        resolveSubdomain(tenantId);
+        log.debug("Setting current tenant context to: " + tenantId);
+        TenantContext.setCurrentTenant(tenantId);
         filterChain.doFilter(request, response);
       } finally {
         TenantContext.clear();
       }
     } else {
-      log.debug(
-          "Skipping tenant filter for request: {} as it belongs to a tenancy whitelist.",
-          request.getRequestURI());
+      log.debug("Skipping tenant resolution for a whitelisted {} request", request.getMethod());
       filterChain.doFilter(request, response);
     }
   }

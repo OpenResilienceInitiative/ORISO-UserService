@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdm
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.TenantAdminRegistrationResult;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -387,13 +388,29 @@ public class TenantAdminOnboardingController {
     /** {@code PENDING_2FA_ACTIVATION} when the flow re-enters at the 2FA step; null otherwise. */
     public String phase;
 
+    /** Server-derived purpose; the setup variant must not call registration endpoints. */
+    public String onboardingPurpose;
+
     /** Re-issued TOTP setup material for a resumable link; null renders the verify-only variant. */
     public TwoFactorSetupDTO twoFactor;
+
+    /**
+     * When step 1 forwarded the contract documents (ISO local date-time), else null. The forward
+     * lives on the invite, so a reload must restore the waiting view instead of step 1 (#1065).
+     */
+    public String dpaForwardedAt;
+
+    /**
+     * When the representative's confirmation landed on the invite (ISO local date-time), else null.
+     * Set: the wizard skips the consent block and continues straight to the account step.
+     */
+    public String dpaSignedAt;
 
     static TenantAdminOnboardingInviteResponseDTO from(OnboardingInviteState state) {
       AccountInvite invite = state.invite();
       TenantAdminOnboardingInviteResponseDTO dto = new TenantAdminOnboardingInviteResponseDTO();
       dto.targetRole = AccountInviteTargetRole.TENANT_ADMIN.name();
+      dto.onboardingPurpose = invite.getPurpose().name();
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();
       dto.lastName = invite.getLastName();
@@ -409,14 +426,21 @@ public class TenantAdminOnboardingController {
       dto.dpaContent = state.dpaContent();
       dto.dpaUnavailableReason =
           state.dpaUnavailableReason() == null ? null : state.dpaUnavailableReason().name();
+      dto.dpaForwardedAt = isoOrNull(invite.getDpaForwardedAt());
+      dto.dpaSignedAt = isoOrNull(invite.getDpaSignedAt());
       applyTwoFactorResume(dto, invite, state.pendingTwoFactorResume());
       return dto;
+    }
+
+    private static String isoOrNull(LocalDateTime value) {
+      return value == null ? null : value.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
     }
 
     static TenantAdminOnboardingInviteResponseDTO from(CounsellorOnboardingState state) {
       AccountInvite invite = state.invite();
       TenantAdminOnboardingInviteResponseDTO dto = new TenantAdminOnboardingInviteResponseDTO();
       dto.targetRole = invite.getTargetRole().name();
+      dto.onboardingPurpose = invite.getPurpose().name();
       dto.alsoCounsellor = invite.getAlsoCounsellor();
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();

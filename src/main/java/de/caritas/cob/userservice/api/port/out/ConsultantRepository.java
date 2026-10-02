@@ -30,6 +30,8 @@ public interface ConsultantRepository
 
   Optional<Consultant> findByEmailAndDeleteDateIsNull(String email);
 
+  List<Consultant> findAllByEmailAndDeleteDateIsNull(String email);
+
   Optional<Consultant> findByUsernameAndDeleteDateIsNull(String username);
 
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
@@ -74,6 +76,10 @@ public interface ConsultantRepository
   List<Consultant> findByTenantIdAndDeleteDateIsNullOrderByFirstNameAscLastNameAsc(Long tenantId);
 
   List<Consultant> findAllByIdIn(List<String> ids);
+
+  @EntityGraph(attributePaths = "consultantAgencies")
+  @Query("SELECT DISTINCT consultant FROM Consultant consultant WHERE consultant.id IN :ids")
+  List<Consultant> findAllWithAgenciesByIdIn(@Param("ids") Collection<String> ids);
 
   @Query("SELECT c.id FROM Consultant c WHERE c.id IN :ids AND c.deleteDate IS NULL")
   Set<String> findActiveIdsByIdIn(@Param("ids") Collection<String> ids);

@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.AdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
@@ -41,6 +43,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsu
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import java.lang.reflect.Method;
@@ -71,6 +74,10 @@ class UserAdminControllerTest {
   @Mock private GrantConsultantIdentityService grantConsultantIdentityService;
   @Mock private UserIdentitiesService userIdentitiesService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer
+      accountSetupIssuer;
+
   private UserAdminController controller;
 
   @BeforeEach
@@ -86,7 +93,8 @@ class UserAdminControllerTest {
             adminDtoMapper,
             authenticatedUser,
             grantConsultantIdentityService,
-            userIdentitiesService);
+            userIdentitiesService,
+            accountSetupIssuer);
   }
 
   @Test
@@ -95,7 +103,8 @@ class UserAdminControllerTest {
     // case.
     var dto = new CreateAdminDTO();
     dto.setEmail("UPPER@EXAMPLE.ORG");
-    when(adminUserFacade.createNewTenantAdmin(any())).thenReturn(new AdminResponseDTO());
+    when(adminUserFacade.createNewTenantAdmin(any()))
+        .thenReturn(new AdminResponseDTO().embedded(new AdminDTO().id("admin-11")));
 
     var response = controller.createTenantAdmin(dto);
 
@@ -116,7 +125,8 @@ class UserAdminControllerTest {
     // rewrote the address because updateAgencyAdmin does lowercase.
     var dto = new CreateAdminDTO();
     dto.setEmail("UPPER@EXAMPLE.ORG");
-    when(adminUserFacade.createNewAgencyAdmin(any())).thenReturn(new AdminResponseDTO());
+    when(adminUserFacade.createNewAgencyAdmin(any()))
+        .thenReturn(new AdminResponseDTO().embedded(new AdminDTO().id("admin-12")));
 
     var response = controller.createAgencyAdmin(dto);
 
@@ -216,7 +226,8 @@ class UserAdminControllerTest {
     dto.setEmail("UPPER@EXAMPLE.ORG");
     dto.setUsername("user");
     when(consultantAdminFacade.createNewConsultant(any()))
-        .thenReturn(new ConsultantAdminResponseDTO());
+        .thenReturn(
+            new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id("consultant-1")));
 
     var response = controller.createConsultant(dto);
 
@@ -224,6 +235,8 @@ class UserAdminControllerTest {
     var captor = ArgumentCaptor.forClass(CreateConsultantDTO.class);
     verify(consultantAdminFacade).createNewConsultant(captor.capture());
     assertEquals("upper@example.org", captor.getValue().getEmail());
+    verify(accountSetupIssuer)
+        .issueAfterCreation(AccountInviteTargetRole.COUNSELLOR, "consultant-1", dto.getPassword());
   }
 
   @Test
@@ -439,7 +452,7 @@ class UserAdminControllerTest {
   void createAgencyAdmin_Should_delegate() {
     var dto = new CreateAdminDTO();
     dto.setEmail("a@x.org");
-    var expected = new AdminResponseDTO();
+    var expected = new AdminResponseDTO().embedded(new AdminDTO().id("admin-13"));
     when(adminUserFacade.createNewAgencyAdmin(dto)).thenReturn(expected);
 
     var response = controller.createAgencyAdmin(dto);

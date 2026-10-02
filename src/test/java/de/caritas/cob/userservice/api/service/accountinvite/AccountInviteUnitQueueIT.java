@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -15,9 +16,11 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
@@ -35,10 +38,13 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispa
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
+import jakarta.persistence.EntityManagerFactory;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -47,6 +53,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -77,6 +87,7 @@ import org.springframework.web.client.HttpClientErrorException;
   InviteTargetResolver.class,
   ReservationLedger.class,
   UnitQueue.class,
+  InviteBoard.class,
   InviteDelivery.class,
   AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
@@ -102,11 +113,15 @@ class AccountInviteUnitQueueIT {
 
   @Autowired private AccountInviteService service;
   @Autowired private UnitQueue queue;
+  @Autowired private InviteBoard board;
+  @Autowired private EntityManagerFactory entityManagerFactory;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private InviteEmailTemplateRepository templateRepository;
   @Autowired private InviteEmailDeliveryRepository deliveryRepository;
   @Autowired private AuthenticatedUser caller;
   @Autowired private org.springframework.transaction.PlatformTransactionManager transactions;
+
+  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
@@ -120,6 +135,8 @@ class AccountInviteUnitQueueIT {
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
 
   private Long templateId;
+  private Long foreignTemplateId;
+  private Set<Long> invitesBefore = Set.of();
 
   @BeforeEach
   void upstreams() {
@@ -127,7 +144,7 @@ class AccountInviteUnitQueueIT {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
         .thenReturn("https://admin.example.org/admin/counsellor-onboarding/token");
     when(inviteMailDispatchService.send(
-            anyString(), anyString(), anyString(), anyString(), any(), any()))
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenAnswer(call -> new InviteMailSendReceipt(call.getArgument(0), Instant.now()));
     // The new agency 500 is free until an admin invite reserves it; afterwards it is RESERVED.
     when(agencyIdAllocationClient.getAvailability(NEW_AGENCY)).thenReturn(IdAllocationStatus.FREE);
@@ -161,11 +178,39 @@ class AccountInviteUnitQueueIT {
             .getId();
   }
 
+  @BeforeEach
+  void rememberExistingInvites() {
+    invitesBefore = Tenants.acrossAll(this::allInviteIds);
+  }
+
   @AfterEach
   void cleanUp() {
-    deliveryRepository.deleteAll();
-    accountInviteRepository.deleteAll();
+    // The invite tables are shared: only the rows this test wrote go.
+    Tenants.acrossAll(
+        () ->
+            allInviteIds().stream()
+                .filter(id -> !invitesBefore.contains(id))
+                .forEach(this::deleteInviteWithItsMail));
     templateRepository.deleteById(templateId);
+    if (foreignTemplateId != null) {
+      templateRepository.deleteById(foreignTemplateId);
+    }
+  }
+
+  private void assertNoInviteWasWritten() {
+    assertThat(Tenants.acrossAll(this::allInviteIds)).isEqualTo(invitesBefore);
+  }
+
+  private Set<Long> allInviteIds() {
+    return accountInviteRepository.findAll().stream()
+        .map(AccountInvite::getId)
+        .collect(Collectors.toSet());
+  }
+
+  private void deleteInviteWithItsMail(Long inviteId) {
+    deliveryRepository.deleteAll(
+        deliveryRepository.findByAccountInviteIdOrderByCreateDateDesc(inviteId));
+    accountInviteRepository.deleteById(inviteId);
   }
 
   // --- queueing ---------------------------------------------------------------------------------
@@ -194,7 +239,7 @@ class AccountInviteUnitQueueIT {
     assertReason(
         () -> service.createInvite(counsellor(NEW_AGENCY)),
         HttpStatusExceptionReason.NO_PENDING_UNIT_ADMIN);
-    assertThat(accountInviteRepository.count()).isZero();
+    assertNoInviteWasWritten();
     verify(agencyIdAllocationClient, never()).reserve(any(), any());
   }
 
@@ -244,7 +289,7 @@ class AccountInviteUnitQueueIT {
     AccountInvite stored = accountInviteRepository.findById(result.invite().getId()).orElseThrow();
     assertThat(stored.getQueuedTemplateId()).isEqualTo(templateId);
     verify(inviteMailDispatchService, never())
-        .send(anyString(), anyString(), anyString(), anyString(), any(), any());
+        .send(anyString(), anyString(), anyString(), anyString(), any(), any(), any());
   }
 
   @Test
@@ -320,7 +365,14 @@ class AccountInviteUnitQueueIT {
         .isAfter(LocalDateTime.now().plusDays(10).minusMinutes(5))
         .isBefore(LocalDateTime.now().plusDays(10).plusMinutes(5));
     verify(inviteMailDispatchService)
-        .send(eq(sent.getRecipientEmail()), anyString(), anyString(), anyString(), any(), any());
+        .send(
+            eq(sent.getRecipientEmail()),
+            anyString(),
+            anyString(),
+            anyString(),
+            any(),
+            any(),
+            any());
   }
 
   @Test
@@ -332,7 +384,7 @@ class AccountInviteUnitQueueIT {
         .thenAnswer(call -> "https://admin.example.org/onboarding/" + call.getArgument(1));
     List<String> mailedLinks = new CopyOnWriteArrayList<>();
     when(inviteMailDispatchService.send(
-            anyString(), anyString(), anyString(), anyString(), any(), any()))
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenAnswer(
             call -> {
               mailedLinks.add(call.getArgument(3));
@@ -401,7 +453,7 @@ class AccountInviteUnitQueueIT {
     service.createInvite(agencyAdmin(NEW_AGENCY));
     var queued = service.createAndSendInvite(counsellor(NEW_AGENCY), templateId);
     when(inviteMailDispatchService.send(
-            anyString(), anyString(), anyString(), anyString(), any(), any()))
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenThrow(
             new SmtpSendException(
                 SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE, "smtp off"));
@@ -412,6 +464,27 @@ class AccountInviteUnitQueueIT {
     AccountInvite draft = reload(queued.invite());
     assertThat(draft.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
     assertThat(draft.getTokenHash()).isNull();
+  }
+
+  @Test
+  void release_Should_KeepARevokeThatLandsWhileSmtpFails_When_TheMailWasNotSent() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    var queued = service.createAndSendInvite(counsellor(NEW_AGENCY), templateId);
+    when(inviteMailDispatchService.send(
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
+        .thenAnswer(
+            call -> {
+              // The admin revokes the released invite while the mail server is failing.
+              service.revokeInvite(queued.invite().getId());
+              throw new SmtpSendException(
+                  SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE, "smtp off");
+            });
+
+    queue.release(InviteUnitType.AGENCY, NEW_AGENCY, OWN_TENANT);
+
+    // The SMTP fallback must not turn the revoked invite back into a sendable draft.
+    assertThat(reload(queued.invite()).getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
   }
 
   @Test
@@ -426,7 +499,7 @@ class AccountInviteUnitQueueIT {
     assertThat(draft.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
     assertThat(draft.getExpiresAt()).isNotNull();
     verify(inviteMailDispatchService, never())
-        .send(anyString(), anyString(), anyString(), anyString(), any(), any());
+        .send(anyString(), anyString(), anyString(), anyString(), any(), any(), any());
   }
 
   @Test
@@ -452,6 +525,100 @@ class AccountInviteUnitQueueIT {
 
     assertThat(result.invite().getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
     assertThat(result.rawToken()).isNotBlank();
+  }
+
+  // --- another Träger's template (#1213 review) ------------------------------------------------
+
+  @Test
+  void createAndSend_Should_RefuseAnotherTraegersTemplate_BeforeTheInviteExists() {
+    actAsTenantAdmin();
+    Long foreign = foreignTemplate();
+
+    assertThatThrownBy(() -> service.createAndSendInvite(agencyAdmin(NEW_AGENCY), foreign))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertNoInviteWasWritten();
+    verify(agencyIdAllocationClient, never()).reserve(any(), any());
+    verifyNoMailWasSent();
+  }
+
+  @Test
+  void createAndSend_Should_RefuseAnotherTraegersTemplate_When_TheInviteWouldWait() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    Long foreign = foreignTemplate();
+
+    assertThatThrownBy(() -> service.createAndSendInvite(counsellor(NEW_AGENCY), foreign))
+        .isInstanceOf(ForbiddenException.class);
+
+    // Only the rows this test wrote: other classes may leave waiting invites behind.
+    assertThat(accountInviteRepository.findAll())
+        .filteredOn(invite -> !invitesBefore.contains(invite.getId()))
+        .noneMatch(invite -> invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT);
+  }
+
+  @Test
+  void send_Should_RefuseAnotherTraegersTemplate() {
+    actAsTenantAdmin();
+    AccountInvite draft = service.createInvite(agencyAdmin(NEW_AGENCY));
+    Long foreign = foreignTemplate();
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(draft.getId(), foreign)))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(reload(draft).getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    verifyNoMailWasSent();
+  }
+
+  @Test
+  void resend_Should_RefuseAnotherTraegersTemplate_AndKeepTheSentInvite() {
+    actAsTenantAdmin();
+    var sent = service.createAndSendInvite(agencyAdmin(NEW_AGENCY), templateId);
+    Long foreign = foreignTemplate();
+
+    assertThatThrownBy(
+            () -> service.resendInvite(new SendInviteCommand(sent.invite().getId(), foreign)))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(reload(sent.invite()).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    verify(inviteMailDispatchService, times(1))
+        .send(anyString(), anyString(), anyString(), anyString(), any(), any(), any());
+  }
+
+  @Test
+  void manualRelease_Should_RefuseAnotherTraegersTemplate_AndKeepTheInviteWaiting() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite queued = service.createInvite(counsellor(NEW_AGENCY));
+    when(agencyIdAllocationClient.getAvailability(NEW_AGENCY))
+        .thenReturn(IdAllocationStatus.ASSIGNED);
+    Long foreign = foreignTemplate();
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(queued.getId(), foreign)))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(reload(queued).getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
+    verifyNoMailWasSent();
+  }
+
+  @Test
+  void queuedRelease_Should_NotMailAnotherTraegersTemplate_ButLeaveADraft() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    var queued = service.createAndSendInvite(counsellor(NEW_AGENCY), templateId);
+    // A stored id is only as good as the check at queue time: the release checks it again.
+    AccountInvite waiting = reload(queued.invite());
+    waiting.setQueuedTemplateId(foreignTemplate());
+    accountInviteRepository.saveAndFlush(waiting);
+    when(agencyIdAllocationClient.getAvailability(NEW_AGENCY))
+        .thenReturn(IdAllocationStatus.ASSIGNED);
+
+    queue.release(InviteUnitType.AGENCY, NEW_AGENCY, OWN_TENANT);
+
+    AccountInvite draft = reload(queued.invite());
+    assertThat(draft.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    assertThat(draft.getTokenHash()).isNull();
+    verifyNoMailWasSent();
   }
 
   // --- a new Träger -----------------------------------------------------------------------------
@@ -485,6 +652,34 @@ class AccountInviteUnitQueueIT {
   }
 
   @Test
+  void tenantRelease_Should_GiveBackTheReservedAgency_When_TheClaimRollsBack() {
+    actAsPlatformAdmin();
+    givenTheNewTenantCanBeReserved();
+    service.createInvite(newTenantAdmin());
+    AccountInvite agencyAdmin =
+        service.createInvite(
+            command(
+                AccountInviteTargetRole.AGENCY_ADMIN,
+                NEW_TENANT,
+                IdAllocationMode.MANUAL,
+                null,
+                IdAllocationMode.AUTO));
+    agencyAdmin.setQueuedTemplateId(templateId);
+    accountInviteRepository.saveAndFlush(agencyAdmin);
+    when(agencyIdAllocationClient.reserve(null, NEW_TENANT)).thenReturn(701L);
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
+        .thenThrow(new IllegalStateException("accept URL not configured"));
+
+    List<Long> released = queue.release(InviteUnitType.TENANT, NEW_TENANT, NEW_TENANT);
+
+    assertThat(released).isEmpty();
+    AccountInvite stillWaiting = reload(agencyAdmin);
+    assertThat(stillWaiting.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
+    assertThat(stillWaiting.getAgencyId()).isNull();
+    verify(agencyIdAllocationClient).release(701L);
+  }
+
+  @Test
   void agencyAdminIntoANewTenant_Should_Answer409_WithoutAPendingTenantAdmin() {
     actAsPlatformAdmin();
 
@@ -514,7 +709,124 @@ class AccountInviteUnitQueueIT {
     verify(tenantIdAllocationClient, times(1)).reserve(anyLong());
   }
 
+  // --- invite board ---------------------------------------------------------------------------
+
+  @Test
+  void board_Should_DeriveTheQueueProblemAndTheLatestDelivery_ForEveryRow() {
+    actAsTenantAdmin();
+    AccountInvite revokedAdmin = service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite mailed = service.createInvite(counsellor(NEW_AGENCY));
+    AccountInvite unmailed = service.createInvite(counsellor(NEW_AGENCY));
+    service.revokeInvite(revokedAdmin.getId());
+    deliver(mailed, InviteEmailDeliveryStatus.FAILED, LocalDateTime.now().minusHours(2));
+    deliver(mailed, InviteEmailDeliveryStatus.SENT, LocalDateTime.now().minusHours(1));
+    actAsPlatformAdmin();
+    givenTheNewTenantCanBeReserved();
+    service.createInvite(newTenantAdmin());
+    AccountInvite waitsForTenant =
+        service.createInvite(
+            command(
+                AccountInviteTargetRole.AGENCY_ADMIN,
+                NEW_TENANT,
+                IdAllocationMode.MANUAL,
+                null,
+                IdAllocationMode.AUTO));
+
+    Map<Long, InviteBoard.Row> rows = boardRows();
+
+    assertThat(rows.get(mailed.getId()).queueProblem()).isEqualTo(InviteQueueProblem.NO_UNIT_ADMIN);
+    assertThat(rows.get(mailed.getId()).latestDelivery().getStatus())
+        .isEqualTo(InviteEmailDeliveryStatus.SENT);
+    assertThat(rows.get(unmailed.getId()).queueProblem())
+        .isEqualTo(InviteQueueProblem.NO_UNIT_ADMIN);
+    assertThat(rows.get(unmailed.getId()).latestDelivery()).isNull();
+    assertThat(rows.get(waitsForTenant.getId()).queueProblem()).isNull();
+    assertThat(rows.get(revokedAdmin.getId()).queueProblem()).isNull();
+  }
+
+  @Test
+  void board_Should_NotRunMoreQueries_When_MoreInvitesWaitOrWereMailed() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    deliver(service.createInvite(counsellor(NEW_AGENCY)), InviteEmailDeliveryStatus.SENT, null);
+    BoardCost fewInvites = costOf(this::boardRows);
+
+    for (int i = 0; i < 4; i++) {
+      AccountInvite waiting = service.createInvite(counsellor(NEW_AGENCY));
+      deliver(waiting, InviteEmailDeliveryStatus.FAILED, LocalDateTime.now().minusHours(1));
+      deliver(waiting, InviteEmailDeliveryStatus.SENT, null);
+    }
+    BoardCost manyInvites = costOf(this::boardRows);
+
+    assertSoftly(
+        softly -> {
+          softly.assertThat(manyInvites.statements()).isEqualTo(fewInvites.statements());
+          // Only the newest delivery of each of the five mailed invites, not their whole history.
+          softly.assertThat(manyInvites.deliveriesLoaded()).isEqualTo(5);
+        });
+  }
+
   // --- helpers ----------------------------------------------------------------------------------
+
+  private Map<Long, InviteBoard.Row> boardRows() {
+    return board.list(null, null, null, null, null, null, 0, 100).rows().getContent().stream()
+        .collect(Collectors.toMap(row -> row.invite().getId(), Function.identity()));
+  }
+
+  private record BoardCost(long statements, long deliveriesLoaded) {}
+
+  private BoardCost costOf(Runnable action) {
+    Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+    boolean enabled = statistics.isStatisticsEnabled();
+    statistics.setStatisticsEnabled(true);
+    statistics.clear();
+    try {
+      action.run();
+      return new BoardCost(
+          statistics.getPrepareStatementCount(),
+          statistics.getEntityStatistics(InviteEmailDelivery.class.getName()).getLoadCount());
+    } finally {
+      statistics.setStatisticsEnabled(enabled);
+    }
+  }
+
+  private void deliver(AccountInvite invite, InviteEmailDeliveryStatus status, LocalDateTime at) {
+    LocalDateTime createDate = at == null ? LocalDateTime.now() : at;
+    deliveryRepository.save(
+        InviteEmailDelivery.builder()
+            .accountInviteId(invite.getId())
+            .templateKind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subjectSnapshot("Einladung")
+            .bodySnapshot("Hallo Ada")
+            .recipientSnapshot(invite.getRecipientEmail())
+            .status(status)
+            .sentAt(status == InviteEmailDeliveryStatus.SENT ? createDate : null)
+            .createDate(createDate)
+            .build());
+  }
+
+  private Long foreignTemplate() {
+    foreignTemplateId =
+        templateRepository
+            .save(
+                InviteEmailTemplate.builder()
+                    .tenantId(OTHER_TENANT)
+                    .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+                    .name("another Träger's text")
+                    .language("de")
+                    .subject("Einladung")
+                    .body("Hallo {{firstName}}")
+                    .active(true)
+                    .createDate(LocalDateTime.now())
+                    .build())
+            .getId();
+    return foreignTemplateId;
+  }
+
+  private void verifyNoMailWasSent() {
+    verify(inviteMailDispatchService, never())
+        .send(anyString(), anyString(), anyString(), anyString(), any(), any(), any());
+  }
 
   private void givenTheNewTenantCanBeReserved() {
     when(tenantIdAllocationClient.getAvailability(NEW_TENANT))
