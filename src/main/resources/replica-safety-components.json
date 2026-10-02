@@ -698,6 +698,22 @@
       "status": "bounded"
     },
     {
+      "id": "service-notice-mail-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/servicenotice/ServiceNoticeMailScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "deliverDueMail"
+      ],
+      "decision": "Commit a PENDING-to-SENDING claim for each recipient row before transport handoff, so a second replica skips it; mark an ambiguous handoff UNCERTAIN and never replay it. Off by default.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "group-chat-admission-matrix-repair",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/chat/GroupChatAdmissionMatrixRepairScheduler.java",
       "kind": "scheduler",
