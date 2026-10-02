@@ -8,7 +8,9 @@ import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.InviteSendResult;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailDelivery.Purpose;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -148,7 +150,13 @@ public class InviteDelivery {
         prepared.body(),
         prepared.acceptUrl(),
         prepared.invite().getTenantId(),
-        prepared.template().getLanguage());
+        prepared.template().getLanguage(),
+        InviteMailOrigin.of(senderTenant(prepared.invite()), Purpose.ACCOUNT_INVITE));
+  }
+
+  // A reserved Träger id has no tenant row yet, so it cannot have its own mail server.
+  private static Long senderTenant(AccountInvite invite) {
+    return invite.getTenantIdReservationToken() == null ? invite.getTenantId() : null;
   }
 
   private static InviteEmailDelivery sentDelivery(
