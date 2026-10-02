@@ -667,6 +667,24 @@ paths:
             enum: [ ASC, DESC ]
             default: ASC
             pattern: '^(ASC|DESC)$'
+        - name: tenantId
+          in: query
+          description: Only rows of this Träger (tenant). Never widens the caller's own scope;
+            a tenant outside it yields an empty result.
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: agencyId
+          in: query
+          description: Only agency admins who administer this Beratungsstelle (agency). Repeat the parameter or pass a
+            comma-separated list to match any of several agencies. Never widens the caller's own scope.
+          required: false
+          schema:
+            type: array
+            items:
+              type: integer
+              format: int64
       responses:
         200:
           description: OK - successful operation
@@ -1003,6 +1021,15 @@ paths:
               enum: [ ASC, DESC ]
               default: ASC
               pattern: '^(ASC|DESC)$'
+          - name: tenantId
+            in: query
+            description: Only rows of this Träger (tenant). Never widens the caller's own scope;
+              a tenant outside it yields an empty result. There is no agencyId filter here, as
+              tenant admins are not bound to agencies, so an agencyId parameter is ignored.
+            required: false
+            schema:
+              type: integer
+              format: int64
         responses:
           200:
             description: OK - successful operation

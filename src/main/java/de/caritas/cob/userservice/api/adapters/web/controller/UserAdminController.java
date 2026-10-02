@@ -35,6 +35,8 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
@@ -516,28 +518,39 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<AdminSearchResultDTO> searchAgencyAdmins(
-      String query, Integer page, Integer perPage, String field, String order) {
+      String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order,
+      Long tenantId,
+      List<Long> agencyId) {
     String decodedInfix = determineDecodedInfix(query);
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = adminDtoMapper.mappedFieldOf(field);
+    var filter = new SearchFilter(tenantId, agencyId);
     var resultMap =
         adminUserFacade.findAgencyAdminsByInfix(
-            decodedInfix, page - 1, perPage, mappedField, isAscending);
-    var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
+            decodedInfix, filter, page - 1, perPage, mappedField, isAscending);
+    var result =
+        adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order, filter);
 
     return ResponseEntity.ok(result);
   }
 
   @Override
   public ResponseEntity<AdminSearchResultDTO> searchTenantAdmins(
-      String query, Integer page, Integer perPage, String field, String order) {
+      String query, Integer page, Integer perPage, String field, String order, Long tenantId) {
     String decodedInfix = determineDecodedInfix(query);
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = adminDtoMapper.mappedFieldOf(field);
+    var filter = new SearchFilter(tenantId, null);
     var resultMap =
         adminUserFacade.findTenantAdminsByInfix(
-            decodedInfix, page - 1, perPage, mappedField, isAscending);
-    var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
+            decodedInfix, filter, page - 1, perPage, mappedField, isAscending);
+    var result =
+        adminDtoMapper.adminSearchResultOf(
+            resultMap, query, page, perPage, field, order, filter, Admin.AdminType.TENANT);
     return ResponseEntity.ok(result);
   }
 
