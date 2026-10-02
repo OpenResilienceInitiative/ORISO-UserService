@@ -12,12 +12,18 @@ public record BrandedEmail(
     this(subject, html, plainText, null);
   }
 
-  /** Public values used by this render; never SMTP settings or unvalidated tenant input. */
+  /**
+   * Public values used by this render: {@code accentColor} is the stripe, {@code primaryColor} the
+   * button fill and {@code buttonLabelColor} the label on it; the Admin preview shows them.
+   *
+   * <p>Never SMTP settings or unvalidated tenant input.
+   */
   public record BrandingSnapshot(
       String brandName,
       String logoUrl,
       String accentColor,
       String primaryColor,
+      String buttonLabelColor,
       LogoRendering logoRendering) {}
 
   public enum LogoRendering {
