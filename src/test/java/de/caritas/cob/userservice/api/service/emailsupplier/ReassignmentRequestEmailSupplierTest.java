@@ -40,7 +40,7 @@ class ReassignmentRequestEmailSupplierTest {
     assertThat(mail.getLanguage(), is(notNullValue()));
     assertThat(mail.getDialect(), is(Dialect.INFORMAL));
     assertThat(mail.getLanguage().toString(), is(receiverLanguageCode.toString()));
-    assertThat(mail.getTemplateData(), hasSize(2));
+    assertThat(mail.getTemplateData(), hasSize(3));
     assertThat(mail.getTemplateData().get(0).getKey(), is("name_recipient"));
     assertThat(mail.getTemplateData().get(0).getValue(), is("receiverUsername"));
     assertThat(mail.getTemplateData().get(1).getKey(), is("url"));
