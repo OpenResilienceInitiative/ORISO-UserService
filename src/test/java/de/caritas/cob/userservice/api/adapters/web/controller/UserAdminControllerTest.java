@@ -40,6 +40,7 @@ import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
+import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
@@ -74,6 +75,7 @@ class UserAdminControllerTest {
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private GrantConsultantIdentityService grantConsultantIdentityService;
   @Mock private UserIdentitiesService userIdentitiesService;
+  @Mock private AdminListPreferenceService adminListPreferenceService;
 
   @Mock
   private de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer
@@ -95,6 +97,7 @@ class UserAdminControllerTest {
             authenticatedUser,
             grantConsultantIdentityService,
             userIdentitiesService,
+            adminListPreferenceService,
             accountSetupIssuer);
   }
 
