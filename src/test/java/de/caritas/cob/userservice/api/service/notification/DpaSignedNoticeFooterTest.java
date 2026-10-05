@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.config.observability.DpaSignedNoticeMetrics;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.DpaSignedNotice;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
@@ -63,6 +64,7 @@ class DpaSignedNoticeFooterTest {
   @Mock private InviteEmailTemplateRepository templateRepository;
   @Mock private TenantService tenantService;
   @Mock private PlatformTransactionManager transactionManager;
+  @Mock private DpaSignedNoticeMetrics metrics;
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
   @Mock private InviteMailTransport inviteMailTransport;
 
@@ -161,7 +163,11 @@ class DpaSignedNoticeFooterTest {
                 "smtp-user", "smtp-pass"),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(
-                brandingResolver, senderOrganisations));
+                brandingResolver, senderOrganisations),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .platformRoutes(),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .unusedRelay());
     DpaSignedNoticeService service =
         new DpaSignedNoticeService(
             signatureReadClient,
@@ -173,6 +179,7 @@ class DpaSignedNoticeFooterTest {
             mailDispatch,
             tenantService,
             transactionManager,
+            metrics,
             new AdminPanelUrl("https://admin.example.org"));
     service.useExecutor(Runnable::run);
 

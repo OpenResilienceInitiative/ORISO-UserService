@@ -22,6 +22,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.NotFoundException;
 import java.util.ArrayList;
@@ -51,10 +53,11 @@ public class CreateAdminService {
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull AdminScope adminScope;
+  private final @NonNull ExistingAccountSetupIssuer accountSetupIssuer;
 
   public Admin createNewAgencyAdmin(CreateAdminDTO createAdminDTO) {
     setTenantId(createAdminDTO);
-    return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY);
+    return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY, true);
   }
 
   /**
@@ -63,11 +66,17 @@ public class CreateAdminService {
    */
   public Admin createNewAgencyAdminInTenant(CreateAdminDTO createAdminDTO) {
     notNull(createAdminDTO.getTenantId());
-    return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY);
+    // The invited administrator chose this credential; only direct creations use a temporary one.
+    return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY, false);
   }
 
   public Admin createNewTenantAdmin(CreateAdminDTO createAdminDTO) {
-    return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT);
+    return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT, true);
+  }
+
+  /** The invited person chose this password themselves during redemption. */
+  public Admin createNewTenantAdminFromInvite(CreateAdminDTO createAdminDTO) {
+    return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT, false);
   }
 
   List<UserRole> getDefaultRoles(Admin.AdminType adminType) {
@@ -108,16 +117,22 @@ public class CreateAdminService {
     }
   }
 
-  private Admin createNewAdmin(final CreateAdminDTO createAdminDTO, Admin.AdminType adminType) {
+  private Admin createNewAdmin(
+      final CreateAdminDTO createAdminDTO, Admin.AdminType adminType, boolean temporaryPassword) {
     final String keycloakUserId = createUser(createAdminDTO);
     final String password =
         StringUtils.isNotBlank(createAdminDTO.getPassword())
             ? createAdminDTO.getPassword()
             : userHelper.getRandomPassword();
+    Admin saved;
     try {
-      identityPasswordUpdater.updatePassword(keycloakUserId, password);
+      if (temporaryPassword) {
+        identityPasswordUpdater.updateTemporaryPassword(keycloakUserId, password);
+      } else {
+        identityPasswordUpdater.updatePassword(keycloakUserId, password);
+      }
       getDefaultRoles(adminType).forEach(role -> identityClient.updateRole(keycloakUserId, role));
-      return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
+      saved = adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
     } catch (CustomValidationHttpStatusException e) {
       identityAccountRemover.rollbackUser(keycloakUserId);
       throw e;
@@ -132,6 +147,17 @@ public class CreateAdminService {
       throw new InternalServerErrorException(
           String.format("Could not complete admin provisioning for type %s", adminType), e);
     }
+    // The identity and admin row exist before the setup link is issued. A mail failure is reported
+    // to the caller and operator; it must never roll back only the Keycloak half of that account.
+    if (temporaryPassword) {
+      accountSetupIssuer.issueAfterCreation(
+          adminType == Admin.AdminType.TENANT
+              ? AccountInviteTargetRole.TENANT_ADMIN
+              : AccountInviteTargetRole.AGENCY_ADMIN,
+          keycloakUserId,
+          password);
+    }
+    return saved;
   }
 
   private String createUser(final CreateAdminDTO createAgencyAdminDTO) {

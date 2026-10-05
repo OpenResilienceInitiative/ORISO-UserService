@@ -388,6 +388,9 @@ public class TenantAdminOnboardingController {
     /** {@code PENDING_2FA_ACTIVATION} when the flow re-enters at the 2FA step; null otherwise. */
     public String phase;
 
+    /** Server-derived purpose; the setup variant must not call registration endpoints. */
+    public String onboardingPurpose;
+
     /** Re-issued TOTP setup material for a resumable link; null renders the verify-only variant. */
     public TwoFactorSetupDTO twoFactor;
 
@@ -407,6 +410,7 @@ public class TenantAdminOnboardingController {
       AccountInvite invite = state.invite();
       TenantAdminOnboardingInviteResponseDTO dto = new TenantAdminOnboardingInviteResponseDTO();
       dto.targetRole = AccountInviteTargetRole.TENANT_ADMIN.name();
+      dto.onboardingPurpose = invite.getPurpose().name();
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();
       dto.lastName = invite.getLastName();
@@ -436,6 +440,7 @@ public class TenantAdminOnboardingController {
       AccountInvite invite = state.invite();
       TenantAdminOnboardingInviteResponseDTO dto = new TenantAdminOnboardingInviteResponseDTO();
       dto.targetRole = invite.getTargetRole().name();
+      dto.onboardingPurpose = invite.getPurpose().name();
       dto.alsoCounsellor = invite.getAlsoCounsellor();
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();

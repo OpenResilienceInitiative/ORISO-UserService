@@ -1035,6 +1035,24 @@ paths:
             enum: [ ASC, DESC ]
             default: ASC
             pattern: '^(ASC|DESC)$'
+        - name: tenantId
+          in: query
+          description: Only rows of this Träger (tenant). Never widens the caller's own scope;
+            a tenant outside it yields an empty result.
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: agencyId
+          in: query
+          description: Only consultants assigned to this Beratungsstelle (agency). Repeat the parameter or pass a
+            comma-separated list to match any of several agencies. Never widens the caller's own scope.
+          required: false
+          schema:
+            type: array
+            items:
+              type: integer
+              format: int64
       responses:
         200:
           description: OK - successful operation
@@ -1952,6 +1970,8 @@ paths:
           description: TOO MANY REQUESTS - maximum number of attempts has been reached
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
+        503:
+          description: SERVICE UNAVAILABLE - identity provider rejected the service session after one refresh; retry later
       security:
         - Bearer: [ ]
   /users/2fa/app:
@@ -2272,6 +2292,69 @@ paths:
         '403': { description: Caller is not a platform administrator }
         '404': { description: Draft not found }
 
+  /users/admin/service-notices/drafts/{campaignKey}/dry-run:
+    get:
+      tags: [service-notice-dry-run-controller]
+      operationId: dryRunServiceNoticeDraft
+      summary: Count who a planned notice would reach, without recording or sending anything
+      description: >-
+        Implemented by the handwritten platform-administrator controller; the /service-prefixed
+        ingress alias serves the same operation. The audience is computed server-side
+        (counselling-centre admins); the response carries counts only, never addresses.
+      x-internal: true
+      security:
+        - Bearer: []
+      parameters:
+        - name: campaignKey
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9-]{0,79}$' }
+      responses:
+        '200':
+          description: Current audience counts; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceNoticeDryRun' }
+        '401': { description: Missing or invalid bearer token }
+        '403': { description: Caller is not a platform administrator }
+        '404': { description: Draft not found }
+
+  /users/admin/service-notices/drafts/{campaignKey}/confirm:
+    post:
+      tags: [service-notice-confirm-controller]
+      operationId: confirmServiceNoticeDraft
+      summary: Confirm a planned notice - records its recipients once and queues their mail
+      description: >-
+        Implemented by the handwritten platform-administrator controller; the /service-prefixed
+        ingress alias serves the same operation. Only the operator who created the draft may
+        confirm it. The body repeats the recipient count from the dry run; a different current
+        count is refused. Repeating a confirmation records nothing new. Mail is delivered later by
+        the separate, opt-in sender.
+      x-internal: true
+      security:
+        - Bearer: []
+      parameters:
+        - name: campaignKey
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9-]{0,79}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServiceNoticeConfirmRequest' }
+      responses:
+        '200':
+          description: Confirmed now, or already confirmed earlier (alreadyConfirmed true); Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceNoticeConfirmed' }
+        '400': { description: Recipient count missing }
+        '401': { description: Missing or invalid bearer token }
+        '403': { description: "Caller is not a platform administrator, or did not create the draft" }
+        '404': { description: Draft not found }
+        '409': { description: "Audience changed since the dry run, audience empty, or maintenance window already over" }
+
   /users/chat-series/{seriesId}/join-requests:
     post:
       tags: [chat-series-controller]
@@ -2431,7 +2514,7 @@ components:
       required: [campaignKey, status, maintenanceDate, maintenanceStart, maintenanceEnd, statusUrl]
       properties:
         campaignKey: { type: string }
-        status: { type: string, enum: [DRAFT] }
+        status: { type: string, x-extensible-enum: [DRAFT, CONFIRMED] }
         maintenanceDate: { type: string, format: date }
         maintenanceStart: { type: string }
         maintenanceEnd: { type: string }
@@ -2446,6 +2529,31 @@ components:
         preheader: { type: string }
         html: { type: string }
         text: { type: string }
+    ServiceNoticeDryRun:
+      type: object
+      required: [campaignKey, audience, recipients, mail, feedOnlyPreferenceOff, feedOnlyNoAddress, feedOnlyNoSenderTenant]
+      properties:
+        campaignKey: { type: string }
+        audience: { type: string, enum: [AGENCY_ADMINS] }
+        recipients: { type: integer, description: Everyone who would get the in-app entry }
+        mail: { type: integer, description: Recipients who would also get the mail }
+        feedOnlyPreferenceOff: { type: integer, description: In-app only because their service-notice switch is off }
+        feedOnlyNoAddress: { type: integer, description: In-app only because no real address is stored }
+        feedOnlyNoSenderTenant: { type: integer, description: In-app only because no sender tenant is known }
+    ServiceNoticeConfirmRequest:
+      type: object
+      required: [expectedRecipients]
+      properties:
+        expectedRecipients: { type: integer, minimum: 0, description: The recipients count shown by the dry run }
+    ServiceNoticeConfirmed:
+      type: object
+      required: [campaignKey, status, recipients, mailQueued, alreadyConfirmed]
+      properties:
+        campaignKey: { type: string }
+        status: { type: string, enum: [CONFIRMED] }
+        recipients: { type: integer }
+        mailQueued: { type: integer }
+        alreadyConfirmed: { type: boolean }
     GuestIdentitySuggestionRequest:
       type: object
       required: [locale, count, exclude]

@@ -107,6 +107,8 @@ class AccountInviteExistingAgencyIT {
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private AuthenticatedUser caller;
 
+  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
+
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private TenantService tenantService;

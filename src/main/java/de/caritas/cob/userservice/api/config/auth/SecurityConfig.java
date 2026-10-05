@@ -228,7 +228,9 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.POST,
                     "/users/account-invites/*/accept",
-                    "/service/users/account-invites/*/accept")
+                    "/service/users/account-invites/*/accept",
+                    "/users/account-invites/*/setup",
+                    "/service/users/account-invites/*/setup")
                 .permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**")
                 .permitAll()
@@ -250,6 +252,8 @@ public class SecurityConfig {
                     HttpMethod.POST,
                     "/users/account-invites/{token}/accept",
                     "/service/users/account-invites/{token}/accept",
+                    "/users/account-invites/{token}/setup",
+                    "/service/users/account-invites/{token}/setup",
                     "/users/account-invites/{token}/onboarding/register",
                     "/service/users/account-invites/{token}/onboarding/register",
                     "/users/account-invites/{token}/onboarding/two-factor",
@@ -518,6 +522,11 @@ public class SecurityConfig {
                     "/useradmin/statistics/tutorials",
                     "/service/useradmin/statistics/tutorials")
                 .hasAnyAuthority(TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // An admin's own list sorts (#1263): every admin role that sees a user list keeps
+                // its own; the data is always the caller's, so no other access widens.
+                .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(
                     "/useradmin", "/useradmin/**", "/service/useradmin", "/service/useradmin/**")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
