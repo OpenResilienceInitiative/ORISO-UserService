@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
  * <p>The Matrix homeserver address (finding DB-M04) must never be baked into the service. {@code
  * matrix.serverName} and {@code matrix.apiUrl} must resolve from the {@code MATRIX_SERVER_NAME} /
  * {@code MATRIX_API_URL} environment variables with NO hardcoded, non-empty default — so the
- * homeserver can be moved (e.g. to {@code matrix.oriso.org}) purely via configuration, without a
+ * homeserver can be moved (e.g. to {@code matrix.example.org}) purely via configuration, without a
  * host address leaking into the source tree.
  */
 class MatrixConfigPropertiesTest {

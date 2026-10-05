@@ -1,0 +1,3 @@
+# Canonical generated Tigrinya title underline uses seven equals signs.
+# Preserve its reviewed bytes while Git uses longer conflict markers for this file.
+src/main/resources/emails/ti/anruf-einladung.txt conflict-marker-size=32

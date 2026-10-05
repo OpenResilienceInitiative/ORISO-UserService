@@ -36,6 +36,15 @@ public class InviteEmailTemplate {
   @Column(name = "id", nullable = false)
   private Long id;
 
+  /**
+   * The Träger this template belongs to, or {@code null} for a <b>platform template</b> written by
+   * the platform operator and offered to everyone (ORISO-Admin#1026). Nullable on purpose: every
+   * row that existed before templates had an owner is a platform template, and a NOT NULL column
+   * without a default would fail every integration test on an empty schema.
+   */
+  @Column(name = "tenant_id")
+  private Long tenantId;
+
   @Enumerated(EnumType.STRING)
   @Column(name = "kind", nullable = false, length = 32)
   private InviteEmailTemplateKind kind;
@@ -56,6 +65,16 @@ public class InviteEmailTemplate {
   @Column(name = "active", nullable = false)
   @Builder.Default
   private Boolean active = true;
+
+  /**
+   * A built-in platform template per kind and language, seeded by Liquibase so an invite never goes
+   * out without text. Only the platform admin may change one, and never its kind, language or
+   * active flag. The column default mirrors the migration: without it the H2 test schema is
+   * stricter than the real one and the seed SQL fails every integration test.
+   */
+  @Column(name = "system_default", nullable = false, columnDefinition = "bit default false")
+  @Builder.Default
+  private Boolean systemDefault = false;
 
   @Column(name = "created_by_user_id", length = 36)
   private String createdByUserId;

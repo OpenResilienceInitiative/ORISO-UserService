@@ -22,7 +22,7 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
               + "c.conversation_type, "
               + "c.consultant_id_owner, c.matrix_room_id, c.update_date, c.create_date, "
               + "c.hint_message, c.source_language, c.hint_message_translations, "
-              + "c.group_chat_rules_translations FROM chat c JOIN chat_agency ca ON c"
+              + "c.group_chat_rules_translations, c.invite_token FROM chat c JOIN chat_agency ca ON c"
               + ".id = ca.chat_id JOIN user_agency ua ON ca.agency_id = ua.agency_id AND ua.user_id = :user_id",
       nativeQuery = true)
   List<Chat> findByUserId(@Param(value = "user_id") String userId);
@@ -35,7 +35,7 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
               + "c.conversation_type, "
               + "c.consultant_id_owner, c.matrix_room_id, c.update_date, c.create_date, "
               + "c.hint_message, c.source_language, c.hint_message_translations, "
-              + "c.group_chat_rules_translations FROM chat c "
+              + "c.group_chat_rules_translations, c.invite_token FROM chat c "
               + "JOIN user_chat uc ON c.id = uc.chat_id AND uc.user_id = :user_id",
       nativeQuery = true)
   List<Chat> findAssignedByUserId(@Param(value = "user_id") String userId);
@@ -45,6 +45,10 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
   List<Chat> findByAgencyIds(@Param(value = "agency_ids") Set<Long> agencyIds);
 
   Optional<Chat> findByMatrixRoomId(String matrixRoomId);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select c from Chat c where c.id = :chatId")
+  Optional<Chat> findByIdForUpdate(@Param("chatId") Long chatId);
 
   @Query(
       "select distinct c from Chat c left join fetch c.chatAgencies where c.matrixRoomId in :room_ids")
@@ -64,6 +68,10 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   List<Chat> findAllByActiveIsTrue();
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select chat from Chat chat where chat.id = :seriesId")
+  Optional<Chat> findSeriesForAppointmentMailUpdate(@Param("seriesId") Long seriesId);
 
   List<Chat> findAllByActiveIsFalseAndStartDateBetween(
       LocalDateTime startInclusive, LocalDateTime endInclusive);

@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantLinks;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
+import de.caritas.cob.userservice.api.adapters.web.dto.TopicPermissionDTO;
 import de.caritas.cob.userservice.api.admin.hallink.HalLinkBuilder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
@@ -106,6 +107,10 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
                 ? ConsultantDTO.AvatarKindEnum.fromValue(consultant.getAvatarKind().name())
                 : null)
         .avatarId(consultant.getAvatarId())
+        .topicPermission(
+            consultant.getTopicPermission() != null
+                ? TopicPermissionDTO.fromValue(consultant.getTopicPermission().name())
+                : null)
         .isSupervisor(consultant.isSupervisor())
         .assignedSupervisorId(consultant.getAssignedSupervisorId())
         // A consultant with no chat identity was created while the chat server was

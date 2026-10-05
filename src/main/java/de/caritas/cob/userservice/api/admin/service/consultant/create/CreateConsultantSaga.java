@@ -322,7 +322,11 @@ public class CreateConsultantSaga {
   private void updateKeycloakPasswordOrRollback(
       ConsultantCreationInput consultantCreationInput, String keycloakUserId, String password) {
     try {
-      identityPasswordUpdater.updatePassword(keycloakUserId, password);
+      if (consultantCreationInput.isPasswordChangeRequired()) {
+        identityPasswordUpdater.updateTemporaryPassword(keycloakUserId, password);
+      } else {
+        identityPasswordUpdater.updatePassword(keycloakUserId, password);
+      }
     } catch (CustomValidationHttpStatusException e) {
       rollbackCreateNewConsultant(
           buildConsultantDataForRollback(consultantCreationInput, keycloakUserId));

@@ -63,6 +63,8 @@ import org.springframework.web.client.RestClientException;
 @Slf4j
 public class CreateUserFacade {
   private final ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
+  private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
+      dpaPolicy;
   private final @NonNull UserVerifier userVerifier;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
@@ -113,6 +115,11 @@ public class CreateUserFacade {
       userVerifier.checkIfAllRequiredAttributesAreCorrectlyFilled(userDTO);
       userVerifier.checkIfUsernameIsAvailable(userDTO);
       agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
+      var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
+      if (consultingTypeSettings.getGroupChat() == null
+          || !isTrue(consultingTypeSettings.getGroupChat().getIsGroupChat())) {
+        dpaPolicy.requireForAgency(userDTO.getAgencyId());
+      }
 
       RecoveryPolicySnapshot snapshot =
           chatRecoveryEnrollmentPolicyService.forNewAsker(TenantContext.getCurrentTenant());
@@ -145,7 +152,6 @@ public class CreateUserFacade {
       }
       provisionMatrixUser(user, plainUsername, activeAttempt);
 
-      var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
       activeAttempt.register(
           SESSION, identityUserId, () -> deleteSessionsForUser(provisionedUser.get()));
       NewRegistrationResponseDto registration =

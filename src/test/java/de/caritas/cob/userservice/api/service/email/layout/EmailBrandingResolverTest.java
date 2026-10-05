@@ -1,19 +1,35 @@
 package de.caritas.cob.userservice.api.service.email.layout;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.HttpClientErrorException;
 
 /** Branding resolution and its fallbacks (ORISO-UserService#914). */
@@ -23,13 +39,22 @@ class EmailBrandingResolverTest {
   @Mock private TenantService tenantService;
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
 
+  @BeforeEach
+  void tenantUrls() {
+    lenient().when(tenantTemplateSupplier.getTenantBaseUrl(any())).thenReturn("https://tenant.org");
+  }
+
   private EmailBrandingResolver resolver(String platformLogoUrl) {
     return new EmailBrandingResolver(
-        tenantService, tenantTemplateSupplier, "ORISO", platformLogoUrl, "https://app.oriso.org/");
+        tenantService,
+        tenantTemplateSupplier,
+        "ORISO",
+        platformLogoUrl,
+        "https://app.example.org/");
   }
 
   private void givenNoTemplateAttributes() {
-    lenient().when(tenantTemplateSupplier.getTenantBaseUrl(any())).thenReturn(null);
+    lenient().when(tenantTemplateSupplier.getTenantBaseUrl(any())).thenReturn("https://tenant.org");
   }
 
   private static RestrictedTenantDTO tenant(String name, Theming theming) {
@@ -40,19 +65,176 @@ class EmailBrandingResolverTest {
     return tenant;
   }
 
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(strings = {"   "})
+  void resolve_Should_RejectMissingConfiguredPlatformName(String configuredName) {
+    EmailBrandingResolver subject =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, configuredName, "", "https://app.example.org");
+
+    assertThatThrownBy(() -> subject.resolve(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+  }
+
+  @Test
+  void resolve_Should_RejectMissingPlatformNameEvenForANamedTenant() {
+    lenient().when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", null));
+    EmailBrandingResolver subject =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "", "", "https://app.example.org");
+
+    assertThatThrownBy(() -> subject.resolve(7L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+  }
+
+  @Test
+  void resolve_Should_TrimTheConfiguredPlatformName() {
+    EmailBrandingResolver subject =
+        new EmailBrandingResolver(
+            tenantService,
+            tenantTemplateSupplier,
+            "  Beratung Mitten  ",
+            "",
+            "https://app.example.org");
+
+    assertThat(subject.resolve(null).brandName()).isEqualTo("Beratung Mitten");
+  }
+
+  @Test
+  void resolve_Should_NotInventANameWhenCanonicalConfigurationIsAbsent() {
+    new ApplicationContextRunner()
+        .withBean(
+            PropertySourcesPlaceholderConfigurer.class, PropertySourcesPlaceholderConfigurer::new)
+        .withInitializer(
+            context -> {
+              context.getBeanFactory().registerSingleton("tenantService", tenantService);
+              context
+                  .getBeanFactory()
+                  .registerSingleton("tenantTemplateSupplier", tenantTemplateSupplier);
+            })
+        .withUserConfiguration(EmailBrandingResolver.class)
+        .withPropertyValues(
+            "app.base.url=https://app.example.org",
+            "multitenancy.enabled=false",
+            "feature.multitenancy.with.single.domain.enabled=false")
+        .run(
+            context ->
+                assertThatThrownBy(() -> context.getBean(EmailBrandingResolver.class).resolve(null))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("EMAIL_BRANDING_NAME"));
+  }
+
+  @Test
+  void resolve_Should_UseCanonicalConfiguredNameInSpringBinding() {
+    new ApplicationContextRunner()
+        .withBean(
+            PropertySourcesPlaceholderConfigurer.class, PropertySourcesPlaceholderConfigurer::new)
+        .withInitializer(
+            context -> {
+              context.getBeanFactory().registerSingleton("tenantService", tenantService);
+              context
+                  .getBeanFactory()
+                  .registerSingleton("tenantTemplateSupplier", tenantTemplateSupplier);
+            })
+        .withUserConfiguration(EmailBrandingResolver.class)
+        .withPropertyValues(
+            "app.base.url=https://app.example.org",
+            "email.branding.name=Beratung Mitten",
+            "multitenancy.enabled=false",
+            "feature.multitenancy.with.single.domain.enabled=false")
+        .run(
+            context ->
+                assertThat(context.getBean(EmailBrandingResolver.class).resolve(null).brandName())
+                    .isEqualTo("Beratung Mitten"));
+  }
+
+  @Test
+  void notificationBrandingRequiresTheExactTenantUrl() {
+    var resolved = tenant("Nord", null);
+    resolved.setSubdomain("nord");
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(resolved);
+    when(tenantTemplateSupplier.getTenantBaseUrl(resolved))
+        .thenReturn("https://nord.app.oriso.org");
+    var subject = resolver("");
+    ReflectionTestUtils.setField(subject, "multitenancyEnabled", true);
+
+    var branding = subject.resolveNotification(7L, "https://nord.app.oriso.org");
+
+    assertThat(branding.imprintUrl()).isEqualTo("https://nord.app.oriso.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://nord.app.oriso.org/datenschutz");
+    assertThatThrownBy(() -> subject.resolveNotification(7L, "https://other.app.oriso.org"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("does not match");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void notificationBrandingUsesCurrentSavedTenantWhenCachedBrandOrSubdomainIsStale(
+      boolean subdomainChanged) {
+    var oldTheme = new Theming();
+    oldTheme.setLogo("https://app.example.org/old-logo.png");
+    oldTheme.setPrimaryColor("#804030");
+    var cachedTenant = tenant("Old tenant brand", oldTheme);
+    cachedTenant.setSubdomain("old");
+    var currentTheme = new Theming();
+    currentTheme.setLogo("https://app.example.org/current-logo.png");
+    currentTheme.setPrimaryColor("#1c4f8f");
+    var currentTenant = tenant("Current tenant brand", currentTheme);
+    currentTenant.setSubdomain(subdomainChanged ? "current" : "old");
+    var currentUrl =
+        subdomainChanged ? "https://current.app.example.org" : "https://old.app.example.org";
+    lenient().when(tenantService.getRestrictedTenantData(7L)).thenReturn(cachedTenant);
+    lenient().when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(currentTenant);
+    lenient()
+        .when(tenantTemplateSupplier.getTenantBaseUrl(cachedTenant))
+        .thenReturn("https://old.app.example.org");
+    lenient().when(tenantTemplateSupplier.getTenantBaseUrl(currentTenant)).thenReturn(currentUrl);
+    var subject = resolver("");
+    ReflectionTestUtils.setField(subject, "multitenancyEnabled", true);
+
+    var branding = subject.resolveNotification(7L, currentUrl);
+
+    assertThat(branding.brandName()).isEqualTo("Current tenant brand");
+    assertThat(branding.logoUrl()).isEqualTo("https://app.example.org/current-logo.png");
+    assertThat(branding.accentColor()).isEqualTo("#1c4f8f");
+    assertThat(branding.imprintUrl()).isEqualTo(currentUrl + "/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo(currentUrl + "/datenschutz");
+  }
+
+  @Test
+  void notificationBrandingDoesNotUsePlatformWhenTenantIsUnavailable() {
+    assertThatThrownBy(() -> resolver("").resolveNotification(7L, "https://app.oriso.org"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("tenant is unavailable");
+  }
+
+  @Test
+  void notificationBrandingRequiresAConfiguredNameWhenTenantHasNone() {
+    var subject =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "  ", "", "https://app.example.org/");
+
+    assertThatThrownBy(() -> subject.resolveNotification(7L, "https://app.example.org"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+  }
+
   // --- logo -----------------------------------------------------------------------------
 
   @Test
   void resolve_Should_preferTheTenantLogo() {
     givenNoTemplateAttributes();
     Theming theming = new Theming();
-    theming.setLogo("https://cdn.example.org/tenant.png");
-    theming.setAssociationLogo("https://cdn.example.org/association.png");
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", theming));
+    theming.setLogo("https://app.example.org/tenant.png");
+    theming.setAssociationLogo("https://app.example.org/association.png");
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", theming));
 
-    EmailBranding branding = resolver("https://cdn.example.org/platform.png").resolve(7L);
+    EmailBranding branding = resolver("https://app.example.org/platform.png").resolve(7L);
 
-    assertThat(branding.logoUrl()).isEqualTo("https://cdn.example.org/tenant.png");
+    assertThat(branding.logoUrl()).isEqualTo("https://app.example.org/tenant.png");
     assertThat(branding.brandName()).isEqualTo("Nord");
   }
 
@@ -60,14 +242,15 @@ class EmailBrandingResolverTest {
   void resolve_Should_fallBackToTheAssociationLogoThenThePlatformLogo() {
     givenNoTemplateAttributes();
     Theming associationOnly = new Theming();
-    associationOnly.setAssociationLogo("https://cdn.example.org/association.png");
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", associationOnly));
+    associationOnly.setAssociationLogo("https://app.example.org/association.png");
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenReturn(tenant("Nord", associationOnly));
 
-    assertThat(resolver("https://cdn.example.org/platform.png").resolve(7L).logoUrl())
-        .isEqualTo("https://cdn.example.org/association.png");
+    assertThat(resolver("https://app.example.org/platform.png").resolve(7L).logoUrl())
+        .isEqualTo("https://app.example.org/association.png");
 
-    assertThat(resolver("https://cdn.example.org/platform.png").resolve(null).logoUrl())
-        .isEqualTo("https://cdn.example.org/platform.png");
+    assertThat(resolver("https://app.example.org/platform.png").resolve(null).logoUrl())
+        .isEqualTo("https://app.example.org/platform.png");
   }
 
   /**
@@ -82,15 +265,15 @@ class EmailBrandingResolverTest {
     RestrictedTenantDTO resolvedTenant = tenant("Nord", base64Logo);
     resolvedTenant.setId(12L);
     resolvedTenant.setSubdomain("nord");
-    when(tenantService.getRestrictedTenantData(12L)).thenReturn(resolvedTenant);
+    when(tenantService.getRestrictedTenantDataFresh(12L)).thenReturn(resolvedTenant);
     lenient()
         .when(tenantTemplateSupplier.getTenantBaseUrl(resolvedTenant))
-        .thenReturn("https://nord.app.oriso.org");
+        .thenReturn("https://nord.app.example.org");
 
     EmailBranding branding = resolver("").resolve(12L);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/12/logo");
+        .isEqualTo("https://app.example.org/service/tenant/public/branding/12/logo");
     assertThat(branding.hasLogo()).isTrue();
   }
 
@@ -101,35 +284,34 @@ class EmailBrandingResolverTest {
     platformTheming.setLogo("data:image/png;base64,iVBORw0KGgo=");
     RestrictedTenantDTO platform = tenant("ORISO", platformTheming);
     platform.setId(1L);
-    when(tenantService.getPlatformTenantData()).thenReturn(platform);
+    when(tenantService.getPlatformTenantDataFresh()).thenReturn(platform);
 
     EmailBranding branding = resolver("").resolve(null);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/1/logo");
+        .isEqualTo("https://app.example.org/service/tenant/public/branding/1/logo");
   }
 
   /**
    * Measured on staging 2026-09-21/22: Träger there have an empty subdomain, so the tenant base URL
    * degenerates to {@code https://.<host>}. The mail logo must still point at this tenant's own
-   * image, pinned by id on the application origin.
+   * image, pinned by id on the application origin once a valid tenant URL exists.
    */
   @Test
-  void resolve_Should_pinAStoredLogoToTheTenantId_When_TheTenantHasAnEmptySubdomain() {
+  void resolve_Should_rejectAnEmptySubdomainWithoutAValidTenantUrl() {
     Theming stored = new Theming();
     stored.setLogo("data:image/png;base64,iVBORw0KGgo=");
     RestrictedTenantDTO tenant12 = tenant("Traeger Zwoelf", stored);
     tenant12.setId(12L);
     tenant12.setSubdomain("");
-    when(tenantService.getRestrictedTenantData(12L)).thenReturn(tenant12);
+    when(tenantService.getRestrictedTenantDataFresh(12L)).thenReturn(tenant12);
     lenient()
         .when(tenantTemplateSupplier.getTenantBaseUrl(tenant12))
         .thenReturn("https://.online-beratung.neusta-integrate.de");
 
-    EmailBranding branding = resolver("").resolve(12L);
-
-    assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/12/logo");
+    assertThatThrownBy(() -> resolver("").resolve(12L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("no valid base URL");
   }
 
   @Test
@@ -145,19 +327,18 @@ class EmailBrandingResolverTest {
         .isEqualTo("https://ok.org/a");
   }
 
-  /** The empty-subdomain base URL must not leak into the footer either. */
+  /** An invalid tenant URL must stop the footer from using a different origin. */
   @Test
-  void resolve_Should_fallBackToTheApplicationFooter_When_TheTenantBaseUrlHasNoHost() {
+  void resolve_Should_rejectAnInvalidTenantFooterOrigin() {
     RestrictedTenantDTO tenant12 = tenant("Traeger Zwoelf", null);
     tenant12.setId(12L);
-    when(tenantService.getRestrictedTenantData(12L)).thenReturn(tenant12);
+    when(tenantService.getRestrictedTenantDataFresh(12L)).thenReturn(tenant12);
     when(tenantTemplateSupplier.getTenantBaseUrl(tenant12))
         .thenReturn("https://.online-beratung.neusta-integrate.de");
 
-    EmailBranding branding = resolver("").resolve(12L);
-
-    assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
-    assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+    assertThatThrownBy(() -> resolver("").resolve(12L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("no valid base URL");
   }
 
   @Test
@@ -165,10 +346,139 @@ class EmailBrandingResolverTest {
     givenNoTemplateAttributes();
     RestrictedTenantDTO tenant12 = tenant("Traeger Zwoelf", new Theming());
     tenant12.setId(12L);
-    when(tenantService.getRestrictedTenantData(12L)).thenReturn(tenant12);
+    when(tenantService.getRestrictedTenantDataFresh(12L)).thenReturn(tenant12);
 
-    assertThat(resolver("https://cdn.example.org/platform.png").resolve(12L).logoUrl())
-        .isEqualTo("https://cdn.example.org/platform.png");
+    assertThat(resolver("https://app.example.org/platform.png").resolve(12L).logoUrl())
+        .isEqualTo("https://app.example.org/platform.png");
+  }
+
+  @Test
+  void resolve_Should_dropAnExternalLogoInsteadOfMakingTheRecipientFetchIt() {
+    Theming theming = new Theming();
+    theming.setLogo("https://tracker.example/logo.png");
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", theming));
+
+    assertThat(resolver("https://tracker.example/platform.png").resolve(7L).logoUrl()).isNull();
+  }
+
+  @Test
+  void resolve_Should_shareOneFreshLookupWithinTheShortCache() {
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", null));
+    EmailBrandingResolver cached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.example.org", 10L);
+
+    cached.resolve(7L);
+    cached.resolve(7L);
+
+    verify(tenantService, times(1)).getRestrictedTenantDataFresh(7L);
+  }
+
+  @Test
+  void slowEarlierLookupCannotReplaceTheNewerTenantInTheBatchCache() throws Exception {
+    CountDownLatch firstLookupStarted = new CountDownLatch(1);
+    CountDownLatch releaseFirstLookup = new CountDownLatch(1);
+    AtomicInteger calls = new AtomicInteger();
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenAnswer(
+            invocation -> {
+              if (calls.incrementAndGet() == 1) {
+                firstLookupStarted.countDown();
+                if (!releaseFirstLookup.await(5, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("First lookup was not released");
+                }
+                return tenant("Old saved name", null);
+              }
+              return tenant("New saved name", null);
+            });
+    EmailBrandingResolver cached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.example.org", 10L);
+
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var first = executor.submit(() -> cached.resolve(7L));
+      try {
+        assertThat(firstLookupStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        var second = executor.submit(() -> cached.resolve(7L));
+        assertThat(second.get(5, TimeUnit.SECONDS).brandName()).isEqualTo("New saved name");
+      } finally {
+        releaseFirstLookup.countDown();
+      }
+      // The older caller receives its own completed lookup; it cannot reseed the shared cache.
+      assertThat(first.get(5, TimeUnit.SECONDS).brandName()).isEqualTo("Old saved name");
+      assertThat(cached.resolve(7L).brandName()).isEqualTo("New saved name");
+      verify(tenantService, times(2)).getRestrictedTenantDataFresh(7L);
+    }
+  }
+
+  @Test
+  void batchCacheRetentionStartsAfterTheRemoteLookupCompletes() {
+    AtomicLong remoteCompletion = new AtomicLong();
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenAnswer(
+            invocation -> {
+              remoteCompletion.set(System.nanoTime());
+              return tenant("Nord", null);
+            });
+    EmailBrandingResolver cached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.example.org", 10L);
+
+    cached.resolve(7L);
+    Map<?, ?> entries = (Map<?, ?>) ReflectionTestUtils.getField(cached, "tenantCache");
+    assertThat(entries).hasSize(1);
+    Object entry = entries.values().iterator().next();
+    Long retainedSince = ReflectionTestUtils.invokeMethod(entry, "storedAtNanos");
+    assertThat(retainedSince).isNotNull();
+    // Monotonic differences also work when nanoTime's arbitrary origin is negative.
+    assertThat(retainedSince - remoteCompletion.get()).isGreaterThanOrEqualTo(0L);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"https://tracker.example/logo.png", ""})
+  void resolve_Should_notLinkToAnAssetThePublicEndpointCannotServe(String primaryLogo) {
+    givenNoTemplateAttributes();
+    Theming theming = new Theming();
+    theming.setLogo(primaryLogo);
+    theming.setAssociationLogo("data:image/png;base64,iVBORw0KGgo=");
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", theming));
+
+    assertThat(resolver("https://app.example.org/platform.png").resolve(7L).logoUrl())
+        .isEqualTo("https://app.example.org/platform.png");
+  }
+
+  @Test
+  void constructor_Should_limitBrandingCacheToTenSeconds() {
+    EmailBrandingResolver cached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.example.org", 300L);
+
+    assertThat(org.springframework.test.util.ReflectionTestUtils.getField(cached, "cacheTtlNanos"))
+        .isEqualTo(10_000_000_000L);
+  }
+
+  @Test
+  void constructor_Should_rejectAMissingApplicationUrl() {
+    assertThatThrownBy(
+            () -> new EmailBrandingResolver(tenantService, tenantTemplateSupplier, "ORISO", "", ""))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("app.base.url");
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "ftp://app.example.org",
+        "https://user:secret@app.example.org",
+        "https://app.example.org/?mail=1",
+        "https://app.example.org/#mail"
+      })
+  void constructor_Should_rejectApplicationUrlsThatCannotBeSafeMailOrigins(String url) {
+    assertThatThrownBy(
+            () ->
+                new EmailBrandingResolver(tenantService, tenantTemplateSupplier, "ORISO", "", url))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("app.base.url");
   }
 
   // --- colour ---------------------------------------------------------------------------
@@ -182,7 +492,7 @@ class EmailBrandingResolverTest {
     givenNoTemplateAttributes();
     Theming primary = new Theming();
     primary.setPrimaryColor("#123456");
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", primary));
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", primary));
 
     assertThat(resolver("").resolve(7L).accentColor()).isEqualTo("#123456");
   }
@@ -197,7 +507,7 @@ class EmailBrandingResolverTest {
     givenNoTemplateAttributes();
     Theming secondaryOnly = new Theming();
     secondaryOnly.setSecondaryColor("#654321");
-    when(tenantService.getRestrictedTenantData(8L)).thenReturn(tenant("Sued", secondaryOnly));
+    when(tenantService.getRestrictedTenantDataFresh(8L)).thenReturn(tenant("Sued", secondaryOnly));
 
     assertThat(resolver("").resolve(8L).accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
   }
@@ -219,26 +529,71 @@ class EmailBrandingResolverTest {
     givenNoTemplateAttributes();
     Theming broken = new Theming();
     broken.setPrimaryColor("not-a-color");
-    when(tenantService.getRestrictedTenantData(9L)).thenReturn(tenant("Ost", broken));
+    when(tenantService.getRestrictedTenantDataFresh(9L)).thenReturn(tenant("Ost", broken));
 
     assertThat(resolver("").resolve(9L).accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
+  }
+
+  @Test
+  void resolve_Should_rejectALightTenantPrimaryColorForAWhiteButtonLabel() {
+    Theming light = new Theming();
+    light.setPrimaryColor("#ffff00");
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", light));
+
+    assertThat(resolver("").resolve(7L).accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
   }
 
   // --- degradation ----------------------------------------------------------------------
 
   /** Tenant-admin invites are sent before the tenant exists — a 404 is normal, not an error. */
   @Test
-  void resolve_Should_degradeToPlatformBranding_When_TenantLookupFails() {
+  void resolvePendingTenant_Should_usePlatformBranding_When_TenantDoesNotExistYet() {
     givenNoTemplateAttributes();
-    when(tenantService.getRestrictedTenantData(anyLong()))
+    when(tenantService.getRestrictedTenantDataFresh(anyLong()))
         .thenThrow(
             HttpClientErrorException.create(
                 org.springframework.http.HttpStatus.NOT_FOUND, "nf", null, null, null));
 
-    EmailBranding branding = resolver("").resolve(4711L);
+    EmailBranding branding = resolver("").resolvePendingTenant(4711L);
 
     assertThat(branding.brandName()).isEqualTo("ORISO");
     assertThat(branding.accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
+  }
+
+  @Test
+  void pendingTenantFallbackDoesNotMaskUnknownTenantInNormalResolution() {
+    givenNoTemplateAttributes();
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenThrow(
+            HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.NOT_FOUND, "nf", null, null, null));
+    EmailBrandingResolver cached = resolver("");
+
+    assertThat(cached.resolvePendingTenant(7L).brandName()).isEqualTo("ORISO");
+    assertThatThrownBy(() -> cached.resolve(7L))
+        .isInstanceOf(HttpClientErrorException.NotFound.class);
+    verify(tenantService, times(2)).getRestrictedTenantDataFresh(7L);
+  }
+
+  @Test
+  void resolve_Should_rejectAnUnknownTenantForAnExistingAccount() {
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenThrow(
+            HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.NOT_FOUND, "nf", null, null, null));
+
+    assertThatThrownBy(() -> resolver("").resolve(7L))
+        .isInstanceOf(HttpClientErrorException.NotFound.class);
+  }
+
+  @Test
+  void resolve_Should_notReplaceATenantBrandAfterATenantServiceFailure() {
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenThrow(new IllegalStateException("tenant service unavailable"));
+
+    assertThatThrownBy(() -> resolver("").resolve(7L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("tenant service unavailable");
   }
 
   @Test
@@ -247,7 +602,7 @@ class EmailBrandingResolverTest {
 
     resolver("").resolve(null);
 
-    org.mockito.Mockito.verify(tenantService).getPlatformTenantData();
+    org.mockito.Mockito.verify(tenantService).getPlatformTenantDataFresh();
   }
 
   // --- footer ---------------------------------------------------------------------------
@@ -255,7 +610,7 @@ class EmailBrandingResolverTest {
   @Test
   void resolve_Should_buildTheImprintAndPrivacyUrlsFromTheResolvedTenantsOwnBaseUrl() {
     RestrictedTenantDTO resolvedTenant = tenant("Nord", null);
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolvedTenant);
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(resolvedTenant);
     when(tenantTemplateSupplier.getTenantBaseUrl(resolvedTenant)).thenReturn("https://nord.org");
 
     EmailBranding branding = resolver("").resolve(7L);
@@ -274,7 +629,7 @@ class EmailBrandingResolverTest {
   @Test
   void resolve_Should_useTheRequestedTenantsFooter_Even_WhenTheAmbientContextIsTechnical() {
     RestrictedTenantDTO tenant42 = tenant("Tenant42", null);
-    when(tenantService.getRestrictedTenantData(42L)).thenReturn(tenant42);
+    when(tenantService.getRestrictedTenantDataFresh(42L)).thenReturn(tenant42);
     when(tenantTemplateSupplier.getTenantBaseUrl(tenant42)).thenReturn("https://tenant42.org");
 
     EmailBranding branding = resolver("").resolve(42L);
@@ -285,14 +640,14 @@ class EmailBrandingResolverTest {
   }
 
   @Test
-  void resolve_Should_fallBackToTheApplicationBaseUrl_When_TheTenantHasNoOwnBaseUrl() {
+  void resolve_Should_rejectMissingTenantBaseUrl() {
     givenNoTemplateAttributes();
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", null));
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", null));
 
-    EmailBranding branding = resolver("").resolve(7L);
-
-    assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
-    assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+    when(tenantTemplateSupplier.getTenantBaseUrl(any())).thenReturn(null);
+    assertThatThrownBy(() -> resolver("").resolve(7L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("no valid base URL");
   }
 
   @Test
@@ -301,7 +656,7 @@ class EmailBrandingResolverTest {
 
     EmailBranding branding = resolver("").resolve(null);
 
-    assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
-    assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+    assertThat(branding.imprintUrl()).isEqualTo("https://app.example.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://app.example.org/datenschutz");
   }
 }

@@ -56,6 +56,7 @@ mariadb_owned_tests=(
   DeleteUserAccountSchedulerMariaDbReplicaIT
   DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT
   SupportRoomMigrationConvergenceIT
+  AccountInviteRevokeAcceptRaceMariaDbIT
 )
 required_test_pattern="**/*IT"
 for mariadb_owned_test in "${mariadb_owned_tests[@]}"; do
@@ -83,6 +84,7 @@ required_e2e = {
     "ConversationControllerIT",
     "UserAdminControllerE2EIT",
     "UserControllerE2EIT",
+    "MatrixBrowserDeviceSynapseIT",
 }
 
 tests = failures = errors = skipped = 0

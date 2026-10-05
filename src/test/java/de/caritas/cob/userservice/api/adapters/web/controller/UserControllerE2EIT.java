@@ -61,6 +61,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.OtpType;
+import de.caritas.cob.userservice.api.model.PublicSlugStatus;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
@@ -195,6 +196,12 @@ class UserControllerE2EIT {
 
   @Autowired private SessionRepository sessionRepository;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory
+      ownerFactory;
+
+  private de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures dpaOwner;
+
   @Autowired private UserVerifier userVerifier;
 
   @Autowired private Messaging messenger;
@@ -248,6 +255,7 @@ class UserControllerE2EIT {
 
   @AfterEach
   void reset() {
+    dpaOwner.close();
     de.caritas.cob.userservice.api.tenant.TenantContext.clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
@@ -292,8 +300,10 @@ class UserControllerE2EIT {
 
   @BeforeEach
   public void setUp() throws MatrixCreateUserException {
+    dpaOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, 1L);
     MatrixCreateUserResponseDTO matrixCreateUserResponse = new MatrixCreateUserResponseDTO();
-    matrixCreateUserResponse.setUserId("@test-user:matrix.oriso.org");
+    matrixCreateUserResponse.setUserId("@test-user:matrix.example.org");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(matrixCreateUserResponse));
     when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);
@@ -1659,6 +1669,40 @@ class UserControllerE2EIT {
     assertEquals(
         savedConsultant.get().getTermsAndConditionsConfirmation().toLocalDate(), LocalDate.now());
     assertEquals(savedConsultant.get().getDataPrivacyConfirmation().toLocalDate(), LocalDate.now());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void updateUserDataShouldQueueRequestedPublicSlugForApprovalInsteadOfPublishingIt()
+      throws Exception {
+    givenAValidConsultant();
+    var liveSlug = consultant.getPublicSlug();
+    givenAMinimalUpdateConsultantDto(consultant.getEmail());
+    updateConsultantDTO.setPublicSlug("self-requested-link");
+
+    try {
+      mockMvc
+          .perform(
+              put("/users/data")
+                  .cookie(CSRF_COOKIE)
+                  .header(CSRF_HEADER, CSRF_VALUE)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(updateConsultantDTO))
+                  .accept(MediaType.APPLICATION_JSON))
+          .andExpect(status().isOk());
+
+      var savedConsultant = consultantRepository.findById(consultant.getId()).orElseThrow();
+      assertEquals(liveSlug, savedConsultant.getPublicSlug());
+      assertEquals("self-requested-link", savedConsultant.getPendingPublicSlug());
+      assertEquals(PublicSlugStatus.PENDING, savedConsultant.getPublicSlugStatus());
+    } finally {
+      var toClean = consultantRepository.findById(consultant.getId()).orElseThrow();
+      toClean.setPublicSlug(liveSlug);
+      toClean.setPendingPublicSlug(null);
+      toClean.setPublicSlugStatus(null);
+      toClean.setPublicSlugReviewedAt(null);
+      consultantRepository.save(toClean);
+    }
   }
 
   // FIXME: does not test the "saved monitoring", see next fixme

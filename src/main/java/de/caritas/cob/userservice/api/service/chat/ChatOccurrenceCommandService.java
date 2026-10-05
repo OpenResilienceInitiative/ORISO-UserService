@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
 import de.caritas.cob.userservice.api.service.notification.GroupChatLifecycleNotificationService;
 import de.caritas.cob.userservice.api.service.notification.GroupChatNotificationRecipientService;
 import jakarta.transaction.Transactional;
@@ -28,6 +29,7 @@ public class ChatOccurrenceCommandService {
   private final GroupChatParticipantRepository participantRepository;
   private final GroupChatLifecycleNotificationService lifecycleNotificationService;
   private final GroupChatNotificationRecipientService notificationRecipientService;
+  private final GroupAppointmentMailQueue appointmentMailQueue;
 
   @Transactional
   public void skip(Long seriesId, String actingConsultantId, LocalDateTime originalStartUtc) {
@@ -36,16 +38,27 @@ public class ChatOccurrenceCommandService {
         chatRepository
             .findById(seriesId)
             .orElseThrow(() -> new NotFoundException("Chat Series not found"));
+    int index = requireOccurrenceIndex(series, originalStartUtc);
+    var existingException =
+        exceptionRepository.findBySeries_IdAndOriginalOccurrenceStartUtc(
+            seriesId, originalStartUtc);
     var exception =
-        exceptionRepository
-            .findBySeries_IdAndOriginalOccurrenceStartUtc(seriesId, originalStartUtc)
-            .orElseGet(() -> ChatOccurrenceException.skip(series, requireStart(originalStartUtc)));
+        existingException.orElseGet(
+            () -> ChatOccurrenceException.skip(series, requireStart(originalStartUtc)));
+    appointmentMailQueue.seedOccurrence(
+        series,
+        index,
+        originalStartUtc,
+        existingException.isPresent()
+            ? effectiveStart(originalStartUtc, existingException.get())
+            : originalStartUtc);
     exception.setExceptionType(ExceptionType.SKIP);
     exception.setOverrideStartUtc(null);
     exception.setOverrideDuration(null);
     exception.setOverrideCapacity(null);
     exception.setOverrideModality(null);
     exceptionRepository.save(exception);
+    appointmentMailQueue.recordOccurrence(series, index, originalStartUtc, null);
     publishCancelled(series, originalStartUtc);
   }
 
@@ -64,6 +77,7 @@ public class ChatOccurrenceCommandService {
         chatRepository
             .findById(seriesId)
             .orElseThrow(() -> new NotFoundException("Chat Series not found"));
+    int index = requireOccurrenceIndex(series, originalStartUtc);
     var exception =
         exceptionRepository
             .findBySeries_IdAndOriginalOccurrenceStartUtc(seriesId, originalStartUtc)
@@ -73,12 +87,19 @@ public class ChatOccurrenceCommandService {
                         .series(series)
                         .originalOccurrenceStartUtc(requireStart(originalStartUtc))
                         .build());
+    appointmentMailQueue.seedOccurrence(
+        series, index, originalStartUtc, effectiveStart(originalStartUtc, exception));
     exception.setExceptionType(ExceptionType.OVERRIDE);
     exception.setOverrideStartUtc(overrideStartUtc);
     exception.setOverrideDuration(overrideDuration);
     exception.setOverrideCapacity(overrideCapacity);
     exception.setOverrideModality(overrideModality);
     exceptionRepository.save(exception);
+    appointmentMailQueue.recordOccurrence(
+        series,
+        index,
+        originalStartUtc,
+        overrideStartUtc == null ? originalStartUtc : overrideStartUtc);
   }
 
   private void assertCanModerate(Long seriesId, String actingConsultantId) {
@@ -130,5 +151,23 @@ public class ChatOccurrenceCommandService {
       }
     }
     return null;
+  }
+
+  private int requireOccurrenceIndex(Chat series, LocalDateTime originalStartUtc) {
+    Integer index = occurrenceIndex(series, requireStart(originalStartUtc));
+    if (index == null) {
+      throw new BadRequestException("Original occurrence start is outside the Series");
+    }
+    return index;
+  }
+
+  private static LocalDateTime effectiveStart(
+      LocalDateTime originalStartUtc, ChatOccurrenceException exception) {
+    if (exception.getExceptionType() == ExceptionType.SKIP) {
+      return null;
+    }
+    return exception.getOverrideStartUtc() == null
+        ? originalStartUtc
+        : exception.getOverrideStartUtc();
   }
 }

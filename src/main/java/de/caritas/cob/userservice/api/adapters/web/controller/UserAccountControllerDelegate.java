@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.facade.userdata.AgencyAdminDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
@@ -175,15 +176,14 @@ class UserAccountControllerDelegate {
     try {
       return identityManager.getOtpCredential(
           usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
-    } catch (Exception ex) {
+    } catch (RuntimeException ex) {
       log.warn(
-          "Could not retrieve OTP credential for authenticated user {}; preserving OTP availability without credential state",
+          "Could not retrieve OTP credential for authenticated user {}",
           authenticatedUser.getUserId(),
           ex);
-      // A failed Keycloak lookup must not look like role-policy denial. An empty
-      // DTO keeps 2FA enabled in the response while safely reporting no active
-      // credential, so users can still open setup/reset controls.
-      return IdentityOtpCredential.empty();
+      // A failed identity lookup says nothing about whether the user already has a credential.
+      // Returning an empty credential would incorrectly start a new 2FA setup.
+      throw new ServiceUnavailableException("OTP credential lookup unavailable");
     }
   }
 
@@ -252,7 +252,8 @@ class UserAccountControllerDelegate {
 
     var updateAdminConsultantDTO =
         consultantDtoMapper.updateAdminConsultantOf(updateConsultantDTO, consultant);
-    consultantUpdateService.updateConsultant(consultantId, updateAdminConsultantDTO);
+    // Self-service: a requested public slug waits for admin approval instead of going live.
+    consultantUpdateService.updateConsultant(consultantId, updateAdminConsultantDTO, false);
 
     return new ResponseEntity<>(HttpStatus.OK);
   }

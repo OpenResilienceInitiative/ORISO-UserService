@@ -85,24 +85,90 @@ class TenantCaseHandoverPolicyReadClientTest {
   }
 
   @Test
-  void generatedClientWritesResolvedPoliciesWithTechnicalHeaders() {
+  void policyWriteCarriesTheCallingAdminsTokenNeverTheTechnicalOne() {
+    when(requestUser.getAccessToken()).thenReturn("synthetic-admin-token");
     server
         .expect(requestTo("https://tenant.example.org/tenantadmin/40/permission-policies"))
         .andExpect(method(HttpMethod.PUT))
-        .andExpect(header("Authorization", "Bearer synthetic-token"))
+        .andExpect(header("Authorization", "Bearer synthetic-admin-token"))
         .andRespond(
             withSuccess(
                 "{\"tenantId\":40,\"policies\":{},\"caseHandoverPolicies\":{\"reasons\":{}}}",
                 MediaType.APPLICATION_JSON));
-    var request =
-        new TenantPermissionPolicies()
-            .tenantId(40L)
-            .policies(java.util.Map.of())
-            .caseHandoverPolicies(new CaseHandoverPolicies().reasons(java.util.Map.of()));
 
-    assertThat(client.updateTenantPermissionPolicies(40L, request).getTenantId()).isEqualTo(40L);
-    verify(identity).logout("synthetic-refresh", "synthetic-token");
+    assertThat(client.updateTenantPermissionPoliciesAsCaller(40L, policyRequest()).getTenantId())
+        .isEqualTo(40L);
+    verifyNoInteractions(identity);
     server.verify();
+  }
+
+  @Test
+  void policyWriteIgnoresAnAmbientTechnicalToken() {
+    when(requestUser.getAccessToken()).thenReturn("synthetic-admin-token");
+    server
+        .expect(requestTo("https://tenant.example.org/tenantadmin/40/permission-policies"))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(header("Authorization", "Bearer synthetic-admin-token"))
+        .andRespond(withSuccess("{\"tenantId\":40,\"policies\":{}}", MediaType.APPLICATION_JSON));
+
+    de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext.runWith(
+        "synthetic-token",
+        () -> client.updateTenantPermissionPoliciesAsCaller(40L, policyRequest()));
+
+    verifyNoInteractions(identity);
+    server.verify();
+  }
+
+  @Test
+  void policyWriteWithoutACallerTokenNeverFallsBackToTheTechnicalUser() {
+    when(requestUser.getAccessToken()).thenReturn("");
+
+    assertThatThrownBy(() -> client.updateTenantPermissionPoliciesAsCaller(40L, policyRequest()))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    verifyNoInteractions(identity);
+    server.verify();
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {401, 403})
+  void policyWriteRejectedByTenantServiceIsForbiddenForTheCaller(int status) {
+    when(requestUser.getAccessToken()).thenReturn("synthetic-admin-token");
+    server
+        .expect(anything())
+        .andRespond(
+            withStatus(HttpStatus.valueOf(status))
+                .body("synthetic-sensitive-downstream-body")
+                .contentType(MediaType.TEXT_PLAIN));
+
+    assertThatThrownBy(() -> client.updateTenantPermissionPoliciesAsCaller(40L, policyRequest()))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class)
+        .hasMessageNotContaining("synthetic-sensitive")
+        .hasNoCause();
+    verifyNoInteractions(identity);
+    server.verify();
+  }
+
+  @Test
+  void callerPolicyReadCarriesTheCallingAdminsToken() {
+    when(requestUser.getAccessToken()).thenReturn("synthetic-admin-token");
+    server
+        .expect(requestTo("https://tenant.example.org/tenantadmin/40/permission-policies"))
+        .andExpect(method(HttpMethod.GET))
+        .andExpect(header("Authorization", "Bearer synthetic-admin-token"))
+        .andRespond(withSuccess("{\"tenantId\":40,\"policies\":{}}", MediaType.APPLICATION_JSON));
+
+    assertThat(client.getTenantPermissionPoliciesAsCaller(40L).getTenantId()).isEqualTo(40L);
+    verifyNoInteractions(identity);
+    server.verify();
+  }
+
+  private static TenantPermissionPolicies policyRequest() {
+    return new TenantPermissionPolicies()
+        .tenantId(40L)
+        .policies(java.util.Map.of())
+        .caseHandoverPolicies(new CaseHandoverPolicies().reasons(java.util.Map.of()));
   }
 
   @ParameterizedTest
