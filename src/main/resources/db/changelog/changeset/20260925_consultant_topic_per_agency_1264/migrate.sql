@@ -4,5 +4,5 @@
 ALTER TABLE consultant_topic
   ADD COLUMN IF NOT EXISTS agency_id BIGINT(21) NULL AFTER topic_id;
 ALTER TABLE consultant_topic
-  DROP INDEX uk_consultant_topic,
-  ADD UNIQUE KEY uk_consultant_topic_agency (consultant_id, topic_id, agency_id);
+  DROP INDEX IF EXISTS uk_consultant_topic,
+  ADD UNIQUE KEY IF NOT EXISTS uk_consultant_topic_agency (consultant_id, topic_id, agency_id);
