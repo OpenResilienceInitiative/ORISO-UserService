@@ -4,12 +4,16 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeAudience;
+import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeConfirmation;
 import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeDraftService;
 import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeDraftService.DraftView;
+import jakarta.servlet.http.Cookie;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
@@ -20,6 +24,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -57,6 +62,8 @@ class ServiceNoticeDraftControllerAuthorizationIT {
   @Autowired private MockMvc mvc;
   @MockitoBean private ServiceNoticeDraftService drafts;
   @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private ServiceNoticeAudience audience;
+  @MockitoBean private ServiceNoticeConfirmation confirmation;
 
   @Test
   void anonymousTenantAdminAndTechnicalCallerCannotReadThePlatformDraft() throws Exception {
@@ -104,5 +111,52 @@ class ServiceNoticeDraftControllerAuthorizationIT {
         .andExpect(status().isOk())
         .andExpect(
             header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")));
+  }
+
+  @Test
+  void tenantAdminAndTechnicalCallerCannotCountThePlatformAudience() throws Exception {
+    mvc.perform(get(DRAFT + "/dry-run")).andExpect(status().isUnauthorized());
+    mvc.perform(
+            get(DRAFT + "/dry-run")
+                .with(
+                    jwt()
+                        .jwt(
+                            token ->
+                                token
+                                    .claim(
+                                        "realm_access",
+                                        Map.of("roles", List.of("agency-admin", "tenant-admin")))
+                                    .claim("tenantId", 7))))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            get(DRAFT + "/dry-run")
+                .with(jwt().authorities(new SimpleGrantedAuthority("technical"))))
+        .andExpect(status().isForbidden());
+    verifyNoInteractions(audience);
+  }
+
+  @Test
+  void tenantAdminAndTechnicalCallerCannotConfirmAPlatformNotice() throws Exception {
+    var confirm =
+        post(DRAFT + "/confirm")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"expectedRecipients\":3}")
+            .cookie(new Cookie("CSRF-TOKEN", "test"))
+            .header("X-CSRF-Token", "test");
+    mvc.perform(confirm).andExpect(status().isUnauthorized());
+    mvc.perform(
+            confirm.with(
+                jwt()
+                    .jwt(
+                        token ->
+                            token
+                                .claim(
+                                    "realm_access",
+                                    Map.of("roles", List.of("agency-admin", "tenant-admin")))
+                                .claim("tenantId", 7))))
+        .andExpect(status().isForbidden());
+    mvc.perform(confirm.with(jwt().authorities(new SimpleGrantedAuthority("technical"))))
+        .andExpect(status().isForbidden());
+    verifyNoInteractions(confirmation);
   }
 }

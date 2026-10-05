@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminFilter;
+import de.caritas.cob.userservice.api.adapters.web.dto.AdminListPreferencesDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AdminListSortDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
@@ -33,8 +35,12 @@ import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.hallink.RootDTOBuilder;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
+import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
+import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService.ListSort;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
@@ -43,6 +49,7 @@ import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import lombok.NonNull;
@@ -79,6 +86,7 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
   private final @NonNull UserIdentitiesService userIdentitiesService;
+  private final @NonNull AdminListPreferenceService adminListPreferenceService;
   private final @NonNull de.caritas.cob.userservice.api.service.accountinvite
           .ExistingAccountSetupIssuer
       accountSetupIssuer;
@@ -92,6 +100,26 @@ public class UserAdminController implements UseradminApi {
   public ResponseEntity<RootDTO> getRoot() {
     RootDTO rootDTO = new RootDTOBuilder().buildRootDTO();
     return ResponseEntity.ok(rootDTO);
+  }
+
+  /** The caller's own saved user-list sorts, keyed by tab (#1263). */
+  @Override
+  public ResponseEntity<AdminListPreferencesDTO> getOwnAdminListPreferences() {
+    var sorts = new LinkedHashMap<String, AdminListSortDTO>();
+    adminListPreferenceService
+        .findOwnSorts(authenticatedUser.getUserId())
+        .forEach(
+            (tab, sort) ->
+                sorts.put(tab, new AdminListSortDTO().field(sort.field()).order(sort.order())));
+    return ResponseEntity.ok(new AdminListPreferencesDTO().sorts(sorts));
+  }
+
+  /** Saves the caller's last chosen sort for one user-list tab (#1263). */
+  @Override
+  public ResponseEntity<Void> putOwnAdminListSort(String tab, AdminListSortDTO sort) {
+    adminListPreferenceService.saveOwnSort(
+        authenticatedUser.getUserId(), tab, new ListSort(sort.getField(), sort.getOrder()));
+    return ResponseEntity.noContent().build();
   }
 
   /**
@@ -516,28 +544,39 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<AdminSearchResultDTO> searchAgencyAdmins(
-      String query, Integer page, Integer perPage, String field, String order) {
+      String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order,
+      Long tenantId,
+      List<Long> agencyId) {
     String decodedInfix = determineDecodedInfix(query);
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = adminDtoMapper.mappedFieldOf(field);
+    var filter = new SearchFilter(tenantId, agencyId);
     var resultMap =
         adminUserFacade.findAgencyAdminsByInfix(
-            decodedInfix, page - 1, perPage, mappedField, isAscending);
-    var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
+            decodedInfix, filter, page - 1, perPage, mappedField, isAscending);
+    var result =
+        adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order, filter);
 
     return ResponseEntity.ok(result);
   }
 
   @Override
   public ResponseEntity<AdminSearchResultDTO> searchTenantAdmins(
-      String query, Integer page, Integer perPage, String field, String order) {
+      String query, Integer page, Integer perPage, String field, String order, Long tenantId) {
     String decodedInfix = determineDecodedInfix(query);
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = adminDtoMapper.mappedFieldOf(field);
+    var filter = new SearchFilter(tenantId, null);
     var resultMap =
         adminUserFacade.findTenantAdminsByInfix(
-            decodedInfix, page - 1, perPage, mappedField, isAscending);
-    var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
+            decodedInfix, filter, page - 1, perPage, mappedField, isAscending);
+    var result =
+        adminDtoMapper.adminSearchResultOf(
+            resultMap, query, page, perPage, field, order, filter, Admin.AdminType.TENANT);
     return ResponseEntity.ok(result);
   }
 

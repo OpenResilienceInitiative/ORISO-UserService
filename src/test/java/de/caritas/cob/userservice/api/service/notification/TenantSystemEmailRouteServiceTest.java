@@ -113,4 +113,71 @@ class TenantSystemEmailRouteServiceTest {
         .thenReturn(Map.of("settings", Map.of("featureSystemNotificationEmailsEnabled", false)));
     assertThat(new TenantSystemEmailRouteService(client).resolve(40L)).isEmpty();
   }
+
+  @Test
+  void transportForAlwaysSentMailsIgnoresTheNotificationSwitch() {
+    when(client.readTenant(40L))
+        .thenReturn(
+            Map.of(
+                "settings",
+                Map.of(
+                    "featureSystemNotificationEmailsEnabled",
+                    false,
+                    "smtpMode",
+                    "OWN",
+                    "smtp",
+                    Map.of(
+                        "enabled",
+                        true,
+                        "host",
+                        "smtp.tenant.example",
+                        "port",
+                        587,
+                        "secure",
+                        false,
+                        "username",
+                        "sender",
+                        "from",
+                        "sender@tenant.example",
+                        "passwordSet",
+                        true))));
+    var routes = new TenantSystemEmailRouteService(client);
+
+    assertThat(routes.resolveTransport(40L).mode())
+        .isEqualTo(TenantSystemEmailRouteService.Mode.OWN);
+    assertThat(routes.resolve(40L)).isEmpty();
+  }
+
+  @Test
+  void transportForUnclassifiedTenantStaysOnThePlatform() {
+    var routes = new TenantSystemEmailRouteService(client);
+    var withoutMode = new java.util.HashMap<String, Object>();
+    withoutMode.put("smtpMode", null);
+    withoutMode.put("smtp", Map.of("enabled", true, "host", "smtp.tenant.example"));
+
+    when(client.readTenant(40L)).thenReturn(Map.of("settings", withoutMode));
+    assertThat(routes.resolveTransport(40L).mode())
+        .isEqualTo(TenantSystemEmailRouteService.Mode.PLATFORM);
+
+    when(client.readTenant(41L)).thenReturn(Map.of("id", 41L));
+    assertThat(routes.resolveTransport(41L).mode())
+        .isEqualTo(TenantSystemEmailRouteService.Mode.PLATFORM);
+  }
+
+  @Test
+  void transportRejectsAnUnknownExplicitMode() {
+    when(client.readTenant(40L)).thenReturn(Map.of("settings", Map.of("smtpMode", "RELAY")));
+
+    assertThatThrownBy(() -> new TenantSystemEmailRouteService(client).resolveTransport(40L))
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
+  }
+
+  @Test
+  void transportWithoutTenantIsThePlatformWithoutAnyRead() {
+    var routes = new TenantSystemEmailRouteService(client);
+
+    assertThat(routes.resolveTransport(null).mode())
+        .isEqualTo(TenantSystemEmailRouteService.Mode.PLATFORM);
+    org.mockito.Mockito.verifyNoInteractions(client);
+  }
 }

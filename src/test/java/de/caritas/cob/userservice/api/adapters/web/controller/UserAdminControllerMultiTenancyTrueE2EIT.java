@@ -170,7 +170,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
         .thenReturn(Map.of("platformName", "Test product"));
     when(renderer.render(Mockito.eq("konto-einrichten"), Mockito.any(), Mockito.any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("Setup", "<p>Setup</p>", "Setup"));
-    when(mail.sendRendered(Mockito.anyString(), Mockito.any()))
+    when(mail.sendRendered(Mockito.anyString(), Mockito.any(), Mockito.any()))
         .thenAnswer(
             invocation -> new InviteMailSendReceipt(invocation.getArgument(0), Instant.now()));
   }

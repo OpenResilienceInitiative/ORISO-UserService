@@ -140,7 +140,7 @@ class CreateAdminServiceIT {
         .thenReturn(Map.of("platformName", "Test product"));
     when(renderer.render(org.mockito.Mockito.eq("konto-einrichten"), any(), any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("Setup", "<p>Setup</p>", "Setup"));
-    when(setupMail.sendRendered(anyString(), any()))
+    when(setupMail.sendRendered(anyString(), any(), any()))
         .thenAnswer(
             invocation -> new InviteMailSendReceipt(invocation.getArgument(0), Instant.now()));
   }

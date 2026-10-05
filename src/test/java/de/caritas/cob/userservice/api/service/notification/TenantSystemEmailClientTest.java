@@ -146,6 +146,26 @@ class TenantSystemEmailClientTest {
   }
 
   @Test
+  void a422FromTheWireIsAConfigurationErrorToo() {
+    server
+        .expect(
+            once(),
+            requestTo(
+                "http://tenantservice.internal:8081/tenant/40/internal/system-email-deliveries"))
+        .andRespond(withStatus(HttpStatus.valueOf(422)));
+
+    assertThatThrownBy(
+            () ->
+                client.deliver(
+                    40L,
+                    "SUPERVISOR_ADDED",
+                    "recipient@example.org",
+                    new OrisoEmailRenderer.RenderedEmail("Subject", "<p>Body</p>", "Body")))
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
+    server.verify();
+  }
+
+  @Test
   void disabledOwnTransportIsNotReportedAsASentMail() {
     server
         .expect(

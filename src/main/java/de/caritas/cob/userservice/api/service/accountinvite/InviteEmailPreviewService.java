@@ -167,7 +167,7 @@ public class InviteEmailPreviewService {
             .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
     // A preview renders the stored subject and body, so it would read out another
     // Träger's text just as a send would (ORISO-Admin#1026).
-    accessPolicy.authorizeTemplateUse(template.getTenantId());
+    accessPolicy.authorizeTemplateUse(template.getTenantId(), template.getKind());
     return template;
   }
 

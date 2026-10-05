@@ -3,6 +3,9 @@ package de.caritas.cob.userservice.api.service.notification;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.config.observability.DpaSignedNoticeMetrics;
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
+import de.caritas.cob.userservice.api.exception.SmtpSendException.DeliveryDisposition;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.DpaSignedNotice;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
@@ -14,6 +17,7 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import jakarta.annotation.PreDestroy;
@@ -49,8 +53,27 @@ import org.springframework.web.client.HttpClientErrorException;
  * signature and dies silently.
  *
  * <p>Exactly-once: a ledger row per (tenant, signed version) is claimed in its own transaction
- * BEFORE sending — of two concurrent hints exactly one wins the unique constraint. When the SMTP
- * handover fails afterwards, the claim is compensated (deleted) so a later hint can retry.
+ * BEFORE sending — of two concurrent hints exactly one wins the unique constraint. When anything
+ * fails before the SMTP handover, the claim is compensated (deleted) so a later hint can retry.
+ *
+ * <p><b>Deliberate duplicate on an uncertain delivery (#1341).</b> The release happens for EVERY
+ * failure before the handover, including {@link
+ * de.caritas.cob.userservice.api.exception.SmtpSendException.DeliveryDisposition#DELIVERY_UNCERTAIN}
+ * — the case where SMTP may already have accepted the mail but the client never saw the
+ * confirmation (a 502 or a timeout from a Träger's own relay). A later hint can then deliver a
+ * SECOND "contract signed" notice for the same signature. That is the chosen trade-off, decided by
+ * Frank on 2026-10-02: <b>better twice than never.</b> The notice is the signal that unblocks the
+ * organisation's setup, so a missing one stalls the Träger while a duplicate only annoys one
+ * administrator.
+ *
+ * <p>This is the opposite of {@code InviteDelivery}, which KEEPS its claim on an uncertain outcome.
+ * An invite mail carries a single-use token: re-sending mints a second link and silently kills the
+ * first, so a duplicate there can lock a person out of the account they were already invited to.
+ * This notice carries no token and no state — it only repeats a fact that is already true.
+ *
+ * <p>Open risk, accepted with the trade-off: the trigger endpoint is unauthenticated, so anyone who
+ * can reach it can provoke the retry. Every release is logged at WARN and counted by {@code
+ * DpaSignedNoticeMetrics}, so a duplicate is visible after the fact rather than silent.
  *
  * <p>Recipient resolution per issue spec: {@code forwardedByUserId} → that admin's account e-mail
  * and account language (identity {@code locale}, fallback {@code de}); a pre-account wizard forward
@@ -147,6 +170,7 @@ public class DpaSignedNoticeService {
   private final InviteMailDispatchService inviteMailDispatchService;
   private final TenantService tenantService;
   private final TransactionTemplate requiresNewTransaction;
+  private final DpaSignedNoticeMetrics metrics;
   private final String adminPanelUrl;
 
   public DpaSignedNoticeService(
@@ -159,6 +183,7 @@ public class DpaSignedNoticeService {
       InviteMailDispatchService inviteMailDispatchService,
       TenantService tenantService,
       PlatformTransactionManager transactionManager,
+      DpaSignedNoticeMetrics metrics,
       AdminPanelUrl adminPanelUrlProvider) {
     this.signatureReadClient = signatureReadClient;
     this.noticeRepository = noticeRepository;
@@ -171,6 +196,7 @@ public class DpaSignedNoticeService {
     this.requiresNewTransaction = new TransactionTemplate(transactionManager);
     this.requiresNewTransaction.setPropagationBehavior(
         TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    this.metrics = metrics;
     this.adminPanelUrl = adminPanelUrlProvider.value();
   }
 
@@ -299,6 +325,16 @@ public class DpaSignedNoticeService {
         .orElse(FALLBACK_LANGUAGE);
   }
 
+  /**
+   * What is known about delivery when the failure surfaced. Only SmtpSendException can report an
+   * uncertain outcome; everything else fails before the handover, so nothing was sent.
+   */
+  private DeliveryDisposition dispositionOf(RuntimeException failure) {
+    return failure instanceof SmtpSendException smtpFailure
+        ? smtpFailure.getDeliveryDisposition()
+        : DeliveryDisposition.CONFIRMED_NOT_SENT;
+  }
+
   /** Claims the exactly-once ledger row; empty when another hint already claimed it. */
   private Optional<DpaSignedNotice> claimNotice(
       Long tenantId, DpaSignatureDTO signature, Recipient recipient) {
@@ -343,12 +379,20 @@ public class DpaSignedNoticeService {
       // the layout would render a second CTA button on top of it. InviteEmailPreviewService passes
       // null for this kind, so passing the Admin URL here made the delivered mail carry a button
       // the operator never saw in the preview.
-      inviteMailDispatchService.send(recipient.email(), subject, body, null, tenantId, language);
-    } catch (RuntimeException beforeDispatch) {
+      inviteMailDispatchService.send(
+          recipient.email(),
+          subject,
+          body,
+          null,
+          tenantId,
+          language,
+          InviteMailOrigin.of(tenantId, TenantSystemEmailDelivery.Purpose.DPA_SIGNED_NOTICE));
+    } catch (RuntimeException failure) {
       // Every failure up to the handoff, not only SmtpSendException: a template load, the
       // tenant-name lookup or the rendering can fail too, and a stranded claim silently disables
-      // the notice forever.
-      releaseClaim(claim, tenantId, beforeDispatch);
+      // the notice forever. SmtpSendException is the only one that can mean "the mail may already
+      // be out" — see releaseClaim and the "better twice than never" rule in the class javadoc.
+      releaseClaim(claim, tenantId, failure);
       return;
     }
 
@@ -363,8 +407,10 @@ public class DpaSignedNoticeService {
             claim.setSentAt(LocalDateTime.now());
             noticeRepository.save(claim);
           });
+      metrics.recordSent();
       log.info("DPA signed-notice sent for tenant {}", tenantId);
     } catch (RuntimeException afterDispatch) {
+      metrics.recordSent();
       log.error(
           "DPA signed-notice for tenant {} was sent but its sent_at could not be recorded; the"
               + " claim is kept so the notice is not sent twice",
@@ -373,17 +419,43 @@ public class DpaSignedNoticeService {
     }
   }
 
-  /** Frees the exactly-once claim so a later hint can retry; never masks the original failure. */
+  /**
+   * Frees the exactly-once claim so a later hint can retry; never masks the original failure.
+   *
+   * <p>Released for every disposition, on purpose. On {@link
+   * DeliveryDisposition#CONFIRMED_NOT_SENT} — and for every non-SMTP failure, which by definition
+   * happened before the handover — this is plain compensation and cannot duplicate anything. On
+   * {@link DeliveryDisposition#DELIVERY_UNCERTAIN} the mail may already be on its way, and
+   * releasing accepts that a later hint delivers a second notice: the "better twice than never"
+   * rule in the class javadoc. The two cases are logged apart so a duplicate is traceable
+   * afterwards; whoever changes this behaviour must change that documentation with it.
+   */
   private void releaseClaim(DpaSignedNotice claim, Long tenantId, RuntimeException failure) {
+    var disposition = dispositionOf(failure);
     try {
       requiresNewTransaction.executeWithoutResult(tx -> noticeRepository.delete(claim));
-      log.warn(
-          "DPA signed-notice for tenant {} failed before dispatch — claim released for retry",
-          tenantId,
-          failure);
+      metrics.recordClaimReleased(disposition);
+      if (disposition == DeliveryDisposition.DELIVERY_UNCERTAIN) {
+        log.warn(
+            "DPA signed-notice for tenant {}: delivery outcome {} — the mail may already have been"
+                + " accepted by SMTP. Releasing the claim on purpose so the notice is not lost; a"
+                + " later hint may therefore send a SECOND notice for this signature (accepted"
+                + " trade-off, see DpaSignedNoticeService javadoc)",
+            tenantId,
+            disposition,
+            failure);
+      } else {
+        log.warn(
+            "DPA signed-notice for tenant {}: delivery outcome {} — nothing was sent, claim"
+                + " released so a later hint can retry",
+            tenantId,
+            disposition,
+            failure);
+      }
     } catch (RuntimeException compensationFailure) {
       // The claim is stuck: no notice will ever be sent for this tenant/version, so this line is
       // the only trace it existed. Logged loudly rather than swallowed.
+      metrics.recordClaimStuck();
       log.error(
           "DPA signed-notice for tenant {} failed AND its claim could not be released; no notice"
               + " will be sent for this signature",
