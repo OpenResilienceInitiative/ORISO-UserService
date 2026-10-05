@@ -204,7 +204,13 @@ class DeleteTemporaryAccountsSchedulerIT {
     try {
       for (var userId : registeredUserIds) {
         try {
-          accountRemover.deleteUser(userId);
+          // The remover reports most failures as returned errors, not exceptions.
+          var errors = accountRemover.deleteUser(userId);
+          if (!errors.isEmpty()) {
+            failures.add(
+                new IllegalStateException(
+                    "Teardown left account " + userId + " behind: " + errors));
+          }
         } catch (RuntimeException failure) {
           failures.add(failure);
         }

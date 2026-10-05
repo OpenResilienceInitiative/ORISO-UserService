@@ -8,15 +8,20 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.delete.service.AnonymousUserDeletionUnit;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteTemporaryAccountsService;
+import de.caritas.cob.userservice.api.workflow.delete.service.WorkflowErrorMailService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease;
 import java.time.Duration;
@@ -27,6 +32,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -123,6 +129,34 @@ class DeleteTemporaryAccountsSchedulerTest {
 
     verify(taskClaimService).release(LEASE);
     assertThat(TenantContext.contextIsSet()).isFalse();
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void performDeletionWorkflow_deletesTheNextAccountAndReportsTheFailure_When_OneDeletionFails() {
+    givenTheLeaseIsHeld();
+    var userRepository = mock(UserRepository.class);
+    var deletionUnit = mock(AnonymousUserDeletionUnit.class);
+    var errorMail = mock(WorkflowErrorMailService.class);
+    var realService = new DeleteTemporaryAccountsService(userRepository, deletionUnit, errorMail);
+    setField(realService, "maxAge", Duration.ofDays(1));
+    when(userRepository.findTemporaryAccountIdsCreatedBefore(any())).thenReturn(List.of("a", "b"));
+    when(deletionUnit.deleteUser("a")).thenThrow(new IllegalStateException("boom"));
+    when(deletionUnit.deleteUser("b")).thenReturn(List.of());
+    var realScheduler =
+        new DeleteTemporaryAccountsScheduler(realService, tenantContextProvider, taskClaimService);
+    setField(realScheduler, "enabled", true);
+    setField(realScheduler, "claimDuration", Duration.ofMinutes(30));
+
+    realScheduler.performDeletionWorkflow();
+
+    verify(deletionUnit).deleteUser("b");
+    ArgumentCaptor<List<DeletionWorkflowError>> reported = ArgumentCaptor.forClass(List.class);
+    verify(errorMail).buildAndSendErrorMail(reported.capture());
+    assertThat(reported.getValue())
+        .extracting(DeletionWorkflowError::getIdentifier)
+        .containsExactly("a");
+    verify(taskClaimService).release(LEASE);
   }
 
   @Test
