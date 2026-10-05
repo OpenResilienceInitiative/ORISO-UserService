@@ -30,6 +30,8 @@ public interface ConsultantRepository
 
   Optional<Consultant> findByEmailAndDeleteDateIsNull(String email);
 
+  List<Consultant> findAllByEmailAndDeleteDateIsNull(String email);
+
   Optional<Consultant> findByUsernameAndDeleteDateIsNull(String username);
 
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
@@ -75,13 +77,17 @@ public interface ConsultantRepository
 
   List<Consultant> findAllByIdIn(List<String> ids);
 
+  @EntityGraph(attributePaths = "consultantAgencies")
+  @Query("SELECT DISTINCT consultant FROM Consultant consultant WHERE consultant.id IN :ids")
+  List<Consultant> findAllWithAgenciesByIdIn(@Param("ids") Collection<String> ids);
+
   @Query("SELECT c.id FROM Consultant c WHERE c.id IN :ids AND c.deleteDate IS NULL")
   Set<String> findActiveIdsByIdIn(@Param("ids") Collection<String> ids);
 
   @Query(
       value =
           "SELECT c.id as id, c.firstName as firstName, c.lastName as lastName, c.email as email, "
-              + "c.updateDate as updateDate "
+              + "c.updateDate as updateDate, COALESCE(c.updateDate, c.createDate) as lastUpdated "
               + "FROM Consultant c "
               + "WHERE "
               + "  c.deleteDate IS NULL "
@@ -103,7 +109,7 @@ public interface ConsultantRepository
   @Query(
       value =
           "SELECT distinct c.id as id, c.firstName as firstName, c.lastName as lastName, "
-              + "c.email as email, c.updateDate as updateDate "
+              + "c.email as email, c.updateDate as updateDate, COALESCE(c.updateDate, c.createDate) as lastUpdated "
               + "FROM Consultant c "
               + "INNER JOIN ConsultantAgency ca ON c.id = ca.consultant.id "
               + "WHERE "

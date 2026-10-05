@@ -114,6 +114,8 @@ class AccountInviteTopicPermissionIT {
   @Autowired private AuthenticatedUser caller;
   @Autowired private InviteEmailTemplateRepository templateRepository;
 
+  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
+
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
 
@@ -300,7 +302,7 @@ class AccountInviteTopicPermissionIT {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
         .thenReturn("https://admin.example.org/onboarding/token");
     when(inviteMailDispatchService.send(
-            anyString(), anyString(), anyString(), anyString(), any(), any()))
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenThrow(
             new SmtpSendException(
                 SmtpSendException.Category.SMTP_TRANSPORT_FAILED,

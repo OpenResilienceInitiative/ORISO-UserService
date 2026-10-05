@@ -1,8 +1,6 @@
 package de.caritas.cob.userservice.api.service.auth;
 
-import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
-import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -17,14 +15,13 @@ import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettings
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.OrisoSmtpTransport;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import jakarta.mail.Authenticator;
 import jakarta.mail.Message;
-import jakarta.mail.PasswordAuthentication;
-import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import java.net.URLEncoder;
@@ -34,7 +31,6 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
@@ -46,7 +42,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 /**
  * Self-service password reset, mirroring {@link MagicLinkLoginService}: generates our own one-time
@@ -69,7 +64,6 @@ public class PasswordResetService {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
-  private final @NonNull RestTemplate restTemplate;
   private final @NonNull OneTimeTokenStore oneTimeTokenStore;
   private final @NonNull ApplicationSettingsService applicationSettingsService;
   private final @NonNull OrisoEmailRenderer emailRenderer;
@@ -115,20 +109,6 @@ public class PasswordResetService {
 
   @Value("${password.reset.admin.frontend.base-url:}")
   private String passwordResetAdminFrontendBaseUrl;
-
-  @Value("${consulting.type.service.api.url:}")
-  private String consultingTypeServiceApiUrl;
-
-  /**
-   * Operator-provided SMTP credentials. Password reset is unauthenticated and dispatched off the
-   * request thread, so there is no user token and the super-admin-guarded credentials endpoint is
-   * unreachable; these are the primary source.
-   */
-  @Value("${smtp.user:}")
-  private String configuredSmtpUsername;
-
-  @Value("${smtp.password:}")
-  private String configuredSmtpPassword;
 
   @PostConstruct
   void logFeatureAvailability() {
@@ -266,21 +246,23 @@ public class PasswordResetService {
     }
     if (userOptional.isPresent()) {
       User user = userOptional.get();
-      return Optional.of(new AccountResetTarget(user.getUserId(), user.getEmail()));
+      return Optional.of(
+          new AccountResetTarget(user.getUserId(), user.getEmail(), user.getTenantId()));
     }
 
-    Optional<Consultant> consultantOptional =
-        consultantService.findConsultantByUsernameOrEmail(username, username);
+    Optional<Consultant> consultantOptional = consultantService.findConsultantForSignIn(username);
     return consultantOptional.map(
-        consultant -> new AccountResetTarget(consultant.getId(), consultant.getEmail()));
+        consultant ->
+            new AccountResetTarget(
+                consultant.getId(), consultant.getEmail(), consultant.getTenantId()));
   }
 
   private Optional<AccountResetTarget> resolveAccount(
       String username, PasswordResetApplication application) {
     if (application == PasswordResetApplication.ADMIN) {
-      Optional<Admin> adminOptional =
-          adminRepository.findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(username, username);
-      return adminOptional.map(admin -> new AccountResetTarget(admin.getId(), admin.getEmail()));
+      Optional<Admin> adminOptional = adminRepository.findForSignIn(username);
+      return adminOptional.map(
+          admin -> new AccountResetTarget(admin.getId(), admin.getEmail(), admin.getTenantId()));
     }
     return resolveAccount(username);
   }
@@ -321,7 +303,8 @@ public class PasswordResetService {
     String resetUrl = buildResetFrontendUrl(oneTimeToken, frontendBaseUrl);
 
     try {
-      mailSender.send(target.getEmail(), locale, resetUrl, smtpSettings);
+      mailSender.send(
+          target.getEmail(), locale, resetUrl, target.getTenantId(), frontendBaseUrl, smtpSettings);
     } catch (Exception ex) {
       // Do not leave a token behind for a mail that never went out, and never log PII (account id,
       // recipient, or the raw exception message) — record the exception class only.
@@ -338,36 +321,28 @@ public class PasswordResetService {
   }
 
   private void sendViaSmtp(
-      String recipient, String locale, String resetUrl, GlobalSmtpSettings smtpSettings)
+      String recipient,
+      String locale,
+      String resetUrl,
+      Long tenantId,
+      String frontendBaseUrl,
+      GlobalSmtpSettings smtpSettings)
       throws Exception {
-    Properties props = new Properties();
-    props.put("mail.smtp.auth", "true");
-    props.put("mail.smtp.host", smtpSettings.getHost());
-    props.put("mail.smtp.port", String.valueOf(smtpSettings.getPort()));
-    if (smtpSettings.isSecure()) {
-      props.put("mail.smtp.ssl.enable", "true");
-    } else {
-      props.put("mail.smtp.starttls.enable", "true");
-    }
-
     jakarta.mail.Session session =
-        jakarta.mail.Session.getInstance(
-            props,
-            new Authenticator() {
-              @Override
-              protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(
-                    smtpSettings.getUsername(), smtpSettings.getPassword());
-              }
-            });
+        OrisoSmtpTransport.session(
+            smtpSettings.getHost(),
+            smtpSettings.getPort(),
+            smtpSettings.isSecure(),
+            smtpSettings.getUsername(),
+            smtpSettings.getPassword());
 
-    var email = renderPasswordReset(locale, resetUrl, smtpSettings.getEmailThemeColor());
+    var email = renderPasswordReset(locale, resetUrl, tenantId, frontendBaseUrl);
     MimeMessage message = new MimeMessage(session);
     message.setFrom(new InternetAddress(smtpSettings.getFrom()));
     message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient));
     message.setSubject(email.subject(), "UTF-8");
     message.setContent(OrisoEmailMime.alternative(email));
-    Transport.send(message);
+    OrisoSmtpTransport.send(message);
   }
 
   /**
@@ -375,7 +350,13 @@ public class PasswordResetService {
    */
   @FunctionalInterface
   interface PasswordResetMailSender {
-    void send(String recipient, String locale, String resetUrl, GlobalSmtpSettings smtpSettings)
+    void send(
+        String recipient,
+        String locale,
+        String resetUrl,
+        Long tenantId,
+        String frontendBaseUrl,
+        GlobalSmtpSettings smtpSettings)
         throws Exception;
   }
 
@@ -388,9 +369,9 @@ public class PasswordResetService {
    * halfway down this file.
    */
   private OrisoEmailRenderer.RenderedEmail renderPasswordReset(
-      String locale, String resetUrl, String emailThemeColor) {
+      String locale, String resetUrl, Long tenantId, String frontendBaseUrl) {
     Map<String, String> values =
-        new LinkedHashMap<>(emailBrand.values(passwordResetFrontendBaseUrl, emailThemeColor));
+        new LinkedHashMap<>(emailBrand.valuesForTenant(frontendBaseUrl, tenantId));
     values.put("resetUrl", resetUrl);
     values.put("expiryHours", String.valueOf(Math.max(1, RESET_TOKEN_TTL.toHours())));
     OrisoEmailRenderer.Tone tone =
@@ -416,97 +397,22 @@ public class PasswordResetService {
         + URLEncoder.encode(oneTimeToken, StandardCharsets.UTF_8);
   }
 
-  @SuppressWarnings("unchecked")
   private Optional<GlobalSmtpSettings> resolveGlobalSmtpSettings() {
-    if (isBlank(consultingTypeServiceApiUrl)) {
-      return Optional.empty();
-    }
     try {
-      String settingsUrl = normalizeBaseUrl(consultingTypeServiceApiUrl) + "/settings";
-      Map<String, Object> settingsResponse = restTemplate.getForObject(settingsUrl, Map.class);
-      if (settingsResponse == null || settingsResponse.isEmpty()) {
-        return Optional.empty();
-      }
-
-      boolean systemEmailsEnabled =
-          asBooleanSettingValue(
-              settingsResponse.get("globalFeatureSystemNotificationEmailsEnabled"));
-      boolean smtpEnabled = asBooleanSettingValue(settingsResponse.get("globalSmtpEnabled"));
-      String host = asStringSettingValue(settingsResponse.get("globalSmtpHost"));
-      Integer port = asIntSettingValue(settingsResponse.get("globalSmtpPort"));
-      boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
-      String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
-      String emailThemeColor =
-          asStringSettingValue(settingsResponse.get("globalSmtpEmailThemeColor"));
-
-      if (!systemEmailsEnabled || !smtpEnabled || isBlank(host) || port == null || isBlank(from)) {
-        return Optional.empty();
-      }
-
-      // The public /settings payload deliberately omits the SMTP username and password since the
-      // CTS-C01 credential-leak fix, so they can never be read from there.
-      String username = configuredSmtpUsername;
-      String password = configuredSmtpPassword;
-      if (isBlank(username) || isBlank(password)) {
-        // Fallback for callers that do run inside an authenticated super-admin request.
-        var credentials = applicationSettingsService.getGlobalSmtpCredentials();
-        if (credentials.isEmpty()) {
-          log.warn(
-              "Password reset email not sent: no SMTP credentials available. Set SMTP_USER and "
-                  + "SMTP_PASSWORD on UserService (the platform-settings credentials are only "
-                  + "readable by a super-admin token, which this unauthenticated flow never has).");
-          return Optional.empty();
-        }
-        username = credentials.get().getGlobalSmtpUsername();
-        password = credentials.get().getGlobalSmtpPassword();
-      }
-
+      var settings = PlatformSmtpSettingsProvider.requireConfigured(applicationSettingsService);
       return Optional.of(
-          new GlobalSmtpSettings(host, port, secure, username, password, from, emailThemeColor));
-    } catch (Exception ex) {
-      log.debug(
-          "Could not resolve global SMTP settings for password reset mail: {}", ex.getMessage());
+          new GlobalSmtpSettings(
+              settings.host(),
+              settings.port(),
+              settings.secure(),
+              settings.username(),
+              settings.password(),
+              settings.from(),
+              settings.emailThemeColor()));
+    } catch (IllegalStateException exception) {
+      log.warn("Platform SMTP unavailable for password reset mail: {}", exception.getMessage());
       return Optional.empty();
     }
-  }
-
-  private boolean asBooleanSettingValue(Object raw) {
-    Object value = unwrapSettingValue(raw);
-    if (value instanceof Boolean) {
-      return (Boolean) value;
-    }
-    if (value instanceof String) {
-      return "true".equalsIgnoreCase((String) value);
-    }
-    return false;
-  }
-
-  private String asStringSettingValue(Object raw) {
-    Object value = unwrapSettingValue(raw);
-    return nonNull(value) ? String.valueOf(value).trim() : null;
-  }
-
-  private Integer asIntSettingValue(Object raw) {
-    Object value = unwrapSettingValue(raw);
-    if (value instanceof Number) {
-      return ((Number) value).intValue();
-    }
-    if (value instanceof String && isNotBlank((String) value)) {
-      try {
-        return Integer.parseInt(((String) value).trim());
-      } catch (NumberFormatException ex) {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  @SuppressWarnings("unchecked")
-  private Object unwrapSettingValue(Object raw) {
-    if (raw instanceof Map<?, ?>) {
-      return ((Map<String, Object>) raw).get("value");
-    }
-    return raw;
   }
 
   private String normalizeBaseUrl(String value) {
@@ -520,6 +426,7 @@ public class PasswordResetService {
   private static class AccountResetTarget {
     String keycloakUserId;
     String email;
+    Long tenantId;
   }
 
   @lombok.Value

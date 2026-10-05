@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.AdminAgency;
@@ -42,6 +43,7 @@ public class CounsellorAgencyAdminGrantService {
   private final @NonNull IdentityClient identityClient;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
+  private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   /**
    * Grants the agency-admin role set to an existing identity and binds it to the agency.
@@ -86,7 +88,8 @@ public class CounsellorAgencyAdminGrantService {
                 .id(consultant.getId())
                 .type(Admin.AdminType.AGENCY)
                 .tenantId(consultant.getTenantId())
-                .username(consultant.getUsername())
+                // The consultant row holds the encoded form; admin rows hold the plain name.
+                .username(usernameTranscoder.decodeUsername(consultant.getUsername()))
                 .firstName(consultant.getFirstName())
                 .lastName(consultant.getLastName())
                 .email(consultant.getEmail())

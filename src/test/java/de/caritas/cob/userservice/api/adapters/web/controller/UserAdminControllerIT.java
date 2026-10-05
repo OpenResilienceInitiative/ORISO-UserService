@@ -17,6 +17,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -29,6 +31,7 @@ import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
+import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -112,6 +115,10 @@ class UserAdminControllerIT {
 
   @MockitoBean private AdminUserFacade adminUserFacade;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer
+      accountSetupIssuer;
+
   @MockitoBean private AdminDtoMapper adminDtoMapper;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
@@ -119,6 +126,7 @@ class UserAdminControllerIT {
   @MockitoBean private GrantConsultantIdentityService grantConsultantIdentityService;
 
   @MockitoBean private UserIdentitiesService userIdentitiesService;
+  @MockitoBean private AdminListPreferenceService adminListPreferenceService;
 
   @Test
   void getSessions_Should_returnBadRequest_When_requiredPaginationParamsAreMissing()
@@ -205,6 +213,9 @@ class UserAdminControllerIT {
   void createConsultant_Should_returnOk_When_requiredCreateConsultantIsGiven() throws Exception {
     CreateConsultantDTO createConsultantDTO =
         new EasyRandom().nextObject(CreateConsultantDTO.class);
+    when(this.consultantAdminFacade.createNewConsultant(any()))
+        .thenReturn(
+            new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id("consultant-1")));
 
     this.mvc
         .perform(

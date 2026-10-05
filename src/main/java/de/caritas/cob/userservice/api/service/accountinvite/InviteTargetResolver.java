@@ -38,6 +38,10 @@ public class InviteTargetResolver {
       tenantId = tenantId != null ? tenantId : existing.tenantId();
       departmentId = bindDepartment(command, existing);
     }
+    // After the policy and the agency binding, which both may stamp the tenant.
+    if (command.targetRole() == AccountInviteTargetRole.AGENCY_ADMIN && tenantId == null) {
+      throw new BadRequestException("An AGENCY_ADMIN invite requires a tenant");
+    }
     InviteUnitType waitsFor = waitsFor(command);
     boolean tenantAdmin = command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN;
     Reservation reservation =

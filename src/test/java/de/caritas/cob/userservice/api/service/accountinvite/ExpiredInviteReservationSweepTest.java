@@ -31,6 +31,7 @@ class ExpiredInviteReservationSweepTest {
   @InjectMocks private ExpiredInviteReservationSweep sweep;
 
   @Mock private AccountInviteService accountInviteService;
+  @Mock private ExistingAccountSetupService accountSetupService;
   @Mock private ScheduledTaskClaimService taskClaimService;
   @Mock private TenantContextProvider tenantContextProvider;
   @Mock private IdentityClientConfig identityClientConfig;
@@ -56,7 +57,7 @@ class ExpiredInviteReservationSweepTest {
 
     sweep.expireElapsedInvites();
 
-    verifyNoInteractions(accountInviteService, identityAuthentication);
+    verifyNoInteractions(accountInviteService, accountSetupService, identityAuthentication);
   }
 
   @Test
@@ -75,13 +76,16 @@ class ExpiredInviteReservationSweepTest {
     when(accountInviteService.expireElapsedInvites())
         .thenAnswer(
             invocation -> {
-              assertThat(TechnicalAccessTokenContext.get()).contains("token");
+              // Local writes run without the service token; only allocation calls may use it.
+              assertThat(TechnicalAccessTokenContext.get()).isEmpty();
+              assertThat(TechnicalAccessTokenContext.offered()).contains("token");
               return 1;
             });
 
     sweep.expireElapsedInvites();
 
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
+    verify(accountSetupService).expireElapsedLinks();
     verify(taskClaimService).release(lease);
     assertThat(TechnicalAccessTokenContext.get()).isEmpty();
   }

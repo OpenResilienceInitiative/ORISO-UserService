@@ -12,6 +12,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
@@ -21,6 +23,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProv
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TopicPermissionPolicy;
+import de.caritas.cob.userservice.api.service.accountinvite.WizardAccept;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -102,6 +105,10 @@ public class CounsellorOnboardingService {
     resolved.rethrowLinkDeath();
 
     AccountInvite invite = resolved.invite();
+    if (invite.getPurpose() == AccountInvitePurpose.EXISTING_ACCOUNT_SETUP) {
+      // The setup-only wizard needs no topic/agency provisioning lookup.
+      return new CounsellorOnboardingState(invite, false, List.of());
+    }
     if (resolved.pendingTwoFactorResume()) {
       repairMissingTotpSecret(invite);
       return new CounsellorOnboardingState(invite, true, List.of());
@@ -117,6 +124,15 @@ public class CounsellorOnboardingService {
         () -> {
           AccountInvite invite = findCounsellorInvite(rawToken);
           LocalDateTime now = LocalDateTime.now();
+
+          if (invite.getPurpose() == AccountInvitePurpose.EXISTING_ACCOUNT_SETUP
+              && invite.getProvisioningStatus() == AccountInviteProvisioningStatus.IN_PROGRESS) {
+            return ResolvedOnboardingInvite.dead(
+                new AccountInviteLinkException(
+                    "SETUP_OUTCOME_INDETERMINATE".equals(invite.getProvisioningFailureReason())
+                        ? AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED
+                        : AccountInviteLinkException.Reason.SETUP_IN_PROGRESS));
+          }
 
           if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
             AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
@@ -146,6 +162,9 @@ public class CounsellorOnboardingService {
     RegisterCounsellorCommand command = requestedCommand;
     validateRegistration(command);
     AccountInvite invite = findCounsellorInvite(rawToken);
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("This link is for existing-account setup");
+    }
     LocalDateTime now = LocalDateTime.now();
 
     if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
@@ -170,23 +189,24 @@ public class CounsellorOnboardingService {
       throw new BadRequestException("A new agency needs at least one topic");
     }
 
-    // A reserved (not yet created) Beratungsstellen-ID: the invitee named the agency in the
-    // wizard and it has to exist — under exactly the reserved ID — before the consultant can be
-    // attached to it. Deliberately here, OUTSIDE any transaction of this service: the invite's
-    // PESSIMISTIC_WRITE lock must never be held across a remote call (#1008 review).
-    boolean agencyCreated = false;
-    if (!coverage.agencyExists()) {
-      createReservedAgency(invite, command);
-      agencyCreated = true;
+    // A reserved Beratungsstellen-ID: the agency is created by the accept that holds the invite
+    // row, so a revoke that wins leaves no agency behind (ORISO-Admin#1026).
+    boolean agencyCreated = !coverage.agencyExists();
+    if (agencyCreated && isBlank(command.agencyName())) {
+      throw new BadRequestException("agency.name is required for an invite without an agency");
     }
+    RegisterCounsellorCommand named = command;
+    WizardAccept routed =
+        WizardAccept.decidedFrom(
+            invite, agencyCreated ? () -> createReservedAgency(invite, named) : () -> {});
 
     // A counsellor gets admin rights only on the agency they just created.
     AccountInvite accepted =
         counsels
             ? counsellorInviteProvisioningService.acceptInvite(
-                rawToken, toProvisionCommand(command, agencyCreated || agencyAdmin))
+                rawToken, toProvisionCommand(command, agencyCreated || agencyAdmin), routed)
             : agencyAdminInviteProvisioningService.acceptAsAgencyAdmin(
-                rawToken, command.username(), command.password());
+                rawToken, command.username(), command.password(), routed);
 
     if (agencyAdmin || agencyCreated) {
       // The agency now has its admin: release its waiting invites (idempotent for further admins).
@@ -451,9 +471,6 @@ public class CounsellorOnboardingService {
    * follow-up attempt sees {@code agencyExists == true} and simply attaches to it.
    */
   private void createReservedAgency(AccountInvite invite, RegisterCounsellorCommand command) {
-    if (isBlank(command.agencyName())) {
-      throw new BadRequestException("agency.name is required for an invite without an agency");
-    }
     TenantData requestTenant = snapshotTenantContext();
     TenantContext.setCurrentTenant(invite.getTenantId());
     try {
@@ -568,10 +585,17 @@ public class CounsellorOnboardingService {
    */
   private AccountInviteLinkException expireIfPastExpiry(AccountInvite invite, LocalDateTime now) {
     if (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(now)) {
-      invite.setStatus(AccountInviteStatus.EXPIRED);
-      invite.setActiveRecipientKey(null);
-      invite.setUpdateDate(now);
-      accountInviteRepository.save(invite);
+      // Conditional: this read may be unlocked, and a revoke or accept may have landed since.
+      int expired =
+          inTransaction(
+              () ->
+                  accountInviteRepository.expireWhileStatusIn(
+                      invite.getId(), List.of(AccountInviteStatus.EMAIL_SENT), now));
+      if (expired == 1) {
+        invite.setStatus(AccountInviteStatus.EXPIRED);
+        invite.setActiveRecipientKey(null);
+        invite.setUpdateDate(now);
+      }
       return new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
     return null;
@@ -583,6 +607,7 @@ public class CounsellorOnboardingService {
     boolean withinExpiryWindow =
         invite.getExpiresAt() == null || !invite.getExpiresAt().isBefore(now);
     return invite.getStatus() == AccountInviteStatus.ACCEPTED
+        && invite.getPurpose() == AccountInvitePurpose.INVITE
         && twoFactorStillPending
         && withinExpiryWindow;
   }

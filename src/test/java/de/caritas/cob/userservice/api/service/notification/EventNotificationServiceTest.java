@@ -328,7 +328,14 @@ class EventNotificationServiceTest {
             "supervisorName",
             // #1201: the counsellor rename entry carries only when the change happened; the old
             // and new names are gone from the payload, so no key may reappear here.
-            "changedAt");
+            "changedAt",
+            // Frontend#876: planned maintenance notice (ServiceNoticeConfirmation); the frontend
+            // renders the window and the status-page link from these.
+            "campaignKey",
+            "maintenanceDate",
+            "maintenanceStart",
+            "maintenanceEnd",
+            "statusUrl");
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -362,6 +369,9 @@ class EventNotificationServiceTest {
             .messageId("$event-1:matrix.example")
             .contentClass("TEXT")
             .build());
+    // Frontend#876: the planned maintenance notice is produced outside this service
+    // (ServiceNoticeConfirmation) but lands in the same feed; sweep it too.
+    sweepPlannedServiceNoticeFeedEntry();
 
     verify(eventNotificationRepository, org.mockito.Mockito.atLeast(9)).save(eventCaptor.capture());
     List<EventNotification> emitted = new java.util.ArrayList<>(eventCaptor.getAllValues());
@@ -376,6 +386,13 @@ class EventNotificationServiceTest {
             .anyMatch(
                 saved -> saved.getParams() != null && saved.getParams().contains("matrixEventId")),
         "the sweep never exercised matrixEventId, so it proves nothing about that key");
+    assertTrue(
+        emitted.stream()
+            .anyMatch(
+                saved ->
+                    "service.notice.planned".equals(saved.getEventType())
+                        && saved.getParams() != null),
+        "the sweep never exercised the planned service notice producer");
     for (EventNotification saved : emitted) {
       if (saved.getParams() == null) {
         continue;
@@ -387,6 +404,41 @@ class EventNotificationServiceTest {
               key ->
                   assertTrue(contract.contains(key), "param key outside shared contract: " + key));
     }
+  }
+
+  /** Repeats a confirmed planned notice, which re-writes its feed entry through this service. */
+  private void sweepPlannedServiceNoticeFeedEntry() {
+    var campaigns =
+        mock(de.caritas.cob.userservice.api.port.out.ServiceNoticeCampaignRepository.class);
+    var recipients =
+        mock(de.caritas.cob.userservice.api.port.out.ServiceNoticeRecipientRepository.class);
+    var campaign = new de.caritas.cob.userservice.api.model.ServiceNoticeCampaign();
+    campaign.setId(7L);
+    campaign.setCampaignKey("maint-2026-10-15");
+    campaign.setStatus("CONFIRMED");
+    campaign.setMaintenanceDate(java.time.LocalDate.of(2026, 10, 15));
+    campaign.setMaintenanceStart(java.time.LocalTime.of(22, 0));
+    campaign.setMaintenanceEnd(java.time.LocalTime.of(23, 30));
+    campaign.setStatusUrl("https://status.example.org/");
+    campaign.setCreatedByUserId("operator-1");
+    var row = new de.caritas.cob.userservice.api.model.ServiceNoticeRecipient();
+    row.setId(1L);
+    row.setCampaignId(7L);
+    row.setRecipientId("agency-admin-1");
+    row.setTenantId(1L);
+    row.setMailStatus(
+        de.caritas.cob.userservice.api.model.ServiceNoticeRecipient.MailStatus.values()[0]);
+    when(campaigns.findByCampaignKeyForUpdate("maint-2026-10-15"))
+        .thenReturn(Optional.of(campaign));
+    when(recipients.findByCampaignIdOrderById(7L)).thenReturn(List.of(row));
+
+    new de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeConfirmation(
+            campaigns,
+            recipients,
+            mock(de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeAudience.class),
+            eventNotificationService,
+            mock(org.springframework.transaction.PlatformTransactionManager.class))
+        .confirm("maint-2026-10-15", 1, "operator-1");
   }
 
   @Test

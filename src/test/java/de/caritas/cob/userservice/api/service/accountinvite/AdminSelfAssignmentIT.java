@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.tenant.TenantFixtures;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Callable;
@@ -71,6 +72,7 @@ import org.springframework.transaction.annotation.Transactional;
   AdminSelfAssignmentService.class,
   ConsultantTopicAgencyCompatibilityValidator.class,
   AccountInviteAccessPolicy.class,
+  ConsultantTopicAgencyCompatibilityValidator.class,
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AdminSelfAssignmentIT.CallerConfig.class,
   TenantFixtures.class
@@ -91,6 +93,7 @@ class AdminSelfAssignmentIT {
   private static final long FOREIGN_AGENCY = 3L;
   private static final long MISSING_AGENCY = 999L;
   private static final long TOPICLESS_AGENCY = 4L;
+  private static final long MULTI_TOPIC_AGENCY = 5L;
 
   @TestConfiguration
   static class CallerConfig {
@@ -125,6 +128,7 @@ class AdminSelfAssignmentIT {
     givenAgency(OWN_AGENCY, OWN_TENANT, List.of(11L));
     givenAgency(OTHER_OWN_TENANT_AGENCY, OWN_TENANT, List.of(21L));
     givenAgency(FOREIGN_AGENCY, FOREIGN_TENANT, List.of(31L));
+    givenAgency(MULTI_TOPIC_AGENCY, OWN_TENANT, List.of(51L, 52L));
     when(agencyFacts.find(MISSING_AGENCY)).thenReturn(Optional.empty());
     adminRepository.save(
         Admin.builder()
@@ -347,6 +351,38 @@ class AdminSelfAssignmentIT {
         .isInstanceOf(BadRequestException.class);
     verify(grantConsultantIdentityService, never())
         .grantConsultantIdentityToAdmin(anyString(), any());
+  }
+
+  @Test
+  void selfAssignment_Should_Answer400_When_ATopicIdIsNull() {
+    actAsTenantAdmin(TENANT_ADMIN_ID);
+
+    assertThatThrownBy(
+            () ->
+                service.assign(
+                    new SelfAssignmentCommand(
+                        SelfAssignmentRole.COUNSELLOR,
+                        MULTI_TOPIC_AGENCY,
+                        Arrays.asList(51L, null))))
+        .isInstanceOf(BadRequestException.class);
+    verify(grantConsultantIdentityService, never())
+        .grantConsultantIdentityToAdmin(anyString(), any());
+  }
+
+  @Test
+  void anAdminWhoAlreadyCounsels_Should_Get400_When_ATopicIdIsNull() {
+    actAsTenantAdmin(counsellingCaller.getId());
+
+    assertThatThrownBy(
+            () ->
+                service.assign(
+                    new SelfAssignmentCommand(
+                        SelfAssignmentRole.COUNSELLOR,
+                        MULTI_TOPIC_AGENCY,
+                        Arrays.asList(51L, null))))
+        .isInstanceOf(BadRequestException.class);
+    verify(consultantAgencyRelationCreatorService, never())
+        .createNewConsultantAgency(anyString(), any());
   }
 
   @Test

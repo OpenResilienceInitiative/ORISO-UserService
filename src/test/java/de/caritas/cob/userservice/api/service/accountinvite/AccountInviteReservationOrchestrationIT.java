@@ -83,6 +83,8 @@ class AccountInviteReservationOrchestrationIT {
   @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
   private AuthenticatedUser authenticatedUser;
 
+  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
+
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;

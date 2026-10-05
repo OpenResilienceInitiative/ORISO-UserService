@@ -1,8 +1,11 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import jakarta.persistence.LockModeType;
@@ -22,6 +25,10 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   Optional<AccountInvite> findByTokenHash(String tokenHash);
+
+  /** Serializes setup-link reissues for the same existing Keycloak identity. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  Optional<AccountInvite> findByActiveSetupIdentityKey(String activeSetupIdentityKey);
 
   /**
    * Lock-free role probe for the shared public onboarding routes (#1008 review): the route decides
@@ -58,6 +65,173 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
   int claimForAcceptance(
       @Param("id") Long id,
       @Param("acceptedByUserId") String acceptedByUserId,
+      @Param("now") LocalDateTime now);
+
+  /** Reserves a setup token before any external password update; only one caller can win. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.provisioningStatus = :inProgress,"
+          + " i.provisioningFailureReason = NULL, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.purpose = :purpose AND i.status = :sent"
+          + " AND i.provisioningStatus IN :retryable"
+          + " AND i.expiresAt > :now")
+  int claimExistingAccountSetup(
+      @Param("id") Long id,
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("sent") AccountInviteStatus sent,
+      @Param("retryable") Collection<AccountInviteProvisioningStatus> retryable,
+      @Param("inProgress") AccountInviteProvisioningStatus inProgress,
+      @Param("now") LocalDateTime now);
+
+  /** A definitive pre-update/password-policy rejection leaves the same token retryable. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.provisioningStatus = :retryable,"
+          + " i.provisioningFailureReason = :reason, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.purpose = :purpose AND i.status = :sent"
+          + " AND i.provisioningStatus = :inProgress")
+  int releaseExistingAccountSetup(
+      @Param("id") Long id,
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("sent") AccountInviteStatus sent,
+      @Param("inProgress") AccountInviteProvisioningStatus inProgress,
+      @Param("retryable") AccountInviteProvisioningStatus retryable,
+      @Param("reason") String reason,
+      @Param("now") LocalDateTime now);
+
+  /** A stale bound account or role permanently invalidates the old e-mail link. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.status = :revoked, i.activeRecipientKey = NULL,"
+          + " i.activeSetupIdentityKey = NULL,"
+          + " i.initialPasswordVerifier = NULL,"
+          + " i.provisioningFailureReason = :reason, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.purpose = :purpose AND i.status = :sent"
+          + " AND i.provisioningStatus = :inProgress")
+  int revokeStaleExistingAccountSetup(
+      @Param("id") Long id,
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("sent") AccountInviteStatus sent,
+      @Param("inProgress") AccountInviteProvisioningStatus inProgress,
+      @Param("revoked") AccountInviteStatus revoked,
+      @Param("reason") String reason,
+      @Param("now") LocalDateTime now);
+
+  /** Unknown Keycloak outcome: preserve the consumed claim for operator review, never replay it. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.provisioningFailureReason = :reason, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.purpose = :purpose AND i.status = :sent"
+          + " AND i.provisioningStatus = :inProgress")
+  int recordIndeterminateExistingAccountSetup(
+      @Param("id") Long id,
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("sent") AccountInviteStatus sent,
+      @Param("inProgress") AccountInviteProvisioningStatus inProgress,
+      @Param("reason") String reason,
+      @Param("now") LocalDateTime now);
+
+  /** Closes only the setup claim that is still reserved for this immutable existing identity. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.status = :accepted,"
+          + " i.provisioningStatus = :completed, i.emailVerificationStatus = :verified,"
+          + " i.acceptedByUserId = :boundUserId, i.acceptedAt = :now,"
+          + " i.activeRecipientKey = NULL, i.activeSetupIdentityKey = NULL,"
+          + " i.initialPasswordVerifier = NULL,"
+          + " i.provisioningFailureReason = NULL, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.purpose = :purpose AND i.status = :sent"
+          + " AND i.provisioningStatus = :inProgress AND i.provisionedUserId = :boundUserId")
+  int completeExistingAccountSetup(
+      @Param("id") Long id,
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("sent") AccountInviteStatus sent,
+      @Param("inProgress") AccountInviteProvisioningStatus inProgress,
+      @Param("accepted") AccountInviteStatus accepted,
+      @Param("completed") AccountInviteProvisioningStatus completed,
+      @Param("verified") EmailVerificationStatus verified,
+      @Param("boundUserId") String boundUserId,
+      @Param("now") LocalDateTime now);
+
+  /** Waits for a running accept, which holds this row lock while it creates the account. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT i FROM AccountInvite i WHERE i.id = :id")
+  Optional<AccountInvite> findByIdForUpdate(@Param("id") Long id);
+
+  /**
+   * Counterpart of {@link #claimForAcceptance}: of a racing revoke and accept only one changes the
+   * row. Returns 0 when an accept or another revoke came first.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i"
+          + " SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.REVOKED,"
+          + " i.activeRecipientKey = NULL,"
+          + " i.activeSetupIdentityKey = NULL,"
+          + " i.initialPasswordVerifier = NULL,"
+          + " i.revokedAt = :now,"
+          + " i.revokedByUserId = :revokedByUserId,"
+          + " i.updateDate = :now"
+          + " WHERE i.id = :id AND i.status IN :revocable"
+          + " AND (i.purpose <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose.EXISTING_ACCOUNT_SETUP"
+          + " OR i.provisioningStatus <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus.IN_PROGRESS)")
+  int revokeWhileStatusIn(
+      @Param("id") Long id,
+      @Param("revocable") Collection<AccountInviteStatus> revocable,
+      @Param("revokedByUserId") String revokedByUserId,
+      @Param("now") LocalDateTime now);
+
+  /**
+   * Locks the row and proves it still has the status its writer checked; 0 when a revoke or accept
+   * changed it first. Keeps the persistence context so the writer goes on with its entity.
+   */
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.updateDate = :now"
+          + " WHERE i.id = :id AND i.status = :expected")
+  int holdInStatus(
+      @Param("id") Long id,
+      @Param("expected") AccountInviteStatus expected,
+      @Param("now") LocalDateTime now);
+
+  /**
+   * Expires only a still open invite; 0 when an accept or a revoke settled it first. A setup
+   * verifier remains private on EXPIRED so a scoped administrator can replace the dead token
+   * without knowing or resetting the original temporary password. Ordinary invites have no setup
+   * verifier or setup identity key.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i"
+          + " SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.EXPIRED,"
+          + " i.activeRecipientKey = NULL,"
+          + " i.updateDate = :now"
+          + " WHERE i.id = :id AND i.status IN :open"
+          + " AND (i.purpose <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose.EXISTING_ACCOUNT_SETUP"
+          + " OR i.provisioningStatus <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus.IN_PROGRESS)")
+  int expireWhileStatusIn(
+      @Param("id") Long id,
+      @Param("open") Collection<AccountInviteStatus> open,
+      @Param("now") LocalDateTime now);
+
+  /** Marks elapsed setup links unusable while retaining private recovery data for scoped resend. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.status = :expired, i.updateDate = :now"
+          + " WHERE i.purpose = :purpose AND i.status IN :open"
+          + " AND i.expiresAt IS NOT NULL AND i.expiresAt <= :now"
+          + " AND i.provisioningStatus <> :inProgress")
+  int expireElapsedExistingAccountSetup(
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("open") Collection<AccountInviteStatus> open,
+      @Param("expired") AccountInviteStatus expired,
+      @Param("inProgress") AccountInviteProvisioningStatus inProgress,
       @Param("now") LocalDateTime now);
 
   boolean existsByTenantIdAndTargetRoleAndStatusIn(
@@ -215,6 +389,34 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
   List<AccountInvite> findPendingTenantAdmins(
       @Param("tenantId") Long tenantId,
       @Param("excludedId") Long excludedId,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** {@link #findPendingAgencyAdmins} for several agencies in one query, for a whole list. */
+  @Query(
+      "SELECT i FROM AccountInvite i"
+          + " WHERE i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".AGENCY_ADMIN"
+          + " AND i.agencyId IN :agencyIds"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  List<AccountInvite> findPendingAgencyAdminsIn(
+      @Param("agencyIds") Collection<Long> agencyIds,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** {@link #findPendingTenantAdmins} for several Träger in one query, for a whole list. */
+  @Query(
+      "SELECT i FROM AccountInvite i"
+          + " WHERE i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".TENANT_ADMIN"
+          + " AND i.tenantId IN :tenantIds"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  List<AccountInvite> findPendingTenantAdminsIn(
+      @Param("tenantIds") Collection<Long> tenantIds,
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 

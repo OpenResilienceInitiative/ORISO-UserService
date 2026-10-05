@@ -53,6 +53,7 @@ import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.Cookie;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -92,6 +93,8 @@ class QueuedInviteReleaseOnOnboardingIT {
   @MockitoBean private TenantService tenantService;
 
   @Autowired private MockMvc mockMvc;
+  private final List<Long> seededInviteIds = new ArrayList<>();
+
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private InviteEmailTemplateRepository templateRepository;
   @Autowired private InviteEmailDeliveryRepository deliveryRepository;
@@ -120,7 +123,7 @@ class QueuedInviteReleaseOnOnboardingIT {
         .thenAnswer(
             invocation ->
                 Optional.of(
-                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
+                    new AgencyFacts.Agency(invocation.getArgument(0), TENANT, false, List.of())));
     when(agencyService.getAgencyWithoutCaching(NEW_AGENCY)).thenReturn(null);
     when(topicService.getAllActiveTopicsMap())
         .thenReturn(java.util.Map.of(TOPIC, new TopicDTO().id(TOPIC).name("Sucht")));
@@ -131,7 +134,7 @@ class QueuedInviteReleaseOnOnboardingIT {
     when(keycloakService.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(false, "SECRET", "QR", IdentityOtpType.APP));
     when(inviteMailDispatchService.send(
-            anyString(), anyString(), anyString(), anyString(), any(), any()))
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenAnswer(call -> new InviteMailSendReceipt(call.getArgument(0), Instant.now()));
     when(operatorDpaContentClient.fetchPublishedDpa())
         .thenReturn(new OperatorDpa("{\"de\":\"<p>AVV</p>\"}", "1"));
@@ -155,8 +158,8 @@ class QueuedInviteReleaseOnOnboardingIT {
 
   @AfterEach
   void cleanUp() {
-    deliveryRepository.deleteAll();
-    accountInviteRepository.deleteAll();
+    // The invite tables are shared: only this class's rows go.
+    Tenants.acrossAll(() -> seededInviteIds.forEach(this::deleteInviteWithItsMail));
     templateRepository.deleteById(templateId);
     // The new admin lives in the new Träger, not in the one the requests resolved to.
     Tenants.acrossAll(
@@ -192,7 +195,14 @@ class QueuedInviteReleaseOnOnboardingIT {
     assertThat(sent.getWaitingForUnit()).isNull();
     assertThat(sent.getExpiresAt()).isAfter(LocalDateTime.now().plusDays(29));
     verify(inviteMailDispatchService)
-        .send(eq(sent.getRecipientEmail()), anyString(), anyString(), anyString(), any(), any());
+        .send(
+            eq(sent.getRecipientEmail()),
+            anyString(),
+            anyString(),
+            anyString(),
+            any(),
+            any(),
+            any());
     assertThat(reload(waitingDraft).getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
   }
 
@@ -282,7 +292,15 @@ class QueuedInviteReleaseOnOnboardingIT {
   }
 
   private AccountInvite seed(AccountInvite invite) {
-    return accountInviteRepository.save(invite);
+    AccountInvite saved = accountInviteRepository.save(invite);
+    seededInviteIds.add(saved.getId());
+    return saved;
+  }
+
+  private void deleteInviteWithItsMail(Long inviteId) {
+    deliveryRepository.deleteAll(
+        deliveryRepository.findByAccountInviteIdOrderByCreateDateDesc(inviteId));
+    accountInviteRepository.deleteById(inviteId);
   }
 
   private String seedSentInvite(AccountInvite invite) {

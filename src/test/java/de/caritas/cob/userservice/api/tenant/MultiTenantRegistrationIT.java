@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -42,6 +44,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
@@ -98,6 +101,7 @@ import org.springframework.test.web.servlet.MvcResult;
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {"multitenancy.enabled=true"})
+@org.springframework.context.annotation.Import(TenantFixtures.class)
 class MultiTenantRegistrationIT {
 
   private static final String CSRF_HEADER = "X-CSRF-Token";
@@ -112,6 +116,12 @@ class MultiTenantRegistrationIT {
   @Autowired private UserRepository userRepository;
   @Autowired private SessionRepository sessionRepository;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory
+      ownerFactory;
+
+  private de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures dpaOwner;
+
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
@@ -121,6 +131,7 @@ class MultiTenantRegistrationIT {
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityLocaleLookup.class,
+        IdentityPasswordChangeRequirement.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,
@@ -151,6 +162,7 @@ class MultiTenantRegistrationIT {
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private ChatRepository chatRepository;
   @Autowired private UserChatRepository userChatRepository;
+  @Autowired private TenantFixtures fixtures;
 
   private final List<String> createdUserIds = new ArrayList<>();
   private final List<Runnable> cleanups = new ArrayList<>();
@@ -160,11 +172,10 @@ class MultiTenantRegistrationIT {
 
   @BeforeEach
   void oneAgencyOfTenantTwo() throws Exception {
-    when(agencyFacts.find(anyLong()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(
-                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
+    dpaOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, TENANT);
+    when(agencyFacts.find(AGENCY))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, TENANT, false, List.of())));
     // The platform domain resolves to the main tenant, as with single-domain multitenancy.
     when(tenantResolverService.resolve(any())).thenReturn(1L);
     when(((IdentityAuthentication) identityClient).login(anyString(), anyString()))
@@ -228,8 +239,10 @@ class MultiTenantRegistrationIT {
         sessionRepository.findByUserUserId(userId).forEach(sessionRepository::delete);
         userRepository.findById(userId).ifPresent(userRepository::delete);
       }
+      fixtures.removeAll();
     } finally {
       TenantContext.clear();
+      dpaOwner.close();
     }
   }
 
@@ -293,12 +306,48 @@ class MultiTenantRegistrationIT {
     assertCreatedInTenant();
   }
 
+  // --- anonymous enquiry: the real facade writes user and session in the resolved tenant ------
+
+  @Test
+  void anonymousEnquiry_Should_WriteTheUserAndTheSessionInTheResolvedTenant() throws Exception {
+    when(tenantResolverService.resolve(any())).thenReturn(TENANT);
+
+    var result =
+        mockMvc
+            .perform(
+                post("/conversations/askers/anonymous/new")
+                    .cookie(CSRF_COOKIE)
+                    .header(CSRF_HEADER, CSRF_VALUE)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"consultingType\": 1}"))
+            .andReturn();
+
+    assertStatus(result, 201);
+    assertCreatedInTenant();
+  }
+
   // --- group-chat invite link: registration with the link's agency, then joining the chat ------
 
   @Test
   void groupInviteLink_Should_LetTheNewAdviceSeekerJoinTheChat() throws Exception {
     var link = persistInviteLink("TENANT_CHAT");
-    assertStatus(mockMvc.perform(register(Map.of())).andReturn(), 201);
+    // The link's own contract: redeem answers the Träger and agency the client registers with.
+    var redeemed =
+        objectMapper.readTree(
+            mockMvc
+                .perform(
+                    post("/users/invitelinks/{token}/redeem", link.getToken())
+                        .cookie(CSRF_COOKIE)
+                        .header(CSRF_HEADER, CSRF_VALUE))
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    assertThat(redeemed.get("tenantId").asLong()).isEqualTo(TENANT);
+    assertStatus(
+        mockMvc
+            .perform(register(Map.of("agencyId", redeemed.get("agencyId").asLong())))
+            .andReturn(),
+        201);
     var chat = persistChat();
     actAsAdviceSeeker(createdUserIds.get(0));
 
@@ -306,6 +355,8 @@ class MultiTenantRegistrationIT {
         mockMvc
             .perform(
                 put("/users/chat/{chatId}/assign", chat.getId())
+                    // The number alone is refused; the link carries the secret token (#1237).
+                    .queryParam("inviteToken", chat.getInviteToken())
                     .with(
                         org.springframework.security.test.web.servlet.request
                             .SecurityMockMvcRequestPostProcessors.user(createdUserIds.get(0))
@@ -317,6 +368,7 @@ class MultiTenantRegistrationIT {
             .andReturn();
 
     assertStatus(result, 200);
+    assertCreatedInTenant();
     TenantContext.setCurrentTenant(TENANT);
     try {
       assertThat(
@@ -330,7 +382,6 @@ class MultiTenantRegistrationIT {
     } finally {
       TenantContext.clear();
     }
-    assertThat(link.getTenantId()).isEqualTo(TENANT);
   }
 
   // --- account invites --------------------------------------------------------------------------
@@ -360,6 +411,31 @@ class MultiTenantRegistrationIT {
 
     assertStatus(result, 200);
     assertThat(tenantAtCreation.get()).isEqualTo(TENANT);
+  }
+
+  @Test
+  void acceptCounsellorInvite_Should_BeRefused_When_TheAgencyHasNoTenant() throws Exception {
+    when(agencyFacts.find(AGENCY))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, null, false, List.of())));
+    var token = persistAccountInvite(AccountInviteTargetRole.COUNSELLOR);
+
+    var result = mockMvc.perform(acceptCounsellorInvite(token)).andReturn();
+
+    assertStatus(result, 404);
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+  }
+
+  @Test
+  void acceptCounsellorInvite_Should_BeRefused_When_TheAgencyBelongsToAnotherTenant()
+      throws Exception {
+    when(agencyFacts.find(AGENCY))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, TENANT + 1, false, List.of())));
+    var token = persistAccountInvite(AccountInviteTargetRole.COUNSELLOR);
+
+    var result = mockMvc.perform(acceptCounsellorInvite(token)).andReturn();
+
+    assertStatus(result, 404);
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
   }
 
   @Test
@@ -451,6 +527,16 @@ class MultiTenantRegistrationIT {
     return link;
   }
 
+  private static org.springframework.test.web.servlet.RequestBuilder acceptCounsellorInvite(
+      String token) {
+    return post("/users/account-invites/{token}/accept", token)
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(
+            "{\"username\":\"invited_counsellor_"
+                + RandomStringUtils.randomAlphabetic(6)
+                + "\",\"password\":\"Valid-Test-Password-2026!\",\"formalLanguage\":true}");
+  }
+
   private String persistAccountInvite(AccountInviteTargetRole role) {
     var token = "registration-" + UUID.randomUUID();
     var invite =
@@ -479,11 +565,14 @@ class MultiTenantRegistrationIT {
   private Chat persistChat() {
     TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
     try {
-      var owner = consultantRepository.findAll().iterator().next();
+      // The chat owner is a counsellor of the link's Träger, not whichever row the seed lists
+      // first.
+      var owner = fixtures.consultant(TENANT, AGENCY);
       var chat =
           chatRepository.save(
               Chat.builder()
                   .topic("Synthetic group")
+                  .conversationType(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP)
                   .consultingTypeId(1)
                   .initialStartDate(java.time.LocalDateTime.now())
                   .startDate(java.time.LocalDateTime.now())
