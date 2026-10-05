@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -259,17 +258,14 @@ public class AgencyLateJoinerMembershipService {
     }
 
     var credentials = credentialsOpt.get();
-    if (isBlank(credentials.getMatrixUserId()) || isBlank(credentials.getMatrixPassword())) {
+    if (isBlank(credentials.getMatrixUserId())) {
       log.warn(
           "Matrix service account configuration incomplete for agency {}; enquiry room membership unchanged.",
           agencyId);
       return null;
     }
 
-    var agencyToken =
-        sessionRoomGateway.loginUser(
-            MatrixIds.localpartLenient(credentials.getMatrixUserId()),
-            credentials.getMatrixPassword());
+    var agencyToken = sessionRoomGateway.loginAsUser(credentials.getMatrixUserId());
     if (isBlank(agencyToken)) {
       log.error(
           "Failed to login Matrix service account {} for agency {}; enquiry room membership unchanged.",

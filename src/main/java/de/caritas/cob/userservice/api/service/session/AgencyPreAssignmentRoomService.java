@@ -4,7 +4,6 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
@@ -67,7 +66,7 @@ public class AgencyPreAssignmentRoomService {
 
     AgencyMatrixCredentialsDTO credentials = credentialsOpt.get();
 
-    if (isBlank(credentials.getMatrixUserId()) || isBlank(credentials.getMatrixPassword())) {
+    if (isBlank(credentials.getMatrixUserId())) {
       log.warn(
           "Matrix service account configuration incomplete for agency {}. Skipping holding room for session {}.",
           session.getAgencyId(),
@@ -75,9 +74,7 @@ public class AgencyPreAssignmentRoomService {
       return;
     }
 
-    String agencyMatrixUsername = extractLocalPart(credentials.getMatrixUserId());
-    String agencyToken =
-        sessionRoomGateway.loginUser(agencyMatrixUsername, credentials.getMatrixPassword());
+    String agencyToken = sessionRoomGateway.loginAsUser(credentials.getMatrixUserId());
 
     if (isBlank(agencyToken)) {
       log.error(
@@ -182,10 +179,6 @@ public class AgencyPreAssignmentRoomService {
           ex.getMessage());
       return false;
     }
-  }
-
-  private String extractLocalPart(String matrixUserId) {
-    return MatrixIds.localpartLenient(matrixUserId);
   }
 
   private String buildRoomAlias(Long sessionId) {
