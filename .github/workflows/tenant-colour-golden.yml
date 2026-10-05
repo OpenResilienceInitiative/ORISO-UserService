@@ -29,9 +29,9 @@ jobs:
       with:
         repository: OpenResilienceInitiative/ORISO-Frontend
         # TODO(#1252): ORISO-Frontend#1608 is still open, so dev has no fixture yet. Until it
-        # merges, pull requests pin its head commit. AFTER Frontend#1608 MERGES, replace the pinned
-        # SHA below with 'dev' (or the merge commit) and delete this comment.
-        ref: ${{ github.event_name == 'pull_request' && '9d0d837d595c8a43beb28ed68c033d6cf0a45f82' || 'dev' }}
+        # merges, EVERY event (pull request and push) pins its head commit.
+        # AFTER Frontend#1608 MERGES, replace the pinned SHA below with 'dev' (or the merge commit) and delete this comment.
+        ref: 9d0d837d595c8a43beb28ed68c033d6cf0a45f82
         path: .frontend
         sparse-checkout: src/utils/theme/__fixtures__
         persist-credentials: false

@@ -139,6 +139,28 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void aPrimaryColourWithoutHashIsWrittenBackAsValidCss() {
+    for (boolean rolesSupplied : new boolean[] {false, true}) {
+      Map<String, String> values = brand();
+      values.put("primaryColor", "f8e71c");
+      values.put("loginUrl", "https://example.org/login?token=abc");
+      values.put("expiryMinutes", "15");
+      if (rolesSupplied) {
+        values.put("primaryTextColor", "#010203");
+        values.put("primaryLinkColor", "#040506");
+      }
+
+      var html = renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values).html();
+
+      assertThat(html)
+          .as("roles supplied: %s", rolesSupplied)
+          .contains("background-color:#f8e71c;")
+          .doesNotContain("background-color:f8e71c")
+          .doesNotContain("bgcolor=\"f8e71c\"");
+    }
+  }
+
+  @Test
   void rendersBothMimePartsAndTheSubject() {
     Map<String, String> values = brand();
     values.put("loginUrl", "https://example.org/login?token=abc");

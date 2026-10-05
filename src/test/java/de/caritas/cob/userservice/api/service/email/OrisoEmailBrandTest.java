@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
+import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
@@ -180,8 +181,11 @@ class OrisoEmailBrandTest {
         .as("the label is a dark tone of the same hue")
         .containsEntry("primaryTextColor", "#1f1c00");
     assertThat(values.get("primaryLinkColor"))
-        .as("text links are darkened until 4.5:1 on white")
-        .isNotEqualTo("#f8e71c");
+        .as("text links meet 4.5:1 contrast on white")
+        .satisfies(
+            color ->
+                assertThat(EmailColors.contrastRatio(color, "#ffffff"))
+                    .isGreaterThanOrEqualTo(4.5d));
   }
 
   @Test

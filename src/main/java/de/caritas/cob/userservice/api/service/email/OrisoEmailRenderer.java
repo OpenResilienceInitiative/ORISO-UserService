@@ -312,17 +312,18 @@ public class OrisoEmailRenderer {
 
   /**
    * Supplies {@code primaryTextColor} and {@code primaryLinkColor} from {@code primaryColor} when
-   * the caller did not (callers that go through {@link OrisoEmailBrand} always do). A value map
-   * without a usable {@code primaryColor} is left alone, so a placeholder stays visible as a bug
-   * report instead of a guessed colour.
+   * the caller did not, and writes the normalised {@code primaryColor} back (callers that go
+   * through {@link OrisoEmailBrand} always do). A value map without a usable {@code primaryColor}
+   * is left alone, so a placeholder stays visible as a bug report instead of a guessed colour.
    */
   private static Map<String, String> withDerivedBrandColours(Map<String, String> values) {
     String primary = EmailColors.normalize(values.get("primaryColor"));
-    if (primary == null
-        || (values.containsKey("primaryTextColor") && values.containsKey("primaryLinkColor"))) {
+    if (primary == null) {
       return values;
     }
     Map<String, String> derived = new LinkedHashMap<>(values);
+    // Write the normalised literal back so a caller's "f8e71c" is valid CSS in the template.
+    derived.put("primaryColor", primary);
     derived.putIfAbsent("primaryTextColor", EmailColors.onPrimary(primary));
     derived.putIfAbsent("primaryLinkColor", EmailColors.onLightBackground(primary));
     return derived;
