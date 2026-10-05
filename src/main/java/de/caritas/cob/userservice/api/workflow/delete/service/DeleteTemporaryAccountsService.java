@@ -8,7 +8,6 @@ import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -37,19 +36,13 @@ public class DeleteTemporaryAccountsService {
   @Value("${user.temporary.deleteWorkflow.maxAge}")
   private Duration maxAge;
 
-  /** Deletes every temporary account older than the configured maximum age. */
-  public void deleteExpiredTemporaryAccounts() {
-    var createdBefore = LocalDateTime.now().minus(maxAge);
-    List<DeletionWorkflowError> workflowErrors = new ArrayList<>();
-    for (String userId : userRepository.findTemporaryAccountIdsCreatedBefore(createdBefore)) {
-      workflowErrors.addAll(deleteIsolated(userId));
-    }
-    if (!workflowErrors.isEmpty()) {
-      notifyAbout(workflowErrors);
-    }
+  /** Temporary accounts older than the configured maximum age. */
+  public List<String> expiredAccountIds() {
+    return userRepository.findTemporaryAccountIdsCreatedBefore(LocalDateTime.now().minus(maxAge));
   }
 
-  private List<DeletionWorkflowError> deleteIsolated(String userId) {
+  /** Deletes one account; a failure is returned as a workflow error instead of thrown. */
+  public List<DeletionWorkflowError> deleteIsolated(String userId) {
     try {
       return deletionUnit.deleteUser(userId);
     } catch (RuntimeException exception) {
@@ -68,7 +61,11 @@ public class DeleteTemporaryAccountsService {
     }
   }
 
-  private void notifyAbout(List<DeletionWorkflowError> workflowErrors) {
+  /** Sends the workflow error mail once per run, if any deletion failed. */
+  public void notifyAbout(List<DeletionWorkflowError> workflowErrors) {
+    if (workflowErrors.isEmpty()) {
+      return;
+    }
     try {
       workflowErrorMailService.buildAndSendErrorMail(workflowErrors);
     } catch (RuntimeException exception) {

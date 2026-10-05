@@ -499,12 +499,12 @@
       "components": [
         "performDeletionWorkflow"
       ],
-      "decision": "Lease execution and make provider cleanup idempotent.",
+      "decision": "A shared lease is claimed per run and each account is deleted under the locked lease row (runIfHeld), so a second replica skips the run; the lease is released in finally. Each deletion runs in its own transaction and treats an already deleted user as done.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded"
     },
     {
       "id": "handshake-expiry-scheduler",

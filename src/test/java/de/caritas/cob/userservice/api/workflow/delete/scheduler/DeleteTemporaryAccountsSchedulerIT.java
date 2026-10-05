@@ -40,6 +40,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures;
 import de.caritas.cob.userservice.api.workflow.delete.service.AnonymousUserDeletionUnit;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.BasicConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
@@ -111,6 +112,7 @@ class DeleteTemporaryAccountsSchedulerIT {
   @Autowired private SessionRepository sessionRepository;
   @Autowired private UserService userService;
   @Autowired private ScheduledTaskClaimRepository claimRepository;
+  @Autowired private ScheduledTaskClaimService claimService;
   @Autowired private ChatRepository chatRepository;
   @Autowired private UserChatRepository userChatRepository;
   @Autowired private ConsultantRepository consultantRepository;
@@ -237,6 +239,30 @@ class DeleteTemporaryAccountsSchedulerIT {
     assertTrue(sessionRepository.findByUserUserId(participant.getUserId()).isEmpty());
     verify(identityAccounts).deleteUser(participant.getUserId());
     verify(matrixSynapseService).deactivateUser(eq(MATRIX_USER_ID));
+  }
+
+  @Test
+  void aSecondReplicaSkipsTheRunWhileTheFirstHoldsTheLease() throws Exception {
+    var participant = register(true);
+    ageBy(participant, maxAge.plusMinutes(1));
+    var otherReplica = claimService.tryClaimLease(TASK_NAME, Duration.ofMinutes(5)).orElseThrow();
+
+    scheduler.performDeletionWorkflow();
+
+    assertTrue(userService.getUser(participant.getUserId()).isPresent());
+    verify(identityAccounts, never()).deleteUser(participant.getUserId());
+    claimService.release(otherReplica);
+  }
+
+  @Test
+  void theLeaseIsReleasedOnceTheRunEnds() throws Exception {
+    var participant = register(true);
+    ageBy(participant, maxAge.plusMinutes(1));
+
+    scheduler.performDeletionWorkflow();
+
+    assertFalse(userService.getUser(participant.getUserId()).isPresent());
+    assertTrue(claimService.tryClaimLease(TASK_NAME, Duration.ofMinutes(5)).isPresent());
   }
 
   @Test
