@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import java.util.List;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -66,6 +67,21 @@ public class GroupChatMembershipService {
     var ownerMatrixUserId =
         chat == null || chat.getChatOwner() == null ? null : chat.getChatOwner().getMatrixUserId();
     return addMemberToRoom(matrixRoomId, ownerMatrixUserId, memberMatrixUserId);
+  }
+
+  /** Returns empty when Matrix cannot establish the member's state; callers must retry safely. */
+  public Optional<Boolean> isMemberInRoom(Chat chat, String memberMatrixUserId) {
+    var matrixRoomId = resolveMatrixRoomId(chat);
+    return isMemberInRoom(matrixRoomId, memberMatrixUserId);
+  }
+
+  public Optional<Boolean> isMemberInRoom(String matrixRoomId, String memberMatrixUserId) {
+    if (isBlank(matrixRoomId) || isBlank(memberMatrixUserId)) {
+      return Optional.empty();
+    }
+    return matrixSynapseService
+        .getRoomMembers(matrixRoomId)
+        .map(members -> members.contains(memberMatrixUserId));
   }
 
   /**

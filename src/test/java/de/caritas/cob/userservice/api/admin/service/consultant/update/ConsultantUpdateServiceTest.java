@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
@@ -210,6 +211,8 @@ public class ConsultantUpdateServiceTest {
 
   private Consultant consultantWithId(String id) {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setId(id);
     consultant.setTenantId(1L);
     consultant.setAssignedSupervisorId(null);
@@ -227,6 +230,8 @@ public class ConsultantUpdateServiceTest {
   @Test
   public void updateConsultant_Should_callServicesCorrectly_When_givenConsultantDataIsValid() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setTenantId(1L);
     when(this.consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
     UpdateAdminConsultantDTO updateConsultant =
@@ -256,6 +261,8 @@ public class ConsultantUpdateServiceTest {
   public void
       updateConsultant_Should_skipIdentityAndAppointmentSync_When_selfServiceOnlyRequestsPublicSlug() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setTenantId(1L);
     consultant.setFirstName("Direct");
     consultant.setLastName("Consultant");
@@ -289,6 +296,8 @@ public class ConsultantUpdateServiceTest {
   public void
       updateConsultant_Should_callServicesCorrectly_And_AddGroupChatConsultantRole_When_givenConsultantDataIsValidAndGroupChatFlagIsGiven() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     when(this.consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
     UpdateAdminConsultantDTO updateConsultant =
         new EasyRandom().nextObject(UpdateAdminConsultantDTO.class);
@@ -310,6 +319,8 @@ public class ConsultantUpdateServiceTest {
   public void
       updateConsultant_Should_callServicesCorrectly_And_RemoveGroupChatConsultantRole_When_givenConsultantDataIsValidAndGroupChatFlagIsGiven() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     when(this.consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
     UpdateAdminConsultantDTO updateConsultant =
         new EasyRandom().nextObject(UpdateAdminConsultantDTO.class);
@@ -331,6 +342,8 @@ public class ConsultantUpdateServiceTest {
   public void
       updateConsultant_Should_stopBeforeIdentityAndDatabaseUpdates_When_topicAgencyValidationFails() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setTenantId(1L);
     when(this.consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
     UpdateAdminConsultantDTO updateConsultant =
@@ -352,6 +365,25 @@ public class ConsultantUpdateServiceTest {
     verify(this.appointmentService, Mockito.never()).syncConsultantData(any());
   }
 
+  @Test
+  public void updateConsultant_Should_refuseToRemoveTheLastTopic_When_theConsultantHasTopics() {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    consultant.setConsultantTopics(new HashSet<>());
+    consultant.setTenantId(1L);
+    consultant.replaceTopics(List.of(5L));
+    when(this.consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
+    UpdateAdminConsultantDTO updateConsultant =
+        new EasyRandom().nextObject(UpdateAdminConsultantDTO.class);
+    updateConsultant.setTopicIds(List.of());
+    keepDisplayNameUnchanged(consultant, updateConsultant);
+
+    assertThrows(
+        BadRequestException.class,
+        () -> this.consultantUpdateService.updateConsultant("", updateConsultant));
+
+    verify(this.consultantService, Mockito.never()).saveConsultant(any());
+  }
+
   // ---------------------------------------------------------------------------
   // ADR-002 §2 / #1200: renaming a counsellor must not push the real name to Matrix.
   // ---------------------------------------------------------------------------
@@ -368,7 +400,7 @@ public class ConsultantUpdateServiceTest {
 
     ArgumentCaptor<String> displayName = ArgumentCaptor.forClass(String.class);
     verify(this.matrixSynapseService)
-        .updateUserDisplayName(eq("@beraterin1:matrix.oriso.org"), displayName.capture());
+        .updateUserDisplayName(eq("@beraterin1:matrix.example.org"), displayName.capture());
     MatrixRealNameGuard.assertNoRealNameReachedMatrix(
         this.matrixSynapseService, "Angela", "Musterfrau");
     assertThat(displayName.getValue()).isEqualTo("Frau M.");
@@ -386,7 +418,7 @@ public class ConsultantUpdateServiceTest {
 
     ArgumentCaptor<String> displayName = ArgumentCaptor.forClass(String.class);
     verify(this.matrixSynapseService)
-        .updateUserDisplayName(eq("@beraterin1:matrix.oriso.org"), displayName.capture());
+        .updateUserDisplayName(eq("@beraterin1:matrix.example.org"), displayName.capture());
     MatrixRealNameGuard.assertNoRealNameReachedMatrix(
         this.matrixSynapseService, "Angela", "Musterfrau");
     assertThat(displayName.getValue()).isEqualTo("beraterin1");
@@ -430,7 +462,7 @@ public class ConsultantUpdateServiceTest {
 
     ArgumentCaptor<String> displayName = ArgumentCaptor.forClass(String.class);
     verify(this.matrixSynapseService)
-        .updateUserDisplayName(eq("@beraterin1:matrix.oriso.org"), displayName.capture());
+        .updateUserDisplayName(eq("@beraterin1:matrix.example.org"), displayName.capture());
     assertThat(displayName.getValue()).isEqualTo("Frau Neu.");
     // No identity field moved, so nothing else may be pushed on the identity side.
     verify(this.keycloakService, Mockito.never())
@@ -591,7 +623,7 @@ public class ConsultantUpdateServiceTest {
     consultant.setUsername("beraterin1");
     consultant.setDisplayName(publicDisplayName);
     consultant.setInternalDisplayName(null);
-    consultant.setMatrixUserId("@beraterin1:matrix.oriso.org");
+    consultant.setMatrixUserId("@beraterin1:matrix.example.org");
     consultant.setFirstName("Old");
     consultant.setLastName("Name");
     consultant.setEmail("old@address.de");

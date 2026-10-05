@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.config.observability.DpaSignedNoticeMetrics;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.DpaSignedNotice;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
@@ -21,7 +22,6 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteFrameMail
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailTransport;
-import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisation;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
@@ -43,10 +43,9 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.SimpleTransactionStatus;
-import org.springframework.web.client.RestTemplate;
 
 /**
- * The footer of the "Vertragsunterlagen unterzeichnet" notice, observed on the wire: the notice
+ * The footer of the "Vertragsunterlagen bestätigt" notice, observed on the wire: the notice
  * service, the invite frame, the brand values and the dispatcher are the production objects; only
  * the lookups, the SMTP settings read and the transport are stubbed.
  */
@@ -65,9 +64,8 @@ class DpaSignedNoticeFooterTest {
   @Mock private InviteEmailTemplateRepository templateRepository;
   @Mock private TenantService tenantService;
   @Mock private PlatformTransactionManager transactionManager;
+  @Mock private DpaSignedNoticeMetrics metrics;
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
-  @Mock private RestTemplate restTemplate;
-  @Mock private ApplicationSettingsService applicationSettingsService;
   @Mock private InviteMailTransport inviteMailTransport;
 
   @BeforeEach
@@ -75,14 +73,13 @@ class DpaSignedNoticeFooterTest {
     when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
     when(noticeRepository.save(any(DpaSignedNotice.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(templateRepository.findByKindAndActiveTrueOrderByCreateDateDesc(
+    when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenReturn(List.of());
     when(identityLocaleLookup.findLocaleById(anyString())).thenReturn(Optional.empty());
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().id(TENANT_ID).name("Träger Nord e.V."));
     when(tenantTemplateSupplier.getTenantBaseUrl(any(RestrictedTenantDTO.class))).thenReturn("");
-    when(restTemplate.getForObject(anyString(), any())).thenReturn(completeSmtpSettings());
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("toni@example.org", Instant.now()));
     when(signatureReadClient.readSignatures(TENANT_ID))
@@ -162,14 +159,15 @@ class DpaSignedNoticeFooterTest {
             tenantService, tenantTemplateSupplier, "Online-Beratung", "", APP_ORIGIN);
     InviteMailDispatchService mailDispatch =
         new InviteMailDispatchService(
-            restTemplate,
-            applicationSettingsService,
+            de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsFixture.configured(
+                "smtp-user", "smtp-pass"),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(
                 brandingResolver, senderOrganisations),
-            "http://consultingtypeservice:8080/service",
-            "smtp-user",
-            "smtp-pass");
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .platformRoutes(),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .unusedRelay());
     DpaSignedNoticeService service =
         new DpaSignedNoticeService(
             signatureReadClient,
@@ -181,6 +179,7 @@ class DpaSignedNoticeFooterTest {
             mailDispatch,
             tenantService,
             transactionManager,
+            metrics,
             new AdminPanelUrl("https://admin.example.org"));
     service.useExecutor(Runnable::run);
 
@@ -191,16 +190,6 @@ class DpaSignedNoticeFooterTest {
     verify(inviteMailTransport)
         .send(any(), eq("toni@example.org"), any(), html.capture(), text.capture());
     return new SentMail(html.getValue(), text.getValue());
-  }
-
-  private static Map<String, Object> completeSmtpSettings() {
-    return Map.of(
-        "globalFeatureSystemNotificationEmailsEnabled", Map.of("value", true),
-        "globalSmtpEnabled", Map.of("value", true),
-        "globalSmtpHost", Map.of("value", "smtp.example.org"),
-        "globalSmtpPort", Map.of("value", "587"),
-        "globalSmtpSecure", Map.of("value", false),
-        "globalSmtpFrom", Map.of("value", "noreply@example.org"));
   }
 
   private record SentMail(String html, String text) {}

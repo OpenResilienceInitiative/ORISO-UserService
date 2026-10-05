@@ -124,7 +124,7 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
         }
         // Account-invite acceptance is another public bootstrap endpoint. The random invite token
         // is the bearer secret; the recipient does not have a login session or CSRF cookie yet.
-        if (lowerUri.matches(".*/users/account-invites/[^/]+/accept$")) {
+        if (lowerUri.matches(".*/users/account-invites/[^/]+/(accept|setup)$")) {
           return true;
         }
         // The DPA signed-notice hint is a machine callback from TenantService, not a browser

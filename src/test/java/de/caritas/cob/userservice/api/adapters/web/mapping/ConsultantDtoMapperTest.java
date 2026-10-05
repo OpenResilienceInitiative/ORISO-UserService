@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.ArrayList;
@@ -465,7 +466,8 @@ class ConsultantDtoMapperTest {
   void pageLinkOf_Should_BuildSelfLink() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
 
-    var link = consultantDtoMapper.pageLinkOf("query", 1, 20, "LAST_NAME", "ASC");
+    var link =
+        consultantDtoMapper.pageLinkOf("query", 1, 20, "LAST_NAME", "ASC", SearchFilter.NONE);
 
     assertThat(link.getMethod()).isEqualTo(MethodEnum.GET);
     assertThat(link.getHref()).contains("query");
@@ -531,5 +533,31 @@ class ConsultantDtoMapperTest {
 
     assertThat(result.getLinks().getPrevious()).isNotNull();
     assertThat(result.getLinks().getNext()).isNotNull();
+  }
+
+  @Test
+  void consultantSearchResultOf_Should_KeepFilters_In_PageLinks() {
+    ConsultantDtoMapper consultantDtoMapper = givenAMapper();
+    when(identityManager.hasRole(anyString(), any(UserRole.class))).thenReturn(false);
+    when(consultantTopicRepository.findTopicIdsByConsultantIdIn(any())).thenReturn(List.of());
+
+    var result =
+        consultantDtoMapper.consultantSearchResultOf(
+            givenAResultMap(false, false),
+            "query",
+            2,
+            20,
+            "LAST_NAME",
+            "ASC",
+            new SearchFilter(4L, List.of(3L, 5L)));
+
+    for (var link :
+        List.of(
+            result.getLinks().getSelf(),
+            result.getLinks().getPrevious(),
+            result.getLinks().getNext())) {
+      assertThat(link.getHref()).contains("tenantId=4").contains("agencyId=3").contains("5");
+      assertThat(link.getTemplated()).isFalse();
+    }
   }
 }

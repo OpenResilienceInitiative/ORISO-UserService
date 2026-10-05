@@ -5,6 +5,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -74,6 +75,27 @@ class AdminDtoMapperTest {
 
     // then
     assertThat(result.getEmbedded().get(0).getEmbedded().getRoleInOrg()).isEqualTo("Support Admin");
+  }
+
+  @Test
+  void adminSearchResultOf_Should_KeepFilters_In_PageLinks() {
+    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService);
+    var resultMap = resultMap();
+    resultMap.put("isFirstPage", false);
+    resultMap.put("isLastPage", false);
+
+    var result =
+        adminDtoMapper.adminSearchResultOf(
+            resultMap, "*", 2, 10, "FIRSTNAME", "ASC", new SearchFilter(4L, List.of(3L)));
+
+    for (var link :
+        List.of(
+            result.getLinks().getSelf(),
+            result.getLinks().getPrevious(),
+            result.getLinks().getNext())) {
+      assertThat(link.getHref()).contains("tenantId=4").contains("agencyId=3");
+      assertThat(link.getTemplated()).isFalse();
+    }
   }
 
   private Map<String, Object> resultMap() {

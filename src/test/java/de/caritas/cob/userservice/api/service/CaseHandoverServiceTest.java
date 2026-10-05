@@ -42,6 +42,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
+import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -90,6 +91,7 @@ class CaseHandoverServiceTest {
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
   @Mock private UserAccountService userAccountService;
   @Mock private EventNotificationService eventNotificationService;
+  @Mock private CaseHandoverEmailNotification caseHandoverEmailNotification;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private CaseHandoverMatrixRepairService matrixRepairService;
   @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
@@ -155,6 +157,9 @@ class CaseHandoverServiceTest {
     when(caseHandoverRequestRepository.save(any(CaseHandoverRequest.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(matrixSynapseService.getRoomMembers(anyString())).thenReturn(Optional.of(List.of()));
+    // Revoking co-access gives the requester their member power level back first (#200).
+    when(matrixSynapseService.setUserPowerLevel(anyString(), anyString(), eq(0), anyString()))
+        .thenReturn(true);
     when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
     when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
   }
@@ -364,7 +369,7 @@ class CaseHandoverServiceTest {
 
       var response =
           updated.stream()
-              .filter(reason -> "COUNSELLOR_ASKED_FOR_ADVICE".equals(reason.getCode()))
+              .filter(reason -> "ADVICE_REQUESTED".equals(reason.getCode()))
               .findFirst()
               .orElseThrow();
       assertEquals(90, response.getMaxAccessDurationMinutes());
@@ -582,6 +587,8 @@ class CaseHandoverServiceTest {
     assertEquals("CLIENT_CONSENT_DECLINED", status.getStatus());
     assertFalse(status.isCanViewContent());
     assertEquals("CLIENT_CONSENT_DECLINED", status.getAuditOutcome());
+    verify(matrixSynapseService)
+        .setUserPowerLevel("!room:matrix", "@requester:matrix", 0, "previous-token");
     verify(matrixSynapseService)
         .removeUserFromRoom("!room:matrix", "@requester:matrix", "previous-token");
   }
@@ -876,7 +883,7 @@ class CaseHandoverServiceTest {
     caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Illness cover.");
 
     verify(eventNotificationService, atLeastOnce())
-        .buildCaseHandoverParams(any(), anyString(), eq("COUNSELLOR_IS_ILL"), any(), any());
+        .buildCaseHandoverParams(any(), anyString(), eq("UNPLANNED_ABSENCE"), any(), any());
   }
 
   @Test
@@ -1543,7 +1550,7 @@ class CaseHandoverServiceTest {
 
     verify(caseHandoverRequestRepository).save(captor.capture());
     CaseHandoverRequest saved = captor.getValue();
-    assertEquals("COUNSELLOR_IS_ILL", saved.getReasonCode());
+    assertEquals("UNPLANNED_ABSENCE", saved.getReasonCode());
     assertEquals("Unplanned absence", saved.getReasonLabel());
     assertEquals("Illness cover.", saved.getExplanation());
     assertEquals("ACCESS_GRANTED", saved.getAuditOutcome());
@@ -2053,6 +2060,165 @@ class CaseHandoverServiceTest {
         .build();
   }
 
+  // #200: co-access is read-only. Session rooms use events_default 0, so for the lifetime of the
+  // grant the requester's power level drops to -1 and Synapse refuses their messages.
+
+  private void givenAdviceIsGrantedWithoutWaitingForTheClient() {
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(
+            tenantPolicies(
+                "Rat benötigt",
+                180,
+                de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .CaseHandoverConsentValue.OPT_OUT,
+                Set.of()));
+  }
+
+  private void givenARoomTheRequesterCanJoin() {
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
+        .thenReturn("requester-token");
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(Optional.of(List.of("@previous:matrix")));
+    when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
+  }
+
+  @Test
+  void requestAccess_makesAdviceCoAccessReadOnlyInTheMatrixRoom() {
+    givenAdviceIsGrantedWithoutWaitingForTheClient();
+    givenARoomTheRequesterCanJoin();
+    when(matrixSynapseService.setUserPowerLevel(
+            "!room:matrix", "@requester:matrix", -1, "previous-token"))
+        .thenReturn(true);
+
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Zweitmeinung");
+
+    verify(matrixSynapseService)
+        .setUserPowerLevel("!room:matrix", "@requester:matrix", -1, "previous-token");
+  }
+
+  @Test
+  void requestAccess_refusesAdviceCoAccessThatCannotBeMadeReadOnly() {
+    givenAdviceIsGrantedWithoutWaitingForTheClient();
+    givenARoomTheRequesterCanJoin();
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () ->
+            caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Zweitmeinung"));
+
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void requestAccess_givesTheTakeoverRecipientTheOwnersPowerLevel() {
+    givenARoomTheRequesterCanJoin();
+    when(matrixSynapseService.setUserPowerLevel(
+            "!room:matrix", "@requester:matrix", 100, "previous-token"))
+        .thenReturn(true);
+
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
+
+    verify(matrixSynapseService)
+        .setUserPowerLevel("!room:matrix", "@requester:matrix", 100, "previous-token");
+    verify(matrixSynapseService, never())
+        .setUserPowerLevel(anyString(), anyString(), eq(-1), anyString());
+  }
+
+  /** An absence cover must never fail over Matrix room rights: at level 0 the owner can post. */
+  @Test
+  void requestAccess_completesTheTakeoverWhenTheOwnersPowerLevelCannotBeSet() {
+    givenARoomTheRequesterCanJoin();
+
+    var status =
+        caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
+
+    assertEquals("GRANTED", status.getStatus());
+    assertEquals(requester, session.getConsultant());
+  }
+
+  @Test
+  void resolveClientConsent_givesTheApprovedTakeoverRecipientTheOwnersPowerLevel() {
+    CaseHandoverRequest request = pendingTakeoverConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    givenARoomTheRequesterCanJoin();
+    when(matrixSynapseService.setUserPowerLevel(
+            "!room:matrix", "@requester:matrix", 100, "previous-token"))
+        .thenReturn(true);
+
+    caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+    verify(matrixSynapseService)
+        .setUserPowerLevel("!room:matrix", "@requester:matrix", 100, "previous-token");
+  }
+
+  @Test
+  void resolveClientConsent_makesApprovedAdviceCoAccessReadOnly() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    givenARoomTheRequesterCanJoin();
+    when(matrixSynapseService.setUserPowerLevel(
+            "!room:matrix", "@requester:matrix", -1, "previous-token"))
+        .thenReturn(true);
+
+    caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+    verify(matrixSynapseService)
+        .setUserPowerLevel("!room:matrix", "@requester:matrix", -1, "previous-token");
+  }
+
+  private CaseHandoverRequest expiredAdviceGrantOfAStandingMember() {
+    CaseHandoverRequest request = grantedAdviceRequest();
+    request.setMatrixMembershipAdded(false);
+    request.setExpiresAt(LocalDateTime.of(2026, 8, 16, 10, 0));
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
+            CaseHandoverRequest.Status.GRANTED,
+            CaseHandoverRequest.AccessType.CO_ACCESS,
+            LocalDateTime.of(2026, 8, 16, 10, 0)))
+        .thenReturn(List.of(request));
+    when(caseHandoverRequestRepository.findByIdForUpdate(request.getId()))
+        .thenReturn(Optional.of(request));
+    return request;
+  }
+
+  @Test
+  void expireCoAccess_givesAStandingMemberTheirPowerLevelBack() {
+    CaseHandoverRequest request = expiredAdviceGrantOfAStandingMember();
+    when(matrixSynapseService.setUserPowerLevel(
+            "!room:matrix", "@requester:matrix", 0, "previous-token"))
+        .thenReturn(true);
+
+    assertEquals(1, caseHandoverService.expireCoAccess());
+
+    assertEquals(CaseHandoverRequest.Status.EXPIRED, request.getStatus());
+    verify(matrixSynapseService)
+        .setUserPowerLevel("!room:matrix", "@requester:matrix", 0, "previous-token");
+    verifyNoMatrixRemoval();
+  }
+
+  @Test
+  void expireCoAccess_keepsTheGrantForTheNextSweepWhenThePowerLevelCannotBeRestored() {
+    CaseHandoverRequest request = expiredAdviceGrantOfAStandingMember();
+    when(matrixSynapseService.setUserPowerLevel(
+            "!room:matrix", "@requester:matrix", 0, "previous-token"))
+        .thenReturn(false);
+
+    assertEquals(0, caseHandoverService.expireCoAccess());
+
+    assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
+  }
+
   private CaseHandoverRequest grantedAdviceRequest() {
     return CaseHandoverRequest.builder()
         .id(100L)
@@ -2262,6 +2428,153 @@ class CaseHandoverServiceTest {
     return new de.caritas.cob.userservice.tenantadminservice.generated.web.model
             .CaseHandoverPolicies()
         .reasons(java.util.Map.of(advice.getCode().getValue(), advice));
+  }
+
+  // #1536: the four neutral reason codes replace the retired, health-revealing ones.
+  private static final List<String> NEUTRAL_CODES =
+      List.of("ADVICE_REQUESTED", "PLANNED_ABSENCE", "UNPLANNED_ABSENCE", "ASSIGNMENT_ENDED");
+
+  @Test
+  void listReasons_servesTheFourNeutralCodesForTenantPoliciesStillKeyedByRetiredCodes() {
+    var reasons = caseHandoverService.listReasons(7L);
+
+    assertThat(reasons)
+        .extracting(CaseHandoverService.CaseHandoverReason::getCode)
+        .containsExactlyElementsOf(NEUTRAL_CODES);
+  }
+
+  @Test
+  void listReasons_withoutTenantServesOnlyNeutralBuiltInDefaults() {
+    var reasons = caseHandoverService.listReasons(null);
+
+    assertThat(reasons)
+        .extracting(CaseHandoverService.CaseHandoverReason::getCode)
+        .containsExactlyElementsOf(NEUTRAL_CODES);
+    assertThat(caseHandoverService.listReasonPolicies())
+        .allSatisfy(
+            reason -> {
+              assertThat(reason.getLabel()).doesNotContainIgnoringCase("ill");
+              assertThat(
+                      reason.getClientNotificationTemplates() == null
+                          ? List.<String>of()
+                          : reason.getClientNotificationTemplates().values())
+                  .noneMatch(text -> text.matches("(?is).*(erkrankt|\\bill\\b|hastal|захвор).*"));
+            });
+  }
+
+  @Test
+  void listReasonPolicies_hidesRetiredRowsOfTheLegacyPolicyTable() {
+    when(caseHandoverReasonPolicyRepository.findAllByOrderByDisplayOrderAscCodeAsc())
+        .thenReturn(
+            List.of(
+                reasonPolicy("COUNSELLOR_IS_ILL", "Counsellor is ill", false, false, false, 40),
+                reasonPolicy("UNPLANNED_ABSENCE", "Unplanned absence", false, true, true, 40)));
+
+    var reasons = caseHandoverService.listReasonPolicies();
+
+    assertThat(reasons)
+        .extracting(CaseHandoverService.CaseHandoverReason::getCode)
+        .containsExactly("UNPLANNED_ABSENCE");
+  }
+
+  @Test
+  void requestAccess_storesTheNeutralCodeItWasGiven() {
+    caseHandoverService.requestAccess(123L, "UNPLANNED_ABSENCE", "Cover.");
+
+    var saved = ArgumentCaptor.forClass(CaseHandoverRequest.class);
+    verify(caseHandoverRequestRepository, atLeastOnce()).save(saved.capture());
+    assertEquals("UNPLANNED_ABSENCE", saved.getValue().getReasonCode());
+    assertEquals(CaseHandoverRequest.AccessType.TAKEOVER, saved.getValue().getAccessType());
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "COUNSELLOR_ON_HOLIDAY,PLANNED_ABSENCE",
+    "COUNSELLOR_IS_ILL,UNPLANNED_ABSENCE",
+    "COUNSELLOR_LEFT,ASSIGNMENT_ENDED"
+  })
+  void requestAccess_mapsARetiredCodeFromAnOlderClientToItsNeutralCode(
+      String retired, String neutral) {
+    caseHandoverService.requestAccess(123L, retired, "Cover.");
+
+    var saved = ArgumentCaptor.forClass(CaseHandoverRequest.class);
+    verify(caseHandoverRequestRepository, atLeastOnce()).save(saved.capture());
+    assertEquals(neutral, saved.getValue().getReasonCode());
+  }
+
+  @Test
+  void requestAccess_adviceRequestedStillGrantsTimeLimitedCoAccess() {
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(tenantPolicies("Rat benötigt", 45, CaseHandoverConsentValue.NONE, Set.of()));
+
+    caseHandoverService.requestAccess(123L, "ADVICE_REQUESTED", "Zweitmeinung");
+
+    var saved = ArgumentCaptor.forClass(CaseHandoverRequest.class);
+    verify(caseHandoverRequestRepository, atLeastOnce()).save(saved.capture());
+    assertEquals("ADVICE_REQUESTED", saved.getValue().getReasonCode());
+    assertEquals(CaseHandoverRequest.AccessType.CO_ACCESS, saved.getValue().getAccessType());
+    assertEquals(45, saved.getValue().getMaxAccessDurationMinutes());
+  }
+
+  @Test
+  void updateReasonPolicies_writesANeutralCodeToTheTenantPolicyKeyedByItsRetiredCode() {
+    when(caseHandoverPolicyCacheService.updateEffective(eq(7L), any()))
+        .thenAnswer(invocation -> invocation.getArgument(1));
+    TenantContext.setCurrentTenant(7L);
+    try {
+      caseHandoverService.updateReasonPolicies(
+          List.of(
+              CaseHandoverService.CaseHandoverReason.builder()
+                  .code("UNPLANNED_ABSENCE")
+                  .label("Ausfall")
+                  .enabled(true)
+                  .accessAllowed(true)
+                  .clientConsent(CaseHandoverConsentMode.NONE)
+                  .build()));
+
+      var written =
+          ArgumentCaptor.forClass(
+              de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies
+                  .class);
+      verify(caseHandoverPolicyCacheService).updateEffective(eq(7L), written.capture());
+      assertEquals(
+          "Ausfall",
+          written
+              .getValue()
+              .getReasons()
+              .get("COUNSELLOR_IS_ILL")
+              .getLabels()
+              .getValue()
+              .get("de"));
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void getStatus_keepsAHistoricalRecordReadableWithoutItsHealthRevealingLabel() {
+    var historical =
+        CaseHandoverRequest.builder()
+            .id(5L)
+            .session(session)
+            .requesterConsultant(requester)
+            .previousConsultant(previous)
+            .reasonCode("COUNSELLOR_IS_ILL")
+            .reasonLabel("Counsellor is ill")
+            .explanation("Cover")
+            .status(CaseHandoverRequest.Status.GRANTED)
+            .clientConsentRequired(false)
+            .createdAt(LocalDateTime.of(2026, 8, 1, 10, 0))
+            .build();
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(historical));
+
+    CaseHandoverStatus status = caseHandoverService.getStatus(123L);
+
+    assertEquals("COUNSELLOR_IS_ILL", status.getReasonCode());
+    assertEquals("Unplanned absence", status.getReasonLabel());
+    assertEquals("TAKEOVER", status.getAccessType());
   }
 
   private CaseHandoverReasonPolicy reasonPolicy(

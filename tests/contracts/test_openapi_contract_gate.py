@@ -12,6 +12,22 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class OpenApiContractGateTest(unittest.TestCase):
+    def test_user_list_preference_references_resolve_to_schemas(self):
+        provider = yaml.safe_load((ROOT / "api/useradminservice.yaml").read_text())
+        read = provider["paths"]["/useradmin/list-preferences"]["get"]
+        responses = {str(code): value for code, value in read["responses"].items()}
+        write = provider["paths"]["/useradmin/list-preferences/sorts/{tab}"]["put"]
+        contracts = [responses["200"], write["requestBody"]]
+
+        for contract in contracts:
+            reference = contract["content"]["application/json"]["schema"]["$ref"]
+            self.assertTrue(reference.startswith("#/components/schemas/"))
+            model = reference.rsplit("/", 1)[-1]
+            self.assertTrue(
+                model in provider["components"]["schemas"],
+                f"{model} must be a schema, so the API client and server can generate it",
+            )
+
     def test_consumer_gate_propagates_oasdiff_failure(self):
         gate = ROOT / "scripts/contracts/verify-consumer-contract.sh"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -134,7 +150,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-AgencyService.*"
-                r"5aace67c8bb82b29770085b19000d21c1982a1b5",
+                r"bbdc934477212020b8c43d8bf3cb28a30081156c",
                 re.DOTALL,
             ),
         )
@@ -142,7 +158,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-ConsultingTypeService.*"
-                r"48004847491b0ad0d38296a5d57d1ba3c1ea4730",
+                r"fd06f72beab16a92e2d1f1c2b88acbb054254baf",
                 re.DOTALL,
             ),
         )
@@ -150,7 +166,8 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                r"e68b087ce0837eb81170fd04178447d151cd9575",
+                # TenantPR296 supplies the additive deadline/gate contract consumed here.
+                r"97067a1371078cce87f44d55c3cdf7901e6426ba",
                 re.DOTALL,
             ),
         )
