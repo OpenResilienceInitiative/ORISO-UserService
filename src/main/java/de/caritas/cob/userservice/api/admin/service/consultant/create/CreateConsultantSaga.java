@@ -497,7 +497,7 @@ public class CreateConsultantSaga {
             .updateDate(consultantCreationInput.getUpdateDate())
             .tenantId(consultantCreationInput.getTenantId())
             .status(ConsultantStatus.CREATED)
-            .walkThroughEnabled(true)
+            .walkThroughEnabled(false)
             .languageCode(LanguageCode.de)
             .notificationsEnabled(true)
             .notificationsSettings(serializeToJsonString(allActiveNotifications()))

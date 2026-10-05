@@ -58,6 +58,33 @@ class UserServiceMapperTest {
   }
 
   @Test
+  void consultantWalkThroughDefaultsToFalse() {
+    assertThat(new Consultant().getWalkThroughEnabled()).isFalse();
+    var built =
+        Consultant.builder()
+            .id("1")
+            .username("u")
+            .firstName("f")
+            .lastName("l")
+            .email("e@example.org")
+            .build();
+    assertThat(built.getWalkThroughEnabled()).isFalse();
+  }
+
+  @Test
+  void switchWalkThroughOffAgain() {
+    Map<String, Object> requestData = new HashMap<>();
+    requestData.put("walkThroughEnabled", false);
+    requestData.put("id", "1");
+    Consultant consultant = new Consultant();
+    consultant.setWalkThroughEnabled(true);
+
+    userServiceMapper.consultantOf(consultant, requestData);
+
+    assertThat(consultant.getWalkThroughEnabled()).isFalse();
+  }
+
+  @Test
   void saveLiveChatViaSidebar() {
     Map<String, Object> requestData = new HashMap<>();
     requestData.put("liveChatViaSidebar", true);
