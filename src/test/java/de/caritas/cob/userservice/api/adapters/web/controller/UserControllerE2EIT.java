@@ -308,7 +308,8 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   @BeforeEach
   public void setUp() throws MatrixCreateUserException {
     dpaOwner =
-        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, 1L);
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
+            ownerFactory, 1L);
     MatrixCreateUserResponseDTO matrixCreateUserResponse = new MatrixCreateUserResponseDTO();
     matrixCreateUserResponse.setUserId("@test-user:matrix.example.org");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))

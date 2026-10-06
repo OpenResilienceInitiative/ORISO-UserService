@@ -166,8 +166,8 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                # TenantPR296 supplies the additive deadline/gate contract consumed here.
-                r"97067a1371078cce87f44d55c3cdf7901e6426ba",
+                # Tenant PR303 contains the earlier PR296 deadline/gate contract and is merged.
+                r"6d7e2d1dcc640af1bd027131f1c217899ad2a70e",
                 re.DOTALL,
             ),
         )

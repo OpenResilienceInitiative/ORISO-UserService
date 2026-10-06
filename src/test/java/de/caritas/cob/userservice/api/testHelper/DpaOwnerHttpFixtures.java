@@ -36,18 +36,20 @@ public final class DpaOwnerHttpFixtures implements AutoCloseable {
               var path = request.getURI().getPath();
               assertTrue(
                   path.endsWith("/tenantadmin/" + tenantId + "/dpa/gate")
-                      || (permitTenantLookup && path.endsWith("/tenant/public/id/" + tenantId)));
+                      || (permitTenantLookup
+                          && (path.endsWith("/tenant/public/id/" + tenantId)
+                              || path.endsWith("/tenant/public/single"))));
               if (path.contains("/tenantadmin/")) {
                 assertEquals("0", request.getHeaders().getFirst("tenantId"));
               }
             })
         .andRespond(
             request -> {
-              if (request.getURI().getPath().contains("/tenant/public/id/")) {
+              if (request.getURI().getPath().contains("/tenant/public/")) {
                 return withSuccess(
                         "{\"id\":"
                             + tenantId
-                            + ",\"subdomain\":\"synthetic\",\"settings\":{\"tenantAdminControls\":{\"accountInactivitySettings\":{\"askerMonths\":24,\"consultantMonths\":24,\"otherMonths\":24,\"revision\":0}}}}}",
+                            + ",\"subdomain\":\"synthetic\",\"settings\":{\"tenantAdminControls\":{\"accountInactivitySettings\":{\"askerMonths\":24,\"consultantMonths\":24,\"otherMonths\":24,\"revision\":0}}}}",
                         MediaType.APPLICATION_JSON)
                     .createResponse(request);
               }
