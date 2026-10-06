@@ -48,6 +48,7 @@ public class GroupChatJoinRequestService {
   private final GroupChatPermissionService groupChatPermissionService;
   private final GroupChatConsultantAccess groupChatConsultantAccess;
   private final GroupChatAdmissionProcessor admissionProcessor;
+  private final GroupCounsellingDpaPolicy dpaPolicy;
 
   /** Result of a knock: the request, and whether this call created it. */
   public record KnockResult(GroupChatJoinRequest request, boolean created) {}
@@ -209,6 +210,9 @@ public class GroupChatJoinRequestService {
               () ->
                   new ConflictException(
                       "Chat Series has no participations and cannot admit members"));
+      if (series.getCurrentOccurrenceIndex() == 0) {
+        dpaPolicy.requireNewEnrolment(series);
+      }
       request.setAdmissionRequestedAt(CustomLocalDateTime.nowInUtc());
       request.setStatus(Status.ADMITTING);
       request.setAdmittedRole(admittedRole);

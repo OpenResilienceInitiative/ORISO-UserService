@@ -38,6 +38,7 @@ public class GroupChatAdmissionProcessor {
   private final GroupChatMembershipService membership;
   private final GroupAppointmentSeriesEventProducer appointmentEvents;
   private final GroupChatAdmissionMatrixRepairService repair;
+  private final GroupCounsellingDpaPolicy dpaPolicy;
 
   @Value("${group.chat.admission.retry-backoff:PT1M}")
   private Duration retryBackoff;
@@ -99,6 +100,15 @@ public class GroupChatAdmissionProcessor {
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException("Group admission requires a transaction before Matrix join");
     }
+    var alreadyParticipant =
+        current.stream()
+            .anyMatch(
+                participant -> request.getConsultantId().equals(participant.getConsultantId()));
+    // A queued intent may outlive renewal grace; an assignment alone is not continuation.
+    if (series.get().getCurrentOccurrenceIndex() == 0
+        && (!alreadyParticipant || !wasMemberBefore.get())) {
+      dpaPolicy.requireNewEnrolment(series.get());
+    }
     var roomId = membership.resolveMatrixRoomId(series.get());
     if (!wasMemberBefore.get()) {
       repair.recordBeforeJoin(
@@ -120,9 +130,7 @@ public class GroupChatAdmissionProcessor {
           });
     }
 
-    if (current.stream()
-        .noneMatch(
-            participant -> request.getConsultantId().equals(participant.getConsultantId()))) {
+    if (!alreadyParticipant) {
       participants.save(
           GroupChatParticipant.builder()
               .chatId(sessionId.get())

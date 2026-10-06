@@ -48,7 +48,12 @@ public class GroupCounsellingDpaPolicy {
   }
 
   public void requireNewEnrolment(Chat chat) {
-    if (chat.getConversationType() != ConversationType.SELF_HELP) return;
+    // Keep later-occurrence classification while its continuation policy remains undefined.
+    var type =
+        chat.getCurrentOccurrenceIndex() == 0
+            ? ChatConverter.conversationTypeOf(chat)
+            : chat.getConversationType();
+    if (type != ConversationType.SELF_HELP) return;
     Long ownerTenant = chat.getChatOwner() == null ? null : chat.getChatOwner().getTenantId();
     if (ownerTenant == null || ownerTenant <= 0) throw unavailable();
     // Invitations may cross tenants; the recipient never becomes the group's serving owner.
