@@ -211,8 +211,7 @@ public class AssignEnquiryFacade {
             }
 
             var agencyCredentials = agencyCredentialsOpt.get();
-            if (isBlank(agencyCredentials.getMatrixUserId())
-                || isBlank(agencyCredentials.getMatrixPassword())) {
+            if (isBlank(agencyCredentials.getMatrixUserId())) {
               log.warn(
                   "Agency Matrix credentials incomplete for agency {}, falling back to create new room",
                   session.getAgencyId());
@@ -220,13 +219,7 @@ public class AssignEnquiryFacade {
               return;
             }
 
-            // Extract agency Matrix username
-            String agencyMatrixUsername = null;
-            if (agencyCredentials.getMatrixUserId().startsWith("@")) {
-              agencyMatrixUsername = MatrixIds.localpart(agencyCredentials.getMatrixUserId());
-            }
-
-            if (isBlank(agencyMatrixUsername)) {
+            if (!MatrixIds.isUserId(agencyCredentials.getMatrixUserId())) {
               log.warn("Invalid agency Matrix user ID, falling back to create new room");
               createNewMatrixRoomOrFail(session, consultant);
               return;
@@ -234,8 +227,7 @@ public class AssignEnquiryFacade {
 
             // Login as agency service account (room creator)
             String agencyToken =
-                sessionRoomGateway.loginUser(
-                    agencyMatrixUsername, agencyCredentials.getMatrixPassword());
+                sessionRoomGateway.loginAsUser(agencyCredentials.getMatrixUserId());
 
             if (isBlank(agencyToken)) {
               log.error(
