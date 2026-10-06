@@ -178,6 +178,8 @@ class MultiTenantRegistrationIT {
         .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, TENANT, false, List.of())));
     // The platform domain resolves to the main tenant, as with single-domain multitenancy.
     when(tenantResolverService.resolve(any())).thenReturn(1L);
+    when(((IdentityAuthentication) identityClient).login(anyString(), anyString()))
+        .thenReturn(new IdentityLogin("access", 300, 1800, "refresh"));
     when(((IdentityAuthentication) identityClient).loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("access", 300, 1800, "refresh"));
     when(((IdentityDummyEmailUpdater) identityClient).updateDummyEmail(anyString(), any()))
