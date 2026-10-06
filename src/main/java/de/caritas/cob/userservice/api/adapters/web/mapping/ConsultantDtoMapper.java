@@ -58,8 +58,10 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
         .publicSlug(updateConsultantDTO.getPublicSlug())
         .dataPrivacyConfirmation(updateConsultantDTO.getDataPrivacyConfirmation())
         .termsAndConditionsConfirmation(updateConsultantDTO.getTermsAndConditionsConfirmation())
-        // Self-service never manages topics; the generated default [] would remove them all.
-        .topicIds(null);
+        // Self-service never manages topics. The generated DTO defaults these lists to [], which
+        // the update would read as "remove every topic".
+        .topicIds(null)
+        .topicsByAgency(null);
   }
 
   public ConsultantResponseDTO consultantResponseDtoOf(
@@ -117,6 +119,8 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
             .map(consultantMap -> (String) consultantMap.get("id"))
             .collect(Collectors.toList());
     var topicIdsByConsultantId = topicIdsByConsultantId(consultantIds);
+    var topicsByAgencyByConsultantId =
+        ConsultantTopicsByAgencyMapper.topicsByAgencyOf(consultantTopicRepository, consultantIds);
     var topicsById =
         topicIdsByConsultantId.isEmpty()
             ? Collections.<Long, TopicDTO>emptyMap()
@@ -127,6 +131,9 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
           var consultantDto = consultantDtoOf(consultantMap);
           consultantDto.setTopics(
               topicsOf(topicIdsByConsultantId.get(consultantDto.getId()), topicsById));
+          consultantDto.setTopicsByAgency(
+              topicsByAgencyByConsultantId.getOrDefault(
+                  consultantDto.getId(), Collections.emptyList()));
           response.setEmbedded(consultantDto);
           response.setLinks(consultantLinksOf(consultantMap));
           consultants.add(response);

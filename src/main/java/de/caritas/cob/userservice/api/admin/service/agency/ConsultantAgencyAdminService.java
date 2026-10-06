@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.session.ConsultantLeftAgencyEvent;
@@ -33,6 +34,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.beanutils.BeanUtils;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Service class to handle administrative operations on consultant-agencies. */
 @Service
@@ -48,6 +50,7 @@ public class ConsultantAgencyAdminService {
   private final @NonNull AgencyAdminService agencyAdminService;
   private final @NonNull ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
   private final @NonNull ApplicationEventPublisher eventPublisher;
+  private final @NonNull ConsultantTopicRepository consultantTopicRepository;
 
   /**
    * Returns all Agencies for the given consultantId.
@@ -236,6 +239,8 @@ public class ConsultantAgencyAdminService {
    * @param consultantId the consultant id
    * @param agencyId the agency id
    */
+  // One transaction: the relation and its centre's topic rows (#1264) go together or not at all.
+  @Transactional
   public void markConsultantAgencyForDeletion(String consultantId, Long agencyId) {
     List<ConsultantAgency> consultantAgencies =
         this.consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull(
@@ -248,6 +253,7 @@ public class ConsultantAgencyAdminService {
         .forEach(this::markAsDeleted);
   }
 
+  @Transactional
   public void markConsultantAgenciesForDeletion(String consultantId, List<Long> agencyIds) {
 
     agencyIds.forEach(
@@ -263,7 +269,16 @@ public class ConsultantAgencyAdminService {
     this.agencyDeletionValidationService.validateAndMarkForDeletion(consultantAgency);
     consultantAgency.setDeleteDate(nowInUtc());
     this.consultantAgencyRepository.save(consultantAgency);
+    deleteTopicsOfRemovedCentre(consultantAgency);
     announceDetachedAgency(consultantAgency);
+  }
+
+  /** #1264: topics offered at a centre go with it; rows without a centre (legacy) stay. */
+  private void deleteTopicsOfRemovedCentre(ConsultantAgency consultantAgency) {
+    if (consultantAgency.getConsultant() != null) {
+      consultantTopicRepository.deleteByConsultantIdAndAgencyId(
+          consultantAgency.getConsultant().getId(), consultantAgency.getAgencyId());
+    }
   }
 
   /**
