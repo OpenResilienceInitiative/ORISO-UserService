@@ -105,9 +105,8 @@ public class GroupChatAdmissionProcessor {
             .anyMatch(
                 participant -> request.getConsultantId().equals(participant.getConsultantId()));
     // A queued intent may outlive renewal grace; an assignment alone is not continuation.
-    if (series.get().getCurrentOccurrenceIndex() == 0
-        && (!alreadyParticipant || !wasMemberBefore.get())) {
-      dpaPolicy.requireNewEnrolment(series.get());
+    if (!alreadyParticipant || !wasMemberBefore.get()) {
+      dpaPolicy.requireFirstStart(series.get());
     }
     var roomId = membership.resolveMatrixRoomId(series.get());
     if (!wasMemberBefore.get()) {

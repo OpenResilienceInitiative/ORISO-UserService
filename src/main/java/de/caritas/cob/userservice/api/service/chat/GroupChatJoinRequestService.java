@@ -210,9 +210,7 @@ public class GroupChatJoinRequestService {
               () ->
                   new ConflictException(
                       "Chat Series has no participations and cannot admit members"));
-      if (series.getCurrentOccurrenceIndex() == 0) {
-        dpaPolicy.requireNewEnrolment(series);
-      }
+      dpaPolicy.requireFirstStart(series);
       request.setAdmissionRequestedAt(CustomLocalDateTime.nowInUtc());
       request.setStatus(Status.ADMITTING);
       request.setAdmittedRole(admittedRole);
