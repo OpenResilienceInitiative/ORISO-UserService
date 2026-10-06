@@ -16,7 +16,6 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
@@ -27,18 +26,18 @@ import org.springframework.web.client.RestTemplate;
 public class KeycloakIdentitySessionExchange implements IdentitySessionExchange {
 
   private static final String TOKEN_ENDPOINT_PATH = "/token";
-  private static final String TOKEN_GRANT_PASSWORD = "password";
+  private static final String TOKEN_GRANT_CLIENT_CREDENTIALS = "client_credentials";
   private static final String TOKEN_GRANT_EXCHANGE =
       "urn:ietf:params:oauth:grant-type:token-exchange";
 
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull IdentityClientConfig identityClientConfig;
 
-  @Value("${keycloak.config.admin-username}")
-  private String keycloakAdminUsername;
+  @Value("${keycloak.config.admin-client-id}")
+  private String keycloakAdminClientId;
 
-  @Value("${keycloak.config.admin-password}")
-  private String keycloakAdminPassword;
+  @Value("${keycloak.config.admin-client-secret}")
+  private String keycloakAdminClientSecret;
 
   @Value("${keycloak.config.app-client-id:app}")
   private String keycloakAppClientId;
@@ -51,7 +50,7 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
     }
 
     try {
-      MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+      MultiValueMap<String, String> form = new KeycloakAuthClient.SensitiveKeycloakFormData();
       form.add("grant_type", TOKEN_GRANT_EXCHANGE);
       form.add("client_id", keycloakAppClientId);
       form.add("subject_token", adminToken);
@@ -71,11 +70,15 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
 
   private String loginAdminForToken() {
     try {
-      MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
-      form.add("grant_type", TOKEN_GRANT_PASSWORD);
-      form.add("client_id", keycloakAppClientId);
-      form.add("username", keycloakAdminUsername);
-      form.add("password", keycloakAdminPassword);
+      MultiValueMap<String, String> form = new KeycloakAuthClient.SensitiveKeycloakFormData();
+      if (isBlank(keycloakAdminClientId)
+          || isBlank(keycloakAdminClientSecret)
+          || keycloakAdminClientId.equals(keycloakAppClientId)) {
+        return null;
+      }
+      form.add("grant_type", TOKEN_GRANT_CLIENT_CREDENTIALS);
+      form.add("client_id", keycloakAdminClientId);
+      form.add("client_secret", keycloakAdminClientSecret);
       HttpHeaders headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
       HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(form, headers);

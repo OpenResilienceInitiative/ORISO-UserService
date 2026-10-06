@@ -1,71 +1,53 @@
 package de.caritas.cob.userservice.api.config.auth;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakCustomConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class ServiceIdentitySeparationCheckTest {
-
-  private final KeycloakCustomConfig keycloakConfig = new KeycloakCustomConfig();
-  private final IdentityClientConfig identityConfig = mock(IdentityClientConfig.class);
+  private final KeycloakCustomConfig admin = new KeycloakCustomConfig();
+  private final IdentityClientConfig identity = mock(IdentityClientConfig.class);
+  private final TechnicalUserConfig technical = new TechnicalUserConfig();
   private final ServiceIdentitySeparationCheck check =
-      new ServiceIdentitySeparationCheck(keycloakConfig, identityConfig);
+      new ServiceIdentitySeparationCheck(admin, identity);
 
-  private void configure(String adminUsername, String technicalUsername) {
-    keycloakConfig.setAdminUsername(adminUsername);
-    var technical = new TechnicalUserConfig();
-    technical.setUsername(technicalUsername);
-    technical.setPassword("synthetic-password");
-    when(identityConfig.getTechnicalUser()).thenReturn(technical);
+  private void configure() {
+    admin.setAdminClientId("backend-admin");
+    admin.setAppClientId("app");
+    admin.setAdminClientSecret("synthetic-admin-secret");
+    technical.setClientId("backend-technical");
+    technical.setClientSecret("synthetic-technical-secret");
+    when(identity.getTechnicalUser()).thenReturn(technical);
   }
 
   @Test
-  void warnsAndNamesBothPropertiesWhenOneIdentityDoesBothJobs() {
-    configure("technical", " Technical ");
-
-    try (var logs = LogbackCaptor.forClass(ServiceIdentitySeparationCheck.class)) {
-      check.warnIfKeycloakAdminIsTheTechnicalUser();
-
-      assertThat(logs.messages(Level.WARN))
-          .singleElement()
-          .satisfies(
-              message ->
-                  assertThat(message)
-                      .contains(
-                          "keycloak.config.admin-username",
-                          "identity.technical-user.username",
-                          "KEYCLOAK_CONFIG_ADMIN_USERNAME",
-                          "IDENTITY_TECHNICAL_USER_USERNAME")
-                      .doesNotContain("synthetic-password"));
-    }
+  void distinctClientsAndSecretsAreAccepted() {
+    configure();
+    check.verifyBackendClients();
   }
 
-  @Test
-  void staysQuietWhenTheIdentitiesAreSeparate() {
-    configure("userservice-keycloak-admin", "technical");
-
-    try (var logs = LogbackCaptor.forClass(ServiceIdentitySeparationCheck.class)) {
-      check.warnIfKeycloakAdminIsTheTechnicalUser();
-
-      assertThat(logs.messages(Level.WARN)).isEmpty();
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"same-clients", "admin-app", "technical-app", "same-secrets", "missing-secret"})
+  void unsafeClientConfigurationAbortsStartupWithoutExposingSecrets(String reason) {
+    configure();
+    switch (reason) {
+      case "same-clients" -> technical.setClientId("backend-admin");
+      case "admin-app" -> admin.setAdminClientId("app");
+      case "technical-app" -> technical.setClientId("app");
+      case "same-secrets" -> technical.setClientSecret("synthetic-admin-secret");
+      case "missing-secret" -> technical.setClientSecret("");
     }
-  }
-
-  @Test
-  void staysQuietWhenATechnicalUserIsNotConfigured() {
-    keycloakConfig.setAdminUsername("technical");
-    when(identityConfig.getTechnicalUser()).thenReturn(null);
-
-    try (var logs = LogbackCaptor.forClass(ServiceIdentitySeparationCheck.class)) {
-      check.warnIfKeycloakAdminIsTheTechnicalUser();
-
-      assertThat(logs.messages(Level.WARN)).isEmpty();
-    }
+    assertThatThrownBy(check::verifyBackendClients)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageNotContaining("synthetic-admin-secret")
+        .hasMessageNotContaining("synthetic-technical-secret")
+        .hasNoCause();
   }
 }

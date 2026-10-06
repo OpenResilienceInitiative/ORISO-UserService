@@ -73,11 +73,11 @@ class CaseHandoverPolicyHttpContractTest {
   @BeforeEach
   void setUp() {
     var technical = new TechnicalUserConfig();
-    technical.setUsername("synthetic-service");
-    technical.setPassword("synthetic-password");
+    technical.setClientId("synthetic-service");
+    technical.setClientSecret("synthetic-password");
     when(identityConfig.getTechnicalUser()).thenReturn(technical);
     lenient().when(requestUser.getAccessToken()).thenReturn("synthetic-admin-token");
-    when(identity.login("synthetic-service", "synthetic-password"))
+    when(identity.loginService("synthetic-service", "synthetic-password"))
         .thenReturn(new IdentityLogin("synthetic-token", 60, 120, "synthetic-refresh"));
     ReflectionTestUtils.setField(headers, "csrfHeaderProperty", "X-CSRF-TOKEN");
     ReflectionTestUtils.setField(headers, "csrfCookieProperty", "CSRF-TOKEN");

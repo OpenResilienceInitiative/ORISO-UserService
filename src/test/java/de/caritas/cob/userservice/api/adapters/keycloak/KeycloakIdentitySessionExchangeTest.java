@@ -35,8 +35,8 @@ class KeycloakIdentitySessionExchangeTest {
   @BeforeEach
   void setUp() {
     exchange = new KeycloakIdentitySessionExchange(restTemplate, identityClientConfig);
-    ReflectionTestUtils.setField(exchange, "keycloakAdminUsername", "admin");
-    ReflectionTestUtils.setField(exchange, "keycloakAdminPassword", "secret");
+    ReflectionTestUtils.setField(exchange, "keycloakAdminClientId", "backend-admin");
+    ReflectionTestUtils.setField(exchange, "keycloakAdminClientSecret", "secret");
     ReflectionTestUtils.setField(exchange, "keycloakAppClientId", "app");
     when(identityClientConfig.getOpenIdConnectUrl("/token")).thenReturn(TOKEN_URL);
   }
@@ -67,10 +67,10 @@ class KeycloakIdentitySessionExchangeTest {
 
     var adminRequest = requestCaptor();
     verify(restTemplate).postForEntity(eq(TOKEN_URL), adminRequest.capture(), eq(Map.class));
-    assertThat(form(adminRequest).getFirst("grant_type")).isEqualTo("password");
-    assertThat(form(adminRequest).getFirst("client_id")).isEqualTo("app");
-    assertThat(form(adminRequest).getFirst("username")).isEqualTo("admin");
-    assertThat(form(adminRequest).getFirst("password")).isEqualTo("secret");
+    assertThat(form(adminRequest).getFirst("grant_type")).isEqualTo("client_credentials");
+    assertThat(form(adminRequest).getFirst("client_id")).isEqualTo("backend-admin");
+    assertThat(form(adminRequest).getFirst("client_secret")).isEqualTo("secret");
+    assertThat(form(adminRequest)).doesNotContainKeys("username", "password");
 
     var exchangeRequest = requestCaptor();
     verify(restTemplate)

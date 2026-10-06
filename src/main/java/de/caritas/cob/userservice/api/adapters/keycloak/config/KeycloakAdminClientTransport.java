@@ -81,8 +81,8 @@ final class KeycloakAdminClientTransport {
     return KeycloakBuilder.builder()
         .serverUrl(serverUrl)
         .realm(realm)
-        .username(config.getAdminUsername())
-        .password(config.getAdminPassword())
+        .grantType("client_credentials")
+        .clientSecret(config.getAdminClientSecret())
         .clientId(config.getAdminClientId())
         .resteasyClient(clientBuilder.build())
         .build();

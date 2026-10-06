@@ -97,11 +97,11 @@ class AgencyMatrixCredentialClientTest {
   @Test
   void fetchMatrixCredentialsShouldReturnEmptyWhenTechnicalUserLoginFails() {
     var technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
+    technicalUser.setClientId("technical");
+    technicalUser.setClientSecret("secret");
 
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.login("technical", "secret"))
+    when(identityAuthentication.loginService("technical", "secret"))
         .thenThrow(new BadRequestException("Keycloak unavailable"));
 
     assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).isEmpty();
@@ -136,12 +136,12 @@ class AgencyMatrixCredentialClientTest {
 
   private void stubTechnicalUserLogin(String accessToken) {
     var technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
+    technicalUser.setClientId("technical");
+    technicalUser.setClientSecret("secret");
 
     var loginResponse = new IdentityLogin(accessToken, 0, 0, "refresh-token");
 
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.login("technical", "secret")).thenReturn(loginResponse);
+    when(identityAuthentication.loginService("technical", "secret")).thenReturn(loginResponse);
   }
 }

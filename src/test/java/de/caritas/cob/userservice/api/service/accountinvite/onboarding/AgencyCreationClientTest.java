@@ -65,10 +65,10 @@ class AgencyCreationClientTest {
   @BeforeEach
   void setUp() {
     var technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
+    technicalUser.setClientId("technical");
+    technicalUser.setClientSecret("secret");
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.login(anyString(), anyString()))
+    when(identityAuthentication.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("access-token", 60, 60, "refresh-token"));
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(anyString()))
         .thenReturn(new HttpHeaders());

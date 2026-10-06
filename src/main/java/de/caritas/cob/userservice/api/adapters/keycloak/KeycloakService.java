@@ -202,6 +202,13 @@ public class KeycloakService
   }
 
   @Override
+  public IdentityLogin loginService(String clientId, String clientSecret) {
+    var response = keycloakAuthClient.loginService(clientId, clientSecret);
+    // Service accounts have no human refresh session; never propagate a provider refresh token.
+    return new IdentityLogin(response.getAccessToken(), response.getExpiresIn(), 0, null);
+  }
+
+  @Override
   public boolean verifyPasswordIgnoringSecondFactor(String username, String password) {
     return keycloakAuthClient.verifyIgnoringOtp(username, password);
   }

@@ -12,9 +12,7 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "keycloak.config")
 public class KeycloakCustomConfig {
 
-  @NotBlank private String adminUsername;
-
-  @NotBlank private String adminPassword;
+  @lombok.ToString.Exclude @NotBlank private String adminClientSecret;
 
   @NotBlank private String adminClientId;
 
