@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.PaginationLinks;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.ArrayList;
@@ -44,6 +45,30 @@ public class AdminDtoMapper implements DtoMapperUtils {
       Integer perPage,
       String field,
       String order) {
+    return adminSearchResultOf(resultMap, query, page, perPage, field, order, SearchFilter.NONE);
+  }
+
+  public AdminSearchResultDTO adminSearchResultOf(
+      Map<String, Object> resultMap,
+      String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order,
+      SearchFilter filter) {
+    return adminSearchResultOf(
+        resultMap, query, page, perPage, field, order, filter, Admin.AdminType.AGENCY);
+  }
+
+  public AdminSearchResultDTO adminSearchResultOf(
+      Map<String, Object> resultMap,
+      String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order,
+      SearchFilter filter,
+      Admin.AdminType adminType) {
     var admins = new ArrayList<AdminResponseDTO>();
 
     var adminMaps = (List<Map<String, Object>>) resultMap.get("admins");
@@ -59,12 +84,14 @@ public class AdminDtoMapper implements DtoMapperUtils {
     result.setTotal((Integer) resultMap.get("totalElements"));
     result.setEmbedded(admins);
 
-    var pagination = new PaginationLinks().self(pageLinkOf(query, page, perPage, field, order));
+    var pagination =
+        new PaginationLinks()
+            .self(pageLinkOf(query, page, perPage, field, order, filter, adminType));
     if (!(boolean) resultMap.get("isFirstPage")) {
-      pagination.previous(pageLinkOf(query, page - 1, perPage, field, order));
+      pagination.previous(pageLinkOf(query, page - 1, perPage, field, order, filter, adminType));
     }
     if (!(boolean) resultMap.get("isLastPage")) {
-      pagination.next(pageLinkOf(query, page + 1, perPage, field, order));
+      pagination.next(pageLinkOf(query, page + 1, perPage, field, order, filter, adminType));
     }
     result.setLinks(pagination);
 
@@ -94,11 +121,27 @@ public class AdminDtoMapper implements DtoMapperUtils {
     return halLinkOf(httpEntity, method);
   }
 
-  private HalLink pageLinkOf(String query, int page, int perPage, String field, String order) {
+  private HalLink pageLinkOf(
+      String query,
+      int page,
+      int perPage,
+      String field,
+      String order,
+      SearchFilter filter,
+      Admin.AdminType adminType) {
+    var controller = methodOn(UserAdminController.class);
     var httpEntity =
-        methodOn(UserAdminController.class).searchAgencyAdmins(query, page, perPage, field, order);
+        switch (adminType) {
+          case TENANT ->
+              controller.searchTenantAdmins(query, page, perPage, field, order, filter.tenantId());
+          case AGENCY ->
+              controller.searchAgencyAdmins(
+                  query, page, perPage, field, order, filter.tenantId(), filter.agencyIds());
+          default ->
+              throw new IllegalArgumentException("unsupported admin search type: " + adminType);
+        };
 
-    return halLinkOf(httpEntity, MethodEnum.GET);
+    return expandedHalLinkOf(httpEntity, MethodEnum.GET);
   }
 
   public HalLink adminLinkOf(String id, MethodEnum method) {

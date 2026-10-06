@@ -10,11 +10,13 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
+import de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
@@ -48,10 +50,13 @@ public class MatrixEventListenerService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
   private final @NonNull MatrixCallInviteNotificationService callInviteNotifications;
+  private final @NonNull AdviceSeekerReplyEmailService replyEmailService;
+  private final @NonNull MatrixEmailSyncCursorStore emailSyncCursorStore;
 
   private OutboundHttpMetrics outboundHttpMetrics;
   private LiveChatDiagnosticMetrics diagnosticMetrics;
   private ObservationRegistry observationRegistry = ObservationRegistry.NOOP;
+  private TenantContextProvider tenantContextProvider;
 
   // Maps Matrix room ID to session ID for quick lookup
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
@@ -67,6 +72,7 @@ public class MatrixEventListenerService {
 
   // Matrix sync token (updated after each sync)
   private String syncToken = null;
+  private Long firstEmailSyncStartedAtMillis;
 
   // Flag to control sync loop
   private volatile boolean running = false;
@@ -82,6 +88,11 @@ public class MatrixEventListenerService {
   @Autowired(required = false)
   void setObservationRegistry(ObservationRegistry observationRegistry) {
     this.observationRegistry = observationRegistry;
+  }
+
+  @Autowired(required = false)
+  void setTenantContextProvider(TenantContextProvider tenantContextProvider) {
+    this.tenantContextProvider = tenantContextProvider;
   }
 
   @Autowired(required = false)
@@ -180,9 +191,17 @@ public class MatrixEventListenerService {
     long errorBackoffMs = INITIAL_BACKOFF_MS;
     long iteration = 0;
     int consecutiveSyncFailures = 0;
+    boolean cursorLoaded = false;
 
     while (running) {
       try {
+        if (!cursorLoaded) {
+          // A transient database outage retries through the normal sync-loop backoff.
+          var start = emailSyncCursorStore.readOrCreateActivation();
+          syncToken = start.batchToken();
+          firstEmailSyncStartedAtMillis = syncToken == null ? start.activationEpochMillis() : null;
+          cursorLoaded = true;
+        }
         MatrixSyncCycleResult cycleResult = executeObservedMatrixSyncCycle();
 
         if (cycleResult == MatrixSyncCycleResult.SUCCESS) {
@@ -244,6 +263,24 @@ public class MatrixEventListenerService {
    * values must never become observation attributes.
    */
   private MatrixSyncCycleResult executeObservedMatrixSyncCycle() {
+    var outcome = new java.util.concurrent.atomic.AtomicReference<MatrixSyncCycleResult>();
+    inTechnicalTenant(() -> outcome.set(observedMatrixSyncCycle()));
+    return outcome.get();
+  }
+
+  /**
+   * Sync cycles and notifications serve every Träger. The technical tenant is set per unit of work,
+   * so a tenant another call leaves on the pooled thread never reaches the next one.
+   */
+  private void inTechnicalTenant(Runnable work) {
+    if (tenantContextProvider == null) {
+      work.run();
+    } else {
+      tenantContextProvider.inTechnicalContext(work).run();
+    }
+  }
+
+  private MatrixSyncCycleResult observedMatrixSyncCycle() {
     Observation observation =
         Observation.createNotStarted("userservice.matrix.sync", observationRegistry).start();
     String result = "exception";
@@ -261,11 +298,12 @@ public class MatrixEventListenerService {
 
       processMatrixSyncEvents(syncResult);
       callInviteNotifications.reconcileMediaRooms();
-      // Retry the same batch after any processing failure. Notification deduplication and
-      // persisted call membership make repeated delivery safe; fetching is not acknowledgement.
-      if (syncResult.get("next_batch") instanceof String nextBatch) {
-        syncToken = nextBatch;
-        log.debug("🔷 Matrix sync cursor updated");
+      // Acknowledge only after every producer has completed successfully.
+      Object nextBatch = syncResult.get("next_batch");
+      if (nextBatch instanceof String token && !token.isBlank()) {
+        emailSyncCursorStore.write(token);
+        syncToken = token;
+        firstEmailSyncStartedAtMillis = null;
       }
       result = "success";
       return MatrixSyncCycleResult.SUCCESS;
@@ -513,6 +551,16 @@ public class MatrixEventListenerService {
       return false;
     }
 
+    // Matrix keeps relation metadata outside the encrypted payload so homeservers can
+    // aggregate edits and reactions. They are not new replies and must not send mail.
+    Object relation = content.get("m.relates_to");
+    if (relation instanceof Map<?, ?> relationFields) {
+      Object relationType = relationFields.get("rel_type");
+      if ("m.replace".equals(relationType) || "m.annotation".equals(relationType)) {
+        return false;
+      }
+    }
+
     String msgtype = (String) content.get("msgtype");
     String senderDomainUserId = resolveDomainUserIdFromMatrixUserId(senderId);
     String threadRootId = extractThreadRootId(content);
@@ -534,6 +582,21 @@ public class MatrixEventListenerService {
                 senderDomainUserId != null && senderDomainUserId.startsWith("consultant"),
                 messageBody,
                 event.get("event_id") != null ? String.valueOf(event.get("event_id")) : null));
+
+    // Persist the mail claim before the in-app recipient cache can short-circuit this event.
+    // A missing push/feed recipient must not cause the Matrix cursor to consume an unclaimed mail.
+    if (!"m.notice".equals(msgtype)
+        && (messageBody == null || !messageBody.startsWith("[SYSTEM_NOTIFICATION]"))
+        && isEligibleForReplyEmail(event)) {
+      String eventId = privacyEnvelope == null ? null : privacyEnvelope.getMessageId();
+      if (isConsultantMatrixUser(senderId)) {
+        replyEmailService.onConsultantReply(roomId, eventId, senderId);
+      } else if (senderDomainUserId != null) {
+        // The durable mail service admits only the primary session room. Protected supervision
+        // and team discussions use separate Matrix rooms; ordinary m.thread replies are allowed.
+        replyEmailService.onAdviceSeekerMessage(roomId, eventId, senderId);
+      }
+    }
 
     // Get users who should receive notification (exclude sender)
     Set<String> userIds = getRecipientCandidatesForRoom(roomId);
@@ -563,43 +626,58 @@ public class MatrixEventListenerService {
 
     // Notify asynchronously so the Matrix sync loop is not blocked.
     executorService.submit(
-        () -> {
-          try {
-            mobilePushNotificationService.triggerMobilePushNotification(recipientIds);
-            recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.SUCCESS);
-          } catch (Exception e) {
-            recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.FAILURE);
-            log.error("❌ Failed to send mobile push notification", e);
-          }
-          // The persisted feed entry is the source of truth for the notification timeline.
-          // Isolate the failure domains so a push failure cannot swallow the notification row.
-          try {
-            if (threadRootId != null && !threadRootId.isBlank()) {
-              eventNotificationService.createThreadReplyNotificationFromRoom(
-                  roomId, senderDomainUserId, threadRootId, privacyEnvelope);
-            } else {
-              eventNotificationService.createMessageNotificationFromRoom(
-                  roomId, senderDomainUserId, privacyEnvelope);
-            }
-            recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
-          } catch (Exception e) {
-            recordSideEffect(SideEffect.NOTIFICATION, Outcome.FAILURE);
-            log.error("❌ Failed to create event notification from room", e);
-            return;
-          }
+        () ->
+            inTechnicalTenant(
+                () -> {
+                  try {
+                    mobilePushNotificationService.triggerMobilePushNotification(recipientIds);
+                    recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.SUCCESS);
+                  } catch (Exception e) {
+                    recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.FAILURE);
+                    log.error("❌ Failed to send mobile push notification", e);
+                  }
+                  // The persisted feed entry is the source of truth for the notification timeline.
+                  // Isolate the failure domains so a push failure cannot swallow the notification
+                  // row.
+                  try {
+                    if (threadRootId != null && !threadRootId.isBlank()) {
+                      eventNotificationService.createThreadReplyNotificationFromRoom(
+                          roomId, senderDomainUserId, threadRootId, privacyEnvelope);
+                    } else {
+                      eventNotificationService.createMessageNotificationFromRoom(
+                          roomId, senderDomainUserId, privacyEnvelope);
+                    }
+                    recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
+                  } catch (Exception e) {
+                    recordSideEffect(SideEffect.NOTIFICATION, Outcome.FAILURE);
+                    log.error("❌ Failed to create event notification from room", e);
+                    return;
+                  }
 
-          if (mappedSessionId != null
-              && senderDomainUserId != null
-              && isConsultantMatrixUser(senderId)) {
-            try {
-              consultantMessageStatService.recordMessageSent(senderDomainUserId, mappedSessionId);
-            } catch (Exception e) {
-              log.error("Failed to record consultant message statistic", e);
-            }
-          }
-        });
+                  if (mappedSessionId != null
+                      && senderDomainUserId != null
+                      && isConsultantMatrixUser(senderId)) {
+                    try {
+                      consultantMessageStatService.recordMessageSent(
+                          senderDomainUserId, mappedSessionId);
+                    } catch (Exception e) {
+                      log.error("Failed to record consultant message statistic", e);
+                    }
+                  }
+                }));
 
     return true;
+  }
+
+  private boolean isEligibleForReplyEmail(Map<String, Object> event) {
+    if (firstEmailSyncStartedAtMillis == null) {
+      return true;
+    }
+    // An initial /sync contains recent historical messages. The activation instant is persisted
+    // before polling, so restarts cannot turn those old messages into a burst of new mail.
+    Object timestamp = event.get("origin_server_ts");
+    return timestamp instanceof Number number
+        && number.longValue() >= firstEmailSyncStartedAtMillis;
   }
 
   private void recordMatrixEvent(String eventType, Outcome outcome) {

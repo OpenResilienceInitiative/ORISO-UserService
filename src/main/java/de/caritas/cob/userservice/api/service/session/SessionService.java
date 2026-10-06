@@ -446,7 +446,7 @@ public class SessionService {
 
   private boolean isVisibleRegisteredEnquiryForConsultant(Session session) {
     if (!isAnonymousStyleRegistration(session)) {
-      return true;
+      return nonNull(session.getEnquiryMessageDate());
     }
     return nonNull(session.getUser()) && nonNull(session.getUser().getDataPrivacyConfirmation());
   }
@@ -526,7 +526,10 @@ public class SessionService {
         consultant.getUsername(),
         consultant.isAbsent(),
         consultant.getAbsenceMessage(),
-        null);
+        null,
+        // #1047: the advice seeker must see the avatar the counsellor chose (#1046).
+        consultant.getAvatarKind() != null ? consultant.getAvatarKind().name() : null,
+        consultant.getAvatarId());
   }
 
   /**
@@ -660,7 +663,7 @@ public class SessionService {
       return emptyList();
     }
     var sessions =
-        runCrossTenant(
+        TenantContext.supplyAcrossTenants(
             () ->
                 sessionRepository.findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
                     sessionIds,
@@ -690,32 +693,12 @@ public class SessionService {
       return emptyList();
     }
     var sessions =
-        runCrossTenant(
+        TenantContext.supplyAcrossTenants(
             () ->
                 StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
                     .filter(session -> session.isAdvisedBy(consultant))
                     .collect(Collectors.toList()));
     return mapSessionsToConsultantSessionDto(sessions);
-  }
-
-  /**
-   * Runs a read in technical-tenant context so the anonymous Live Chat visibility query bypasses
-   * the Hibernate tenant filter (the queue is deliberately cross-tenant), restoring the caller's
-   * tenant afterwards so no other query in the request leaks. Mirrors the queue provider's own
-   * guard.
-   */
-  private <T> T runCrossTenant(Supplier<T> query) {
-    var callerTenant = TenantContext.getCurrentTenant();
-    try {
-      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      return query.get();
-    } finally {
-      if (callerTenant == null) {
-        TenantContext.clear();
-      } else {
-        TenantContext.setCurrentTenant(callerTenant);
-      }
-    }
   }
 
   /**
@@ -792,7 +775,8 @@ public class SessionService {
     }
   }
 
-  private boolean isConsultantPermittedToSession(Consultant consultant, Session session) {
+  /** Whether {@code consultant} advises, supervises or may take on {@code session}. */
+  public boolean isConsultantPermittedToSession(Consultant consultant, Session session) {
     try {
       checkConsultantAssignment(consultant, session);
     } catch (ForbiddenException e) {

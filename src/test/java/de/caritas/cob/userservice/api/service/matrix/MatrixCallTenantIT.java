@@ -13,6 +13,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.controller.MatrixCallStateController;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.*;
@@ -21,7 +22,6 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationDedu
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
-import de.caritas.cob.userservice.api.tenant.TenantAspect;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.Duration;
@@ -45,14 +45,17 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Real domain repositories and tenant AOP exercised through the background sync loop. */
+/**
+ * Real domain repositories and current Hibernate tenant filters exercised through the background
+ * sync loop.
+ */
 @DataJpaTest
 @TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
-  TenantAspect.class,
   MatrixCallTenantIT.AopConfiguration.class,
   EventNotificationService.class,
+  ConsultantDisplayNameResolver.class,
   EventNotificationDeduplicationWriter.class,
   MatrixCallBindingService.class,
   MatrixCallBindingWriter.class,
@@ -78,6 +81,13 @@ class MatrixCallTenantIT {
   @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private IdentityTombstoneService tombstones;
+
+  private MatrixEmailSyncCursorStore freshEmailCursor() {
+    var cursor = mock(MatrixEmailSyncCursorStore.class);
+    when(cursor.readOrCreateActivation())
+        .thenReturn(new MatrixEmailSyncCursorStore.Start(null, 0L));
+    return cursor;
+  }
 
   @ParameterizedTest
   @CsvSource({"false,false", "true,false", "false,true"})
@@ -116,7 +126,11 @@ class MatrixCallTenantIT {
             consultants,
             sessions,
             mock(ConsultantMessageStatService.class),
-            invites);
+            invites,
+            mock(
+                de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
+                    .class),
+            freshEmailCursor());
     try {
       // Control: this fixture must really enforce tenant isolation before testing the worker.
       TenantContext.setCurrentTenant(7L);
@@ -196,9 +210,12 @@ class MatrixCallTenantIT {
                 return response.get();
               });
       // The worker is a fresh thread: HTTP/main-thread tenant context is not inherited.
+      // Poll on the test thread so repository assertions retain technical tenant 0 and
+      // inspect all persisted recipients, including any incorrectly notified tenant 8 user.
       listener.initialize();
       if (!invitationAlreadyExpired)
         await()
+            .pollInSameThread()
             .atMost(Duration.ofSeconds(5))
             .untilAsserted(
                 () ->
@@ -206,6 +223,7 @@ class MatrixCallTenantIT {
                         .anySatisfy(
                             event -> assertThat(event.getEventType()).isEqualTo("call.invited")));
       await()
+          .pollInSameThread()
           .atMost(Duration.ofSeconds(10))
           .untilAsserted(
               () ->
@@ -233,6 +251,7 @@ class MatrixCallTenantIT {
                                   member(caller, now + 1, true),
                                   member(receiver, now + 1, true))))))));
       await()
+          .pollInSameThread()
           .during(Duration.ofMillis(300))
           .atMost(Duration.ofSeconds(5))
           .untilAsserted(

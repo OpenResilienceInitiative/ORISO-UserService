@@ -20,6 +20,22 @@ interface ConsultantCreationInput {
 
   String getEmail();
 
+  /**
+   * Whether the created counsellor must establish a second factor before using the account.
+   * Defaults to false so a creation path has to opt in; the bulk import keeps that default.
+   */
+  default boolean isTwoFactorRequired() {
+    return false;
+  }
+
+  /**
+   * Whether the created counsellor must replace their password before using the account. Defaults
+   * to false so a creation path has to opt in; the bulk import keeps that default.
+   */
+  default boolean isPasswordChangeRequired() {
+    return false;
+  }
+
   default String getPublicSlug() {
     return null;
   }
@@ -45,6 +61,20 @@ interface ConsultantCreationInput {
   }
 
   default String getAdminRemarks() {
+    return null;
+  }
+
+  /**
+   * Counsellor avatar choice (#1046) as its wire spelling, e.g. {@code "ICON"}. Kept as a plain
+   * string here so this input contract stays free of generated DTO types; unknown values are
+   * resolved to "no choice" downstream.
+   */
+  default String getAvatarKind() {
+    return null;
+  }
+
+  /** Id of the chosen counsellor motif; only meaningful together with {@code ICON}. */
+  default String getAvatarId() {
     return null;
   }
 

@@ -57,7 +57,7 @@ class MatrixCallStateControllerTest {
                     .tenantId(7L)
                     .matrixUserId("@participant:example")
                     .build()));
-    when(matrix.getRoomMembers("!source:example"))
+    when(matrix.getCallRoomMembers("!source:example"))
         .thenReturn(Optional.of(List.of("@participant:example")));
     when(bindings.findBySourceRoomIdAndCallId("!source:example", "stable-call"))
         .thenReturn(
@@ -84,6 +84,19 @@ class MatrixCallStateControllerTest {
                         matrix),
                     actor))
             .build();
+  }
+
+  @Test
+  void downstreamMembershipUnavailableDoesNotBecomeNotFound() throws Exception {
+    when(matrix.getCallRoomMembers("!source:example")).thenReturn(Optional.empty());
+    when(matrix.getCallRoomMembers("!source:example"))
+        .thenThrow(new MatrixSynapseService.CallLookupUnavailableException("upstream unavailable"));
+    mvc.perform(
+            get("/matrix/calls/state")
+                .param("sourceRoomId", "!source:example")
+                .param("callId", "stable-call"))
+        .andExpect(status().isBadGateway())
+        .andExpect(jsonPath("$.reason").value("call_state_lookup_unavailable"));
   }
 
   @Test
@@ -120,7 +133,7 @@ class MatrixCallStateControllerTest {
                             .email("owner@example.invalid")
                             .build())
                     .build()));
-    when(matrix.getRoomMembers("!group:example"))
+    when(matrix.getCallRoomMembers("!group:example"))
         .thenReturn(Optional.of(List.of("@participant:example")));
     when(bindings.findBySourceRoomIdAndCallId("!group:example", "group-call"))
         .thenReturn(
@@ -175,7 +188,7 @@ class MatrixCallStateControllerTest {
                     .tenantId(7L)
                     .matrixUserId("@consultant:example")
                     .build()));
-    when(matrix.getRoomMembers("!source:example"))
+    when(matrix.getCallRoomMembers("!source:example"))
         .thenReturn(Optional.of(List.of("@consultant:example")));
     mvc.perform(
             get("/matrix/calls/state")
@@ -194,13 +207,13 @@ class MatrixCallStateControllerTest {
 
   @Test
   void removedMemberCannotReadAKnownCall() throws Exception {
-    when(matrix.getRoomMembers("!source:example")).thenReturn(Optional.of(List.of()));
+    when(matrix.getCallRoomMembers("!source:example")).thenReturn(Optional.of(List.of()));
     assertHidden("!source:example", "stable-call");
   }
 
   @Test
   void missingMembershipEvidenceDoesNotGrantAccess() throws Exception {
-    when(matrix.getRoomMembers("!source:example")).thenReturn(Optional.empty());
+    when(matrix.getCallRoomMembers("!source:example")).thenReturn(Optional.empty());
     assertHidden("!source:example", "stable-call");
   }
 

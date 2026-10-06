@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
@@ -37,6 +38,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
@@ -63,6 +65,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -99,6 +102,7 @@ public class KeycloakService
         IdentityEmailOwnerLookup,
         IdentityLocaleLookup,
         IdentityPasswordUpdater,
+        IdentityPasswordChangeRequirement,
         IdentityProfileLookup,
         IdentityProfileUpdater,
         IdentityRoleLookup,
@@ -168,6 +172,11 @@ public class KeycloakService
   protected void changeLanguageForTheUser(
       String locale, UserResource userResource, UserRepresentation user) {
     if (needToUpdateLocale(locale, user)) {
+      // Accounts created outside the UserService (Keycloak console, imports) can come back
+      // without any attribute map — the language switch on login must not 500 on them.
+      if (user.getAttributes() == null) {
+        user.setAttributes(new HashMap<>());
+      }
       user.getAttributes().put(LOCALE, Lists.newArrayList(locale));
       userResource.update(user);
     } else {
@@ -176,8 +185,10 @@ public class KeycloakService
   }
 
   private boolean needToUpdateLocale(String locale, UserRepresentation userRepresentation) {
-    return !userRepresentation.getAttributes().containsKey(LOCALE)
-        || !userRepresentation.getAttributes().get(LOCALE).contains(locale);
+    var attributes = userRepresentation.getAttributes();
+    return attributes == null
+        || !attributes.containsKey(LOCALE)
+        || !attributes.get(LOCALE).contains(locale);
   }
 
   @Override
@@ -198,6 +209,11 @@ public class KeycloakService
   @Override
   public boolean logout(final String refreshToken) {
     return keycloakAuthClient.logoutUser(refreshToken);
+  }
+
+  @Override
+  public boolean logout(final String refreshToken, final String accessToken) {
+    return keycloakAuthClient.logoutUser(refreshToken, accessToken);
   }
 
   /**
@@ -257,9 +273,10 @@ public class KeycloakService
                 keycloakClient.get(keycloakClient.getBearerToken(), requestUrl, OtpInfoDTO.class));
 
     var body = response.getBody();
-    return body == null
-        ? IdentityOtpCredential.empty()
-        : keycloakMapper.identityOtpCredentialOf(body);
+    if (body == null) {
+      throw new KeycloakException("OTP credential lookup returned an empty response");
+    }
+    return keycloakMapper.identityOtpCredentialOf(body);
   }
 
   @Override
@@ -315,6 +332,8 @@ public class KeycloakService
     var requestUrl = getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);
 
     try {
+      // The OTP SPI also returns 401 for an invalid or expired code. Only a bearer challenge
+      // identifies a failed service session; repeating a rejected code consumes another attempt.
       var response =
           withFreshAdminTokenOnUnauthorized(
               "email-verification-finish",
@@ -323,9 +342,15 @@ public class KeycloakService
                       keycloakClient.getBearerToken(),
                       requestUrl,
                       otpSetupDTO,
-                      SuccessWithEmail.class));
+                      SuccessWithEmail.class),
+              KeycloakService::isBearerChallenge);
       return keycloakMapper.identityEmailVerificationOf(response);
     } catch (HttpClientErrorException exception) {
+      if (exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)
+          && isBearerChallenge(exception)) {
+        throw new ServiceUnavailableException(
+            "OTP verification service authentication unavailable");
+      }
       return keycloakMapper.identityEmailVerificationOf(exception);
     }
   }
@@ -337,10 +362,16 @@ public class KeycloakService
   }
 
   private <T> T withFreshAdminTokenOnUnauthorized(String operation, Supplier<T> request) {
+    return withFreshAdminTokenOnUnauthorized(operation, request, exception -> true);
+  }
+
+  private <T> T withFreshAdminTokenOnUnauthorized(
+      String operation, Supplier<T> request, Predicate<HttpClientErrorException> retryable) {
     try {
       return request.get();
     } catch (HttpClientErrorException exception) {
-      if (!exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)) {
+      if (!exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)
+          || !retryable.test(exception)) {
         throw exception;
       }
 
@@ -352,6 +383,10 @@ public class KeycloakService
       keycloakClient.refreshAdminSession();
       return request.get();
     }
+  }
+
+  private static boolean isBearerChallenge(HttpClientErrorException exception) {
+    return WwwAuthenticateChallenges.containsScheme(exception.getResponseHeaders(), "Bearer");
   }
 
   /**
@@ -492,11 +527,12 @@ public class KeycloakService
         .anyMatch(userRepresentation -> userRepresentation.getEmail().equals(email));
   }
 
-  private CredentialRepresentation getCredentialRepresentation(final String password) {
+  private CredentialRepresentation getCredentialRepresentation(
+      final String password, boolean temporary) {
     var credentials = new CredentialRepresentation();
     credentials.setType(CredentialRepresentation.PASSWORD);
     credentials.setValue(password);
-    credentials.setTemporary(false);
+    credentials.setTemporary(temporary);
 
     return credentials;
   }
@@ -787,7 +823,16 @@ public class KeycloakService
    */
   @Override
   public void updatePassword(final String userId, final String password) {
-    var newCredentials = getCredentialRepresentation(password);
+    resetPassword(userId, password, false);
+  }
+
+  @Override
+  public void updateTemporaryPassword(final String userId, final String password) {
+    resetPassword(userId, password, true);
+  }
+
+  private void resetPassword(final String userId, final String password, boolean temporary) {
+    var newCredentials = getCredentialRepresentation(password, temporary);
     var userResource = keycloakClient.getUsersResource().get(userId);
 
     try {
@@ -852,7 +897,8 @@ public class KeycloakService
     user.setEmail(dummyEmail);
     user.setTenantId(identityUpdate.tenantId());
     var userResource = keycloakClient.getUsersResource().get(userId);
-    userResource.update(getUserRepresentation(user, null, null));
+    userResource.update(
+        withExistingAttributes(userResource, getUserRepresentation(user, null, null)));
     log.debug("Set email dummy for {} to {}", userId, dummyEmail);
     return dummyEmail;
   }
@@ -866,8 +912,42 @@ public class KeycloakService
   @Override
   public void updateProfile(final String userId, final IdentityProfileUpdate profile) {
     var userResource = keycloakClient.getUsersResource().get(userId);
-    verifyEmail(userResource.toRepresentation(), profile.email());
-    userResource.update(getUserRepresentation(profile));
+    var existing = userResource.toRepresentation();
+    verifyEmail(existing, profile.email());
+    userResource.update(withExistingAttributes(existing, getUserRepresentation(profile)));
+  }
+
+  /**
+   * Keycloak's user update replaces the whole attribute map when the representation carries one. A
+   * representation built only from the profile values therefore silently dropped every attribute it
+   * did not know about — above all {@code userId}, the custom claim the AgencyService needs to
+   * scope a Beratungsstellen-Admin to their own agencies (their agency list answered 403 after the
+   * first admin edit). Merge the profile attributes onto the attributes Keycloak currently holds so
+   * an update never removes what creation wrote.
+   */
+  private UserRepresentation withExistingAttributes(
+      UserResource userResource, UserRepresentation update) {
+    UserRepresentation existing;
+    try {
+      existing = userResource.toRepresentation();
+    } catch (RuntimeException e) {
+      log.warn("Could not read current keycloak user before update; attributes may be lost", e);
+      existing = null;
+    }
+    return withExistingAttributes(existing, update);
+  }
+
+  private UserRepresentation withExistingAttributes(
+      UserRepresentation existing, UserRepresentation update) {
+    if (existing == null || existing.getAttributes() == null) {
+      return update;
+    }
+    Map<String, List<String>> merged = new LinkedHashMap<>(existing.getAttributes());
+    if (update.getAttributes() != null) {
+      merged.putAll(update.getAttributes());
+    }
+    update.setAttributes(merged);
+    return update;
   }
 
   private void verifyEmail(UserRepresentation userRepresentation, String email) {
@@ -1015,6 +1095,22 @@ public class KeycloakService
               user.getEmail()));
     } catch (NotFoundException ex) {
       return Optional.empty();
+    }
+  }
+
+  @Override
+  public boolean requiresPasswordChange(String userId) {
+    try {
+      UserResource userResource = keycloakClient.getUsersResource().get(userId);
+      if (userResource == null) {
+        return false;
+      }
+      var user = userResource.toRepresentation();
+      return user != null
+          && user.getRequiredActions() != null
+          && user.getRequiredActions().contains("UPDATE_PASSWORD");
+    } catch (NotFoundException missing) {
+      return false;
     }
   }
 

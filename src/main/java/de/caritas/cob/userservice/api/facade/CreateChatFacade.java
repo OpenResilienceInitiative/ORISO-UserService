@@ -21,6 +21,9 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
+import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -36,6 +39,7 @@ import org.springframework.stereotype.Service;
 public class CreateChatFacade {
 
   private final @NonNull ChatService chatService;
+  private final @NonNull GroupAppointmentSeriesEventProducer appointmentEvents;
   private final @NonNull SessionService sessionService;
   private final @NonNull AgencyService agencyService;
   private final @NonNull ChatConverter chatConverter;
@@ -43,6 +47,7 @@ public class CreateChatFacade {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull de.caritas.cob.userservice.api.port.out.UserRepository userRepository;
+  private final @NonNull GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
 
   /**
    * Creates a group chat in MariaDB and Matrix.
@@ -85,10 +90,12 @@ public class CreateChatFacade {
     List<String> participantIds =
         chatDTO.getConsultantIds() == null ? List.of() : chatDTO.getConsultantIds();
     Long agencyId = resolveAgencyId(chatDTO, consultant);
+    groupCounsellingDpaPolicy.requireCreation(chatDTO, agencyId, consultant);
 
     // Create a session for the group (needed for backend logic)
     Session session = new Session();
     session.setConsultant(consultant);
+    session.setTenantId(consultant.getTenantId());
 
     // Use a tenant-scoped system user for group chats (user_id is NOT NULL in database).
     var systemUser = resolveOrCreateGroupChatSystemUser(consultant);
@@ -131,7 +138,7 @@ public class CreateChatFacade {
     //
     // An internal team chat has no occurrence to open. It is a persistent room for colleagues,
     // so there is nothing to wait for and nobody to open it for — creating it inactive sent
-    // counsellors into the askers' Waiting Area, countdown and all (#979). It is open on
+    // counsellors into the askers' Waiting Area, countdown and all. It is open on
     // creation.
     chat.setActive(ConversationType.INTERNAL_GROUP.equals(chat.getConversationType()));
     chat = chatService.saveChat(chat);
@@ -145,8 +152,10 @@ public class CreateChatFacade {
       String roomName = chatDTO.getTopic();
       String roomAlias = "group_chat_" + sessionId;
 
-      if (consultant.getMatrixUserId() == null || consultant.getMatrixUserId().isBlank()) {
-        throw new InternalServerErrorException("Consultant does not have Matrix credentials");
+      if (!ConsultantChatIdentityService.hasChatIdentity(consultant)) {
+        throw new InternalServerErrorException(
+            ConsultantChatIdentityService.missingChatIdentityMessage(
+                "Consultant", consultant.getId()));
       }
 
       var matrixResponse =
@@ -215,6 +224,8 @@ public class CreateChatFacade {
           // Continue with other participants
         }
       }
+
+      appointmentEvents.recordCreated(chat);
 
       log.info(
           "Successfully created group chat '{}' with Session ID: {}, Chat ID: {}, Matrix room: {} and {} participants",

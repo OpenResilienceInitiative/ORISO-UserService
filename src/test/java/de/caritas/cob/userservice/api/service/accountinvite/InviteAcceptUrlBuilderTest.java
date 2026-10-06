@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
@@ -29,9 +30,13 @@ class InviteAcceptUrlBuilderTest {
   }
 
   @Test
-  void buildAcceptUrl_Should_targetPublicAppRoute_ForOtherRoles() {
+  void buildAcceptUrl_Should_targetTheCounsellorWizardRoute_ForAgencyAdmins() {
     assertThat(builder.buildAcceptUrl(AccountInviteTargetRole.AGENCY_ADMIN, "t"))
-        .isEqualTo("https://app.example.org/account-invite/t");
+        .isEqualTo("https://admin.example.org/admin/counsellor-onboarding/t");
+  }
+
+  @Test
+  void buildAcceptUrl_Should_targetPublicAppRoute_ForOtherRoles() {
     assertThat(builder.buildAcceptUrl(AccountInviteTargetRole.PLATFORM_ADMIN, "t"))
         .isEqualTo("https://app.example.org/account-invite/t");
     assertThat(builder.buildAcceptUrl(AccountInviteTargetRole.ADVICE_SEEKER, "t"))
@@ -51,15 +56,22 @@ class InviteAcceptUrlBuilderTest {
         .isEqualTo("https://admin.example.org/admin/counsellor-onboarding/tok");
   }
 
+  /**
+   * Regression for the dev invite mails that linked to production (2026-09-16), and for the
+   * localhost fallback that replaced it: a blank invite origin must stop startup and name the
+   * variable, never guess a host (ORISO-Helm#368).
+   */
   @Test
-  void buildAcceptUrl_Should_fallBackToDefaultOrigin_When_ConfigurationBlank() {
-    var blank = new InviteAcceptUrlBuilder("  ", null);
+  void constructor_Should_failNamingTheVariable_When_AppOriginBlank() {
+    assertThatThrownBy(() -> new InviteAcceptUrlBuilder("  ", "https://admin.example.org"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ACCOUNT_INVITE_APP_FRONTEND_BASE_URL");
+  }
 
-    assertThat(blank.buildAcceptUrl(AccountInviteTargetRole.ADVICE_SEEKER, "tok"))
-        .isEqualTo("https://app.oriso.org/account-invite/tok");
-    assertThat(blank.buildAcceptUrl(AccountInviteTargetRole.TENANT_ADMIN, "tok"))
-        .isEqualTo("https://app.oriso.org/admin/tenant-onboarding/tok");
-    assertThat(blank.buildAcceptUrl(AccountInviteTargetRole.COUNSELLOR, "tok"))
-        .isEqualTo("https://app.oriso.org/admin/counsellor-onboarding/tok");
+  @Test
+  void constructor_Should_failNamingTheVariable_When_AdminOriginMissing() {
+    assertThatThrownBy(() -> new InviteAcceptUrlBuilder("https://app.example.org", null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ACCOUNT_INVITE_ADMIN_FRONTEND_BASE_URL");
   }
 }

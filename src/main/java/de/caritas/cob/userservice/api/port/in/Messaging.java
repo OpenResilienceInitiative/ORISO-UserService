@@ -25,4 +25,6 @@ public interface Messaging {
 
   long countPendingEnquiriesAheadOf(
       Long agencyId, Integer consultingTypeId, Long mainTopicId, LocalDateTime beforeDate);
+
+  void touchLiveChatQueueHeartbeat(Long sessionId);
 }

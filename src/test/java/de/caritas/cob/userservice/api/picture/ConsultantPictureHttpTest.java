@@ -1,0 +1,214 @@
+package de.caritas.cob.userservice.api.picture;
+
+import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.*;
+import static org.mockito.Mockito.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
+import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
+import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
+import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
+import de.caritas.cob.userservice.api.config.auth.*;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.*;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import jakarta.servlet.http.Cookie;
+import java.util.*;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.*;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.junit.jupiter.web.SpringJUnitWebConfig;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
+import org.springframework.web.servlet.config.annotation.EnableWebMvc;
+
+@SpringJUnitWebConfig(ConsultantPictureHttpTest.Config.class)
+@TestPropertySource(properties = "multitenancy.enabled=false")
+class ConsultantPictureHttpTest {
+  @Configuration
+  @EnableWebMvc
+  @Import({
+    SecurityConfig.class,
+    RoleAuthorizationAuthorityMapper.class,
+    ConsultantPictureController.class,
+    ConsultantPictureAccess.class,
+    ConsultantPictureService.class,
+    PictureIntake.class,
+    ApiResponseEntityExceptionHandler.class
+  })
+  static class Config {
+    @Bean
+    CsrfSecurityProperties csrfSecurityProperties() {
+      var p = new CsrfSecurityProperties();
+      var cookie = new CsrfSecurityProperties.ConfigProperty();
+      cookie.setProperty("CSRF-TOKEN");
+      p.setCookie(cookie);
+      var header = new CsrfSecurityProperties.ConfigProperty();
+      header.setProperty("X-CSRF-Token");
+      p.setHeader(header);
+      var whitelist = new CsrfSecurityProperties.Whitelist();
+      var wh = new CsrfSecurityProperties.ConfigProperty();
+      wh.setProperty("X-CSRF-Whitelist");
+      whitelist.setHeader(wh);
+      p.setWhitelist(whitelist);
+      return p;
+    }
+  }
+
+  @Autowired WebApplicationContext context;
+  @MockitoBean JwtDecoder jwtDecoder;
+  @MockitoBean ConsultantPictureStore store;
+  @MockitoBean ClamAvPictureScanner scanner;
+  @MockitoBean AuthenticatedUser caller;
+  @MockitoBean ConsultantRepository consultants;
+  @MockitoBean AdminUserFacade admins;
+  @MockitoBean ConsultantAgencyAdminService agencies;
+  MockMvc mvc;
+  final String id = "14c9b484-605f-44a3-8c36-cc11447e3a10";
+  byte[] png;
+
+  @BeforeEach
+  void setup() throws Exception {
+    mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+    png = PictureIntakeTest.png(2, 2);
+    var target = new Consultant();
+    target.setId(id);
+    target.setTenantId(1L);
+    when(consultants.findByIdAndDeleteDateIsNull(id)).thenReturn(Optional.of(target));
+    when(caller.getTenantId()).thenReturn(1L);
+    when(caller.getUserId()).thenReturn("caller");
+    when(caller.getGrantedAuthorities()).thenReturn(Set.of(USER_ADMIN, CONSULTANT_UPDATE));
+    when(store.read(id)).thenReturn(new ConsultantPicture(id, png, "image/png"));
+  }
+
+  MockHttpServletRequestBuilder csrf(MockHttpServletRequestBuilder request) {
+    return request
+        .cookie(new Cookie("CSRF-TOKEN", "synthetic"))
+        .header("X-CSRF-Token", "synthetic");
+  }
+
+  MockHttpServletRequestBuilder admin(MockHttpServletRequestBuilder request) {
+    return csrf(request)
+        .with(
+            user("caller")
+                .authorities(
+                    new SimpleGrantedAuthority(USER_ADMIN),
+                    new SimpleGrantedAuthority(CONSULTANT_UPDATE)));
+  }
+
+  String path(String prefix) {
+    return prefix + "/useradmin/consultants/" + id + "/picture";
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"", "/service"})
+  void anonymousAndAskersCannotReadOrMutate(String prefix) throws Exception {
+    for (var request :
+        List.of(
+            get(path(prefix)),
+            put(path(prefix)).content(png).contentType("image/png"),
+            delete(path(prefix)))) {
+      mvc.perform(csrf(request)).andExpect(status().isUnauthorized());
+    }
+    for (var request :
+        List.of(
+            get(path(prefix)),
+            put(path(prefix)).content(png).contentType("image/png"),
+            delete(path(prefix)))) {
+      mvc.perform(
+              csrf(request)
+                  .with(user("asker").authorities(new SimpleGrantedAuthority(USER_DEFAULT))))
+          .andExpect(status().isForbidden());
+    }
+    verifyNoInteractions(store, scanner, consultants);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"", "/service"})
+  void colleagueCanReadPrivateBytesButCannotChangeThem(String prefix) throws Exception {
+    when(caller.getGrantedAuthorities()).thenReturn(Set.of(CONSULTANT_DEFAULT));
+    mvc.perform(
+            get(path(prefix))
+                .with(
+                    user("colleague").authorities(new SimpleGrantedAuthority(CONSULTANT_DEFAULT))))
+        .andExpect(status().isOk())
+        .andExpect(content().bytes(png))
+        .andExpect(content().contentType("image/png"))
+        .andExpect(header().string("Cache-Control", "no-store, private"))
+        .andExpect(header().string("X-Content-Type-Options", "nosniff"));
+    mvc.perform(
+            csrf(put(path(prefix)).content(png).contentType("image/png"))
+                .with(
+                    user("colleague").authorities(new SimpleGrantedAuthority(CONSULTANT_DEFAULT))))
+        .andExpect(status().isForbidden());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"", "/service"})
+  void wrongTenantAndRestrictedAgencyRefuseBeforeScan(String prefix) throws Exception {
+    when(caller.getTenantId()).thenReturn(2L);
+    mvc.perform(admin(put(path(prefix)).contentType("image/png").content(png)))
+        .andExpect(status().isForbidden());
+    mvc.perform(admin(get(path(prefix)))).andExpect(status().isForbidden());
+    when(caller.getTenantId()).thenReturn(1L);
+    when(caller.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(admins.findAdminUserAgencyIds("caller")).thenReturn(List.of(1L));
+    when(agencies.findConsultantAgencyIds(id)).thenReturn(List.of(2L));
+    mvc.perform(admin(put(path(prefix)).contentType("image/png").content(png)))
+        .andExpect(status().isForbidden());
+    mvc.perform(admin(delete(path(prefix)))).andExpect(status().isForbidden());
+    verifyNoInteractions(scanner, store);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"", "/service"})
+  void adminCanUploadReadAndRemoveAndGetsSanitizedFailures(String prefix) throws Exception {
+    mvc.perform(admin(put(path(prefix)).contentType("image/png").content(png)))
+        .andExpect(status().isNoContent());
+    verify(scanner).scan(png);
+    verify(store).replace(id, png, "image/png");
+    mvc.perform(admin(get(path(prefix))))
+        .andExpect(status().isOk())
+        .andExpect(content().bytes(png));
+    mvc.perform(admin(delete(path(prefix)))).andExpect(status().isNoContent());
+    verify(store).remove(id);
+    doThrow(PictureException.unavailable()).when(scanner).scan(any());
+    mvc.perform(admin(put(path(prefix)).contentType("image/png").content(png)))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.reason").value("PICTURE_SCAN_UNAVAILABLE"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"", "/service"})
+  void invalidOversizeUnsupportedAndRejectedImagesHaveClearErrors(String prefix) throws Exception {
+    mvc.perform(admin(put(path(prefix)).contentType("image/png").content(new byte[0])))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.reason").value("PICTURE_INVALID_IMAGE"));
+    mvc.perform(
+            admin(
+                put(path(prefix))
+                    .contentType("image/png")
+                    .content(new byte[PictureIntake.MAX_BYTES + 1])))
+        .andExpect(status().isPayloadTooLarge())
+        .andExpect(jsonPath("$.reason").value("PICTURE_TOO_LARGE"));
+    mvc.perform(admin(put(path(prefix)).contentType("image/svg+xml").content("<svg/>")))
+        .andExpect(status().isUnsupportedMediaType())
+        .andExpect(jsonPath("$.reason").value("PICTURE_UNSUPPORTED_TYPE"));
+    doThrow(PictureException.rejected()).when(scanner).scan(any());
+    mvc.perform(admin(put(path(prefix)).contentType("image/png").content(png)))
+        .andExpect(status().isUnprocessableEntity())
+        .andExpect(jsonPath("$.reason").value("PICTURE_REJECTED"));
+    verifyNoInteractions(store);
+  }
+}

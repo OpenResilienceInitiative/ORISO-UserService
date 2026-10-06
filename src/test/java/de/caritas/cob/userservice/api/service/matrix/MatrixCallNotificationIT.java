@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -41,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
   EventNotificationService.class,
+  ConsultantDisplayNameResolver.class,
   EventNotificationDeduplicationWriter.class,
   MatrixCallBindingService.class,
   MatrixCallLifecycleService.class,
@@ -401,7 +403,11 @@ class MatrixCallNotificationIT {
                     consultants,
                     notificationService,
                     callBindings,
-                    lifecycle));
+                    lifecycle),
+                mock(
+                    de.caritas.cob.userservice.api.service.notification
+                        .AdviceSeekerReplyEmailService.class),
+                freshEmailCursor());
     var listener = fresh.get();
     try {
       listener.initialize();
@@ -677,7 +683,11 @@ class MatrixCallNotificationIT {
                     consultants,
                     notificationService,
                     callBindings,
-                    lifecycle));
+                    lifecycle),
+                mock(
+                    de.caritas.cob.userservice.api.service.notification
+                        .AdviceSeekerReplyEmailService.class),
+                freshEmailCursor());
     var listener = freshListener.get();
     try {
       listener.initialize();
@@ -862,6 +872,13 @@ class MatrixCallNotificationIT {
     return event;
   }
 
+  private MatrixEmailSyncCursorStore freshEmailCursor() {
+    var cursor = mock(MatrixEmailSyncCursorStore.class);
+    when(cursor.readOrCreateActivation())
+        .thenReturn(new MatrixEmailSyncCursorStore.Start(null, 0L));
+    return cursor;
+  }
+
   private MatrixEventListenerService fastRetryListener() {
     return new MatrixEventListenerService(
         matrix,
@@ -880,7 +897,11 @@ class MatrixCallNotificationIT {
             consultants,
             notificationService,
             callBindings,
-            lifecycle)) {
+            lifecycle),
+        mock(
+            de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
+                .class),
+        freshEmailCursor()) {
       @Override
       void sleep(long millis) throws InterruptedException {
         super.sleep(Math.min(millis, 10));
@@ -1120,7 +1141,11 @@ class MatrixCallNotificationIT {
                     consultants,
                     notificationService,
                     callBindings,
-                    lifecycle));
+                    lifecycle),
+                mock(
+                    de.caritas.cob.userservice.api.service.notification
+                        .AdviceSeekerReplyEmailService.class),
+                freshEmailCursor());
     var listener = newListener.get();
     try {
       listener.initialize();

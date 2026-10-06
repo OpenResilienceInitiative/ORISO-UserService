@@ -17,10 +17,20 @@ import org.springframework.data.repository.query.Param;
 public interface ConsultantRepository
     extends JpaRepository<Consultant, String>, JpaSpecificationExecutor<Consultant> {
 
+  @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+  @Query("select c from Consultant c where c.id = :id")
+  Optional<Consultant> findPictureOwnerForUpdate(@Param("id") String id);
+
+  @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+  @Query("select c from Consultant c where c.id = :id and c.deleteDate is null")
+  Optional<Consultant> findActiveByIdForUpdate(@Param("id") String id);
+
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
   Optional<Consultant> findByIdAndDeleteDateIsNull(String id);
 
   Optional<Consultant> findByEmailAndDeleteDateIsNull(String email);
+
+  List<Consultant> findAllByEmailAndDeleteDateIsNull(String email);
 
   Optional<Consultant> findByUsernameAndDeleteDateIsNull(String username);
 
@@ -32,6 +42,28 @@ public interface ConsultantRepository
   boolean existsByPendingPublicSlugAndIdNotAndDeleteDateIsNull(String pendingPublicSlug, String id);
 
   Optional<Consultant> findByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
+
+  /**
+   * Every consultant row referencing the given chat (Matrix) identity, <em>including soft-deleted
+   * ones</em>. Uniqueness here is by username, so a soft-deleted consultant keeps owning their chat
+   * account while freeing the username — the repair has to see that row or it would adopt a
+   * colleague's rooms.
+   *
+   * @param matrixUserId the full Matrix user id
+   * @return the rows holding it, empty when it is free
+   */
+  List<Consultant> findByMatrixUserId(String matrixUserId);
+
+  /**
+   * Every active consultant that owns no chat (Matrix) identity. Such a record looks complete to an
+   * administrator but is refused by every counselling room operation.
+   *
+   * @return the consultants whose {@code matrixUserId} is null or blank
+   */
+  @Query(
+      "SELECT c FROM Consultant c WHERE c.deleteDate IS NULL "
+          + "AND (c.matrixUserId IS NULL OR TRIM(c.matrixUserId) = '')")
+  List<Consultant> findWithoutChatIdentity();
 
   List<Consultant> findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List<Long> agencyIds);
 
@@ -45,13 +77,17 @@ public interface ConsultantRepository
 
   List<Consultant> findAllByIdIn(List<String> ids);
 
+  @EntityGraph(attributePaths = "consultantAgencies")
+  @Query("SELECT DISTINCT consultant FROM Consultant consultant WHERE consultant.id IN :ids")
+  List<Consultant> findAllWithAgenciesByIdIn(@Param("ids") Collection<String> ids);
+
   @Query("SELECT c.id FROM Consultant c WHERE c.id IN :ids AND c.deleteDate IS NULL")
   Set<String> findActiveIdsByIdIn(@Param("ids") Collection<String> ids);
 
   @Query(
       value =
           "SELECT c.id as id, c.firstName as firstName, c.lastName as lastName, c.email as email, "
-              + "c.updateDate as updateDate "
+              + "c.updateDate as updateDate, COALESCE(c.updateDate, c.createDate) as lastUpdated "
               + "FROM Consultant c "
               + "WHERE "
               + "  c.deleteDate IS NULL "
@@ -73,7 +109,7 @@ public interface ConsultantRepository
   @Query(
       value =
           "SELECT distinct c.id as id, c.firstName as firstName, c.lastName as lastName, "
-              + "c.email as email, c.updateDate as updateDate "
+              + "c.email as email, c.updateDate as updateDate, COALESCE(c.updateDate, c.createDate) as lastUpdated "
               + "FROM Consultant c "
               + "INNER JOIN ConsultantAgency ca ON c.id = ca.consultant.id "
               + "WHERE "

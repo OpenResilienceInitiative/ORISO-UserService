@@ -13,9 +13,10 @@ import org.springframework.stereotype.Component;
  *   <li>{@code TENANT_ADMIN} → the PUBLIC ADMIN onboarding route. The tenant is an organisation,
  *       not an app user — the login belongs to the tenant admin and the flow completes on the Admin
  *       panel's public page ({@code /admin/tenant-onboarding/{token}}, Admin U8, #571).
- *   <li>{@code COUNSELLOR} → the PUBLIC ADMIN counsellor onboarding wizard ({@code
- *       /admin/counsellor-onboarding/{token}}, #997) — product decision 2026-08-12: counsellor
- *       onboarding runs step-by-step in the Admin SPA instead of the generic App acceptance page.
+ *   <li>{@code COUNSELLOR} and {@code AGENCY_ADMIN} → the PUBLIC ADMIN counsellor onboarding wizard
+ *       ({@code /admin/counsellor-onboarding/{token}}, #997) — product decision 2026-08-12:
+ *       counsellor onboarding runs step-by-step in the Admin SPA instead of the generic App
+ *       acceptance page.
  *   <li>all other roles (advice seekers, …) → the public App accept route ({@code
  *       /account-invite/{token}}).
  * </ul>
@@ -35,13 +36,17 @@ public class InviteAcceptUrlBuilder {
   private final String appFrontendBaseUrl;
   private final String adminFrontendBaseUrl;
 
+  /**
+   * Both origins are required and have no fallback: a guessed host mails people into the wrong
+   * environment (ORISO-Helm#368). {@link
+   * de.caritas.cob.userservice.api.config.PublicUrlStartupValidator} checks their shape at startup.
+   */
   public InviteAcceptUrlBuilder(
-      @Value("${account.invite.app.frontend.base-url:https://app.oriso.org}")
-          String appFrontendBaseUrl,
-      @Value("${account.invite.admin.frontend.base-url:https://app.oriso.org}")
-          String adminFrontendBaseUrl) {
-    this.appFrontendBaseUrl = normalize(appFrontendBaseUrl, "https://app.oriso.org");
-    this.adminFrontendBaseUrl = normalize(adminFrontendBaseUrl, "https://app.oriso.org");
+      @Value("${account.invite.app.frontend.base-url}") String appFrontendBaseUrl,
+      @Value("${account.invite.admin.frontend.base-url}") String adminFrontendBaseUrl) {
+    this.appFrontendBaseUrl = normalize(appFrontendBaseUrl, "ACCOUNT_INVITE_APP_FRONTEND_BASE_URL");
+    this.adminFrontendBaseUrl =
+        normalize(adminFrontendBaseUrl, "ACCOUNT_INVITE_ADMIN_FRONTEND_BASE_URL");
   }
 
   /** Builds the absolute accept URL for the given role's public frontend route. */
@@ -49,14 +54,19 @@ public class InviteAcceptUrlBuilder {
     if (targetRole == AccountInviteTargetRole.TENANT_ADMIN) {
       return adminFrontendBaseUrl + ADMIN_TENANT_ONBOARDING_PATH + "/" + rawToken;
     }
-    if (targetRole == AccountInviteTargetRole.COUNSELLOR) {
+    if (targetRole == AccountInviteTargetRole.COUNSELLOR
+        || targetRole == AccountInviteTargetRole.AGENCY_ADMIN) {
+      // Agency admins run the same wizard; its resolve answer carries the role.
       return adminFrontendBaseUrl + ADMIN_COUNSELLOR_ONBOARDING_PATH + "/" + rawToken;
     }
     return appFrontendBaseUrl + APP_ACCEPT_PATH + "/" + rawToken;
   }
 
-  private static String normalize(String baseUrl, String fallback) {
-    String base = isBlank(baseUrl) ? fallback : baseUrl.trim();
+  private static String normalize(String baseUrl, String envVar) {
+    if (isBlank(baseUrl)) {
+      throw new IllegalStateException("invite accept link origin must be set (" + envVar + ")");
+    }
+    String base = baseUrl.trim();
     while (base.endsWith("/")) {
       base = base.substring(0, base.length() - 1);
     }

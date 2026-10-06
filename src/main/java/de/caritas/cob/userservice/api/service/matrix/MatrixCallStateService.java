@@ -47,7 +47,7 @@ public class MatrixCallStateService {
     if (matrixId.isEmpty()
         || matrixId.get().isBlank()
         || !matrix
-            .getRoomMembers(sourceRoomId)
+            .getCallRoomMembers(sourceRoomId)
             .map(members -> members.contains(matrixId.get()))
             .orElse(false)) {
       return Optional.empty();

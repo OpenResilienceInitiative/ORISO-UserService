@@ -191,6 +191,8 @@ class SessionServiceTest {
           null,
           null,
           null,
+          null,
+          null,
           null);
 
   @InjectMocks private SessionService sessionService;
@@ -369,6 +371,35 @@ class SessionServiceTest {
     assertThat(
         sessionService.getSessionsForUserId(USER_ID),
         everyItem(instanceOf(UserSessionResponseDTO.class)));
+  }
+
+  @Test
+  void getSessionsForUserId_Should_CarryTheConsultantsChosenAvatar() {
+    // #1047: the advice seeker's session payload has to name the avatar the counsellor chose.
+    Consultant withAvatar = ACCEPTED_SESSION.getConsultant();
+    withAvatar.setAvatarKind(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON);
+    withAvatar.setAvatarId("motif-24");
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(List.of(ACCEPTED_SESSION));
+    when(agencyService.getAgencies(any())).thenReturn(AGENCY_DTO_LIST);
+
+    var result = sessionService.getSessionsForUserId(USER_ID);
+
+    assertEquals("ICON", result.get(0).getConsultant().getAvatarKind());
+    assertEquals("motif-24", result.get(0).getConsultant().getAvatarId());
+  }
+
+  @Test
+  void getSessionsForUserId_Should_LeaveTheAvatarNull_When_TheConsultantMadeNoChoice() {
+    Consultant withoutAvatar = ACCEPTED_SESSION.getConsultant();
+    withoutAvatar.setAvatarKind(null);
+    withoutAvatar.setAvatarId(null);
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(List.of(ACCEPTED_SESSION));
+    when(agencyService.getAgencies(any())).thenReturn(AGENCY_DTO_LIST);
+
+    var result = sessionService.getSessionsForUserId(USER_ID);
+
+    assertNull(result.get(0).getConsultant().getAvatarKind());
+    assertNull(result.get(0).getConsultant().getAvatarId());
   }
 
   @Test

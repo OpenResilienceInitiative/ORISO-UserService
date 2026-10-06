@@ -109,7 +109,7 @@ class AgencyMembershipSyncListenerTest {
     underTest.onConsultantLeftAgency(new ConsultantLeftAgencyEvent(CONSULTANT_ID, AGENCY_ID));
 
     verify(agencyLateJoinerMembershipService)
-        .removeConsultantFromOpenEnquiryRooms(consultant, AGENCY_ID);
+        .removeConsultantFromAgencyRooms(consultant, AGENCY_ID);
   }
 
   @Test
@@ -119,7 +119,7 @@ class AgencyMembershipSyncListenerTest {
         .thenReturn(Optional.of(consultant));
     doThrow(new RuntimeException("synapse is down"))
         .when(agencyLateJoinerMembershipService)
-        .removeConsultantFromOpenEnquiryRooms(any(), anyLong());
+        .removeConsultantFromAgencyRooms(any(), anyLong());
 
     assertDoesNotThrow(
         () ->
