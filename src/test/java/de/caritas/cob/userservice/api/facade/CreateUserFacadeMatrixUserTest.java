@@ -81,7 +81,8 @@ class CreateUserFacadeMatrixUserTest {
             provisioningCompensator,
             tenantService,
             agencyService,
-            applicationSettingsService);
+            applicationSettingsService,
+            groupInviteRegistration);
     org.mockito.Mockito.lenient()
         .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
@@ -120,6 +121,7 @@ class CreateUserFacadeMatrixUserTest {
   @Mock private SessionService sessionService;
   @Mock private ApplicationSettingsService applicationSettingsService;
   @Mock private WelcomeEmailService welcomeEmailService;
+  @Mock private GroupInviteRegistration groupInviteRegistration;
 
   @Spy
   private ProvisioningCompensator provisioningCompensator =
