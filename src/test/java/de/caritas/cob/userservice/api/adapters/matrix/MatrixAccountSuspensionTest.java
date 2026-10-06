@@ -36,7 +36,14 @@ class MatrixAccountSuspensionTest {
         .expect(requestTo(org.hamcrest.Matchers.containsString("/_synapse/admin/v2/users/")))
         .andExpect(method(HttpMethod.GET))
         .andRespond(withSuccess("{\"locked\":true}", MediaType.APPLICATION_JSON));
-    var service = new MatrixSynapseService(config, transport, transport, null, null);
+    var service =
+        new MatrixSynapseService(
+            config,
+            transport,
+            transport,
+            null,
+            null,
+            MatrixIdentifierRedactor.withKey("test-only-redaction-key"));
     assertThat(service.setAccountSuspended("@person:matrix.example", true)).isTrue();
     server.verify();
   }

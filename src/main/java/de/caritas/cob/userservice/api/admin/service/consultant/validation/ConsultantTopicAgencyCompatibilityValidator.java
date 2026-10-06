@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.admin.service.consultant.validation;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyTopicsDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -12,8 +13,11 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -29,14 +33,102 @@ public class ConsultantTopicAgencyCompatibilityValidator {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
 
-  public void validateGrantTopicsAgainstSelectedAgencies(
+  /**
+   * @return the topics per selected centre (#1264): each topic is stored for every selected centre
+   *     that offers it
+   */
+  public Map<Long, Set<Long>> validateGrantTopicsAgainstSelectedAgencies(
       Collection<Long> topicIds, Collection<Long> agencyIds, Long tenantId) {
-    validateTopicsCoveredByAgencies(topicIds, agencyIds, tenantId);
+    var agencies = validateTopicsCoveredByAgencies(topicIds, agencyIds, tenantId);
+    return distributeOverOfferingAgencies(topicIds, agencies);
   }
 
   public void validateTopicUpdateAgainstAssignedAgencies(
       String consultantId, Collection<Long> topicIds, Long tenantId) {
     validateTopicsCoveredByAgencies(topicIds, assignedAgencyIdsOf(consultantId), tenantId);
+  }
+
+  /**
+   * Validates an admin topic update and returns the target topics per counselling centre (#1264),
+   * or {@code null} when the request leaves topics untouched.
+   *
+   * <p>{@code topicsByAgency} wins when it is non-empty: each centre must be assigned to the
+   * consultant and must offer every topic listed for it. Otherwise the flat {@code topicIds} are
+   * stored for every assigned centre that offers them, so existing clients keep their behaviour.
+   */
+  public Map<Long, Set<Long>> resolveTopicUpdate(
+      String consultantId,
+      Collection<Long> topicIds,
+      List<ConsultantAgencyTopicsDTO> topicsByAgency,
+      Long tenantId) {
+    var assignedAgencyIds = assignedAgencyIdsOf(consultantId);
+    // The generated DTO defaults an absent list to [], so an empty list counts as "not sent".
+    if (topicsByAgency != null && !topicsByAgency.isEmpty()) {
+      return resolvePerAgency(topicsByAgency, assignedAgencyIds, tenantId);
+    }
+    var agencies = validateTopicsCoveredByAgencies(topicIds, assignedAgencyIds, tenantId);
+    if (topicIds == null) {
+      return null;
+    }
+    return distributeOverOfferingAgencies(topicIds, agencies);
+  }
+
+  private Map<Long, Set<Long>> distributeOverOfferingAgencies(
+      Collection<Long> topicIds, List<AgencyDTO> agencies) {
+    var selectedTopicIds = Set.copyOf(normalizedIds(topicIds));
+    Map<Long, Set<Long>> target = new TreeMap<>();
+    agencies.forEach(
+        agency -> {
+          var offered = agency.getTopicIds() == null ? List.<Long>of() : agency.getTopicIds();
+          var topics =
+              offered.stream()
+                  .filter(selectedTopicIds::contains)
+                  .collect(Collectors.toCollection(TreeSet::new));
+          if (!topics.isEmpty()) {
+            target.put(agency.getId(), topics);
+          }
+        });
+    return target;
+  }
+
+  private Map<Long, Set<Long>> resolvePerAgency(
+      List<ConsultantAgencyTopicsDTO> topicsByAgency, List<Long> assignedAgencyIds, Long tenantId) {
+    Map<Long, Set<Long>> target = new TreeMap<>();
+    for (var entry : topicsByAgency) {
+      if (entry == null || entry.getAgencyId() == null) {
+        throw new BadRequestException("topicsByAgency entries need an agencyId");
+      }
+      target
+          .computeIfAbsent(entry.getAgencyId(), id -> new TreeSet<>())
+          .addAll(normalizedIds(entry.getTopicIds()));
+    }
+    var unassigned =
+        target.keySet().stream().filter(id -> !assignedAgencyIds.contains(id)).toList();
+    if (!unassigned.isEmpty()) {
+      throw new BadRequestException(
+          String.format("Agency ids %s are not assigned to the consultant", unassigned));
+    }
+    if (target.isEmpty()) {
+      return target;
+    }
+    var agencyIds = List.copyOf(target.keySet());
+    var agencies = agenciesFor(agencyIds);
+    assertAllSelectedAgenciesResolved(agencyIds, agencies);
+    assertAgenciesBelongToTenant(agencies, tenantId);
+    agencies.forEach(
+        agency -> {
+          var offered = agency.getTopicIds() == null ? List.<Long>of() : agency.getTopicIds();
+          var uncovered =
+              target.get(agency.getId()).stream().filter(id -> !offered.contains(id)).toList();
+          if (!uncovered.isEmpty()) {
+            throw new BadRequestException(
+                String.format(
+                    "Consultant topic ids %s are not offered by agency %s (coverage: %s)",
+                    uncovered, agency.getId(), offered));
+          }
+        });
+    target.values().removeIf(Set::isEmpty);
+    return target;
   }
 
   public void validateCurrentTopicsAgainstSelectedAgencies(
@@ -64,13 +156,13 @@ public class ConsultantTopicAgencyCompatibilityValidator {
         tenantId);
   }
 
-  private void validateTopicsCoveredByAgencies(
+  private List<AgencyDTO> validateTopicsCoveredByAgencies(
       Collection<Long> topicIds, Collection<Long> agencyIds, Long tenantId) {
     var selectedTopicIds = normalizedIds(topicIds);
     var selectedAgencyIds = normalizedIds(agencyIds);
     if (selectedAgencyIds.isEmpty()) {
       if (selectedTopicIds.isEmpty()) {
-        return;
+        return List.of();
       }
       throw new BadRequestException(
           String.format(
@@ -82,7 +174,7 @@ public class ConsultantTopicAgencyCompatibilityValidator {
     assertAgenciesBelongToTenant(agencies, tenantId);
 
     if (selectedTopicIds.isEmpty()) {
-      return;
+      return agencies;
     }
 
     // Offline agencies count towards topic coverage on purpose: a freshly created agency is
@@ -107,6 +199,7 @@ public class ConsultantTopicAgencyCompatibilityValidator {
               "Consultant topic ids %s are not covered by selected/assigned agencies %s (coverage: %s)",
               uncoveredTopicIds, selectedAgencyIds, describeCoverage(agencies)));
     }
+    return agencies;
   }
 
   /**

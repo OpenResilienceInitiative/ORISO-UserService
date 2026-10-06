@@ -71,7 +71,15 @@ class InactiveAskerDeletionTest {
       config.setAdminUsername("admin");
       config.setAdminPassword("test-only");
       var transport = new RestTemplate();
-      var matrix = new MatrixSynapseService(config, transport, transport, null, null);
+      var matrix =
+          new MatrixSynapseService(
+              config,
+              transport,
+              transport,
+              null,
+              null,
+              org.mockito.Mockito.mock(
+                  de.caritas.cob.userservice.api.adapters.matrix.MatrixIdentifierRedactor.class));
       context
           .getBeanFactory()
           .registerSingleton("matrixDeletion", new DeleteMatrixAskerAction(matrix, sessions));
@@ -137,7 +145,15 @@ class InactiveAskerDeletionTest {
           .expect(requestTo(org.hamcrest.Matchers.containsString("/_synapse/admin/v1/deactivate/")))
           .andRespond(withServerError());
     }
-    var matrix = new MatrixSynapseService(config, transport, transport, null, null);
+    var matrix =
+        new MatrixSynapseService(
+            config,
+            transport,
+            transport,
+            null,
+            null,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.adapters.matrix.MatrixIdentifierRedactor.class));
     try (var context = new StaticApplicationContext()) {
       context
           .getBeanFactory()

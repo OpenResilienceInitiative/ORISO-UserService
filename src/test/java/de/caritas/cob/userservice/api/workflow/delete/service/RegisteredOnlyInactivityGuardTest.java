@@ -46,12 +46,16 @@ class RegisteredOnlyInactivityGuardTest {
     session.setCreateDate(LocalDateTime.now().minusYears(3));
     sessions.save(session);
     entityManager.flush();
+    var jdbc = new JdbcTemplate(dataSource);
+    jdbc.update(
+        "UPDATE user SET create_date=? WHERE user_id=?",
+        java.sql.Timestamp.valueOf(LocalDateTime.now().minusYears(3)),
+        user.getUserId());
     assertThat(
             users.findAllByDeleteDateNullAndNoRunningSessionsAndCreateDateOlderThan(
                 LocalDateTime.now().minusDays(30)))
         .extracting(User::getUserId)
         .contains(user.getUserId());
-    var jdbc = new JdbcTemplate(dataSource);
     jdbc.update(
         "INSERT INTO account_inactivity(identity_id,assigned_months,revision,last_activity,due_at,status)"
             + " VALUES (?,24,0,CURRENT_TIMESTAMP,DATEADD('MONTH',24,CURRENT_TIMESTAMP),'ACTIVE')",
@@ -84,7 +88,12 @@ class RegisteredOnlyInactivityGuardTest {
                 auth));
     var mail =
         new WorkflowErrorMailService(
-            new MailService(headers, new MailServiceApiControllerFactory()), templates);
+            new MailService(
+                headers,
+                new MailServiceApiControllerFactory(),
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.email.NotificationMailSender.class)),
+            templates);
     try (var context = new StaticApplicationContext()) {
       // Real registry is intentionally empty: crossing into the legacy deletion workflow fails
       // before external effects. Enrolled accounts must never enter that pipeline in either mode.

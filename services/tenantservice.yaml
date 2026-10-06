@@ -529,7 +529,7 @@ paths:
         '500':
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
   /tenant/public/dpa/confirm/{token}:
-    summary: Public confirmation (signature) of a tenant Data Processing Agreement
+    summary: 'Public confirmation (signature) of a tenant Data Processing Agreement'
     get:
       tags:
         - tenant-controller
@@ -543,15 +543,15 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        200:
           description: Successful operation
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DpaSignPreviewDTO'
-        '410':
+        410:
           description: GONE - token unknown, already used, expired, or its contract version is missing
-        '500':
+        500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
     post:
       tags:
@@ -572,24 +572,33 @@ paths:
             schema:
               $ref: '#/components/schemas/DpaSignatureRequestDTO'
       responses:
-        '200':
+        200:
           description: Successful operation
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DpaSignatureDTO'
-        '400':
+        400:
           description: BAD REQUEST - invalid/incomplete request or body object
-        '410':
+        410:
           description: GONE - token unknown, already used, or expired
-        '500':
+        500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
   /tenant/public/dpa/forward:
-    summary: Create a DPA sign link from the public tenant onboarding context
+    summary: 'Create a DPA sign link from the public tenant onboarding context'
+    description: 'Forward path for the tenant onboarding wizard (ORISO-TenantService#179): an
+      administrator who is not authorised to sign can create a single-use sign link BEFORE the
+      registration completes. The call is authorised by the onboarding context itself - the
+      tenant-ID reservation pair (reserved tenant id + reservation token) issued for the invite -
+      instead of a user session. The resulting PENDING signature is bound to the reserved tenant
+      id, so the signature lands on the tenant once it exists; the link works immediately, before
+      and after the registration finishes. The signed version is the operator DPA governing a
+      tenant without an own published DPA.'
     post:
       tags:
         - tenant-controller
-      summary: 'Creates a single-use DPA sign link for a reserved tenant [Authorization: no-auth, tenant-ID reservation token]'
+      summary: 'Creates a single-use DPA sign link for a reserved tenant [Authorization: no-auth,
+        tenant-ID reservation token]'
       operationId: createPublicDpaForwardInvite
       requestBody:
         required: true
@@ -598,22 +607,27 @@ paths:
             schema:
               $ref: '#/components/schemas/PublicDpaForwardRequestDTO'
       responses:
-        '200':
+        200:
           description: Successful operation
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DpaSignInviteDTO'
-        '400':
+        400:
           description: BAD REQUEST - invalid/incomplete request or body object
-        '409':
+        409:
           description: CONFLICT - no data processing agreement is published to sign yet
-        '410':
-          description: GONE - unknown reservation, reservation token mismatch, or the reservation was released
-        '500':
+        410:
+          description: GONE - unknown reservation, reservation token mismatch, a reservation
+            already consumed by registration, or a released one; no information about the
+            reservation state is leaked
+        429:
+          description: TOO MANY REQUESTS - too many unexpired sign links are already outstanding
+            for this onboarding; existing links stay valid, so wait for one to be used or expire
+        500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
   /tenantadmin/{id}/dpa/signatures:
-    summary: Confirmed DPA signatures of a tenant (audit list)
+    summary: 'Confirmed DPA signatures of a tenant (audit list)'
     get:
       tags:
         - tenant-controller
@@ -628,7 +642,7 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        200:
           description: Successful operation
           content:
             application/json:
@@ -636,16 +650,20 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/DpaSignatureDTO'
-        '403':
+        403:
           description: FORBIDDEN - not authorized to access this tenant
-        '500':
+        500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
   /tenantadmin/{id}/dpa/gate:
-    summary: DPA legal-gate status of a tenant
+    summary: 'DPA legal-gate status of a tenant'
+    description: 'Boolean projection of the authoritative DPA status (/dpa/status): dpaPublished
+      means a DPA is in force for the tenant (its own or the governing operator DPA), dpaSigned
+      means that exact version is signed - by an authenticated tenant admin in-app or by the
+      authorised signer through a forwarded invite.'
     get:
       tags:
         - tenant-controller
-      summary: 'Whether the tenant DPA is published and signed [Authorization: Authority.GET_TENANT]'
+      summary: 'Whether a DPA is in force for the tenant and signed [Authorization: Authority.GET_TENANT]'
       operationId: getDataProcessingAgreementGate
       parameters:
         - name: id
@@ -656,18 +674,22 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        200:
           description: Successful operation
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DpaGateStatusDTO'
-        '403':
+        403:
           description: FORBIDDEN - not authorized to access this tenant
-        '500':
+        500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
   /tenantadmin/{id}/dpa/invite:
-    summary: Create a single-use DPA sign invite (link) for a tenant
+    summary: 'Create a single-use DPA sign invite (link) for a tenant'
+    description: 'Forwarding path of the SAME single agreement: the natural person authorised to
+      sign for the tenant organisation need not be an app user. The invite covers the DPA version
+      in force for the tenant - its own published DPA, or the governing operator DPA - and the
+      resulting signature always belongs to this tenant.'
     post:
       tags:
         - tenant-controller
@@ -682,20 +704,21 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        200:
           description: Successful operation
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DpaSignInviteDTO'
-        '403':
+        403:
           description: FORBIDDEN - not authorized to access this tenant
-        '409':
+        409:
           description: CONFLICT - the tenant has no published DPA to sign yet
-        '500':
+        500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
   /tenantadmin/{id}/dpa:
-    summary: Publish a tenant Data Processing Agreement (multilingual)
+    summary: 'Publish a tenant Data Processing Agreement (multilingual)'
+    description: 'Legacy publication. After this document adopts deadline policy, use /dpa/v2; legacy writes return 409.'
     put:
       tags:
         - tenant-controller
@@ -711,7 +734,15 @@ paths:
             format: int64
       requestBody:
         required: true
-        description: 'Per-language DPA HTML content (language code -> HTML). Supports the machine-translation metadata convention: next to a translated language (e.g. "en") the map may carry a parallel "en__meta" key whose value is the strict JSON string {"mt":true,"src":"de","at":"<ISO-timestamp>"} marking the language as machine translated. Meta values are validated as strict JSON with only these fields and stored unsanitized; all other values are HTML-sanitized. When the HTML of a language is changed manually (i.e. the content changed but the resent meta is the previously stored one), the meta key for that language is removed - a manual edit clears the machine-translated tag.'
+        description: 'Per-language DPA HTML content (language code -> HTML). Supports the
+          machine-translation metadata convention: next to a translated language (e.g. "en") the
+          map may carry a parallel "en__meta" key whose value is the strict JSON string
+          {"mt":true,"src":"de","at":"<ISO-timestamp>"} marking the language as machine
+          translated. Meta values are validated as strict JSON with only these fields and stored
+          unsanitized; all other values are HTML-sanitized. When the HTML of a language is changed
+          manually (i.e. the content changed but the resent meta is the previously stored one),
+          the meta key for that language is removed - a manual edit clears the
+          machine-translated tag.'
         content:
           application/json:
             schema:
@@ -719,24 +750,32 @@ paths:
               additionalProperties:
                 type: string
       responses:
-        '200':
+        200:
           description: Successful operation
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DpaGateStatusDTO'
-        '403':
+        403:
           description: FORBIDDEN - not authorized to access this tenant
-        '404':
+        404:
           description: NOT FOUND - tenant does not exist
-        '500':
+        409:
+          description: CONFLICT - this document requires deadline-managed publication through /dpa/v2
+        500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
   /tenantadmin/{id}/dpa/versions:
-    summary: Published DPA versions of a tenant (newest first)
+    summary: 'Published versions of the DPA in force for a tenant (newest first)'
+    description: 'The tenant''s own publish history if it authored a DPA, otherwise the governing
+      operator DPA (tenant app.dpa.operator-tenant-id) it is measured against - the same document
+      the DPA status and the in-app signing path use, so a tenant always has the agreement it is
+      blocked on available to read. The content is the unchanged multilingual map; the caller
+      picks the language.'
     get:
       tags:
         - tenant-controller
-      summary: 'Lists the published DPA versions of a tenant [Authorization: Authority.GET_TENANT]'
+      summary: 'Lists the published versions of the DPA in force for a tenant
+        [Authorization: Authority.GET_TENANT]'
       operationId: getDataProcessingAgreementVersions
       parameters:
         - name: id
@@ -747,7 +786,7 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        200:
           description: Successful operation
           content:
             application/json:
@@ -755,9 +794,9 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/DpaVersionDTO'
-        '403':
+        403:
           description: FORBIDDEN - not authorized to access this tenant
-        '500':
+        500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
   /tenantadmin/media:
     post:
@@ -846,6 +885,166 @@ paths:
           description: BAD REQUEST - request must contain 1 to 100 tenant ids
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/{id}/dpa/v2:
+    summary: 'Publish a tenant Data Processing Agreement (multilingual)'
+    put:
+      tags:
+        - tenant-controller
+      summary: 'Publishes the tenant DPA text and stamps a new version [Authorization: Authority.UPDATE_TENANT]'
+      operationId: publishDataProcessingAgreementV2
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: signingDeadlineAt
+          in: query
+          required: true
+          description: 'Global signing deadline for this publication, including the first AVV.
+            Must be a future instant with an explicit offset. No default duration is applied.'
+          schema:
+            type: string
+      requestBody:
+        required: true
+        description: 'Per-language DPA HTML content (language code -> HTML). Supports the
+          machine-translation metadata convention: next to a translated language (e.g. "en") the
+          map may carry a parallel "en__meta" key whose value is the strict JSON string
+          {"mt":true,"src":"de","at":"<ISO-timestamp>"} marking the language as machine
+          translated. Meta values are validated as strict JSON with only these fields and stored
+          unsanitized; all other values are HTML-sanitized. When the HTML of a language is changed
+          manually (i.e. the content changed but the resent meta is the previously stored one),
+          the meta key for that language is removed - a manual edit clears the
+          machine-translated tag.'
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+      responses:
+        200:
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaGateStatusDTO'
+        400:
+          description: BAD REQUEST - missing, invalid or nonfuture signing deadline
+        403:
+          description: FORBIDDEN - not authorized to access this tenant
+        404:
+          description: NOT FOUND - tenant does not exist
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/{id}/dpa/status:
+    summary: 'Authoritative DPA status of a tenant for its authenticated tenant admins'
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Returns the authoritative DPA state (MISSING, UNSIGNED, OUTDATED, VALID,
+        INCONSISTENT) of a tenant [Authorization: Authority.GET_TENANT]'
+      operationId: getDataProcessingAgreementStatus
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaStatusDTO'
+        403:
+          description: FORBIDDEN - not authorized to access this tenant
+        404:
+          description: NOT FOUND - no tenant with the given id exists
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/{id}/dpa/sign:
+    summary: 'Sign the currently published DPA version as an authenticated tenant admin'
+    description: 'Legacy signing for documents without deadline policy. Deadline-managed documents require /dpa/v2/sign and an exact displayed version; legacy signing returns 409.'
+    post:
+      tags:
+        - tenant-controller
+      summary: 'Signs the current DPA version; persists signer identity, version, timestamp and
+        form data append-only. Idempotent for an already-VALID tenant.
+        [Authorization: Authority.UPDATE_TENANT]'
+      operationId: signDataProcessingAgreement
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DpaAdminSignRequestDTO'
+      responses:
+        200:
+          description: Successful operation - returns the resulting authoritative DPA status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaStatusDTO'
+        400:
+          description: BAD REQUEST - the agreement checkbox was not accepted
+        403:
+          description: FORBIDDEN - not authorized to access this tenant
+        409:
+          description: CONFLICT - no published DPA, or deadline-managed document requires /dpa/v2/sign
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/{id}/dpa/v2/sign:
+    summary: 'Sign the currently published DPA version as an authenticated tenant admin'
+    post:
+      tags:
+        - tenant-controller
+      summary: 'Signs the current DPA version; persists signer identity, version, timestamp and
+        form data append-only. Idempotent for an already-VALID tenant.
+        [Authorization: Authority.UPDATE_TENANT]'
+      operationId: signDataProcessingAgreementV2
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DpaVersionedAdminSignRequestDTO'
+      responses:
+        200:
+          description: Successful operation - returns the resulting authoritative DPA status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaStatusDTO'
+        400:
+          description: BAD REQUEST - missing or malformed displayed version, or agreement checkbox not accepted
+        403:
+          description: FORBIDDEN - not authorized to access this tenant
+        409:
+          description: CONFLICT - no published DPA or displayed version is outdated
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
 components:
   schemas:
     TranslationApiKeysDTO:
@@ -928,6 +1127,9 @@ components:
     DpaVersionDTO:
       type: object
       properties:
+        signingDeadlineAt:
+          type: string
+          description: 'UTC deadline of the governing publication. Absent on legacy snapshots.'
         activationDate:
           type: string
         content:
@@ -946,13 +1148,19 @@ components:
       required:
         - reservedTenantId
         - tenantIdReservationToken
+      description: 'Onboarding-context credential for the public DPA forward: the reservation
+        pair the tenant-admin onboarding invite carries (TenantIdReservationDTO). The raw
+        reservation token is validated against the authoritative tenant-ID ledger and never
+        persisted or logged by this endpoint.'
       properties:
         reservedTenantId:
           type: integer
           format: int64
+          example: 42
         tenantIdReservationToken:
           type: string
           maxLength: 36
+          example: "a81bc81b-dead-4e5d-abff-90865d1e13b1"
     DpaSignPreviewDTO:
       type: object
       required:
@@ -963,20 +1171,43 @@ components:
       properties:
         tenantName:
           type: string
+          description: 'Name of the tenant the signature belongs to. A sign link created from
+            the public onboarding context is bound to a reserved tenant id whose tenant row does
+            not exist yet; until the registration completes this carries the same neutral
+            placeholder the forward e-mail uses. Never null - the field stays required.'
         dpaVersion:
           type: string
         content:
           type: string
-          description: Sanitized multilingual DPA snapshot as JSON (language code -> HTML).
+          description: 'Sanitized multilingual DPA snapshot as JSON (language code -> HTML).'
         expiresAt:
           type: string
     DpaGateStatusDTO:
       type: object
       properties:
+        signingDeadlineAt:
+          type: string
+          description: 'UTC deadline of the governing publication. Absent on legacy snapshots.'
+        renewalGraceActive:
+          type: boolean
+          description: 'True only for a previously signed, outdated renewal before its deadline. Never grants initial unsigned access.'
+        dpaStatus:
+          type: string
+          description: 'Authoritative legal state, separate from renewal grace.'
+        currentDpaVersion:
+          type: string
+        newCounsellingAllowed:
+          type: boolean
+          description: 'Current signature or active renewal grace. Begun counselling continuation is evaluated separately by its owner.'
         dpaPublished:
           type: boolean
         dpaSigned:
           type: boolean
+        dpaForwardPending:
+          type: boolean
+          description: 'True while the governing DPA version is not signed but at least one
+            unexpired sign link is outstanding for the tenant - the contract is "on hold"
+            awaiting the authorised signer (status PENDING_FORWARDED).'
     DpaSignatureRequestDTO:
       type: object
       required:
@@ -990,28 +1221,36 @@ components:
         signerName:
           type: string
           maxLength: 255
-          example: Erika Mustermann
+          example: "Erika Mustermann"
         signerPosition:
           type: string
           maxLength: 255
-          example: Geschäftsführerin
+          example: "Geschäftsführerin"
         signerEmail:
           type: string
           maxLength: 255
           format: email
-          example: erika.mustermann@example.org
+          example: "erika.mustermann@example.org"
         signerOrganisation:
           type: string
           maxLength: 255
-          example: Caritas Beispiel e.V.
+          example: "Caritas Beispiel e.V."
         forwardedByUserId:
           type: string
           maxLength: 64
-          example: tenant-admin-1
+          example: "tenant-admin-1"
+          deprecated: true
+          description: 'Ignored since ORISO-TenantService#179: the forwarder identity is stamped
+            server-side when the sign link is created and can no longer be supplied by the
+            signing client.'
         source:
           type: string
           maxLength: 64
-          example: PUBLIC_SIGN_LINK
+          example: "FORWARDED_EXTERNAL"
+          deprecated: true
+          description: 'Ignored since ORISO-TenantService#179: the signature source is stamped
+            server-side when the sign link is created and can no longer be supplied by the
+            signing client.'
         signerIsMember:
           type: boolean
           example: false
@@ -1021,7 +1260,7 @@ components:
         language:
           type: string
           maxLength: 10
-          example: de
+          example: "de"
     DpaSignatureDTO:
       type: object
       properties:
@@ -1030,7 +1269,11 @@ components:
           format: int64
         status:
           type: string
-          example: SIGNED
+          example: "SIGNED"
+        dpaVersion:
+          type: string
+          description: Activation timestamp identifying the signed DPA version
+          example: "2026-07-01T12:00:00"
         signerName:
           type: string
         signerPosition:
@@ -1196,9 +1439,21 @@ components:
         primaryColor:
           type: string
           example: '#FFFFFF'
+        accent:
+          type: string
+          example: '#FFB3C7'
+          description: >-
+            The light accent of the tenant seed set. Read from TenantService (ORISO-UserService#1252),
+            not used for mail yet; may be null.
         secondaryColor:
           type: string
           example: '#FFFFFF'
+        signal:
+          type: string
+          example: '#D93025'
+          description: >-
+            Optional signal/attention colour of the tenant seed set. Read from TenantService
+            (ORISO-UserService#1252), not used for mail yet; may be null.
     Content:
       type: object
       required:
@@ -1842,3 +2097,95 @@ components:
         welcomeMessage:
           allOf:
             - $ref: '#/components/schemas/WelcomeMessageDTO'
+    DpaStatusDTO:
+      type: object
+      required:
+        - tenantId
+        - status
+      properties:
+        newCounsellingAllowed:
+          type: boolean
+          description: 'Current signature or active renewal grace. Route access for begun counselling and signing recovery is separate.'
+        signingDeadlineAt:
+          type: string
+          description: 'UTC deadline of the governing publication. Absent on legacy snapshots.'
+        renewalGraceActive:
+          type: boolean
+          description: 'True only for a previously signed, outdated renewal before its deadline. Never grants initial unsigned access.'
+        tenantId:
+          type: integer
+          format: int64
+          example: 7
+        status:
+          type: string
+          description: MISSING = no DPA ever published and nothing signed, UNSIGNED = published
+            but never signed, OUTDATED = only an older version is signed, VALID = the current
+            version is signed, INCONSISTENT = stored signature data contradicts the publish
+            history. The "forwarded, awaiting signature" case is NOT a status value - it is the
+            orthogonal forwardPending flag below, so existing consumers keep receiving the
+            values they already handle.
+          enum: [ MISSING, UNSIGNED, OUTDATED, VALID, INCONSISTENT ]
+        forwardPending:
+          type: boolean
+          description: 'True while the tenant is not validly signed AND at least one unexpired
+            sign link is outstanding - the contract is "on hold" awaiting the authorised signer.
+            Never true for VALID, MISSING or INCONSISTENT.'
+          example: false
+        currentDpaVersion:
+          type: string
+          description: Activation timestamp of the currently published DPA version, if any
+          example: "2026-07-01T12:00:00"
+        signedDpaVersion:
+          type: string
+          description: Newest DPA version a signature exists for, if any
+          example: "2026-05-01T10:00:00"
+        signedAt:
+          type: string
+          description: Timestamp of the signature covering the newest signed version
+          example: "2026-05-02T09:30:00"
+        signedBy:
+          type: string
+          description: Display name of the signer of the newest signed version
+          example: "Toni Tenantadmin"
+    DpaAdminSignRequestDTO:
+      type: object
+      required:
+        - signerName
+        - accepted
+      properties:
+        signerName:
+          type: string
+          maxLength: 255
+          example: "Toni Tenantadmin"
+        signerPosition:
+          type: string
+          maxLength: 255
+          example: "Geschäftsführung"
+        signerEmail:
+          type: string
+          maxLength: 255
+          format: email
+          example: "toni@example.org"
+        signerOrganisation:
+          type: string
+          maxLength: 255
+          example: "Träger Nord e.V."
+        accepted:
+          type: boolean
+          description: Must be true - the signer explicitly accepted the current DPA version
+          example: true
+        language:
+          type: string
+          maxLength: 10
+          example: "de"
+    DpaVersionedAdminSignRequestDTO:
+      allOf:
+        - $ref: '#/components/schemas/DpaAdminSignRequestDTO'
+        - type: object
+          required:
+            - dpaVersion
+          properties:
+            dpaVersion:
+              type: string
+              maxLength: 40
+              description: 'Exact activationDate/currentDpaVersion of the contract displayed to the signer. Missing/malformed input is rejected; an outdated displayed version returns 409 without signing the unseen renewal.'

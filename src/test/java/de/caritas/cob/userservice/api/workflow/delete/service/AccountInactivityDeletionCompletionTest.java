@@ -213,7 +213,14 @@ class AccountInactivityDeletionCompletionTest {
                 new de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient(
                     transport, kc, kcConfig),
                 new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService(
-                    matrixConfig, transport, transport, null, null),
+                    matrixConfig,
+                    transport,
+                    transport,
+                    null,
+                    null,
+                    org.mockito.Mockito.mock(
+                        de.caritas.cob.userservice.api.adapters.matrix.MatrixIdentifierRedactor
+                            .class)),
                 new AccountInactivityMediaClient(
                     transport, true, url, "test-only-media-lifecycle-secret-32"),
                 context.getBeanProvider(InactiveAskerDeletionService.class));

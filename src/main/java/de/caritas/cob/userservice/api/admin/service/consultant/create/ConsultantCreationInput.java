@@ -4,6 +4,8 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /** Definition for required input data used to create a new consultant. */
 interface ConsultantCreationInput {
@@ -19,6 +21,22 @@ interface ConsultantCreationInput {
   String getLastName();
 
   String getEmail();
+
+  /**
+   * Whether the created counsellor must establish a second factor before using the account.
+   * Defaults to false so a creation path has to opt in; the bulk import keeps that default.
+   */
+  default boolean isTwoFactorRequired() {
+    return false;
+  }
+
+  /**
+   * Whether the created counsellor must replace their password before using the account. Defaults
+   * to false so a creation path has to opt in; the bulk import keeps that default.
+   */
+  default boolean isPasswordChangeRequired() {
+    return false;
+  }
 
   default String getPublicSlug() {
     return null;
@@ -91,6 +109,11 @@ interface ConsultantCreationInput {
   }
 
   default List<Long> getAgencyIds() {
+    return null;
+  }
+
+  /** Topics per selected centre (#1264); null when the flow selected no centre. */
+  default Map<Long, Set<Long>> getTopicIdsByAgencyId() {
     return null;
   }
 }

@@ -5,6 +5,8 @@ import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
@@ -16,6 +18,18 @@ import lombok.RequiredArgsConstructor;
 public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreationInput {
 
   private final @NonNull CreateConsultantDTO createConsultantDTO;
+  private Map<Long, Set<Long>> topicIdsByAgencyId;
+
+  CreateConsultantDTOCreationInputAdapter withTopicIdsByAgencyId(
+      Map<Long, Set<Long>> topicIdsByAgencyId) {
+    this.topicIdsByAgencyId = topicIdsByAgencyId;
+    return this;
+  }
+
+  @Override
+  public Map<Long, Set<Long>> getTopicIdsByAgencyId() {
+    return topicIdsByAgencyId;
+  }
 
   /**
    * Provides the old id.
@@ -45,6 +59,25 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
   @Override
   public String getEncodedUsername() {
     return new UsernameTranscoder().encodeUsername(createConsultantDTO.getUsername());
+  }
+
+  /**
+   * Whether the created counsellor must set up a second factor. Always true here: an administrator
+   * chooses the initial password and passes it out of band, so it is not a secret only the
+   * counsellor holds.
+   */
+  @Override
+  public boolean isTwoFactorRequired() {
+    return true;
+  }
+
+  /**
+   * Whether the created counsellor must replace their password. Always true here, for the same
+   * reason as the second factor: the password was typed by an administrator.
+   */
+  @Override
+  public boolean isPasswordChangeRequired() {
+    return true;
   }
 
   /**

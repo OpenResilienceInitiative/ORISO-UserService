@@ -52,6 +52,37 @@ class ConsultantResponseDTOBuilderTest {
   }
 
   @Test
+  void buildResponseDTO_Should_reportAMissingChatIdentity() {
+    var consultant = consultantWithPersonalInfo();
+    consultant.setMatrixUserId(null);
+
+    var dto = ConsultantResponseDTOBuilder.getInstance(consultant).buildResponseDTO().getEmbedded();
+
+    assertThat(dto.getChatIdentityStatus()).isEqualTo(ConsultantDTO.ChatIdentityStatusEnum.MISSING);
+  }
+
+  @Test
+  void buildResponseDTO_Should_reportABlankChatIdentityAsMissing() {
+    var consultant = consultantWithPersonalInfo();
+    consultant.setMatrixUserId("  ");
+
+    var dto = ConsultantResponseDTOBuilder.getInstance(consultant).buildResponseDTO().getEmbedded();
+
+    assertThat(dto.getChatIdentityStatus()).isEqualTo(ConsultantDTO.ChatIdentityStatusEnum.MISSING);
+  }
+
+  @Test
+  void buildResponseDTO_Should_reportAProvisionedChatIdentity() {
+    var consultant = consultantWithPersonalInfo();
+    consultant.setMatrixUserId("@anna.beispiel:matrix.local");
+
+    var dto = ConsultantResponseDTOBuilder.getInstance(consultant).buildResponseDTO().getEmbedded();
+
+    assertThat(dto.getChatIdentityStatus())
+        .isEqualTo(ConsultantDTO.ChatIdentityStatusEnum.PROVISIONED);
+  }
+
+  @Test
   void buildResponseDTO_Should_mapAvatarChoice() {
     var consultant = consultantWithPersonalInfo();
     consultant.setAvatarKind(ConsultantAvatarKind.ICON);

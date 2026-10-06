@@ -79,6 +79,12 @@ class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture 
 
   @Autowired private UserService userService;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory
+      ownerFactory;
+
+  private de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures dpaOwner;
+
   @Value("${user.anonymous.deleteworkflow.periodMinutes}")
   private long deletionPeriodInMinutes;
 
@@ -96,6 +102,8 @@ class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture 
 
   @BeforeEach
   public void setup() throws MatrixCreateUserException {
+    dpaOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, 1L);
     deleteSchedulerClaim();
     when(tenantService.getSingleTenancyTenantDataFresh())
         .thenReturn(ChatRecoveryPolicyFixtures.tenant());
@@ -127,6 +135,7 @@ class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture 
 
   @AfterEach
   public void cleanDatabase() {
+    dpaOwner.close();
     this.sessionRepository.deleteAll();
     deleteSchedulerClaim();
   }

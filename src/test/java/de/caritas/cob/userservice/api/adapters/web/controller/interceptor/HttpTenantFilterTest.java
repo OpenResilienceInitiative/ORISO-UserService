@@ -10,6 +10,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -59,10 +61,7 @@ class HttpTenantFilterTest {
   @Test
   void dpaSignedNoticeCallbackDoesNotRequireBrowserTenantContext()
       throws ServletException, IOException {
-    // TenantService posts this headerless on the service host: no session, no tenant header, no
-    // resolvable subdomain. Without the exemption resolveForNonAuthenticatedUser throws
-    // AccessDeniedException before the permitAll route reaches its controller. The tenant is not
-    // lost — it is in the path, and DpaSignedNoticeService establishes it on the worker thread.
+    // Headerless machine callback; the tenant travels in the path.
     Mockito.when(request.getRequestURI()).thenReturn("/users/tenants/42/dpa-signed-notices");
 
     httpTenantFilter.doFilterInternal(request, response, filterChain);
@@ -121,5 +120,141 @@ class HttpTenantFilterTest {
 
     // then
     Mockito.verify(tenantResolverService).resolve(request);
+  }
+
+  @Test
+  void routeThatOnlyContainsAWhitelistedPathStillRequiresTenantContext()
+      throws ServletException, IOException {
+    Mockito.when(request.getRequestURI()).thenReturn("/useradmin/users/askers/new");
+    Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
+    Mockito.when(tenantService.getRestrictedTenantData(1L)).thenReturn(new RestrictedTenantDTO());
+
+    httpTenantFilter.doFilterInternal(request, response, filterChain);
+
+    Mockito.verify(tenantResolverService).resolve(request);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/conversations/askers/anonymous/new",
+        "/service/conversations/askers/anonymous/new"
+      })
+  void anonymousEnquiryRunsInTheResolvedTenant(String uri) throws ServletException, IOException {
+    Mockito.when(request.getRequestURI()).thenReturn(uri);
+    Mockito.when(tenantResolverService.resolve(request)).thenReturn(7L);
+    Mockito.when(tenantService.getRestrictedTenantData(7L)).thenReturn(new RestrictedTenantDTO());
+    var tenantInChain = new java.util.concurrent.atomic.AtomicReference<Long>();
+    Mockito.doAnswer(
+            invocation -> {
+              tenantInChain.set(
+                  de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant());
+              return null;
+            })
+        .when(filterChain)
+        .doFilter(request, response);
+
+    httpTenantFilter.doFilterInternal(request, response, filterChain);
+
+    org.assertj.core.api.Assertions.assertThat(tenantInChain.get()).isEqualTo(7L);
+  }
+
+  @Test
+  void whitelistedRoutesMatchUnderTheServicePrefix() throws ServletException, IOException {
+    Mockito.when(request.getRequestURI()).thenReturn("/service/users/magic-link/consume");
+
+    httpTenantFilter.doFilterInternal(request, response, filterChain);
+
+    Mockito.verifyNoInteractions(tenantResolverService, tenantService);
+    Mockito.verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
+  void tenantIsClearedWhenTheRequestFails() throws ServletException, IOException {
+    Mockito.when(request.getRequestURI()).thenReturn("/users/1");
+    Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
+    Mockito.when(tenantService.getRestrictedTenantData(1L)).thenReturn(new RestrictedTenantDTO());
+    Mockito.doThrow(new ServletException("boom")).when(filterChain).doFilter(request, response);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> httpTenantFilter.doFilterInternal(request, response, filterChain))
+        .isInstanceOf(ServletException.class);
+
+    org.assertj.core.api.Assertions.assertThat(
+            de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant())
+        .isNull();
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void clearTenantContext() {
+    de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/account-invites/SECRET-INVITE-TOKEN/accept",
+        "/service/users/invitelinks/SECRET-INVITE-TOKEN/redeem"
+      })
+  void logsNeverCarryTheRequestPath_BecauseItMayHoldAnInviteToken(String uri)
+      throws ServletException, IOException {
+    var logger =
+        (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(HttpTenantFilter.class);
+    var appender =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    appender.start();
+    var previousLevel = logger.getLevel();
+    logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+    logger.addAppender(appender);
+    try {
+      Mockito.lenient().when(request.getRequestURI()).thenReturn(uri);
+      Mockito.lenient().when(request.getMethod()).thenReturn("POST");
+      Mockito.lenient()
+          .when(tenantResolverService.resolve(request))
+          .thenThrow(new org.springframework.security.access.AccessDeniedException("no tenant"));
+
+      httpTenantFilter.doFilterInternal(request, response, filterChain);
+    } finally {
+      logger.detachAppender(appender);
+      logger.setLevel(previousLevel);
+    }
+
+    org.assertj.core.api.Assertions.assertThat(appender.list).isNotEmpty();
+    org.assertj.core.api.Assertions.assertThat(appender.list)
+        .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+        .noneMatch(message -> message.contains("SECRET-INVITE-TOKEN"));
+  }
+
+  @Test
+  void tenantIsClearedWhenTheTenantIsRefused() throws ServletException, IOException {
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(99L);
+    Mockito.when(request.getRequestURI()).thenReturn("/users/1");
+    Mockito.when(tenantResolverService.resolve(request))
+        .thenThrow(new org.springframework.security.access.AccessDeniedException("no tenant"));
+
+    httpTenantFilter.doFilterInternal(request, response, filterChain);
+
+    Mockito.verify(response).sendError(HttpServletResponse.SC_FORBIDDEN);
+    org.assertj.core.api.Assertions.assertThat(
+            de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenantData())
+        .isNull();
+  }
+
+  @Test
+  void tenantIsClearedWhenTheSubdomainLookupFails() {
+    // A pooled thread may still carry a tenant; the failed lookup must not leave it behind.
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(99L);
+    Mockito.when(request.getRequestURI()).thenReturn("/users/1");
+    Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
+    Mockito.when(tenantService.getRestrictedTenantData(1L))
+        .thenThrow(new IllegalStateException("TenantService unavailable"));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> httpTenantFilter.doFilterInternal(request, response, filterChain))
+        .isInstanceOf(IllegalStateException.class);
+
+    org.assertj.core.api.Assertions.assertThat(
+            de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenantData())
+        .isNull();
   }
 }

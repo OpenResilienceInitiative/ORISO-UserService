@@ -90,7 +90,15 @@ class MatrixRtcInactivityPolicyHttpTest {
       config.setApiUrl(url);
       config.setAdminUsername("admin");
       config.setAdminPassword("test-only");
-      var matrix = new MatrixSynapseService(config, transport, transport, null, null);
+      var matrix =
+          new MatrixSynapseService(
+              config,
+              transport,
+              transport,
+              null,
+              null,
+              org.mockito.Mockito.mock(
+                  de.caritas.cob.userservice.api.adapters.matrix.MatrixIdentifierRedactor.class));
       var factory = new TenantServiceApiControllerFactory();
       ReflectionTestUtils.setField(factory, "tenantServiceApiUrl", url);
       ReflectionTestUtils.setField(factory, "restTemplate", transport);

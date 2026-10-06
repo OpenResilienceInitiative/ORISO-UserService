@@ -55,9 +55,7 @@ class DefaultAccountInactivityEffectsTest {
         matrixConfig.setApiUrl(remote.url());
         matrixConfig.setAdminUsername("admin");
         matrixConfig.setAdminPassword("test-only");
-        var matrix =
-            new MatrixSynapseService(
-                matrixConfig, new RestTemplate(), new RestTemplate(), null, null);
+        var matrix = matrixService(matrixConfig);
         var effects =
             new DefaultAccountInactivityEffects(
                 jdbc,
@@ -116,9 +114,7 @@ class DefaultAccountInactivityEffectsTest {
         matrixConfig.setApiUrl(remote.url());
         matrixConfig.setAdminUsername("admin");
         matrixConfig.setAdminPassword("test-only");
-        var matrix =
-            new MatrixSynapseService(
-                matrixConfig, new RestTemplate(), new RestTemplate(), null, null);
+        var matrix = matrixService(matrixConfig);
         var effects =
             new DefaultAccountInactivityEffects(
                 jdbc,
@@ -181,9 +177,7 @@ class DefaultAccountInactivityEffectsTest {
         matrixConfig.setApiUrl(remote.url());
         matrixConfig.setAdminUsername("admin");
         matrixConfig.setAdminPassword("test-only");
-        var matrix =
-            new MatrixSynapseService(
-                matrixConfig, new RestTemplate(), new RestTemplate(), null, null);
+        var matrix = matrixService(matrixConfig);
         var effects =
             new DefaultAccountInactivityEffects(
                 jdbc,
@@ -243,9 +237,7 @@ class DefaultAccountInactivityEffectsTest {
         matrixConfig.setApiUrl(remote.url());
         matrixConfig.setAdminUsername("admin");
         matrixConfig.setAdminPassword("test-only");
-        var matrix =
-            new MatrixSynapseService(
-                matrixConfig, new RestTemplate(), new RestTemplate(), null, null);
+        var matrix = matrixService(matrixConfig);
         var effects =
             new DefaultAccountInactivityEffects(
                 jdbc,
@@ -307,9 +299,7 @@ class DefaultAccountInactivityEffectsTest {
         matrixConfig.setApiUrl(remote.url());
         matrixConfig.setAdminUsername("admin");
         matrixConfig.setAdminPassword("test-only");
-        var matrix =
-            new MatrixSynapseService(
-                matrixConfig, new RestTemplate(), new RestTemplate(), null, null);
+        var matrix = matrixService(matrixConfig);
         var effects =
             new DefaultAccountInactivityEffects(
                 jdbc,
@@ -368,9 +358,7 @@ class DefaultAccountInactivityEffectsTest {
         matrixConfig.setApiUrl(remote.url());
         matrixConfig.setAdminUsername("admin");
         matrixConfig.setAdminPassword("test-only");
-        var matrix =
-            new MatrixSynapseService(
-                matrixConfig, new RestTemplate(), new RestTemplate(), null, null);
+        var matrix = matrixService(matrixConfig);
         var effects =
             new DefaultAccountInactivityEffects(
                 jdbc,
@@ -391,6 +379,17 @@ class DefaultAccountInactivityEffectsTest {
         assertThat(remote.locked.get()).isTrue();
       }
     }
+  }
+
+  private static MatrixSynapseService matrixService(MatrixConfig matrixConfig) {
+    return new MatrixSynapseService(
+        matrixConfig,
+        new RestTemplate(),
+        new RestTemplate(),
+        null,
+        null,
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.matrix.MatrixIdentifierRedactor.class));
   }
 
   static class Remote implements AutoCloseable {

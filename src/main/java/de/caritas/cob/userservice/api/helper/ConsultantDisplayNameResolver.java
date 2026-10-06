@@ -29,14 +29,26 @@ public class ConsultantDisplayNameResolver {
     if (consultant == null) {
       return null;
     }
+    return resolveMatrixDisplayName(consultant.getDisplayName(), consultant.getUsername());
+  }
 
-    var appDisplayName = consultant.getDisplayName();
-    if (isUsable(appDisplayName)) {
-      return appDisplayName;
+  /**
+   * Raw-parts overload of {@link #resolveMatrixDisplayName(Consultant)}, for the provisioning paths
+   * that have no persisted {@link Consultant} yet: admin/import consultant creation works from a
+   * creation input, and granting a consultant identity works from an {@code Admin}. They call this
+   * instead of re-deciding, so this class stays the only place that knows the rule.
+   *
+   * @param publicDisplayName the public display name the advice seeker is already shown (nullable)
+   * @param username the plain or transcoded username, the last resort (nullable)
+   * @return the display name to register with Synapse, never the counsellor's real name
+   */
+  public String resolveMatrixDisplayName(String publicDisplayName, String username) {
+    if (isUsable(publicDisplayName)) {
+      return publicDisplayName;
     }
 
     // Falls back to what the Matrix ID already exposes, so provisioning adds no new information.
-    return usernameTranscoder.decodeUsername(consultant.getUsername());
+    return username == null ? null : usernameTranscoder.decodeUsername(username);
   }
 
   /**

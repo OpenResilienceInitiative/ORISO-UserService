@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter;
@@ -261,8 +262,10 @@ public class TeamDiscussionFacade {
    * a confirmed join records participation.
    */
   private void joinConsultant(TeamDiscussion discussion, Session session, Consultant consultant) {
-    if (consultant.getMatrixUserId() == null || consultant.getMatrixUserId().isBlank()) {
-      throw new InternalServerErrorException("Consultant Matrix identity is not available");
+    if (!ConsultantChatIdentityService.hasChatIdentity(consultant)) {
+      throw new InternalServerErrorException(
+          ConsultantChatIdentityService.missingChatIdentityMessage(
+              "Consultant", consultant.getId()));
     }
     String agencyToken = loginAgencyOperator(session);
     try {

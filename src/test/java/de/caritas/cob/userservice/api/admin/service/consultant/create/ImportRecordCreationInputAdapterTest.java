@@ -44,4 +44,29 @@ class ImportRecordCreationInputAdapterTest {
     assertThat(input.getCreateDate(), notNullValue());
     assertThat(input.getUpdateDate(), notNullValue());
   }
+
+  @Test
+  void isTwoFactorRequired_Should_beFalse_When_consultantsAreBulkImported() {
+    // The import carries counsellors who already exist elsewhere into this system.
+    // Gating them behind a second factor would lock a whole migrated tenant out on
+    // the first login after the move.
+    ImportRecord importRecord = new ImportRecord();
+    importRecord.setUsername("plainUsername");
+
+    ConsultantCreationInput input = new ImportRecordCreationInputAdapter(importRecord);
+
+    assertThat(input.isTwoFactorRequired(), is(false));
+  }
+
+  @Test
+  void isPasswordChangeRequired_Should_beFalse_When_consultantsAreBulkImported() {
+    // Imported counsellors keep the password they already had; there is no
+    // administrator-chosen secret to replace.
+    ImportRecord importRecord = new ImportRecord();
+    importRecord.setUsername("plainUsername");
+
+    ConsultantCreationInput input = new ImportRecordCreationInputAdapter(importRecord);
+
+    assertThat(input.isPasswordChangeRequired(), is(false));
+  }
 }
