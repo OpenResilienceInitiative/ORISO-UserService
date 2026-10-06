@@ -109,6 +109,27 @@ class AgencyCreationClientTest {
         .hasMessageContaining("400");
   }
 
+  @Test
+  void policyConflict_isCorrectableInputRatherThanAConsumedReservation() {
+    HttpHeaders headers = new HttpHeaders();
+    headers.add("X-Reason", "ONE_TOPIC_PER_AGENCY");
+    when(adminAgencyControllerApi.createAgency(any(AgencyDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.CONFLICT, "Conflict", headers, null, null));
+    assertThatThrownBy(this::createAgency)
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class)
+        .satisfies(
+            failure ->
+                assertThat(
+                        ((de.caritas.cob.userservice.api.exception.httpresponses
+                                    .CustomValidationHttpStatusException)
+                                failure)
+                            .getHttpStatus())
+                    .isEqualTo(HttpStatus.CONFLICT));
+  }
+
   /** The documented single-use outcome keeps its own status. */
   @Test
   void createAgencyWithReservedId_upstreamConflict_staysAConflict() {

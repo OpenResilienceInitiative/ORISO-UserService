@@ -73,6 +73,11 @@ class CounsellorOnboardingServiceTest {
   @Mock private IdentityProfileLookup identityProfileLookup;
   @Mock private AgencyService agencyService;
   @Mock private TopicService topicService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService
+      applicationSettingsService;
+
   @Mock private UsernameTranscoder usernameTranscoder;
   @Mock private AgencyCreationClient agencyCreationClient;
   @Mock private AgencyAdminInviteProvisioningService agencyAdminInviteProvisioningService;
@@ -89,6 +94,11 @@ class CounsellorOnboardingServiceTest {
 
   @BeforeEach
   void setUp() {
+    org.mockito.Mockito.lenient()
+        .when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(
+            new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                .ApplicationSettingsDTO());
     service =
         new CounsellorOnboardingService(
             accountInviteRepository,
@@ -98,6 +108,7 @@ class CounsellorOnboardingServiceTest {
             identityProfileLookup,
             agencyService,
             topicService,
+            applicationSettingsService,
             usernameTranscoder,
             agencyCreationClient,
             agencyAdminInviteProvisioningService,

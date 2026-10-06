@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.exception.httpresponses.customheader;
 
 public enum HttpStatusExceptionReason {
+  ONE_TOPIC_PER_AGENCY,
+  SETTINGS_UNAVAILABLE,
   USERNAME_NOT_AVAILABLE,
   USERNAME_NOT_VALID,
   EMAIL_NOT_AVAILABLE,

@@ -342,6 +342,9 @@ public class TenantAdminOnboardingController {
      */
     public Boolean agencyExists;
 
+    /** Platform limit for configuring the new reserved centre. */
+    public Boolean oneTopicPerAgencyEnabled;
+
     /** Agency-admin invites only: the inviter's proposal; the invitee may override it. */
     public Boolean alsoCounsellor;
 
@@ -451,6 +454,7 @@ public class TenantAdminOnboardingController {
       dto.topics = state.topics().stream().map(TopicOptionDTO::from).toList();
       dto.availableTopics = state.availableTopics().stream().map(TopicOptionDTO::from).toList();
       dto.agencyExists = state.agencyExists();
+      dto.oneTopicPerAgencyEnabled = state.oneTopicPerAgencyEnabled();
       dto.topicPermission = TopicPermissionPolicy.effective(invite).name();
       dto.expiresAt = invite.getExpiresAt();
       applyTwoFactorResume(dto, invite, state.pendingTwoFactorResume());
