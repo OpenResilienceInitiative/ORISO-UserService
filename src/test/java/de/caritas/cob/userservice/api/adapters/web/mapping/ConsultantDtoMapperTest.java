@@ -514,6 +514,35 @@ class ConsultantDtoMapperTest {
   }
 
   @Test
+  void consultantSearchResultOf_Should_PreserveBothRowsWhenIdentityProviderIsUnavailable() {
+    var lookup =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup.class);
+    when(lookup.findEnabledById("consultant-id"))
+        .thenThrow(new jakarta.ws.rs.ServiceUnavailableException());
+    var mapper = givenAMapper();
+    ReflectionTestUtils.setField(
+        mapper, "accountLoginStatusService", new AccountLoginStatusService(lookup));
+    when(consultantTopicRepository.findTopicIdsByConsultantIdIn(any())).thenReturn(List.of());
+    var second = new HashMap<>(consultantMap());
+    second.put("id", "second-consultant");
+    var source = givenAResultMap(true, true);
+    source.put("consultants", List.of(consultantMap(), second));
+    source.put("totalElements", 2);
+
+    var result = mapper.consultantSearchResultOf(source, "*", 1, 10, "LASTNAME", "ASC");
+
+    assertThat(result.getTotal()).isEqualTo(2);
+    assertThat(result.getEmbedded())
+        .extracting(row -> row.getEmbedded().getId())
+        .containsExactly("consultant-id", "second-consultant");
+    assertThat(result.getEmbedded())
+        .allSatisfy(row -> assertThat(row.getEmbedded().getActive()).isNull());
+    org.mockito.Mockito.verify(lookup).findEnabledById("consultant-id");
+    org.mockito.Mockito.verifyNoMoreInteractions(lookup);
+  }
+
+  @Test
   void consultantSearchResultOf_Should_SkipTopicLookup_When_NoTopicIdsFoundForAnyConsultant() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
     when(identityManager.hasRole(anyString(), any(UserRole.class))).thenReturn(false);

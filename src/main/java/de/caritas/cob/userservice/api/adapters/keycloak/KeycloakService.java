@@ -1080,6 +1080,18 @@ public class KeycloakService
   @Override
   public Optional<Boolean> findEnabledById(String userId) {
     try {
+      return findEnabledByIdOnce(userId);
+    } catch (NotAuthorizedException unauthorized) {
+      log.warn(
+          "Keycloak admin session was unauthorized while reading account status, forcing token"
+              + " refresh and retrying once");
+      keycloakClient.refreshAdminSession();
+      return findEnabledByIdOnce(userId);
+    }
+  }
+
+  private Optional<Boolean> findEnabledByIdOnce(String userId) {
+    try {
       var user = keycloakClient.getUsersResource().get(userId).toRepresentation();
       return user == null ? Optional.empty() : Optional.ofNullable(user.isEnabled());
     } catch (NotFoundException missing) {
