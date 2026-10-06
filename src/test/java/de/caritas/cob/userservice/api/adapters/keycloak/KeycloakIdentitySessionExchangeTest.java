@@ -9,15 +9,21 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
@@ -29,14 +35,16 @@ class KeycloakIdentitySessionExchangeTest {
 
   @Mock private RestTemplate restTemplate;
   @Mock private IdentityClientConfig identityClientConfig;
+  @Mock private JwtDecoder jwtDecoder;
 
   private KeycloakIdentitySessionExchange exchange;
 
   @BeforeEach
   void setUp() {
-    exchange = new KeycloakIdentitySessionExchange(restTemplate, identityClientConfig);
+    exchange = new KeycloakIdentitySessionExchange(restTemplate, identityClientConfig, jwtDecoder);
     ReflectionTestUtils.setField(exchange, "keycloakAdminClientId", "backend-admin");
     ReflectionTestUtils.setField(exchange, "keycloakAdminClientSecret", "secret");
+    ReflectionTestUtils.setField(exchange, "keycloakAdminServiceSubject", "admin-service-subject");
     ReflectionTestUtils.setField(exchange, "keycloakAppClientId", "app");
     when(identityClientConfig.getOpenIdConnectUrl("/token")).thenReturn(TOKEN_URL);
   }
@@ -48,6 +56,9 @@ class KeycloakIdentitySessionExchangeTest {
             "access-token", 300, 600, "refresh-token", "Bearer", "session-state", "openid profile");
     when(restTemplate.postForEntity(eq(TOKEN_URL), any(), eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of("access_token", "admin-token")));
+    when(jwtDecoder.decode("admin-token"))
+        .thenReturn(
+            adminToken("admin-service-subject", "backend-admin", List.of("otp-config-admin")));
     when(restTemplate.postForEntity(eq(TOKEN_URL), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenReturn(ResponseEntity.ok(providerResponse));
 
@@ -98,10 +109,62 @@ class KeycloakIdentitySessionExchangeTest {
   void exchangeForUserShouldReturnEmptyWhenProviderExchangeFails() {
     when(restTemplate.postForEntity(eq(TOKEN_URL), any(), eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of("access_token", "admin-token")));
+    when(jwtDecoder.decode("admin-token"))
+        .thenReturn(
+            adminToken("admin-service-subject", "backend-admin", List.of("otp-config-admin")));
     when(restTemplate.postForEntity(eq(TOKEN_URL), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenThrow(new IllegalStateException("identity provider unavailable"));
 
     assertThat(exchange.exchangeForUser("identity-user-id")).isEmpty();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "wrong-subject",
+        "wrong-azp",
+        "expired",
+        "missing-role",
+        "technical",
+        "realm-admin"
+      })
+  void exchangeForUserShouldRejectUnexpectedAdminToken(String invalidClaim) {
+    when(restTemplate.postForEntity(eq(TOKEN_URL), any(), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "admin-token")));
+    var subject = "wrong-subject".equals(invalidClaim) ? "other" : "admin-service-subject";
+    var azp = "wrong-azp".equals(invalidClaim) ? "other" : "backend-admin";
+    var roles =
+        switch (invalidClaim) {
+          case "missing-role" -> List.of("view-users");
+          case "technical" -> List.of("otp-config-admin", "technical");
+          case "realm-admin" -> List.of("otp-config-admin", "realm-admin");
+          default -> List.of("otp-config-admin");
+        };
+    var expiry =
+        "expired".equals(invalidClaim)
+            ? Instant.now().minusSeconds(1)
+            : Instant.now().plusSeconds(300);
+    when(jwtDecoder.decode("admin-token")).thenReturn(adminToken(subject, azp, roles, expiry));
+
+    assertThat(exchange.exchangeForUser("identity-user-id")).isEmpty();
+
+    verify(restTemplate, never())
+        .postForEntity(eq(TOKEN_URL), any(), eq(KeycloakLoginResponseDTO.class));
+  }
+
+  private static Jwt adminToken(String subject, String azp, List<String> roles) {
+    return adminToken(subject, azp, roles, Instant.now().plusSeconds(300));
+  }
+
+  private static Jwt adminToken(String subject, String azp, List<String> roles, Instant expiresAt) {
+    return Jwt.withTokenValue("admin-token")
+        .header("alg", "none")
+        .subject(subject)
+        .claim("azp", azp)
+        .claim("realm_access", Map.of("roles", roles))
+        .issuedAt(Instant.now().minusSeconds(10))
+        .expiresAt(expiresAt)
+        .build();
   }
 
   @SuppressWarnings("rawtypes")

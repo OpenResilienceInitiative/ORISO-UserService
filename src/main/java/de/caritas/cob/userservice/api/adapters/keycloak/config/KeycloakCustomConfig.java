@@ -16,5 +16,7 @@ public class KeycloakCustomConfig {
 
   @NotBlank private String adminClientId;
 
+  @NotBlank private String adminServiceSubject;
+
   @NotBlank private String appClientId;
 }

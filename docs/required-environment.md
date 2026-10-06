@@ -126,11 +126,14 @@ IDENTITY_TECHNICAL_CLIENT_ID=backend-technical
 KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET=<separately provisioned technical client secret>
 KEYCLOAK_CONFIG_ADMIN_CLIENTID=backend-admin
 KEYCLOAK_BACKEND_ADMIN_CLIENT_SECRET=<different separately provisioned admin client secret>
+KEYCLOAK_BACKEND_ADMIN_SERVICE_SUBJECT=<actual backend-admin service-account UUID>
 
 Technical calls: IdentityAuthentication.loginService(clientId, clientSecret).
 Admin REST: client_credentials using backend-admin; no admin username/password.
-Trusted user exchange: administrative token acquired via backend-admin; original
-app client and requested_subject exchange contract retained.
+Trusted user exchange: administrative token acquired via backend-admin and pinned
+to its subject, azp, expiry and otp-config-admin realm role; tokens with technical
+or realm-admin are rejected. Original app client and requested_subject exchange
+contract retained.
 
 Deploy reviewed matching Keycloak client/role and Helm configuration first.
 Read actual service-account subjects in each existing realm and keep incoming
