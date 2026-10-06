@@ -56,23 +56,10 @@ class GroupChatAdmissionProcessorTest {
 
   @BeforeEach
   void setUp() {
-    var policy = de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy();
-    var realAgencies =
-        (de.caritas.cob.userservice.api.service.agency.AgencyService)
-            ReflectionTestUtils.getField(policy, "agencyService");
     ReflectionTestUtils.setField(
         processor,
         "dpaPolicy",
-        new GroupCounsellingDpaPolicy(
-            policy,
-            mock(de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
-            realAgencies,
-            new de.caritas.cob.userservice.api.service.matrixgroup.MatrixGroupParticipationHistory(
-                new de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixPolicySettings(
-                    false, "", ""),
-                new org.springframework.web.client.RestTemplate(),
-                new com.fasterxml.jackson.databind.ObjectMapper(),
-                null)));
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy());
     TransactionSynchronizationManager.initSynchronization();
     request =
         GroupChatJoinRequest.builder()

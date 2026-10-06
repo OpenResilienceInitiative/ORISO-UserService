@@ -407,6 +407,41 @@ class GroupCounsellingMatrixReturnIT extends GroupCounsellingDpaHttpFixture {
     assertEquals(0, matrixWrites.get());
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"PARTICIPANT", "CO_MODERATOR"})
+  void anAuthorizedQueuedCurrentJoinCompletesWithoutHistoryWhenTheParticipantRowIsMissing(
+      String role) throws Exception {
+    long id = knockNewRequest();
+    historyUnavailableAtRead = 2;
+    var accepted =
+        consultantCall(
+            "POST",
+            "/users/chat-series/" + requestedGroup.getId() + "/join-requests/" + id + "/admit",
+            consultant,
+            "{\"role\":\"" + role + "\"}");
+    assertEquals(204, accepted.statusCode(), accepted.body());
+    assertEquals("ADMITTING", ownRequestStatus());
+    assertTrue(
+        participants
+            .findBySeriesIdAndConsultantId(requestedGroup.getId(), requester.getId())
+            .isEmpty());
+    assertEquals(0, matrixWrites.get());
+    members = "{\"members\":[\"" + requester.getMatrixUserId() + "\"]}";
+    historyNon200 = true;
+    ownerStatus = 503;
+    assertDoesNotThrow(() -> Tenants.acrossAll(() -> processor.process(id)));
+    assertEquals("ADMITTED", ownRequestStatus());
+    var moderatorPermission =
+        consultantCall("PUT", "/users/chat/" + requestedGroup.getId() + "/verify", requester, "");
+    assertEquals(
+        role.equals("CO_MODERATOR") ? 200 : 403,
+        moderatorPermission.statusCode(),
+        moderatorPermission.body());
+    assertEquals(2, historyReads.get());
+    assertEquals(0, ownerReads.get());
+    assertEquals(2, matrixWrites.get());
+  }
+
   @Test
   void aMixedReturningAndNewModeratorSelectionIsRefusedAtomically() throws Exception {
     Chat chat = storedChat(ConversationType.SELF_HELP);

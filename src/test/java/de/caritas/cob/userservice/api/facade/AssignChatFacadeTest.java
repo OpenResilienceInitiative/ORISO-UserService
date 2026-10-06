@@ -48,22 +48,8 @@ class AssignChatFacadeTest {
 
   @org.junit.jupiter.api.BeforeEach
   void wireRealGroupPolicy() {
-    var policy = de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy();
-    var realAgencies =
-        (de.caritas.cob.userservice.api.service.agency.AgencyService)
-            org.springframework.test.util.ReflectionTestUtils.getField(policy, "agencyService");
     var groupPolicy =
-        new de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy(
-            policy,
-            org.mockito.Mockito.mock(
-                de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
-            realAgencies,
-            new de.caritas.cob.userservice.api.service.matrixgroup.MatrixGroupParticipationHistory(
-                new de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixPolicySettings(
-                    false, "", ""),
-                new org.springframework.web.client.RestTemplate(),
-                new com.fasterxml.jackson.databind.ObjectMapper(),
-                null));
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy();
     assignChatFacade =
         new AssignChatFacade(chatService, userService, userChats, groupPolicy, appointmentEvents);
   }

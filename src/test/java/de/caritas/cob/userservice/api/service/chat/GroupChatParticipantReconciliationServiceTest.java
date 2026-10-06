@@ -38,21 +38,8 @@ class GroupChatParticipantReconciliationServiceTest {
 
   @BeforeEach
   void setUp() {
-    var policy = de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy();
-    var realAgencies =
-        (de.caritas.cob.userservice.api.service.agency.AgencyService)
-            org.springframework.test.util.ReflectionTestUtils.getField(policy, "agencyService");
     var groupPolicy =
-        new GroupCounsellingDpaPolicy(
-            policy,
-            Mockito.mock(de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
-            realAgencies,
-            new de.caritas.cob.userservice.api.service.matrixgroup.MatrixGroupParticipationHistory(
-                new de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixPolicySettings(
-                    false, "", ""),
-                new org.springframework.web.client.RestTemplate(),
-                new com.fasterxml.jackson.databind.ObjectMapper(),
-                null));
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy();
     service =
         new GroupChatParticipantReconciliationService(
             participantRepository, consultantRepository, membershipService, groupPolicy);

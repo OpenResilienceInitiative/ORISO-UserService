@@ -120,8 +120,9 @@ public class GroupChatAdmissionProcessor {
         current.stream()
             .anyMatch(
                 participant -> request.getConsultantId().equals(participant.getConsultantId()));
-    // A queued intent may outlive renewal grace; an assignment alone is not continuation.
-    if (!alreadyParticipant || !wasMemberBefore.get()) {
+    // Current JOIN is commencement even if its UserService participant row needs repair.
+    // Disabled deployments retain the existing intent policy until paired rollout.
+    if (!wasMemberBefore.get() || (!dpaPolicy.historicalReturnEnabled() && !alreadyParticipant)) {
       dpaPolicy.requireAuthorizedFirstEntry(series.get(), matrixUserId);
     }
     var roomId = membership.resolveMatrixRoomId(series.get());
