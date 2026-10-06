@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -51,6 +52,8 @@ class CounsellorInviteProvisioningServiceTest {
   private final CreateConsultantSaga createConsultantSaga = mock(CreateConsultantSaga.class);
   private final IdentityAuthentication identityAuthentication = mock(IdentityAuthentication.class);
   private final IdentityClientConfig identityClientConfig = mock(IdentityClientConfig.class);
+  private final IdentityPasswordUpdater identityPasswordUpdater =
+      mock(IdentityPasswordUpdater.class);
   private final CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService =
       mock(CounsellorAgencyAdminGrantService.class);
   private final de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository
@@ -79,7 +82,8 @@ class CounsellorInviteProvisioningServiceTest {
             counsellorAgencyAdminGrantService,
             consultantAgencyRelationCreatorService,
             new AcceptTimeAgencyCheck(agencyFacts, identityAuthentication, identityClientConfig),
-            consultantTopicRepository);
+            consultantTopicRepository,
+            identityPasswordUpdater);
     when(agencyFacts.find(275L))
         .thenReturn(Optional.of(new AgencyFacts.Agency(275L, 79L, false, List.of())));
     var technicalUser = new TechnicalUserConfig();
@@ -90,6 +94,74 @@ class CounsellorInviteProvisioningServiceTest {
         .thenReturn(new IdentityLogin("technical-token", 60, 60, null));
     when(accountInviteRepository.save(any(AccountInvite.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = AccountInviteTargetRole.class,
+      names = {"COUNSELLOR", "AGENCY_ADMIN"})
+  void inviteesOwnPasswordIsPermanentBeforeTheInviteIsAccepted(AccountInviteTargetRole role) {
+    var invite = activeCounsellorInvite();
+    invite.setTargetRole(role);
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(
+            new ConsultantAdminResponseDTO()
+                .embedded(new ConsultantDTO().id("created-consultant")));
+    when(accountInviteService.acceptInvite("raw-token", "created-consultant")).thenReturn(invite);
+
+    service.acceptInvite(
+        "raw-token",
+        new ProvisionCounsellorCommand(
+            "invited-counsellor",
+            "self-chosen-password",
+            true,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            true));
+
+    var order = org.mockito.Mockito.inOrder(identityPasswordUpdater, accountInviteService);
+    order
+        .verify(identityPasswordUpdater)
+        .updatePassword("created-consultant", "self-chosen-password");
+    order.verify(accountInviteService).acceptInvite("raw-token", "created-consultant");
+    verify(identityPasswordUpdater, never()).updateTemporaryPassword(any(), any());
+  }
+
+  @Test
+  void failingToMakeTheChosenPasswordPermanentRollsBackAndLeavesInviteRetryable() {
+    var invite = activeCounsellorInvite();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(
+            new ConsultantAdminResponseDTO()
+                .embedded(new ConsultantDTO().id("created-consultant")));
+    var created = mock(Consultant.class);
+    when(consultantRepository.findById("created-consultant")).thenReturn(Optional.of(created));
+    doThrow(new IllegalStateException("identity password update failed"))
+        .when(identityPasswordUpdater)
+        .updatePassword("created-consultant", "self-chosen-password");
+
+    assertThatThrownBy(
+            () ->
+                service.acceptInvite(
+                    "raw-token",
+                    new ProvisionCounsellorCommand(
+                        "invited-counsellor", "self-chosen-password", true, null)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("identity password update failed");
+
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
+    assertThat(invite.getProvisionedUserId()).isNull();
+    verify(createConsultantSaga).rollbackCreateNewConsultant(created);
+    verify(accountInviteService, never()).acceptInvite(any(), any());
+    verifyNoInteractions(consultantAgencyRelationCreatorService, counsellorAgencyAdminGrantService);
   }
 
   @Test
