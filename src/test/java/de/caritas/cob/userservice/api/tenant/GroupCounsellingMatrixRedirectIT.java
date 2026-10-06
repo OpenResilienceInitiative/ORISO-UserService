@@ -6,12 +6,14 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpRequest;
 import org.springframework.http.client.ClientHttpResponse;
@@ -28,6 +30,7 @@ class GroupCounsellingMatrixRedirectIT extends GroupCounsellingDpaHttpFixture {
   private static HttpServer source;
   private static HttpServer sink;
   private static String location;
+  @Autowired private MeterRegistry meters;
 
   @DynamicPropertySource
   static void realHistoryEndpoint(DynamicPropertyRegistry registry) throws Exception {
@@ -101,6 +104,7 @@ class GroupCounsellingMatrixRedirectIT extends GroupCounsellingDpaHttpFixture {
     var chat = storedChat(ConversationType.SELF_HELP);
     chat.setActive(true);
     chats.save(chat);
+    var observedBefore = historyRedirectAttempts();
     var response =
         request(
             "PUT",
@@ -121,9 +125,30 @@ class GroupCounsellingMatrixRedirectIT extends GroupCounsellingDpaHttpFixture {
         () -> assertEquals(0, sinkCredentials.get()),
         () -> assertEquals(0, ownerReads.get()),
         () -> assertEquals(0, matrixWrites.get()),
+        () -> assertEquals(observedBefore + 1, historyRedirectAttempts()),
         () -> assertEquals(1, participants.findBySeriesId(chat.getId()).size()),
         () -> assertFalse(response.body().contains(CREDENTIAL)),
         () -> assertFalse(response.body().contains("synthetic-private-redirect-body")));
+    var tags =
+        meters
+            .get("userservice.outbound.http.calls")
+            .tags("dependency", "127.0.0.1", "method", "post", "outcome", "3xx")
+            .counter()
+            .getId()
+            .getTags();
+    assertEquals(3, tags.size());
+    assertFalse(tags.toString().contains(CREDENTIAL));
+    assertFalse(tags.toString().contains("group-participation-history"));
+    assertFalse(tags.toString().contains(chat.getMatrixRoomId()));
+  }
+
+  private double historyRedirectAttempts() {
+    var counter =
+        meters
+            .find("userservice.outbound.http.calls")
+            .tags("dependency", "127.0.0.1", "method", "post", "outcome", "3xx")
+            .counter();
+    return counter == null ? 0 : counter.count();
   }
 
   @Override

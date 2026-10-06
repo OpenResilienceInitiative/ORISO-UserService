@@ -14,8 +14,9 @@ import org.springframework.web.client.RestTemplate;
 public class MatrixGroupPolicyHttpConfiguration {
   /** Let the bounded reader reject non200 without eagerly consuming private error bodies. */
   @Bean("matrixGroupHistoryRestTemplate")
-  public RestTemplate historyTransport(RestTemplateBuilder builder, OutboundHttpMetrics metrics) {
-    var transport =
+  public RestTemplate historyTransport(
+      RestTemplateBuilder builder, OutboundHttpMetrics outboundHttpMetrics) {
+    var restTemplate =
         builder
             .requestFactoryBuilder(ClientHttpRequestFactoryBuilder.jdk())
             .redirects(HttpRedirects.DONT_FOLLOW)
@@ -23,7 +24,7 @@ public class MatrixGroupPolicyHttpConfiguration {
             .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
             .errorHandler(new NoOpResponseErrorHandler())
             .build();
-    metrics.customize(transport);
-    return transport;
+    outboundHttpMetrics.customize(restTemplate);
+    return restTemplate;
   }
 }
