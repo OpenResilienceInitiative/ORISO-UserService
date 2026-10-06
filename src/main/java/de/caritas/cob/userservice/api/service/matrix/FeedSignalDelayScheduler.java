@@ -6,7 +6,7 @@ package de.caritas.cob.userservice.api.service.matrix;
  *
  * <p>Deliberately its own tiny abstraction rather than a Spring {@code TaskScheduler} bean: a lone
  * {@code TaskScheduler} (or {@code ScheduledExecutorService}) bean in the context is adopted by
- * {@code @EnableScheduling} as THE scheduler for every {@code @Scheduled} job in the service, which
+ * {@code @EnableScheduling} as THE scheduler for every periodic batch job in the service, which
  * would make feed signals and batch jobs starve each other. It also keeps the service
  * deterministically unit-testable without sleeping.
  */

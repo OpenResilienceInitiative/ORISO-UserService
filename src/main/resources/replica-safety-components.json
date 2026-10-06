@@ -744,6 +744,22 @@
         "userservice.scheduler.duration"
       ],
       "status": "bounded"
+    },
+    {
+      "id": "matrix-feed-signal-coalescer",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/FeedSignalCoalescer.java",
+      "kind": "local-state",
+      "owner": "notifications",
+      "risk": "performance",
+      "components": [
+        "windowEndByRecipient"
+      ],
+      "decision": "Keep the short coalescing window local. Separate replicas may send duplicate content-free refresh notices; authenticated REST and periodic polling remain authoritative. A restart drops only optional notices. Expired windows are removed after send and pruned under load.",
+      "signals": [
+        "userservice.replica.local_state",
+        "oriso.matrix.feed_signal"
+      ],
+      "status": "bounded"
     }
   ]
 }
