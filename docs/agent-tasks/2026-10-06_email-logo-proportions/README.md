@@ -11,3 +11,8 @@ Validation:116focused tests aftersync passed, including loadedtemplate class and
 Open choice: exceptionally wide ratios above6:1 cannot fit320px while preserving48pxheight. User was asked whether shrinking is allowed; currentcodepreservesheight.
 
 Resume: implementation andlocalcommit complete; request approval before opening review PRs againstdev. No PR opened, no merge/deploy/mailbox proof. FrontendAGENTSline16 requires explicitapproval beforePRcreation.
+
+
+## Review correction
+
+A long unbroken platform name beside a 3:1 logo overflowed 320px. Frontend commit d6aa08398c956a9471c69fb0da59149c3df5c404 adds wordmark wrapping and a real browser regression (560px before; 320px after). Generated artifacts are synchronized from that commit. Backend package validation passed; CI will validate the follow-up push.
