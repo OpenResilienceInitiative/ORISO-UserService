@@ -47,7 +47,8 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-ConsultingTypeService
-        # The one-topic consumer requires CTS#163 in dev; keep that dependency visible.
+        # CTS#164 is already in dev; CTS#163 must merge there before the one-topic consumer passes.
+        # The shared dev reference verifies both additive settings contracts without hiding the dependency.
         ref: dev
         path: .providers/consulting
         persist-credentials: false
