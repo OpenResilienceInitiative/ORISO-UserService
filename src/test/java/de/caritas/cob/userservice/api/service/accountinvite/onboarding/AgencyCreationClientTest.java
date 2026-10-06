@@ -121,13 +121,15 @@ class AgencyCreationClientTest {
             de.caritas.cob.userservice.api.exception.httpresponses
                 .CustomValidationHttpStatusException.class)
         .satisfies(
-            failure ->
-                assertThat(
-                        ((de.caritas.cob.userservice.api.exception.httpresponses
-                                    .CustomValidationHttpStatusException)
-                                failure)
-                            .getHttpStatus())
-                    .isEqualTo(HttpStatus.CONFLICT));
+            failure -> {
+              var validationFailure =
+                  (de.caritas.cob.userservice.api.exception.httpresponses
+                          .CustomValidationHttpStatusException)
+                      failure;
+              assertThat(validationFailure.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(validationFailure.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("ONE_TOPIC_PER_AGENCY");
+            });
   }
 
   /** The documented single-use outcome keeps its own status. */

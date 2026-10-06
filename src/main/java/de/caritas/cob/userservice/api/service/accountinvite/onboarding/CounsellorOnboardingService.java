@@ -47,6 +47,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
@@ -466,8 +467,17 @@ public class CounsellorOnboardingService {
       if (settings == null) {
         throw new IllegalStateException("Missing platform settings");
       }
-      return settings.getOneTopicPerAgencyEnabled() != null
-          && Boolean.TRUE.equals(settings.getOneTopicPerAgencyEnabled().getValue());
+      var oneTopicPerAgency = settings.getOneTopicPerAgencyEnabled();
+      if (oneTopicPerAgency == null || oneTopicPerAgency.getValue() == null) {
+        throw new IllegalStateException("Missing one-topic-per-agency setting");
+      }
+      return Boolean.TRUE.equals(oneTopicPerAgency.getValue());
+    } catch (RestClientResponseException failure) {
+      log.warn(
+          "Application settings lookup failed with upstream status {}",
+          failure.getStatusCode().value());
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.SETTINGS_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE);
     } catch (RestClientException | ResponseStatusException | IllegalStateException failure) {
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.SETTINGS_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE);
