@@ -1127,6 +1127,30 @@ class MatrixSynapseServiceTest {
     assertThat(matrixSynapseService().getCallRoomMembers(MATRIX_ROOM_ID)).contains(List.of());
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("unavailableCallMemberBodies")
+  void getCallRoomMembers_unknownResponseIsRetryable(Map<String, Object> body) {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/members")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(body));
+    assertThatThrownBy(() -> matrixSynapseService().getCallRoomMembers(MATRIX_ROOM_ID))
+        .isInstanceOf(MatrixSynapseService.CallLookupUnavailableException.class);
+  }
+
+  static java.util.stream.Stream<Map<String, Object>> unavailableCallMemberBodies() {
+    return java.util.stream.Stream.of(
+        null,
+        Map.of(),
+        Map.of("members", "unknown"),
+        Map.of("members", List.of(123)),
+        Map.of("members", java.util.Arrays.asList((Object) null)),
+        Map.of("members", List.of(" ")));
+  }
+
   @Test
   void getCallRoomMembers_forbiddenIsDefinitive() {
     stubAdminLogin();

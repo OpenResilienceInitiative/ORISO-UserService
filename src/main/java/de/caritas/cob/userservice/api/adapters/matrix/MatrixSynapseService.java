@@ -1369,7 +1369,14 @@ public class MatrixSynapseService implements MatrixUserClient {
       var body = response.getBody();
       if (body == null || !(body.get("members") instanceof java.util.List<?> members)) {
         log.warn("Unexpected response reading members of Matrix room {}", matrixRoomId);
+        if (retryTransientFailure) {
+          throw new CallLookupUnavailableException("call membership lookup unavailable");
+        }
         return java.util.Optional.empty();
+      }
+      if (retryTransientFailure
+          && members.stream().anyMatch(member -> !(member instanceof String id) || id.isBlank())) {
+        throw new CallLookupUnavailableException("call membership lookup unavailable");
       }
 
       return java.util.Optional.of(members.stream().map(String::valueOf).toList());
@@ -1386,6 +1393,8 @@ public class MatrixSynapseService implements MatrixUserClient {
         throw new CallLookupUnavailableException("call membership lookup unavailable", ex);
       }
       return java.util.Optional.empty();
+    } catch (CallLookupUnavailableException ex) {
+      throw ex;
     } catch (Exception ex) {
       log.warn(
           "Matrix Error: Could not read members of room {}: {}",
