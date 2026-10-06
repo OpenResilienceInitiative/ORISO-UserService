@@ -80,9 +80,8 @@ class TeamDiscussionConcurrencyIT {
     when(sessions.findById(42001L)).thenReturn(Optional.of(session));
     var agencyCredentials = new AgencyMatrixCredentialsDTO();
     agencyCredentials.setMatrixUserId("@agency7:oriso");
-    agencyCredentials.setMatrixPassword("test-only");
     when(credentials.fetchMatrixCredentials(7L)).thenReturn(Optional.of(agencyCredentials));
-    when(matrix.loginUser("agency7", "test-only")).thenReturn("agency-token");
+    when(matrix.loginAsUserAccessToken("@agency7:oriso")).thenReturn("agency-token");
     for (String id : new String[] {"alice", "bob"}) {
       var consultant = new Consultant();
       consultant.setId(id);
