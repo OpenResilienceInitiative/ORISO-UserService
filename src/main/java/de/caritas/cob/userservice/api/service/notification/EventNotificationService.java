@@ -936,7 +936,7 @@ public class EventNotificationService {
     try {
       feedUpdateSignalService.signalFeedUpdated(recipientUserId);
     } catch (Exception ex) {
-      log.warn("Feed-update signal failed for recipient {}: {}", recipientUserId, ex.getMessage());
+      log.warn("Feed-update signal failed: {}", ex.getClass().getSimpleName());
     }
   }
 

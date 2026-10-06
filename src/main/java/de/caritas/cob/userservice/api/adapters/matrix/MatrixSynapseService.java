@@ -1313,7 +1313,7 @@ public class MatrixSynapseService implements MatrixUserClient {
    * signalling room has to be provisioned and existing users need no migration.
    *
    * @param eventType the custom event type, e.g. {@code org.oriso.feed.updated}
-   * @param matrixUserId the fully qualified recipient, e.g. {@code @alice:matrix.oriso.org}
+   * @param matrixUserId the fully qualified recipient, e.g. {@code @alice:matrix.example.com}
    * @param content the event content; pass an empty map for a content-free signal
    * @return {@code true} when Synapse accepted the message; {@code false} on any failure (this
    *     method never throws — callers are best-effort)
@@ -1362,8 +1362,8 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.warn(
           "Matrix Error: Could not send to-device message {} to {}: {}",
           eventType,
-          matrixUserId,
-          ex.getMessage());
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(ex.getMessage()));
       return false;
     }
   }

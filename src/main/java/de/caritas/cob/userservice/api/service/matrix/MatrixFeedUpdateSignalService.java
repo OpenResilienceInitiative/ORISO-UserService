@@ -148,7 +148,7 @@ public class MatrixFeedUpdateSignalService {
       delayScheduler.schedule(
           () -> handOffToExecutor(recipientUserId, window.endMillis()), window.endMillis() - now);
     } catch (Exception ex) {
-      log.warn("Could not schedule feed-update signal: {}", ex.getMessage());
+      log.warn("Could not schedule feed-update signal: {}", ex.getClass().getSimpleName());
       metrics.record(Outcome.FAILED);
     }
   }
@@ -160,10 +160,12 @@ public class MatrixFeedUpdateSignalService {
       executor.execute(() -> sendSignal(recipientUserId));
     } catch (RejectedExecutionException rejected) {
       // Bounded pool saturated. Drop with a warning — never run a Matrix call on the caller.
-      log.warn("Feed-signal executor saturated, dropping one signal: {}", rejected.getMessage());
+      log.warn(
+          "Feed-signal executor saturated, dropping one signal: {}",
+          rejected.getClass().getSimpleName());
       metrics.record(Outcome.FAILED);
     } catch (Exception ex) {
-      log.warn("Could not hand off feed-update signal: {}", ex.getMessage());
+      log.warn("Could not hand off feed-update signal: {}", ex.getClass().getSimpleName());
       metrics.record(Outcome.FAILED);
     }
   }
@@ -182,7 +184,7 @@ public class MatrixFeedUpdateSignalService {
       metrics.record(accepted ? Outcome.SENT : Outcome.FAILED);
     } catch (Exception ex) {
       // Best effort: the 15 s poll remains the guaranteed floor.
-      log.warn("Could not send feed-update signal: {}", ex.getMessage());
+      log.warn("Could not send feed-update signal: {}", ex.getClass().getSimpleName());
       metrics.record(Outcome.FAILED);
     }
   }
