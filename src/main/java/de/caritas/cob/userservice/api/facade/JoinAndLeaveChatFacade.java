@@ -57,7 +57,9 @@ public class JoinAndLeaveChatFacade {
     requireMatrixRoom(chat);
     String matrixUserId = retrieveMatrixUserId(authenticatedUser);
     if (!isBlank(matrixUserId)
-        && chat.getConversationType() == ConversationType.SELF_HELP
+        && (chat.getConversationType() == ConversationType.SELF_HELP
+            || (groupCounsellingDpaPolicy.historicalReturnEnabled()
+                && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP))
         && chat.getCurrentOccurrenceIndex() == 0) {
       // Assignment does not prove participation. The active first room plus a
       // current JOIN membership establishes a begun consultation for this caller.
@@ -77,7 +79,7 @@ public class JoinAndLeaveChatFacade {
       if (joinedMembers.contains(matrixUserId)) {
         return;
       }
-      groupCounsellingDpaPolicy.requireNewEnrolment(chat);
+      groupCounsellingDpaPolicy.requireAuthorizedEnrolment(chat, matrixUserId);
     }
     if (isBlank(matrixUserId) || !groupChatMembershipService.addMemberToRoom(chat, matrixUserId)) {
       throw new InternalServerErrorException(

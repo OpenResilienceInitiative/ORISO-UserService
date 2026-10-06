@@ -57,7 +57,13 @@ class AssignChatFacadeTest {
             policy,
             org.mockito.Mockito.mock(
                 de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
-            realAgencies);
+            realAgencies,
+            new de.caritas.cob.userservice.api.service.matrixgroup.MatrixGroupParticipationHistory(
+                new de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixPolicySettings(
+                    false, "", ""),
+                new org.springframework.web.client.RestTemplate(),
+                new com.fasterxml.jackson.databind.ObjectMapper(),
+                null));
     assignChatFacade =
         new AssignChatFacade(chatService, userService, userChats, groupPolicy, appointmentEvents);
   }

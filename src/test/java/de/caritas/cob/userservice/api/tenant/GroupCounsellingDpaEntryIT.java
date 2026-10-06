@@ -156,6 +156,19 @@ class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
   }
 
   @Test
+  void disabledHistoricalIntegrationKeepsOnePureOwnerDecisionForAModeratorBatch() throws Exception {
+    Chat chat = storedChat(ConversationType.SELF_HELP);
+    Consultant first = fixtures.consultant(OWNER, AGENCY);
+    Consultant second = fixtures.consultant(OWNER, AGENCY);
+    gate = "{\"dpaPublished\":true,\"dpaSigned\":true}";
+    var response = update(chat, "[\"" + first.getId() + "\",\"" + second.getId() + "\"]");
+    assertEquals(200, response.statusCode(), response.body());
+    assertEquals(1, ownerReads.get());
+    assertEquals(4, matrixWrites.get());
+    assertEquals(3, participants.findBySeriesId(chat.getId()).size());
+  }
+
+  @Test
   void aRefusedMixedModeratorUpdateDoesNotRemoveTheExistingModeratorFromMatrix() throws Exception {
     Chat chat = storedChat(ConversationType.SELF_HELP);
     Consultant existing = addModerator(chat);

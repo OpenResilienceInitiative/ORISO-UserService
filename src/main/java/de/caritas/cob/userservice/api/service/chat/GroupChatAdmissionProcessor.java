@@ -39,6 +39,7 @@ public class GroupChatAdmissionProcessor {
   private final GroupAppointmentSeriesEventProducer appointmentEvents;
   private final GroupChatAdmissionMatrixRepairService repair;
   private final GroupCounsellingDpaPolicy dpaPolicy;
+  private final GroupChatPermissionService permission;
 
   @Value("${group.chat.admission.retry-backoff:PT1M}")
   private Duration retryBackoff;
@@ -91,6 +92,21 @@ public class GroupChatAdmissionProcessor {
       return;
     }
 
+    if (dpaPolicy.historicalReturnEnabled()) {
+      if (request.getDecidedBy() == null)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+            "Admission no longer has an authorized moderator");
+      var decider =
+          consultants
+              .findByIdAndDeleteDateIsNull(request.getDecidedBy())
+              .orElseThrow(
+                  () ->
+                      new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+                          "Admission no longer has an authorized moderator"));
+      permission.requireCanModerate(series.get(), decider);
+      permission.requireCanAssignAdmissionRole(
+          series.get(), current, decider, consultant.get(), request.getAdmittedRole());
+    }
     var matrixUserId = consultant.get().getMatrixUserId();
     var wasMemberBefore = membership.isMemberInRoom(series.get(), matrixUserId);
     if (wasMemberBefore.isEmpty()) {
@@ -106,7 +122,7 @@ public class GroupChatAdmissionProcessor {
                 participant -> request.getConsultantId().equals(participant.getConsultantId()));
     // A queued intent may outlive renewal grace; an assignment alone is not continuation.
     if (!alreadyParticipant || !wasMemberBefore.get()) {
-      dpaPolicy.requireFirstStart(series.get());
+      dpaPolicy.requireAuthorizedFirstEntry(series.get(), matrixUserId);
     }
     var roomId = membership.resolveMatrixRoomId(series.get());
     if (!wasMemberBefore.get()) {

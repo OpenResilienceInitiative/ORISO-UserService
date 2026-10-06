@@ -46,7 +46,13 @@ class GroupChatParticipantReconciliationServiceTest {
         new GroupCounsellingDpaPolicy(
             policy,
             Mockito.mock(de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
-            realAgencies);
+            realAgencies,
+            new de.caritas.cob.userservice.api.service.matrixgroup.MatrixGroupParticipationHistory(
+                new de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixPolicySettings(
+                    false, "", ""),
+                new org.springframework.web.client.RestTemplate(),
+                new com.fasterxml.jackson.databind.ObjectMapper(),
+                null));
     service =
         new GroupChatParticipantReconciliationService(
             participantRepository, consultantRepository, membershipService, groupPolicy);
