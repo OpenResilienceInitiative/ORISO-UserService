@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -94,6 +95,7 @@ import org.springframework.web.client.RestClientResponseException;
 @RequiredArgsConstructor
 public class KeycloakService
     implements IdentityAccountRemover,
+        IdentityAccountStatusLookup,
         IdentityAuthentication,
         IdentityClient,
         IdentityDeactivator,
@@ -1072,6 +1074,16 @@ public class KeycloakService
               + " refresh and retrying once");
       keycloakClient.refreshAdminSession();
       return keycloakClient.getUsersResource().search(username);
+    }
+  }
+
+  @Override
+  public Optional<Boolean> findEnabledById(String userId) {
+    try {
+      var user = keycloakClient.getUsersResource().get(userId).toRepresentation();
+      return user == null ? Optional.empty() : Optional.ofNullable(user.isEnabled());
+    } catch (NotFoundException missing) {
+      return Optional.empty();
     }
   }
 

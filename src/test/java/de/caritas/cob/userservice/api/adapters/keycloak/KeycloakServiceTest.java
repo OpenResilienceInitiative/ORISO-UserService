@@ -158,6 +158,34 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  void findEnabledById_Should_ReadTheActualLoginFlag() {
+    var resource = mock(UserResource.class);
+    var representation = new UserRepresentation();
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("account-id")).thenReturn(resource);
+    when(resource.toRepresentation()).thenReturn(representation);
+    representation.setEnabled(false);
+    org.assertj.core.api.Assertions.assertThat(keycloakService.findEnabledById("account-id"))
+        .contains(false);
+    representation.setEnabled(true);
+    org.assertj.core.api.Assertions.assertThat(keycloakService.findEnabledById("account-id"))
+        .contains(true);
+    representation.setEnabled(null);
+    org.assertj.core.api.Assertions.assertThat(keycloakService.findEnabledById("account-id"))
+        .isEmpty();
+  }
+
+  @Test
+  void findEnabledById_Should_NotTreatMissingIdentityAsDisabled() {
+    var resource = mock(UserResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("missing")).thenReturn(resource);
+    when(resource.toRepresentation()).thenThrow(new jakarta.ws.rs.NotFoundException());
+    org.assertj.core.api.Assertions.assertThat(keycloakService.findEnabledById("missing"))
+        .isEmpty();
+  }
+
+  @Test
   public void changePassword_Should_ReturnTrue_When_KeycloakPasswordChangeWasSuccessful() {
     var usersResource = mock(UsersResource.class);
     var userResource = mock(UserResource.class);
