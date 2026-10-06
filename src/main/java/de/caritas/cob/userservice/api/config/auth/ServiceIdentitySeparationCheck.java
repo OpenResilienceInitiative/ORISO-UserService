@@ -22,6 +22,7 @@ public class ServiceIdentitySeparationCheck {
         || blank(technical.getClientSecret())
         || blank(keycloakCustomConfig.getAdminClientId())
         || blank(keycloakCustomConfig.getAdminClientSecret())
+        || blank(keycloakCustomConfig.getAdminServiceSubject())
         || blank(keycloakCustomConfig.getAppClientId())
         || technical.getClientId().equals(keycloakCustomConfig.getAdminClientId())
         || technical.getClientId().equals(keycloakCustomConfig.getAppClientId())

@@ -8,8 +8,10 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +34,10 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
   private static final String TOKEN_GRANT_CLIENT_CREDENTIALS = "client_credentials";
   private static final String TOKEN_GRANT_EXCHANGE =
       "urn:ietf:params:oauth:grant-type:token-exchange";
+  private static final Set<String> REQUIRED_ADMIN_MANAGEMENT_ROLES =
+      Set.of("manage-users", "view-users", "query-users", "view-realm");
+  private static final Set<String> ALLOWED_ADMIN_MANAGEMENT_ROLES =
+      Set.of("manage-users", "view-users", "query-users", "view-realm", "query-groups");
 
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull IdentityClientConfig identityClientConfig;
@@ -114,14 +120,26 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
     if (!(rolesValue instanceof Collection<?> roles)) {
       return false;
     }
-    return !isBlank(keycloakAdminServiceSubject)
+    return Set.of("otp-config-admin").equals(new HashSet<>(roles))
+        && !isBlank(keycloakAdminServiceSubject)
         && keycloakAdminServiceSubject.equals(jwt.getSubject())
         && keycloakAdminClientId.equals(jwt.getClaimAsString("azp"))
         && jwt.getExpiresAt() != null
         && jwt.getExpiresAt().isAfter(Instant.now())
-        && roles.contains("otp-config-admin")
-        && !roles.contains("technical")
-        && !roles.contains("realm-admin");
+        && hasExpectedAdminResources(jwt.getClaimAsMap("resource_access"));
+  }
+
+  private static boolean hasExpectedAdminResources(Map<String, Object> resourceAccess) {
+    if (resourceAccess == null
+        || !resourceAccess.keySet().equals(Set.of("realm-management"))
+        || !(resourceAccess.get("realm-management") instanceof Map<?, ?> realmManagement)
+        || !(realmManagement.get("roles") instanceof Collection<?> roles)
+        || roles.stream().anyMatch(role -> !(role instanceof String))) {
+      return false;
+    }
+    var actualRoles = new HashSet<>(roles);
+    return actualRoles.containsAll(REQUIRED_ADMIN_MANAGEMENT_ROLES)
+        && ALLOWED_ADMIN_MANAGEMENT_ROLES.containsAll(actualRoles);
   }
 
   private static IdentitySession toIdentitySession(KeycloakLoginResponseDTO response) {

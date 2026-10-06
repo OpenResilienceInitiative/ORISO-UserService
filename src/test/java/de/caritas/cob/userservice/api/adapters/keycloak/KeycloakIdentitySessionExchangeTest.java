@@ -126,7 +126,10 @@ class KeycloakIdentitySessionExchangeTest {
         "expired",
         "missing-role",
         "technical",
-        "realm-admin"
+        "realm-admin",
+        "resource-realm-admin",
+        "unexpected-management-role",
+        "foreign-resource"
       })
   void exchangeForUserShouldRejectUnexpectedAdminToken(String invalidClaim) {
     when(restTemplate.postForEntity(eq(TOKEN_URL), any(), eq(Map.class)))
@@ -144,7 +147,22 @@ class KeycloakIdentitySessionExchangeTest {
         "expired".equals(invalidClaim)
             ? Instant.now().minusSeconds(1)
             : Instant.now().plusSeconds(300);
-    when(jwtDecoder.decode("admin-token")).thenReturn(adminToken(subject, azp, roles, expiry));
+    var managementRoles =
+        switch (invalidClaim) {
+          case "resource-realm-admin" ->
+              List.of("manage-users", "view-users", "query-users", "view-realm", "realm-admin");
+          case "unexpected-management-role" ->
+              List.of("manage-users", "view-users", "query-users", "view-realm", "impersonation");
+          default -> List.of("manage-users", "view-users", "query-users", "view-realm");
+        };
+    var resourceAccess =
+        "foreign-resource".equals(invalidClaim)
+            ? Map.of(
+                "realm-management", Map.of("roles", managementRoles),
+                "account", Map.of("roles", List.of("manage-account")))
+            : Map.of("realm-management", Map.of("roles", managementRoles));
+    when(jwtDecoder.decode("admin-token"))
+        .thenReturn(adminToken(subject, azp, roles, resourceAccess, expiry));
 
     assertThat(exchange.exchangeForUser("identity-user-id")).isEmpty();
 
@@ -157,11 +175,28 @@ class KeycloakIdentitySessionExchangeTest {
   }
 
   private static Jwt adminToken(String subject, String azp, List<String> roles, Instant expiresAt) {
+    return adminToken(
+        subject,
+        azp,
+        roles,
+        Map.of(
+            "realm-management",
+            Map.of("roles", List.of("manage-users", "view-users", "query-users", "view-realm"))),
+        expiresAt);
+  }
+
+  private static Jwt adminToken(
+      String subject,
+      String azp,
+      List<String> roles,
+      Map<String, Map<String, List<String>>> resourceAccess,
+      Instant expiresAt) {
     return Jwt.withTokenValue("admin-token")
         .header("alg", "none")
         .subject(subject)
         .claim("azp", azp)
         .claim("realm_access", Map.of("roles", roles))
+        .claim("resource_access", resourceAccess)
         .issuedAt(Instant.now().minusSeconds(10))
         .expiresAt(expiresAt)
         .build();

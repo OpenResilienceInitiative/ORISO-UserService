@@ -21,6 +21,7 @@ class ServiceIdentitySeparationCheckTest {
     admin.setAdminClientId("backend-admin");
     admin.setAppClientId("app");
     admin.setAdminClientSecret("synthetic-admin-secret");
+    admin.setAdminServiceSubject("admin-service-subject");
     technical.setClientId("backend-technical");
     technical.setClientSecret("synthetic-technical-secret");
     when(identity.getTechnicalUser()).thenReturn(technical);
@@ -34,7 +35,14 @@ class ServiceIdentitySeparationCheckTest {
 
   @ParameterizedTest
   @ValueSource(
-      strings = {"same-clients", "admin-app", "technical-app", "same-secrets", "missing-secret"})
+      strings = {
+        "same-clients",
+        "admin-app",
+        "technical-app",
+        "same-secrets",
+        "missing-secret",
+        "missing-admin-subject"
+      })
   void unsafeClientConfigurationAbortsStartupWithoutExposingSecrets(String reason) {
     configure();
     switch (reason) {
@@ -43,6 +51,7 @@ class ServiceIdentitySeparationCheckTest {
       case "technical-app" -> technical.setClientId("app");
       case "same-secrets" -> technical.setClientSecret("synthetic-admin-secret");
       case "missing-secret" -> technical.setClientSecret("");
+      case "missing-admin-subject" -> admin.setAdminServiceSubject(" ");
     }
     assertThatThrownBy(check::verifyBackendClients)
         .isInstanceOf(IllegalStateException.class)
