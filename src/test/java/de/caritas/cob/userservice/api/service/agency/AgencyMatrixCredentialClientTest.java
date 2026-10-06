@@ -72,7 +72,6 @@ class AgencyMatrixCredentialClientTest {
 
     var credentials = new AgencyMatrixCredentialsDTO();
     credentials.setMatrixUserId("@agency:matrix");
-    credentials.setMatrixPassword("matrix-password");
 
     mockServer
         .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
@@ -92,6 +91,23 @@ class AgencyMatrixCredentialClientTest {
   @Test
   void fetchMatrixCredentialsShouldReturnEmptyWhenAgencyIdIsNull() {
     assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(null)).isEmpty();
+  }
+
+  @Test
+  void oldAgencyResponseRemainsCompatibleButPasswordIsDiscarded() throws Exception {
+    stubTechnicalUserLogin("technical-access-token");
+    mockServer
+        .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
+        .andRespond(
+            withSuccess(
+                "{\"matrixUserId\":\"@agency:matrix\",\"matrixPassword\":\"public-legacy-fixture\"}",
+                MediaType.APPLICATION_JSON));
+    var identity = agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID).orElseThrow();
+    assertThat(identity.getMatrixUserId()).isEqualTo("@agency:matrix");
+    assertThat(new ObjectMapper().writeValueAsString(identity))
+        .isEqualTo("{\"matrixUserId\":\"@agency:matrix\"}");
+    assertThat(identity.toString()).doesNotContain("public-legacy-fixture", "Password");
+    mockServer.verify();
   }
 
   @Test
