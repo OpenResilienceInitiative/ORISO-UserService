@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.SmtpSendException.DeliveryDisposition;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.DpaSignedNotice;
+import de.caritas.cob.userservice.api.model.DpaSignedNotice.NoticeRole;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
@@ -27,6 +28,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Comparator;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -43,7 +45,8 @@ import org.springframework.web.client.HttpClientErrorException;
 
 /**
  * DPA_SIGNED_NOTICE (ORISO-UserService#1005, epic ORISO-Admin#722): tells the administrator who
- * forwarded the data processing agreement that the signature has landed.
+ * forwarded the data processing agreement that the signature has landed, and sends the authorised
+ * person a separate confirmation receipt (ORISO-UserService#1353).
  *
  * <p>Trigger model — untrusted hint, verified facts: TenantService fires an unauthenticated
  * fire-and-forget hint after a public sign-link confirmation. This service then reads the signature
@@ -52,9 +55,10 @@ import org.springframework.web.client.HttpClientErrorException;
  * can never fabricate a notice; a hint for a self-signed or unsigned tenant finds no forwarded
  * signature and dies silently.
  *
- * <p>Exactly-once: a ledger row per (tenant, signed version) is claimed in its own transaction
- * BEFORE sending — of two concurrent hints exactly one wins the unique constraint. When anything
- * fails before the SMTP handover, the claim is compensated (deleted) so a later hint can retry.
+ * <p>Per-role deduplication: a ledger row per (tenant, signed version, recipient role) is claimed
+ * in its own transaction BEFORE sending — of two concurrent hints exactly one wins the unique
+ * constraint. When anything fails before the SMTP handover, the claim is compensated (deleted) so a
+ * later hint can retry.
  *
  * <p><b>Deliberate duplicate on an uncertain delivery (#1341).</b> The release happens for EVERY
  * failure before the handover, including {@link
@@ -77,7 +81,9 @@ import org.springframework.web.client.HttpClientErrorException;
  *
  * <p>Recipient resolution per issue spec: {@code forwardedByUserId} → that admin's account e-mail
  * and account language (identity {@code locale}, fallback {@code de}); a pre-account wizard forward
- * (null forwarder) → the onboarding invite's contact address, fallback language.
+ * (null forwarder) → the onboarding invite's contact address, fallback language. The signer receipt
+ * uses the persisted signer e-mail and confirmation language (DE/EN, German fallback); it has no
+ * admin action or editable account-invite template.
  */
 @Service
 @Slf4j
@@ -124,6 +130,50 @@ public class DpaSignedNoticeService {
       organisation in the admin panel:
 
       {{adminUrl}}""";
+
+  static final String SIGNER_BODY_DE =
+      """
+      Guten Tag,
+
+      Ihre Bestätigung der Vertragsunterlagen wurde registriert.
+      Der Trägeradmin wird darüber benachrichtigt und kann nun die Einrichtung
+      Ihrer Organisation im Admin-Bereich fortsetzen.
+
+      Organisation: {{tenantName}}
+      Vertragsversion: {{dpaVersion}}
+      Bestätigt am: {{signedAt}}
+      Bestätigt von: {{signerName}}{{signerPositionSuffix}}""";
+
+  static final String SIGNER_BODY_EN =
+      """
+      Hello,
+
+      Your confirmation of the contract documents has been recorded.
+      The organisation administrator will be notified and can now continue
+      setting up your organisation in the admin panel.
+
+      Organisation: {{tenantName}}
+      Contract version: {{dpaVersion}}
+      Confirmed at: {{signedAt}}
+      Confirmed by: {{signerName}}{{signerPositionSuffix}}""";
+
+  private static String receiptLanguage(String language) {
+    if (isBlank(language)) {
+      return FALLBACK_LANGUAGE;
+    }
+    String code = language.trim().toLowerCase(Locale.ROOT).split("[-_]", 2)[0];
+    return "en".equals(code) ? "en" : FALLBACK_LANGUAGE;
+  }
+
+  private static String signerSubject(String language) {
+    return "en".equals(language)
+        ? "Confirmation of your contract documents"
+        : "Bestätigung Ihrer Vertragsunterlagen";
+  }
+
+  private static String signerBody(String language) {
+    return "en".equals(language) ? SIGNER_BODY_EN : SIGNER_BODY_DE;
+  }
 
   /**
    * Bounded dispatcher for the PUBLIC hint endpoint, modelled on {@code PasswordResetService}: an
@@ -256,18 +306,35 @@ public class DpaSignedNoticeService {
     // (ORISO-Admin#896, epic #725). Idempotent end to end - the repository update only fills a
     // still-null timestamp, so a repeated hint can never regress or overwrite it.
     recordSignatureOnInvites(tenantId, signature);
-    Optional<Recipient> recipient = resolveRecipient(tenantId, signature);
-    if (recipient.isEmpty()) {
-      log.warn(
-          "DPA signed-notice for tenant {} has no resolvable recipient — no notice sent", tenantId);
-      return;
+    // Each role has its own claim and failure boundary, even when both addresses are identical.
+    dispatchForRole(tenantId, signature, NoticeRole.ADMIN);
+    dispatchForRole(tenantId, signature, NoticeRole.SIGNER);
+  }
+
+  private void dispatchForRole(Long tenantId, DpaSignatureDTO signature, NoticeRole role) {
+    try {
+      Optional<Recipient> recipient =
+          role == NoticeRole.ADMIN
+              ? resolveRecipient(tenantId, signature)
+              : Optional.ofNullable(signature.getSignerEmail())
+                  .filter(email -> !isBlank(email))
+                  .map(
+                      email ->
+                          new Recipient(email.trim(), receiptLanguage(signature.getLanguage())));
+      if (recipient.isEmpty()) {
+        log.warn("DPA {} notice for tenant {} has no resolvable recipient", role, tenantId);
+        return;
+      }
+      var claim = claimNotice(tenantId, signature, recipient.get(), role);
+      if (claim.isEmpty()) {
+        log.debug("DPA {} notice for tenant {} already claimed", role, tenantId);
+        return;
+      }
+      sendNotice(tenantId, signature, recipient.get(), claim.get());
+    } catch (RuntimeException failure) {
+      // Recipient resolution or claim failure must not suppress the other role's notification.
+      log.warn("DPA {} notice for tenant {} could not be processed", role, tenantId, failure);
     }
-    var claim = claimNotice(tenantId, signature, recipient.get());
-    if (claim.isEmpty()) {
-      log.debug("DPA signed-notice for tenant {} was already sent — skipping duplicate", tenantId);
-      return;
-    }
-    sendNotice(tenantId, signature, recipient.get(), claim.get());
   }
 
   /**
@@ -337,7 +404,7 @@ public class DpaSignedNoticeService {
 
   /** Claims the exactly-once ledger row; empty when another hint already claimed it. */
   private Optional<DpaSignedNotice> claimNotice(
-      Long tenantId, DpaSignatureDTO signature, Recipient recipient) {
+      Long tenantId, DpaSignatureDTO signature, Recipient recipient, NoticeRole role) {
     var dpaVersion = dedupKeyFor(signature);
     try {
       return Optional.ofNullable(
@@ -347,6 +414,7 @@ public class DpaSignedNoticeService {
                       DpaSignedNotice.builder()
                           .tenantId(tenantId)
                           .dpaVersion(dpaVersion)
+                          .noticeRole(role)
                           .recipientEmail(recipient.email())
                           .signedAt(parseDateTime(signature.getSignedAt()))
                           .createDate(LocalDateTime.now())
@@ -365,15 +433,21 @@ public class DpaSignedNoticeService {
     // Loading a template, resolving the tenant name and rendering all reach out or can throw.
     try {
       var language = recipient.language();
-      var template = findActiveTemplate(language);
+      var signerReceipt = claim.getNoticeRole() == NoticeRole.SIGNER;
+      var template =
+          signerReceipt ? Optional.<InviteEmailTemplate>empty() : findActiveTemplate(language);
       var placeholders = buildPlaceholders(tenantId, signature, language);
       var subject =
           render(
-              template.map(InviteEmailTemplate::getSubject).orElse(defaultSubject(language)),
+              template
+                  .map(InviteEmailTemplate::getSubject)
+                  .orElse(signerReceipt ? signerSubject(language) : defaultSubject(language)),
               placeholders);
       var body =
           render(
-              template.map(InviteEmailTemplate::getBody).orElse(defaultBody(language)),
+              template
+                  .map(InviteEmailTemplate::getBody)
+                  .orElse(signerReceipt ? signerBody(language) : defaultBody(language)),
               placeholders);
       // No primary action: the notice carries its link as {{adminUrl}} inline in the prose, and
       // the layout would render a second CTA button on top of it. InviteEmailPreviewService passes

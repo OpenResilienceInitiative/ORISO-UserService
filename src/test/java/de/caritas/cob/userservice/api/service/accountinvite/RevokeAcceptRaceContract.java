@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
@@ -170,6 +171,7 @@ abstract class RevokeAcceptRaceContract {
   @MockitoBean private CreateAdminService createAdminService;
   @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
   @MockitoBean private IdentityAccountRemover identityAccountRemover;
+  @MockitoBean private IdentityPasswordUpdater identityPasswordUpdater;
   @MockitoBean private AcceptTimeAgencyCheck acceptTimeAgencyCheck;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
