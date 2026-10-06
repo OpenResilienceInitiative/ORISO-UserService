@@ -2182,6 +2182,11 @@ components:
     ConsultantDTO:
       type: object
       properties:
+        active:
+          type: boolean
+          nullable: true
+          description: Login enabled in the identity provider. Null means unknown, not disabled. Read-only.
+          readOnly: true
         topicPermission:
           $ref: '#/components/schemas/TopicPermissionDTO'
         id:
@@ -2415,6 +2420,11 @@ components:
     AdminDTO:
       type: object
       properties:
+        active:
+          type: boolean
+          nullable: true
+          description: Login enabled in the identity provider. Null means unknown, not disabled. Read-only.
+          readOnly: true
         id:
           type: string
           example: "0f2cca9c-9303-4791-a0a5-a1ce16f1524f"
