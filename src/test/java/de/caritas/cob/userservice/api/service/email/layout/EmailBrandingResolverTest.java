@@ -39,9 +39,22 @@ class EmailBrandingResolverTest {
   @Mock private TenantService tenantService;
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
 
+  /** Any dark colour: the platform theming colour most tests inherit when a tenant has none. */
+  private static final String PLATFORM_COLOUR = "#1c4f8f";
+
   @BeforeEach
   void tenantUrls() {
     lenient().when(tenantTemplateSupplier.getTenantBaseUrl(any())).thenReturn("https://tenant.org");
+    givenPlatformPrimaryColour(PLATFORM_COLOUR);
+  }
+
+  private void givenPlatformPrimaryColour(String primaryColor) {
+    Theming theming = new Theming();
+    theming.setPrimaryColor(primaryColor);
+    RestrictedTenantDTO platform = new RestrictedTenantDTO();
+    platform.setId(0L);
+    platform.setTheming(primaryColor == null ? null : theming);
+    lenient().when(tenantService.getPlatformTenantDataFresh()).thenReturn(platform);
   }
 
   private EmailBrandingResolver resolver(String platformLogoUrl) {
@@ -282,6 +295,7 @@ class EmailBrandingResolverTest {
     givenNoTemplateAttributes();
     Theming platformTheming = new Theming();
     platformTheming.setLogo("data:image/png;base64,iVBORw0KGgo=");
+    platformTheming.setPrimaryColor(PLATFORM_COLOUR);
     RestrictedTenantDTO platform = tenant("ORISO", platformTheming);
     platform.setId(1L);
     when(tenantService.getPlatformTenantDataFresh()).thenReturn(platform);
@@ -498,7 +512,7 @@ class EmailBrandingResolverTest {
   }
 
   /**
-   * {@code secondaryColor} is dead weight and must not silently become the mail accent: ORISO-Admin
+   * {@code secondaryColor} is dead weight and must not silently become the mail colour: ORISO-Admin
    * writes it as {@code null} on every theming save, so a chain step reading it can never resolve
    * and would only hide the real fallback.
    */
@@ -509,38 +523,136 @@ class EmailBrandingResolverTest {
     secondaryOnly.setSecondaryColor("#654321");
     when(tenantService.getRestrictedTenantDataFresh(8L)).thenReturn(tenant("Sued", secondaryOnly));
 
-    assertThat(resolver("").resolve(8L).accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
+    assertThat(resolver("").resolve(8L).accentColor()).isEqualTo(PLATFORM_COLOUR);
   }
 
-  /** The platform fallback is the product's own dark accent, not an invented colour. */
+  /** The web app keeps a light brand colour and derives the label; mail does the same. */
+  @ParameterizedTest
+  @ValueSource(strings = {"#f8e71c", "#ffff00", "#ffd400", "#9ad6ff"})
+  void resolve_Should_useALightButChromaticTenantColourAsConfigured(String light) {
+    givenNoTemplateAttributes();
+    Theming theming = new Theming();
+    theming.setPrimaryColor(light);
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", theming));
+
+    EmailBranding branding = resolver("").resolve(7L);
+
+    assertThat(branding.accentColor()).isEqualTo(light);
+    assertThat(branding.buttonLabelColor()).as("a dark tone, not white").isNotEqualTo("#ffffff");
+    assertThat(EmailColors.contrastRatio(branding.accentColor(), branding.buttonLabelColor()))
+        .isGreaterThanOrEqualTo(4.5d);
+    assertThat(EmailColors.contrastRatio(branding.linkColor(), "#ffffff"))
+        .as("links on the white card are darkened, the button is not")
+        .isGreaterThanOrEqualTo(4.5d);
+  }
+
+  /** The platform colour only steps in when the tenant colour is unusable under the web rule. */
+  @ParameterizedTest
+  @ValueSource(strings = {"not-a-color", "#808080", "#8a8a8a", "#000000", "#ffffff", "   "})
+  void resolve_Should_usePlatformThemingColour_When_TenantColourIsUnusable(String unusable) {
+    givenNoTemplateAttributes();
+    Theming theming = new Theming();
+    theming.setPrimaryColor(unusable);
+    when(tenantService.getRestrictedTenantDataFresh(9L)).thenReturn(tenant("Ost", theming));
+
+    assertThat(resolver("").resolve(9L).accentColor()).isEqualTo(PLATFORM_COLOUR);
+  }
+
   @Test
-  void resolve_Should_fallBackToTheProductDarkAccent_When_NoTenantColorIsConfigured() {
+  void resolve_Should_usePlatformThemingColour_When_TenantHasNoThemingAtAll() {
+    givenNoTemplateAttributes();
+    when(tenantService.getRestrictedTenantDataFresh(9L)).thenReturn(tenant("Ost", null));
+
+    assertThat(resolver("").resolve(9L).accentColor()).isEqualTo(PLATFORM_COLOUR);
+  }
+
+  @Test
+  void resolve_Should_useThePlatformThemingColourForPlatformMail() {
     givenNoTemplateAttributes();
 
     EmailBranding branding = resolver("").resolve(null);
 
-    assertThat(branding.accentColor()).isEqualTo("#a5000a");
+    assertThat(branding.accentColor()).isEqualTo(PLATFORM_COLOUR);
     assertThat(branding.brandName()).isEqualTo("ORISO");
     assertThat(branding.logoUrl()).isNull();
   }
 
+  /** A near-grey platform colour is unusable under the web rule too; the default takes over. */
   @Test
-  void resolve_Should_ignoreAMalformedTenantPrimaryColor() {
+  void resolve_Should_applyTheWebRuleToThePlatformColourToo() {
     givenNoTemplateAttributes();
-    Theming broken = new Theming();
-    broken.setPrimaryColor("not-a-color");
-    when(tenantService.getRestrictedTenantDataFresh(9L)).thenReturn(tenant("Ost", broken));
+    givenPlatformPrimaryColour("#808080");
 
-    assertThat(resolver("").resolve(9L).accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
+    assertThat(resolver("").resolve(null).accentColor()).isEqualTo("#000000");
+  }
+
+  /** No colour anywhere: the neutral installation default, black with a white label. */
+  @Test
+  void resolve_Should_useTheNeutralDefault_When_NoTenantNorPlatformColourIsUsable() {
+    givenNoTemplateAttributes();
+    givenPlatformPrimaryColour(null);
+    when(tenantService.getRestrictedTenantDataFresh(9L)).thenReturn(tenant("Ost", null));
+
+    EmailBranding tenantMail = resolver("").resolve(9L);
+    EmailBranding platformMail = resolver("").resolve(null);
+
+    assertThat(tenantMail.accentColor()).isEqualTo("#000000");
+    assertThat(tenantMail.buttonLabelColor()).isEqualTo("#ffffff");
+    assertThat(platformMail.accentColor()).isEqualTo("#000000");
+    assertThat(platformMail.buttonLabelColor()).isEqualTo("#ffffff");
   }
 
   @Test
-  void resolve_Should_rejectALightTenantPrimaryColorForAWhiteButtonLabel() {
-    Theming light = new Theming();
-    light.setPrimaryColor("#ffff00");
-    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", light));
+  void resolve_Should_useTheNeutralDefault_When_ThePlatformTenantCannotBeLoaded() {
+    givenNoTemplateAttributes();
+    when(tenantService.getPlatformTenantDataFresh()).thenThrow(new IllegalStateException("down"));
+    when(tenantService.getRestrictedTenantDataFresh(9L)).thenReturn(tenant("Ost", null));
 
-    assertThat(resolver("").resolve(7L).accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
+    EmailBranding branding = resolver("").resolve(9L);
+
+    assertThat(branding.accentColor()).isEqualTo("#000000");
+    assertThat(branding.buttonLabelColor()).isEqualTo("#ffffff");
+  }
+
+  /** Near-grey tenant colour: platform colour first, then the default, never the grey itself. */
+  @Test
+  void resolve_Should_fallBackToThePlatformThenToTheDefault_When_TenantColourIsNearGrey() {
+    givenNoTemplateAttributes();
+    Theming theming = new Theming();
+    theming.setPrimaryColor("#8a8a8a");
+    when(tenantService.getRestrictedTenantDataFresh(9L)).thenReturn(tenant("Ost", theming));
+
+    assertThat(resolver("").resolve(9L).accentColor()).isEqualTo(PLATFORM_COLOUR);
+
+    givenPlatformPrimaryColour(null);
+    EmailBranding branding = resolver("").resolve(9L);
+    assertThat(branding.accentColor()).isEqualTo("#000000");
+    assertThat(branding.buttonLabelColor()).isEqualTo("#ffffff");
+  }
+
+  @Test
+  void resolve_Should_notUseTheTenantColourWhenItIsUsable_EvenIfPlatformHasOne() {
+    givenNoTemplateAttributes();
+    Theming theming = new Theming();
+    theming.setPrimaryColor("#00897b");
+    when(tenantService.getRestrictedTenantDataFresh(9L)).thenReturn(tenant("Ost", theming));
+
+    assertThat(resolver("").resolve(9L).accentColor()).isEqualTo("#00897b");
+  }
+
+  /** accent and signal are read from the tenant (generated client) but not used for mail yet. */
+  @Test
+  void resolve_Should_readButNotUseAccentAndSignal() {
+    givenNoTemplateAttributes();
+    Theming theming = new Theming();
+    theming.setPrimaryColor("#1c4f8f");
+    theming.setAccent("#ffb3c7");
+    theming.setSignal("#d93025");
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", theming));
+
+    assertThat(theming.getAccent()).isEqualTo("#ffb3c7");
+    assertThat(theming.getSignal()).isEqualTo("#d93025");
+    assertThat(resolver("").resolve(7L).accentColor()).isEqualTo("#1c4f8f");
   }
 
   // --- degradation ----------------------------------------------------------------------
@@ -557,7 +669,7 @@ class EmailBrandingResolverTest {
     EmailBranding branding = resolver("").resolvePendingTenant(4711L);
 
     assertThat(branding.brandName()).isEqualTo("ORISO");
-    assertThat(branding.accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
+    assertThat(branding.accentColor()).isEqualTo(PLATFORM_COLOUR);
   }
 
   @Test

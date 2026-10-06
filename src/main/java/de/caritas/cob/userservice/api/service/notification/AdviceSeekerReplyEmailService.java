@@ -15,7 +15,6 @@ import de.caritas.cob.userservice.api.service.donotdisturb.DoNotDisturbService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
-import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.net.URI;
@@ -263,10 +262,6 @@ public class AdviceSeekerReplyEmailService {
       // theming from this exact recipient tenant may vary between installations.
       if (recipientBrand.logoUrl() != null) {
         values.put("logoUrl", recipientBrand.logoUrl());
-      }
-      if (!EmailColors.PLATFORM_ACCENT_DARK.equals(recipientBrand.accentColor())) {
-        values.put("primaryColor", emailBrand.readablePrimary(recipientBrand.accentColor()));
-        values.put("accentColor", recipientBrand.accentColor());
       }
       values.put("messageUrl", baseUrl + actionPath);
       email = renderer.render(template, tone, values);
