@@ -41,6 +41,9 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
@@ -103,6 +106,77 @@ class MatrixMessageControllerTest {
 
     assertThrows(ForbiddenException.class, () -> controller.getMessages(SESSION_ID));
 
+    verifyNoInteractions(matrixSynapseService);
+    verifyNoInteractions(matrixCredentialClient);
+  }
+
+  @Test
+  void unassignedEnquiryReadsMessagesWithAgencyIdentityOnly() {
+    var session = sessionWithMatrixRoom();
+    session.setAgencyId(7L);
+    session.setConsultant(null);
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("consultant"));
+    var identity =
+        new de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO();
+    identity.setMatrixUserId("@agency:matrix");
+    when(matrixCredentialClient.fetchMatrixCredentials(7L)).thenReturn(Optional.of(identity));
+    when(matrixSynapseService.loginAsUserAccessToken("@agency:matrix")).thenReturn("agency-token");
+    when(matrixSynapseService.getRoomMessages(MATRIX_ROOM_ID, "agency-token"))
+        .thenReturn(List.of(Map.of("event_id", "$enquiry")));
+
+    var response = controller.getMessages(SESSION_ID);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    verify(matrixSynapseService).getRoomMessages(MATRIX_ROOM_ID, "agency-token");
+    verify(matrixSynapseService, never())
+        .loginUser(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(strings = {"  "})
+  void unavailableAgencyImpersonationDoesNotFallBackToPasswordOrReadMessages(String token) {
+    var session = sessionWithMatrixRoom();
+    session.setAgencyId(7L);
+    session.setConsultant(null);
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("consultant"));
+    var identity =
+        new de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO();
+    identity.setMatrixUserId("@agency:matrix");
+    when(matrixCredentialClient.fetchMatrixCredentials(7L)).thenReturn(Optional.of(identity));
+    when(matrixSynapseService.loginAsUserAccessToken("@agency:matrix")).thenReturn(token);
+
+    assertEquals(HttpStatus.BAD_GATEWAY, controller.getMessages(SESSION_ID).getStatusCode());
+
+    verify(matrixSynapseService, never())
+        .getRoomMessages(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    verify(matrixSynapseService, never())
+        .loginUser(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"absent", "invalid"})
+  void unavailableAgencyIdentityIsNotReportedAsEmptyConversation(String state) {
+    var session = sessionWithMatrixRoom();
+    session.setAgencyId(7L);
+    session.setConsultant(null);
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("consultant"));
+    var identity =
+        new de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO();
+    identity.setMatrixUserId("invalid");
+    when(matrixCredentialClient.fetchMatrixCredentials(7L))
+        .thenReturn("absent".equals(state) ? Optional.empty() : Optional.of(identity));
+
+    assertEquals(HttpStatus.BAD_GATEWAY, controller.getMessages(SESSION_ID).getStatusCode());
     verifyNoInteractions(matrixSynapseService);
   }
 
