@@ -12,6 +12,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.function.LongSupplier;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -59,6 +60,7 @@ public class MatrixFeedUpdateSignalService {
   private final FeedSignalCoalescer coalescer;
   private final LongSupplier nowMillis;
 
+  @Autowired
   public MatrixFeedUpdateSignalService(
       MatrixSynapseService matrixSynapseService,
       UserRepository userRepository,

@@ -52,7 +52,8 @@ class MatrixSynapseServiceSendToDeviceTest {
         restTemplate,
         matrixLongPollRestTemplate,
         matrixRoomClient,
-        matrixMediaClient);
+        matrixMediaClient,
+        MatrixIdentifierRedactor.withKey("feed-signal-test-key"));
   }
 
   private void stubAdminLogin() {
