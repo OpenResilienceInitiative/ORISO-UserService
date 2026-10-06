@@ -106,6 +106,8 @@ public class SecurityConfig {
       http.addFilterBefore(ipPrivacyHeaderFilter, StatelessCsrfFilter.class);
     }
     enableTenantFilterIfMultitenancyEnabled(http);
+    // account.inactivity.enabled controls scheduled execution only. Admission stays fail-closed
+    // during rollout so a human identity without its immutable lifecycle snapshot cannot enter.
     http.addFilterAfter(
         new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
             .AccountInactivityAccessFilter(inactivity),

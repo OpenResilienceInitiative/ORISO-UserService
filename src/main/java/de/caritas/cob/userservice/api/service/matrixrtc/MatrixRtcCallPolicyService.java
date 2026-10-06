@@ -49,13 +49,39 @@ public class MatrixRtcCallPolicyService {
             String.class,
             matrixUserId,
             matrixUserId);
-    if (identities.size() != 1) return CallMediaPolicy.denied();
+    if (identities.isEmpty()) {
+      log.info(
+          "Call policy denied [{}]: reason={}",
+          correlationId,
+          CallPolicyDenialReason.MATRIX_IDENTITY_NOT_FOUND);
+      return CallMediaPolicy.denied();
+    }
+    if (identities.size() != 1) {
+      log.info(
+          "Call policy denied [{}]: reason={}",
+          correlationId,
+          CallPolicyDenialReason.MATRIX_IDENTITY_AMBIGUOUS);
+      return CallMediaPolicy.denied();
+    }
     var states =
         jdbc.queryForList(
             "SELECT status FROM account_inactivity WHERE identity_id=?",
             String.class,
             identities.getFirst());
-    if (states.size() != 1 || !"ACTIVE".equals(states.getFirst())) return CallMediaPolicy.denied();
+    if (states.size() != 1) {
+      log.info(
+          "Call policy denied [{}]: reason={}",
+          correlationId,
+          CallPolicyDenialReason.INACTIVITY_STATE_UNAVAILABLE);
+      return CallMediaPolicy.denied();
+    }
+    if (!"ACTIVE".equals(states.getFirst())) {
+      log.info(
+          "Call policy denied [{}]: reason={}",
+          correlationId,
+          CallPolicyDenialReason.ACCOUNT_NOT_ACTIVE);
+      return CallMediaPolicy.denied();
+    }
 
     var currentMembers = matrixSynapseService.getRoomMembers(sourceRoomId);
     if (currentMembers.isEmpty()) {

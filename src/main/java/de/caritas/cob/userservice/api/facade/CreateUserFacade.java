@@ -145,8 +145,11 @@ public class CreateUserFacade {
           DATABASE_USER,
           identityUserId,
           () -> {
-            deleteDatabaseUser(identityUserId, provisionedUser.get());
-            inactivityEnrollment.discardUncompletedCreation(identityUserId, inactivityPolicy);
+            try {
+              deleteDatabaseUser(identityUserId, provisionedUser.get());
+            } finally {
+              inactivityEnrollment.discardUncompletedCreation(identityUserId, inactivityPolicy);
+            }
           });
 
       inactivityEnrollment.enroll(

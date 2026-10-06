@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -121,6 +122,11 @@ class GuestIdentityHttpTest {
   @BeforeEach
   void setup() {
     mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+  }
+
+  @AfterEach
+  void anonymousRoutesDoNotConsultAccountLifecycle() {
+    verifyNoInteractions(accountInactivityService);
   }
 
   @Test

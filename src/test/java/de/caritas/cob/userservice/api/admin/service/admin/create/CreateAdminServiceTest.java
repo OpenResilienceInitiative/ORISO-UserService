@@ -37,11 +37,13 @@ import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetup
 import jakarta.ws.rs.NotFoundException;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -67,6 +69,89 @@ class CreateAdminServiceTest {
   @Mock private ExistingAccountSetupIssuer accountSetupIssuer;
 
   private final EasyRandom easyRandom = new EasyRandom();
+
+  private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy
+      inactivityPolicy =
+          new de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy(
+              24, 7, java.time.Instant.parse("2026-10-06T00:00:00Z"));
+
+  @BeforeEach
+  void inactivityPolicy() {
+    org.mockito.Mockito.lenient()
+        .when(
+            inactivityEnrollment.capture(
+                org.mockito.ArgumentMatchers.nullable(Long.class),
+                any(
+                    de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
+                        .class)))
+        .thenReturn(inactivityPolicy);
+  }
+
+  @Test
+  void capturesAndPersistsTheAdminInactivityPolicy() {
+    givenKeycloakCreatesUser();
+    var admin = givenValidCreateAdminDTO(42);
+
+    createAdminService.createNewTenantAdmin(admin);
+
+    verify(inactivityEnrollment)
+        .capture(
+            42L,
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.OTHER);
+    verify(inactivityEnrollment).enroll("kc-user-id", 42L, inactivityPolicy);
+  }
+
+  @Test
+  void policyCaptureFailureStopsBeforeIdentityCreation() {
+    var admin = givenValidCreateAdminDTO(42);
+    var failure =
+        new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_GATEWAY);
+    when(inactivityEnrollment.capture(
+            42L,
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.OTHER))
+        .thenThrow(failure);
+
+    assertThat(
+            assertThrows(
+                RuntimeException.class, () -> createAdminService.createNewTenantAdmin(admin)))
+        .isSameAs(failure);
+    verifyNoInteractions(identityClient);
+  }
+
+  @Test
+  void enrollmentValidationFailureDeletesTheAdminRowAndIdentity() {
+    givenKeycloakCreatesUser();
+    var admin = givenValidCreateAdminDTO(42);
+    var failure =
+        new CustomValidationHttpStatusException(HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE);
+    doThrow(failure).when(inactivityEnrollment).enroll("kc-user-id", 42L, inactivityPolicy);
+
+    assertThat(
+            assertThrows(
+                RuntimeException.class, () -> createAdminService.createNewTenantAdmin(admin)))
+        .isSameAs(failure);
+    verify(adminRepository).deleteById("kc-user-id");
+    verify(inactivityEnrollment).discardUncompletedCreation("kc-user-id", inactivityPolicy);
+    verify(identityAccountRemover).rollbackUser("kc-user-id");
+  }
+
+  @Test
+  void compensationContinuesWhenDeletingTheAdminRowFails() {
+    givenKeycloakCreatesUser();
+    var admin = givenValidCreateAdminDTO(42);
+    doThrow(new IllegalStateException("policy write failed"))
+        .when(inactivityEnrollment)
+        .enroll("kc-user-id", 42L, inactivityPolicy);
+    doThrow(new IllegalStateException("database unavailable"))
+        .when(adminRepository)
+        .deleteById("kc-user-id");
+
+    assertThrows(
+        InternalServerErrorException.class, () -> createAdminService.createNewTenantAdmin(admin));
+
+    verify(inactivityEnrollment).discardUncompletedCreation("kc-user-id", inactivityPolicy);
+    verify(identityAccountRemover).rollbackUser("kc-user-id");
+  }
 
   @Test
   void directlyCreatedAdminsGetTemporaryPasswordsButInvitedAdminsDoNot() {

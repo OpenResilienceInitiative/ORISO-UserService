@@ -142,19 +142,16 @@ public class CreateAdminService {
       saved = adminRepository.saveAndFlush(admin);
       inactivityEnrollment.enroll(keycloakUserId, admin.getTenantId(), inactivityPolicy);
     } catch (CustomValidationHttpStatusException e) {
-      identityAccountRemover.rollbackUser(keycloakUserId);
+      rollbackProvisioning(saved, keycloakUserId, inactivityPolicy);
       throw e;
     } catch (NotFoundException e) {
       // A required Keycloak realm role (e.g. restricted-agency-admin or user-admin) is missing.
       // Surface a specific, machine-readable reason so the admin panel can show a clear message
       // instead of a generic 500, while still rolling back the partially created user.
-      identityAccountRemover.rollbackUser(keycloakUserId);
+      rollbackProvisioning(saved, keycloakUserId, inactivityPolicy);
       throw new CustomValidationHttpStatusException(ROLE_NOT_FOUND, HttpStatus.NOT_FOUND);
     } catch (RuntimeException e) {
-      if (saved != null) {
-        adminRepository.deleteById(saved.getId());
-      }
-      identityAccountRemover.rollbackUser(keycloakUserId);
+      rollbackProvisioning(saved, keycloakUserId, inactivityPolicy);
       throw new InternalServerErrorException(
           String.format("Could not complete admin provisioning for type %s", adminType), e);
     }
@@ -169,6 +166,34 @@ public class CreateAdminService {
           password);
     }
     return saved;
+  }
+
+  private void rollbackProvisioning(
+      Admin saved,
+      String keycloakUserId,
+      de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy policy) {
+    compensate(
+        "admin row",
+        () -> {
+          if (saved != null) adminRepository.deleteById(saved.getId());
+        });
+    compensate(
+        "inactivity lifecycle",
+        () -> inactivityEnrollment.discardUncompletedCreation(keycloakUserId, policy));
+    compensate("identity account", () -> identityAccountRemover.rollbackUser(keycloakUserId));
+  }
+
+  private void compensate(String resource, Runnable action) {
+    try {
+      action.run();
+    } catch (RuntimeException failure) {
+      org.apache.commons.logging.LogFactory.getLog(getClass())
+          .warn(
+              "Admin provisioning compensation failed for "
+                  + resource
+                  + ": "
+                  + failure.getClass().getSimpleName());
+    }
   }
 
   private String createUser(final CreateAdminDTO createAgencyAdminDTO) {

@@ -1764,6 +1764,18 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     assertNotNull(savedUser);
     assertEquals("de", savedUser.getLanguageCode().toString());
 
+    Object[] inactivity =
+        (Object[])
+            entityManager
+                .createNativeQuery(
+                    "SELECT tenant_id,assigned_months,revision,status FROM account_inactivity WHERE identity_id=:identity")
+                .setParameter("identity", savedUser.getUserId())
+                .getSingleResult();
+    assertEquals(1L, ((Number) inactivity[0]).longValue());
+    assertEquals(24, ((Number) inactivity[1]).intValue());
+    assertEquals(0L, ((Number) inactivity[2]).longValue());
+    assertEquals("ACTIVE", inactivity[3]);
+
     var session = sessionRepository.findByUserUserId(savedUser.getUserId()).get(0);
     assertFalse(session.getIsConsultantDirectlySet());
   }

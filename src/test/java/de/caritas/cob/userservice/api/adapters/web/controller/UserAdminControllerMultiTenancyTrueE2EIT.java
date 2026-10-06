@@ -248,6 +248,14 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
     String content = mvcResult.getResponse().getContentAsString();
     JsonPath.read(content, "_embedded.id");
     assertIssuedSetup(AccountInviteTargetRole.AGENCY_ADMIN, 95L);
+    var inactivity =
+        jdbc.queryForMap(
+            "SELECT tenant_id,assigned_months,revision,status FROM account_inactivity WHERE identity_id=?",
+            createdIdentityId);
+    assertThat(((Number) inactivity.get("TENANT_ID")).longValue()).isEqualTo(95L);
+    assertThat(((Number) inactivity.get("ASSIGNED_MONTHS")).intValue()).isEqualTo(24);
+    assertThat(((Number) inactivity.get("REVISION")).longValue()).isZero();
+    assertThat(inactivity.get("STATUS")).isEqualTo("ACTIVE");
   }
 
   @Test

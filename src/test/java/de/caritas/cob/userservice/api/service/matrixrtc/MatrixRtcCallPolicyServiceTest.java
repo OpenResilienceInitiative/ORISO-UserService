@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -47,9 +49,11 @@ class MatrixRtcCallPolicyServiceTest {
   @Mock private MatrixSynapseService matrixSynapseService;
 
   private MatrixRtcCallPolicyService service;
+  private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
   @BeforeEach
   void setUp() {
+    jdbc = activeLifecycle();
     service =
         new MatrixRtcCallPolicyService(
             new MatrixRtcPolicyContextResolver(
@@ -60,8 +64,9 @@ class MatrixRtcCallPolicyServiceTest {
             tenantService,
             matrixSynapseService,
             correlationIdHasher(),
-            activeLifecycle());
-    when(matrixSynapseService.getRoomMembers(ROOM_ID))
+            jdbc);
+    org.mockito.Mockito.lenient()
+        .when(matrixSynapseService.getRoomMembers(ROOM_ID))
         .thenReturn(Optional.of(List.of(MATRIX_USER_ID)));
   }
 
@@ -85,6 +90,18 @@ class MatrixRtcCallPolicyServiceTest {
   @AfterEach
   void clearTenantContext() {
     TenantContext.clear();
+  }
+
+  @Test
+  void missingMatrixBindingLogsOnlyTheCorrelatedDenialReason() {
+    jdbc.update("DELETE FROM user WHERE matrix_user_id=?", MATRIX_USER_ID);
+
+    try (var logs = LogbackCaptor.forClass(MatrixRtcCallPolicyService.class)) {
+      assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
+      assertThat(logs.messages(Level.INFO))
+          .anySatisfy(message -> assertThat(message).contains("MATRIX_IDENTITY_NOT_FOUND"))
+          .noneSatisfy(message -> assertThat(message).contains(MATRIX_USER_ID));
+    }
   }
 
   @Test
