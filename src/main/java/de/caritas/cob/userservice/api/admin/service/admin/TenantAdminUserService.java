@@ -6,17 +6,17 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collections;
 import java.util.List;
@@ -42,7 +42,7 @@ public class TenantAdminUserService {
   private final @NonNull DeleteAdminService deleteAdminService;
   private final @NonNull UserServiceMapper userServiceMapper;
   private final @NonNull TenantService tenantService;
-  private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AdminScope adminScope;
   private final @NonNull ConsultantRepository consultantRepository;
 
   @Value("${multitenancy.enabled}")
@@ -56,11 +56,10 @@ public class TenantAdminUserService {
 
   private void validateCreateAdmin(CreateAdminDTO createTenantAdminDTO) {
     validateTenantId(createTenantAdminDTO.getTenantId());
-    AdminTenantOwnershipValidator.assertCallerMayCreateAdminForTenant(
-        authenticatedUser, createTenantAdminDTO.getTenantId());
   }
 
   private void validateUpdateAdmin(UpdateTenantAdminDTO updateTenantAdminDTO) {
+    // The body's tenant is written to the admin row, so it must be within reach.
     validateTenantId(updateTenantAdminDTO.getTenantId());
   }
 
@@ -68,14 +67,12 @@ public class TenantAdminUserService {
     if (inputTenantId == null) {
       throw new BadRequestException("Tenant id must be provided");
     }
-    if (inputTenantId.equals(0) && !authenticatedUser.isPlatformAdmin()) {
-      throw new ForbiddenException("Only platform admins can create platform admin accounts");
-    }
+    adminScope.assertMay(Target.tenant(inputTenantId.longValue()));
   }
 
   public AdminResponseDTO findTenantAdmin(final String adminId) {
+    adminScope.assertMay(Target.admin(adminId));
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.TENANT);
-    assertCallerMayAccessTenantAdmin(admin);
     var responseDTO = AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO();
     responseDTO
         .getEmbedded()
@@ -86,7 +83,7 @@ public class TenantAdminUserService {
   public AdminResponseDTO updateTenantAdmin(
       final String adminId, final UpdateTenantAdminDTO updateTenantAdminDTO) {
     validateUpdateAdmin(updateTenantAdminDTO);
-    assertCallerMayAccessTenantAdmin(adminId);
+    adminScope.assertMay(Target.admin(adminId));
     final Admin updatedAdmin = updateAdminService.updateTenantAdmin(adminId, updateTenantAdminDTO);
     var responseDTO =
         AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();
@@ -102,63 +99,13 @@ public class TenantAdminUserService {
   }
 
   public void deleteTenantAdmin(final String adminId) {
-    assertCallerMayAccessTenantAdmin(adminId);
+    adminScope.assertMay(Target.admin(adminId));
     this.deleteAdminService.deleteTenantAdmin(adminId);
   }
 
-  /**
-   * Enforces that the caller may act on a tenant admin identified by id. A platform admin keeps the
-   * full view; every other caller must belong to the target's tenant (#968). Loads the target admin
-   * to read its tenant so a caller cannot bypass the search-side scoping by guessing an admin id.
-   */
-  private void assertCallerMayAccessTenantAdmin(String targetAdminId) {
-    if (authenticatedUser.isPlatformAdmin()) {
-      return;
-    }
-    Admin target = retrieveAdminService.findAdmin(targetAdminId, Admin.AdminType.TENANT);
-    assertCallerMayAccessTenantAdmin(target);
-  }
-
-  private void assertCallerMayAccessTenantAdmin(Admin target) {
-    if (authenticatedUser.isPlatformAdmin()) {
-      return;
-    }
-    Long callerTenantId = authenticatedUser.getTenantId();
-    if (callerTenantId == null || !callerTenantId.equals(target.getTenantId())) {
-      log.warn(
-          "Tenant admin {} (tenant {}) attempted to access tenant admin {} in tenant {}",
-          authenticatedUser.getUserId(),
-          callerTenantId,
-          target.getId(),
-          target.getTenantId());
-      throw new ForbiddenException(
-          "Tenant admin is not allowed to access an admin outside their own tenant");
-    }
-  }
-
-  /**
-   * Enforces the caller may list tenant admins for the supplied tenant id. Platform admins may
-   * cross tenants; every other caller may only list their own tenant. Prevents the sibling leak of
-   * {@link #findTenantAdminsByInfix} on GET /useradmin/tenantadmins?tenantId=X (#968).
-   */
-  private void assertCallerMayListTenantAdminsOf(Long tenantId) {
-    if (authenticatedUser.isPlatformAdmin()) {
-      return;
-    }
-    Long callerTenantId = authenticatedUser.getTenantId();
-    if (callerTenantId == null || !callerTenantId.equals(tenantId)) {
-      log.warn(
-          "Tenant admin {} (tenant {}) attempted to list tenant admins of tenant {}",
-          authenticatedUser.getUserId(),
-          callerTenantId,
-          tenantId);
-      throw new ForbiddenException(
-          "Tenant admin is not allowed to list admins of a foreign tenant");
-    }
-  }
-
-  public Map<String, Object> findTenantAdminsByInfix(String infix, PageRequest pageRequest) {
-    Page<AdminBase> adminsPage = findScopedTenantAdminsByInfix(infix, pageRequest);
+  public Map<String, Object> findTenantAdminsByInfix(
+      String infix, SearchFilter filter, PageRequest pageRequest) {
+    Page<AdminBase> adminsPage = findScopedTenantAdminsByInfix(infix, filter, pageRequest);
     var adminIds = adminsPage.stream().map(AdminBase::getId).collect(Collectors.toSet());
     var fullAdmins = retrieveAdminService.findAllById(adminIds);
 
@@ -178,19 +125,22 @@ public class TenantAdminUserService {
         idsWithConsultantIdentity);
   }
 
-  /**
-   * Returns the infix-matched tenant admins visible to the current caller. A platform admin keeps
-   * the full list; every other caller — including a single-tenant admin and a tenant super admin
-   * bound to their own tenant — is scoped to their own tenant. Closes the cross-tenant leak in
-   * /useradmin/tenantadmins/search (#968) where any holder of the tenant-admin authority could
-   * enumerate admins of every other tenant.
-   */
-  private Page<AdminBase> findScopedTenantAdminsByInfix(String infix, PageRequest pageRequest) {
-    if (authenticatedUser.isPlatformAdmin()) {
-      return retrieveAdminService.findAllByInfix(infix, Admin.AdminType.TENANT, pageRequest);
+  /** The Träger filter (#1263) only narrows: a Träger outside the caller's reach is empty. */
+  private Page<AdminBase> findScopedTenantAdminsByInfix(
+      String infix, SearchFilter filter, PageRequest pageRequest) {
+    var reach = adminScope.current();
+    if (reach instanceof AdminScope.Platform) {
+      return filter.tenantId() == null
+          ? retrieveAdminService.findAllByInfix(infix, Admin.AdminType.TENANT, pageRequest)
+          : retrieveAdminService.findAllByInfixScopedToTenant(
+              infix, Admin.AdminType.TENANT, filter.tenantId(), pageRequest);
+    }
+    // An agency admin's reach holds no Träger admin, though the route admits USER_ADMIN.
+    if (reach instanceof AdminScope.Agencies || filter.isTenantOutside(reach.tenantId())) {
+      return Page.empty(pageRequest);
     }
     return retrieveAdminService.findAllByInfixScopedToTenant(
-        infix, Admin.AdminType.TENANT, authenticatedUser.getTenantId(), pageRequest);
+        infix, Admin.AdminType.TENANT, reach.tenantId(), pageRequest);
   }
 
   private Map<Long, String> tenantIdsToNameMap(List<Admin> fullAdmins) {
@@ -216,7 +166,7 @@ public class TenantAdminUserService {
   }
 
   public List<AdminResponseDTO> findTenantAdmins(Long tenantId) {
-    assertCallerMayListTenantAdminsOf(tenantId);
+    adminScope.assertMay(Target.tenant(tenantId));
     var admins = retrieveAdminService.findTenantAdminsByTenantId(tenantId);
     return admins.stream()
         .map(admin -> AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO())
@@ -224,7 +174,7 @@ public class TenantAdminUserService {
   }
 
   public AdminResponseDTO patchTenantAdmin(String adminId, PatchAdminDTO patchAdminDTO) {
-    assertCallerMayAccessTenantAdmin(adminId);
+    adminScope.assertMay(Target.admin(adminId));
     final Admin updatedAdmin = updateAdminService.patchTenantAdmin(adminId, patchAdminDTO);
     var responseDTO =
         AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();

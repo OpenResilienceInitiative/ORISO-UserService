@@ -16,7 +16,12 @@ public class PictureRequestFilter extends OncePerRequestFilter {
           PathPatternRequestMatcher.withDefaults()
               .matcher("/useradmin/consultants/{consultantId}/picture"),
           PathPatternRequestMatcher.withDefaults()
-              .matcher("/service/useradmin/consultants/{consultantId}/picture"));
+              .matcher("/service/useradmin/consultants/{consultantId}/picture"),
+          // Issue #1049: the onboarding wizard's raw-body upload needs the same guard.
+          PathPatternRequestMatcher.withDefaults()
+              .matcher("/users/account-invites/{token}/onboarding/picture"),
+          PathPatternRequestMatcher.withDefaults()
+              .matcher("/service/users/account-invites/{token}/onboarding/picture"));
 
   @Override
   protected boolean shouldNotFilter(HttpServletRequest request) {

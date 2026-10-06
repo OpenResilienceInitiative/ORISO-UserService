@@ -10,7 +10,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -30,6 +32,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReserva
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.tenant.AsTechnicalUser;
+import de.caritas.cob.userservice.api.tenant.Tenants;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -39,6 +43,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Answers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -60,7 +65,18 @@ import org.springframework.transaction.annotation.Transactional;
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({AccountInviteService.class, IdReservationReleaseProcessor.class})
+@Import({
+  AccountInviteService.class,
+  InviteTargetResolver.class,
+  ReservationLedger.class,
+  UnitQueue.class,
+  InviteDelivery.class,
+  AccountInviteTopicPermissionService.class,
+  AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
+  IdReservationReleaseProcessor.class
+})
+@AsTechnicalUser
 class AccountInviteDirectSendAtomicIT {
 
   private static final String RECIPIENT = "owner@example.org";
@@ -71,11 +87,17 @@ class AccountInviteDirectSendAtomicIT {
   @Autowired private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
   @MockitoSpyBean private InviteEmailDeliveryRepository deliveryRepository;
 
-  @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
+  private AuthenticatedUser authenticatedUser;
+
+  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
+
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
+  @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
@@ -84,8 +106,14 @@ class AccountInviteDirectSendAtomicIT {
 
   @BeforeEach
   void setUp() {
-    when(authenticatedUser.getUserId()).thenReturn("admin-1");
-    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    Tenants.actAs(
+        authenticatedUser,
+        "admin-1",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
+    authenticatedUser.setUsername("admin@example.org");
     when(identityEmailOwnerLookup.findByEmail(RECIPIENT)).thenReturn(Optional.empty());
     when(tenantIdAllocationClient.reserve(null))
         .thenReturn(new TenantIdReservation(17L, "reservation-17"));
@@ -123,7 +151,7 @@ class AccountInviteDirectSendAtomicIT {
             new de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt(
                 RECIPIENT, java.time.Instant.parse("2026-09-10T10:00:00Z")))
         .when(inviteMailDispatchService)
-        .send(any(), any(), any(), any(), any(), any());
+        .send(any(), any(), any(), any(), any(), any(), any());
 
     assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminInvite(), templateId))
         .isInstanceOf(SmtpSendException.class);
@@ -150,7 +178,9 @@ class AccountInviteDirectSendAtomicIT {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://example.org/invite/token");
     SmtpSendException failure = confirmedRejection();
-    doThrow(failure).when(inviteMailDispatchService).send(any(), any(), any(), any(), any(), any());
+    doThrow(failure)
+        .when(inviteMailDispatchService)
+        .send(any(), any(), any(), any(), any(), any(), any());
 
     assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminAgencyInvite(), templateId))
         .isSameAs(failure);
@@ -165,7 +195,9 @@ class AccountInviteDirectSendAtomicIT {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://example.org/invite/token");
     SmtpSendException failure = confirmedRejection();
-    doThrow(failure).when(inviteMailDispatchService).send(any(), any(), any(), any(), any(), any());
+    doThrow(failure)
+        .when(inviteMailDispatchService)
+        .send(any(), any(), any(), any(), any(), any(), any());
     doThrow(new DataAccessResourceFailureException("database unavailable"))
         .when(accountInviteRepository)
         .deleteById(any());
@@ -185,7 +217,9 @@ class AccountInviteDirectSendAtomicIT {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://example.org/invite/token");
     SmtpSendException failure = confirmedRejection();
-    doThrow(failure).when(inviteMailDispatchService).send(any(), any(), any(), any(), any(), any());
+    doThrow(failure)
+        .when(inviteMailDispatchService)
+        .send(any(), any(), any(), any(), any(), any(), any());
     when(tenantIdAllocationClient.release(17L)).thenReturn(false);
 
     assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminAgencyInvite(), templateId))
@@ -213,7 +247,7 @@ class AccountInviteDirectSendAtomicIT {
                 SmtpSendException.DeliveryDisposition.DELIVERY_UNCERTAIN,
                 "SMTP connection closed after DATA"))
         .when(inviteMailDispatchService)
-        .send(any(), any(), any(), any(), any(), any());
+        .send(any(), any(), any(), any(), any(), any(), any());
 
     assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminInvite(), templateId))
         .isInstanceOf(SmtpSendException.class);
@@ -240,14 +274,14 @@ class AccountInviteDirectSendAtomicIT {
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses
                 .CustomValidationHttpStatusException.class);
-    verify(inviteMailDispatchService).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService).send(any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
   void directSend_ShouldKeepUsableClaimWhenDeliveryAuditFailsAfterSmtp() {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://example.org/invite/token");
-    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(
             new de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt(
                 RECIPIENT, java.time.Instant.parse("2026-09-10T10:00:00Z")));
@@ -276,7 +310,7 @@ class AccountInviteDirectSendAtomicIT {
     CountDownLatch firstMailStarted = new CountDownLatch(1);
     CountDownLatch releaseFirstMail = new CountDownLatch(1);
     AtomicInteger mailCalls = new AtomicInteger();
-    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenAnswer(
             invocation -> {
               if (mailCalls.incrementAndGet() == 1) {
@@ -370,7 +404,7 @@ class AccountInviteDirectSendAtomicIT {
 
   @Test
   void resendInvite_ShouldRejectExistingRecipientClaimBeforeMailDispatch() {
-    AccountInvite oldInvite = persistedInvite(AccountInviteStatus.EXPIRED, RECIPIENT);
+    AccountInvite oldInvite = persistedInvite(AccountInviteStatus.EMAIL_SENT, RECIPIENT);
     oldInvite.setActiveRecipientKey(null);
     oldInvite = accountInviteRepository.saveAndFlush(oldInvite);
     AccountInvite legacyConflict = persistedInvite(AccountInviteStatus.EMAIL_SENT, RECIPIENT);
@@ -384,7 +418,61 @@ class AccountInviteDirectSendAtomicIT {
                     new AccountInviteService.SendInviteCommand(oldInviteId, templateId)))
         .isInstanceOf(CustomValidationHttpStatusException.class);
 
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void sendInvite_ShouldRejectExpiredInvite() {
+    AccountInvite expired = persistedInvite(AccountInviteStatus.EXPIRED, RECIPIENT);
+    expired.setActiveRecipientKey(null);
+    Long expiredId = accountInviteRepository.saveAndFlush(expired).getId();
+
+    assertThatThrownBy(
+            () ->
+                service.sendInvite(
+                    new AccountInviteService.SendInviteCommand(expiredId, templateId)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be sent");
+
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
+    assertThat(accountInviteRepository.findById(expiredId))
+        .get()
+        .extracting(AccountInvite::getStatus)
+        .isEqualTo(AccountInviteStatus.EXPIRED);
+  }
+
+  @Test
+  void resendInvite_ShouldRejectInviteThatTheRecipientCleanupExpires() {
+    // The cleanup releases reservation-17; a replacement must not inherit the dead token.
+    AccountInvite elapsed = persistedInvite(AccountInviteStatus.EMAIL_SENT, RECIPIENT);
+    elapsed.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+    Long elapsedId = accountInviteRepository.saveAndFlush(elapsed).getId();
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
+        .thenReturn("https://example.org/invite/replacement");
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt(
+                RECIPIENT, java.time.Instant.parse("2026-09-10T10:00:00Z")));
+
+    assertThatThrownBy(
+            () ->
+                service.resendInvite(
+                    new AccountInviteService.SendInviteCommand(elapsedId, templateId)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be resent");
+
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
+    assertThat(accountInviteRepository.findAll())
+        .singleElement()
+        .satisfies(
+            invite -> {
+              assertThat(invite.getId()).isEqualTo(elapsedId);
+              assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+              assertThat(invite.getActiveRecipientKey()).isNull();
+            });
   }
 
   @Test
@@ -396,7 +484,7 @@ class AccountInviteDirectSendAtomicIT {
         .thenReturn("https://example.org/invite/replacement");
     CountDownLatch mailStarted = new CountDownLatch(1);
     CountDownLatch releaseMail = new CountDownLatch(1);
-    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenAnswer(
             invocation -> {
               mailStarted.countDown();
@@ -446,7 +534,9 @@ class AccountInviteDirectSendAtomicIT {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://example.org/invite/replacement");
     SmtpSendException failure = confirmedRejection();
-    doThrow(failure).when(inviteMailDispatchService).send(any(), any(), any(), any(), any(), any());
+    doThrow(failure)
+        .when(inviteMailDispatchService)
+        .send(any(), any(), any(), any(), any(), any(), any());
 
     assertThatThrownBy(
             () ->
@@ -472,7 +562,7 @@ class AccountInviteDirectSendAtomicIT {
             persistedInvite(AccountInviteStatus.EMAIL_SENT, RECIPIENT));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://example.org/invite/replacement");
-    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(
             new de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt(
                 RECIPIENT, java.time.Instant.parse("2026-09-10T10:00:00Z")));
@@ -550,7 +640,7 @@ class AccountInviteDirectSendAtomicIT {
         firstName,
         "Lovelace",
         null,
-        null,
+        11L,
         30L,
         null,
         null);

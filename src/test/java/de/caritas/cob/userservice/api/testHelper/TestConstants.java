@@ -295,6 +295,8 @@ public class TestConstants {
           null,
           null,
           null,
+          null,
+          null,
           null);
   public static final UserDTO USER_DTO_KREUZBUND =
       new UserDTO(
@@ -309,6 +311,8 @@ public class TestConstants {
           Integer.toString(CONSULTING_TYPE_ID_KREUZBUND),
           "",
           true,
+          null,
+          null,
           null,
           null,
           null,
@@ -330,7 +334,7 @@ public class TestConstants {
   public static final UserDTO USER_DTO_WITHOUT_MANDATORY_STATE =
       new UserDTO(null, null, null, null, null, null, Integer.toString(CONSULTING_TYPE_ID_SUCHT));
   public static final SessionConsultantForUserDTO SESSION_CONSULTANT_FOR_USER_DTO =
-      new SessionConsultantForUserDTO(null, USERNAME, IS_ABSENT, ABSENCE_MESSAGE, null);
+      new SessionConsultantForUserDTO(null, USERNAME, IS_ABSENT, ABSENCE_MESSAGE, null, null, null);
 
   /*
    * /* Messages

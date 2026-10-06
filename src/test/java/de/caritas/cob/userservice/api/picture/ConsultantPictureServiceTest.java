@@ -37,6 +37,17 @@ class ConsultantPictureServiceTest {
   }
 
   @Test
+  void onboardingUploadCarriesTheRawTokenIntoTheWriteAfterTheScan() throws Exception {
+    byte[] bytes = PictureIntakeTest.png(2, 2);
+    service.putForOnboarding("raw-invite-token", new ByteArrayInputStream(bytes), "image/png");
+    var order = inOrder(scanner, store);
+    order.verify(scanner).scan(bytes);
+    order.verify(store).replaceForOnboarding("raw-invite-token", bytes, "image/png");
+    verify(store, never()).replace(anyString(), any(), anyString());
+    verifyNoInteractions(access);
+  }
+
+  @Test
   void failedReplacementNeverTouchesStorage() throws Exception {
     doThrow(PictureException.unavailable()).when(scanner).scan(any());
     assertThatThrownBy(

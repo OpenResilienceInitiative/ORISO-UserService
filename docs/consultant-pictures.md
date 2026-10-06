@@ -35,6 +35,51 @@ removes the picture immediately. Final hard deletion has an `ON DELETE CASCADE` 
 The existing account safeguard/hold workflow remains in place. GET uses true MIME,
 `X-Content-Type-Options: nosniff` and `Cache-Control: no-store, private`.
 
+## Publish switch (#1049)
+
+The picture is internal by default. `consultant_picture.internal_only` carries the owner's publish
+decision and is read and written through
+`/useradmin/consultants/{id}/picture/visibility` (GET with the internal read roles, PUT with
+`CONSULTANT_UPDATE`). Advice seekers read a published picture through the separate route
+`/users/consultants/{id}/picture`, under both prefixes.
+
+Three properties hold:
+
+- **Withdrawal is immediate.** The published route re-reads the flag on every request and answers
+  `Cache-Control: no-store, private`, so nothing keeps delivering a withdrawn picture.
+- **A replacement image starts internal again.** `replace` writes a fresh row, whose flag defaults
+  to internal, so a new photo is never published on the strength of a decision made about the old
+  one. The administrative form re-applies the switch after a successful upload.
+- **Refusals after authorization are indistinguishable.** The security chain still answers `401`
+  when the caller is unauthenticated and `403` when they lack `USER_DEFAULT`, `ANONYMOUS_DEFAULT`
+  or `CONSULTANT_DEFAULT`. Once the route has authorized the caller, every remaining refusal is a
+  404 — wrong tenant, deleted consultant, no picture, or an internal-only picture all look the same
+  to an advice seeker, so the route never reveals that a private picture exists.
+
+The published route is not public: it requires `USER_DEFAULT`, `ANONYMOUS_DEFAULT` or
+`CONSULTANT_DEFAULT` and the caller's tenant must match the target's. Anonymous live-chat guests
+are covered by `ANONYMOUS_DEFAULT`. The counsellor avatar (#1046/#1047) is a separate,
+genuinely public field and is unaffected by this switch — an advice seeker who cannot see the
+picture still sees the avatar.
+
+### Onboarding wizard step
+
+The public counsellor onboarding wizard runs before the invitee has a session, so it cannot use the
+administrative route. `PUT /users/account-invites/{token}/onboarding/picture` (and its
+`/visibility` sibling, both prefixes) take the **raw invite token** as the credential, exactly as
+the register and two-factor steps of the same flow do. The controller resolves the token through
+`CounsellorOnboardingService.consultantIdForOnboardingPicture` before any byte is read — the same
+gate as two-factor activation. The raw token is then carried through intake and scanning (no
+database transaction is held over that work) into the final write, where
+`replaceForOnboarding` / `writeInternalOnlyForOnboarding` lock the invite again in the same
+transaction as the picture mutation and refuse an expired or no-longer-resumable link before
+anything is persisted.
+
+The write path is otherwise identical — same `PictureIntake`, same two upload slots, same
+fail-closed ClamAV scan, same multipart refusal filter. What it skips is the administrative
+authority check, because the token, not a role, is what proves the caller owns this consultant. The
+route never serves or removes bytes; there is no GET or DELETE.
+
 ## Scanner deployment contract
 
 New uploads are refused by default; GET and removal of already stored images remain usable.

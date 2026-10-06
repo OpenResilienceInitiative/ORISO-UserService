@@ -8,8 +8,10 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantLinks;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
+import de.caritas.cob.userservice.api.adapters.web.dto.TopicPermissionDTO;
 import de.caritas.cob.userservice.api.admin.hallink.HalLinkBuilder;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 
 /**
@@ -100,8 +102,24 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
                 ? ConsultantDTO.PublicSlugStatusEnum.fromValue(
                     consultant.getPublicSlugStatus().name())
                 : null)
+        .avatarKind(
+            consultant.getAvatarKind() != null
+                ? ConsultantDTO.AvatarKindEnum.fromValue(consultant.getAvatarKind().name())
+                : null)
+        .avatarId(consultant.getAvatarId())
+        .topicPermission(
+            consultant.getTopicPermission() != null
+                ? TopicPermissionDTO.fromValue(consultant.getTopicPermission().name())
+                : null)
         .isSupervisor(consultant.isSupervisor())
-        .assignedSupervisorId(consultant.getAssignedSupervisorId());
+        .assignedSupervisorId(consultant.getAssignedSupervisorId())
+        // A consultant with no chat identity was created while the chat server was
+        // unreachable. Creation stays successful on purpose, so this is the only place the
+        // administrator can learn that the account is not usable for counselling yet.
+        .chatIdentityStatus(
+            ConsultantChatIdentityService.hasChatIdentity(consultant)
+                ? ConsultantDTO.ChatIdentityStatusEnum.PROVISIONED
+                : ConsultantDTO.ChatIdentityStatusEnum.MISSING);
   }
 
   private HalLink buildSelfLink() {

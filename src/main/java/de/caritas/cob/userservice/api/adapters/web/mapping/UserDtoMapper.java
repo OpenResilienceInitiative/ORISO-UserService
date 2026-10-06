@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +27,12 @@ import org.springframework.stereotype.Service;
 public class UserDtoMapper {
 
   private static final String DISPLAY_NAME = "displayName";
+
+  private final IdentityPolicy identityPolicy;
+
+  public UserDtoMapper(IdentityPolicy identityPolicy) {
+    this.identityPolicy = identityPolicy;
+  }
 
   @Value("${feature.appointment.enabled}")
   private boolean appointmentFeatureEnabled;
@@ -52,6 +59,12 @@ public class UserDtoMapper {
     }
 
     twoFactorAuthDTO.setIsToEncourage(userData.getEncourage2fa());
+    // Null (asker, or a row predating the column) is "not required", not "blocked". Gated on the
+    // OTP role policy: announcing a requirement that enrolment answers with 409 is a permanent
+    // lockout. The stored requirement is untouched, so enabling the policy later takes effect.
+    twoFactorAuthDTO.setIsRequired(
+        Boolean.TRUE.equals(userData.getTwoFactorRequired())
+            && identityPolicy.isTwoFactorAuthenticationAllowed(userData.getUserRoles()));
     userData.setTwoFactorAuth(twoFactorAuthDTO);
     userData.setE2eEncryptionEnabled(isE2eEncEnabled);
     userData.setIsDisplayNameEditable(
@@ -94,6 +107,7 @@ public class UserDtoMapper {
         && isNull(patchUserDTO.getDataPrivacyConfirmation())
         && isNull(patchUserDTO.getTermsAndConditionsConfirmation())
         && isNull(patchUserDTO.getAvailable())
+        && isNull(patchUserDTO.getLiveChatViaSidebar())
         && isNull(patchUserDTO.getEmailNotifications())) {
       return Optional.empty();
     }
@@ -130,6 +144,9 @@ public class UserDtoMapper {
     }
     if (nonNull(patchUserDTO.getAvailable())) {
       map.put("available", patchUserDTO.getAvailable());
+    }
+    if (nonNull(patchUserDTO.getLiveChatViaSidebar())) {
+      map.put("liveChatViaSidebar", patchUserDTO.getLiveChatViaSidebar());
     }
     if (nonNull(patchUserDTO.getEmailNotifications())) {
       map.put("emailNotifications", patchUserDTO.getEmailNotifications());

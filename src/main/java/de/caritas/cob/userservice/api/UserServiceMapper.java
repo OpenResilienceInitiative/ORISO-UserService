@@ -86,6 +86,7 @@ public class UserServiceMapper {
         "notifyNewChatMessageFromAdviceSeeker",
         consultant.getNotifyNewChatMessageFromAdviceSeeker());
     map.put("walkThroughEnabled", consultant.getWalkThroughEnabled());
+    map.put("liveChatViaSidebar", consultant.getLiveChatViaSidebar());
     map.put("matrixUserId", consultant.getMatrixUserId());
     map.put("preferredLanguage", consultant.getLanguageCode().toString());
     map.put("publicSlug", consultant.getPublicSlug());
@@ -434,6 +435,9 @@ public class UserServiceMapper {
     }
     if (patchMap.containsKey("walkThroughEnabled")) {
       consultant.setWalkThroughEnabled((Boolean) patchMap.get("walkThroughEnabled"));
+    }
+    if (patchMap.containsKey("liveChatViaSidebar")) {
+      consultant.setLiveChatViaSidebar((Boolean) patchMap.get("liveChatViaSidebar"));
     }
     if (patchMap.containsKey("notifyEnquiriesRepeating")) {
       consultant.setNotifyEnquiriesRepeating((Boolean) patchMap.get("notifyEnquiriesRepeating"));
