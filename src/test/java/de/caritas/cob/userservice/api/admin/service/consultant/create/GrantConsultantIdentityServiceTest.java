@@ -239,6 +239,31 @@ class GrantConsultantIdentityServiceTest {
   }
 
   @Test
+  void storeTopicsPerSelectedCentre_When_validatorDistributesThem() throws Exception {
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    stubHappyMatrix();
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    dto.setTopicIds(List.of(7L));
+    when(consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+            any(), any(), any()))
+        .thenReturn(java.util.Map.of(1L, Set.of(7L), 2L, Set.of(7L)));
+
+    grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
+
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(
+        consultantCaptor.getValue().getConsultantTopics().stream()
+            .map(ct -> ct.getAgencyId() + ":" + ct.getTopicId())
+            .collect(java.util.stream.Collectors.toSet()),
+        is(Set.of("1:7", "2:7")));
+  }
+
+  @Test
   void requireASecondFactor_When_anAdminIsPromotedToConsultant() throws Exception {
     // The create path marks every admin-provisioned counsellor as owing a second factor
     // (CreateConsultantDTOCreationInputAdapter). This path grants the same role over the same
