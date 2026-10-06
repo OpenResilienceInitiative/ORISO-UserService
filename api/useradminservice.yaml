@@ -2185,7 +2185,10 @@ components:
         active:
           type: boolean
           nullable: true
-          description: Login enabled in the identity provider. Null means unknown, not disabled. Read-only.
+          description: >-
+            Login enabled in the identity provider. Null means unknown, not disabled.
+            Read-only best-effort metadata; missing identity data, provider outages or
+            exhausted page lookup budgets leave the status unknown without removing rows.
           readOnly: true
         topicPermission:
           $ref: '#/components/schemas/TopicPermissionDTO'
@@ -2423,7 +2426,10 @@ components:
         active:
           type: boolean
           nullable: true
-          description: Login enabled in the identity provider. Null means unknown, not disabled. Read-only.
+          description: >-
+            Login enabled in the identity provider. Null means unknown, not disabled.
+            Read-only best-effort metadata; missing identity data, provider outages or
+            exhausted page lookup budgets leave the status unknown without removing rows.
           readOnly: true
         id:
           type: string
