@@ -150,11 +150,11 @@ class AccountInactivityDeletionCompletionTest {
       var authentication =
           new IdentityAuthentication() {
             public IdentityLogin login(String u, String p) {
-              throw new UnsupportedOperationException();
+              return new IdentityLogin("external-test-token", 60, 60, "unused");
             }
 
             public IdentityLogin loginService(String clientId, String clientSecret) {
-              return new IdentityLogin("external-test-token", 60, 60, null);
+              return new IdentityLogin("external-test-token", 60, 60, "unused");
             }
 
             public boolean logout(String token) {
