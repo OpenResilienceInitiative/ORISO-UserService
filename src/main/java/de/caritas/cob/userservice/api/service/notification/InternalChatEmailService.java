@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.ReplyEmailDelivery;
@@ -247,6 +248,7 @@ public class InternalChatEmailService {
         && consultant != null
         && consultant.getId() != null
         && consultant.getDeleteDate() == null
+        && consultant.getStatus() == ConsultantStatus.IN_PROGRESS
         && !isBlank(consultant.getMatrixUserId())
         && Objects.equals(consultant.getTenantId(), session.getTenantId())
         && participants.findByChatId(session.getId()).stream()

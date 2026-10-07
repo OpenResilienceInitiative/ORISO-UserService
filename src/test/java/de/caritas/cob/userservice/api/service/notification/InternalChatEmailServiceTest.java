@@ -452,6 +452,29 @@ class InternalChatEmailServiceTest {
     }
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = ConsultantStatus.class,
+      names = {"CREATED", "ERROR", "IN_DELETION"})
+  void incompleteOrDeletingRecipientCannotReceiveInternalMail(ConsultantStatus status) {
+    recipient.setStatus(status);
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = ConsultantStatus.class,
+      names = {"CREATED", "ERROR", "IN_DELETION"})
+  void incompleteOrDeletingSenderCannotGenerateInternalMail(ConsultantStatus status) {
+    actor.setStatus(status);
+    service.onMessageIntent(ROOM, EVENT, caller);
+    service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());
+    drain();
+    assertThat(received).isEmpty();
+  }
+
   private void drain() {
     for (int pass = 0; pass < 2; pass++) {
       for (long id : writer.pendingIds()) {
