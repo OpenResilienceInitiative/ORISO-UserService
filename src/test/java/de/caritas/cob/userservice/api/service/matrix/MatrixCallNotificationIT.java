@@ -41,7 +41,10 @@ import org.springframework.transaction.annotation.Transactional;
 /** Exercises the actual sync input and committed notification storage, not private handlers. */
 @DataJpaTest
 @TestPropertySource(
-    properties = {"spring.profiles.active=testing", "matrix.calls.observation-retry-ms=10"})
+    properties = {
+      "spring.profiles.active=testing,call-notification-account-fixture",
+      "matrix.calls.observation-retry-ms=10"
+    })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
   EventNotificationService.class,
@@ -75,6 +78,7 @@ class MatrixCallNotificationIT {
   @Autowired private javax.sql.DataSource accountDataSource;
 
   @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
+  @org.springframework.context.annotation.Profile("call-notification-account-fixture")
   static class ActiveAccountFixture {
     @org.springframework.context.annotation.Bean
     AccountInactivityService accountLifecycle(
