@@ -141,8 +141,6 @@ class AccountInactivityDeletionCompletionTest {
       ReflectionTestUtils.setField(factory, "restTemplate", transport);
       var config = new IdentityConfig();
       var tech = new TechnicalUserConfig();
-      tech.setUsername("test");
-      tech.setPassword("test");
       config.setTechnicalUser(tech);
       var security = new SecurityHeaderSupplier(new AuthenticatedUser());
       ReflectionTestUtils.setField(security, "csrfHeaderProperty", "X-CSRF");
@@ -151,6 +149,10 @@ class AccountInactivityDeletionCompletionTest {
           new IdentityAuthentication() {
             public IdentityLogin login(String u, String p) {
               return new IdentityLogin("external-test-token", 60, 60, "unused");
+            }
+
+            public IdentityLogin loginService(String clientId, String clientSecret) {
+              return login(clientId, clientSecret);
             }
 
             public boolean logout(String token) {

@@ -68,6 +68,10 @@ class RegisteredOnlyInactivityGuardTest {
             throw new UnsupportedOperationException();
           }
 
+          public IdentityLogin loginService(String clientId, String clientSecret) {
+            return login(clientId, clientSecret);
+          }
+
           public boolean logout(String t) {
             throw new UnsupportedOperationException();
           }
