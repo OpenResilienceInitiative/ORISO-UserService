@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import static de.caritas.cob.userservice.api.service.notification.NotificationEmailDiagnostics.*;
+
 import java.util.Map;
 import java.util.Optional;
 import lombok.NonNull;
@@ -17,9 +19,13 @@ public class TenantSystemEmailRouteService {
 
   public record Route(Mode mode, String emailThemeColor) {}
 
-  public static class ConfigurationException extends IllegalStateException {
+  public static class ConfigurationException extends Failure {
     public ConfigurationException(String message) {
-      super(message);
+      super(Stage.TENANT_SMTP, Reason.CONFIGURATION_INVALID, message);
+    }
+
+    public ConfigurationException(Stage stage, Reason reason, String message) {
+      super(stage, reason, message);
     }
   }
 
@@ -33,7 +39,10 @@ public class TenantSystemEmailRouteService {
       return Optional.empty();
     }
     if (!Boolean.TRUE.equals(notificationPolicy)) {
-      throw new ConfigurationException("Tenant notification policy is missing or invalid");
+      throw new ConfigurationException(
+          Stage.TENANT_POLICY,
+          Reason.NOTIFICATION_POLICY_INVALID,
+          "Tenant notification policy is missing or invalid");
     }
     return Optional.of(route(settings));
   }
@@ -56,7 +65,10 @@ public class TenantSystemEmailRouteService {
   private Map<?, ?> readSettings(long tenantId) {
     Map<?, ?> settings = map(tenantClient.readTenant(tenantId).get("settings"));
     if (settings == null) {
-      throw new ConfigurationException("Tenant system-mail settings are missing");
+      throw new ConfigurationException(
+          Stage.TENANT_POLICY,
+          Reason.TENANT_SETTINGS_MISSING,
+          "Tenant system-mail settings are missing");
     }
     return settings;
   }
@@ -68,10 +80,12 @@ public class TenantSystemEmailRouteService {
       return new Route(Mode.PLATFORM, color);
     }
     if (!"OWN".equals(settings.get("smtpMode"))) {
-      throw new ConfigurationException("Tenant smtpMode must be PLATFORM or OWN");
+      throw new ConfigurationException(
+          Stage.TENANT_SMTP, Reason.SMTP_MODE_INVALID, "Tenant smtpMode must be PLATFORM or OWN");
     }
     if (smtp == null) {
-      throw new ConfigurationException("OWN tenant SMTP settings are missing");
+      throw new ConfigurationException(
+          Stage.TENANT_SMTP, Reason.OWN_SMTP_MISSING, "OWN tenant SMTP settings are missing");
     }
     Object port = smtp.get("port");
     if (!Boolean.TRUE.equals(smtp.get("enabled"))
@@ -83,7 +97,10 @@ public class TenantSystemEmailRouteService {
         || blank(smtp.get("username"))
         || blank(smtp.get("from"))
         || !Boolean.TRUE.equals(smtp.get("passwordSet"))) {
-      throw new ConfigurationException("OWN tenant SMTP configuration is incomplete");
+      throw new ConfigurationException(
+          Stage.TENANT_SMTP,
+          Reason.OWN_SMTP_INCOMPLETE,
+          "OWN tenant SMTP configuration is incomplete");
     }
     return new Route(Mode.OWN, color);
   }

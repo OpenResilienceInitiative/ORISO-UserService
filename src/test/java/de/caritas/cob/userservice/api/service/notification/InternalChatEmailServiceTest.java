@@ -33,6 +33,7 @@ class InternalChatEmailServiceTest {
   private final GroupChatParticipantRepository participants =
       mock(GroupChatParticipantRepository.class);
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
+  private final IdentityAccountStatusLookup identities = mock(IdentityAccountStatusLookup.class);
   private final MatrixSynapseService matrix = mock(MatrixSynapseService.class);
   private final ReplyEmailDeliveryRepository repository = mock(ReplyEmailDeliveryRepository.class);
   private final UserDoNotDisturbRepository dnd = mock(UserDoNotDisturbRepository.class);
@@ -86,6 +87,7 @@ class InternalChatEmailServiceTest {
                             row.getStatus() == i.getArgument(0)
                                 && !row.getNextAttemptAt().isAfter(i.getArgument(1)))
                     .toList());
+    when(identities.findEnabledById(anyString())).thenReturn(Optional.of(true));
     actor = consultant("actor", 7L);
     recipient = consultant("recipient", 7L);
     session =
@@ -181,6 +183,7 @@ class InternalChatEmailServiceTest {
             sessions,
             participants,
             consultants,
+            identities,
             matrix,
             writer,
             new DoNotDisturbService(dnd),
@@ -473,6 +476,96 @@ class InternalChatEmailServiceTest {
     service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());
     drain();
     assertThat(received).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"actor", "recipient"})
+  void suspendedIdentityCannotGenerateOrReceiveMail(String userId) {
+    when(identities.findEnabledById(userId)).thenReturn(Optional.of(false));
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).isEmpty();
+    doReturn(Optional.of(true)).when(identities).findEnabledById(userId);
+    makeRetryDue();
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"actor", "recipient"})
+  void identityOutageRetriesWithoutLosingTheMessage(String userId) {
+    when(identities.findEnabledById(userId))
+        .thenThrow(new IllegalStateException("fixture-secret-not-for-logs"));
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).isEmpty();
+    doReturn(Optional.of(true)).when(identities).findEnabledById(userId);
+    makeRetryDue();
+    drain();
+    assertThat(received).hasSize(1);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"actor", "recipient"})
+  void suspensionAfterFanOutPreventsPendingDelivery(String userId) {
+    service.onMessageIntent(ROOM, EVENT, caller);
+    writer.pendingIds().forEach(service::resolveIntent);
+    when(identities.findEnabledById(userId)).thenReturn(Optional.of(false));
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "policy,TENANT_POLICY,NOTIFICATION_POLICY_INVALID",
+    "mode,TENANT_SMTP,SMTP_MODE_INVALID",
+    "own,TENANT_SMTP,OWN_SMTP_INCOMPLETE",
+    "membership,MATRIX_MEMBERSHIP,DEPENDENCY_UNAVAILABLE",
+    "event,MATRIX_EVENT,DEPENDENCY_UNAVAILABLE",
+    "identity,IDENTITY,DEPENDENCY_UNAVAILABLE",
+    "context,TENANT_CONTEXT,TENANT_UNAVAILABLE"
+  })
+  void retryDiagnosticsIdentifySafeActionableStageAndReason(
+      String failure, String stage, String reason) {
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(InternalChatEmailService.class);
+    var appender =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      switch (failure) {
+        case "policy" -> tenantSettings.remove("featureSystemNotificationEmailsEnabled");
+        case "mode" -> tenantSettings.remove("smtpMode");
+        case "own" -> tenantSettings.put("smtp", Map.of("enabled", true));
+        case "membership" -> when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.empty());
+        case "event" ->
+            when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token")).thenReturn(Optional.empty());
+        case "identity" ->
+            when(identities.findEnabledById("actor"))
+                .thenThrow(new IllegalStateException("fixture-secret-not-for-logs"));
+        case "context" -> when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(null);
+      }
+      service.onMessageIntent(ROOM, EVENT, caller);
+      drain();
+      assertThat(received).isEmpty();
+      assertThat(appender.list)
+          .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+          .anySatisfy(message -> assertThat(message).contains("stage=" + stage, "reason=" + reason))
+          .allSatisfy(
+              message ->
+                  assertThat(message)
+                      .doesNotContain(
+                          "fixture-secret",
+                          "matrix-token",
+                          "PRIVATE_",
+                          "actor@example",
+                          "recipient@example"));
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
   }
 
   private void drain() {
