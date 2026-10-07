@@ -79,7 +79,7 @@ class CaseHandoverEmailNotificationTest {
   }
 
   @Test
-  void coAccessAndNonPendingConsentNeverSendTakeoverMail() {
+  void coAccessConsentSendsButOnlyTakeoverOwnershipSends() {
     transaction.executeWithoutResult(
         status -> {
           notification.consentRequested(
@@ -87,7 +87,10 @@ class CaseHandoverEmailNotificationTest {
           notification.ownershipGranted(request(Status.GRANTED, AccessType.CO_ACCESS));
           notification.consentRequested(request(Status.GRANTED, AccessType.TAKEOVER));
         });
-    verifyNoInteractions(sender);
+    verify(sender)
+        .send(
+            org.mockito.ArgumentMatchers.argThat(
+                mail -> mail.outcome() == CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED));
   }
 
   @Test

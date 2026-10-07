@@ -56,6 +56,7 @@ class InquiryAcceptedMailDeliveryTest {
   private final MailServiceApiControllerFactory upstream = mock();
   private final TenantTemplateSupplier tenantTemplates = mock();
   private final EmailBrandingResolver branding = mock();
+  private final de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenants = mock();
   private EmailNotificationFacade facade;
   private User recipient;
   private Consultant counsellor;
@@ -81,6 +82,10 @@ class InquiryAcceptedMailDeliveryTest {
     var service = new MailService(mock(), upstream, sender);
     IdentityClientConfig identity = mock();
     when(identity.getEmailDummySuffix()).thenReturn("@dummy.invalid");
+    when(tenants.getRestrictedTenantDataFresh(7L))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(7L));
     facade =
         new EmailNotificationFacade(
             service,
@@ -93,7 +98,8 @@ class InquiryAcceptedMailDeliveryTest {
             mock(),
             tenantTemplates,
             mock(),
-            mock(ReleaseToggleService.class));
+            mock(ReleaseToggleService.class),
+            tenants);
     ReflectionTestUtils.setField(facade, "applicationBaseUrl", "https://platform.example.org");
     ReflectionTestUtils.setField(facade, "multiTenancyEnabled", true);
     when(tenantTemplates.getTemplateAttributes())
@@ -120,6 +126,17 @@ class InquiryAcceptedMailDeliveryTest {
     counsellor = new Consultant();
     counsellor.setFirstName("PrivateCounsellorName");
     counsellor.setLastName("PrivateCounsellorSurname");
+  }
+
+  @Test
+  void actualSessionPolicyDeniesLiveChatAcceptanceEmailBeforeMimeDelivery() throws Exception {
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setConversationType(de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT);
+    try (var wire = mockStatic(OrisoSmtpTransport.class, CALLS_REAL_METHODS)) {
+      facade.sendInquiryAcceptedNotification(
+          recipient, counsellor, new TenantData(7L, "seven"), session);
+      wire.verifyNoInteractions();
+    }
   }
 
   @ParameterizedTest
