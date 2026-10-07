@@ -491,6 +491,22 @@
       "status": "blocker"
     },
     {
+      "id": "temporary-account-deletion-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeleteTemporaryAccountsScheduler.java",
+      "kind": "scheduler",
+      "owner": "identity-profile",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "performDeletionWorkflow"
+      ],
+      "decision": "A shared lease is claimed per run and each account is deleted under the locked lease row (runIfHeld), so a second replica skips the run; the lease is released in finally. Each deletion runs in its own transaction and treats an already deleted user as done.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "handshake-expiry-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/handshake/HandshakeService.java",
       "kind": "scheduler",

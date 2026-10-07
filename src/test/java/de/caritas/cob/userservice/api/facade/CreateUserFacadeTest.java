@@ -493,6 +493,53 @@ public class CreateUserFacadeTest {
     verify(groupInviteRegistration, never()).leave(any(), any());
   }
 
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_RejectATemporaryAccount_When_NoGroupInviteBacksIt() {
+    // The deletion job removes temporary accounts, so only the invite flow may ask for one.
+    USER_DTO_SUCHT.setTemporary(true);
+    try {
+      assertThrows(
+          BadRequestException.class,
+          () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+    } finally {
+      USER_DTO_SUCHT.setTemporary(false);
+    }
+
+    verify(identityClient, never()).createUser(any());
+    verify(userService, never()).saveUser(any());
+  }
+
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_StoreATemporaryAccount_When_RegisteringThroughAGroupInvite()
+          throws Exception {
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    givenMatrixProvisioningSucceeds();
+    User user = givenAFullyPersistedUser();
+    Chat group =
+        Chat.builder()
+            .id(4711L)
+            .topic("group")
+            .initialStartDate(LocalDateTime.now())
+            .startDate(LocalDateTime.now())
+            .conversationType(ConversationType.SELF_HELP)
+            .build();
+    when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
+
+    USER_DTO_SUCHT.setTemporary(true);
+    try {
+      createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+    } finally {
+      USER_DTO_SUCHT.setTemporary(false);
+    }
+
+    assertThat(user.isTemporaryAccount(), is(true));
+    verify(groupInviteRegistration).join(group, user);
+  }
+
   private User givenAFullyPersistedUser() {
     User user = new User();
     user.setUsername("dbUser");

@@ -2134,6 +2134,8 @@ class UserControllerE2EIT {
     userDTO.setReferer("validRef");
     userDTO.setGroupChatId(null);
     userDTO.setGroupChatInviteToken(null);
+    // EasyRandom would otherwise ask for a temporary account at random.
+    userDTO.setTemporary(false);
   }
 
   private static final String GROUP_INVITE_TOKEN = "q2Vx8mK4TzJ1bR7nW0cY5sLh9dFg3aPe";

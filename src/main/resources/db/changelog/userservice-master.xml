@@ -228,4 +228,5 @@
   <include file="db/changelog/changeset/20260925_consultant_topic_per_agency_1264/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_consultant_topic_agency_key_1264/changeSet.xml"/>
   <include file="db/changelog/changeset/20261006_dpa_notice_role/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260923_user_temporary_account/changeSet.xml"/>
 </databaseChangeLog>
