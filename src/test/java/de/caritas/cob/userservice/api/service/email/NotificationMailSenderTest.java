@@ -5,15 +5,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailClient;
 import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailDelivery;
 import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailRouteService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -95,6 +99,34 @@ class NotificationMailSenderTest {
     assertThat(sender.send(mail)).isFalse();
 
     verify(composer, never()).compose(any(), eq(7L));
+  }
+
+  @Test
+  void newEnquiryHonorsTheFreshDisabledTenantPolicyWithoutResolvingSmtp() {
+    var client = mock(TenantSystemEmailClient.class);
+    when(client.readTenant(7L))
+        .thenReturn(Map.of("settings", Map.of("featureSystemNotificationEmailsEnabled", false)));
+    var tested =
+        new NotificationMailSender(composer, new TenantSystemEmailRouteService(client), delivery);
+
+    assertThat(tested.send(mail("enquiry-notification-consultant", "7", "7"))).isFalse();
+
+    verifyNoInteractions(composer, delivery);
+  }
+
+  @Test
+  void newEnquiryReportsMissingConfiguredRouteInsteadOfClaimingPolicySuppression() {
+    var client = mock(TenantSystemEmailClient.class);
+    when(client.readTenant(7L))
+        .thenReturn(Map.of("settings", Map.of("featureSystemNotificationEmailsEnabled", true)));
+    var tested =
+        new NotificationMailSender(composer, new TenantSystemEmailRouteService(client), delivery);
+
+    assertThatThrownBy(() -> tested.send(mail("enquiry-notification-consultant", "7", "7")))
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
+        .hasMessageContaining("smtpMode");
+
+    verifyNoInteractions(composer, delivery);
   }
 
   @Test

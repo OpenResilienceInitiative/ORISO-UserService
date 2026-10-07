@@ -606,6 +606,19 @@ class AdviceSeekerReplyEmailServiceTest {
   }
 
   @Test
+  void disabledTenantTerminatesReplyWithoutSetupRetries() {
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(asker(true, "asker@example.net"))));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+    when(routes.resolve(7L)).thenReturn(Optional.empty());
+
+    service.deliverPending(1L);
+
+    verify(writer).finish(1L, Status.REJECTED);
+    verify(writer, never()).retryLater(1L);
+    verifyNoInteractions(delivery);
+  }
+
+  @Test
   void tenantConfigurationRejectionRetriesAfterRepair() {
     prepareReadyClaim();
     org.mockito.Mockito.doThrow(

@@ -466,14 +466,30 @@ class FeedbackMessageEmailServiceTest {
   }
 
   @Test
-  void missingSmtpRouteKeepsFeedbackPendingWithoutAProviderFallback() {
+  void disabledTenantTerminatesFeedbackWithoutSetupRetries() {
     var pending = claim(RecipientKind.FEEDBACK, owner, "supervisor");
     when(writer.claim(2L)).thenReturn(Optional.of(pending));
     when(routes.resolve(7L)).thenReturn(Optional.empty());
 
     service.deliverPending(2L);
 
+    verify(writer).finish(2L, Status.REJECTED);
+    verify(writer, never()).retryLater(2L);
+    verifyNoSmtp();
+  }
+
+  @Test
+  void missingConfiguredTenantRouteKeepsFeedbackPendingWithoutAProviderFallback() {
+    var pending = claim(RecipientKind.FEEDBACK, owner, "supervisor");
+    when(writer.claim(2L)).thenReturn(Optional.of(pending));
+    when(routes.resolve(7L))
+        .thenThrow(
+            new TenantSystemEmailRouteService.ConfigurationException("Tenant smtpMode is missing"));
+
+    service.deliverPending(2L);
+
     verify(writer).retryLater(2L);
+    verify(writer, never()).finish(2L, Status.REJECTED);
     verifyNoSmtp();
   }
 
