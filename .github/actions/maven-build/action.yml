@@ -1,4 +1,5 @@
 name: Reusable Maven validation and build steps
+description: Run Maven validation, CI contracts and package the Java application.
 
 inputs:
   java_version:
@@ -118,7 +119,9 @@ runs:
 
   - name: Verify CI and load-test contracts
     shell: bash
-    run: python3 -m unittest discover -s tests/ci -p 'test_*.py'
+    run: |
+      python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+      python3 -m unittest discover -s tests/ci -p 'test_*.py'
 
   - name: Package Java application
     shell: bash
