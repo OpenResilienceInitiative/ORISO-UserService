@@ -150,7 +150,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-AgencyService.*"
-                r"bbdc934477212020b8c43d8bf3cb28a30081156c",
+                r"7780942a8fbef19c11bd6aeacab94d677f3905da",
                 re.DOTALL,
             ),
         )
@@ -158,7 +158,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-ConsultingTypeService.*"
-                r"fd06f72beab16a92e2d1f1c2b88acbb054254baf",
+                r"fc3404819574f2c38a2e559910a2c84206e9001b",
                 re.DOTALL,
             ),
         )
@@ -167,7 +167,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
                 # Merged TenantPR303 includes the stored confirmation language consumed here.
-                r"6d7e2d1dcc640af1bd027131f1c217899ad2a70e",
+                r"af9a5aa3adccfeab37404f5cb30895b34213ef3e",
                 re.DOTALL,
             ),
         )
