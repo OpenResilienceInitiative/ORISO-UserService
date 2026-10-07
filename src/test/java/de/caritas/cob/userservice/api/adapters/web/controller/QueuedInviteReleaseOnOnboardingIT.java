@@ -127,7 +127,7 @@ class QueuedInviteReleaseOnOnboardingIT {
     when(agencyService.getAgencyWithoutCaching(NEW_AGENCY)).thenReturn(null);
     when(topicService.getAllActiveTopicsMap())
         .thenReturn(java.util.Map.of(TOPIC, new TopicDTO().id(TOPIC).name("Sucht")));
-    when(keycloakService.login(anyString(), anyString()))
+    when(keycloakService.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
     when(keycloakService.createUser(any(UserDTO.class), anyString(), anyString()))
         .thenReturn(new CreatedIdentity(ADMIN_ID));

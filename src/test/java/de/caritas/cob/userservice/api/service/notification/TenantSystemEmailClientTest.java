@@ -51,10 +51,10 @@ class TenantSystemEmailClientTest {
     ReflectionTestUtils.setField(
         client, "tenantServiceApiUrl", "http://tenantservice.internal:8081");
     var account = new TechnicalUserConfig();
-    account.setUsername("technical");
-    account.setPassword("test-secret");
+    account.setClientId("technical");
+    account.setClientSecret("test-secret");
     when(identityConfig.getTechnicalUser()).thenReturn(account);
-    when(authentication.login("technical", "test-secret"))
+    when(authentication.loginService("technical", "test-secret"))
         .thenReturn(new IdentityLogin("technical-token", 60, 60, "refresh"));
     var headers = new HttpHeaders();
     headers.setBearerAuth("technical-token");

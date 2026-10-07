@@ -180,6 +180,8 @@ class MultiTenantRegistrationIT {
     when(tenantResolverService.resolve(any())).thenReturn(1L);
     when(((IdentityAuthentication) identityClient).login(anyString(), anyString()))
         .thenReturn(new IdentityLogin("access", 300, 1800, "refresh"));
+    when(((IdentityAuthentication) identityClient).loginService(anyString(), anyString()))
+        .thenReturn(new IdentityLogin("access", 300, 1800, "refresh"));
     when(((IdentityDummyEmailUpdater) identityClient).updateDummyEmail(anyString(), any()))
         .thenAnswer(call -> call.getArgument(0) + "@dummy.synthetic.oriso.test");
     when(agencyService.getAgenciesByConsultingType(any(Integer.class)))

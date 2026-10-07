@@ -61,7 +61,7 @@ public class QueuedInviteReleaseListener {
       var technicalUser = identityClientConfig.getTechnicalUser();
       return Optional.of(
           identityAuthentication
-              .login(technicalUser.getUsername(), technicalUser.getPassword())
+              .loginService(technicalUser.getClientId(), technicalUser.getClientSecret())
               .accessToken());
     } catch (RuntimeException exception) {
       log.warn(

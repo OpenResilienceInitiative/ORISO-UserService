@@ -113,17 +113,18 @@ public class ApplicationSettingsService {
   private String loginTechnicalUser() {
     TechnicalUserConfig technicalUser = identityClientConfig.getTechnicalUser();
     if (technicalUser == null
-        || isBlank(technicalUser.getUsername())
-        || isBlank(technicalUser.getPassword())) {
+        || isBlank(technicalUser.getClientId())
+        || isBlank(technicalUser.getClientSecret())) {
       log.warn(
           "Global SMTP credentials lookup skipped: no technical user configured"
-              + " (identity.technical-user.username / .password)");
+              + " (identity.technical-user.client-id / .client-secret)");
       throw new SmtpSettingsUnavailableException();
     }
     de.caritas.cob.userservice.api.port.out.IdentityLogin login;
     try {
       login =
-          identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
+          identityAuthentication.loginService(
+              technicalUser.getClientId(), technicalUser.getClientSecret());
     } catch (RuntimeException ex) {
       log.warn(
           "Global SMTP credentials lookup skipped: technical user login failed ({})",
