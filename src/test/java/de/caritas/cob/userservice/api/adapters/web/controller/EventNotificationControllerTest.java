@@ -69,6 +69,9 @@ class EventNotificationControllerTest {
             feedbackMessageEmailService,
             internalChatEmailService,
             authenticatedUser,
+            mock(
+                de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                    .class),
             Optional.of(redisMessageMirrorService));
     controllerWithoutMirror =
         new EventNotificationController(
@@ -77,6 +80,9 @@ class EventNotificationControllerTest {
             feedbackMessageEmailService,
             internalChatEmailService,
             authenticatedUser,
+            mock(
+                de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                    .class),
             Optional.empty());
   }
 
@@ -146,6 +152,9 @@ class EventNotificationControllerTest {
             feedbackMessageEmailService,
             internalChatEmailService,
             authenticatedUser,
+            mock(
+                de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                    .class),
             Optional.empty());
 
     when(authenticatedUser.getUserId()).thenReturn("counsellor-1");
