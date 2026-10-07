@@ -77,6 +77,7 @@ import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.BasicConsultingTypeResponseDTO;
@@ -155,7 +156,7 @@ import org.springframework.web.util.UriTemplateHandler;
       "identity.otp-allowed-for-consultants=true"
     })
 @Transactional
-class UserControllerE2EIT {
+class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
     org.mockito.Mockito.when(
@@ -307,7 +308,8 @@ class UserControllerE2EIT {
   @BeforeEach
   public void setUp() throws MatrixCreateUserException {
     dpaOwner =
-        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, 1L);
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
+            ownerFactory, 1L);
     MatrixCreateUserResponseDTO matrixCreateUserResponse = new MatrixCreateUserResponseDTO();
     matrixCreateUserResponse.setUserId("@test-user:matrix.example.org");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
@@ -1761,6 +1763,18 @@ class UserControllerE2EIT {
             .orElse(null);
     assertNotNull(savedUser);
     assertEquals("de", savedUser.getLanguageCode().toString());
+
+    Object[] inactivity =
+        (Object[])
+            entityManager
+                .createNativeQuery(
+                    "SELECT tenant_id,assigned_months,revision,status FROM account_inactivity WHERE identity_id=:identity")
+                .setParameter("identity", savedUser.getUserId())
+                .getSingleResult();
+    assertEquals(1L, ((Number) inactivity[0]).longValue());
+    assertEquals(24, ((Number) inactivity[1]).intValue());
+    assertEquals(0L, ((Number) inactivity[2]).longValue());
+    assertEquals("ACTIVE", inactivity[3]);
 
     var session = sessionRepository.findByUserUserId(savedUser.getUserId()).get(0);
     assertFalse(session.getIsConsultantDirectlySet());

@@ -53,6 +53,8 @@ class ReplicaSafetyInventoryContractTest {
           "service-notice-mail-scheduler",
           "inactive-account-notification-scheduler",
           "account-deletion-scheduler",
+          "account-inactivity-expiry",
+          "account-inactivity-bootstrap",
           "anonymous-deletion-scheduler",
           "registered-only-deletion-scheduler",
           "temporary-account-deletion-scheduler",

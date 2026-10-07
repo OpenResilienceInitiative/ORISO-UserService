@@ -76,7 +76,8 @@ import org.springframework.test.web.servlet.MockMvc;
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @WithTenant(1L)
-class AgencyAdminOnboardingWizardIT {
+class AgencyAdminOnboardingWizardIT
+    extends de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture {
 
   private static final long TENANT = 79L;
   private static final long AGENCY = 275L;

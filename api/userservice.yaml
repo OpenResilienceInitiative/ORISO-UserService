@@ -3,6 +3,9 @@ info:
   title: will be replaced
   description: This information will be replaced by the SpringFox config information
   version: 0.0.1
+externalDocs:
+  description: Account inactivity lifecycle and platform administration API.
+  url: ./account-inactivity.yaml
 paths:
   /users/identity-suggestions:
     post:

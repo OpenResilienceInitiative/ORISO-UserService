@@ -52,6 +52,7 @@ import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
@@ -90,7 +91,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {"multitenancy.enabled=true"})
 @Transactional
-class UserAdminControllerMultiTenancyTrueE2EIT {
+class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHttpFixture {
 
   private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
@@ -249,6 +250,14 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
     String content = mvcResult.getResponse().getContentAsString();
     JsonPath.read(content, "_embedded.id");
     assertIssuedSetup(AccountInviteTargetRole.AGENCY_ADMIN, 95L);
+    var inactivity =
+        jdbc.queryForMap(
+            "SELECT tenant_id,assigned_months,revision,status FROM account_inactivity WHERE identity_id=?",
+            createdIdentityId);
+    assertThat(((Number) inactivity.get("TENANT_ID")).longValue()).isEqualTo(95L);
+    assertThat(((Number) inactivity.get("ASSIGNED_MONTHS")).intValue()).isEqualTo(24);
+    assertThat(((Number) inactivity.get("REVISION")).longValue()).isZero();
+    assertThat(inactivity.get("STATUS")).isEqualTo("ACTIVE");
   }
 
   @Test

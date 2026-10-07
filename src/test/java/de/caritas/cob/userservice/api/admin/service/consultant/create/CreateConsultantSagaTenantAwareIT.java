@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
 import org.jeasy.random.EasyRandom;
@@ -44,7 +45,7 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @TestPropertySource(properties = "multitenancy.enabled=true")
 @Transactional
-public class CreateConsultantSagaTenantAwareIT {
+public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHttpFixture {
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
     org.mockito.Mockito.when(
@@ -126,6 +127,7 @@ public class CreateConsultantSagaTenantAwareIT {
     // then
     assertThat(consultant.getEmbedded(), notNullValue());
     assertThat(consultant.getEmbedded().getId(), notNullValue());
+    assertDefaultInactivityPolicy(consultant.getEmbedded().getId());
     rollbackDBState();
   }
 
