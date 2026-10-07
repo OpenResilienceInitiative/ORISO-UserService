@@ -120,8 +120,11 @@ runs:
   - name: Verify CI and load-test contracts
     shell: bash
     run: |
-      python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
-      python3 -m unittest discover -s tests/ci -p 'test_*.py'
+      contract_venv=$(mktemp -d "${RUNNER_TEMP:?}/oriso-ci-contracts.XXXXXX")
+      trap 'rm -rf "$contract_venv"' EXIT
+      python3 -m venv "$contract_venv"
+      "$contract_venv/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
+      "$contract_venv/bin/python" -m unittest discover -s tests/ci -p 'test_*.py'
 
   - name: Package Java application
     shell: bash

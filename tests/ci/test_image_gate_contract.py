@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -163,11 +164,48 @@ class ImageGateContractTest(unittest.TestCase):
                     self.assertNotIn("github_token", gate["with"])
                     permissions = image_jobs[0].get("permissions", workflow.get("permissions", {}))
                     self.assertEqual({"contents": "read"}, permissions)
+                    checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
+                    self.assertIs(False, checkout.get("with", {}).get("persist-credentials"))
                 for step in steps:
                     if "attest@" in step.get("uses", "") or "git push" in step.get("run", ""):
                         self.assertGreater(steps.index(step), steps.index(gate))
                         self.assertNotIn("always()", step.get("if", ""))
                 self.assertFalse(any(s.get("uses", "").startswith("docker/build-push-action@") for s in steps))
+
+    def test_ci_contracts_install_and_run_in_one_disposable_virtual_environment(self):
+        action = document(ROOT / ".github/actions/maven-build/action.yml")
+        step = next(s for s in action["runs"]["steps"] if s["name"] == "Verify CI and load-test contracts")
+        for test_exit in (0, 23):
+            with self.subTest(test_exit=test_exit), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                log = root / "commands.jsonl"
+                executable = root / "python3"
+                executable.write_text(
+                    f"#!{sys.executable}\n"
+                    "import json,os,pathlib,sys\n"
+                    "args=sys.argv[1:]\n"
+                    "with open(os.environ['COMMAND_LOG'],'a') as out:\n"
+                    " out.write(json.dumps([sys.argv[0]]+args)+'\\n')\n"
+                    "if args[:2]==['-m','venv']:\n"
+                    " destination=pathlib.Path(args[2]); (destination/'bin').mkdir()\n"
+                    " (destination/'bin'/'python').symlink_to(sys.argv[0])\n"
+                    "elif pathlib.Path(sys.argv[0]).name=='python3': sys.exit(42)\n"
+                    "elif args[:2]==['-m','unittest']: sys.exit(int(os.environ['TEST_EXIT']))\n"
+                )
+                executable.chmod(0o755)
+                env = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}",
+                       "RUNNER_TEMP": temporary, "COMMAND_LOG": str(log), "TEST_EXIT": str(test_exit)}
+                result = subprocess.run(["bash", "-eo", "pipefail", "-c", step["run"]],
+                                        env=env, capture_output=True, text=True)
+                self.assertEqual(test_exit, result.returncode, result.stderr)
+                commands = [json.loads(line) for line in log.read_text().splitlines()]
+                self.assertEqual(["-m", "venv"], commands[0][1:3])
+                venv = Path(commands[0][3])
+                self.assertEqual(str(venv / "bin/python"), commands[1][0])
+                self.assertEqual(commands[1][0], commands[2][0])
+                self.assertEqual(["-m", "pip", "install", "--disable-pip-version-check", "PyYAML==6.0.3"], commands[1][1:])
+                self.assertEqual(["-m", "unittest", "discover", "-s", "tests/ci", "-p", "test_*.py"], commands[2][1:])
+                self.assertFalse(venv.exists(), "Clean up the environment even when a contract fails")
 
 
 if __name__ == "__main__":
