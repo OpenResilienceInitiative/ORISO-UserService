@@ -591,6 +591,9 @@ public class UserServiceMapper {
               NotificationsSettingsDTO::getAssignmentNotificationEnabled,
               NotificationsSettingsDTO::setAssignmentNotificationEnabled),
           new NotificationSetting(
+              NotificationsSettingsDTO::getInternalChatNotificationEnabled,
+              NotificationsSettingsDTO::setInternalChatNotificationEnabled),
+          new NotificationSetting(
               NotificationsSettingsDTO::getFeedbackNotificationEnabled,
               NotificationsSettingsDTO::setFeedbackNotificationEnabled),
           new NotificationSetting(

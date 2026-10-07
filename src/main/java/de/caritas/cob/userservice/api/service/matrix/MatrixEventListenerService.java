@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
 import de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
@@ -49,6 +50,7 @@ public class MatrixEventListenerService {
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
   private final @NonNull AdviceSeekerReplyEmailService replyEmailService;
   private final @NonNull MatrixEmailSyncCursorStore emailSyncCursorStore;
+  private final @NonNull InternalChatEmailService internalChatEmailService;
 
   private OutboundHttpMetrics outboundHttpMetrics;
   private LiveChatDiagnosticMetrics diagnosticMetrics;
@@ -563,6 +565,7 @@ public class MatrixEventListenerService {
       String eventId = privacyEnvelope == null ? null : privacyEnvelope.getMessageId();
       if (isConsultantMatrixUser(senderId)) {
         replyEmailService.onConsultantReply(roomId, eventId, senderId);
+        internalChatEmailService.onMatrixMessage(roomId, eventId, senderId);
       } else if (senderDomainUserId != null) {
         // The durable mail service admits only the primary session room. Protected supervision
         // and team discussions use separate Matrix rooms; ordinary m.thread replies are allowed.

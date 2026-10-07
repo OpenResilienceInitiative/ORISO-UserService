@@ -180,7 +180,7 @@ class UserServiceMapperTest {
     assertThat(consultant.isNotificationsEnabled()).isTrue();
     assertThat(consultant.getNotificationsSettings())
         .isEqualTo(
-            "{\"initialEnquiryNotificationEnabled\":false,\"newChatMessageNotificationEnabled\":true,\"reassignmentNotificationEnabled\":true,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
+            "{\"initialEnquiryNotificationEnabled\":false,\"newChatMessageNotificationEnabled\":true,\"reassignmentNotificationEnabled\":true,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"internalChatNotificationEnabled\":null,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
   }
 
   // ── mapOf(Appointment) ────────────────────────────────────────────────────
