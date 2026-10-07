@@ -74,6 +74,39 @@ class CaseHandoverMailComposerTest {
   }
 
   @Test
+  void temporaryAccessUsesItsOwnAccurateConsentRecipeInAllSevenTones() {
+    prepareBrand();
+    for (var tone : OrisoEmailRenderer.Tone.values()) {
+      var language =
+          tone == OrisoEmailRenderer.Tone.DE_FORMAL || tone == OrisoEmailRenderer.Tone.DE_INFORMAL
+              ? LanguageCode.de
+              : LanguageCode.valueOf(tone.name().toLowerCase());
+      var dialect = tone == OrisoEmailRenderer.Tone.DE_INFORMAL ? Dialect.INFORMAL : Dialect.FORMAL;
+      var mail =
+          new CaseHandoverEmailNotification.Mail(
+              12L,
+              77L,
+              "!room:example.test",
+              CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED,
+              40L,
+              "asker@example.test",
+              language,
+              dialect,
+              de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.CO_ACCESS);
+      var rendered = composer.compose(mail, "https://tenant.example.test");
+      assertThat(rendered.text())
+          .contains(
+              "https://tenant.example.test/sessions/user/view/session/77?caseHandoverRequestId=12")
+          .doesNotContain("{{", "Counsellor Name", "#123");
+      assertThat(rendered.html()).doesNotContain("{{");
+      if (language == LanguageCode.en)
+        assertThat(rendered.text())
+            .contains("temporarily access your conversation")
+            .doesNotContain("You are now responsible");
+    }
+  }
+
+  @Test
   void confirmationTellsTheIncomingCounsellorTheyNowOwnTheCase() {
     prepareBrand();
     var rendered =

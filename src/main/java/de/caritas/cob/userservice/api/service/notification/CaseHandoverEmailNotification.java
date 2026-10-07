@@ -39,7 +39,30 @@ public class CaseHandoverEmailNotification {
       long tenantId,
       String recipient,
       LanguageCode language,
-      Dialect dialect) {}
+      Dialect dialect,
+      AccessType accessType) {
+    /** Legacy queued records were exclusively takeover notifications. */
+    public Mail(
+        Long requestId,
+        Long sessionId,
+        String matrixRoomId,
+        Outcome outcome,
+        long tenantId,
+        String recipient,
+        LanguageCode language,
+        Dialect dialect) {
+      this(
+          requestId,
+          sessionId,
+          matrixRoomId,
+          outcome,
+          tenantId,
+          recipient,
+          language,
+          dialect,
+          AccessType.TAKEOVER);
+    }
+  }
 
   private record DeliveryKey(Long requestId, Outcome outcome) {}
 
@@ -48,7 +71,10 @@ public class CaseHandoverEmailNotification {
   private final @NonNull IdentityClientConfig identityClientConfig;
 
   public void consentRequested(CaseHandoverRequest request) {
-    if (!isTakeover(request) || request.getStatus() != Status.PENDING_CLIENT_CONSENT) return;
+    if (request == null
+        || (request.getAccessType() != AccessType.TAKEOVER
+            && request.getAccessType() != AccessType.CO_ACCESS)
+        || request.getStatus() != Status.PENDING_CLIENT_CONSENT) return;
     User recipient = request.getSession().getUser();
     if (!eligible(recipient)) return;
     schedule(
@@ -117,7 +143,8 @@ public class CaseHandoverEmailNotification {
         tenantId,
         email,
         language,
-        dialect);
+        dialect,
+        request.getAccessType());
   }
 
   private void schedule(Mail mail) {
