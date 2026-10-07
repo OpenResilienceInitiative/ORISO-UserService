@@ -60,6 +60,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   EventNotificationDeduplicationWriter.class,
   MatrixCallBindingService.class,
   MatrixCallBindingWriter.class,
+  MatrixCallNotificationIT.ActiveAccountFixture.class,
   MatrixCallLifecycleService.class,
   MatrixCallConversationResolver.class,
   MatrixCallStateService.class,
@@ -75,6 +76,13 @@ class MatrixCallTenantIT {
   @Autowired private ConsultantRepository consultants;
   @Autowired private SessionRepository sessions;
   @Autowired private EventNotificationRepository notifications;
+  @Autowired private javax.sql.DataSource accountDataSource;
+
+  @org.junit.jupiter.api.BeforeEach
+  void initializeAccountLifecycleRows() {
+    MatrixCallNotificationIT.initializeAccountLifecycleTable(accountDataSource);
+  }
+
   @Autowired private MatrixCallBindingRepository bindings;
   @Autowired private MatrixCallInviteNotificationService invites;
   @Autowired private MatrixCallStateService callStates;
@@ -236,6 +244,27 @@ class MatrixCallTenantIT {
                               .map(binding -> binding.getStartedAt())
                               .orElse(null))
                       .isNotNull());
+      await()
+          .pollInSameThread()
+          .atMost(Duration.ofSeconds(5))
+          .untilAsserted(
+              () -> {
+                var started =
+                    notifications.findAll().stream()
+                        .filter(event -> "call.started".equals(event.getEventType()))
+                        .toList();
+                assertThat(started).hasSize(invitationAlreadyExpired ? 0 : 1);
+                assertThat(started)
+                    .allSatisfy(
+                        event -> {
+                          assertThat(event.getRecipientUserId()).isEqualTo("tenant-receiver");
+                          assertThat(event.getTenantId()).isEqualTo(7L);
+                          assertThat(event.getSourceSessionId()).isEqualTo(session.getId());
+                          assertThat(event.getParams())
+                              .contains(
+                                  "\"callId\":\"tenant-call\"", "\"callRoomId\":\"" + media + "\"");
+                        });
+              });
       if (invitationAlreadyExpired) assertThat(notifications.findAll()).isEmpty();
       response.set(
           Map.of(

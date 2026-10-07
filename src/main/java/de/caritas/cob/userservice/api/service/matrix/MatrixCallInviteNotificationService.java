@@ -113,6 +113,7 @@ public class MatrixCallInviteNotificationService {
         .flatMap(Optional::stream)
         .distinct()
         .filter(recipient -> !recipient.id().equals(actor.id()))
+        .filter(recipient -> lifecycle.isActiveRecipient(recipient.id()))
         .forEach(
             recipient ->
                 notifications.createCallInvitationNotification(

@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,7 @@ public class MatrixCallLifecycleService {
   private final UserRepository users;
   private final ConsultantRepository consultants;
   private final EventNotificationService notifications;
+  private final AccountInactivityService accountLifecycle;
 
   @org.springframework.beans.factory.annotation.Value("${matrix.calls.observation-retry-ms:30000}")
   private long observationRetryMillis = 30000;
@@ -109,6 +111,26 @@ public class MatrixCallLifecycleService {
                   attended,
                   event.eventId()));
     }
+    // Announce the observed start to the persisted invitation audience, rechecking access.
+    // Reconcile each batch so an original invitee restored while the call runs is not lost.
+    if (binding.getStartedAt() != null) {
+      binding.getInvitedMatrixIds().stream()
+          .filter(members::contains)
+          .filter(member -> !member.equals(binding.getCallerMatrixId()))
+          .map(member -> identity(member, binding.getTenantId()))
+          .flatMap(Optional::stream)
+          .distinct()
+          .filter(recipient -> isActiveRecipient(recipient.id()))
+          .forEach(
+              recipient ->
+                  notifications.createCallStartedNotification(
+                      session,
+                      recipient.id(),
+                      recipient.consultant(),
+                      binding.getCallId(),
+                      binding.getMediaRoomId(),
+                      binding.isVideo()));
+    }
     // Apply the entire room batch before evaluating the last departure.
     if (binding.getMediaObservedAt() != null
         && (binding.getStartedAt() != null || binding.getInviteExpiresAt() <= now)
@@ -130,6 +152,7 @@ public class MatrixCallLifecycleService {
           .map(sender -> identity(sender, binding.getTenantId()))
           .flatMap(Optional::stream)
           .distinct()
+          .filter(recipient -> isActiveRecipient(recipient.id()))
           .forEach(
               recipient ->
                   notifications.createCallEndedNotification(
@@ -152,6 +175,7 @@ public class MatrixCallLifecycleService {
           .map(member -> identity(member, binding.getTenantId()))
           .flatMap(Optional::stream)
           .distinct()
+          .filter(recipient -> isActiveRecipient(recipient.id()))
           .forEach(
               recipient ->
                   notifications.createCallMissedNotification(
@@ -181,6 +205,15 @@ public class MatrixCallLifecycleService {
       }
     }
     return result;
+  }
+
+  boolean isActiveRecipient(String identityId) {
+    // Suspension can leave domain rows and stale Matrix membership in place.
+    // Accounts without a lifecycle row retain their established eligibility.
+    return accountLifecycle
+        .snapshot(identityId)
+        .map(account -> account.status() == AccountInactivityService.Status.ACTIVE)
+        .orElse(true);
   }
 
   private Optional<Recipient> identity(String matrixId, Long tenant) {
