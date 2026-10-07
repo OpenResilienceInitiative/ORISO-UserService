@@ -1427,6 +1427,10 @@ components:
           type: string
         signedAt:
           type: string
+        language:
+          type: string
+          description: Optional stored confirmation language; absent for legacy signatures.
+          example: "de"
     TenantDTO:
       type: object
       required:
