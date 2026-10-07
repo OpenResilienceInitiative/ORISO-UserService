@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -125,6 +126,7 @@ class MultiTenantRegistrationIT {
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
+        IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
@@ -179,6 +181,8 @@ class MultiTenantRegistrationIT {
     // The platform domain resolves to the main tenant, as with single-domain multitenancy.
     when(tenantResolverService.resolve(any())).thenReturn(1L);
     when(((IdentityAuthentication) identityClient).login(anyString(), anyString()))
+        .thenReturn(new IdentityLogin("access", 300, 1800, "refresh"));
+    when(((IdentityAuthentication) identityClient).loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("access", 300, 1800, "refresh"));
     when(((IdentityDummyEmailUpdater) identityClient).updateDummyEmail(anyString(), any()))
         .thenAnswer(call -> call.getArgument(0) + "@dummy.synthetic.oriso.test");

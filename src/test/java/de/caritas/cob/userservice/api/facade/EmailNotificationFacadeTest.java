@@ -361,7 +361,7 @@ class EmailNotificationFacadeTest {
   private final de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver
       brandResolver =
           new de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver(
-              mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
+              tenantServiceWithPlatformColour(),
               mock(TenantTemplateSupplier.class),
               "Beispielplattform",
               "",
@@ -1030,6 +1030,21 @@ class EmailNotificationFacadeTest {
     org.assertj.core.api.Assertions.assertThat(TenantContext.getCurrentTenant()).isNull();
   }
 
+  /** The platform theming colour mail falls back to; production has no built-in brand colour. */
+  private static de.caritas.cob.userservice.api.admin.service.tenant.TenantService
+      tenantServiceWithPlatformColour() {
+    var tenantService =
+        mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class);
+    when(tenantService.getPlatformTenantDataFresh())
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(0L)
+                .theming(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Theming()
+                        .primaryColor("#1c4f8f")));
+    return tenantService;
+  }
+
   private void bindCanonicalPlatformName(String name) {
     try (var context = new AnnotationConfigApplicationContext()) {
       context
@@ -1049,7 +1064,7 @@ class EmailNotificationFacadeTest {
                       "false")));
       context.registerBean(
           de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class,
-          () -> mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class));
+          EmailNotificationFacadeTest::tenantServiceWithPlatformColour);
       context.registerBean(TenantTemplateSupplier.class, () -> tenantTemplateSupplier);
       context.register(
           de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver.class);

@@ -18,7 +18,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
-/** Produces reproducible two-tenant previews for the ADR-026 visual review when requested. */
+/**
+ * Produces reproducible two-tenant previews for the ADR-026 visual review when requested: one dark
+ * tenant colour (white button label) and one light (dark label), ORISO-UserService#1252.
+ */
 class EmailBrandingPreviewExportTest {
 
   private static final String ORIGIN = "http://127.0.0.1:8765";
@@ -30,12 +33,16 @@ class EmailBrandingPreviewExportTest {
   void fourCatalogueOccasionsRenderForTwoDistinctTenants() throws IOException {
     TenantService tenants = mock(TenantService.class);
     TenantTemplateSupplier urls = mock(TenantTemplateSupplier.class);
-    RestrictedTenantDTO north = tenant(12L, "Nord", "nord", "#123456");
-    RestrictedTenantDTO south = tenant(13L, "Süd", "sued", "#654321");
+    RestrictedTenantDTO north = tenant(12L, "Nord", "nord", "#1c4f8f");
+    RestrictedTenantDTO south = tenant(13L, "Süd", "sued", "#f8e71c");
     when(tenants.getRestrictedTenantDataFresh(12L)).thenReturn(north);
     when(tenants.getRestrictedTenantDataFresh(13L)).thenReturn(south);
     when(tenants.getPlatformTenantDataFresh())
-        .thenReturn(new RestrictedTenantDTO().id(0L).name("Online-Beratung"));
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(0L)
+                .name("Online-Beratung")
+                .theming(new Theming().primaryColor("#1c4f8f")));
     when(urls.getTenantBaseUrl(north)).thenReturn(ORIGIN + "/nord");
     when(urls.getTenantBaseUrl(south)).thenReturn(ORIGIN + "/sued");
     OrisoEmailBrand brand =
@@ -47,8 +54,8 @@ class EmailBrandingPreviewExportTest {
     Path outputDir = output == null || output.isBlank() ? null : Path.of(output);
     if (outputDir != null) {
       Files.createDirectories(outputDir.resolve("logos"));
-      writeLogo(outputDir, "nord", "#123456", "N");
-      writeLogo(outputDir, "sued", "#654321", "S");
+      writeLogo(outputDir, "nord", "#1c4f8f", "N");
+      writeLogo(outputDir, "sued", "#f8e71c", "S");
     }
 
     for (RestrictedTenantDTO tenant : new RestrictedTenantDTO[] {north, south}) {
@@ -62,6 +69,11 @@ class EmailBrandingPreviewExportTest {
             .contains(tenant.getName())
             .contains(ORIGIN + "/logos/" + slug + ".svg")
             .contains(tenant.getTheming().getPrimaryColor())
+            .as("the dark tenant keeps a white label, the light one gets a dark tone of its hue")
+            .contains(
+                slug.equals("nord")
+                    ? "font-weight:600;color:#ffffff;text-decoration:none"
+                    : "font-weight:600;color:#1f1c00;text-decoration:none")
             .doesNotContain("{{");
         assertThat(mail.text()).doesNotContain("{{");
         if (outputDir != null) {

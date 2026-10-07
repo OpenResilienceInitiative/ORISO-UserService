@@ -2091,12 +2091,22 @@ components:
           type: array
           nullable: true
           description: >-
-            Replaces the full set of topics assigned to the consultant. Omitted or null keeps the
-            stored topics; an empty list is rejected while the consultant still has topics.
+            Replaces the full set of topics assigned to the consultant; each topic is stored for
+            every assigned counselling centre that offers it. Ignored when topicsByAgency is non-empty.
+            Omitted or null keeps the stored topics; an empty list is rejected while the consultant
+            still has topics.
           items:
             type: integer
             format: int64
           example: [3, 7, 12]
+        topicsByAgency:
+          type: array
+          description: >-
+            Optional. Replaces the full set of topics per counselling centre (#1264). Each agency
+            must be assigned to the consultant and must offer every topic listed for it. Wins over
+            topicIds when non-empty; an empty list counts as not sent (clear with topicIds: []).
+          items:
+            $ref: '#/components/schemas/ConsultantAgencyTopicsDTO'
         publicSlug:
           type: string
           example: nikunj-rohit
@@ -2172,6 +2182,14 @@ components:
     ConsultantDTO:
       type: object
       properties:
+        active:
+          type: boolean
+          nullable: true
+          description: >-
+            Login enabled in the identity provider. Null means unknown, not disabled.
+            Read-only best-effort metadata; missing identity data, provider outages or
+            exhausted page lookup budgets leave the status unknown without removing rows.
+          readOnly: true
         topicPermission:
           $ref: '#/components/schemas/TopicPermissionDTO'
         id:
@@ -2278,6 +2296,13 @@ components:
           description: topics directly assigned to the consultant, enriched with names
           items:
             $ref: '#/components/schemas/ConsultantTopicDTO'
+        topicsByAgency:
+          type: array
+          description: >-
+            Topics of the consultant per counselling centre (#1264). An entry without agencyId
+            holds legacy assignments that apply to every centre of the consultant.
+          items:
+            $ref: '#/components/schemas/ConsultantAgencyTopicsDTO'
         hasOtherIdentity:
           type: boolean
           description: true if this consultant also holds an admin identity on the same account
@@ -2296,6 +2321,21 @@ components:
             complete, so the counsellor cannot start or join any counselling room. Repair it
             with POST /useradmin/consultants/{consultantId}/chat-identity. Absent on responses
             from older deployments; treat absent as unknown, not as PROVISIONED.
+
+    ConsultantAgencyTopicsDTO:
+      type: object
+      description: Topics a consultant offers at one counselling centre (Fachbereich = centre x topic).
+      properties:
+        agencyId:
+          type: integer
+          format: int64
+          example: 5
+        topicIds:
+          type: array
+          items:
+            type: integer
+            format: int64
+          example: [3, 7]
 
     ConsultantTopicDTO:
       type: object
@@ -2383,6 +2423,14 @@ components:
     AdminDTO:
       type: object
       properties:
+        active:
+          type: boolean
+          nullable: true
+          description: >-
+            Login enabled in the identity provider. Null means unknown, not disabled.
+            Read-only best-effort metadata; missing identity data, provider outages or
+            exhausted page lookup budgets leave the status unknown without removing rows.
+          readOnly: true
         id:
           type: string
           example: "0f2cca9c-9303-4791-a0a5-a1ce16f1524f"

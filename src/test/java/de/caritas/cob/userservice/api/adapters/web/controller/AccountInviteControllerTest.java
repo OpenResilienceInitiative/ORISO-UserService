@@ -117,6 +117,7 @@ class AccountInviteControllerTest {
             logo,
             "#f8e71c",
             "#0f3b8f",
+            "#ffffff",
             image ? BrandedEmail.LogoRendering.IMAGE : BrandedEmail.LogoRendering.TEXT_WORDMARK);
     when(previewService.preview(any()))
         .thenReturn(

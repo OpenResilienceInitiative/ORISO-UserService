@@ -50,10 +50,10 @@ class TraegerOrganisationClientTest {
   @BeforeEach
   void setUp() {
     TechnicalUserConfig technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
+    technicalUser.setClientId("technical");
+    technicalUser.setClientSecret("secret");
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.login(anyString(), anyString()))
+    when(identityAuthentication.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("token", 0, 0, null));
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(anyString()))
         .thenReturn(new HttpHeaders());

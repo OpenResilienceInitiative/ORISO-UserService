@@ -137,10 +137,9 @@ class TeamDiscussionFacadeTest {
 
     var credentials = new AgencyMatrixCredentialsDTO();
     credentials.setMatrixUserId("@agency7:oriso");
-    credentials.setMatrixPassword("secret");
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(credentials));
-    when(matrixSynapseService.loginUser("agency7", "secret")).thenReturn("agency-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@agency7:oriso")).thenReturn("agency-token");
     when(matrixSynapseService.loginAsUserAccessToken("@consultant1:oriso"))
         .thenReturn("consultant-token");
     when(matrixSynapseService.joinRoom(ROOM_ID, "consultant-token")).thenReturn(true);

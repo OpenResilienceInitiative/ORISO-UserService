@@ -56,8 +56,8 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
-        # Immutable additive AVV contract from companion PR296; TenantService must merge first.
-        ref: ${{ github.event_name == 'pull_request' && '97067a1371078cce87f44d55c3cdf7901e6426ba' || 'pre-dev' }}
+        # TenantService PR303 merged the stored confirmation language consumed by this branch into dev.
+        ref: ${{ github.event_name == 'pull_request' && '6d7e2d1dcc640af1bd027131f1c217899ad2a70e' || 'pre-dev' }}
         path: .providers/tenant
         persist-credentials: false
 

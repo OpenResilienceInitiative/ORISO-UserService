@@ -54,7 +54,7 @@ class ServiceNoticeMailComposerTest {
     when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
     when(tenantTemplates.getTenantBaseUrl(tenant)).thenReturn("https://centre-a.oriso.example");
     when(routes.resolve(7L)).thenReturn(Optional.of(route));
-    var brand = EmailBranding.neutral();
+    var brand = new EmailBranding("ORISO", null, "#123456", null, null);
     when(branding.resolveNotification(7L, "https://centre-a.oriso.example")).thenReturn(brand);
     var values = new HashMap<String, String>();
     values.put("platformName", "Independent Platform");

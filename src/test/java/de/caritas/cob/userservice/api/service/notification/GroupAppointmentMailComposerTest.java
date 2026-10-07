@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.model.GroupAppointmentOccurrenceState;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
@@ -78,7 +79,7 @@ class GroupAppointmentMailComposerTest {
         new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.OWN, "#a5000a");
     when(routes.resolve(7L)).thenReturn(Optional.of(route));
     when(branding.resolveNotification(7L, "https://group-owner.oriso.example"))
-        .thenReturn(EmailBranding.neutral());
+        .thenReturn(new EmailBranding("ORISO", null, EmailBrandingFixture.TEST_COLOUR, null, null));
     when(brandValues.values(any(), eq(7L))).thenReturn(Map.of("platformName", "ORISO"));
     var rendered = new OrisoEmailRenderer.RenderedEmail("Termin", "<p>Termin</p>", "Termin");
     when(renderer.render(

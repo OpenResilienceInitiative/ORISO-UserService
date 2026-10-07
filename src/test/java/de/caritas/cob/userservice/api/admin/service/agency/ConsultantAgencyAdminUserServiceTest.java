@@ -55,6 +55,10 @@ public class ConsultantAgencyAdminUserServiceTest {
 
   @Mock private ApplicationEventPublisher eventPublisher;
 
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository
+      consultantTopicRepository;
+
   @Test
   public void
       markAllAssignedConsultantsAsTeamConsultant_Should_notThrowNotFoundException_When_agencyWithIdDoesNotExist() {
