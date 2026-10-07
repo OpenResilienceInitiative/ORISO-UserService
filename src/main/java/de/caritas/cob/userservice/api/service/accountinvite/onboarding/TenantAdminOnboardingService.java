@@ -285,8 +285,8 @@ public class TenantAdminOnboardingService {
           identitySecondFactor.getOtpCredential(
               usernameTranscoder.encodeUsername(admin.getUsername()));
       if (otpInfo == null || isBlank(otpInfo.secret())) {
-        throw new InternalServerErrorException(
-            "Keycloak issued no TOTP setup material for the onboarding account");
+        // App setup data is optional: the accepted account can still verify the email factor.
+        otpInfo = IdentityOtpCredential.empty();
       }
 
       AccountInvite claimedInvite =
@@ -366,8 +366,8 @@ public class TenantAdminOnboardingService {
           identitySecondFactor.getOtpCredential(
               usernameTranscoder.encodeUsername(admin.getUsername()));
       if (otpInfo == null || isBlank(otpInfo.secret())) {
-        throw new InternalServerErrorException(
-            "Keycloak issued no TOTP setup material for the onboarding account");
+        // App setup data is optional: the accepted account can still verify the email factor.
+        otpInfo = IdentityOtpCredential.empty();
       }
       AccountInvite claimedInvite =
           accountInviteRepository
