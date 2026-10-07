@@ -159,7 +159,8 @@ class DeleteTemporaryAccountsSchedulerIT {
     deleteSchedulerClaim();
     // Registration requires the agency's signed AVV (#1327).
     dpaOwner =
-        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, 1L);
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
+            ownerFactory, 1L);
     when(tenantService.getRestrictedTenantDataFresh(anyLong()))
         .thenReturn(ChatRecoveryPolicyFixtures.tenant());
     when(tenantService.getSingleTenancyTenantDataFresh())
