@@ -120,14 +120,7 @@ public class MatrixCallLifecycleService {
           .map(member -> identity(member, binding.getTenantId()))
           .flatMap(Optional::stream)
           .distinct()
-          // Suspension can leave domain rows and stale Matrix membership in place.
-          // Accounts without a lifecycle row retain their established eligibility.
-          .filter(
-              recipient ->
-                  accountLifecycle
-                      .snapshot(recipient.id())
-                      .map(account -> account.status() == AccountInactivityService.Status.ACTIVE)
-                      .orElse(true))
+          .filter(recipient -> isActiveRecipient(recipient.id()))
           .forEach(
               recipient ->
                   notifications.createCallStartedNotification(
@@ -159,6 +152,7 @@ public class MatrixCallLifecycleService {
           .map(sender -> identity(sender, binding.getTenantId()))
           .flatMap(Optional::stream)
           .distinct()
+          .filter(recipient -> isActiveRecipient(recipient.id()))
           .forEach(
               recipient ->
                   notifications.createCallEndedNotification(
@@ -181,6 +175,7 @@ public class MatrixCallLifecycleService {
           .map(member -> identity(member, binding.getTenantId()))
           .flatMap(Optional::stream)
           .distinct()
+          .filter(recipient -> isActiveRecipient(recipient.id()))
           .forEach(
               recipient ->
                   notifications.createCallMissedNotification(
@@ -210,6 +205,15 @@ public class MatrixCallLifecycleService {
       }
     }
     return result;
+  }
+
+  boolean isActiveRecipient(String identityId) {
+    // Suspension can leave domain rows and stale Matrix membership in place.
+    // Accounts without a lifecycle row retain their established eligibility.
+    return accountLifecycle
+        .snapshot(identityId)
+        .map(account -> account.status() == AccountInactivityService.Status.ACTIVE)
+        .orElse(true);
   }
 
   private Optional<Recipient> identity(String matrixId, Long tenant) {

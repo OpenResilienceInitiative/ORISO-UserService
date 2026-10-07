@@ -1176,6 +1176,120 @@ class MatrixCallNotificationIT {
     }
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("callAudienceLifecycleStatuses")
+  void invitationAndTerminalAudienceRequireCurrentActiveLifecycle(
+      String eventType, AccountInactivityService.Status status) {
+    String source = "!active-audience-source:example";
+    String media = "!active-audience-media:example";
+    String caller = "@active-audience-caller:example";
+    String receiver = "@active-audience-receiver:example";
+    var owner = startedUser("active-audience-caller", caller);
+    var recipient = mock(Consultant.class);
+    when(recipient.getId()).thenReturn("active-audience-receiver");
+    when(recipient.getTenantId()).thenReturn(7L);
+    when(recipient.getMatrixUserId()).thenReturn(receiver);
+    when(users.findByMatrixUserIdAndDeleteDateIsNull(caller)).thenReturn(Optional.of(owner));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(receiver))
+        .thenReturn(Optional.of(recipient));
+    var session = mock(Session.class);
+    when(session.getId()).thenReturn(244L);
+    when(session.getTenantId()).thenReturn(7L);
+    when(session.getMatrixRoomId()).thenReturn(source);
+    when(session.getUser()).thenReturn(owner);
+    when(session.getConsultant()).thenReturn(recipient);
+    when(sessions.findByMatrixRoomId(source)).thenReturn(Optional.of(session));
+    when(matrix.getCallRoomMembers(source)).thenReturn(Optional.of(List.of(caller, receiver)));
+    when(matrix.getCallRoomBinding(media, caller))
+        .thenReturn(Optional.of(Map.of("call_id", "active-audience", "source_room_id", source)));
+    when(matrix.ensureAdminInRoom(media, caller)).thenReturn(true);
+    var invites =
+        new MatrixCallInviteNotificationService(
+            matrix,
+            conversations,
+            users,
+            consultants,
+            notificationService,
+            callBindings,
+            lifecycle);
+    long timestamp = System.currentTimeMillis() - 100;
+    var invite =
+        Map.<String, Object>of(
+            "sender", caller,
+            "origin_server_ts", timestamp,
+            "content",
+                Map.of("call_id", "active-audience", "call_room_id", media, "lifetime", 60000));
+    try {
+      if ("call.invited".equals(eventType)) setAccountLifecycleStatus(status);
+      assertThat(invites.handle(source, invite)).isTrue();
+      assertThat(bindingRepository.findByMediaRoomId(media)).isPresent();
+      if (!"call.invited".equals(eventType)) {
+        var attendance = new java.util.ArrayList<Map<String, Object>>();
+        attendance.add(rtcMember(caller, "active-caller-device", timestamp, false));
+        if ("call.ended".equals(eventType)) {
+          attendance.add(rtcMember(receiver, "active-receiver-device", timestamp, false));
+        }
+        assertThat(lifecycle.handleRoom(media, Map.of("state", Map.of("events", attendance))))
+            .isTrue();
+        var existingHistory = notifications.findAll().stream().map(event -> event.getId()).toList();
+        setAccountLifecycleStatus(status);
+        var departures = new java.util.ArrayList<Map<String, Object>>();
+        departures.add(departure(caller, "active-caller-device", timestamp, 0));
+        if ("call.ended".equals(eventType)) {
+          departures.add(departure(receiver, "active-receiver-device", timestamp, 0));
+        }
+        assertThat(lifecycle.handleRoom(media, Map.of("timeline", Map.of("events", departures))))
+            .isTrue();
+        assertThat(bindingRepository.findByMediaRoomId(media).orElseThrow().getEndedAt())
+            .isNotNull();
+        assertThat(notifications.findAll())
+            .extracting(event -> event.getId())
+            .containsAll(existingHistory);
+        // A legacy account without a lifecycle row still receives the real terminal event.
+        assertThat(notifications.findAll())
+            .filteredOn(event -> "call.ended".equals(event.getEventType()))
+            .extracting(event -> event.getRecipientUserId())
+            .contains("active-audience-caller");
+      }
+      assertThat(notifications.findAll())
+          .filteredOn(
+              event ->
+                  eventType.equals(event.getEventType())
+                      && "active-audience-receiver".equals(event.getRecipientUserId()))
+          .hasSize(status == AccountInactivityService.Status.ACTIVE ? 1 : 0);
+      var history = notifications.findAll().stream().map(event -> event.getId()).toList();
+      invites.handle(source, invite);
+      lifecycle.handleRoom(media, Map.of());
+      assertThat(notifications.findAll())
+          .extracting(event -> event.getId())
+          .containsExactlyInAnyOrderElementsOf(history);
+    } finally {
+      notifications.deleteAll();
+      bindingRepository.deleteAll();
+    }
+  }
+
+  private void setAccountLifecycleStatus(AccountInactivityService.Status status) {
+    accountLifecycle.assignAtCreation(
+        "active-audience-receiver", 7L, 12, 1L, java.time.Instant.now());
+    new JdbcTemplate(accountDataSource)
+        .update(
+            "UPDATE account_inactivity SET status=? WHERE identity_id=?",
+            status.name(),
+            "active-audience-receiver");
+    assertThat(accountLifecycle.snapshot("active-audience-receiver").orElseThrow().status())
+        .isEqualTo(status);
+  }
+
+  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      callAudienceLifecycleStatuses() {
+    return java.util.stream.Stream.of("call.invited", "call.ended", "call.missed")
+        .flatMap(
+            event ->
+                java.util.Arrays.stream(AccountInactivityService.Status.values())
+                    .map(status -> org.junit.jupiter.params.provider.Arguments.of(event, status)));
+  }
+
   private User startedUser(String id, String matrixId) {
     return User.builder()
         .userId(id)
