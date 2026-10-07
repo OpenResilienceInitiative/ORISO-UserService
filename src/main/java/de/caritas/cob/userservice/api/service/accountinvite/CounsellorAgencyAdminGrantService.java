@@ -53,7 +53,6 @@ public class CounsellorAgencyAdminGrantService {
    * @param invite the invite carrying the person's name, email and tenant
    */
   public void grantAgencyAdmin(String userId, Long agencyId, AccountInvite invite) {
-    AGENCY_ADMIN_ROLES.forEach(role -> identityClient.updateRole(userId, role));
     bindAdmin(
         userId,
         agencyId,

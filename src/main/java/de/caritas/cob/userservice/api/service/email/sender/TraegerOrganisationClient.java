@@ -2,13 +2,7 @@ package de.caritas.cob.userservice.api.service.email.sender;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi;
-import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
@@ -34,21 +28,15 @@ public class TraegerOrganisationClient {
 
   static final Duration CACHE_TTL = Duration.ofMinutes(5);
 
-  private final SecurityHeaderSupplier securityHeaderSupplier;
-  private final IdentityAuthentication identityAuthentication;
-  private final IdentityClientConfig identityClientConfig;
-  private final TenantAdminServiceApiControllerFactory controllerFactory;
+  private final de.caritas.cob.userservice.api.service.notification.TenantSystemEmailClient
+      contextClient;
   private final Map<Long, Cached> cache = new ConcurrentHashMap<>();
 
   public TraegerOrganisationClient(
-      @NonNull SecurityHeaderSupplier securityHeaderSupplier,
-      @NonNull IdentityAuthentication identityAuthentication,
-      @NonNull IdentityClientConfig identityClientConfig,
-      @NonNull TenantAdminServiceApiControllerFactory controllerFactory) {
-    this.securityHeaderSupplier = securityHeaderSupplier;
-    this.identityAuthentication = identityAuthentication;
-    this.identityClientConfig = identityClientConfig;
-    this.controllerFactory = controllerFactory;
+      @NonNull
+          de.caritas.cob.userservice.api.service.notification.TenantSystemEmailClient
+              contextClient) {
+    this.contextClient = contextClient;
   }
 
   /**
@@ -63,15 +51,17 @@ public class TraegerOrganisationClient {
       return Optional.of(cached.organisation());
     }
     try {
-      TenantDTO tenant = technicalUserApi().getTenantById(tenantId);
+      Map<String, Object> tenant = contextClient.readTenant(tenantId);
       SenderOrganisation organisation =
           tenant == null
               ? SenderOrganisation.NONE
               : new SenderOrganisation(
-                  isBlank(tenant.getLegalName()) ? tenant.getName() : tenant.getLegalName(),
-                  tenant.getAddress(),
+                  isBlank(text(tenant.get("legalName")))
+                      ? text(tenant.get("name"))
+                      : text(tenant.get("legalName")),
+                  text(tenant.get("address")),
                   SenderOrganisation.contactLine(
-                      tenant.getContactEmail(), tenant.getContactPhone()));
+                      text(tenant.get("contactEmail")), text(tenant.get("contactPhone"))));
       if (organisation.isEmpty()) {
         return Optional.empty();
       }
@@ -90,16 +80,8 @@ public class TraegerOrganisationClient {
     }
   }
 
-  private TenantControllerApi technicalUserApi() {
-    var api = controllerFactory.createControllerApi();
-    var technicalUser = identityClientConfig.getTechnicalUser();
-    var login =
-        identityAuthentication.loginService(
-            technicalUser.getClientId(), technicalUser.getClientSecret());
-    securityHeaderSupplier
-        .getKeycloakAndCsrfHttpHeaders(login.accessToken())
-        .forEach((key, value) -> api.getApiClient().addDefaultHeader(key, value.iterator().next()));
-    return api;
+  private static String text(Object value) {
+    return value instanceof String string ? string : null;
   }
 
   private record Cached(SenderOrganisation organisation, long expiresAtNanos) {}

@@ -47,12 +47,13 @@ public class AgencyContactDetailsClient {
       throw new IllegalArgumentException("agency and tenant IDs must be positive");
     }
     String baseUrl = requireBaseUrl();
-    var account = identityConfig.getTechnicalUser();
+    var account =
+        identityConfig.getTaskIdentity(
+            de.caritas.cob.userservice.api.config.auth.TaskIdentity.NOTIFICATION_DISPATCH);
     if (account == null || account.getClientId() == null || account.getClientSecret() == null) {
       throw new IllegalStateException("Identity technical account is not configured");
     }
-    String token =
-        authentication.loginService(account.getClientId(), account.getClientSecret()).accessToken();
+    String token = authentication.loginTask(account).accessToken();
     String url =
         baseUrl.replaceAll("/+$", "")
             + "/internal/agencies/"

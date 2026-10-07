@@ -70,10 +70,18 @@ public class AgencyCreationClient {
    *     was consumed, released or taken in the meantime (single-use link semantics upstream)
    */
   public Long createAgencyWithReservedId(
-      Long reservedAgencyId, String name, Long tenantId, List<Long> topicIds) {
+      Long reservedAgencyId,
+      String name,
+      Long tenantId,
+      List<Long> topicIds,
+      String reservationToken) {
+    if (reservationToken == null || reservationToken.isBlank()) {
+      throw new ConflictException("Agency reservation requires ownership-proof migration");
+    }
     var agency =
         new AgencyDTO()
             .reservedAgencyId(reservedAgencyId)
+            .reservationToken(reservationToken)
             .name(name)
             .tenantId(tenantId)
             .topicIds(topicIds == null ? List.of() : List.copyOf(topicIds))
@@ -144,9 +152,10 @@ public class AgencyCreationClient {
   }
 
   private void addTechnicalUserHeaders(ApiClient apiClient) {
-    var techUser = identityClientConfig.getTechnicalUser();
-    var identityLogin =
-        identityAuthentication.loginService(techUser.getClientId(), techUser.getClientSecret());
+    var techUser =
+        identityClientConfig.getTaskIdentity(
+            de.caritas.cob.userservice.api.config.auth.TaskIdentity.CONFIG_WIZARD);
+    var identityLogin = identityAuthentication.loginTask(techUser);
     HttpHeaders headers =
         securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));

@@ -7,12 +7,13 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.session.DeactivateSessionActionCommand;
 import de.caritas.cob.userservice.api.actions.session.PostMatrixUserLeftMessageActionCommand;
 import de.caritas.cob.userservice.api.actions.session.SendFinishedAnonymousConversationEventActionCommand;
-import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
+import de.caritas.cob.userservice.api.actions.user.DeactivateAuthorizedIdentityActionCommand;
+import de.caritas.cob.userservice.api.actions.user.IdentityDeactivationTarget;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +41,16 @@ public class FinishAnonymousConversationFacade {
                 () -> new NotFoundException("Session with id %s does not exist", sessionId));
 
     verifyPermissionToFinish(session);
+    var authentication =
+        org.springframework.security.core.context.SecurityContextHolder.getContext()
+            .getAuthentication();
+    if (!(authentication
+        instanceof
+        org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken
+                caller))
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Verified conversation caller required");
+    var deactivationOrigin = IdentityCommandAuthorization.finishedAnonymousSession(session, caller);
 
     // Notify the room first while user/consultant Matrix credentials are still valid.
     this.actionsRegistry
@@ -48,9 +59,9 @@ public class FinishAnonymousConversationFacade {
         .executeActions(session);
 
     this.actionsRegistry
-        .buildContainerForType(User.class)
-        .addActionToExecute(DeactivateKeycloakUserActionCommand.class)
-        .executeActions(session.getUser());
+        .buildContainerForType(IdentityDeactivationTarget.class)
+        .addActionToExecute(DeactivateAuthorizedIdentityActionCommand.class)
+        .executeActions(new IdentityDeactivationTarget(session.getUser(), deactivationOrigin));
 
     this.actionsRegistry
         .buildContainerForType(Session.class)

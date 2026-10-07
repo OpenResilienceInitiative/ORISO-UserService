@@ -10,6 +10,7 @@ import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.*;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
@@ -19,18 +20,13 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AgencyVerifier;
+import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -71,10 +67,11 @@ public class CreateUserFacade {
   private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
       dpaPolicy;
   private final @NonNull UserVerifier userVerifier;
-  private final @NonNull IdentityClient identityClient;
-  private final @NonNull IdentityAccountRemover identityAccountRemover;
-  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
-  private final @NonNull IdentityDummyEmailUpdater identityDummyEmailUpdater;
+  private final @NonNull de.caritas.cob.userservice.api.adapters.keycloak.commands
+          .IdentityCreationLocalCompletion
+      localCompletion;
+  private final @NonNull IdentityAccountProvisioning identityProvisioning;
+  private final @NonNull UserHelper userHelper;
   private final @NonNull UserService userService;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull AgencyVerifier agencyVerifier;
@@ -103,6 +100,7 @@ public class CreateUserFacade {
    *
    * @param userDTO {@link UserDTO}
    */
+  @org.springframework.transaction.annotation.Transactional
   public Long createUserAccountWithInitializedConsultingType(final UserDTO userDTO) {
 
     initializeTenantContextForRegistration(userDTO);
@@ -112,6 +110,8 @@ public class CreateUserFacade {
     de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.PlainCredentials plainCreds =
         de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
     ProvisioningAttempt provisioningAttempt = null;
+    String ownedCreatedIdentity = null;
+    boolean localSagaCompleted = false;
     AtomicReference<User> provisionedUser = new AtomicReference<>();
 
     try {
@@ -140,12 +140,25 @@ public class CreateUserFacade {
               TenantContext.getCurrentTenant(),
               de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
                   .ASKER);
-      CreatedIdentity response = identityClient.createUser(userDTO);
-      String identityUserId = CreatedIdentity.requireUserId(response);
+      var verifiedAgency =
+          agencyVerifier.getVerifiedAgency(
+              userDTO.getAgencyId(), Integer.parseInt(userDTO.getConsultingType()));
+      var origin =
+          IdentityCreationOrigin.checkedRegistration(
+              userDTO, verifiedAgency, TenantContext.getCurrentTenant());
+      var receipt =
+          identityProvisioning.create(
+              java.util.UUID.randomUUID(), initialIdentity(userDTO, origin), origin);
+      if (receipt == null || isBlank(receipt.accountId()))
+        throw new de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException(
+            "Identity provider returned no user id");
+      identityProvisioning.acquireLocalSaga(receipt);
+      String identityUserId = receipt.accountId();
+      ownedCreatedIdentity = identityUserId;
       provisioningAttempt = provisioningCompensator.begin(ProvisioningWorkflow.REGISTERED_USER);
       ProvisioningAttempt activeAttempt = provisioningAttempt;
       activeAttempt.register(
-          IDENTITY_USER, identityUserId, () -> identityAccountRemover.rollbackUser(identityUserId));
+          IDENTITY_USER, identityUserId, () -> identityProvisioning.compensate(receipt, origin));
       activeAttempt.register(
           DATABASE_USER,
           identityUserId,
@@ -216,7 +229,9 @@ public class CreateUserFacade {
         }
       }
 
+      localCompletion.user(user);
       activeAttempt.complete();
+      localSagaCompleted = true;
 
       // The welcome mail carries the generated user name, which ORISO cannot
       // recover. Sent after the attempt is marked complete and guarded here:
@@ -231,7 +246,17 @@ public class CreateUserFacade {
 
       return sessionId;
     } finally {
-      compensateProvisioning(provisioningAttempt);
+      if (ownedCreatedIdentity != null && !localSagaCompleted) {
+        try {
+          identityProvisioning.prepareLocalRollback(ownedCreatedIdentity);
+          compensateProvisioning(provisioningAttempt);
+        } catch (RuntimeException intentFailure) {
+          log.warn(
+              "Creation rollback for account {} awaits durable intent; local cleanup was not started ({})",
+              ownedCreatedIdentity,
+              intentFailure.getClass().getSimpleName());
+        }
+      } else compensateProvisioning(provisioningAttempt);
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
     }
   }
@@ -354,17 +379,7 @@ public class CreateUserFacade {
   private User updateIdentityAndCreateAccount(
       String userId, UserDTO userDTO, UserRole role, RecoveryPolicySnapshot snapshot) {
 
-    try {
-      updateKeycloakRoleAndPassword(userId, userDTO, role);
-    } catch (RuntimeException ex) {
-      if (role == UserRole.ANONYMOUS) {
-        log.error(
-            "Identity operations failed for anonymous account; aborting account creation", ex);
-        throw new InternalServerErrorException("Identity operations failed for anonymous user", ex);
-      }
-      log.error("Identity operations failed; aborting database user creation", ex);
-      throw ex;
-    }
+    checkIfUserIdNotNull(userId);
 
     var extendedConsultingTypeResponseDTO =
         consultingTypeManager.getConsultingTypeSettings(userDTO.getConsultingType());
@@ -405,10 +420,19 @@ public class CreateUserFacade {
     return consultingTypeManager.getConsultingTypeSettings(userDTO.getConsultingType());
   }
 
-  private void updateKeycloakRoleAndPassword(String userId, UserDTO userDTO, UserRole role) {
-    checkIfUserIdNotNull(userId);
-    identityClient.updateRole(userId, role);
-    identityPasswordUpdater.updatePassword(userId, userDTO.getPassword());
+  public static KeycloakTaskCommands.AccountCreation initialIdentity(
+      UserDTO request, IdentityCreationOrigin origin) {
+    return new KeycloakTaskCommands.AccountCreation(
+        new UsernameTranscoder().decodeUsername(request.getUsername()),
+        request.getEmail(),
+        null,
+        null,
+        request.getPreferredLanguage() == null ? null : request.getPreferredLanguage().toString(),
+        origin.tenantId(),
+        request.getPassword(),
+        false,
+        origin.roles(),
+        origin.registrationKind());
   }
 
   private void checkIfUserIdNotNull(String userId) {
@@ -419,8 +443,7 @@ public class CreateUserFacade {
 
   private String returnDummyEmailIfNoneGiven(UserDTO userDTO, String userId) {
     if (isBlank(userDTO.getEmail())) {
-      return identityDummyEmailUpdater.updateDummyEmail(
-          userId, new IdentityDummyEmailUpdate(userDTO.getUsername(), userDTO.getTenantId()));
+      return userHelper.getDummyEmail(userId);
     }
 
     return userDTO.getEmail();

@@ -59,9 +59,10 @@ public class TenantDpaSignatureReadClient {
   }
 
   private void addTechnicalUserHeaders(ApiClient apiClient) {
-    var techUser = identityClientConfig.getTechnicalUser();
-    var identityLogin =
-        identityAuthentication.loginService(techUser.getClientId(), techUser.getClientSecret());
+    var techUser =
+        identityClientConfig.getTaskIdentity(
+            de.caritas.cob.userservice.api.config.auth.TaskIdentity.NOTIFICATION_DISPATCH);
+    var identityLogin = identityAuthentication.loginTask(techUser);
     HttpHeaders headers =
         securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));

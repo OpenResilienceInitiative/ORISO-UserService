@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.workflow.delete.action.asker;
 
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.KEYCLOAK;
-import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
@@ -56,20 +55,21 @@ public class DeleteKeycloakAskerActionTest {
 
   @Test
   public void execute_Should_deleteKeycloakUserAndReturnEmptyList_When_userDeletionIsSuccessful() {
-    AskerDeletionWorkflowDTO workflowDTO = new AskerDeletionWorkflowDTO(new User(), emptyList());
+    AskerDeletionWorkflowDTO workflowDTO =
+        new AskerDeletionWorkflowDTO(markedUser(), new ArrayList<>());
 
     this.deleteKeycloakAskerAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
     assertThat(workflowErrors, hasSize(0));
-    verify(this.identityAccountRemover, times(1)).deleteUser(any());
+    verify(this.identityAccountRemover, times(1)).deleteUser(any(), any());
   }
 
   @Test
   public void execute_Should_returnExpectedWorkflowErrorAndLogError_When_userDeletionFailes() {
-    User user = new User();
+    User user = markedUser();
     user.setUserId("userId");
-    doThrow(new RuntimeException()).when(this.identityAccountRemover).deleteUser(any());
+    doThrow(new RuntimeException()).when(this.identityAccountRemover).deleteUser(any(), any());
     AskerDeletionWorkflowDTO workflowDTO = new AskerDeletionWorkflowDTO(user, new ArrayList<>());
 
     this.deleteKeycloakAskerAction.execute(workflowDTO);
@@ -87,11 +87,11 @@ public class DeleteKeycloakAskerActionTest {
 
   @Test
   public void execute_Should_notReturnWorkflowErrorIfUserCouldNotBeFoundInKeycloak() {
-    User user = new User();
+    User user = markedUser();
     user.setUserId("userId");
     doThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND))
         .when(this.identityAccountRemover)
-        .deleteUser(any());
+        .deleteUser(any(), any());
     AskerDeletionWorkflowDTO workflowDTO = new AskerDeletionWorkflowDTO(user, new ArrayList<>());
 
     this.deleteKeycloakAskerAction.execute(workflowDTO);
@@ -103,5 +103,12 @@ public class DeleteKeycloakAskerActionTest {
                 Level.WARN,
                 "No user with id userId could be found in keycloak, but proceeding with further actions."))
         .isTrue();
+  }
+
+  private User markedUser() {
+    var target = new User();
+    target.setUserId("userId");
+    target.setDeleteDate(java.time.LocalDateTime.now());
+    return target;
   }
 }

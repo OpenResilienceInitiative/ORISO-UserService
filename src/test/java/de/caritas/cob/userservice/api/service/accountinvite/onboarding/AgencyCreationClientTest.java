@@ -12,7 +12,7 @@ import de.caritas.cob.userservice.agencyadminserivce.generated.ApiClient;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.AdminAgencyControllerApi;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyAdminServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -64,11 +64,12 @@ class AgencyCreationClientTest {
 
   @BeforeEach
   void setUp() {
-    var technicalUser = new TechnicalUserConfig();
+    var technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical");
     technicalUser.setClientSecret("secret");
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.loginService(anyString(), anyString()))
+    when(identityClientConfig.getTaskIdentity(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(technicalUser);
+    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new IdentityLogin("access-token", 60, 60, "refresh-token"));
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(anyString()))
         .thenReturn(new HttpHeaders());
@@ -91,7 +92,7 @@ class AgencyCreationClientTest {
 
   private void createAgency() {
     client.createAgencyWithReservedId(
-        RESERVED_AGENCY_ID, "Beratungsstelle", TENANT_ID, List.of(3L));
+        RESERVED_AGENCY_ID, "Beratungsstelle", TENANT_ID, List.of(3L), "owner-proof");
   }
 
   /**

@@ -51,10 +51,10 @@ public class ExpiredInviteReservationSweep {
       if (expiredSetup > 0) {
         log.info("Expired {} elapsed existing-account setup links", expiredSetup);
       }
-      var technicalUser = identityClientConfig.getTechnicalUser();
-      var login =
-          identityAuthentication.loginService(
-              technicalUser.getClientId(), technicalUser.getClientSecret());
+      var technicalUser =
+          identityClientConfig.getTaskIdentity(
+              de.caritas.cob.userservice.api.config.auth.TaskIdentity.INVITE_RESERVATIONS);
+      var login = identityAuthentication.loginTask(technicalUser);
       int expired =
           TechnicalAccessTokenContext.offerDuring(
               login.accessToken(), accountInviteService::expireElapsedInvites);

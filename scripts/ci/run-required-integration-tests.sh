@@ -59,9 +59,16 @@ mariadb_owned_tests=(
   SupportRoomMigrationConvergenceIT
   AccountInviteRevokeAcceptRaceMariaDbIT
 )
+# These identity suites require native issued-token/custom-provider fixtures and are
+# executed by the required Helm cross-repository identity join. Explicit -Dtest
+# selection overrides POM discovery, so exclude them from this ordinary H2 selection.
+native_identity_owned_tests=(
+  RealTaskTokenAuthorizationIT
+  IdentityCreationNativeRestartIT
+)
 required_test_pattern="**/*IT"
-for mariadb_owned_test in "${mariadb_owned_tests[@]}"; do
-  required_test_pattern+=",!${mariadb_owned_test}"
+for externally_owned_test in "${mariadb_owned_tests[@]}" "${native_identity_owned_tests[@]}"; do
+  required_test_pattern+=",!${externally_owned_test}"
 done
 
 # The application/H2 *IT suite is the required contract here. Unit tests and real-MariaDB tests

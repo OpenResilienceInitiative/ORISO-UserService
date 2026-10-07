@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -145,11 +146,14 @@ class AccountInviteReservationOrchestrationIT {
                     : IdAllocationStatus.FREE);
     org.mockito.Mockito.doAnswer(
             invocation -> {
-              tenantIdLedger.remove((long) invocation.getArgument(0));
+              long reservedId = invocation.getArgument(0);
+              String proof = invocation.getArgument(1);
+              if (!("token-" + reservedId).equals(proof)) return false;
+              tenantIdLedger.remove(reservedId);
               return true;
             })
         .when(tenantIdAllocationClient)
-        .release(anyLong());
+        .release(anyLong(), anyString());
   }
 
   @AfterEach
@@ -211,7 +215,7 @@ class AccountInviteReservationOrchestrationIT {
             () -> createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "owner@example.org"))
         .isInstanceOf(ConflictException.class);
 
-    verify(tenantIdAllocationClient).release(21L);
+    verify(tenantIdAllocationClient).release(21L, "token-21");
     assertThat(accountInviteRepository.count()).isZero();
     assertThat(tenantIdLedger).isEmpty();
   }
@@ -231,9 +235,12 @@ class AccountInviteReservationOrchestrationIT {
         .isInstanceOf(ConflictException.class)
         .hasMessageContaining("pending reservation cleanup");
 
-    verify(tenantIdAllocationClient).release(21L);
+    verify(tenantIdAllocationClient).release(21L, "token-21");
     assertThat(accountInviteRepository.count()).isZero();
     assertThat(tenantIdLedger).isEmpty();
+    assertThat(reservationReleaseTaskRepository.findAll())
+        .singleElement()
+        .satisfies(task -> assertThat(task.getReservationToken()).isNull());
   }
 
   private AccountInvite createTenantAdminInvite(

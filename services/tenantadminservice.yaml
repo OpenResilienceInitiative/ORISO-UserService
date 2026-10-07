@@ -124,6 +124,11 @@ paths:
             type: integer
             format: int64
             minimum: 1
+        - name: reservationToken
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         '204':
           description: NO CONTENT - reservation released

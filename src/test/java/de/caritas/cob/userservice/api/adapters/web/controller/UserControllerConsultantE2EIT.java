@@ -27,6 +27,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands.AccountProjection;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
@@ -36,6 +38,7 @@ import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControlle
 import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -56,16 +59,19 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import jakarta.servlet.http.Cookie;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.PositiveOrZero;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -82,7 +88,11 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.test.context.TestSecurityContextHolder;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -90,6 +100,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestTemplate;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -106,9 +117,32 @@ class UserControllerConsultantE2EIT {
 
   @Autowired private MockMvc mockMvc;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+      lifecycle;
+
+  private final java.util.Map<String, Instant> fixtureLifecycleRows =
+      new java.util.LinkedHashMap<>();
+  @MockitoBean private TaskIdentityGrant taskGrants;
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @Autowired private Environment environment;
+
+  @MockitoBean
+  @Qualifier("keycloakRestTemplate")
+  private RestTemplate keycloakRestTemplate;
+
+  private BoundedIdentityHttpFixtures.Provider identityProvider;
+
   @Autowired private ObjectMapper objectMapper;
 
   @Autowired private ConsultantRepository consultantRepository;
+  @Autowired private de.caritas.cob.userservice.api.port.out.AdminRepository adminRepository;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.AdminAgencyRepository adminAgencyRepository;
+
+  private final List<de.caritas.cob.userservice.api.model.AdminAgency> ownedAdminAgencies =
+      new ArrayList<>();
 
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
@@ -155,6 +189,10 @@ class UserControllerConsultantE2EIT {
   @BeforeEach
   void setUp() {
     TenantContext.clear();
+    identityProvider =
+        BoundedIdentityHttpFixtures.givenProvider(
+            keycloakRestTemplate, taskGrants, taskIdentities, environment, objectMapper, id -> {});
+    givenVerifiedHuman("1c80e100-266f-4a02-a3a3-703f236f4a63", null, "user-admin");
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
@@ -165,6 +203,11 @@ class UserControllerConsultantE2EIT {
 
   @AfterEach
   void reset() {
+    adminAgencyRepository.deleteAll(ownedAdminAgencies);
+    ownedAdminAgencies.clear();
+    fixtureLifecycleRows.forEach(
+        (id, capturedAt) -> lifecycle.discardUncompletedCreation(id, 24, 0, capturedAt));
+    fixtureLifecycleRows.clear();
     TenantContext.clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
@@ -513,6 +556,13 @@ class UserControllerConsultantE2EIT {
     when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
     when(authenticatedUser.getUserId()).thenReturn("d42c2e5e-143c-4db1-a90f-7cccf82fbb15");
     long agencyIdToSearchFor = 2L;
+    var scopedAdmin = adminRepository.findById(authenticatedUser.getUserId()).orElseThrow();
+    ownedAdminAgencies.add(
+        adminAgencyRepository.save(
+            de.caritas.cob.userservice.api.model.AdminAgency.builder()
+                .admin(scopedAdmin)
+                .agencyId(agencyIdToSearchFor)
+                .build()));
     when(adminUserFacade.findAdminUserAgencyIds(authenticatedUser.getUserId()))
         .thenReturn(Lists.newArrayList(agencyIdToSearchFor));
     givenAnInfix();
@@ -611,6 +661,13 @@ class UserControllerConsultantE2EIT {
     when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
     when(authenticatedUser.getUserId()).thenReturn("d42c2e5e-143c-4db1-a90f-7cccf82fbb15");
     long agencyIdToSearchFor = 2L;
+    var scopedAdmin = adminRepository.findById(authenticatedUser.getUserId()).orElseThrow();
+    ownedAdminAgencies.add(
+        adminAgencyRepository.save(
+            de.caritas.cob.userservice.api.model.AdminAgency.builder()
+                .admin(scopedAdmin)
+                .agencyId(agencyIdToSearchFor)
+                .build()));
     when(adminUserFacade.findAdminUserAgencyIds(authenticatedUser.getUserId()))
         .thenReturn(Lists.newArrayList(agencyIdToSearchFor));
     givenAnInfix();
@@ -1257,6 +1314,19 @@ class UserControllerConsultantE2EIT {
 
       consultant = consultantRepository.save(consultant);
       consultantIdsToDelete.add(consultant.getId());
+      identityProvider.seed(
+          new AccountProjection(
+              consultant.getId(),
+              usernameTranscoder.decodeUsername(consultant.getUsername()),
+              consultant.getEmail(),
+              consultant.getFirstName(),
+              consultant.getLastName(),
+              consultant.getTenantId(),
+              "de",
+              true,
+              false,
+              List.of("consultant", "group-chat-consultant"),
+              false));
 
       ConsultantAgency consultantAgency;
 
@@ -1365,6 +1435,7 @@ class UserControllerConsultantE2EIT {
       when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
       when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
       when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anAuthority"));
+      givenVerifiedHuman(consultant.getId(), consultant.getTenantId(), "consultant");
     }
   }
 
@@ -1438,5 +1509,29 @@ class UserControllerConsultantE2EIT {
     when(topicControllerApi.getAllTopics()).thenReturn(Lists.newArrayList(firstTopic, secondTopic));
     when(topicControllerApi.getAllActiveTopics())
         .thenReturn(Lists.newArrayList(firstTopic, secondTopic));
+  }
+
+  private void givenVerifiedHuman(String id, Long tenant, String role) {
+    var previous =
+        org.springframework.security.core.context.SecurityContextHolder.getContext()
+            .getAuthentication();
+    if (previous == null) return;
+    if (lifecycle.snapshot(id).isEmpty()) {
+      var capturedAt = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+      lifecycle.assignAtCreation(id, tenant, 24, 0, capturedAt);
+      fixtureLifecycleRows.put(id, capturedAt);
+    }
+    var token =
+        Jwt.withTokenValue("synthetic-human-session")
+            .header("alg", "RS256")
+            .subject(id)
+            .claim("azp", "app")
+            .claim("tenantId", tenant == null ? null : tenant.toString())
+            .claim("realm_access", Map.of("roles", List.of(role)))
+            .issuedAt(Instant.now())
+            .expiresAt(Instant.now().plusSeconds(300))
+            .build();
+    TestSecurityContextHolder.setAuthentication(
+        new JwtAuthenticationToken(token, previous.getAuthorities()));
   }
 }

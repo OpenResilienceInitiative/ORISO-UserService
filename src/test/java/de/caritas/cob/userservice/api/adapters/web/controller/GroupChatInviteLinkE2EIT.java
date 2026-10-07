@@ -10,6 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentity;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -30,8 +32,11 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.Cookie;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +45,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -75,6 +81,8 @@ class GroupChatInviteLinkE2EIT {
   @Autowired private UserChatRepository userChatRepository;
   @Autowired private GroupChatParticipantRepository participantRepository;
 
+  @Autowired private TaskIdentityConfiguration identities;
+  @MockitoBean private JwtDecoder jwtDecoder;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @Autowired private AgencyService agencyService;
   @MockitoBean private MatrixSynapseService matrixSynapseService;
@@ -126,6 +134,8 @@ class GroupChatInviteLinkE2EIT {
 
   /** Existing permission journeys keep real AVV policy and explicitly permitted owner HTTP. */
   private void permittedExternalOwnerAndAgencies() {
+    var policyJwt = BoundedIdentityHttpFixtures.taskJwt(TaskIdentity.RUNTIME_POLICY, identities);
+    when(jwtDecoder.decode(policyJwt.getTokenValue())).thenReturn(policyJwt);
     permittedOwner =
         de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(
             ownerFactory, GROUP_TENANT);
@@ -168,12 +178,34 @@ class GroupChatInviteLinkE2EIT {
         .andRespond(
             request -> {
               String path = request.getURI().getPath();
-              if (path.endsWith("/token"))
+              if (path.endsWith("/token")) {
+                var form = new org.springframework.util.LinkedMultiValueMap<String, String>();
+                for (var field :
+                    ((org.springframework.mock.http.client.MockClientHttpRequest) request)
+                        .getBodyAsString()
+                        .split("&")) {
+                  var pair = field.split("=", 2);
+                  form.add(
+                      URLDecoder.decode(pair[0], StandardCharsets.UTF_8),
+                      URLDecoder.decode(pair.length == 2 ? pair[1] : "", StandardCharsets.UTF_8));
+                }
+                var credential = identities.require(TaskIdentity.RUNTIME_POLICY);
+                org.junit.jupiter.api.Assertions.assertEquals(
+                    org.springframework.http.HttpMethod.POST, request.getMethod());
+                org.junit.jupiter.api.Assertions.assertEquals(
+                    "client_credentials", form.getFirst("grant_type"));
+                org.junit.jupiter.api.Assertions.assertEquals(
+                    credential.getClientId(), form.getFirst("client_id"));
+                org.junit.jupiter.api.Assertions.assertEquals(
+                    credential.getClientSecret(), form.getFirst("client_secret"));
                 return org.springframework.test.web.client.response.MockRestResponseCreators
                     .withSuccess(
-                        "{\"access_token\":\"synthetic-service-token\",\"expires_in\":60,\"refresh_expires_in\":60,\"refresh_token\":\"synthetic-refresh\"}",
+                        "{\"access_token\":\""
+                            + policyJwt.getTokenValue()
+                            + "\",\"expires_in\":300}",
                         org.springframework.http.MediaType.APPLICATION_JSON)
                     .createResponse(request);
+              }
               if (path.endsWith("/logout"))
                 return org.springframework.test.web.client.response.MockRestResponseCreators
                     .withNoContent()

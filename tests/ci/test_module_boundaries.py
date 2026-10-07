@@ -250,8 +250,7 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
         ).read_text()
         availability_port = (
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/"
             "IdentityUsernameAvailability.java"
         )
         consumers = (
@@ -259,12 +258,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/conversation/service/user/"
             "anonymous/AnonymousUsernameRegistry.java",
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/service/"
-            "ConsultantImportService.java",
         )
         user_verifier = (
-            ROOT / "src/main/java/de/caritas/cob/userservice/api/helper/UserVerifier.java"
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/helper/UserVerifier.java"
         ).read_text()
 
         self.assertTrue(
@@ -293,6 +290,29 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             user_verifier,
             "UserVerifier must not retain an unused broad identity dependency",
         )
+
+        importer = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/ConsultantImportService.java"
+        ).read_text()
+        for required in (
+            "ConfiguredConsultantImport",
+            "captured.authorize(",
+            "consultantService.getConsultant(importRecord.getConsultantId())",
+            "currentConsultant.get().getTenantId()",
+            "currentConsultant.get().getUsername()",
+            "captured.existingRowCapability(",
+            '"account.read"',
+            '"account.roles"',
+        ):
+            self.assertIn(required, importer)
+        for forbidden in (
+            "IdentityUsernameAvailability",
+            "identityClient.createUser(",
+            "identityClient.getUser(",
+            "getAdminClient(",
+        ):
+            self.assertNotIn(forbidden, importer)
 
     def test_identity_email_owner_lookup_uses_a_focused_typed_port(self):
         identity_port = (
@@ -581,17 +601,17 @@ class ModuleBoundaryContractTest(unittest.TestCase):
 
     def test_dummy_email_consumer_uses_a_focused_provider_neutral_port(self):
         port = (
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/"
             "IdentityDummyEmailUpdater.java"
         )
         value = (
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/"
             "IdentityDummyEmailUpdate.java"
         )
         self.assertTrue(port.exists(), "Dummy-email updates need a focused output port")
-        self.assertTrue(value.exists(), "Dummy-email updates need provider-neutral values")
+        self.assertTrue(
+            value.exists(), "Dummy-email updates need provider-neutral values"
+        )
         if not port.exists() or not value.exists():
             return
 
@@ -607,7 +627,22 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/facade/CreateUserFacade.java"
         ).read_text()
-        self.assertIn("IdentityDummyEmailUpdater", registration)
+        for required in (
+            "IdentityAccountProvisioning",
+            "IdentityCreationOrigin.checkedRegistration(",
+            "identityProvisioning.create(",
+            "new KeycloakTaskCommands.AccountCreation(",
+            "request.getEmail()",
+            "origin.roles()",
+            "origin.registrationKind()",
+        ):
+            self.assertIn(required, registration)
+        for forbidden in (
+            "identityDummyEmailUpdater.updateDummyEmail(",
+            "identityClient.createUser(",
+            "getAdminClient(",
+        ):
+            self.assertNotIn(forbidden, registration)
         self.assertNotIn("identityClient.updateDummyEmail(", registration)
 
         identity_client = (
@@ -697,8 +732,7 @@ class ModuleBoundaryContractTest(unittest.TestCase):
 
     def test_identity_deactivation_consumers_use_a_focused_port(self):
         port = (
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/"
             "IdentityDeactivator.java"
         )
         self.assertTrue(
@@ -711,22 +745,23 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         port_text = port.read_text()
         self.assertNotIn(
             "de.caritas.cob.userservice.api.adapters.",
-            port_text,
+            port_text.replace(
+                "de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization",
+                "",
+            ),
         )
+        self.assertIn("IdentityCommandAuthorization", port_text)
         self.assertNotIn("org.keycloak.", port_text)
 
         consumers = (
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/actions/user/"
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/actions/user/"
             "DeactivateKeycloakUserActionCommand.java",
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/admin/facade/"
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/admin/facade/"
             "AskerUserAdminFacade.java",
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant/"
             "delete/ConsultantPreDeletionService.java",
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/service/user/"
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/service/user/"
             "UserAccountService.java",
         )
         focused_import = (
@@ -778,10 +813,14 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(missing_test_interface),
         )
 
+        deletion = consumers[-1].read_text()
+        self.assertIn("deletionLifecycleService.beginUserDeletion(", deletion)
+        self.assertIn('persistedDeletion(user, "account.deactivate")', deletion)
+        self.assertNotIn("getAdminClient(", deletion)
+
     def test_password_write_consumers_use_a_focused_identity_port(self):
         port = (
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/"
             "IdentityPasswordUpdater.java"
         )
         self.assertTrue(
@@ -803,17 +842,35 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "The focused password port must not expose Keycloak types",
         )
 
-        consumers = (
+        creators = (
             ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/"
-            "create/CreateAdminService.java",
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/create/CreateAdminService.java",
             ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant/"
-            "create/CreateConsultantSaga.java",
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant/create/CreateConsultantSaga.java",
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/facade/CreateUserFacade.java",
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/service/auth/"
+        )
+        for source in creators:
+            text = source.read_text()
+            for required in (
+                "IdentityAccountProvisioning",
+                "IdentityCreationOrigin",
+                "identityProvisioning.create(",
+                "new KeycloakTaskCommands.AccountCreation(",
+                "origin.roles()",
+                "origin.registrationKind()",
+            ):
+                self.assertIn(required, text, source.name)
+            for forbidden in (
+                "identityPasswordUpdater.updatePassword(",
+                "identityClient.updatePassword(",
+                "identityClient.createUser(",
+                "getAdminClient(",
+            ):
+                self.assertNotIn(forbidden, text, source.name)
+
+        consumers = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/service/auth/"
             "PasswordResetService.java",
         )
         focused_import = (
@@ -995,8 +1052,7 @@ class ModuleBoundaryContractTest(unittest.TestCase):
 
     def test_identity_account_removal_consumers_use_a_focused_port(self):
         port = (
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/"
             "IdentityAccountRemover.java"
         )
         self.assertTrue(
@@ -1009,8 +1065,12 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         port_text = port.read_text()
         self.assertNotIn(
             "de.caritas.cob.userservice.api.adapters.",
-            port_text,
+            port_text.replace(
+                "de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization",
+                "",
+            ),
         )
+        self.assertIn("IdentityCommandAuthorization", port_text)
         self.assertNotIn("org.keycloak.", port_text)
 
         consumers = (
@@ -1026,12 +1086,6 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/delete/"
             "DeleteAdminService.java",
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/facade/rollback/"
-            "RollbackFacade.java",
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/create/"
-            "CreateAdminService.java",
         )
         focused_import = (
             "import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;"
@@ -1086,6 +1140,26 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "Shared Spring identity mocks must implement the focused removal port:\n"
             + "\n".join(missing_test_interface),
         )
+
+        for path in (
+            "facade/rollback/RollbackFacade.java",
+            "admin/service/admin/create/CreateAdminService.java",
+        ):
+            source = (
+                ROOT / "src/main/java/de/caritas/cob/userservice/api" / path
+            ).read_text()
+            self.assertIn("IdentityAccountProvisioning", source, path)
+            self.assertIn(
+                "identityProvisioning.compensateForLocalRollback(", source, path
+            )
+            for forbidden in (
+                "IdentityAccountRemover",
+                "identityAccountRemover.deleteUser(",
+                "identityClient.deleteUser(",
+                "identityClient.rollBackUser(",
+                "getAdminClient(",
+            ):
+                self.assertNotIn(forbidden, source, path)
 
     def test_consultant_agency_fallback_does_not_retry_agency_service_per_id(self):
         source = (

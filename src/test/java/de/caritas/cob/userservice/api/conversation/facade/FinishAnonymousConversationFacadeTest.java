@@ -11,12 +11,12 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.session.DeactivateSessionActionCommand;
 import de.caritas.cob.userservice.api.actions.session.PostMatrixUserLeftMessageActionCommand;
 import de.caritas.cob.userservice.api.actions.session.SendFinishedAnonymousConversationEventActionCommand;
-import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
+import de.caritas.cob.userservice.api.actions.user.DeactivateAuthorizedIdentityActionCommand;
+import de.caritas.cob.userservice.api.actions.user.IdentityDeactivationTarget;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
@@ -40,6 +40,11 @@ class FinishAnonymousConversationFacadeTest {
   private final ActionCommandMockProvider actionCommandMockProvider =
       new ActionCommandMockProvider();
 
+  @org.junit.jupiter.api.AfterEach
+  void clearSecurity() {
+    org.springframework.security.core.context.SecurityContextHolder.clearContext();
+  }
+
   private Session anonymousSession() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
@@ -49,6 +54,19 @@ class FinishAnonymousConversationFacadeTest {
   private void mockAskerOwnsSession(Session session) {
     when(this.authenticatedUser.getUserId()).thenReturn(session.getUser().getUserId());
     when(this.authenticatedUser.isConsultant()).thenReturn(false);
+    var jwt =
+        org.springframework.security.oauth2.jwt.Jwt.withTokenValue("verified-human-test")
+            .header("alg", "RS256")
+            .subject(session.getUser().getUserId())
+            .build();
+    org.springframework.security.core.context.SecurityContextHolder.getContext()
+        .setAuthentication(
+            new org.springframework.security.oauth2.server.resource.authentication
+                .JwtAuthenticationToken(
+                jwt,
+                java.util.List.of(
+                    new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                        "AUTHORIZATION_USER_DEFAULT"))));
   }
 
   @Test
@@ -68,8 +86,9 @@ class FinishAnonymousConversationFacadeTest {
     when(this.actionsRegistry.buildContainerForType(Session.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class));
-    when(this.actionsRegistry.buildContainerForType(User.class))
-        .thenReturn(this.actionCommandMockProvider.getActionContainer(User.class));
+    when(this.actionsRegistry.buildContainerForType(IdentityDeactivationTarget.class))
+        .thenReturn(
+            this.actionCommandMockProvider.getActionContainer(IdentityDeactivationTarget.class));
 
     this.finishAnonymousConversationFacade.finishConversation(session.getId());
 
@@ -83,9 +102,11 @@ class FinishAnonymousConversationFacadeTest {
             times(1))
         .execute(session);
     verify(
-            this.actionCommandMockProvider.getActionMock(DeactivateKeycloakUserActionCommand.class),
+            this.actionCommandMockProvider.getActionMock(
+                DeactivateAuthorizedIdentityActionCommand.class),
             times(1))
-        .execute(session.getUser());
+        .execute(
+            org.mockito.ArgumentMatchers.argThat(target -> target.user() == session.getUser()));
     verify(
             this.actionCommandMockProvider.getActionMock(
                 PostMatrixUserLeftMessageActionCommand.class),
@@ -104,8 +125,9 @@ class FinishAnonymousConversationFacadeTest {
     when(this.actionsRegistry.buildContainerForType(Session.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class));
-    when(this.actionsRegistry.buildContainerForType(User.class))
-        .thenReturn(this.actionCommandMockProvider.getActionContainer(User.class));
+    when(this.actionsRegistry.buildContainerForType(IdentityDeactivationTarget.class))
+        .thenReturn(
+            this.actionCommandMockProvider.getActionContainer(IdentityDeactivationTarget.class));
 
     this.finishAnonymousConversationFacade.finishConversation(session.getId());
 

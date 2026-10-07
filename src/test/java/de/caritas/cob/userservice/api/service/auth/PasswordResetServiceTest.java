@@ -272,7 +272,7 @@ class PasswordResetServiceTest {
   @Test
   void confirmPasswordReset_Should_ReturnFalse_When_TokenIsBlank() {
     assertThat(passwordResetService.confirmPasswordReset("  ", "NewPassw0rd!")).isFalse();
-    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
+    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString(), any());
   }
 
   @Test
@@ -294,7 +294,11 @@ class PasswordResetServiceTest {
     boolean result = passwordResetService.confirmPasswordReset("valid-token", "NewPassw0rd!");
 
     assertThat(result).isTrue();
-    verify(identityPasswordUpdater).updatePassword("user-keycloak-id", "NewPassw0rd!");
+    verify(identityPasswordUpdater)
+        .updatePassword(
+            org.mockito.ArgumentMatchers.eq("user-keycloak-id"),
+            org.mockito.ArgumentMatchers.eq("NewPassw0rd!"),
+            any());
     verify(oneTimeTokenStore).claim("password-reset", "valid-token");
   }
 
@@ -308,7 +312,10 @@ class PasswordResetServiceTest {
             new CustomValidationHttpStatusException(
                 HttpStatusExceptionReason.PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
         .when(identityPasswordUpdater)
-        .updatePassword("user-keycloak-id", "weak");
+        .updatePassword(
+            org.mockito.ArgumentMatchers.eq("user-keycloak-id"),
+            org.mockito.ArgumentMatchers.eq("weak"),
+            any());
 
     assertThatThrownBy(() -> passwordResetService.confirmPasswordReset("retry-token", "weak"))
         .isInstanceOf(CustomValidationHttpStatusException.class);
@@ -326,7 +333,10 @@ class PasswordResetServiceTest {
         .thenReturn(Optional.of(claim));
     doThrow(new RuntimeException("connection reset"))
         .when(identityPasswordUpdater)
-        .updatePassword("user-keycloak-id", "NewPassw0rd!");
+        .updatePassword(
+            org.mockito.ArgumentMatchers.eq("user-keycloak-id"),
+            org.mockito.ArgumentMatchers.eq("NewPassw0rd!"),
+            any());
 
     assertThatThrownBy(
             () -> passwordResetService.confirmPasswordReset("indeterminate-token", "NewPassw0rd!"))
@@ -343,7 +353,7 @@ class PasswordResetServiceTest {
     boolean result = passwordResetService.confirmPasswordReset("expired-token", "NewPassw0rd!");
 
     assertThat(result).isFalse();
-    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
+    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString(), any());
   }
 
   @Test
@@ -352,7 +362,7 @@ class PasswordResetServiceTest {
         .thenThrow(new IllegalStateException("redis unavailable"));
 
     assertThat(passwordResetService.confirmPasswordReset("token", "NewPassw0rd!")).isFalse();
-    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
+    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString(), any());
   }
 
   // The public /settings payload deliberately omits globalSmtpUsername/globalSmtpPassword since the
@@ -466,6 +476,16 @@ class PasswordResetServiceTest {
   }
 
   private OneTimeTokenStore.TokenClaim validClaim() {
+    org.mockito.Mockito.lenient()
+        .when(userService.getUser("user-keycloak-id"))
+        .thenReturn(
+            Optional.of(
+                User.builder()
+                    .username("synthetic-account")
+                    .email("synthetic@example.org")
+                    .userId("user-keycloak-id")
+                    .tenantId(7L)
+                    .build()));
     return new OneTimeTokenStore.TokenClaim("user-keycloak-id", Instant.now().plusSeconds(900));
   }
 }

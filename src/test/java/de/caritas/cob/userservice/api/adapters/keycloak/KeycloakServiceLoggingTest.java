@@ -64,7 +64,9 @@ class KeycloakServiceLoggingTest {
             keycloakClient,
             keycloakMapper,
             userHelper,
-            keycloakAuthClient);
+            keycloakAuthClient,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.config.auth.TaskIdentityTokenVerifier.class));
 
     lenient().when(authenticatedUser.getAccessToken()).thenReturn("access-token");
     lenient()

@@ -6,4 +6,12 @@ import java.util.List;
 public interface IdentityRoleLookup {
 
   List<String> findAllByUserId(String userId);
+
+  default List<String> findAllByUserId(
+      String userId,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          origin) {
+    throw new org.springframework.security.access.AccessDeniedException(
+        "Explicit account-read capability is required");
+  }
 }

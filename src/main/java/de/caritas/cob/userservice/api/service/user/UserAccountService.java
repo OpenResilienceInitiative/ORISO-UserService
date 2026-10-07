@@ -223,9 +223,12 @@ public class UserAccountService {
    */
   public void deactivateAndFlagUserAccountForDeletion() {
     User user = retrieveValidatedUser();
-    this.identityDeactivator.deactivateUser(user.getUserId());
     deletionLifecycleService.beginUserDeletion(user, user.getUserId());
     userService.saveUser(user);
+    this.identityDeactivator.deactivateUser(
+        user.getUserId(),
+        de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+            .persistedDeletion(user, "account.deactivate"));
     fireAccountDeletionStatisticsEvent(user);
   }
 

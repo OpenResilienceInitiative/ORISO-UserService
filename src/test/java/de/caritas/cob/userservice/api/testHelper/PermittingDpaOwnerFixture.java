@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.testHelper;
 
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.anything;
@@ -9,7 +8,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -72,13 +71,15 @@ public final class PermittingDpaOwnerFixture {
     ReflectionTestUtils.setField(headers, "csrfCookieProperty", "CSRF-TOKEN");
     var identity = mock(IdentityAuthentication.class);
     lenient()
-        .when(identity.loginService(anyString(), anyString()))
+        .when(identity.loginTask(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new IdentityLogin("synthetic-service-token", 60, 60, "synthetic-refresh"));
     var config = mock(IdentityClientConfig.class);
-    var serviceUser = new TechnicalUserConfig();
+    var serviceUser = new TaskIdentityCredentials();
     serviceUser.setClientId("synthetic-service");
     serviceUser.setClientSecret("synthetic-fixture");
-    lenient().when(config.getTechnicalUser()).thenReturn(serviceUser);
+    lenient()
+        .when(config.getTaskIdentity(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(serviceUser);
     var caches = new ConcurrentMapCacheManager("agencyCache", "tenantCache");
     var agencies =
         new AgencyService(

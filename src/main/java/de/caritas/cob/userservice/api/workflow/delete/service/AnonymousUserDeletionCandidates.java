@@ -59,7 +59,9 @@ public class AnonymousUserDeletionCandidates {
     return session -> {
       Set<Session> userSessions = session.getUser().getSessions();
       return CollectionUtils.isEmpty(userSessions)
-          || (allSessionsAreDone(userSessions)
+          || (userSessions.stream()
+                  .allMatch(owned -> owned.getRegistrationType() == RegistrationType.ANONYMOUS)
+              && allSessionsAreDone(userSessions)
               && allSessionsAreBeforeDeletionTime(deletionTime, userSessions));
     };
   }

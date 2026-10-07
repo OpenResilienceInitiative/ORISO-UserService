@@ -1,15 +1,11 @@
 package de.caritas.cob.userservice.api.workflow.accountinactivity;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
-import java.util.HashSet;
 import java.util.List;
-import org.keycloak.representations.idm.ClientRepresentation;
-import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
@@ -33,7 +29,7 @@ public class AccountInactivityBootstrap implements SmartInitializingSingleton {
   public record Issue(String identityId, String reason, Instant observedAt) {}
 
   private final JdbcTemplate jdbc;
-  private final KeycloakClient keycloak;
+  private final de.caritas.cob.userservice.api.port.out.IdentityInactivityInventory inventory;
   private final AccountInactivityService lifecycle;
   private final Clock clock;
   private final int pageSize;
@@ -41,7 +37,7 @@ public class AccountInactivityBootstrap implements SmartInitializingSingleton {
 
   public AccountInactivityBootstrap(
       JdbcTemplate jdbc,
-      KeycloakClient keycloak,
+      de.caritas.cob.userservice.api.port.out.IdentityInactivityInventory inventory,
       AccountInactivityService lifecycle,
       Clock clock,
       org.springframework.transaction.PlatformTransactionManager transactionManager,
@@ -49,7 +45,7 @@ public class AccountInactivityBootstrap implements SmartInitializingSingleton {
     if (pageSize < 1 || pageSize > 1000)
       throw new IllegalArgumentException("Inventory page size must be 1..1000");
     this.jdbc = jdbc;
-    this.keycloak = keycloak;
+    this.inventory = inventory;
     this.lifecycle = lifecycle;
     this.clock = clock;
     this.pageSize = pageSize;
@@ -87,15 +83,10 @@ public class AccountInactivityBootstrap implements SmartInitializingSingleton {
     int enrolled = 0, missingNew = 0, failed = 0;
     boolean finished = false;
     try {
-      var clients = keycloak.getRealmResource().clients().findAll();
       for (int first = 0; ; first += pageSize) {
-        var page = keycloak.getUsersResource().list(first, pageSize);
-        if (page.isEmpty()) {
-          finished = true;
-          break;
-        }
-        for (var listed : page) {
-          String id = listed.getId();
+        var page = inventory.page(first, pageSize);
+        for (var listed : page.accounts()) {
+          String id = listed.id();
           if (id == null) {
             failed++;
             continue;
@@ -105,28 +96,31 @@ public class AccountInactivityBootstrap implements SmartInitializingSingleton {
               jdbc.update("DELETE FROM account_inactivity_bootstrap_issue WHERE identity_id=?", id);
               continue;
             }
-            var user = keycloak.getUsersResource().get(id).toRepresentation();
-            if (user.getServiceAccountClientId() != null || isPureTechnical(user, clients)) {
+            if (!listed.eligibleHuman()) {
               jdbc.update("DELETE FROM account_inactivity_bootstrap_issue WHERE identity_id=?", id);
               continue;
             }
-            if (user.getCreatedTimestamp() == null) {
+            if (listed.createdTimestamp() == null) {
               failed++;
               issue(id, "CREATION_TIME_UNKNOWN", now);
               continue;
             }
-            if (Instant.ofEpochMilli(user.getCreatedTimestamp()).isAfter(cutoff)) {
+            if (Instant.ofEpochMilli(listed.createdTimestamp()).isAfter(cutoff)) {
               missingNew++;
               issue(id, "POST_ROLLOUT_SNAPSHOT_MISSING", now);
               continue;
             }
-            lifecycle.assignAtCreation(id, tenant(user), 24, 0, cutoff);
+            lifecycle.assignAtCreation(id, listed.tenantId(), 24, 0, cutoff);
             enrolled++;
             jdbc.update("DELETE FROM account_inactivity_bootstrap_issue WHERE identity_id=?", id);
           } catch (RuntimeException failure) {
             failed++;
             issue(id, "IDENTITY_LOOKUP_FAILED", now);
           }
+        }
+        if (!page.hasMore()) {
+          finished = true;
+          break;
         }
       }
     } catch (RuntimeException failure) {
@@ -183,30 +177,6 @@ public class AccountInactivityBootstrap implements SmartInitializingSingleton {
                 r.getObject("observed_at", LocalDateTime.class).toInstant(ZoneOffset.UTC)),
         after == null ? "" : after,
         limit);
-  }
-
-  private boolean isPureTechnical(UserRepresentation user, List<ClientRepresentation> clients) {
-    var resource = keycloak.getUsersResource().get(user.getId());
-    var roles = new HashSet<String>();
-    resource.roles().realmLevel().listEffective().forEach(role -> roles.add(role.getName()));
-    for (var client : clients)
-      resource
-          .roles()
-          .clientLevel(client.getId())
-          .listEffective()
-          .forEach(role -> roles.add(role.getName()));
-    return AccountInactivityIdentityRoles.isPureTechnical(roles);
-  }
-
-  private Long tenant(UserRepresentation user) {
-    if (user.getAttributes() == null) return null;
-    var values = user.getAttributes().get("tenantId");
-    if (values == null || values.isEmpty()) return null;
-    try {
-      return Long.valueOf(values.getFirst());
-    } catch (NumberFormatException invalid) {
-      return null;
-    }
   }
 
   private void issue(String id, String reason, Instant now) {

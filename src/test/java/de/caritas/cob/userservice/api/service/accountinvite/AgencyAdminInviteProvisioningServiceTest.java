@@ -14,7 +14,6 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,7 +34,11 @@ class AgencyAdminInviteProvisioningServiceTest {
   @Mock private CreateAdminService createAdminService;
   @Mock private AdminAgencyRepository adminAgencyRepository;
   @Mock private AdminRepository adminRepository;
-  @Mock private IdentityAccountRemover identityAccountRemover;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityAccountProvisioning
+      identityProvisioning;
+
   @Mock private AcceptTimeAgencyCheck acceptTimeAgencyCheck;
 
   @InjectMocks private AgencyAdminInviteProvisioningService service;
@@ -59,7 +62,7 @@ class AgencyAdminInviteProvisioningServiceTest {
     when(accountInviteService.findInviteByToken(TOKEN)).thenReturn(invite);
     // #1271 holds the invite row before provisioning.
     when(accountInviteRepository.holdInStatus(any(), any(), any())).thenReturn(1);
-    when(createAdminService.createNewAgencyAdminInTenant(any()))
+    when(createAdminService.createNewAgencyAdminInTenant(any(), any()))
         .thenReturn(
             Admin.builder()
                 .id(ADMIN_ID)
@@ -80,10 +83,11 @@ class AgencyAdminInviteProvisioningServiceTest {
   void acceptAsAgencyAdmin_Should_DeleteTheAdminRowsAndTheIdentity_When_ALaterStepFails() {
     assertThatThrownBy(() -> service.acceptAsAgencyAdmin(TOKEN, "ada", "pw")).isSameAs(failure);
 
-    var order = inOrder(adminAgencyRepository, adminRepository, identityAccountRemover);
+    var order = inOrder(adminAgencyRepository, adminRepository, identityProvisioning);
+    order.verify(identityProvisioning).prepareLocalRollback(ADMIN_ID);
     order.verify(adminAgencyRepository).deleteByAdminId(ADMIN_ID);
     order.verify(adminRepository).deleteById(ADMIN_ID);
-    order.verify(identityAccountRemover).rollbackUser(ADMIN_ID);
+    order.verify(identityProvisioning).compensateCreatedAccount(ADMIN_ID);
     assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
   }
 
@@ -96,6 +100,6 @@ class AgencyAdminInviteProvisioningServiceTest {
         .isSameAs(failure)
         .satisfies(thrown -> assertThat(thrown.getSuppressed()).containsExactly(cleanupFailure));
 
-    verify(identityAccountRemover).rollbackUser(ADMIN_ID);
+    verify(identityProvisioning).compensateCreatedAccount(ADMIN_ID);
   }
 }

@@ -10,7 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
@@ -54,12 +54,14 @@ class OperatorDpaContentClientTest {
 
   @BeforeEach
   void setUp() {
-    TechnicalUserConfig technicalUser = new TechnicalUserConfig();
+    TaskIdentityCredentials technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical");
     technicalUser.setClientSecret("secret");
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
+    when(identityClientConfig.getTaskIdentity(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(technicalUser);
     IdentityLogin identityLogin = new IdentityLogin("token", 0, 0, null);
-    when(identityAuthentication.loginService(anyString(), anyString())).thenReturn(identityLogin);
+    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(identityLogin);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(anyString()))
         .thenReturn(new HttpHeaders());
     when(controllerFactory.createControllerApi()).thenReturn(tenantControllerApi);
@@ -253,7 +255,7 @@ class OperatorDpaContentClientTest {
    */
   @Test
   void lookupPublishedDpaReportsUpstreamErrorWhenTheTechnicalUserLoginFails() {
-    when(identityAuthentication.loginService(anyString(), anyString()))
+    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.any()))
         .thenThrow(new IllegalStateException("technical user login failed"));
 
     var lookup = clientFor(OPERATOR_TENANT_ID).lookupPublishedDpa();
@@ -264,7 +266,7 @@ class OperatorDpaContentClientTest {
 
   @Test
   void fetchPublishedDpaDoesNotThrowWhenTheTechnicalUserLoginFails() {
-    when(identityAuthentication.loginService(anyString(), anyString()))
+    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.any()))
         .thenThrow(new IllegalStateException("technical user login failed"));
 
     assertNull(clientFor(OPERATOR_TENANT_ID).fetchPublishedDpa());
@@ -354,7 +356,7 @@ class OperatorDpaContentClientTest {
 
     clientFor(OPERATOR_TENANT_ID).fetchPublishedDpaContent();
 
-    verify(identityAuthentication).loginService("technical", "secret");
+    verify(identityAuthentication).loginTask(org.mockito.ArgumentMatchers.any());
     verify(securityHeaderSupplier).getKeycloakAndCsrfHttpHeaders("token");
   }
 }

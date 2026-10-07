@@ -4,7 +4,6 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.ApplicationSettingsApiControllerFactory;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -111,7 +110,9 @@ public class ApplicationSettingsService {
   }
 
   private String loginTechnicalUser() {
-    TechnicalUserConfig technicalUser = identityClientConfig.getTechnicalUser();
+    var technicalUser =
+        identityClientConfig.getTaskIdentity(
+            de.caritas.cob.userservice.api.config.auth.TaskIdentity.SYSTEM_EMAIL_DELIVERY);
     if (technicalUser == null
         || isBlank(technicalUser.getClientId())
         || isBlank(technicalUser.getClientSecret())) {
@@ -122,9 +123,7 @@ public class ApplicationSettingsService {
     }
     de.caritas.cob.userservice.api.port.out.IdentityLogin login;
     try {
-      login =
-          identityAuthentication.loginService(
-              technicalUser.getClientId(), technicalUser.getClientSecret());
+      login = identityAuthentication.loginTask(technicalUser);
     } catch (RuntimeException ex) {
       log.warn(
           "Global SMTP credentials lookup skipped: technical user login failed ({})",

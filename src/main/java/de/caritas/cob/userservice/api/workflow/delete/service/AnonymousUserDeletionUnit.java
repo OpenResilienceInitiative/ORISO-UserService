@@ -17,6 +17,12 @@ public class AnonymousUserDeletionUnit {
 
   private final @NonNull UserRepository userRepository;
   private final @NonNull DeleteUserAccountService deleteUserAccountService;
+  private final @NonNull AnonymousUserDeletionCandidates anonymousCandidates;
+  private final @NonNull DeletionLifecycleService lifecycle;
+  @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager entityManager;
+
+  @org.springframework.beans.factory.annotation.Value("${user.temporary.deleteWorkflow.maxAge}")
+  private java.time.Duration temporaryMaxAge;
 
   /**
    * Deletes the given user and commits when this method returns.
@@ -33,12 +39,27 @@ public class AnonymousUserDeletionUnit {
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public List<DeletionWorkflowError> deleteUser(String userId) {
     return userRepository
-        .findById(userId)
+        .findByIdForDeletionUpdate(userId)
         .map(this::performDeletion)
         .orElseGet(java.util.Collections::emptyList);
   }
 
   private List<DeletionWorkflowError> performDeletion(User user) {
+    boolean temporaryExpired =
+        user.isTemporaryAccount()
+            && user.getCreateDate() != null
+            && user.getCreateDate().isBefore(java.time.LocalDateTime.now().minus(temporaryMaxAge));
+    boolean anonymousExpired =
+        anonymousCandidates.findOverdueAnonymousUserIds().contains(user.getUserId());
+    if (!temporaryExpired && !anonymousExpired) return java.util.List.of();
+    if (user.getDeleteDate() != null && !lifecycle.isReadyForHardDelete(user))
+      return java.util.List.of();
+    if (user.getDeleteDate() == null) {
+      lifecycle.beginUserDeletion(
+          user, temporaryExpired ? "expired-temporary-account" : "overdue-anonymous-account");
+      userRepository.save(user);
+      entityManager.flush();
+    }
     return deleteUserAccountService.performUserDeletion(user);
   }
 }

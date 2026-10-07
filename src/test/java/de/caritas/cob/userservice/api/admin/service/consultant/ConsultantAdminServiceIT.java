@@ -40,7 +40,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(classes = UserServiceApplication.class)
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@org.springframework.context.annotation.Import(
+    de.caritas.cob.userservice.api.testHelper.VerifiedRequestCallerFixture.class)
+@TestPropertySource(properties = "spring.profiles.active=testing,verified-request-caller")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 public class ConsultantAdminServiceIT {
 
@@ -52,6 +54,21 @@ public class ConsultantAdminServiceIT {
   @Autowired private ConsultantRepository consultantRepository;
 
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
+
+  @Autowired private de.caritas.cob.userservice.api.port.out.AdminRepository adminRepository;
+  @Autowired private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+  @Autowired private org.springframework.core.env.Environment environment;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration taskIdentities;
+
+  @MockitoBean(name = "restTemplate")
+  private org.springframework.web.client.RestTemplate taskAuthHttp;
+
+  @MockitoBean private org.springframework.security.oauth2.jwt.JwtDecoder taskDecoder;
+
+  @MockitoBean(name = "keycloakRestTemplate")
+  private org.springframework.web.client.RestTemplate identityHttp;
 
   @MockitoBean private CreateConsultantSaga createConsultantSaga;
 
@@ -154,19 +171,105 @@ public class ConsultantAdminServiceIT {
   @Test
   @Transactional
   public void markConsultantForDeletion_Should_setDeleteDateForConsultantAndConsultantAgencies() {
-    var consultant = givenAPersistedConsultantWithMultipleAgencies();
+    var previousSecurity =
+        org.springframework.security.core.context.SecurityContextHolder.getContext();
+    var previousRequest =
+        org.springframework.web.context.request.RequestContextHolder.getRequestAttributes();
+    var admin =
+        de.caritas.cob.userservice.api.tenant.Tenants.in(
+            2L,
+            () -> adminRepository.findById("382517bc-7b9d-4c44-8d33-6b8638201c98").orElseThrow());
+    org.assertj.core.api.Assertions.assertThat(admin.getTenantId()).isEqualTo(2L);
+    org.assertj.core.api.Assertions.assertThat(admin.getType())
+        .isEqualTo(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
+    var token =
+        org.springframework.security.oauth2.jwt.Jwt.withTokenValue(
+                "synthetic-human-consultant-deletion")
+            .header("alg", "RS256")
+            .subject(admin.getId())
+            .claim("azp", "app")
+            .claim("preferred_username", admin.getUsername())
+            .claim("tenantId", admin.getTenantId().toString())
+            .claim("realm_access", java.util.Map.of("roles", java.util.List.of("tenant-admin")))
+            .issuedAt(java.time.Instant.now())
+            .expiresAt(java.time.Instant.now().plusSeconds(300))
+            .build();
+    var authentication =
+        new org.springframework.security.oauth2.server.resource.authentication
+            .JwtAuthenticationToken(
+            token,
+            java.util.List.of(
+                new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                    de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue
+                        .TENANT_ADMIN)));
+    var request = new org.springframework.mock.web.MockHttpServletRequest();
+    request.setUserPrincipal(authentication);
+    var requestAttributes =
+        new org.springframework.web.context.request.ServletRequestAttributes(request);
+    var security =
+        org.springframework.security.core.context.SecurityContextHolder.createEmptyContext();
+    security.setAuthentication(authentication);
+    org.springframework.security.core.context.SecurityContextHolder.setContext(security);
+    org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(
+        requestAttributes);
+    try {
+      de.caritas.cob.userservice.api.tenant.Tenants.in(
+          2L,
+          () -> {
+            var consultant = givenAPersistedConsultantWithMultipleAgencies();
+            de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenTaskGrants(
+                taskAuthHttp, taskDecoder, taskIdentities);
+            var provider =
+                de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenProvider(
+                    identityHttp,
+                    taskIdentities,
+                    environment,
+                    objectMapper,
+                    body -> java.util.UUID.randomUUID().toString(),
+                    id -> {},
+                    command -> {});
+            provider.seed(
+                new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+                    .AccountProjection(
+                    consultant.getId(),
+                    consultant.getUsername(),
+                    consultant.getEmail(),
+                    consultant.getFirstName(),
+                    consultant.getLastName(),
+                    consultant.getTenantId(),
+                    "de",
+                    true,
+                    false,
+                    java.util.List.of("consultant"),
+                    false));
 
-    this.consultantAdminService.markConsultantForDeletion(consultant.getId(), false);
+            this.consultantAdminService.markConsultantForDeletion(consultant.getId(), false);
 
-    var deletedConsultant = consultantRepository.findById(consultant.getId());
-    assertThat(deletedConsultant.get().getDeleteDate(), notNullValue());
-    assertThat(deletedConsultant.get().getStatus(), is(ConsultantStatus.IN_DELETION));
-    consultantAgencyRepository
-        .findByConsultantId(consultant.getId())
-        .forEach(
-            ca -> {
-              assertThat(ca.getDeleteDate(), notNullValue());
-            });
+            var deletedConsultant = consultantRepository.findById(consultant.getId()).orElseThrow();
+            assertThat(deletedConsultant.getDeleteDate(), notNullValue());
+            assertThat(deletedConsultant.getStatus(), is(ConsultantStatus.IN_DELETION));
+            var relations = consultantAgencyRepository.findByConsultantId(consultant.getId());
+            org.assertj.core.api.Assertions.assertThat(relations).hasSize(10);
+            relations.forEach(ca -> assertThat(ca.getDeleteDate(), notNullValue()));
+            org.assertj.core.api.Assertions.assertThat(provider.commands())
+                .anySatisfy(
+                    command -> {
+                      org.assertj.core.api.Assertions.assertThat(command.operation())
+                          .isEqualTo("account.deactivate");
+                      org.assertj.core.api.Assertions.assertThat(command.target())
+                          .isEqualTo(consultant.getId());
+                    });
+            org.assertj.core.api.Assertions.assertThat(
+                    provider.projections().get(consultant.getId()).enabled())
+                .isFalse();
+            return null;
+          });
+    } finally {
+      requestAttributes.requestCompleted();
+      org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(
+          previousRequest);
+      org.springframework.security.core.context.SecurityContextHolder.setContext(previousSecurity);
+    }
   }
 
   private Consultant givenAPersistedConsultantWithMultipleAgencies() {
@@ -181,6 +284,8 @@ public class ConsultantAdminServiceIT {
             .excludeField(FieldPredicates.named("appointments"))
             .excludeField(FieldPredicates.named("sessions"));
     var consultant = new EasyRandom(parameters).nextObject(Consultant.class);
+    consultant.setId("c0a1e5e5-1026-4a4a-9d1e-000000000202");
+    consultant.setTenantId(2L);
     var persistedConsultant = consultantRepository.save(consultant);
     var consultantAgencies =
         new EasyRandom()
@@ -190,6 +295,7 @@ public class ConsultantAdminServiceIT {
                   agencyRelation.setId(null);
                   agencyRelation.setAgencyId(1L);
                   agencyRelation.setConsultant(persistedConsultant);
+                  agencyRelation.setTenantId(2L);
                   agencyRelation.setDeleteDate(null);
                 })
             .collect(Collectors.toList());

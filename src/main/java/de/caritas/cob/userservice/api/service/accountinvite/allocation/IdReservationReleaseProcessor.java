@@ -61,6 +61,11 @@ public class IdReservationReleaseProcessor {
   }
 
   private boolean attemptRelease(IdReservationReleaseTask task) {
+    // Legacy rows require operator migration with genuine owner proof; never guess ownership.
+    if (task.getReservationToken() == null || task.getReservationToken().isBlank()) {
+      log.warn("Reservation release task {} needs ownership-proof migration", task.getId());
+      return false;
+    }
     TenantData currentTenant = TenantContext.getCurrentTenantData();
     TenantData previousTenant =
         currentTenant == null
@@ -71,8 +76,10 @@ public class IdReservationReleaseProcessor {
         TenantContext.setCurrentTenant(task.getTenantContextId());
       }
       return switch (task.getAllocationType()) {
-        case TENANT -> tenantIdAllocationClient.release(task.getReservedId());
-        case AGENCY -> agencyIdAllocationClient.release(task.getReservedId());
+        case TENANT ->
+            tenantIdAllocationClient.release(task.getReservedId(), task.getReservationToken());
+        case AGENCY ->
+            agencyIdAllocationClient.release(task.getReservedId(), task.getReservationToken());
       };
     } catch (RuntimeException exception) {
       log.warn(

@@ -5,8 +5,6 @@ import static java.util.Objects.nonNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.endsWith;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -20,11 +18,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands.AccountProjection;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -45,9 +46,12 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import jakarta.servlet.http.Cookie;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import lombok.NonNull;
@@ -57,11 +61,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.keycloak.admin.client.Keycloak;
-import org.keycloak.admin.client.resource.RealmResource;
-import org.keycloak.admin.client.resource.UserResource;
-import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.admin.client.token.TokenManager;
-import org.keycloak.representations.idm.UserRepresentation;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -72,11 +72,15 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.test.context.TestSecurityContextHolder;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -101,6 +105,31 @@ class UserController2faE2EIT {
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
   @Autowired private MockMvc mockMvc;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+      lifecycle;
+
+  private final java.util.Map<String, Instant> fixtureLifecycleRows =
+      new java.util.LinkedHashMap<>();
+  @MockitoBean private TaskIdentityGrant taskGrants;
+  @MockitoBean private org.springframework.security.oauth2.jwt.JwtDecoder taskJwtDecoder;
+
+  @MockitoBean
+  @Qualifier("restTemplate")
+  private RestTemplate restTemplate;
+
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @Autowired private Environment environment;
+  private BoundedIdentityHttpFixtures.Provider identityProvider;
+
+  @org.junit.jupiter.api.BeforeEach
+  void boundedIdentityProviderFixture() {
+    identityProvider =
+        BoundedIdentityHttpFixtures.givenProvider(
+            keycloakRestTemplate, taskGrants, taskIdentities, environment, objectMapper, id -> {});
+    BoundedIdentityHttpFixtures.givenTaskGrants(restTemplate, taskJwtDecoder, taskIdentities);
+  }
 
   @Autowired private ObjectMapper objectMapper;
 
@@ -145,6 +174,9 @@ class UserController2faE2EIT {
 
   @AfterEach
   void reset() {
+    fixtureLifecycleRows.forEach(
+        (id, capturedAt) -> lifecycle.discardUncompletedCreation(id, 24, 0, capturedAt));
+    fixtureLifecycleRows.clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
       userRepository.save(user);
@@ -770,22 +802,21 @@ class UserController2faE2EIT {
   }
 
   private void givenAValidKeycloakEmailChangeByUsernameResponse(String username) {
-    var userRepresentation = new UserRepresentation();
-    var keycloakId = UUID.randomUUID().toString();
-    userRepresentation.setId(keycloakId);
-    userRepresentation.setUsername(username);
-    userRepresentation.setEmail(givenAValidEmail());
-    var userRepresentationList = new ArrayList<UserRepresentation>(1);
-    userRepresentationList.add(userRepresentation);
-    var usersResource = mock(UsersResource.class);
-    var userResource = mock(UserResource.class);
-
-    when(usersResource.search(username)).thenReturn(userRepresentationList);
-    when(usersResource.get(keycloakId)).thenReturn(userResource);
-
-    var realmResource = mock(RealmResource.class);
-    when(realmResource.users()).thenReturn(usersResource);
-    when(keycloak.realm(anyString())).thenReturn(realmResource);
+    String id = user != null ? user.getUserId() : consultant.getId();
+    Long tenant = user != null ? user.getTenantId() : consultant.getTenantId();
+    identityProvider.seed(
+        new AccountProjection(
+            id,
+            username,
+            user != null ? user.getEmail() : consultant.getEmail(),
+            null,
+            null,
+            tenant,
+            "de",
+            true,
+            false,
+            List.of(user != null ? "user" : "consultant"),
+            false));
   }
 
   private void givenKeycloakIsDown() {
@@ -839,45 +870,41 @@ class UserController2faE2EIT {
   }
 
   private void givenKeycloakFoundAnEmailInUse() {
-    var usernameTranscoder = new UsernameTranscoder();
-    var userRepresentation = new UserRepresentation();
-    var username = usernameTranscoder.encodeUsername(RandomStringUtils.randomAlphabetic(8, 16));
-    userRepresentation.setUsername(username);
-    userRepresentation.setEmail(emailDTO.getEmail().toLowerCase());
-    var userRepresentationList = new ArrayList<UserRepresentation>(1);
-    userRepresentationList.add(userRepresentation);
-    var usersResource = mock(UsersResource.class);
-    when(usersResource.search(eq(emailDTO.getEmail().toLowerCase()), anyInt(), anyInt()))
-        .thenReturn(userRepresentationList);
-    var realmResource = mock(RealmResource.class);
-    when(realmResource.users()).thenReturn(usersResource);
-    when(keycloak.realm(anyString())).thenReturn(realmResource);
+    identityProvider.seed(
+        new AccountProjection(
+            UUID.randomUUID().toString(),
+            "other-email-owner",
+            emailDTO.getEmail().toLowerCase(),
+            null,
+            null,
+            consultant.getTenantId(),
+            "de",
+            true,
+            false,
+            List.of("consultant"),
+            false));
   }
 
   private void givenKeycloakFoundOwnEmailInUse() {
-    var usernameTranscoder = new UsernameTranscoder();
-    var userRepresentation = new UserRepresentation();
-    var username = usernameTranscoder.decodeUsername(consultant.getUsername());
-    userRepresentation.setUsername(username);
-    userRepresentation.setEmail(emailDTO.getEmail());
-    var userRepresentationList = new ArrayList<UserRepresentation>(1);
-    userRepresentationList.add(userRepresentation);
-    var usersResource = mock(UsersResource.class);
-    when(usersResource.search(eq(emailDTO.getEmail()), anyInt(), anyInt()))
-        .thenReturn(userRepresentationList);
-    var realmResource = mock(RealmResource.class);
-    when(realmResource.users()).thenReturn(usersResource);
-    when(keycloak.realm(anyString())).thenReturn(realmResource);
+    identityProvider.seed(
+        new AccountProjection(
+            consultant.getId(),
+            keycloakUsername(consultant.getUsername()),
+            emailDTO.getEmail(),
+            null,
+            null,
+            consultant.getTenantId(),
+            "de",
+            true,
+            false,
+            List.of("consultant"),
+            false));
   }
 
   private void givenKeycloakFoundNoEmailInUse() {
-    var userRepresentationList = new ArrayList<UserRepresentation>(0);
-    var usersResource = mock(UsersResource.class);
-    when(usersResource.search(eq(emailDTO.getEmail()), anyInt(), anyInt()))
-        .thenReturn(userRepresentationList);
-    var realmResource = mock(RealmResource.class);
-    when(realmResource.users()).thenReturn(usersResource);
-    when(keycloak.realm(anyString())).thenReturn(realmResource);
+    // An empty external exact-owner search reports that this requested address is free.
+    org.assertj.core.api.Assertions.assertThat(identityProvider.projections().values())
+        .noneMatch(account -> emailDTO.getEmail().equalsIgnoreCase(account.email()));
   }
 
   private void givenAKeycloakSetupEmailOtpAnotherOtpConfigActiveErrorResponse() {
@@ -1038,6 +1065,7 @@ class UserController2faE2EIT {
     when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anAuthority"));
+    givenVerifiedHuman(consultant.getId(), consultant.getTenantId(), "consultant");
   }
 
   private void givenAValidUser() {
@@ -1049,6 +1077,7 @@ class UserController2faE2EIT {
     when(authenticatedUser.getUsername()).thenReturn(user.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anotherAuthority"));
+    givenVerifiedHuman(user.getUserId(), user.getTenantId(), "user");
   }
 
   private void givenAValidRestrictedAgencyAdmin() {
@@ -1062,5 +1091,43 @@ class UserController2faE2EIT {
     when(authenticatedUser.getRoles())
         .thenReturn(Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("restrictedAgencyAdmin"));
+    givenVerifiedHuman(consultant.getId(), consultant.getTenantId(), "restricted-agency-admin");
+  }
+
+  private void givenVerifiedHuman(String id, Long tenant, String role) {
+    var previous =
+        org.springframework.security.core.context.SecurityContextHolder.getContext()
+            .getAuthentication();
+    if (previous == null) return;
+    if (lifecycle.snapshot(id).isEmpty()) {
+      var capturedAt = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+      lifecycle.assignAtCreation(id, tenant, 24, 0, capturedAt);
+      fixtureLifecycleRows.put(id, capturedAt);
+    }
+    var token =
+        Jwt.withTokenValue("synthetic-human-session")
+            .header("alg", "RS256")
+            .subject(id)
+            .claim("azp", "app")
+            .claim("tenantId", tenant == null ? null : tenant.toString())
+            .claim("realm_access", Map.of("roles", List.of(role)))
+            .issuedAt(Instant.now())
+            .expiresAt(Instant.now().plusSeconds(300))
+            .build();
+    TestSecurityContextHolder.setAuthentication(
+        new JwtAuthenticationToken(token, previous.getAuthorities()));
+    identityProvider.seed(
+        new AccountProjection(
+            id,
+            keycloakUsername(user != null ? user.getUsername() : consultant.getUsername()),
+            user != null ? user.getEmail() : consultant.getEmail(),
+            null,
+            null,
+            tenant,
+            "de",
+            true,
+            false,
+            List.of(role),
+            false));
   }
 }

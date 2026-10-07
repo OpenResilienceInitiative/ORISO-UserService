@@ -197,15 +197,36 @@ class RequiredCiContractTest(unittest.TestCase):
         ):
             self.assertIn(f"!{mariadb_owned_test}", arguments)
 
-    def test_every_test_excluded_from_the_required_runner_is_run_by_the_mariadb_job(self):
-        """No test may fall between the two required jobs.
+    def test_required_runner_does_not_discover_native_identity_join_owned_tests(self):
+        runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            arguments_file = temp_root / "arguments"
+            fake_maven = temp_root / "mvnw"
+            fake_maven.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os\n"
+                "from pathlib import Path\n"
+                "import sys\n"
+                "Path(os.environ['MAVEN_ARGUMENTS_FILE']).write_text('\\n'.join(sys.argv[1:]))\n"
+                "raise SystemExit(23)\n"
+            )
+            fake_maven.chmod(0o755)
+            env = os.environ.copy()
+            env["ORISO_MAVEN_WRAPPER"] = str(fake_maven)
+            env["MAVEN_ARGUMENTS_FILE"] = str(arguments_file)
+            result = subprocess.run([runner], cwd=temp_root, env=env, check=False)
+            arguments = arguments_file.read_text()
+        self.assertEqual(23, result.returncode)
+        self.assertIn("!RealTaskTokenAuthorizationIT", arguments)
+        self.assertIn("!IdentityCreationNativeRestartIT", arguments)
 
-        The required runner excludes real-MariaDB tests from discovery so that JUnit's
-        environment conditions cannot manufacture green skips. That is only honest while the
-        mariadb-contract job actually runs every excluded test. Asserting the exclusion list
-        alone cannot see the gap: a name added to the exclusions and to nothing else silently
-        removes the test from required CI, which is how SupportRoomMigrationConvergenceIT was
-        lost.
+    def test_every_excluded_test_has_its_required_mariadb_or_native_identity_job(self):
+        """Every exclusion stays assigned to its required fixture-owning job.
+
+        MariaDB suites run in mariadb-contract; only the two exact native identity suites
+        are owned by the required Helm join. A third arbitrary exclusion still fails this
+        guard instead of silently turning a contract into quarantine.
         """
         runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -243,10 +264,32 @@ class RequiredCiContractTest(unittest.TestCase):
         for match in re.finditer(r"-Dtest=([^\s]+)", mariadb_workflow):
             mariadb_selectors.update(match.group(1).split(","))
 
+        # The two opt-in suites are executed by the required Helm native identity join.
+        # Keep this list exact: any third exclusion still fails rather than becoming quarantine.
+        native_sources = {
+            "RealTaskTokenAuthorizationIT": (
+                ROOT / "src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/RealTaskTokenAuthorizationIT.java",
+                "ORISO_TASK_TOKEN_FIXTURE",
+            ),
+            "IdentityCreationNativeRestartIT": (
+                ROOT / "src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/commands/IdentityCreationNativeRestartIT.java",
+                "ORISO_CREATION_NATIVE_FIXTURE",
+            ),
+        }
+        pom = (ROOT / "pom.xml").read_text()
+        rollout_contract = (ROOT / "docs/required-environment.md").read_text()
+        self.assertIn(".github/workflows/validate-helm-chart.yml", rollout_contract)
+        self.assertIn("job task-permission-matrix", rollout_contract)
+        for name, (source, fixture) in native_sources.items():
+            self.assertIn(name, rollout_contract)
+            self.assertIn(fixture, rollout_contract)
+            self.assertTrue(source.exists(), f"required native join suite missing: {name}")
+            self.assertIn(fixture, source.read_text())
+            self.assertIn(f"<exclude>**/{name}.java</exclude>", pom)
         self.assertEqual(
             set(),
-            excluded - mariadb_selectors,
-            "excluded from the required runner but not run by the mariadb-contract job",
+            excluded - mariadb_selectors - set(native_sources),
+            "excluded suite has neither required MariaDB nor native identity ownership",
         )
 
     def test_pull_request_has_one_truthful_required_conclusion(self):

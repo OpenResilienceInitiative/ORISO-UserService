@@ -37,6 +37,21 @@ class OrganizerIT {
 
   @Autowired private Organizer organizer;
 
+  @Autowired private org.springframework.context.ApplicationContext context;
+
+  @Autowired private jakarta.persistence.EntityManagerFactory entityManagerFactory;
+
+  @Test
+  void broadApplicationScanUsesProductionSchemaAndExcludesIsolatedCreationFixtures() {
+    assertThat(context.containsBean("attempts")).isFalse();
+    assertThat(context.containsBean("journal")).isFalse();
+    assertThat(context.getBeanDefinitionNames())
+        .noneMatch(name -> name.contains("TaskAuthorizationTest"));
+    assertThat(entityManagerFactory.getProperties())
+        .containsEntry("hibernate.hbm2ddl.auto", "create-drop");
+    assertThat(consultantRepository.count()).isPositive();
+  }
+
   @Test
   void deleteObsoleteAppointmentsShouldDeleteAppointmentsOlderThanLifespan() {
     var today = LocalDateTime.of(2022, 2, 15, 13, 37).toInstant(ZoneOffset.UTC);

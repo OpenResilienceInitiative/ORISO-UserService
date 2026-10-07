@@ -219,7 +219,8 @@ class AccountInviteExistingTenantIT {
   @Test
   void createInvite_Should_ReserveOnlyTheNewAgency_When_AnAgencyAdminIsInvitedIntoTheTenant() {
     actAsPlatformAdmin();
-    when(agencyIdAllocationClient.reserve(null, FOREIGN_TENANT)).thenReturn(700L);
+    when(agencyIdAllocationClient.reserveWithProof(null, FOREIGN_TENANT))
+        .thenReturn(new AgencyIdAllocationClient.AgencyReservation(700L, "owned-agency-proof"));
     when(agencyIdAllocationClient.getAvailability(700L)).thenReturn(IdAllocationStatus.RESERVED);
 
     AccountInvite invite =

@@ -16,7 +16,7 @@ import org.springframework.test.context.TestPropertySource;
  *     ./mvnw -B -Dskip.unit-tests=true -Dtest=AccountInviteRevokeAcceptRaceMariaDbIT integration-test
  * </pre>
  */
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@TestPropertySource(properties = "spring.profiles.active=testing,revoke-accept-race")
 @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
 class AccountInviteRevokeAcceptRaceMariaDbIT extends RevokeAcceptRaceContract {
 

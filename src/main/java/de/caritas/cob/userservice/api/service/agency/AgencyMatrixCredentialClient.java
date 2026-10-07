@@ -65,9 +65,10 @@ public class AgencyMatrixCredentialClient {
   }
 
   private HttpHeaders technicalUserHeaders() {
-    var techUser = identityClientConfig.getTechnicalUser();
-    var identityLogin =
-        identityAuthentication.loginService(techUser.getClientId(), techUser.getClientSecret());
+    var techUser =
+        identityClientConfig.getTaskIdentity(
+            de.caritas.cob.userservice.api.config.auth.TaskIdentity.MATRIX_AGENCY);
+    var identityLogin = identityAuthentication.loginTask(techUser);
     var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
     tenantHeaderSupplier.addTenantHeader(headers);
     return headers;

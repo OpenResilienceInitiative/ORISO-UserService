@@ -59,8 +59,19 @@ public class TenantIdAllocationClient {
    *     callers can retain a durable retry task without masking the original creation failure
    */
   public boolean release(long tenantId) {
+    if (TechnicalAccessTokenContext.offered().isPresent()) {
+      return false;
+    }
+    return release(tenantId, null);
+  }
+
+  public boolean release(long tenantId, String reservationToken) {
+    if (TechnicalAccessTokenContext.offered().isPresent()
+        && (reservationToken == null || reservationToken.isBlank())) {
+      return false;
+    }
     try {
-      createControllerApi().releaseTenantIdReservation(tenantId);
+      createControllerApi().releaseTenantIdReservation(tenantId, reservationToken);
       return true;
     } catch (HttpClientErrorException.NotFound exception) {
       log.info("Tenant ID reservation {} was already released", tenantId);

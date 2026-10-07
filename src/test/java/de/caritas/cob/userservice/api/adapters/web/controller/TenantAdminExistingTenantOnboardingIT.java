@@ -3,27 +3,19 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
-import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
-import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
@@ -78,7 +70,89 @@ class TenantAdminExistingTenantOnboardingIT
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private AdminRepository adminRepository;
 
-  @MockitoBean private KeycloakService keycloakService;
+  @MockitoBean(name = "keycloakRestTemplate")
+  private org.springframework.web.client.RestTemplate boundedIdentityHttp;
+
+  @MockitoBean(name = "restTemplate")
+  private org.springframework.web.client.RestTemplate taskAuthHttp;
+
+  @MockitoBean private org.springframework.security.oauth2.jwt.JwtDecoder taskDecoder;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant taskGrants;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration taskIdentities;
+
+  @Autowired private org.springframework.core.env.Environment identityEnvironment;
+  @Autowired private com.fasterxml.jackson.databind.ObjectMapper identityMapper;
+  @Autowired private org.springframework.jdbc.core.JdbcTemplate fixtureJdbc;
+  @Autowired private org.springframework.transaction.PlatformTransactionManager fixtureTransactions;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
+
+  private de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.Provider
+      nativeAccounts;
+  private final java.util.Set<String> createdIdentityIds = new java.util.LinkedHashSet<>();
+
+  private void givenTaskAccounts(
+      java.util.function.Function<java.util.Map<String, Object>, String> ids, String secret) {
+    createdIdentityIds.clear();
+    nativeAccounts =
+        de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenProvider(
+            boundedIdentityHttp,
+            taskGrants,
+            taskIdentities,
+            identityEnvironment,
+            identityMapper,
+            ids,
+            createdIdentityIds::add);
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenTaskGrants(
+        taskAuthHttp, taskDecoder, taskIdentities);
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenWizardPolicy(
+        taskAuthHttp, taskIdentities, identityEnvironment, identityMapper);
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenOtp(
+        boundedIdentityHttp,
+        taskIdentities,
+        new de.caritas.cob.userservice.api.model.OtpInfoDTO()
+            .otpSetup(false)
+            .otpSecret(secret)
+            .otpSecretQrCode("QRBASE64")
+            .otpType(de.caritas.cob.userservice.api.model.OtpType.APP));
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenConsultingPolicy(
+        taskAuthHttp,
+        new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+                .ExtendedConsultingTypeResponseDTO()
+            .id(1)
+            .consultantBoundedToConsultingType(false));
+  }
+
+  private void cleanCreatedIdentities() {
+    for (String id : createdIdentityIds) {
+      de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup.consultant(
+          fixtureJdbc, fixtureTransactions, id);
+      de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup.admin(
+          fixtureJdbc, fixtureTransactions, id);
+      new org.springframework.transaction.support.TransactionTemplate(fixtureTransactions)
+          .executeWithoutResult(
+              status -> {
+                fixtureJdbc.update(
+                    "DELETE FROM identity_creation_attempt WHERE account_id = ?", id);
+                fixtureJdbc.update("DELETE FROM account_inactivity WHERE identity_id = ?", id);
+              });
+    }
+    createdIdentityIds.clear();
+  }
+
+  private java.util.List<
+          de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.Command>
+      accountCreates() {
+    return nativeAccounts.commands().stream()
+        .filter(command -> command.operation().equals("account.create"))
+        .toList();
+  }
+
   @MockitoBean private TenantCreationClient tenantCreationClient;
   @MockitoBean private OperatorDpaContentClient operatorDpaContentClient;
   @MockitoBean private PublicDpaForwardClient publicDpaForwardClient;
@@ -88,11 +162,7 @@ class TenantAdminExistingTenantOnboardingIT
   @BeforeEach
   void identityProvider() {
     email = "joins-" + UUID.randomUUID() + "@example.org";
-    when(keycloakService.createUser(any(UserDTO.class), anyString(), anyString()))
-        .thenReturn(new CreatedIdentity(NEW_ADMIN_ID));
-    when(keycloakService.getOtpCredential(anyString()))
-        .thenReturn(
-            new IdentityOtpCredential(false, "JOINTOTPSECRET", "QRBASE64", IdentityOtpType.APP));
+    givenTaskAccounts(body -> NEW_ADMIN_ID, "JOINTOTPSECRET");
   }
 
   @AfterEach
@@ -100,6 +170,7 @@ class TenantAdminExistingTenantOnboardingIT
     Tenants.acrossAll(() -> seededInviteIds.forEach(accountInviteRepository::deleteById));
     Tenants.acrossAll(
         () -> adminRepository.findById(NEW_ADMIN_ID).ifPresent(adminRepository::delete));
+    cleanCreatedIdentities();
     // The admin lives in the existing Träger, so only a read across all of them proves it is gone.
     assertThat(Tenants.acrossAll(() -> adminRepository.findById(NEW_ADMIN_ID))).isEmpty();
   }
@@ -145,7 +216,15 @@ class TenantAdminExistingTenantOnboardingIT
         Tenants.in(EXISTING_TENANT, () -> adminRepository.findById(NEW_ADMIN_ID).orElseThrow());
     assertThat(admin.getType()).isEqualTo(Admin.AdminType.TENANT);
     assertThat(admin.getTenantId()).isEqualTo(EXISTING_TENANT);
-    verify(keycloakService).updatePassword(eq(NEW_ADMIN_ID), eq("Valid-Test-Password-2026!"));
+    assertThat(accountCreates())
+        .singleElement()
+        .satisfies(
+            command -> {
+              assertThat(command.body().get("password")).isEqualTo("Valid-Test-Password-2026!");
+              assertThat((java.util.List<String>) command.body().get("roles"))
+                  .containsExactlyInAnyOrder(
+                      "user-admin", "agency-admin", "tenant-admin", "topic-admin");
+            });
     AccountInvite invite = seededInvite();
     assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
     assertThat(invite.getAcceptedByUserId()).isEqualTo(NEW_ADMIN_ID);

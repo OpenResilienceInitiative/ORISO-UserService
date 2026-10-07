@@ -129,6 +129,7 @@ public class AccountInviteService {
       invite.setTenantId(held.tenantId());
       invite.setTenantIdReservationToken(held.tenantToken());
       invite.setAgencyId(held.agencyId());
+      invite.setAgencyReservationToken(held.agencyToken());
       invite.setExpiresAt(resolveExpiry(now, command.expiresInDays()));
       invite.setStatus(AccountInviteStatus.DRAFT);
       return save(invite);
@@ -560,6 +561,7 @@ public class AccountInviteService {
                       .targetRole(oldInvite.getTargetRole())
                       .tenantId(oldInvite.getTenantId())
                       .tenantIdReservationToken(oldInvite.getTenantIdReservationToken())
+                      .agencyReservationToken(oldInvite.getAgencyReservationToken())
                       .recipientEmail(oldInvite.getRecipientEmail())
                       .activeRecipientKey(normalizeEmail(oldInvite.getRecipientEmail()))
                       .firstName(oldInvite.getFirstName())

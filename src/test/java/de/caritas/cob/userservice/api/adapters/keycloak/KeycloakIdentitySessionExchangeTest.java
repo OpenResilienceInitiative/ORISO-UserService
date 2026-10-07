@@ -42,9 +42,10 @@ class KeycloakIdentitySessionExchangeTest {
   @BeforeEach
   void setUp() {
     exchange = new KeycloakIdentitySessionExchange(restTemplate, identityClientConfig, jwtDecoder);
-    ReflectionTestUtils.setField(exchange, "keycloakAdminClientId", "backend-admin");
-    ReflectionTestUtils.setField(exchange, "keycloakAdminClientSecret", "secret");
-    ReflectionTestUtils.setField(exchange, "keycloakAdminServiceSubject", "admin-service-subject");
+    ReflectionTestUtils.setField(exchange, "sessionExchangeClientId", "backend-session-exchange");
+    ReflectionTestUtils.setField(exchange, "sessionExchangeClientSecret", "secret");
+    ReflectionTestUtils.setField(
+        exchange, "sessionExchangeServiceSubject", "exchange-service-subject");
     ReflectionTestUtils.setField(exchange, "keycloakAppClientId", "app");
     when(identityClientConfig.getOpenIdConnectUrl("/token")).thenReturn(TOKEN_URL);
   }
@@ -58,7 +59,10 @@ class KeycloakIdentitySessionExchangeTest {
         .thenReturn(ResponseEntity.ok(Map.of("access_token", "admin-token")));
     when(jwtDecoder.decode("admin-token"))
         .thenReturn(
-            adminToken("admin-service-subject", "backend-admin", List.of("otp-config-admin")));
+            adminToken(
+                "exchange-service-subject",
+                "backend-session-exchange",
+                List.of("session-exchange")));
     when(restTemplate.postForEntity(eq(TOKEN_URL), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenReturn(ResponseEntity.ok(providerResponse));
 
@@ -79,7 +83,7 @@ class KeycloakIdentitySessionExchangeTest {
     var adminRequest = requestCaptor();
     verify(restTemplate).postForEntity(eq(TOKEN_URL), adminRequest.capture(), eq(Map.class));
     assertThat(form(adminRequest).getFirst("grant_type")).isEqualTo("client_credentials");
-    assertThat(form(adminRequest).getFirst("client_id")).isEqualTo("backend-admin");
+    assertThat(form(adminRequest).getFirst("client_id")).isEqualTo("backend-session-exchange");
     assertThat(form(adminRequest).getFirst("client_secret")).isEqualTo("secret");
     assertThat(form(adminRequest)).doesNotContainKeys("username", "password");
 
@@ -111,7 +115,10 @@ class KeycloakIdentitySessionExchangeTest {
         .thenReturn(ResponseEntity.ok(Map.of("access_token", "admin-token")));
     when(jwtDecoder.decode("admin-token"))
         .thenReturn(
-            adminToken("admin-service-subject", "backend-admin", List.of("otp-config-admin")));
+            adminToken(
+                "exchange-service-subject",
+                "backend-session-exchange",
+                List.of("session-exchange")));
     when(restTemplate.postForEntity(eq(TOKEN_URL), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenThrow(new IllegalStateException("identity provider unavailable"));
 
@@ -134,14 +141,14 @@ class KeycloakIdentitySessionExchangeTest {
   void exchangeForUserShouldRejectUnexpectedAdminToken(String invalidClaim) {
     when(restTemplate.postForEntity(eq(TOKEN_URL), any(), eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of("access_token", "admin-token")));
-    var subject = "wrong-subject".equals(invalidClaim) ? "other" : "admin-service-subject";
-    var azp = "wrong-azp".equals(invalidClaim) ? "other" : "backend-admin";
+    var subject = "wrong-subject".equals(invalidClaim) ? "other" : "exchange-service-subject";
+    var azp = "wrong-azp".equals(invalidClaim) ? "other" : "backend-session-exchange";
     var roles =
         switch (invalidClaim) {
           case "missing-role" -> List.of("view-users");
-          case "technical" -> List.of("otp-config-admin", "technical");
-          case "realm-admin" -> List.of("otp-config-admin", "realm-admin");
-          default -> List.of("otp-config-admin");
+          case "technical" -> List.of("session-exchange", "technical");
+          case "realm-admin" -> List.of("session-exchange", "realm-admin");
+          default -> List.of("session-exchange");
         };
     var expiry =
         "expired".equals(invalidClaim)
@@ -175,14 +182,7 @@ class KeycloakIdentitySessionExchangeTest {
   }
 
   private static Jwt adminToken(String subject, String azp, List<String> roles, Instant expiresAt) {
-    return adminToken(
-        subject,
-        azp,
-        roles,
-        Map.of(
-            "realm-management",
-            Map.of("roles", List.of("manage-users", "view-users", "query-users", "view-realm"))),
-        expiresAt);
+    return adminToken(subject, azp, roles, Map.of(), expiresAt);
   }
 
   private static Jwt adminToken(

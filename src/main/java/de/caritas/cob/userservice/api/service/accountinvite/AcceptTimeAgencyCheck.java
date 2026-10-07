@@ -59,12 +59,12 @@ public class AcceptTimeAgencyCheck {
 
   /** The Keycloak technical user's access token; its failure text stays out of the invite. */
   public String serviceToken() {
-    var technicalUser = identityClientConfig.getTechnicalUser();
+    var technicalUser =
+        identityClientConfig.getTaskIdentity(
+            de.caritas.cob.userservice.api.config.auth.TaskIdentity.CONFIG_WIZARD);
     IdentityLogin login;
     try {
-      login =
-          identityAuthentication.loginService(
-              technicalUser.getClientId(), technicalUser.getClientSecret());
+      login = identityAuthentication.loginTask(technicalUser);
     } catch (RuntimeException exception) {
       throw new IllegalStateException("Service authentication unavailable", exception);
     }

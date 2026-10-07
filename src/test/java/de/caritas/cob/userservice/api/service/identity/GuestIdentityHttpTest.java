@@ -121,6 +121,10 @@ class GuestIdentityHttpTest {
 
   @BeforeEach
   void setup() {
+    // Public guest requests must not inherit a verified caller left by another fixture.
+    org.springframework.security.test.context.TestSecurityContextHolder.clearContext();
+    org.springframework.security.core.context.SecurityContextHolder.clearContext();
+    de.caritas.cob.userservice.api.tenant.TenantContext.clear();
     mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
   }
 

@@ -34,31 +34,26 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
   private static final String TOKEN_GRANT_CLIENT_CREDENTIALS = "client_credentials";
   private static final String TOKEN_GRANT_EXCHANGE =
       "urn:ietf:params:oauth:grant-type:token-exchange";
-  private static final Set<String> REQUIRED_ADMIN_MANAGEMENT_ROLES =
-      Set.of("manage-users", "view-users", "query-users", "view-realm");
-  private static final Set<String> ALLOWED_ADMIN_MANAGEMENT_ROLES =
-      Set.of("manage-users", "view-users", "query-users", "view-realm", "query-groups");
-
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull JwtDecoder jwtDecoder;
 
-  @Value("${keycloak.config.admin-client-id}")
-  private String keycloakAdminClientId;
+  @Value("${identity.tasks.session-exchange.client-id}")
+  private String sessionExchangeClientId;
 
-  @Value("${keycloak.config.admin-client-secret}")
-  private String keycloakAdminClientSecret;
+  @Value("${identity.tasks.session-exchange.client-secret}")
+  private String sessionExchangeClientSecret;
 
-  @Value("${keycloak.config.admin-service-subject}")
-  private String keycloakAdminServiceSubject;
+  @Value("${identity.tasks.session-exchange.service-subject}")
+  private String sessionExchangeServiceSubject;
 
   @Value("${keycloak.config.app-client-id:app}")
   private String keycloakAppClientId;
 
   @Override
   public Optional<IdentitySession> exchangeForUser(String identityUserId) {
-    String adminToken = loginAdminForToken();
-    if (isBlank(adminToken)) {
+    String taskToken = loginSessionExchangeForToken();
+    if (isBlank(taskToken)) {
       return Optional.empty();
     }
 
@@ -66,7 +61,7 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
       MultiValueMap<String, String> form = new KeycloakAuthClient.SensitiveKeycloakFormData();
       form.add("grant_type", TOKEN_GRANT_EXCHANGE);
       form.add("client_id", keycloakAppClientId);
-      form.add("subject_token", adminToken);
+      form.add("subject_token", taskToken);
       form.add("requested_subject", identityUserId);
       HttpHeaders headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
@@ -81,17 +76,17 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
     }
   }
 
-  private String loginAdminForToken() {
+  private String loginSessionExchangeForToken() {
     try {
       MultiValueMap<String, String> form = new KeycloakAuthClient.SensitiveKeycloakFormData();
-      if (isBlank(keycloakAdminClientId)
-          || isBlank(keycloakAdminClientSecret)
-          || keycloakAdminClientId.equals(keycloakAppClientId)) {
+      if (isBlank(sessionExchangeClientId)
+          || isBlank(sessionExchangeClientSecret)
+          || sessionExchangeClientId.equals(keycloakAppClientId)) {
         return null;
       }
       form.add("grant_type", TOKEN_GRANT_CLIENT_CREDENTIALS);
-      form.add("client_id", keycloakAdminClientId);
-      form.add("client_secret", keycloakAdminClientSecret);
+      form.add("client_id", sessionExchangeClientId);
+      form.add("client_secret", sessionExchangeClientSecret);
       HttpHeaders headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
       HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(form, headers);
@@ -103,43 +98,35 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
       Object token = response.getBody().get("access_token");
       if (!(token instanceof String accessToken)
           || isBlank(accessToken)
-          || !isExpectedAdminToken(accessToken)) {
+          || !isExpectedSessionExchangeToken(accessToken)) {
         return null;
       }
       return accessToken;
     } catch (Exception loginFailure) {
-      log.warn("Identity admin-session login failed ({})", loginFailure.getClass().getSimpleName());
+      log.warn(
+          "Identity session-exchange login failed ({})", loginFailure.getClass().getSimpleName());
       return null;
     }
   }
 
-  private boolean isExpectedAdminToken(String accessToken) {
+  private boolean isExpectedSessionExchangeToken(String accessToken) {
     var jwt = jwtDecoder.decode(accessToken);
     var realmAccess = jwt.getClaimAsMap("realm_access");
     Object rolesValue = realmAccess == null ? null : realmAccess.get("roles");
     if (!(rolesValue instanceof Collection<?> roles)) {
       return false;
     }
-    return Set.of("otp-config-admin").equals(new HashSet<>(roles))
-        && !isBlank(keycloakAdminServiceSubject)
-        && keycloakAdminServiceSubject.equals(jwt.getSubject())
-        && keycloakAdminClientId.equals(jwt.getClaimAsString("azp"))
+    return Set.of("session-exchange").equals(new HashSet<>(roles))
+        && !isBlank(sessionExchangeServiceSubject)
+        && sessionExchangeServiceSubject.equals(jwt.getSubject())
+        && sessionExchangeClientId.equals(jwt.getClaimAsString("azp"))
         && jwt.getExpiresAt() != null
         && jwt.getExpiresAt().isAfter(Instant.now())
-        && hasExpectedAdminResources(jwt.getClaimAsMap("resource_access"));
+        && hasNoPrivilegedResources(jwt.getClaimAsMap("resource_access"));
   }
 
-  private static boolean hasExpectedAdminResources(Map<String, Object> resourceAccess) {
-    if (resourceAccess == null
-        || !resourceAccess.keySet().equals(Set.of("realm-management"))
-        || !(resourceAccess.get("realm-management") instanceof Map<?, ?> realmManagement)
-        || !(realmManagement.get("roles") instanceof Collection<?> roles)
-        || roles.stream().anyMatch(role -> !(role instanceof String))) {
-      return false;
-    }
-    var actualRoles = new HashSet<>(roles);
-    return actualRoles.containsAll(REQUIRED_ADMIN_MANAGEMENT_ROLES)
-        && ALLOWED_ADMIN_MANAGEMENT_ROLES.containsAll(actualRoles);
+  private static boolean hasNoPrivilegedResources(Map<String, Object> resourceAccess) {
+    return resourceAccess == null || resourceAccess.isEmpty();
   }
 
   private static IdentitySession toIdentitySession(KeycloakLoginResponseDTO response) {

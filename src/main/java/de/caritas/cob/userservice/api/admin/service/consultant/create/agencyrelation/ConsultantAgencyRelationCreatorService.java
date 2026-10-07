@@ -37,6 +37,9 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class ConsultantAgencyRelationCreatorService {
 
+  private final @NonNull de.caritas.cob.userservice.api.adapters.keycloak.commands
+          .IdentityAccountProvisioning
+      identityProvisioning;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull AgencyService agencyService;
@@ -48,6 +51,91 @@ public class ConsultantAgencyRelationCreatorService {
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
   private final @NonNull ApplicationEventPublisher eventPublisher;
+
+  public void createOwnedCreationRelations(
+      String consultantId,
+      java.util.Collection<AgencyDTO> verifiedAgencies,
+      Set<String> requestedRoles,
+      Consumer<String> logMethod) {
+    var grant = identityProvisioning.createdRelationGrant(consultantId);
+    var consultant = retrieveConsultant(consultantId);
+    var ids =
+        verifiedAgencies.stream()
+            .map(AgencyDTO::getId)
+            .collect(java.util.stream.Collectors.toSet());
+    if (!java.util.Objects.equals(consultant.getTenantId(), grant.tenantId())
+        || !Set.copyOf(grant.agencyIds()).equals(ids)
+        || !grant.initialRoles().containsAll(requestedRoles))
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Relations exceed the owned initial account scope");
+    var invitation = identityProvisioning.heldCreationInvitation(consultantId);
+    if (invitation.isPresent()) {
+      consultantTopicAgencyCompatibilityValidator.validateHeldInvitationTopics(
+          consultantId, verifiedAgencies, consultant.getTenantId(), invitation.get());
+    }
+    createValidatedRelations(
+        consultant, verifiedAgencies, requestedRoles, logMethod, invitation.isEmpty());
+  }
+
+  public void createExistingImportedRelations(
+      String consultantId,
+      java.util.Collection<AgencyDTO> verifiedAgencies,
+      Set<String> requestedRoles,
+      Consumer<String> logMethod,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization read,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          additions) {
+    identityRoleUpdater.ensureRoles(consultantId, requestedRoles, read, additions);
+    createValidatedRelations(
+        retrieveConsultant(consultantId), verifiedAgencies, requestedRoles, logMethod, true);
+  }
+
+  private void createValidatedRelations(
+      Consultant consultant,
+      java.util.Collection<AgencyDTO> agencies,
+      Set<String> roles,
+      Consumer<String> logMethod,
+      boolean validateImportCoverage) {
+    var ids = agencies.stream().map(AgencyDTO::getId).collect(java.util.stream.Collectors.toSet());
+    if (agencies.isEmpty()
+        || agencies.stream()
+            .anyMatch(
+                agency ->
+                    agency == null
+                        || agency.getId() == null
+                        || (agency.getTenantId() != null
+                            && !java.util.Objects.equals(
+                                agency.getTenantId(), consultant.getTenantId()))))
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Imported relation has a foreign agency tenant");
+    if (validateImportCoverage)
+      consultantTopicAgencyCompatibilityValidator.validateCurrentTopicsAgainstVerifiedAgencies(
+          consultant.getId(), agencies, consultant.getTenantId());
+    for (var agency : agencies) {
+      if (consultingTypeManager.isConsultantBoundedToAgency(agency.getConsultingType())) {
+        if (consultant.getConsultantAgencies() != null)
+          for (var old : consultant.getConsultantAgencies()) {
+            var existing =
+                agencyService.getPublicImportAgency(old.getAgencyId(), consultant.getTenantId());
+            if (existing == null || existing.getConsultingType() != agency.getConsultingType())
+              throw new BadRequestException(
+                  "Imported consultant agencies have incompatible consulting types");
+          }
+      }
+      var relation =
+          consultantAgencyService.saveConsultantAgency(
+              buildConsultantAgency(consultant, agency.getId()));
+      consultant.setStatus(ConsultantStatus.IN_PROGRESS);
+      consultantRepository.save(consultant);
+      consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(consultant, relation);
+      if (isTeamAgencyButNotTeamConsultant(agency, consultant)) {
+        consultant.setTeamConsultant(true);
+        consultantRepository.save(consultant);
+      }
+      eventPublisher.publishEvent(
+          new ConsultantJoinedAgencyEvent(consultant.getId(), agency.getId()));
+    }
+  }
 
   /**
    * Creates a new {@link ConsultantAgency} based on the {@link ImportRecord} and agency ids.

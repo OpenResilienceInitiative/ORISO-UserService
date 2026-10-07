@@ -66,6 +66,21 @@ public class SecurityConfig {
 
   private final CsrfSecurityProperties csrfSecurityProperties;
 
+  @Value("${identity.tasks.notification-dispatch.client-id:}")
+  private String notificationTaskClient;
+
+  @Value("${identity.tasks.notification-dispatch.service-subject:}")
+  private String notificationTaskSubject;
+
+  @Value("${identity.consultant-import.client-id:}")
+  private String importTaskClient;
+
+  @Value("${identity.consultant-import.service-subject:}")
+  private String importTaskSubject;
+
+  @Value("${task.identity.audience:userservice}")
+  private String taskIdentityAudience;
+
   @Value("${multitenancy.enabled}")
   private boolean multitenancy;
 
@@ -298,8 +313,11 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.GET, "/service/conversations/anonymous/{sessionId:[0-9]+}")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
-                .requestMatchers("/users/notifications")
-                .hasAnyAuthority(NOTIFICATIONS_TECHNICAL)
+                .requestMatchers(
+                    HttpMethod.GET, "/users/notifications", "/service/users/notifications")
+                .access(
+                    new NotificationPreferencesTaskAuthorization(
+                        notificationTaskClient, notificationTaskSubject, taskIdentityAudience))
                 .requestMatchers("/users/data")
                 .hasAnyAuthority(
                     ANONYMOUS_DEFAULT,
@@ -451,8 +469,13 @@ public class SecurityConfig {
                 .hasAnyAuthority(ASSIGN_CONSULTANT_TO_ENQUIRY, ASSIGN_CONSULTANT_TO_SESSION)
                 .requestMatchers("/users/consultants")
                 .hasAuthority(VIEW_AGENCY_CONSULTANTS)
-                .requestMatchers("/users/consultants/import")
-                .hasAuthority(TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/consultants/import",
+                    "/service/users/consultants/import")
+                .access(
+                    new ConsultantImportTaskAuthorization(
+                        importTaskClient, importTaskSubject, taskIdentityAudience))
                 .requestMatchers("/liveproxy/send")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT)
                 .requestMatchers("/users/messages/key")

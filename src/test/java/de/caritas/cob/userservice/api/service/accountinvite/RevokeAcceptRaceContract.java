@@ -9,17 +9,12 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
-import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
-import de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminService;
-import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
-import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
-import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
@@ -28,22 +23,19 @@ import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
-import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.AgencyCreationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
+import de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup;
 import java.time.LocalDateTime;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -55,18 +47,25 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Profile;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.client.RestTemplate;
 
 /**
  * An admin revokes an account invite while the invitee finishes onboarding (ORISO-Admin#1026).
@@ -76,36 +75,21 @@ import org.springframework.transaction.support.TransactionTemplate;
  * by {@link AccountInviteRevokeAcceptRaceIT} and on MariaDB by {@link
  * AccountInviteRevokeAcceptRaceMariaDbIT}, whose row locks are what production relies on.
  */
-@DataJpaTest
+@SpringBootTest
+@ActiveProfiles({"testing", "revoke-accept-race"})
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({
-  AccountInviteService.class,
-  AgencyAdminInviteProvisioningService.class,
-  InviteTargetResolver.class,
-  ReservationLedger.class,
-  UnitQueue.class,
-  InviteDelivery.class,
-  AccountInviteAccessPolicy.class,
-  AccountInviteTopicPermissionService.class,
-  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
-  IdReservationReleaseProcessor.class,
-  InviteRoleChange.class,
-  InviteEmailDeliveryFailureRecorder.class,
-  CounsellorInviteProvisioningService.class,
-  de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.class,
-  RevokeAcceptRaceContract.CallerConfig.class
-})
+@Import(RevokeAcceptRaceContract.CallerConfig.class)
 // Resets the acting tenant after each test (TenantExtension); inherited by both subclasses.
 @de.caritas.cob.userservice.api.tenant.WithTenant(RevokeAcceptRaceContract.OWN_TENANT)
-abstract class RevokeAcceptRaceContract {
+abstract class RevokeAcceptRaceContract extends AccountInactivityPolicyHttpFixture {
 
   static final long OWN_TENANT = 1L;
   private static final long NEW_AGENCY = 700L;
   private static final long EXISTING_AGENCY = 1L;
   private static final long TOPIC = 11L;
   private static final String RAW_TOKEN = "revoke-accept-race-token";
-  private static final String ADMIN_ID = "revoke-race-admin";
+  private String adminId;
   private static final String RECIPIENT = "revoke-race@example.org";
   private static final String SECOND_RECIPIENT = "revoke-race-second@example.org";
   private static final String SECOND_TOKEN = "revoke-accept-race-second-token";
@@ -152,46 +136,52 @@ abstract class RevokeAcceptRaceContract {
   }
 
   @TestConfiguration
+  @Profile("revoke-accept-race")
   static class CallerConfig {
     @Bean
-    ObservedCaller authenticatedUser() {
+    @Primary
+    ObservedCaller observedRaceCaller() {
       return new ObservedCaller();
     }
   }
+
+  @MockitoBean(name = "keycloakRestTemplate")
+  private RestTemplate boundedIdentityHttp;
+
+  @MockitoBean(name = "restTemplate")
+  private RestTemplate taskAuthHttp;
+
+  @MockitoBean private JwtDecoder taskDecoder;
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @Autowired private Environment identityEnvironment;
+  @Autowired private ObjectMapper identityMapper;
+  private BoundedIdentityHttpFixtures.Provider nativeAccounts;
+  private volatile Runnable beforeNativeCreate;
+  private volatile Runnable beforeNativeSearch;
+  private AgencyIdAllocationClient.AgencyReservation agencyReservation;
 
   @Autowired private AccountInviteService service;
   @Autowired private AgencyAdminInviteProvisioningService agencyAdminProvisioning;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private AdminRepository adminRepository;
   @Autowired private AdminAgencyRepository adminAgencyRepository;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.IdentityCreationAttemptRepository
+      creationAttempts;
+
   @Autowired private IdReservationReleaseTaskRepository releaseTaskRepository;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private ObservedCaller caller;
 
-  @MockitoBean private CreateAdminService createAdminService;
-  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
-  @MockitoBean private IdentityAccountRemover identityAccountRemover;
-  @MockitoBean private IdentityPasswordUpdater identityPasswordUpdater;
-  @MockitoBean private AcceptTimeAgencyCheck acceptTimeAgencyCheck;
-  @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
-  @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
   @MockitoBean private AgencyFacts agencyFacts;
-  @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
+  @MockitoSpyBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
-  @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
-  @MockitoBean private CreateConsultantSaga createConsultantSaga;
-  @MockitoBean private CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService;
 
-  @MockitoBean
-  private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
-
-  @MockitoBean private IdentitySecondFactor identitySecondFactor;
-  @MockitoBean private IdentityProfileLookup identityProfileLookup;
   @MockitoBean private TopicService topicService;
-  @MockitoBean private UsernameTranscoder usernameTranscoder;
   @MockitoBean private AgencyCreationClient agencyCreationClient;
 
   @Autowired private InviteRoleChange roleChange;
@@ -212,6 +202,30 @@ abstract class RevokeAcceptRaceContract {
 
   @BeforeEach
   void setUp() {
+    adminId = java.util.UUID.randomUUID().toString();
+    beforeNativeCreate = null;
+    beforeNativeSearch = null;
+    BoundedIdentityHttpFixtures.givenTaskGrants(taskAuthHttp, taskDecoder, taskIdentities);
+    BoundedIdentityHttpFixtures.givenWizardPolicy(
+        taskAuthHttp, taskIdentities, identityEnvironment, identityMapper);
+    nativeAccounts =
+        BoundedIdentityHttpFixtures.givenProvider(
+            boundedIdentityHttp,
+            taskIdentities,
+            identityEnvironment,
+            identityMapper,
+            body -> {
+              Runnable hook = beforeNativeCreate;
+              if (hook != null) hook.run();
+              return adminId;
+            },
+            id -> {},
+            command -> {
+              if (command.operation().equals("account.search")) {
+                Runnable hook = beforeNativeSearch;
+                if (hook != null) hook.run();
+              }
+            });
     caller.revokeDecided = new CountDownLatch(1);
     caller.afterWriterRead = null;
     Tenants.actAs(
@@ -223,8 +237,16 @@ abstract class RevokeAcceptRaceContract {
         UserRole.USER_ADMIN);
     when(agencyIdAllocationClient.getAvailability(NEW_AGENCY))
         .thenReturn(IdAllocationStatus.RESERVED);
-    when(agencyIdAllocationClient.release(anyLong())).thenReturn(true);
-    when(identityEmailOwnerLookup.findByEmail(anyString())).thenReturn(java.util.Optional.empty());
+    when(agencyIdAllocationClient.reserveWithProof(NEW_AGENCY, OWN_TENANT))
+        .thenReturn(
+            new AgencyIdAllocationClient.AgencyReservation(
+                NEW_AGENCY, "race-owned-agency-" + java.util.UUID.randomUUID()));
+    agencyReservation = agencyIdAllocationClient.reserveWithProof(NEW_AGENCY, OWN_TENANT);
+    when(agencyIdAllocationClient.release(NEW_AGENCY, agencyReservation.token())).thenReturn(true);
+    when(agencyFacts.find(NEW_AGENCY))
+        .thenReturn(
+            java.util.Optional.of(
+                new AgencyFacts.Agency(NEW_AGENCY, OWN_TENANT, false, java.util.List.of(TOPIC))));
     when(agencyService.getAgenciesWithoutCaching(java.util.List.of(EXISTING_AGENCY)))
         .thenReturn(
             java.util.List.of(
@@ -236,9 +258,6 @@ abstract class RevokeAcceptRaceContract {
             java.util.Optional.of(
                 new AgencyFacts.Agency(
                     EXISTING_AGENCY, OWN_TENANT, false, java.util.List.of(TOPIC))));
-    when(acceptTimeAgencyCheck.serviceToken()).thenReturn("service-token");
-    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
-        .thenReturn("https://dev.example.org/accept");
     executor =
         Executors.newFixedThreadPool(
             4,
@@ -264,15 +283,8 @@ abstract class RevokeAcceptRaceContract {
   @AfterEach
   void cleanUp() {
     executor.shutdownNow();
-    Tenants.acrossAll(
-        () -> {
-          adminAgencyRepository.deleteAll(
-              java.util.stream.StreamSupport.stream(
-                      adminAgencyRepository.findAll().spliterator(), false)
-                  .filter(relation -> ADMIN_ID.equals(relation.getAdmin().getId()))
-                  .toList());
-          adminRepository.findById(ADMIN_ID).ifPresent(adminRepository::delete);
-        });
+    ExistingAccountSetupFixtureCleanup.admin(
+        new org.springframework.jdbc.core.JdbcTemplate(dataSource), transactionManager, adminId);
     var ownInvites =
         accountInviteRepository.findAll().stream()
             .filter(invite -> invite.getRecipientEmail().startsWith("revoke-race"))
@@ -297,15 +309,12 @@ abstract class RevokeAcceptRaceContract {
       throws Exception {
     AccountInvite invite = persistedAgencyAdminInvite();
     CountDownLatch accountBeingCreated = new CountDownLatch(1);
-    when(createAdminService.createNewAgencyAdminInTenant(any()))
-        .thenAnswer(
-            call -> {
-              Admin admin = persistedAdmin(call.getArgument(0));
-              accountBeingCreated.countDown();
-              // Before the fix the revoke reads the invite here, unlocked; after it, it waits.
-              caller.revokeDecided.await(REVOKE_READ_GRACE_MILLIS, TimeUnit.MILLISECONDS);
-              return admin;
-            });
+    beforeNativeCreate =
+        () -> {
+          accountBeingCreated.countDown();
+          // Before the fix the revoke reads the invite here, unlocked; after it, it waits.
+          awaitQuietly(caller.revokeDecided);
+        };
 
     Future<Object> accept =
         submit(
@@ -327,15 +336,34 @@ abstract class RevokeAcceptRaceContract {
 
     AccountInvite persisted = accountInviteRepository.findById(invite.getId()).orElseThrow();
     assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
-    assertThat(persisted.getAcceptedByUserId()).isEqualTo(ADMIN_ID);
-    assertThat(persisted.getProvisionedUserId()).isEqualTo(ADMIN_ID);
+    assertThat(persisted.getAcceptedByUserId()).isEqualTo(adminId);
+    assertThat(persisted.getProvisionedUserId()).isEqualTo(adminId);
     assertThat(persisted.getProvisioningStatus())
         .isEqualTo(AccountInviteProvisioningStatus.COMPLETED);
     assertThat(persisted.getRevokedAt()).isNull();
     // The new account uses the agency number, so the losing revoke must not give it back.
     verify(agencyIdAllocationClient, never()).release(anyLong());
+    verify(agencyIdAllocationClient, never()).release(anyLong(), any());
     assertThat(releaseTaskRepository.count()).isZero();
-    verify(identityAccountRemover, never()).rollbackUser(anyString());
+    assertThat(nativeAccounts.commands())
+        .extracting(BoundedIdentityHttpFixtures.Command::operation)
+        .contains("account.create", "account.commit")
+        .doesNotContain("account.compensate", "account.rollback");
+    assertDefaultInactivityPolicy(adminId);
+    var admin = adminRepository.findById(adminId).orElseThrow();
+    assertThat(admin.getTenantId()).isEqualTo(OWN_TENANT);
+    assertThat(admin.getType()).isEqualTo(Admin.AdminType.AGENCY);
+    assertThat(adminAgencyRepository.findAll())
+        .filteredOn(relation -> adminId.equals(relation.getAdmin().getId()))
+        .extracting(de.caritas.cob.userservice.api.model.AdminAgency::getAgencyId)
+        .containsExactly(NEW_AGENCY);
+    var attempt =
+        new TransactionTemplate(transactionManager)
+            .execute(status -> creationAttempts.findByAccountId(adminId).orElseThrow());
+    assertThat(attempt.getStatus()).isEqualTo("COMMITTED");
+    assertThat(attempt.getOriginKind()).isEqualTo("INVITATION");
+    assertThat(attempt.getProvenance()).isEqualTo("invite:" + invite.getId());
+    assertThat(attempt.getAuthorizedAgencyIds()).isEqualTo(Long.toString(NEW_AGENCY));
   }
 
   @Test
@@ -377,13 +405,13 @@ abstract class RevokeAcceptRaceContract {
     assertThat(accepted).isInstanceOf(AccountInviteLinkException.class);
     assertThat(((AccountInviteLinkException) accepted).getReason())
         .isEqualTo(AccountInviteLinkException.Reason.REVOKED);
-    verify(createAdminService, never()).createNewAgencyAdminInTenant(any());
+    assertNoNativeAccountCreation();
 
     AccountInvite persisted = accountInviteRepository.findById(invite.getId()).orElseThrow();
     assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
     assertThat(persisted.getAcceptedByUserId()).isNull();
     assertThat(persisted.getProvisionedUserId()).isNull();
-    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY);
+    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY, agencyReservation.token());
   }
 
   @Test
@@ -394,7 +422,7 @@ abstract class RevokeAcceptRaceContract {
     AccountInvite again = service.revokeInvite(invite.getId());
 
     assertThat(again.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
-    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY);
+    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY, agencyReservation.token());
   }
 
   // --- admin writers: a revoke that holds the row must never be written over ---
@@ -408,7 +436,7 @@ abstract class RevokeAcceptRaceContract {
         .thenAnswer(
             call -> {
               writerRead.countDown();
-              return "https://dev.example.org/accept";
+              return call.callRealMethod();
             });
     mailGoesOut();
 
@@ -431,14 +459,7 @@ abstract class RevokeAcceptRaceContract {
     AccountInvite invite = persistedAgencyAdminInvite();
     Long template = persistedTemplate();
     CountDownLatch writerRead = new CountDownLatch(1);
-    when(identityEmailOwnerLookup.findByEmail(anyString()))
-        .thenAnswer(
-            call -> {
-              writerRead.countDown();
-              return java.util.Optional.empty();
-            });
-    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
-        .thenReturn("https://dev.example.org/accept");
+    beforeNativeSearch = writerRead::countDown;
     mailGoesOut();
 
     Object resent =
@@ -719,7 +740,7 @@ abstract class RevokeAcceptRaceContract {
     assertThat(ownInvites())
         .extracting(AccountInvite::getStatus)
         .doesNotContain(AccountInviteStatus.EMAIL_SENT);
-    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY);
+    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY, agencyReservation.token());
   }
 
   @Test
@@ -734,7 +755,7 @@ abstract class RevokeAcceptRaceContract {
 
     assertThat(swept).isNotInstanceOf(Exception.class);
     assertThat(reload(invite).getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
-    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY);
+    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY, agencyReservation.token());
   }
 
   @Test
@@ -770,7 +791,7 @@ abstract class RevokeAcceptRaceContract {
 
     assertThat(firstRevoke.get(30, TimeUnit.SECONDS)).isInstanceOf(AccountInvite.class);
     assertThat(secondRevoke[0].get(30, TimeUnit.SECONDS)).isInstanceOf(AccountInvite.class);
-    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY);
+    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY, agencyReservation.token());
   }
 
   @Test
@@ -806,8 +827,10 @@ abstract class RevokeAcceptRaceContract {
 
     assertThat(revoked).isInstanceOf(AccountInvite.class);
     assertThat(registered).isInstanceOf(AccountInviteLinkException.class);
-    verify(agencyCreationClient, never()).createAgencyWithReservedId(any(), any(), any(), any());
-    verify(consultantAdminFacade, never()).createNewConsultant(any());
+    verify(agencyCreationClient, never())
+        .createAgencyWithReservedId(
+            any(), any(), any(), any(), org.mockito.ArgumentMatchers.eq(agencyReservation.token()));
+    assertNoNativeAccountCreation();
   }
 
   @Test
@@ -845,7 +868,7 @@ abstract class RevokeAcceptRaceContract {
     AccountInvite persisted = reload(invite);
     assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
     assertThat(persisted.getTargetRole()).isEqualTo(AccountInviteTargetRole.AGENCY_ADMIN);
-    verify(consultantAdminFacade, never()).createNewConsultant(any());
+    assertNoNativeAccountCreation();
   }
 
   /**
@@ -979,6 +1002,7 @@ abstract class RevokeAcceptRaceContract {
     invite.setTargetRole(AccountInviteTargetRole.COUNSELLOR);
     invite.setAgencyId(EXISTING_AGENCY);
     invite.setAgencyIdAllocationMode(null);
+    invite.setAgencyReservationToken(null);
     invite.setAlsoCounsellor(null);
     invite.setTopicPermission(TopicPermission.CREATE);
     return accountInviteRepository.save(invite);
@@ -1015,7 +1039,8 @@ abstract class RevokeAcceptRaceContract {
                 new de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO()
                     .id(TOPIC)
                     .name("Sucht")));
-    when(agencyCreationClient.createAgencyWithReservedId(any(), any(), any(), any()))
+    when(agencyCreationClient.createAgencyWithReservedId(
+            any(), any(), any(), any(), org.mockito.ArgumentMatchers.eq(agencyReservation.token())))
         .thenReturn(NEW_AGENCY);
 
     Future<Object> registration =
@@ -1053,8 +1078,10 @@ abstract class RevokeAcceptRaceContract {
     assertThat(registered).isInstanceOf(AccountInviteLinkException.class);
     assertThat(((AccountInviteLinkException) registered).getReason())
         .isEqualTo(AccountInviteLinkException.Reason.REVOKED);
-    verify(agencyCreationClient, never()).createAgencyWithReservedId(any(), any(), any(), any());
-    verify(createAdminService, never()).createNewAgencyAdminInTenant(any());
+    verify(agencyCreationClient, never())
+        .createAgencyWithReservedId(
+            any(), any(), any(), any(), org.mockito.ArgumentMatchers.eq(agencyReservation.token()));
+    assertNoNativeAccountCreation();
   }
 
   /**
@@ -1122,6 +1149,7 @@ abstract class RevokeAcceptRaceContract {
     AccountInvite invite = persistedAgencyAdminInvite();
     invite.setAgencyId(EXISTING_AGENCY);
     invite.setAgencyIdAllocationMode(null);
+    invite.setAgencyReservationToken(null);
     invite.setAlsoCounsellor(true);
     return accountInviteRepository.save(invite);
   }
@@ -1135,10 +1163,13 @@ abstract class RevokeAcceptRaceContract {
     return executor.submit(
         () -> {
           Thread.currentThread().setName(threadName);
+          de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(OWN_TENANT);
           try {
             return work.call();
           } catch (Exception exception) {
             return exception;
+          } finally {
+            de.caritas.cob.userservice.api.tenant.TenantContext.clear();
           }
         });
   }
@@ -1155,20 +1186,11 @@ abstract class RevokeAcceptRaceContract {
     }
   }
 
-  private Admin persistedAdmin(CreateAdminDTO dto) {
-    LocalDateTime now = LocalDateTime.now();
-    return adminRepository.save(
-        Admin.builder()
-            .id(ADMIN_ID)
-            .tenantId(OWN_TENANT)
-            .username(dto.getUsername())
-            .firstName(dto.getFirstname())
-            .lastName(dto.getLastname())
-            .email(dto.getEmail())
-            .type(Admin.AdminType.AGENCY)
-            .createDate(now)
-            .updateDate(now)
-            .build());
+  private void assertNoNativeAccountCreation() {
+    assertThat(nativeAccounts.commands())
+        .extracting(BoundedIdentityHttpFixtures.Command::operation)
+        .doesNotContain("account.create", "account.commit");
+    assertThat(adminRepository.findById(adminId)).isEmpty();
   }
 
   /** The first admin of a new Beratungsstelle; the invite holds its reserved number. */
@@ -1176,12 +1198,13 @@ abstract class RevokeAcceptRaceContract {
     return accountInviteRepository.save(newAgencyAdminInvite());
   }
 
-  private static AccountInvite newAgencyAdminInvite() {
+  private AccountInvite newAgencyAdminInvite() {
     LocalDateTime now = LocalDateTime.now();
     return AccountInvite.builder()
         .targetRole(AccountInviteTargetRole.AGENCY_ADMIN)
         .tenantId(OWN_TENANT)
-        .agencyId(NEW_AGENCY)
+        .agencyId(agencyReservation.agencyId())
+        .agencyReservationToken(agencyReservation.token())
         .agencyIdAllocationMode(IdAllocationMode.MANUAL)
         .alsoCounsellor(false)
         .recipientEmail(RECIPIENT)

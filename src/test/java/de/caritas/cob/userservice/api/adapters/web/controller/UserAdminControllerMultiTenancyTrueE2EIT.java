@@ -14,34 +14,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityProfile;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
-import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
@@ -53,6 +35,7 @@ import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
@@ -60,8 +43,6 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
 import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -72,8 +53,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.test.context.TestSecurityContextHolder;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -98,7 +83,27 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
   @Autowired private MockMvc mockMvc;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+      lifecycle;
+
+  private final java.util.Map<String, Instant> fixtureLifecycleRows =
+      new java.util.LinkedHashMap<>();
+  @MockitoBean private org.springframework.security.oauth2.jwt.JwtDecoder taskJwtDecoder;
+
+  @MockitoBean(name = "restTemplate")
+  private org.springframework.web.client.RestTemplate taskAuthHttp;
+
+  @MockitoBean private TaskIdentityGrant taskGrants;
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @Autowired private Environment environment;
+  private BoundedIdentityHttpFixtures.Provider identityProvider;
+
   @Autowired private ObjectMapper objectMapper;
+
+  @MockitoBean
+  @org.springframework.beans.factory.annotation.Qualifier("keycloakRestTemplate")
+  private org.springframework.web.client.RestTemplate keycloakRestTemplate;
 
   @Autowired private IdentityConfig identityConfig;
 
@@ -121,27 +126,6 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
 
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockitoBean(
-      extraInterfaces = {
-        IdentityAccountRemover.class,
-        IdentityAccountStatusLookup.class,
-        IdentityAuthentication.class,
-        IdentityDeactivator.class,
-        IdentityDummyEmailUpdater.class,
-        IdentityEmailAddressUpdater.class,
-        IdentityEmailOwnerLookup.class,
-        IdentityLocaleLookup.class,
-        IdentityPasswordChangeRequirement.class,
-        IdentityPasswordUpdater.class,
-        IdentityProfileLookup.class,
-        IdentityProfileUpdater.class,
-        IdentityRoleLookup.class,
-        IdentityRoleUpdater.class,
-        IdentitySecondFactor.class,
-        IdentityUsernameAvailability.class
-      })
-  IdentityClient identityClient;
-
   @MockitoBean TenantService tenantService;
 
   @MockitoBean TenantResolverService tenantResolverService;
@@ -156,17 +140,41 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       ExistingAccountSetupFixtureCleanup.admin(jdbc, transactions, cleanupIdentityId);
     } finally {
       identityConfig.setDisplayNameAllowedForConsultants(false);
+      fixtureLifecycleRows.forEach(
+          (id, capturedAt) -> lifecycle.discardUncompletedCreation(id, 24, 0, capturedAt));
+      fixtureLifecycleRows.clear();
+      if (cleanupIdentityId != null)
+        new org.springframework.transaction.support.TransactionTemplate(transactions)
+            .executeWithoutResult(
+                status -> {
+                  jdbc.update(
+                      "DELETE FROM identity_creation_attempt WHERE account_id = ?",
+                      cleanupIdentityId);
+                  jdbc.update(
+                      "DELETE FROM account_inactivity WHERE identity_id = ?", cleanupIdentityId);
+                });
     }
   }
 
   @BeforeEach
   public void setUp() {
 
-    CreatedIdentity keycloakResponse = new CreatedIdentity();
-    createdIdentityId = UUID.randomUUID().toString();
-    keycloakResponse.setUserId(createdIdentityId);
-    when(identityClient.createUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(keycloakResponse);
+    createdIdentityId = null;
+    cleanupIdentityId = null;
+    identityProvider =
+        BoundedIdentityHttpFixtures.givenProvider(
+            keycloakRestTemplate,
+            taskGrants,
+            taskIdentities,
+            environment,
+            objectMapper,
+            id -> {
+              createdIdentityId = id;
+              cleanupIdentityId = id;
+            });
+    BoundedIdentityHttpFixtures.givenTaskGrants(taskAuthHttp, taskJwtDecoder, taskIdentities);
+    givenVerifiedHuman(
+        "1c80e100-266f-4a02-a3a3-703f236f4a63", 0L, List.of("tenant-admin", "agency-admin"));
     var resolved = new EmailBranding("Test product", null, "#124078", null, null);
     when(branding.resolve(Mockito.nullable(Long.class))).thenReturn(resolved);
     when(brandValues.values(Mockito.eq(resolved), Mockito.nullable(Long.class)))
@@ -179,25 +187,8 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
   }
 
   private void givenCurrentSetupIdentity(CreateAdminDTO input, AccountInviteTargetRole role) {
-    cleanupIdentityId = createdIdentityId;
-    when(((IdentityProfileLookup) identityClient).findById(createdIdentityId))
-        .thenReturn(
-            Optional.of(
-                new IdentityProfile(
-                    createdIdentityId,
-                    new UsernameTranscoder().encodeUsername(input.getUsername()),
-                    null,
-                    null,
-                    input.getEmail())));
-    when(((IdentityRoleLookup) identityClient).findAllByUserId(createdIdentityId))
-        .thenReturn(
-            List.of(
-                role == AccountInviteTargetRole.TENANT_ADMIN
-                    ? "tenant-admin"
-                    : "restricted-agency-admin"));
-    when(((IdentityPasswordChangeRequirement) identityClient)
-            .requiresPasswordChange(createdIdentityId))
-        .thenReturn(true);
+    // The actual bounded creation command supplies the identity and setup-required projection.
+
   }
 
   private void assertIssuedSetup(AccountInviteTargetRole role, Long tenantId) {
@@ -212,8 +203,12 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
               assertThat(invite.getTargetRole()).isEqualTo(role);
               assertThat(invite.getTenantId()).isEqualTo(tenantId);
             });
-    org.mockito.Mockito.verify((IdentityPasswordChangeRequirement) identityClient)
-        .requiresPasswordChange(createdIdentityId);
+    assertThat(identityProvider.commands())
+        .anySatisfy(
+            command -> {
+              assertThat(command.operation()).isEqualTo("account.read");
+              assertThat(command.target()).isEqualTo(createdIdentityId);
+            });
   }
 
   @Test
@@ -252,7 +247,8 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
     assertIssuedSetup(AccountInviteTargetRole.AGENCY_ADMIN, 95L);
     var inactivity =
         jdbc.queryForMap(
-            "SELECT tenant_id,assigned_months,revision,status FROM account_inactivity WHERE identity_id=?",
+            "SELECT tenant_id,assigned_months,revision,status FROM account_inactivity WHERE"
+                + " identity_id=?",
             createdIdentityId);
     assertThat(((Number) inactivity.get("TENANT_ID")).longValue()).isEqualTo(95L);
     assertThat(((Number) inactivity.get("ASSIGNED_MONTHS")).intValue()).isEqualTo(24);
@@ -448,10 +444,22 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
     Mockito.doCallRealMethod().when(authenticatedUser).isTenantSuperAdmin();
     Mockito.doCallRealMethod().when(authenticatedUser).isPlatformAdmin();
     when(authenticatedUser.getTenantId()).thenReturn(tenantId);
+    givenVerifiedHuman(
+        "1c80e100-266f-4a02-a3a3-703f236f4a63",
+        tenantId,
+        authenticatedUser.getRoles() == null
+            ? List.of("tenant-admin")
+            : new java.util.ArrayList<>(authenticatedUser.getRoles()));
   }
 
   private void givenCallerBelongsToTenant(Long tenantId) {
     when(authenticatedUser.getTenantId()).thenReturn(tenantId);
+    givenVerifiedHuman(
+        "1c80e100-266f-4a02-a3a3-703f236f4a63",
+        tenantId,
+        authenticatedUser.getRoles() == null
+            ? List.of("tenant-admin")
+            : new java.util.ArrayList<>(authenticatedUser.getRoles()));
   }
 
   private void givenTenantSuperAdmin() {
@@ -462,5 +470,29 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
     when(tenantResolverService.resolve(any())).thenReturn(95L);
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().subdomain("subdomain"));
+  }
+
+  private void givenVerifiedHuman(String id, Long tenant, List<String> roles) {
+    var previous =
+        org.springframework.security.core.context.SecurityContextHolder.getContext()
+            .getAuthentication();
+    if (previous == null) return;
+    if (lifecycle.snapshot(id).isEmpty()) {
+      var capturedAt = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+      lifecycle.assignAtCreation(id, tenant, 24, 0, capturedAt);
+      fixtureLifecycleRows.put(id, capturedAt);
+    }
+    var token =
+        Jwt.withTokenValue("synthetic-human-session")
+            .header("alg", "RS256")
+            .subject(id)
+            .claim("azp", "app")
+            .claim("tenantId", tenant == null ? null : tenant.toString())
+            .claim("realm_access", Map.of("roles", roles))
+            .issuedAt(Instant.now())
+            .expiresAt(Instant.now().plusSeconds(300))
+            .build();
+    TestSecurityContextHolder.setAuthentication(
+        new JwtAuthenticationToken(token, previous.getAuthorities()));
   }
 }

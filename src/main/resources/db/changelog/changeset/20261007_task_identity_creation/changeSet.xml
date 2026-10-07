@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+<changeSet id="20261007-task-identity-creation" author="oriso">
+<createTable tableName="identity_creation_attempt">
+<column name="id" type="VARCHAR(36)"><constraints nullable="false" primaryKey="true"/></column>
+<column name="request_key" type="VARCHAR(64)"><constraints unique="true"/></column>
+<column name="account_id" type="VARCHAR(64)"><constraints unique="true"/></column>
+<column name="creation_proof" type="VARCHAR(256)"/>
+<column name="origin_kind" type="VARCHAR(32)"><constraints nullable="false"/></column>
+<column name="registration_kind" type="VARCHAR(32)"><constraints nullable="false"/></column>
+<column name="tenant_id" type="BIGINT"/>
+<column name="initial_roles" type="VARCHAR(512)"><constraints nullable="false"/></column>
+<column name="authorized_agency_ids" type="VARCHAR(512)"/>
+<column name="provenance" type="VARCHAR(128)"><constraints nullable="false"/></column>
+<column name="status" type="VARCHAR(32)"><constraints nullable="false"/></column>
+<column name="execution_claim" type="VARCHAR(36)"/>
+<column name="execution_expires_at" type="DATETIME(6)"/>
+<column name="bootstrap_session_id" type="BIGINT"/>
+<column name="bootstrap_expires_at" type="DATETIME(6)"/>
+<column name="bootstrap_failed_at" type="DATETIME(6)"/>
+<column name="update_date" type="DATETIME(6)"><constraints nullable="false"/></column>
+</createTable>
+<createIndex tableName="identity_creation_attempt" indexName="idx_identity_creation_pending"><column name="status"/><column name="execution_claim" type="VARCHAR(36)"/>
+<column name="execution_expires_at" type="DATETIME(6)"/>
+<column name="update_date"/></createIndex>
+<createIndex tableName="identity_creation_attempt" indexName="idx_identity_creation_request"><column name="request_key"/><column name="status"/></createIndex>
+<rollback><dropTable tableName="identity_creation_attempt"/></rollback>
+</changeSet></databaseChangeLog>

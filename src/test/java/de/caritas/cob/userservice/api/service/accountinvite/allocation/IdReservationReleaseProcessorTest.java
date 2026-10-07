@@ -52,7 +52,7 @@ class IdReservationReleaseProcessorTest {
   void process_ShouldDeleteTask_WhenReleaseSucceeds() {
     IdReservationReleaseTask task = task(IdReservationReleaseType.TENANT, 41L, null);
     when(taskRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
-    when(tenantIdAllocationClient.release(41L)).thenReturn(true);
+    when(tenantIdAllocationClient.release(41L, "owner-proof")).thenReturn(true);
 
     assertThat(processor.process(1L)).isTrue();
 
@@ -65,7 +65,7 @@ class IdReservationReleaseProcessorTest {
     IdReservationReleaseTask task = task(IdReservationReleaseType.AGENCY, 73L, 12L);
     TenantContext.setCurrentTenantData(new TenantData(99L, "original"));
     when(taskRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
-    when(agencyIdAllocationClient.release(73L))
+    when(agencyIdAllocationClient.release(73L, "owner-proof"))
         .thenAnswer(
             invocation -> {
               assertThat(TenantContext.getCurrentTenant()).isEqualTo(12L);
@@ -95,7 +95,7 @@ class IdReservationReleaseProcessorTest {
   void process_ShouldRetainTaskAndClearTenantContext_WhenClientThrows() {
     IdReservationReleaseTask task = task(IdReservationReleaseType.TENANT, 41L, 12L);
     when(taskRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
-    when(tenantIdAllocationClient.release(41L))
+    when(tenantIdAllocationClient.release(41L, "owner-proof"))
         .thenThrow(new IllegalStateException("ledger unreachable"));
 
     assertThat(processor.process(1L)).isFalse();
@@ -106,6 +106,18 @@ class IdReservationReleaseProcessorTest {
     verify(taskRepository).save(task);
   }
 
+  @Test
+  void legacyTaskWithoutOwnershipProofStaysPendingWithoutExternalMutation() {
+    IdReservationReleaseTask task = task(IdReservationReleaseType.AGENCY, 73L, 12L);
+    task.setReservationToken(null);
+    when(taskRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
+
+    assertThat(processor.process(1L)).isFalse();
+    org.mockito.Mockito.verifyNoInteractions(agencyIdAllocationClient, tenantIdAllocationClient);
+    verify(taskRepository).save(task);
+    verify(taskRepository, never()).delete(task);
+  }
+
   private IdReservationReleaseTask task(
       IdReservationReleaseType type, Long reservedId, Long tenantContextId) {
     return IdReservationReleaseTask.builder()
@@ -113,6 +125,7 @@ class IdReservationReleaseProcessorTest {
         .allocationType(type)
         .reservedId(reservedId)
         .tenantContextId(tenantContextId)
+        .reservationToken("owner-proof")
         .createDate(LocalDateTime.now())
         .build();
   }

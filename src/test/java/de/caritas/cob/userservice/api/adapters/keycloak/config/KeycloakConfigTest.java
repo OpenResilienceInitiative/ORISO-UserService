@@ -63,62 +63,49 @@ class KeycloakConfigTest {
   }
 
   @Test
-  void keycloakAdminClientMeasuresTokenAndAdminRequestsWithoutSensitiveTags() throws IOException {
+  void runtimeCannotConstructTheRetiredNativeAdministratorClient() {
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> keycloakConfig.keycloak(new OutboundHttpMetrics(new SimpleMeterRegistry())))
+        .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+    assertThat(
+            java.util.Arrays.stream(KeycloakConfig.class.getDeclaredMethods())
+                .filter(
+                    method ->
+                        method.getReturnType().equals(org.keycloak.admin.client.Keycloak.class))
+                .noneMatch(
+                    method ->
+                        method.isAnnotationPresent(
+                            org.springframework.context.annotation.Bean.class)))
+        .isTrue();
+  }
+
+  @Test
+  void boundedRestTemplateStillMeasuresRequestsWithoutSensitiveTags() throws IOException {
     var registry = new SimpleMeterRegistry();
     startKeycloakStub();
-    configureKeycloak();
-
-    try (var keycloak = keycloakConfig.keycloak(new OutboundHttpMetrics(registry))) {
-      assertThat(keycloak.realm("oriso").users().count()).isZero();
-    }
-
+    var http =
+        keycloakConfig.keycloakRestTemplate(
+            new org.springframework.boot.restclient.RestTemplateBuilder(),
+            new OutboundHttpMetrics(registry));
+    assertThat(
+            http.getForObject(
+                "http://localhost:"
+                    + server.getAddress().getPort()
+                    + "/realms/oriso/oriso-commands/v1/accounts/account",
+                String.class))
+        .isEqualTo("0");
     assertThat(
             registry
                 .get("userservice.outbound.http.calls")
-                .tags("dependency", "keycloak", "method", "post", "outcome", "2xx")
+                .tags("dependency", "localhost", "method", "get", "outcome", "2xx")
                 .counter()
                 .count())
         .isEqualTo(1);
-    assertThat(
-            registry
-                .get("userservice.outbound.http.calls")
-                .tags("dependency", "keycloak", "method", "get", "outcome", "2xx")
-                .counter()
-                .count())
-        .isEqualTo(1);
-    assertThat(
-            registry
-                .get("userservice.outbound.http.latency")
-                .tags("dependency", "keycloak", "method", "get", "outcome", "2xx")
-                .timer()
-                .count())
-        .isEqualTo(1);
-    assertThat(
-            registry
-                .get("userservice.outbound.http.payload")
-                .tags("dependency", "keycloak", "direction", "request")
-                .summary()
-                .count())
-        .isEqualTo(2);
-    assertThat(
-            registry
-                .get("userservice.outbound.http.payload")
-                .tags("dependency", "keycloak", "direction", "request")
-                .summary()
-                .totalAmount())
-        .isPositive();
-    assertThat(
-            registry
-                .get("userservice.outbound.http.payload")
-                .tags("dependency", "keycloak", "direction", "response")
-                .summary()
-                .count())
-        .isEqualTo(2);
     assertThat(registry.getMeters())
         .allSatisfy(
             meter ->
                 assertThat(meter.getId().getTags().toString())
-                    .doesNotContain("protocol", "admin", "oriso", "password"));
+                    .doesNotContain("account", "oriso", "password"));
   }
 
   private void startKeycloakStub() throws IOException {

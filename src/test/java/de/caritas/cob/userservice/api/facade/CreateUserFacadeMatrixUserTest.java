@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.facade;
 
-import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.CREATED_IDENTITY_WITH_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
@@ -64,16 +63,24 @@ class CreateUserFacadeMatrixUserTest {
 
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
+    org.mockito.Mockito.lenient()
+        .when(agencyVerifier.getVerifiedAgency(any(), org.mockito.ArgumentMatchers.anyInt()))
+        .thenAnswer(
+            call ->
+                new de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO()
+                    .id(call.getArgument(0))
+                    .consultingType(call.getArgument(1)));
     createUserFacade =
         new CreateUserFacade(
             chatRecoveryEnrollmentPolicyService,
             inactivityEnrollment,
             de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
             userVerifier,
-            identityClient,
-            identityAccountRemover,
-            identityPasswordUpdater,
-            identityDummyEmailUpdater,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.adapters.keycloak.commands
+                    .IdentityCreationLocalCompletion.class),
+            identityProvisioning,
+            userHelper,
             userService,
             consultingTypeManager,
             agencyVerifier,
@@ -109,6 +116,12 @@ class CreateUserFacadeMatrixUserTest {
   private CreateUserFacade createUserFacade;
 
   @Mock private UserVerifier userVerifier;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityAccountProvisioning
+      identityProvisioning;
+
+  @Mock private de.caritas.cob.userservice.api.helper.UserHelper userHelper;
   @Mock private IdentityClient identityClient;
   @Mock private IdentityAccountRemover identityAccountRemover;
   @Mock private IdentityPasswordUpdater identityPasswordUpdater;
@@ -147,7 +160,10 @@ class CreateUserFacadeMatrixUserTest {
 
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityProvisioning.create(any(), any(), any()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+                .CreationResult(java.util.UUID.randomUUID(), USER_ID, "own-proof", "OPEN"));
 
     var createdUser =
         new User(

@@ -34,7 +34,6 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
-import jakarta.ws.rs.NotFoundException;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,6 +50,14 @@ class CreateAdminServiceTest {
   @Mock
   private de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
       inactivityEnrollment;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationLocalCompletion
+      localCompletion;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityAccountProvisioning
+      identityProvisioning;
 
   @InjectMocks private CreateAdminService createAdminService;
 
@@ -77,6 +84,7 @@ class CreateAdminServiceTest {
 
   @BeforeEach
   void inactivityPolicy() {
+    de.caritas.cob.userservice.api.testHelper.VerifiedCreationCallerFixture.install();
     org.mockito.Mockito.lenient()
         .when(
             inactivityEnrollment.capture(
@@ -85,6 +93,28 @@ class CreateAdminServiceTest {
                     de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
                         .class)))
         .thenReturn(inactivityPolicy);
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void clearCaller() {
+    org.springframework.security.core.context.SecurityContextHolder.clearContext();
+  }
+
+  @Test
+  void failedAtomicFinalStepRecordsCompensationBeforeDeletingItsOwnLocalRows() {
+    givenKeycloakCreatesUser();
+    var input = givenValidCreateAdminDTO(42);
+    doThrow(new IllegalStateException("last local transaction failed"))
+        .when(localCompletion)
+        .admin(any());
+    assertThrows(
+        InternalServerErrorException.class, () -> createAdminService.createNewTenantAdmin(input));
+    var order =
+        org.mockito.Mockito.inOrder(identityProvisioning, adminRepository, inactivityEnrollment);
+    order.verify(identityProvisioning).compensateForLocalRollback("kc-user-id");
+    order.verify(adminRepository).deleteById("kc-user-id");
+    order.verify(inactivityEnrollment).discardUncompletedCreation("kc-user-id", inactivityPolicy);
+    verifyNoInteractions(accountSetupIssuer);
   }
 
   @Test
@@ -132,7 +162,7 @@ class CreateAdminServiceTest {
         .isSameAs(failure);
     verify(adminRepository).deleteById("kc-user-id");
     verify(inactivityEnrollment).discardUncompletedCreation("kc-user-id", inactivityPolicy);
-    verify(identityAccountRemover).rollbackUser("kc-user-id");
+    verify(identityProvisioning).compensateForLocalRollback("kc-user-id");
   }
 
   @Test
@@ -150,7 +180,7 @@ class CreateAdminServiceTest {
         InternalServerErrorException.class, () -> createAdminService.createNewTenantAdmin(admin));
 
     verify(inactivityEnrollment).discardUncompletedCreation("kc-user-id", inactivityPolicy);
-    verify(identityAccountRemover).rollbackUser("kc-user-id");
+    verify(identityProvisioning).compensateForLocalRollback("kc-user-id");
   }
 
   @Test
@@ -162,22 +192,57 @@ class CreateAdminServiceTest {
     admin.setPassword("initial-secret");
 
     createAdminService.createNewTenantAdmin(admin);
-    verify(identityPasswordUpdater).updateTemporaryPassword("kc-user-id", "initial-secret");
+
     verify(accountSetupIssuer)
         .issueAfterCreation(AccountInviteTargetRole.TENANT_ADMIN, "kc-user-id", "initial-secret");
 
-    createAdminService.createNewTenantAdminFromInvite(admin);
-    verify(identityPasswordUpdater).updatePassword("kc-user-id", "initial-secret");
+    createAdminService.createNewTenantAdminFromInvite(
+        admin,
+        de.caritas.cob.userservice.api.model.AccountInvite.builder()
+            .id(1L)
+            .tenantId(admin.getTenantId().longValue())
+            .purpose(
+                de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose.INVITE)
+            .targetRole(
+                de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole
+                    .TENANT_ADMIN)
+            .status(
+                de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.EMAIL_SENT)
+            .build());
 
     admin.setPassword("agency-secret");
     createAdminService.createNewAgencyAdmin(admin);
-    verify(identityPasswordUpdater).updateTemporaryPassword("kc-user-id", "agency-secret");
+
     verify(accountSetupIssuer)
         .issueAfterCreation(AccountInviteTargetRole.AGENCY_ADMIN, "kc-user-id", "agency-secret");
 
     admin.setTenantId(42);
-    createAdminService.createNewAgencyAdminInTenant(admin);
-    verify(identityPasswordUpdater).updatePassword("kc-user-id", "agency-secret");
+    createAdminService.createNewAgencyAdminInTenant(
+        admin,
+        de.caritas.cob.userservice.api.model.AccountInvite.builder()
+            .id(1L)
+            .tenantId(admin.getTenantId().longValue())
+            .purpose(
+                de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose.INVITE)
+            .targetRole(
+                de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole
+                    .AGENCY_ADMIN)
+            .status(
+                de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.EMAIL_SENT)
+            .build());
+    var commands =
+        org.mockito.ArgumentCaptor.forClass(
+            de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+                .AccountCreation.class);
+    verify(identityProvisioning, org.mockito.Mockito.times(4))
+        .create(any(), commands.capture(), any());
+    assertThat(commands.getAllValues())
+        .extracting(command -> command.passwordTemporary())
+        .containsExactly(true, false, true, false);
+    assertThat(commands.getAllValues())
+        .extracting(command -> command.password())
+        .containsExactly("initial-secret", "initial-secret", "agency-secret", "agency-secret");
+    verifyNoInteractions(identityPasswordUpdater);
   }
 
   @Test
@@ -195,7 +260,7 @@ class CreateAdminServiceTest {
         .hasMessage("setup delivery failed");
 
     verify(adminRepository).saveAndFlush(any(Admin.class));
-    verify(identityAccountRemover, never()).rollbackUser(anyString());
+    verify(identityProvisioning, never()).compensateForLocalRollback(anyString());
   }
 
   @Test
@@ -219,46 +284,32 @@ class CreateAdminServiceTest {
   }
 
   @Test
-  void createNewAgencyAdmin_ShouldRollbackUser_WhenRoleAssignmentFails() {
-    CreatedIdentity keycloakResponse = new CreatedIdentity();
-    keycloakResponse.setUserId("kc-user-id");
-    when(identityClient.createUser(any(), anyString(), anyString())).thenReturn(keycloakResponse);
-    doThrow(new RuntimeException("role assignment failed"))
-        .when(identityClient)
-        .updateRole(anyString(), any(UserRole.class));
-
-    CreateAdminDTO createAdminDTO = easyRandom.nextObject(CreateAdminDTO.class);
-    createAdminDTO.setUsername("valid_username");
-    createAdminDTO.setEmail("valid@email.com");
-
+  void createNewAgencyAdmin_ShouldRollbackUser_WhenRoleAssignmentFails() throws Exception {
+    when(identityProvisioning.create(any(), any(), any()))
+        .thenThrow(new IllegalStateException("atomic creation failed"));
     assertThrows(
-        InternalServerErrorException.class,
-        () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
-
-    verify(identityAccountRemover).rollbackUser("kc-user-id");
+        IllegalStateException.class,
+        () -> createAdminService.createNewAgencyAdmin(givenValidCreateAdminDTO(9)));
+    verifyNoInteractions(adminRepository);
+    verify(identityProvisioning, never()).compensateForLocalRollback(anyString());
   }
 
   @Test
-  void createNewAgencyAdmin_ShouldThrowRoleNotFoundReason_AndRollbackUser_WhenRealmRoleIsMissing() {
-    CreatedIdentity keycloakResponse = new CreatedIdentity();
-    keycloakResponse.setUserId("kc-user-id");
-    when(identityClient.createUser(any(), anyString(), anyString())).thenReturn(keycloakResponse);
-    doThrow(new NotFoundException("HTTP 404 Not Found"))
-        .when(identityClient)
-        .updateRole(anyString(), any(UserRole.class));
-
-    CreateAdminDTO createAdminDTO = easyRandom.nextObject(CreateAdminDTO.class);
-    createAdminDTO.setUsername("valid_username");
-    createAdminDTO.setEmail("valid@email.com");
-
-    CustomValidationHttpStatusException exception =
+  void createNewAgencyAdmin_ShouldThrowRoleNotFoundReason_AndRollbackUser_WhenRealmRoleIsMissing()
+      throws Exception {
+    when(identityProvisioning.create(any(), any(), any()))
+        .thenThrow(
+            new CustomValidationHttpStatusException(
+                HttpStatusExceptionReason.ROLE_NOT_FOUND,
+                org.springframework.http.HttpStatus.BAD_REQUEST));
+    var exception =
         assertThrows(
             CustomValidationHttpStatusException.class,
-            () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
-
+            () -> createAdminService.createNewAgencyAdmin(givenValidCreateAdminDTO(9)));
     assertThat(exception.getCustomHttpHeaders().getFirst("X-Reason"))
         .isEqualTo(HttpStatusExceptionReason.ROLE_NOT_FOUND.name());
-    verify(identityAccountRemover).rollbackUser("kc-user-id");
+    verifyNoInteractions(adminRepository);
+    verify(identityProvisioning, never()).compensateForLocalRollback(anyString());
   }
 
   @Test
@@ -294,10 +345,12 @@ class CreateAdminServiceTest {
 
     // then
     assertThat(admin.getTenantId()).isEqualTo(9L);
-    var order = inOrder(adminScope, identityClient);
-    order.verify(adminScope).assertMay(AdminScope.Target.tenant(9L));
-    order.verify(identityClient).createUser(any(), anyString(), anyString());
-    verify(identityAccountRemover, never()).rollbackUser(anyString());
+    var order = inOrder(adminScope, identityProvisioning);
+    order
+        .verify(adminScope, org.mockito.Mockito.atLeastOnce())
+        .assertMay(AdminScope.Target.tenant(9L));
+    order.verify(identityProvisioning).create(any(), any(), any());
+    verify(identityProvisioning, never()).compensateForLocalRollback(anyString());
   }
 
   private CreateAdminDTO givenValidCreateAdminDTO(Integer tenantId) {
@@ -311,7 +364,10 @@ class CreateAdminServiceTest {
   private void givenKeycloakCreatesUser() {
     CreatedIdentity keycloakResponse = new CreatedIdentity();
     keycloakResponse.setUserId("kc-user-id");
-    when(identityClient.createUser(any(), anyString(), anyString())).thenReturn(keycloakResponse);
+    when(identityProvisioning.create(any(), any(), any()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+                .CreationResult(java.util.UUID.randomUUID(), "kc-user-id", "owned-proof", "OPEN"));
     when(adminRepository.saveAndFlush(any(Admin.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
   }

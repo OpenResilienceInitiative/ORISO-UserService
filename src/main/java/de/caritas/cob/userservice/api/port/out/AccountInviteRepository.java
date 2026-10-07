@@ -591,4 +591,8 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("tenantId") Long tenantId,
       @Param("targetRole") AccountInviteTargetRole targetRole,
       @Param("signedAt") LocalDateTime signedAt);
+
+  Optional<AccountInvite>
+      findFirstByAgencyIdAndTenantIdAndAgencyReservationTokenIsNotNullOrderByCreateDateDesc(
+          Long agencyId, Long tenantId);
 }

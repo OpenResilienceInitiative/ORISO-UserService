@@ -50,7 +50,10 @@ public class TenantSystemEmailClient {
 
   @SuppressWarnings("unchecked")
   public Map<String, Object> readTenant(long tenantId) {
-    String url = endpoint(tenantId, "");
+    String url =
+        endpoint(tenantId, "")
+            .replace(
+                "/tenant/" + tenantId, "/internal/tenants/" + tenantId + "/system-email-context");
     Map<?, ?> response =
         restTemplate
             .exchange(url, HttpMethod.GET, new HttpEntity<Void>(technicalHeaders()), Map.class)
@@ -176,12 +179,13 @@ public class TenantSystemEmailClient {
   }
 
   private HttpHeaders technicalHeaders() {
-    var account = identityConfig.getTechnicalUser();
+    var account =
+        identityConfig.getTaskIdentity(
+            de.caritas.cob.userservice.api.config.auth.TaskIdentity.NOTIFICATION_DISPATCH);
     if (account == null || account.getClientId() == null || account.getClientSecret() == null) {
       throw new IllegalStateException("Identity technical account is not configured");
     }
-    String token =
-        authentication.loginService(account.getClientId(), account.getClientSecret()).accessToken();
+    String token = authentication.loginTask(account).accessToken();
     return headerSupplier.getKeycloakAndCsrfHttpHeaders(token);
   }
 

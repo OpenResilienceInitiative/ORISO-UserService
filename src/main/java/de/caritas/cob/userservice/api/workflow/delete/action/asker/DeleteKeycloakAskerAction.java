@@ -31,7 +31,13 @@ public class DeleteKeycloakAskerAction extends DeleteKeycloakUserAction
   @Override
   public void execute(AskerDeletionWorkflowDTO actionTarget) {
     try {
-      this.deleteUserWithId(actionTarget.getUser().getUserId());
+      this.deleteUserWithId(
+          actionTarget.getUser().getUserId(),
+          actionTarget.getLifecycleDeletionAuthorization() != null
+              ? actionTarget.getLifecycleDeletionAuthorization()
+              : de.caritas.cob.userservice.api.adapters.keycloak.commands
+                  .IdentityCommandAuthorization.persistedDeletion(
+                  actionTarget.getUser(), "account.delete"));
     } catch (Exception e) {
       log.error("UserService delete workflow error: ", e);
       actionTarget

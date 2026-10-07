@@ -64,7 +64,9 @@ public class AppointmentService {
       ObjectMapper mapper = getObjectMapper(false);
       ConsultantApi appointmentConsultantApi =
           this.appointmentConsultantServiceApiControllerFactory.createControllerApi();
-      addTechnicalUserHeaders(appointmentConsultantApi.getApiClient());
+      addTechnicalUserHeaders(
+          appointmentConsultantApi.getApiClient(),
+          de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_SYNC);
       de.caritas.cob.userservice.appointmentservice.generated.web.model.ConsultantDTO consultant =
           getConsultantDTO(consultantAdminResponseDTO, mapper);
       appointmentConsultantApi.createConsultant(consultant);
@@ -108,7 +110,9 @@ public class AppointmentService {
 
     if (consultantAdminResponseDTO != null) {
       ObjectMapper mapper = getObjectMapper(false);
-      addTechnicalUserHeaders(appointmentConsultantApi.getApiClient());
+      addTechnicalUserHeaders(
+          appointmentConsultantApi.getApiClient(),
+          de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_SYNC);
       try {
         de.caritas.cob.userservice.appointmentservice.generated.web.model.ConsultantDTO consultant =
             mapper.readValue(
@@ -141,7 +145,9 @@ public class AppointmentService {
         this.appointmentConsultantServiceApiControllerFactory.createControllerApi();
 
     if (consultantId != null && !consultantId.isEmpty()) {
-      addTechnicalUserHeaders(appointmentConsultantApi.getApiClient());
+      addTechnicalUserHeaders(
+          appointmentConsultantApi.getApiClient(),
+          de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_CLEANUP);
       try {
         appointmentConsultantApi.deleteConsultant(consultantId);
       } catch (HttpClientErrorException ex) {
@@ -162,10 +168,10 @@ public class AppointmentService {
   }
 
   @SuppressWarnings("Duplicates")
-  private void addTechnicalUserHeaders(ApiClient apiClient) {
-    var techUser = identityClientConfig.getTechnicalUser();
-    var identityLogin =
-        identityAuthentication.loginService(techUser.getClientId(), techUser.getClientSecret());
+  private void addTechnicalUserHeaders(
+      ApiClient apiClient, de.caritas.cob.userservice.api.config.auth.TaskIdentity task) {
+    var techUser = identityClientConfig.getTaskIdentity(task);
+    var identityLogin = identityAuthentication.loginTask(techUser);
     var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
     tenantHeaderSupplier.addTenantHeader(headers);
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
@@ -179,7 +185,9 @@ public class AppointmentService {
     AgencyApi controllerApi =
         this.appointmentAgencyServiceApiControllerFactory.createControllerApi();
 
-    addTechnicalUserHeaders(controllerApi.getApiClient());
+    addTechnicalUserHeaders(
+        controllerApi.getApiClient(),
+        de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_SYNC);
     var agencies =
         agencyList.stream()
             .map(CreateConsultantAgencyDTO::getAgencyId)
@@ -196,7 +204,9 @@ public class AppointmentService {
     }
     de.caritas.cob.userservice.appointmentservice.generated.web.AskerApi controllerApi =
         this.appointmentAskerServiceApiControllerFactory.createControllerApi();
-    addTechnicalUserHeaders(controllerApi.getApiClient());
+    addTechnicalUserHeaders(
+        controllerApi.getApiClient(),
+        de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_CLEANUP);
     controllerApi.deleteAskerData(askerId);
   }
 
@@ -231,7 +241,9 @@ public class AppointmentService {
         this.appointmentConsultantServiceApiControllerFactory.createControllerApi();
 
     if (consultantId != null && !consultantId.isEmpty()) {
-      addTechnicalUserHeaders(appointmentConsultantApi.getApiClient());
+      addTechnicalUserHeaders(
+          appointmentConsultantApi.getApiClient(),
+          de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_SYNC);
       try {
         appointmentConsultantApi.patchConsultant(
             consultantId,

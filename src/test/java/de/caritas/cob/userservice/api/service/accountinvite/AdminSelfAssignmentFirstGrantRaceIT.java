@@ -120,6 +120,9 @@ class AdminSelfAssignmentFirstGrantRaceIT {
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
   @Autowired private AuthenticatedUser caller;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.consultingtype.TopicService topicService;
+
   @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private AgencyService agencyService;
 

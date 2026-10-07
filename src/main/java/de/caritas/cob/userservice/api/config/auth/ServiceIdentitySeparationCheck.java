@@ -7,30 +7,89 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-/** Backend technical, admin and human clients must remain separate identities. */
+/** Task clients and proof keys stay distinct from each other and the human client. */
 @Component
 @RequiredArgsConstructor
 public class ServiceIdentitySeparationCheck {
   private final @NonNull KeycloakCustomConfig keycloakCustomConfig;
   private final @NonNull IdentityClientConfig identityClientConfig;
 
+  @org.springframework.beans.factory.annotation.Value("${identity.consultant-import.client-id:}")
+  private String consultantImportClientId;
+
+  @org.springframework.beans.factory.annotation.Value(
+      "${identity.consultant-import.service-subject:}")
+  private String consultantImportSubject;
+
+  @org.springframework.beans.factory.annotation.Value("${oriso.commands.provisioning-origin-key:}")
+  private String provisioningOriginKey;
+
+  @org.springframework.beans.factory.annotation.Value("${oriso.commands.maintenance-origin-key:}")
+  private String maintenanceOriginKey;
+
+  @org.springframework.beans.factory.annotation.Value(
+      "${oriso.commands.wizard-policy-context-key:}")
+  private String wizardPolicyContextKey;
+
   @PostConstruct
   public void verifyBackendClients() {
-    var technical = identityClientConfig.getTechnicalUser();
-    if (technical == null
-        || blank(technical.getClientId())
-        || blank(technical.getClientSecret())
-        || blank(keycloakCustomConfig.getAdminClientId())
-        || blank(keycloakCustomConfig.getAdminClientSecret())
-        || blank(keycloakCustomConfig.getAdminServiceSubject())
-        || blank(keycloakCustomConfig.getAppClientId())
-        || technical.getClientId().equals(keycloakCustomConfig.getAdminClientId())
-        || technical.getClientId().equals(keycloakCustomConfig.getAppClientId())
-        || keycloakCustomConfig.getAdminClientId().equals(keycloakCustomConfig.getAppClientId())
-        || technical.getClientSecret().equals(keycloakCustomConfig.getAdminClientSecret())) {
+    if (blank(keycloakCustomConfig.getAppClientId()))
       throw new IllegalStateException(
-          "Configure distinct confidential technical/admin clients and secrets, separate from the human app client");
+          "Configure the human application client separately from task identities");
+    var clients = new java.util.HashSet<String>();
+    var secrets = new java.util.HashSet<String>();
+    var subjects = new java.util.HashSet<String>();
+    for (var task : TaskIdentity.values()) {
+      var configured = identityClientConfig.getTaskIdentity(task);
+      if (configured == null
+          || blank(configured.getClientId())
+          || blank(configured.getClientSecret())
+          || blank(configured.getServiceSubject())
+          || configured.getClientId().equals(keycloakCustomConfig.getAppClientId())
+          || !clients.add(configured.getClientId())
+          || !secrets.add(configured.getClientSecret())
+          || !subjects.add(configured.getServiceSubject()))
+        throw new IllegalStateException(
+            "Configure distinct task clients, subjects and secrets, separate from the human app client");
     }
+    if (blank(consultantImportClientId)
+        || blank(consultantImportSubject)
+        || consultantImportClientId.equals(keycloakCustomConfig.getAppClientId())
+        || clients.contains(consultantImportClientId)
+        || subjects.contains(consultantImportSubject))
+      throw new IllegalStateException(
+          "Configure a separate incoming consultant-import client and subject");
+    byte[] provisioning = key(provisioningOriginKey);
+    byte[] maintenance = key(maintenanceOriginKey);
+    byte[] wizard = key(wizardPolicyContextKey);
+    if (java.security.MessageDigest.isEqual(provisioning, maintenance)
+        || java.security.MessageDigest.isEqual(provisioning, wizard)
+        || java.security.MessageDigest.isEqual(maintenance, wizard)
+        || secrets.stream()
+            .anyMatch(
+                secret ->
+                    sameSecret(secret, provisioningOriginKey, provisioning)
+                        || sameSecret(secret, maintenanceOriginKey, maintenance)
+                        || sameSecret(secret, wizardPolicyContextKey, wizard)))
+      throw new IllegalStateException(
+          "Command origin keys must be distinct from task client credentials");
+  }
+
+  private static byte[] key(String encoded) {
+    try {
+      byte[] key = java.util.Base64.getDecoder().decode(encoded == null ? "" : encoded);
+      if (key.length < 32) throw new IllegalArgumentException();
+      return key;
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalStateException(
+          "Configure distinct managed command origin keys of at least 256 bits");
+    }
+  }
+
+  private static boolean sameSecret(String secret, String encoded, byte[] decoded) {
+    return secret.equals(encoded)
+        || java.security.MessageDigest.isEqual(
+            secret.getBytes(java.nio.charset.StandardCharsets.UTF_8), decoded);
   }
 
   private static boolean blank(String value) {

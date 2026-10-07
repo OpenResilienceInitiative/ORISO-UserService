@@ -210,7 +210,40 @@ public class PasswordResetService {
     }
 
     try {
-      identityPasswordUpdater.updatePassword(claim.get().subjectId(), newPassword);
+      var resetSubject = claim.get().subjectId();
+      var origin =
+          TenantContext.supplyAcrossTenants(
+              () ->
+                  userService
+                      .getUser(resetSubject)
+                      .map(
+                          target ->
+                              de.caritas.cob.userservice.api.adapters.keycloak.commands
+                                  .IdentityCommandAuthorization.claimedPasswordReset(
+                                  claim.get(), target))
+                      .or(
+                          () ->
+                              consultantService
+                                  .getConsultant(resetSubject)
+                                  .map(
+                                      target ->
+                                          de.caritas.cob.userservice.api.adapters.keycloak.commands
+                                              .IdentityCommandAuthorization.claimedPasswordReset(
+                                              claim.get(), target)))
+                      .or(
+                          () ->
+                              adminRepository
+                                  .findById(resetSubject)
+                                  .map(
+                                      target ->
+                                          de.caritas.cob.userservice.api.adapters.keycloak.commands
+                                              .IdentityCommandAuthorization.claimedPasswordReset(
+                                              claim.get(), target)))
+                      .orElseThrow(
+                          () ->
+                              new org.springframework.security.access.AccessDeniedException(
+                                  "Password reset claim has no persisted account owner")));
+      identityPasswordUpdater.updatePassword(resetSubject, newPassword, origin);
     } catch (CustomValidationHttpStatusException ex) {
       // Definitive password-policy rejection: Keycloak did NOT apply the password, so the token
       // can safely be restored for a retry with a different password via the same emailed link

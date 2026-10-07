@@ -267,7 +267,10 @@ public class CounsellorOnboardingService {
 
     var profile =
         identityProfileLookup
-            .findById(invite.getAcceptedByUserId())
+            .findById(
+                invite.getAcceptedByUserId(),
+                de.caritas.cob.userservice.api.adapters.keycloak.commands
+                    .IdentityCommandAuthorization.acceptedInviteRead(invite))
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
     boolean valid =
@@ -478,7 +481,8 @@ public class CounsellorOnboardingService {
           invite.getAgencyId(),
           command.agencyName().trim(),
           invite.getTenantId(),
-          command.topicIds());
+          command.topicIds(),
+          invite.getAgencyReservationToken());
     } finally {
       restoreTenantContext(requestTenant);
     }
@@ -520,7 +524,13 @@ public class CounsellorOnboardingService {
       return;
     }
     try {
-      var profile = identityProfileLookup.findById(invite.getAcceptedByUserId()).orElse(null);
+      var profile =
+          identityProfileLookup
+              .findById(
+                  invite.getAcceptedByUserId(),
+                  de.caritas.cob.userservice.api.adapters.keycloak.commands
+                      .IdentityCommandAuthorization.acceptedInviteRead(invite))
+              .orElse(null);
       if (profile == null) {
         // The invite id identifies the record for support; the identity-provider user id is a
         // direct user identifier and must not be written to the log (#1008 review).

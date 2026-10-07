@@ -4,8 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -14,10 +12,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
-import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
@@ -56,7 +50,6 @@ import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
@@ -149,13 +142,29 @@ class MultiTenantRegistrationIT {
       })
   IdentityClient identityClient;
 
+  de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.Provider provider;
+
+  @MockitoBean
+  @org.springframework.beans.factory.annotation.Qualifier("restTemplate")
+  org.springframework.web.client.RestTemplate wizardHttp;
+
+  @MockitoBean
+  @org.springframework.beans.factory.annotation.Qualifier("keycloakRestTemplate")
+  org.springframework.web.client.RestTemplate boundedIdentityHttp;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant taskGrants;
+
+  @Autowired de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration taskIdentities;
+  @Autowired org.springframework.core.env.Environment environment;
+
   @MockitoBean TenantService tenantService;
   @MockitoBean AgencyService agencyService;
   @MockitoBean ConsultingTypeManager consultingTypeManager;
   @MockitoBean MatrixSynapseService matrixSynapseService;
 
   @MockitoBean TenantResolverService tenantResolverService;
-  @MockitoBean ConsultantAdminFacade consultantAdminFacade;
+
   @MockitoBean ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
   @MockitoBean TenantCreationClient tenantCreationClient;
   @MockitoBean OperatorDpaContentClient operatorDpaContentClient;
@@ -182,6 +191,19 @@ class MultiTenantRegistrationIT {
 
   @BeforeEach
   void oneAgencyOfTenantTwo() throws Exception {
+    provider =
+        de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenProvider(
+            boundedIdentityHttp,
+            taskGrants,
+            taskIdentities,
+            environment,
+            objectMapper,
+            id -> {
+              createdUserIds.add(id);
+              cleanups.add(() -> adminRepository.findById(id).ifPresent(adminRepository::delete));
+            });
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenWizardPolicy(
+        wizardHttp, taskIdentities, environment, objectMapper);
     dpaOwner =
         de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
             ownerFactory, TENANT);
@@ -190,8 +212,13 @@ class MultiTenantRegistrationIT {
     // The platform domain resolves to the main tenant, as with single-domain multitenancy.
     when(tenantResolverService.resolve(any())).thenReturn(1L);
     when(((IdentityAuthentication) identityClient).login(anyString(), anyString()))
-        .thenReturn(new IdentityLogin("access", 300, 1800, "refresh"));
-    when(((IdentityAuthentication) identityClient).loginService(anyString(), anyString()))
+        .thenAnswer(
+            call -> {
+              assertThat(provider.commands())
+                  .anyMatch(command -> command.operation().equals("account.commit"));
+              return new IdentityLogin("access", 300, 1800, "refresh");
+            });
+    when(((IdentityAuthentication) identityClient).loginTask(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new IdentityLogin("access", 300, 1800, "refresh"));
     when(((IdentityDummyEmailUpdater) identityClient).updateDummyEmail(anyString(), any()))
         .thenAnswer(call -> call.getArgument(0) + "@dummy.synthetic.oriso.test");
@@ -218,6 +245,7 @@ class MultiTenantRegistrationIT {
             .offline(false);
     when(agencyService.getAgency(AGENCY)).thenReturn(agency);
     when(agencyService.getAgencyWithoutCaching(AGENCY)).thenReturn(agency);
+    when(agencyService.getPublicImportAgency(AGENCY, TENANT)).thenReturn(agency);
     when(agencyService.getAgencies(any())).thenReturn(List.of(agency));
     var consultingType =
         new ExtendedConsultingTypeResponseDTO()
@@ -237,14 +265,6 @@ class MultiTenantRegistrationIT {
     when(consultingTypeManager.getConsultingTypeSettings(anyString())).thenReturn(consultingType);
     when(((IdentityUsernameAvailability) identityClient).isUsernameAvailable(anyString()))
         .thenReturn(true);
-    when(identityClient.createUser(any()))
-        .thenAnswer(
-            call -> {
-              var identity = new CreatedIdentity();
-              identity.setUserId(UUID.randomUUID().toString());
-              createdUserIds.add(identity.getUserId());
-              return identity;
-            });
   }
 
   @AfterEach
@@ -411,14 +431,6 @@ class MultiTenantRegistrationIT {
 
   @Test
   void acceptCounsellorInvite_Should_CreateTheCounsellorInTheInvitesTenant() throws Exception {
-    var tenantAtCreation = new java.util.concurrent.atomic.AtomicReference<Long>();
-    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
-        .thenAnswer(
-            call -> {
-              tenantAtCreation.set(TenantContext.getCurrentTenant());
-              return new ConsultantAdminResponseDTO()
-                  .embedded(new ConsultantDTO().id(UUID.randomUUID().toString()));
-            });
     var token = persistAccountInvite(AccountInviteTargetRole.COUNSELLOR);
 
     var result =
@@ -433,7 +445,15 @@ class MultiTenantRegistrationIT {
             .andReturn();
 
     assertStatus(result, 200);
-    assertThat(tenantAtCreation.get()).isEqualTo(TENANT);
+    assertThat(
+            Tenants.in(
+                TENANT,
+                () ->
+                    consultantRepository
+                        .findById(createdUserIds.getLast())
+                        .orElseThrow()
+                        .getTenantId()))
+        .isEqualTo(TENANT);
   }
 
   @Test
@@ -445,7 +465,8 @@ class MultiTenantRegistrationIT {
     var result = mockMvc.perform(acceptCounsellorInvite(token)).andReturn();
 
     assertStatus(result, 404);
-    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+    assertThat(provider.commands())
+        .noneMatch(command -> command.operation().equals("account.create"));
   }
 
   @Test
@@ -458,7 +479,8 @@ class MultiTenantRegistrationIT {
     var result = mockMvc.perform(acceptCounsellorInvite(token)).andReturn();
 
     assertStatus(result, 404);
-    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+    assertThat(provider.commands())
+        .noneMatch(command -> command.operation().equals("account.create"));
   }
 
   @Test
@@ -467,14 +489,6 @@ class MultiTenantRegistrationIT {
         .thenReturn(new OperatorDpaContentClient.OperatorDpa("dpa", "1"));
     when(((IdentitySecondFactor) identityClient).getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(false, "SECRET", "QR", null));
-    when(identityClient.createUser(any(), anyString(), anyString()))
-        .thenAnswer(
-            call -> {
-              var identity = new CreatedIdentity();
-              identity.setUserId(UUID.randomUUID().toString());
-              cleanups.add(() -> adminRepository.deleteById(identity.getUserId()));
-              return identity;
-            });
     var token = persistAccountInvite(AccountInviteTargetRole.TENANT_ADMIN);
 
     var result =

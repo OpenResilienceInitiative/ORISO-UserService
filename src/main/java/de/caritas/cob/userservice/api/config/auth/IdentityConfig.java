@@ -19,6 +19,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 @Data
 @Validated
 @Configuration
+@org.springframework.context.annotation.Import(TaskIdentityConfiguration.class)
 @ConfigurationProperties(prefix = "identity")
 public class IdentityConfig implements IdentityClientConfig, IdentityPolicy {
 
@@ -44,7 +45,16 @@ public class IdentityConfig implements IdentityClientConfig, IdentityPolicy {
 
   @NotNull private Boolean displayNameAllowedForConsultants;
 
-  @NotNull private TechnicalUserConfig technicalUser;
+  @org.springframework.beans.factory.annotation.Autowired
+  private TaskIdentityConfiguration taskIdentities;
+
+  // Compatibility projection for older tests/configuration only. Runtime callers use tasks.
+  private TechnicalUserConfig technicalUser;
+
+  @Override
+  public TaskIdentityCredentials getTaskIdentity(TaskIdentity task) {
+    return taskIdentities.require(task);
+  }
 
   @NotBlank
   @Pattern(regexp = "^@\\S+$")

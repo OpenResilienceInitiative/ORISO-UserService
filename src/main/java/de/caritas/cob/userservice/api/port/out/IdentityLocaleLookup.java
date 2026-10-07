@@ -9,4 +9,12 @@ import java.util.Optional;
 public interface IdentityLocaleLookup {
 
   Optional<String> findLocaleById(String userId);
+
+  default java.util.Optional<String> findLocaleById(
+      String userId,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          origin) {
+    throw new org.springframework.security.access.AccessDeniedException(
+        "Identity adapter must preserve explicit origin authorization");
+  }
 }

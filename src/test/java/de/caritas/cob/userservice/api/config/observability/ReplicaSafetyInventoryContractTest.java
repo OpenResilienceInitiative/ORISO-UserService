@@ -55,6 +55,7 @@ class ReplicaSafetyInventoryContractTest {
           "account-deletion-scheduler",
           "account-inactivity-expiry",
           "account-inactivity-bootstrap",
+          "owned-identity-creation-finalization",
           "anonymous-deletion-scheduler",
           "registered-only-deletion-scheduler",
           "temporary-account-deletion-scheduler",

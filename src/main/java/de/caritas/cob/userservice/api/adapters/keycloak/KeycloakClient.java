@@ -21,17 +21,22 @@ public class KeycloakClient {
 
   private final RestTemplate restTemplate;
 
-  private final Keycloak keycloak;
-
   private final KeycloakConfig keycloakConfig;
 
+  @org.springframework.beans.factory.annotation.Autowired
   public KeycloakClient(
-      @Qualifier("keycloakRestTemplate") final RestTemplate restTemplate,
-      final Keycloak keycloak,
-      final KeycloakConfig keycloakConfig) {
+      @Qualifier("keycloakRestTemplate") RestTemplate restTemplate, KeycloakConfig keycloakConfig) {
     this.restTemplate = restTemplate;
-    this.keycloak = keycloak;
     this.keycloakConfig = keycloakConfig;
+  }
+
+  /**
+   * Retained only for source compatibility; native administrator clients are never held or used.
+   */
+  @Deprecated
+  public KeycloakClient(
+      RestTemplate restTemplate, Keycloak ignored, KeycloakConfig keycloakConfig) {
+    this(restTemplate, keycloakConfig);
   }
 
   public <T> ResponseEntity<T> get(String bearerToken, String url, Class<T> responseType)
@@ -76,29 +81,29 @@ public class KeycloakClient {
     return restTemplate.exchange(url, HttpMethod.DELETE, entity, responseType);
   }
 
+  @Deprecated
   public UsersResource getUsersResource() {
-    return getRealmResource().users();
+    throw retired();
   }
 
+  @Deprecated
   public RealmResource getRealmResource() {
-    String realm = keycloakConfig.getRealm();
-    return keycloak.realm(realm);
+    throw retired();
   }
 
+  @Deprecated
   public String getBearerToken() {
-    return keycloak.tokenManager().getAccessTokenString();
+    throw retired();
   }
 
-  /**
-   * Forces a fresh admin token grant, bypassing the cached access token.
-   *
-   * <p>The keycloak-admin-client only refreshes its cached token when the token's own {@code exp}
-   * claim is close to expiry. It does not know that the underlying Keycloak session can be
-   * invalidated server-side earlier (e.g. by session-idle timeout), so a cached token can look
-   * valid locally while the admin REST API already rejects it with 401.
-   */
+  @Deprecated
   public void refreshAdminSession() {
-    keycloak.tokenManager().grantToken();
+    throw retired();
+  }
+
+  private org.springframework.security.access.AccessDeniedException retired() {
+    return new org.springframework.security.access.AccessDeniedException(
+        "Native administrator transport has been retired; use a bounded task command");
   }
 
   @NonNull

@@ -3,8 +3,6 @@ package de.caritas.cob.userservice.api.workflow.accountinactivity;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.sun.net.httpserver.HttpServer;
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient;
-import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.workflow.delete.service.InactiveAskerDeletionService;
@@ -13,7 +11,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
-import org.keycloak.admin.client.KeycloakBuilder;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -42,15 +39,11 @@ class DefaultAccountInactivityEffectsTest {
           "CREATE TABLE account_inactivity_matrix_state(identity_id VARCHAR(36),matrix_user_id"
               + " VARCHAR(255),original_locked BOOLEAN NOT NULL,PRIMARY"
               + " KEY(identity_id,matrix_user_id))");
-      var kcConfig = new KeycloakConfig();
-      kcConfig.setRealm("test");
-      try (var kc =
-          KeycloakBuilder.builder()
-              .serverUrl(remote.url())
-              .realm("test")
-              .authorization("test-token")
-              .build()) {
-        var client = new KeycloakClient(new RestTemplate(), kc, kcConfig);
+      jdbc.execute(
+          "CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,status VARCHAR(20))");
+      jdbc.execute("INSERT INTO account_inactivity VALUES('person',7,'SUSPENDING')");
+      {
+        var client = InactivityCommandTestSupport.lifecycle(jdbc, remote.url());
         var matrixConfig = new MatrixConfig();
         matrixConfig.setApiUrl(remote.url());
         matrixConfig.setAdminUsername("admin");
@@ -71,6 +64,8 @@ class DefaultAccountInactivityEffectsTest {
         assertThat(remote.enabled.get()).isFalse();
         assertThat(remote.locked.get()).isTrue();
         assertThat(remote.logouts.get()).isEqualTo(1);
+        jdbc.update(
+            "UPDATE account_inactivity SET status='REACTIVATING' WHERE identity_id='person'");
         assertThat(effects.reactivate("person")).isTrue();
         assertThat(remote.enabled.get()).isTrue();
         assertThat(remote.locked.get()).isTrue();
@@ -101,15 +96,11 @@ class DefaultAccountInactivityEffectsTest {
           "CREATE TABLE account_inactivity_matrix_state(identity_id VARCHAR(36),matrix_user_id"
               + " VARCHAR(255),original_locked BOOLEAN NOT NULL,PRIMARY"
               + " KEY(identity_id,matrix_user_id))");
-      var kcConfig = new KeycloakConfig();
-      kcConfig.setRealm("test");
-      try (var kc =
-          KeycloakBuilder.builder()
-              .serverUrl(remote.url())
-              .realm("test")
-              .authorization("test-token")
-              .build()) {
-        var client = new KeycloakClient(new RestTemplate(), kc, kcConfig);
+      jdbc.execute(
+          "CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,status VARCHAR(20))");
+      jdbc.execute("INSERT INTO account_inactivity VALUES('person',7,'SUSPENDING')");
+      {
+        var client = InactivityCommandTestSupport.lifecycle(jdbc, remote.url());
         var matrixConfig = new MatrixConfig();
         matrixConfig.setApiUrl(remote.url());
         matrixConfig.setAdminUsername("admin");
@@ -135,6 +126,8 @@ class DefaultAccountInactivityEffectsTest {
         assertThat(remote.enabled.get()).isFalse();
         remote.failMatrix.set(false);
         assertThat(effects.suspend("person")).isTrue();
+        jdbc.update(
+            "UPDATE account_inactivity SET status='REACTIVATING' WHERE identity_id='person'");
         assertThat(effects.reactivate("person")).isTrue();
         assertThat(remote.enabled.get()).isTrue();
         assertThat(remote.locked.get()).isFalse();
@@ -164,15 +157,11 @@ class DefaultAccountInactivityEffectsTest {
           "CREATE TABLE account_inactivity_matrix_state(identity_id VARCHAR(36),matrix_user_id"
               + " VARCHAR(255),original_locked BOOLEAN NOT NULL,PRIMARY"
               + " KEY(identity_id,matrix_user_id))");
-      var kcConfig = new KeycloakConfig();
-      kcConfig.setRealm("test");
-      try (var kc =
-          KeycloakBuilder.builder()
-              .serverUrl(remote.url())
-              .realm("test")
-              .authorization("test-token")
-              .build()) {
-        var client = new KeycloakClient(new RestTemplate(), kc, kcConfig);
+      jdbc.execute(
+          "CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,status VARCHAR(20))");
+      jdbc.execute("INSERT INTO account_inactivity VALUES('person',7,'SUSPENDING')");
+      {
+        var client = InactivityCommandTestSupport.lifecycle(jdbc, remote.url());
         var matrixConfig = new MatrixConfig();
         matrixConfig.setApiUrl(remote.url());
         matrixConfig.setAdminUsername("admin");
@@ -224,15 +213,11 @@ class DefaultAccountInactivityEffectsTest {
           "CREATE TABLE account_inactivity_matrix_state(identity_id VARCHAR(36),matrix_user_id"
               + " VARCHAR(255),original_locked BOOLEAN NOT NULL,PRIMARY"
               + " KEY(identity_id,matrix_user_id))");
-      var kcConfig = new KeycloakConfig();
-      kcConfig.setRealm("test");
-      try (var kc =
-          KeycloakBuilder.builder()
-              .serverUrl(remote.url())
-              .realm("test")
-              .authorization("test-token")
-              .build()) {
-        var client = new KeycloakClient(new RestTemplate(), kc, kcConfig);
+      jdbc.execute(
+          "CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,status VARCHAR(20))");
+      jdbc.execute("INSERT INTO account_inactivity VALUES('person',7,'SUSPENDING')");
+      {
+        var client = InactivityCommandTestSupport.lifecycle(jdbc, remote.url());
         var matrixConfig = new MatrixConfig();
         matrixConfig.setApiUrl(remote.url());
         matrixConfig.setAdminUsername("admin");
@@ -286,15 +271,11 @@ class DefaultAccountInactivityEffectsTest {
           "CREATE TABLE account_inactivity_matrix_state(identity_id VARCHAR(36),matrix_user_id"
               + " VARCHAR(255),original_locked BOOLEAN NOT NULL,PRIMARY"
               + " KEY(identity_id,matrix_user_id))");
-      var kcConfig = new KeycloakConfig();
-      kcConfig.setRealm("test");
-      try (var kc =
-          KeycloakBuilder.builder()
-              .serverUrl(remote.url())
-              .realm("test")
-              .authorization("test-token")
-              .build()) {
-        var client = new KeycloakClient(new RestTemplate(), kc, kcConfig);
+      jdbc.execute(
+          "CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,status VARCHAR(20))");
+      jdbc.execute("INSERT INTO account_inactivity VALUES('person',7,'SUSPENDING')");
+      {
+        var client = InactivityCommandTestSupport.lifecycle(jdbc, remote.url());
         var matrixConfig = new MatrixConfig();
         matrixConfig.setApiUrl(remote.url());
         matrixConfig.setAdminUsername("admin");
@@ -345,15 +326,11 @@ class DefaultAccountInactivityEffectsTest {
           "CREATE TABLE account_inactivity_matrix_state(identity_id VARCHAR(36),matrix_user_id"
               + " VARCHAR(255),original_locked BOOLEAN NOT NULL,PRIMARY"
               + " KEY(identity_id,matrix_user_id))");
-      var kcConfig = new KeycloakConfig();
-      kcConfig.setRealm("test");
-      try (var kc =
-          KeycloakBuilder.builder()
-              .serverUrl(remote.url())
-              .realm("test")
-              .authorization("test-token")
-              .build()) {
-        var client = new KeycloakClient(new RestTemplate(), kc, kcConfig);
+      jdbc.execute(
+          "CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,status VARCHAR(20))");
+      jdbc.execute("INSERT INTO account_inactivity VALUES('person',7,'SUSPENDING')");
+      {
+        var client = InactivityCommandTestSupport.lifecycle(jdbc, remote.url());
         var matrixConfig = new MatrixConfig();
         matrixConfig.setApiUrl(remote.url());
         matrixConfig.setAdminUsername("admin");
@@ -374,6 +351,8 @@ class DefaultAccountInactivityEffectsTest {
         assertThat(remote.enabled.get()).isFalse();
         assertThat(remote.locked.get()).isTrue();
         assertThat(remote.logouts.get()).isEqualTo(1);
+        jdbc.update(
+            "UPDATE account_inactivity SET status='REACTIVATING' WHERE identity_id='person'");
         assertThat(effects.reactivate("person")).isTrue();
         assertThat(remote.enabled.get()).isFalse();
         assertThat(remote.locked.get()).isTrue();
@@ -403,6 +382,8 @@ class DefaultAccountInactivityEffectsTest {
     final AtomicBoolean locked = new AtomicBoolean(true);
     final AtomicBoolean failMatrix = new AtomicBoolean();
     final AtomicInteger logouts = new AtomicInteger();
+    final java.util.concurrent.atomic.AtomicReference<Throwable> httpFailure =
+        new java.util.concurrent.atomic.AtomicReference<>();
     final HttpServer server;
 
     Remote() throws Exception {
@@ -426,20 +407,44 @@ class DefaultAccountInactivityEffectsTest {
               if (method.equals("PUT"))
                 locked.set(body.matches("(?s).*\\\"locked\\\"\\s*:\\s*true.*"));
               response = "{\"locked\":" + locked.get() + "}";
-            } else if (path.endsWith("/logout")) {
-              logouts.incrementAndGet();
-              status = 204;
-            } else if (path.endsWith("/role-mappings/realm/composite")) response = roles.get();
-            else if (path.endsWith("/clients")) response = clients.get();
-            else if (path.endsWith("/role-mappings/clients/app-id/composite"))
-              response = clientRoles.get();
-            else if (path.endsWith("/sessions")) response = "[]";
-            else if (path.endsWith("/users/person")) {
-              if (method.equals("PUT")) {
-                enabled.set(body.matches("(?s).*\\\"enabled\\\"\\s*:\\s*true.*"));
-                status = 204;
+            } else if (path.startsWith("/realms/test/oriso-commands/v1/accounts/person/")) {
+              try {
+                String operation;
+                if (path.endsWith("/lifecycle-status")) {
+                  operation = "account.lifecycle-status";
+                  var json = new com.fasterxml.jackson.databind.ObjectMapper();
+                  var coarse = new java.util.HashSet<String>();
+                  for (var role : json.readTree(roles.get())) {
+                    String name = role.get("name").asText();
+                    coarse.add(
+                        name.equals("user") || name.equals("anonymous")
+                            ? "ASKER"
+                            : name.equals("consultant") ? "CONSULTANT" : "OTHER");
+                  }
+                  if (!json.readTree(clientRoles.get()).isEmpty()) coarse.add("OTHER");
+                  response =
+                      json.writeValueAsString(
+                          java.util.Map.of(
+                              "enabled", enabled.get(), "sessionCount", 0, "roles", coarse));
+                } else if (path.endsWith("/suspension")) {
+                  operation = "account.suspend";
+                  enabled.set(false);
+                  logouts.incrementAndGet();
+                  status = 204;
+                } else if (path.endsWith("/access-restoration")) {
+                  operation = "account.restore";
+                  enabled.set(
+                      new com.fasterxml.jackson.databind.ObjectMapper()
+                          .readTree(body)
+                          .get("enabled")
+                          .asBoolean());
+                  status = 204;
+                } else throw new AssertionError("Unexpected command route");
+                InactivityCommandTestSupport.verify(exchange, body, "person", 7L, operation);
+              } catch (Throwable failure) {
+                httpFailure.set(failure);
+                status = 500;
               }
-              response = "{\"id\":\"person\",\"enabled\":" + enabled.get() + "}";
             } else {
               status = 404;
             }
@@ -461,6 +466,7 @@ class DefaultAccountInactivityEffectsTest {
 
     public void close() {
       server.stop(0);
+      assertThat(httpFailure.get()).isNull();
     }
   }
 }

@@ -11,7 +11,6 @@ import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import java.time.LocalDateTime;
@@ -35,7 +34,9 @@ public class AgencyAdminInviteProvisioningService {
   private final @NonNull CreateAdminService createAdminService;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
   private final @NonNull AdminRepository adminRepository;
-  private final @NonNull IdentityAccountRemover identityAccountRemover;
+  private final @NonNull de.caritas.cob.userservice.api.adapters.keycloak.commands
+          .IdentityAccountProvisioning
+      identityProvisioning;
   private final @NonNull AcceptTimeAgencyCheck acceptTimeAgencyCheck;
 
   @Transactional(noRollbackFor = RuntimeException.class)
@@ -83,7 +84,8 @@ public class AgencyAdminInviteProvisioningService {
     try {
       acceptTimeAgencyCheck.requireLiveAgency(invite);
       var admin =
-          createAdminService.createNewAgencyAdminInTenant(toAdmin(invite, username, password));
+          createAdminService.createNewAgencyAdminInTenant(
+              toAdmin(invite, username, password), invite);
       adminId = admin.getId();
       adminAgencyRepository.save(
           AdminAgency.builder()
@@ -103,18 +105,21 @@ public class AgencyAdminInviteProvisioningService {
           "Agency-admin invite {} created an agency admin for agency {} (no consultant)",
           invite.getId(),
           invite.getAgencyId());
-      return accountInviteRepository.save(accepted);
+      var saved = accountInviteRepository.save(accepted);
+      identityProvisioning.completeCreatedAccount(adminId);
+      return saved;
     } catch (RuntimeException failure) {
       if (adminId != null) {
         // The transaction commits despite the failure, so rows left here would block a retry.
         try {
+          identityProvisioning.prepareLocalRollback(adminId);
           adminAgencyRepository.deleteByAdminId(adminId);
           adminRepository.deleteById(adminId);
         } catch (RuntimeException cleanupFailure) {
           failure.addSuppressed(cleanupFailure);
         }
         try {
-          identityAccountRemover.rollbackUser(adminId);
+          identityProvisioning.compensateCreatedAccount(adminId);
         } catch (RuntimeException rollbackFailure) {
           failure.addSuppressed(rollbackFailure);
         }

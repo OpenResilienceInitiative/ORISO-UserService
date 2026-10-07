@@ -371,9 +371,8 @@ public class DpaSignedNoticeService {
     if (!isBlank(signature.getForwardedByUserId())) {
       return adminRepository
           .findById(signature.getForwardedByUserId())
-          .map(Admin::getEmail)
-          .filter(email -> !isBlank(email))
-          .map(email -> new Recipient(email, resolveLanguage(signature.getForwardedByUserId())));
+          .filter(admin -> !isBlank(admin.getEmail()))
+          .map(admin -> new Recipient(admin.getEmail(), resolveLanguage(admin)));
     }
     // Pre-account wizard forward: the onboarding invite that declared the forward is the anchor.
     return accountInviteRepository
@@ -385,9 +384,12 @@ public class DpaSignedNoticeService {
   }
 
   /** Account language of the forwarding admin; the fallback when it cannot be determined. */
-  private String resolveLanguage(String userId) {
+  private String resolveLanguage(Admin persistedRecipient) {
     return identityLocaleLookup
-        .findLocaleById(userId)
+        .findLocaleById(
+            persistedRecipient.getId(),
+            de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+                .persistedRecipient(persistedRecipient))
         .filter(locale -> !isBlank(locale))
         .orElse(FALLBACK_LANGUAGE);
   }

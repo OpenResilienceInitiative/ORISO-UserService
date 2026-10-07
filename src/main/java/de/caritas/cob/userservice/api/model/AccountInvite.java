@@ -54,6 +54,7 @@ import lombok.ToString;
     exclude = {
       "tokenHash",
       "tenantIdReservationToken",
+      "agencyReservationToken",
       "totpPendingSecret",
       "initialPasswordVerifier"
     })
@@ -104,6 +105,9 @@ public class AccountInvite {
    */
   @Column(name = "tenant_id_reservation_token", length = 36)
   private String tenantIdReservationToken;
+
+  @Column(name = "agency_reservation_token", length = 64)
+  private String agencyReservationToken;
 
   @Column(name = "department_id")
   private Long departmentId;

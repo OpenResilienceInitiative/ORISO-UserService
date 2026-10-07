@@ -8,21 +8,25 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.UserServiceApplication;
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantResponseDTOBuilder;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
-import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Settings;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,9 +34,18 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.env.Environment;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * The incomplete-then-repaired path of #1194, against the real persistence.
@@ -44,10 +57,67 @@ import org.springframework.test.util.ReflectionTestUtils;
  * while the chat server was up.
  */
 @SpringBootTest(classes = UserServiceApplication.class)
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@org.springframework.context.annotation.Import(
+    de.caritas.cob.userservice.api.testHelper.VerifiedRequestCallerFixture.class)
+@TestPropertySource(properties = "spring.profiles.active=testing,verified-request-caller")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 class ConsultantChatIdentityRepairIT
     extends de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture {
+
+  @MockitoBean(name = "keycloakRestTemplate")
+  private RestTemplate boundedIdentityHttp;
+
+  @MockitoBean private TaskIdentityGrant taskIdentityGrant;
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @Autowired private Environment identityEnvironment;
+  @Autowired private ObjectMapper identityMapper;
+  private BoundedIdentityHttpFixtures.Provider nativeAccounts;
+
+  private void givenBoundedAccounts() {
+    nativeAccounts =
+        BoundedIdentityHttpFixtures.givenProvider(
+            boundedIdentityHttp,
+            taskIdentityGrant,
+            taskIdentities,
+            identityEnvironment,
+            identityMapper,
+            id -> {});
+    givenHuman("7ad454de-cf29-4557-b8b3-1bf986524de2", 1L, List.of("user-admin", "tenant-admin"));
+  }
+
+  private void givenHuman(String id, Long tenant, List<String> roles) {
+    var token =
+        Jwt.withTokenValue("verified-creator-session")
+            .header("alg", "RS256")
+            .subject(id)
+            .claim("azp", "admin")
+            .claim("preferred_username", "apau1")
+            .claim("tenantId", tenant == null ? null : tenant.toString())
+            .claim("realm_access", Map.of("roles", roles))
+            .issuedAt(Instant.now())
+            .expiresAt(Instant.now().plusSeconds(300))
+            .build();
+    var authentication =
+        new JwtAuthenticationToken(
+            token,
+            List.of(
+                    "AUTHORIZATION_USER_ADMIN",
+                    "AUTHORIZATION_TENANT_ADMIN",
+                    "AUTHORIZATION_CONSULTANT_CREATE")
+                .stream()
+                .map(SimpleGrantedAuthority::new)
+                .toList());
+    SecurityContextHolder.getContext().setAuthentication(authentication);
+    var request = new MockHttpServletRequest();
+    request.setUserPrincipal(authentication);
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void clearBoundedCaller() {
+    SecurityContextHolder.clearContext();
+    RequestContextHolder.resetRequestAttributes();
+  }
 
   private static final String VALID_USERNAME = "chatlessUsername";
   private static final String VALID_EMAILADDRESS = "chatless@emailaddress.de";
@@ -61,10 +131,8 @@ class ConsultantChatIdentityRepairIT
   @Autowired private ConsultantChatIdentityService consultantChatIdentityService;
   @Autowired private ConsultantRepository consultantRepository;
 
-  @MockitoBean private KeycloakService keycloakService;
   @MockitoBean private MatrixSynapseService matrixSynapseService;
   @MockitoBean private TenantAdminService tenantAdminService;
-  @MockitoBean private RollbackFacade rollbackFacade;
   @MockitoBean private AppointmentService appointmentService;
 
   @MockitoBean
@@ -74,14 +142,10 @@ class ConsultantChatIdentityRepairIT
 
   @BeforeEach
   void setup() {
+    givenBoundedAccounts();
     ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", false);
     when(tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
         .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
-    // EasyRandom's default seed is fixed, so a per-test random CreatedIdentity would hand both
-    // tests the same Keycloak id and the second would find the first one's consultant row.
-    var createdIdentity = easyRandom.nextObject(CreatedIdentity.class);
-    createdIdentity.setUserId(java.util.UUID.randomUUID().toString());
-    when(keycloakService.createUser(any(), anyString(), any())).thenReturn(createdIdentity);
     when(tenantAdminService.getTenantById(TENANT_ID))
         .thenReturn(new TenantDTO().settings(new Settings().featureGroupChatV2Enabled(false)));
   }
@@ -198,6 +262,7 @@ class ConsultantChatIdentityRepairIT
     // EasyRandom's seed is fixed, so without this both tests would claim the same public slug.
     createConsultantDTO.setPublicSlug(username.toLowerCase(java.util.Locale.ROOT) + "-slug");
     createConsultantDTO.setIsGroupchatConsultant(false);
+    createConsultantDTO.setAgencyIds(List.of());
     return createConsultantDTO;
   }
 }

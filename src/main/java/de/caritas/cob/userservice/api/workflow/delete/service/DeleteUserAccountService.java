@@ -101,12 +101,23 @@ public class DeleteUserAccountService {
   }
 
   public List<DeletionWorkflowError> performConsultantDeletion(Consultant consultant) {
+    return performConsultantDeletion(consultant, false);
+  }
 
+  /**
+   * Creation owner has already compensated its receipt; this path performs local/partner cleanup.
+   */
+  public List<DeletionWorkflowError> performConsultantCreationRollback(Consultant consultant) {
+    return performConsultantDeletion(consultant, true);
+  }
+
+  private List<DeletionWorkflowError> performConsultantDeletion(
+      Consultant consultant, boolean creationRollback) {
     var deletionWorkflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
 
-    this.actionsRegistry
-        .buildContainerForType(ConsultantDeletionWorkflowDTO.class)
-        .addActionToExecute(DeleteKeycloakConsultantAction.class)
+    var actions = this.actionsRegistry.buildContainerForType(ConsultantDeletionWorkflowDTO.class);
+    if (!creationRollback) actions.addActionToExecute(DeleteKeycloakConsultantAction.class);
+    actions
         .addActionToExecute(DeleteMatrixConsultantAction.class)
         .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
         .addActionToExecute(DeleteChatAction.class)

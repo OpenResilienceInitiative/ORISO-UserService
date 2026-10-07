@@ -14,8 +14,34 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class TechnicalOrSuperAdminUserTenantResolver implements TenantResolver {
 
+  @org.springframework.beans.factory.annotation.Value(
+      "${identity.tasks.notification-dispatch.client-id:}")
+  private String notificationTaskClient;
+
+  @org.springframework.beans.factory.annotation.Value(
+      "${identity.tasks.notification-dispatch.service-subject:}")
+  private String notificationTaskSubject;
+
+  @org.springframework.beans.factory.annotation.Value("${identity.consultant-import.client-id:}")
+  private String importTaskClient;
+
+  @org.springframework.beans.factory.annotation.Value(
+      "${identity.consultant-import.service-subject:}")
+  private String importTaskSubject;
+
+  @org.springframework.beans.factory.annotation.Value("${task.identity.audience:userservice}")
+  private String taskIdentityAudience;
+
   @Override
   public Optional<Long> resolve(HttpServletRequest request) {
+    var principal = request.getUserPrincipal();
+    if (principal instanceof JwtAuthenticationToken verified
+        && (new de.caritas.cob.userservice.api.config.auth.NotificationPreferencesTaskAuthorization(
+                    notificationTaskClient, notificationTaskSubject, taskIdentityAudience)
+                .permits(verified)
+            || new de.caritas.cob.userservice.api.config.auth.ConsultantImportTaskAuthorization(
+                    importTaskClient, importTaskSubject, taskIdentityAudience)
+                .permits(verified))) return Optional.of(0L);
     return isTechnicalOrGlobalTenantAdmin(request) ? Optional.of(0L) : Optional.empty();
   }
 

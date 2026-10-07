@@ -383,6 +383,14 @@ public class UserAccountServiceTest {
       deactivateAndFlagUserAccountForDeletion_Should_ContinueWithoutEvent_When_StatisticsServiceThrows() {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    Mockito.doAnswer(
+            invocation -> {
+              User target = invocation.getArgument(0);
+              target.setDeleteDate(java.time.LocalDateTime.now());
+              return null;
+            })
+        .when(deletionLifecycleService)
+        .beginUserDeletion(USER, USER.getUserId());
     Mockito.doThrow(new RuntimeException("stats service down"))
         .when(statisticsService)
         .fireEvent(any());
@@ -397,10 +405,22 @@ public class UserAccountServiceTest {
       deactivateAndFlagUserAccountForDeletion_Should_DeactivateKeycloakAccountAndSetDeleteDate() {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    Mockito.doAnswer(
+            invocation -> {
+              User target = invocation.getArgument(0);
+              target.setDeleteDate(java.time.LocalDateTime.now());
+              return null;
+            })
+        .when(deletionLifecycleService)
+        .beginUserDeletion(USER, USER.getUserId());
 
     this.accountProvider.deactivateAndFlagUserAccountForDeletion();
 
-    verify(identityDeactivator, times(1)).deactivateUser(USER.getUserId());
+    var ordered = Mockito.inOrder(deletionLifecycleService, userService, identityDeactivator);
+    ordered.verify(deletionLifecycleService).beginUserDeletion(USER, USER.getUserId());
+    ordered.verify(userService).saveUser(USER);
+    ordered.verify(identityDeactivator).deactivateUser(Mockito.eq(USER.getUserId()), any());
+    assertThat(USER.getDeleteDate()).isNotNull();
     verify(deletionLifecycleService, times(1)).beginUserDeletion(USER, USER.getUserId());
     verify(userService, times(1)).saveUser(USER);
     verify(statisticsService).fireEvent(any(DeleteAccountStatisticsEvent.class));

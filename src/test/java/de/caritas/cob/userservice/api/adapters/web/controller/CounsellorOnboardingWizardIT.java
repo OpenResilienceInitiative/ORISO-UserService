@@ -2,31 +2,17 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
-import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
-import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
-import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityLogin;
-import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
@@ -44,7 +30,6 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
@@ -59,18 +44,20 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 /**
  * End-to-end wiring of the public counsellor onboarding wizard endpoints (#997) through the real
  * HTTP layer: resolve → register → resume → two-factor, plus the link-death answers. The consultant
- * creation itself runs through the SAME facade the normal admin form uses (mocked at the facade
- * seam exactly like {@link AccountInviteCounsellorProvisioningIT}); external identity lookups
- * (Keycloak OTP material) are mocked at their ports.
+ * creation uses the real creation saga, bounded signed account commands and persisted relations.
+ * Native identity HTTP and token decoding are the external test seams.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @WithTenant(1L)
-class CounsellorOnboardingWizardIT {
+class CounsellorOnboardingWizardIT
+    extends de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture {
 
-  private static final String CONSULTANT_ID = "wizard-counsellor-id";
+  private final java.util.List<Long> seededInviteIds = new java.util.ArrayList<>();
+
+  private static final String CONSULTANT_ID = "c0a1e5e5-1026-4a4a-9d1e-000000000079";
 
   private static final Long AGENCY_ID = 275L;
 
@@ -95,19 +82,88 @@ class CounsellorOnboardingWizardIT {
 
   @Autowired private AccountInviteRepository accountInviteRepository;
 
-  @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
+  @MockitoBean(name = "keycloakRestTemplate")
+  private org.springframework.web.client.RestTemplate boundedIdentityHttp;
+
+  @MockitoBean(name = "restTemplate")
+  private org.springframework.web.client.RestTemplate taskAuthHttp;
+
+  @MockitoBean private org.springframework.security.oauth2.jwt.JwtDecoder taskDecoder;
 
   @MockitoBean
-  private de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation
-          .ConsultantAgencyRelationCreatorService
-      consultantAgencyRelationCreatorService;
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant taskGrants;
 
-  /**
-   * The single {@code keycloakService} bean implements ALL identity ports (authentication, second
-   * factor, profile lookup, …), so the concrete bean is mocked — mocking a single port interface
-   * would replace the bean and break every other port dependency at context startup.
-   */
-  @MockitoBean private KeycloakService keycloakService;
+  @Autowired
+  private de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration taskIdentities;
+
+  @Autowired private org.springframework.core.env.Environment identityEnvironment;
+  @Autowired private com.fasterxml.jackson.databind.ObjectMapper identityMapper;
+  @Autowired private org.springframework.jdbc.core.JdbcTemplate fixtureJdbc;
+  @Autowired private org.springframework.transaction.PlatformTransactionManager fixtureTransactions;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
+
+  private de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.Provider
+      nativeAccounts;
+  private final java.util.Set<String> createdIdentityIds = new java.util.LinkedHashSet<>();
+
+  private void givenTaskAccounts(
+      java.util.function.Function<java.util.Map<String, Object>, String> ids, String secret) {
+    createdIdentityIds.clear();
+    nativeAccounts =
+        de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenProvider(
+            boundedIdentityHttp,
+            taskGrants,
+            taskIdentities,
+            identityEnvironment,
+            identityMapper,
+            ids,
+            createdIdentityIds::add);
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenTaskGrants(
+        taskAuthHttp, taskDecoder, taskIdentities);
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenWizardPolicy(
+        taskAuthHttp, taskIdentities, identityEnvironment, identityMapper);
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenOtp(
+        boundedIdentityHttp,
+        taskIdentities,
+        new de.caritas.cob.userservice.api.model.OtpInfoDTO()
+            .otpSetup(false)
+            .otpSecret(secret)
+            .otpSecretQrCode("QRBASE64")
+            .otpType(de.caritas.cob.userservice.api.model.OtpType.APP));
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenConsultingPolicy(
+        taskAuthHttp,
+        new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+                .ExtendedConsultingTypeResponseDTO()
+            .id(1)
+            .consultantBoundedToConsultingType(false));
+  }
+
+  private void cleanCreatedIdentities() {
+    for (String id : createdIdentityIds) {
+      de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup.consultant(
+          fixtureJdbc, fixtureTransactions, id);
+      de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup.admin(
+          fixtureJdbc, fixtureTransactions, id);
+      new org.springframework.transaction.support.TransactionTemplate(fixtureTransactions)
+          .executeWithoutResult(
+              status -> {
+                fixtureJdbc.update(
+                    "DELETE FROM identity_creation_attempt WHERE account_id = ?", id);
+                fixtureJdbc.update("DELETE FROM account_inactivity WHERE identity_id = ?", id);
+              });
+    }
+    createdIdentityIds.clear();
+  }
+
+  private java.util.List<
+          de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.Command>
+      accountCreates() {
+    return nativeAccounts.commands().stream()
+        .filter(command -> command.operation().equals("account.create"))
+        .toList();
+  }
 
   /**
    * The invite's topic coverage comes from AgencyService (#1008 review). Without a stub the
@@ -128,27 +184,26 @@ class CounsellorOnboardingWizardIT {
                 Optional.of(
                     new AgencyFacts.Agency(invocation.getArgument(0), 79L, false, List.of())));
     agencyIsHealthy();
-    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+    when(tenantService.getRestrictedTenantDataFresh(anyLong()))
+        .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
+    when(tenantService.getSingleTenancyTenantDataFresh())
+        .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
+    givenTaskAccounts(body -> CONSULTANT_ID, "WIZARDTOTPSECRET");
+    when(agencyService.getPublicImportAgency(AGENCY_ID, 79L))
         .thenReturn(
-            new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id(CONSULTANT_ID)));
-    when(keycloakService.loginService(anyString(), anyString()))
-        .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
-    when(keycloakService.getOtpCredential(anyString()))
-        .thenReturn(
-            new IdentityOtpCredential(false, "WIZARDTOTPSECRET", "QRBASE64", IdentityOtpType.APP));
-    when(keycloakService.setUpOtpCredential(anyString(), eq("123456"), anyString()))
-        .thenReturn(true);
-    when(keycloakService.findById(CONSULTANT_ID))
-        .thenReturn(
-            Optional.of(
-                new IdentityProfile(
-                    CONSULTANT_ID, "codex_wizard_counsellor", "Lisa", "Simpson", "l@example.org")));
+            new AgencyDTO()
+                .id(AGENCY_ID)
+                .tenantId(79L)
+                .consultingType(1)
+                .topicIds(List.of(DEPARTMENT_TOPIC_ID, 7L))
+                .teamAgency(false));
   }
 
   /** AgencyService answers: the invite's agency covers the topics 2 (department) and 7. */
   private void agencyIsHealthy() {
     when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
-        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(DEPARTMENT_TOPIC_ID, 7L)));
+        .thenReturn(
+            new AgencyDTO().id(AGENCY_ID).tenantId(79L).topicIds(List.of(DEPARTMENT_TOPIC_ID, 7L)));
   }
 
   /** AgencyService is unreachable — the coverage degrades to the invite's department topic. */
@@ -158,22 +213,31 @@ class CounsellorOnboardingWizardIT {
   }
 
   private void seedInvite(String rawToken) throws Exception {
-    accountInviteRepository.save(
-        AccountInvite.builder()
-            .targetRole(AccountInviteTargetRole.COUNSELLOR)
-            .tenantId(79L)
-            .recipientEmail("lisa.simpson@example.org")
-            .firstName("Lisa")
-            .lastName("Simpson")
-            .agencyId(AGENCY_ID)
-            .departmentId(DEPARTMENT_TOPIC_ID)
-            .tokenHash(sha256(rawToken))
-            .expiresAt(LocalDateTime.now().plusDays(1))
-            .status(AccountInviteStatus.EMAIL_SENT)
-            .emailVerificationStatus(EmailVerificationStatus.PENDING)
-            .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
-            .createDate(LocalDateTime.now())
-            .build());
+    var seeded =
+        accountInviteRepository.save(
+            AccountInvite.builder()
+                .targetRole(AccountInviteTargetRole.COUNSELLOR)
+                .tenantId(79L)
+                .recipientEmail("lisa.simpson@example.org")
+                .firstName("Lisa")
+                .lastName("Simpson")
+                .agencyId(AGENCY_ID)
+                .departmentId(DEPARTMENT_TOPIC_ID)
+                .tokenHash(sha256(rawToken))
+                .expiresAt(LocalDateTime.now().plusDays(1))
+                .status(AccountInviteStatus.EMAIL_SENT)
+                .emailVerificationStatus(EmailVerificationStatus.PENDING)
+                .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+                .createDate(LocalDateTime.now())
+                .build());
+    seededInviteIds.add(seeded.getId());
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void cleanUpCreatedAccounts() {
+    seededInviteIds.forEach(accountInviteRepository::deleteById);
+    seededInviteIds.clear();
+    cleanCreatedIdentities();
   }
 
   @Test
@@ -221,27 +285,37 @@ class CounsellorOnboardingWizardIT {
         .andExpect(jsonPath("$.twoFactor.secret").value("WIZARDTOTPSECRET"))
         .andExpect(jsonPath("$.twoFactor.qrCodeBase64").value("QRBASE64"));
 
-    // The registration went through the SAME domain path as the normal admin creation.
-    ArgumentCaptor<CreateConsultantDTO> consultantCaptor =
-        ArgumentCaptor.forClass(CreateConsultantDTO.class);
-    verify(consultantAdminFacade).createNewConsultant(consultantCaptor.capture());
-    CreateConsultantDTO consultant = consultantCaptor.getValue();
-    assertThat(consultant.getUsername()).isEqualTo("codex_wizard_counsellor");
-    assertThat(consultant.getEmail()).isEqualTo("lisa.simpson@example.org");
-    assertThat(consultant.getTenantId()).isEqualTo(79L);
-    assertThat(consultant.getTopicIds()).containsExactly(2L);
-    assertThat(consultant.getSalutation()).isEqualTo("counsellor_female");
-    assertThat(consultant.getPosition()).isEqualTo("Head of centre");
-    assertThat(consultant.getTitle()).isEqualTo("Dipl.-Soz.Päd.");
-    assertThat(consultant.getDisplayName()).isEqualTo("Lisa");
-    assertThat(consultant.getInternalDisplayName()).isEqualTo("Lisa S. (Nord)");
-
-    ArgumentCaptor<CreateConsultantAgencyDTO> agencyCaptor =
-        ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
-    verify(consultantAgencyRelationCreatorService)
-        .createNewConsultantAgency(eq(CONSULTANT_ID), agencyCaptor.capture());
-    assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(AGENCY_ID);
-    assertThat(agencyCaptor.getValue().getRoleSetKey()).isEqualTo("CONSULTANT_DEFAULT");
+    // Real local creation preserves the wizard's submitted profile and agency scope.
+    new org.springframework.transaction.support.TransactionTemplate(fixtureTransactions)
+        .executeWithoutResult(
+            status -> {
+              var consultant =
+                  de.caritas.cob.userservice.api.tenant.Tenants.in(
+                      79L, () -> consultantRepository.findById(CONSULTANT_ID).orElseThrow());
+              assertThat(
+                      new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+                          .decodeUsername(consultant.getUsername()))
+                  .isEqualTo("codex_wizard_counsellor");
+              assertThat(consultant.getEmail()).isEqualTo("lisa.simpson@example.org");
+              assertThat(consultant.getTenantId()).isEqualTo(79L);
+              assertThat(consultant.getConsultantTopics())
+                  .extracting(de.caritas.cob.userservice.api.model.ConsultantTopic::getTopicId)
+                  .containsExactly(2L);
+              assertThat(consultant.getSalutation()).isEqualTo("counsellor_female");
+              assertThat(consultant.getPosition()).isEqualTo("Head of centre");
+              assertThat(consultant.getTitle()).isEqualTo("Dipl.-Soz.Päd.");
+              assertThat(consultant.getDisplayName()).isEqualTo("Lisa");
+              assertThat(consultant.getInternalDisplayName()).isEqualTo("Lisa S. (Nord)");
+              assertThat(consultant.getConsultantAgencies())
+                  .extracting(de.caritas.cob.userservice.api.model.ConsultantAgency::getAgencyId)
+                  .containsExactly(AGENCY_ID);
+            });
+    assertThat(accountCreates())
+        .singleElement()
+        .satisfies(
+            command ->
+                assertThat((java.util.List<String>) command.body().get("roles"))
+                    .contains("consultant"));
 
     // 3) Resume: reopening the link continues at the 2FA step with the stored secret.
     mockMvc
@@ -347,6 +421,8 @@ class CounsellorOnboardingWizardIT {
                 .createDate(LocalDateTime.now().minusDays(8))
                 .build());
 
+    seededInviteIds.add(expired.getId());
+
     mockMvc
         .perform(get("/users/account-invites/{token}/onboarding", token))
         .andExpect(status().isGone())
@@ -365,19 +441,24 @@ class CounsellorOnboardingWizardIT {
     String token = "existing-single-topic-token-" + java.util.UUID.randomUUID();
     seedInvite(token);
     when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
-        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(DEPARTMENT_TOPIC_ID)));
+        .thenReturn(
+            new AgencyDTO().id(AGENCY_ID).tenantId(79L).topicIds(List.of(DEPARTMENT_TOPIC_ID)));
 
     mockMvc.perform(registerWithoutTopics(token)).andExpect(status().isOk());
 
-    ArgumentCaptor<CreateConsultantDTO> consultantCaptor =
-        ArgumentCaptor.forClass(CreateConsultantDTO.class);
-    verify(consultantAdminFacade).createNewConsultant(consultantCaptor.capture());
-    assertThat(consultantCaptor.getValue().getTopicIds()).containsExactly(DEPARTMENT_TOPIC_ID);
-    ArgumentCaptor<CreateConsultantAgencyDTO> agencyCaptor =
-        ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
-    verify(consultantAgencyRelationCreatorService)
-        .createNewConsultantAgency(eq(CONSULTANT_ID), agencyCaptor.capture());
-    assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(AGENCY_ID);
+    new org.springframework.transaction.support.TransactionTemplate(fixtureTransactions)
+        .executeWithoutResult(
+            status -> {
+              var consultant =
+                  de.caritas.cob.userservice.api.tenant.Tenants.in(
+                      79L, () -> consultantRepository.findById(CONSULTANT_ID).orElseThrow());
+              assertThat(consultant.getConsultantTopics())
+                  .extracting(de.caritas.cob.userservice.api.model.ConsultantTopic::getTopicId)
+                  .containsExactly(DEPARTMENT_TOPIC_ID);
+              assertThat(consultant.getConsultantAgencies())
+                  .extracting(de.caritas.cob.userservice.api.model.ConsultantAgency::getAgencyId)
+                  .containsExactly(AGENCY_ID);
+            });
   }
 
   @Test

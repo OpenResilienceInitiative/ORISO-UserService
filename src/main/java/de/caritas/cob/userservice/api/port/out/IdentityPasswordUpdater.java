@@ -7,4 +7,13 @@ public interface IdentityPasswordUpdater {
 
   /** Sets an administrator-chosen password that must be replaced at first sign-in. */
   void updateTemporaryPassword(String userId, String password);
+
+  default void updatePassword(
+      String userId,
+      String password,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          origin) {
+    throw new org.springframework.security.access.AccessDeniedException(
+        "Identity adapter must preserve explicit origin authorization");
+  }
 }

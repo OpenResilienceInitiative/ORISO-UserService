@@ -123,4 +123,28 @@ class AccountLoginStatusServiceTest {
     assertThat(service.activeOf(" ")).isNull();
     verifyNoInteractions(lookup);
   }
+
+  @ParameterizedTest
+  @ValueSource(ints = {401, 403, 500, 503})
+  void boundedHttpReadPreservesConfirmedRowsAndSeparatesOutageFromDeniedAuthority(int status) {
+    when(lookup.findEnabledById("first")).thenReturn(Optional.of(false));
+    var failure =
+        org.springframework.web.client.HttpClientErrorException.create(
+            org.springframework.http.HttpStatus.valueOf(status),
+            "Fixture",
+            org.springframework.http.HttpHeaders.EMPTY,
+            new byte[0],
+            null);
+    when(lookup.findEnabledById("second")).thenThrow(failure);
+    var service = new AccountLoginStatusService(lookup);
+    if (status < 500) {
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> service.activeByIds(java.util.List.of("first", "second", "third")))
+          .isSameAs(failure);
+    } else {
+      assertThat(service.activeByIds(java.util.List.of("first", "second", "third")))
+          .containsExactlyEntriesOf(java.util.Map.of("first", false));
+    }
+    verify(lookup, org.mockito.Mockito.never()).findEnabledById("third");
+  }
 }

@@ -64,6 +64,14 @@ public class AccountLoginStatusService {
         // Provider outages leave unread rows unknown; invalid/forbidden reads are not outages.
         log.warn("Account login status is unavailable ({})", failure.getClass().getSimpleName());
         break;
+      } catch (org.springframework.web.client.RestClientResponseException failure) {
+        if (failure.getStatusCode().value() < 500) throw failure;
+        log.warn("Account login status is unavailable ({})", failure.getClass().getSimpleName());
+        break;
+      } catch (org.springframework.web.client.ResourceAccessException unavailable) {
+        log.warn(
+            "Account login status is unavailable ({})", unavailable.getClass().getSimpleName());
+        break;
       } catch (ProcessingException unavailable) {
         log.warn(
             "Account login status is unavailable ({})", unavailable.getClass().getSimpleName());

@@ -57,7 +57,7 @@ class TenantSystemEmailRouteServiceTest {
                         "sender",
                         "from",
                         "sender@tenant.example",
-                        "passwordSet",
+                        "configured",
                         true))));
 
     var route = new TenantSystemEmailRouteService(client).resolve(40L);
@@ -139,7 +139,7 @@ class TenantSystemEmailRouteServiceTest {
                         "sender",
                         "from",
                         "sender@tenant.example",
-                        "passwordSet",
+                        "configured",
                         true))));
     var routes = new TenantSystemEmailRouteService(client);
 

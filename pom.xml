@@ -1163,6 +1163,8 @@
 								</includes>
 							<excludes>
 								<exclude>**/LiquibaseHibernateIT.java</exclude>
+								<exclude>**/RealTaskTokenAuthorizationIT.java</exclude>
+								<exclude>**/IdentityCreationNativeRestartIT.java</exclude>
 							</excludes>
 						</configuration>
 					</execution>

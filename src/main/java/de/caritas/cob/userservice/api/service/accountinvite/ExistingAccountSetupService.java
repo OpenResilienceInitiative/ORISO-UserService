@@ -55,6 +55,37 @@ public class ExistingAccountSetupService {
   @Value("${multitenancy.enabled:true}")
   private boolean multitenancyEnabled;
 
+  /** A direct creator proves the initial native projection with its exact owned durable receipt. */
+  public void requireSameCreatedIdentity(
+      String id,
+      AccountInviteTargetRole role,
+      Long tenant,
+      String email,
+      String username,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+              .AccountProjection
+          projection,
+      boolean requireEnabled) {
+    var target = new SetupTarget(null, id, role, tenant, email, username, null, null);
+    requireSameSavedIdentity(target);
+    String requiredRole =
+        switch (role) {
+          case TENANT_ADMIN -> "tenant-admin";
+          case AGENCY_ADMIN -> "restricted-agency-admin";
+          case COUNSELLOR -> "consultant";
+          default -> throw new ConflictException("Unsupported created setup role");
+        };
+    if (projection == null
+        || !id.equals(projection.id())
+        || !java.util.Objects.equals(tenant, projection.tenantId())
+        || !sameEmail(email, projection.email())
+        || !sameCanonicalUsername(username, projection.username())
+        || !projection.roles().contains(requiredRole)
+        || !projection.passwordChangeRequired()
+        || (requireEnabled && !projection.enabled()))
+      throw new ConflictException("Created account setup binding is no longer current");
+  }
+
   /** Issuance preflight; confirmation makes the same fresh check before changing a password. */
   public void requireSameCurrentIdentity(
       String identityId,
@@ -64,7 +95,7 @@ public class ExistingAccountSetupService {
       String username) {
     try {
       requireSameCurrentIdentity(
-          new SetupTarget(null, identityId, role, tenantId, email, username, null));
+          new SetupTarget(null, identityId, role, tenantId, email, username, null, null));
     } catch (StaleIdentityException stale) {
       throw new ConflictException(
           "SETUP_TEMPORARY_PASSWORD_REPLACED".equals(stale.reason)
@@ -122,7 +153,11 @@ public class ExistingAccountSetupService {
     }
 
     try {
-      passwords.updatePassword(target.identityId(), chosenPassword);
+      passwords.updatePassword(
+          target.identityId(),
+          chosenPassword,
+          de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+              .checkedSetupPassword(target.claimedInvite(), chosenPassword, initialPasswords));
     } catch (CustomValidationHttpStatusException rejected) {
       // Keycloak positively rejected the new credential before changing it.
       releaseDefinitive(target.inviteId(), "SETUP_PASSWORD_REJECTED");
@@ -237,6 +272,7 @@ public class ExistingAccountSetupService {
     if (won != 1) {
       throw new ConflictException("Account setup is already being processed");
     }
+    invite.setProvisioningStatus(IN_PROGRESS);
     return new SetupTarget(
         invite.getId(),
         invite.getProvisionedUserId(),
@@ -244,12 +280,22 @@ public class ExistingAccountSetupService {
         invite.getTenantId(),
         invite.getRecipientEmail(),
         usernameOf(invite),
-        invite.getInitialPasswordVerifier());
+        invite.getInitialPasswordVerifier(),
+        invite);
   }
 
   private String requireSameCurrentIdentity(SetupTarget target) {
     requireSameSavedIdentity(target);
-    var profile = identities.findById(target.identityId()).orElseThrow(StaleIdentityException::new);
+    var origin =
+        target.claimedInvite() == null
+            ? null
+            : de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+                .claimedSetupRead(target.claimedInvite());
+    var profile =
+        (origin == null
+                ? identities.findById(target.identityId())
+                : identities.findById(target.identityId(), origin))
+            .orElseThrow(StaleIdentityException::new);
     if (!target.identityId().equals(profile.id())
         || !sameEmail(target.email(), profile.email())
         || !sameCanonicalUsername(target.username(), profile.username())) {
@@ -262,12 +308,17 @@ public class ExistingAccountSetupService {
           case COUNSELLOR -> "consultant";
           default -> throw new StaleIdentityException();
         };
-    if (!roles.findAllByUserId(target.identityId()).contains(requiredRole)) {
+    if (!(origin == null
+            ? roles.findAllByUserId(target.identityId())
+            : roles.findAllByUserId(target.identityId(), origin))
+        .contains(requiredRole)) {
       throw new StaleIdentityException();
     }
     // A normal password reset can replace the temporary credential independently of this link.
     // Once Keycloak has removed UPDATE_PASSWORD, the old setup token cannot reset it again.
-    if (!passwordChangeRequirement.requiresPasswordChange(target.identityId())) {
+    if (!(origin == null
+        ? passwordChangeRequirement.requiresPasswordChange(target.identityId())
+        : passwordChangeRequirement.requiresPasswordChange(target.identityId(), origin))) {
       throw new StaleIdentityException("SETUP_TEMPORARY_PASSWORD_REPLACED");
     }
     return profile.username();
@@ -398,7 +449,8 @@ public class ExistingAccountSetupService {
       Long tenantId,
       String email,
       String username,
-      String initialPasswordVerifier) {}
+      String initialPasswordVerifier,
+      AccountInvite claimedInvite) {}
 
   private static final class StaleIdentityException extends RuntimeException {
     private final String reason;

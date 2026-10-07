@@ -10,7 +10,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -112,12 +112,13 @@ class AgencyMatrixCredentialClientTest {
 
   @Test
   void fetchMatrixCredentialsShouldReturnEmptyWhenTechnicalUserLoginFails() {
-    var technicalUser = new TechnicalUserConfig();
+    var technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical");
     technicalUser.setClientSecret("secret");
 
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.loginService("technical", "secret"))
+    when(identityClientConfig.getTaskIdentity(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(technicalUser);
+    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.any()))
         .thenThrow(new BadRequestException("Keycloak unavailable"));
 
     assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).isEmpty();
@@ -151,13 +152,15 @@ class AgencyMatrixCredentialClientTest {
   }
 
   private void stubTechnicalUserLogin(String accessToken) {
-    var technicalUser = new TechnicalUserConfig();
+    var technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical");
     technicalUser.setClientSecret("secret");
 
     var loginResponse = new IdentityLogin(accessToken, 0, 0, "refresh-token");
 
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.loginService("technical", "secret")).thenReturn(loginResponse);
+    when(identityClientConfig.getTaskIdentity(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(technicalUser);
+    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(loginResponse);
   }
 }

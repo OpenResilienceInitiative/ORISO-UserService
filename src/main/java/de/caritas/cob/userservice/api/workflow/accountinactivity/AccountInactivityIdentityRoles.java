@@ -5,7 +5,17 @@ import java.util.Set;
 
 /** Shared conservative distinction between machine access and mixed human privileges. */
 public final class AccountInactivityIdentityRoles {
-  private static final Set<String> TECHNICAL = Set.of("technical", "notifications-technical");
+  private static final Set<String> TECHNICAL = machineRoles();
+
+  private static Set<String> machineRoles() {
+    var roles =
+        new java.util.HashSet<>(
+            Set.of("technical", "notifications-technical", "consultant-import", "smtp-sync"));
+    for (var task : de.caritas.cob.userservice.api.config.auth.TaskIdentity.values())
+      roles.addAll(task.roles());
+    return Set.copyOf(roles);
+  }
+
   private static final Set<String> INFRASTRUCTURE =
       Set.of(
           "offline_access",

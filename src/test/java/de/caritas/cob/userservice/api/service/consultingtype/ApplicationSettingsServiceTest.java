@@ -7,7 +7,7 @@ import de.caritas.cob.userservice.api.adapters.web.controller.GlobalSmtpTestEmai
 import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSmtpTestEmailDTO;
 import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.ApplicationSettingsApiControllerFactory;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -200,7 +200,7 @@ class ApplicationSettingsServiceTest {
             new StubApplicationSettingsApiControllerFactory(controllerApi),
             securityHeaderSupplier,
             tenantHeaderSupplier,
-            createIdentityClientConfig(new TechnicalUserConfig()),
+            createIdentityClientConfig(new TaskIdentityCredentials()),
             identityAuthentication);
 
     var response = diagnosticController().sendGlobalSmtpTestEmail(diagnosticRequest());
@@ -381,7 +381,7 @@ class ApplicationSettingsServiceTest {
                   new StubApplicationSettingsApiControllerFactory(controllerApi),
                   securityHeaderSupplier,
                   tenantHeaderSupplier,
-                  createIdentityClientConfig(new TechnicalUserConfig()),
+                  createIdentityClientConfig(new TaskIdentityCredentials()),
                   identityAuthentication);
 
           assertThat(applicationSettingsService.getGlobalSmtpCredentials()).isEmpty();
@@ -597,17 +597,19 @@ class ApplicationSettingsServiceTest {
   }
 
   private static IdentityClientConfig createTechnicalIdentityClientConfig() {
-    TechnicalUserConfig technicalUser = new TechnicalUserConfig();
+    TaskIdentityCredentials technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical-user");
     technicalUser.setClientSecret("technical-password");
     return createIdentityClientConfig(technicalUser);
   }
 
   private static IdentityClientConfig createIdentityClientConfig(
-      TechnicalUserConfig technicalUser) {
+      TaskIdentityCredentials technicalUser) {
     IdentityClientConfig identityClientConfig =
         org.mockito.Mockito.mock(IdentityClientConfig.class);
-    org.mockito.Mockito.when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
+    org.mockito.Mockito.when(
+            identityClientConfig.getTaskIdentity(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(technicalUser);
     return identityClientConfig;
   }
 
@@ -623,6 +625,11 @@ class ApplicationSettingsServiceTest {
     }
 
     @Override
+    public IdentityLogin loginTask(
+        de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials task) {
+      return loginService(task.getClientId(), task.getClientSecret());
+    }
+
     public IdentityLogin loginService(String username, String password) {
       loginCount.incrementAndGet();
       lastUsername = username;

@@ -11,7 +11,6 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -43,6 +42,20 @@ class ConsultantImportServiceTest {
   @InjectMocks private ConsultantImportService consultantImportService;
 
   @Mock private IdentityUsernameAvailability identityUsernameAvailability;
+  @Mock private de.caritas.cob.userservice.api.facade.rollback.RollbackFacade rollbackFacade;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationLocalCompletion
+      localCompletion;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityAccountProvisioning
+      identityProvisioning;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.ConfiguredConsultantImport
+      configuredImport;
+
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock private AgencyService agencyService;
@@ -57,12 +70,37 @@ class ConsultantImportServiceTest {
 
   @BeforeEach
   void setUp() throws IOException {
+    var jwt =
+        org.springframework.security.oauth2.jwt.Jwt.withTokenValue("verified-test-token")
+            .header("alg", "RS256")
+            .subject("import-subject")
+            .audience(List.of("userservice"))
+            .claim("azp", "backend-consultant-import")
+            .claim("realm_access", Map.of("roles", List.of("consultant-import")))
+            .build();
+    org.springframework.security.core.context.SecurityContextHolder.getContext()
+        .setAuthentication(
+            new org.springframework.security.oauth2.server.resource.authentication
+                .JwtAuthenticationToken(jwt, List.of()));
     importFile = tempDir.resolve("consultant-import.csv");
     protocolFile = tempDir.resolve("protocol");
     ReflectionTestUtils.setField(consultantImportService, "importFilename", importFile.toString());
     ReflectionTestUtils.setField(
         consultantImportService, "protocolFilename", protocolFile.toString());
     ReflectionTestUtils.setField(consultantImportService, "multiTenancyEnabled", false);
+    when(configuredImport.capture())
+        .thenAnswer(
+            ignored ->
+                new de.caritas.cob.userservice.api.adapters.keycloak.commands
+                        .ConfiguredConsultantImport(
+                        importFile.toString(),
+                        "backend-consultant-import",
+                        "import-subject",
+                        "userservice",
+                        Boolean.TRUE.equals(
+                            ReflectionTestUtils.getField(
+                                consultantImportService, "multiTenancyEnabled")))
+                    .capture());
   }
 
   // ---------------------------------------------------------------------------
@@ -74,7 +112,7 @@ class ConsultantImportServiceTest {
     ReflectionTestUtils.setField(
         consultantImportService, "importFilename", "/nonexistent/file.csv");
 
-    assertThrows(InternalServerErrorException.class, () -> consultantImportService.startImport());
+    assertThrows(IllegalStateException.class, () -> consultantImportService.startImport());
   }
 
   // ---------------------------------------------------------------------------
@@ -89,7 +127,7 @@ class ConsultantImportServiceTest {
 
     consultantImportService.startImport();
 
-    verify(agencyService, never()).getAgencyWithoutCaching(any());
+    verify(agencyService, never()).getPublicImportAgency(any(), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -105,7 +143,7 @@ class ConsultantImportServiceTest {
 
     consultantImportService.startImport();
 
-    verify(agencyService, never()).getAgencyWithoutCaching(any());
+    verify(agencyService, never()).getPublicImportAgency(any(), any());
   }
 
   @Test
@@ -113,7 +151,7 @@ class ConsultantImportServiceTest {
     writeCsv(",1,validuser,First,Last,valid@example.com,nein,,10;roleA\r\n");
     when(userHelper.isUsernameValid("validuser")).thenReturn(true);
     when(userHelper.isValidEmail(anyString())).thenReturn(true);
-    when(agencyService.getAgencyWithoutCaching(10L)).thenReturn(null);
+    when(agencyService.getPublicImportAgency(eq(10L), any())).thenReturn(null);
 
     consultantImportService.startImport();
 
@@ -126,13 +164,14 @@ class ConsultantImportServiceTest {
     writeCsv(",1,validuser,First,Last,valid@example.com,nein,,10;unknownRole\r\n");
     when(userHelper.isUsernameValid("validuser")).thenReturn(true);
     when(userHelper.isValidEmail(anyString())).thenReturn(true);
-    when(agencyService.getAgencyWithoutCaching(10L)).thenReturn(agencyWithConsultingType(1));
+    when(agencyService.getPublicImportAgency(eq(10L), any()))
+        .thenReturn(agencyWithConsultingType(1));
     when(consultingTypeManager.getConsultingTypeSettings(1))
-        .thenReturn(typeWithRoles(Map.of("validRole", List.of("ROLE_A"))));
+        .thenReturn(typeWithRoles(Map.of("validRole", List.of("consultant"))));
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(createConsultantSaga, never()).createImportedConsultant(any(), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -144,9 +183,10 @@ class ConsultantImportServiceTest {
     writeCsv(",1,existinguser,First,Last,valid@example.com,nein,,10;roleA\r\n");
     when(userHelper.isUsernameValid("existinguser")).thenReturn(true);
     when(userHelper.isValidEmail(anyString())).thenReturn(true);
-    when(agencyService.getAgencyWithoutCaching(10L)).thenReturn(agencyWithConsultingType(1));
+    when(agencyService.getPublicImportAgency(eq(10L), any()))
+        .thenReturn(agencyWithConsultingType(1));
     when(consultingTypeManager.getConsultingTypeSettings(1))
-        .thenReturn(typeWithRoles(Map.of("roleA", List.of("ROLE_A"))));
+        .thenReturn(typeWithRoles(Map.of("roleA", List.of("consultant"))));
     when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
         .thenReturn(Optional.of(new Consultant()));
 
@@ -160,16 +200,19 @@ class ConsultantImportServiceTest {
     writeCsv(",1,newuser,First,Last,valid@example.com,nein,,10;roleA\r\n");
     when(userHelper.isUsernameValid("newuser")).thenReturn(true);
     when(userHelper.isValidEmail(anyString())).thenReturn(true);
-    when(agencyService.getAgencyWithoutCaching(10L)).thenReturn(agencyWithConsultingType(1));
+    when(agencyService.getPublicImportAgency(eq(10L), any()))
+        .thenReturn(agencyWithConsultingType(1));
     when(consultingTypeManager.getConsultingTypeSettings(1))
-        .thenReturn(typeWithRoles(Map.of("roleA", List.of("ROLE_A"))));
+        .thenReturn(typeWithRoles(Map.of("roleA", List.of("consultant"))));
     when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
         .thenReturn(Optional.empty());
-    when(identityUsernameAvailability.isUsernameAvailable("newuser")).thenReturn(false);
+    when(createConsultantSaga.createImportedConsultant(any(), any()))
+        .thenThrow(new IllegalStateException("atomic username conflict"));
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(createConsultantSaga).createImportedConsultant(any(), any());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
   }
 
   // ---------------------------------------------------------------------------
@@ -180,14 +223,15 @@ class ConsultantImportServiceTest {
   void startImport_Should_SkipRecord_When_ConsultantIdProvidedButNotFound() throws IOException {
     writeCsv("existing-id-123,1,someuser,First,Last,valid@example.com,nein,,10;roleA\r\n");
     when(userHelper.isValidEmail(anyString())).thenReturn(true);
-    when(agencyService.getAgencyWithoutCaching(10L)).thenReturn(agencyWithConsultingType(1));
+    when(agencyService.getPublicImportAgency(eq(10L), any()))
+        .thenReturn(agencyWithConsultingType(1));
     when(consultingTypeManager.getConsultingTypeSettings(1))
-        .thenReturn(typeWithRoles(Map.of("roleA", List.of("ROLE_A"))));
+        .thenReturn(typeWithRoles(Map.of("roleA", List.of("consultant"))));
     when(consultantService.getConsultant("existing-id-123")).thenReturn(Optional.empty());
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(createConsultantSaga, never()).createImportedConsultant(any(), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -199,21 +243,22 @@ class ConsultantImportServiceTest {
     writeCsv(",1,brandnewuser,First,Last,valid@example.com,nein,,10;roleA\r\n");
     when(userHelper.isUsernameValid("brandnewuser")).thenReturn(true);
     when(userHelper.isValidEmail(anyString())).thenReturn(true);
-    when(agencyService.getAgencyWithoutCaching(10L)).thenReturn(agencyWithConsultingType(1));
+    when(agencyService.getPublicImportAgency(eq(10L), any()))
+        .thenReturn(agencyWithConsultingType(1));
     when(consultingTypeManager.getConsultingTypeSettings(1))
-        .thenReturn(typeWithRoles(Map.of("roleA", List.of("ROLE_CONSULTANT"))));
+        .thenReturn(typeWithRoles(Map.of("roleA", List.of("consultant"))));
     when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
         .thenReturn(Optional.empty());
     when(identityUsernameAvailability.isUsernameAvailable("brandnewuser")).thenReturn(true);
     Consultant newConsultant = new Consultant();
     newConsultant.setId("new-id-456");
-    when(createConsultantSaga.createNewConsultant(any(), any())).thenReturn(newConsultant);
+    when(createConsultantSaga.createImportedConsultant(any(), any())).thenReturn(newConsultant);
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga).createNewConsultant(any(), any());
+    verify(createConsultantSaga).createImportedConsultant(any(), any());
     verify(consultantAgencyRelationCreatorService)
-        .createConsultantAgencyRelations(eq("new-id-456"), any(), any(), any());
+        .createOwnedCreationRelations(eq("new-id-456"), any(), any(), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -228,7 +273,7 @@ class ConsultantImportServiceTest {
 
     consultantImportService.startImport();
 
-    verify(agencyService, never()).getAgencyWithoutCaching(any());
+    verify(agencyService, never()).getPublicImportAgency(any(), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -241,19 +286,20 @@ class ConsultantImportServiceTest {
     writeCsv(",1,tenantuser,First,Last,valid@example.com,nein,,10;roleA,5\r\n");
     when(userHelper.isUsernameValid("tenantuser")).thenReturn(true);
     when(userHelper.isValidEmail(anyString())).thenReturn(true);
-    when(agencyService.getAgencyWithoutCaching(10L)).thenReturn(agencyWithConsultingType(1));
+    when(agencyService.getPublicImportAgency(eq(10L), any()))
+        .thenReturn(agencyWithConsultingType(1));
     when(consultingTypeManager.getConsultingTypeSettings(1))
-        .thenReturn(typeWithRoles(Map.of("roleA", List.of("ROLE_CONSULTANT"))));
+        .thenReturn(typeWithRoles(Map.of("roleA", List.of("consultant"))));
     when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
         .thenReturn(Optional.empty());
     when(identityUsernameAvailability.isUsernameAvailable("tenantuser")).thenReturn(true);
     Consultant newConsultant = new Consultant();
     newConsultant.setId("tenant-cons-id");
-    when(createConsultantSaga.createNewConsultant(any(), any())).thenReturn(newConsultant);
+    when(createConsultantSaga.createImportedConsultant(any(), any())).thenReturn(newConsultant);
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga).createNewConsultant(any(), any());
+    verify(createConsultantSaga).createImportedConsultant(any(), any());
   }
 
   // ---------------------------------------------------------------------------

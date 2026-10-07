@@ -65,6 +65,10 @@ public class ExistingAccountSetupIssuer {
   private final @NonNull InviteMailDispatchService mail;
   private final @NonNull PlatformTransactionManager transactions;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityAccountProvisioning
+      provisioning;
+
   @Value("${multitenancy.enabled:true}")
   private boolean multitenancyEnabled;
 
@@ -117,30 +121,75 @@ public class ExistingAccountSetupIssuer {
           identity.username());
     }
     String rawToken = token();
+    if (!reissue) requireCreated(identity, false);
     AccountInvite invite = prepare(identity, rawToken, initialPassword, reissue, expectedInviteId);
+    if (!reissue
+        && org.springframework.transaction.support.TransactionSynchronizationManager
+            .isActualTransactionActive()) {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .registerSynchronization(
+              new org.springframework.transaction.support.TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                  deliver(identity, invite, rawToken, true);
+                }
+              });
+      return invite;
+    }
+    return deliver(identity, invite, rawToken, !reissue);
+  }
+
+  private void requireCreated(ExistingIdentity identity, boolean requireEnabled) {
+    confirmation.requireSameCreatedIdentity(
+        identity.id(),
+        identity.role(),
+        identity.tenantId(),
+        identity.email(),
+        identity.username(),
+        provisioning.setupProjection(identity.id()),
+        requireEnabled);
+  }
+
+  private AccountInvite deliver(
+      ExistingIdentity identity, AccountInvite invite, String rawToken, boolean creation) {
+    String preparationStep = "identity-confirmation";
     try {
       // Persist a recoverable setup row first. If the identity provider is briefly unavailable,
       // the direct-created account still has a named DRAFT failure and a safe operator reissue.
       // No database lock is held across this remote check or the later SMTP handover.
-      confirmation.requireSameCurrentIdentity(
-          identity.id(),
-          identity.role(),
-          identity.tenantId(),
-          identity.email(),
-          identity.username());
+      if (creation) {
+        // afterCommit still binds the completed outer EntityManager; use a fresh read
+        // transaction only after both local persistence and native activation have committed.
+        var confirmationTransaction = new TransactionTemplate(transactions);
+        confirmationTransaction.setPropagationBehavior(
+            TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        confirmationTransaction.executeWithoutResult(status -> requireCreated(identity, true));
+      } else
+        confirmation.requireSameCurrentIdentity(
+            identity.id(),
+            identity.role(),
+            identity.tenantId(),
+            identity.email(),
+            identity.username());
+      preparationStep = "setup-url";
       String setupUrl = urls.buildAcceptUrl(identity.role(), rawToken);
+      preparationStep = "branding";
       Map<String, String> values =
           new LinkedHashMap<>(
               brandValues.values(branding.resolve(identity.tenantId()), identity.tenantId()));
       values.put("setupUrl", setupUrl);
       values.put("inviteExpiresAt", invite.getExpiresAt().toLocalDate().toString());
+      preparationStep = "rendering";
       RenderedEmail rendered = renderer.render(TEMPLATE, identity.tone(), values);
+      preparationStep = "delivery-intent";
       markReadyToSend(invite.getId(), invite.getTokenHash());
+      preparationStep = "mail-handover";
       var receipt =
           mail.sendRendered(
               identity.email(),
               rendered,
               InviteMailOrigin.of(identity.tenantId(), Purpose.ACCOUNT_INVITE));
+      preparationStep = "delivery-receipt";
       recordDelivery(
           invite.getId(),
           identity.email(),
@@ -163,7 +212,11 @@ public class ExistingAccountSetupIssuer {
     } catch (RuntimeException preparationFailure) {
       recordFailure(invite.getId(), identity.email(), "SETUP_PREPARATION_FAILED", true);
       throw new IllegalStateException(
-          "Account exists but its setup mail could not be prepared; operator action is required");
+          "Account exists but its setup mail could not be prepared; operator action is required ("
+              + preparationStep
+              + ":"
+              + preparationFailure.getClass().getSimpleName()
+              + ")");
     }
   }
 
@@ -173,7 +226,8 @@ public class ExistingAccountSetupIssuer {
       String initialPassword,
       boolean reissue,
       Long expectedInviteId) {
-    return inTransaction(
+    return inPreparationTransaction(
+        reissue,
         () -> {
           AccountInvite previous = invites.findByActiveSetupIdentityKey(identity.id()).orElse(null);
           String verifier;
@@ -388,6 +442,15 @@ public class ExistingAccountSetupIssuer {
     } else {
       throw new BadRequestException("Existing account role is not supported");
     }
+  }
+
+  private <T> T inPreparationTransaction(boolean reissue, java.util.function.Supplier<T> action) {
+    TransactionTemplate transaction = new TransactionTemplate(transactions);
+    transaction.setPropagationBehavior(
+        reissue
+            ? TransactionDefinition.PROPAGATION_REQUIRES_NEW
+            : TransactionDefinition.PROPAGATION_REQUIRED);
+    return transaction.execute(status -> action.get());
   }
 
   private <T> T inTransaction(java.util.function.Supplier<T> action) {

@@ -265,6 +265,22 @@ class TeamDiscussionFacadeTest {
     }
 
     @Bean
+    de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration taskIdentities() {
+      var settings = new de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration();
+      for (var task : de.caritas.cob.userservice.api.config.auth.TaskIdentity.values()) {
+        settings
+            .getTasks()
+            .put(
+                task.key(),
+                new de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials(
+                    "fixture-" + task.key(),
+                    "fixture-secret-" + task.key(),
+                    "fixture-subject-" + task.key()));
+      }
+      return settings;
+    }
+
+    @Bean
     IdentityConfig identityConfig() {
       var identity = org.mockito.Mockito.mock(IdentityConfig.class);
       when(identity.getOpenIdConnectUrl("certs")).thenReturn("https://identity.invalid/certs");

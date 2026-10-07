@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.conversation.facade;
 
 import static org.apache.commons.lang3.BooleanUtils.isFalse;
 
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.*;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
@@ -24,6 +25,14 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class CreateAnonymousEnquiryFacade {
 
+  private final @NonNull de.caritas.cob.userservice.api.adapters.keycloak.commands
+          .IdentityCreationLocalCompletion
+      localCompletion;
+  private final @NonNull IdentityAccountProvisioning identityProvisioning;
+  private final @NonNull IdentityCreationLocalTransactions localTransactions;
+  private final @NonNull IdentityAnonymousBootstrapFailure bootstrapFailure;
+  private final @NonNull de.caritas.cob.userservice.api.facade.rollback.RollbackFacade
+      rollbackFacade;
   private final @NonNull AnonymousUserCreatorService anonymousUserCreatorService;
   private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
       dpaPolicy;
@@ -66,17 +75,82 @@ public class CreateAnonymousEnquiryFacade {
 
     dpaPolicy.requireForTenant(TenantContext.getCurrentTenant());
     var userDto = buildUserDto(createAnonymousEnquiryDTO);
-    AnonymousUserCredentials credentials = anonymousUserCreatorService.createAnonymousUser(userDto);
-    var session =
-        anonymousConversationCreatorService.createAnonymousConversation(userDto, credentials);
-
+    var origin = IdentityCreationOrigin.checkedAnonymous(userDto, TenantContext.getCurrentTenant());
+    var completedLocal = new java.util.concurrent.atomic.AtomicReference<CreatedAnonymous>();
+    CreatedAnonymous created;
+    try {
+      created =
+          localTransactions.execute(
+              () -> {
+                var result = createLocalAnonymousSaga(userDto, origin);
+                completedLocal.set(result);
+                return result;
+              });
+    } catch (RuntimeException failure) {
+      var result = completedLocal.get();
+      if (result != null) {
+        try {
+          bootstrapFailure.record(
+              result.credentials().getUserId(), result.session().getId(), failure);
+        } catch (RuntimeException checkpointFailure) {
+          failure.addSuppressed(checkpointFailure);
+        }
+      }
+      throw failure;
+    }
+    // execute() commits local state and invokes native activation before returning.
+    AnonymousUserCredentials credentials;
+    try {
+      credentials =
+          anonymousUserCreatorService.authenticateCreatedUser(userDto, created.credentials());
+    } catch (RuntimeException failure) {
+      try {
+        bootstrapFailure.record(
+            created.credentials().getUserId(), created.session().getId(), failure);
+      } catch (RuntimeException lifecycleFailure) {
+        failure.addSuppressed(lifecycleFailure);
+      }
+      throw failure;
+    }
+    bootstrapFailure.complete(created.credentials().getUserId(), created.session().getId());
     return new CreateAnonymousEnquiryResponseDTO()
         .userName(userDto.getUsername())
         .accessToken(credentials.getAccessToken())
         .refreshToken(credentials.getRefreshToken())
         .expiresIn(credentials.getExpiresIn())
         .refreshExpiresIn(credentials.getRefreshExpiresIn())
-        .sessionId(session.getId());
+        .sessionId(created.session().getId());
+  }
+
+  private record CreatedAnonymous(
+      de.caritas.cob.userservice.api.model.Session session, AnonymousUserCredentials credentials) {}
+
+  private CreatedAnonymous createLocalAnonymousSaga(
+      UserDTO userDto, IdentityCreationOrigin origin) {
+    var credentials = anonymousUserCreatorService.createAnonymousUser(userDto, origin);
+    de.caritas.cob.userservice.api.model.Session session = null;
+    try {
+      session =
+          anonymousConversationCreatorService.createAnonymousConversation(userDto, credentials);
+      localCompletion.anonymousSession(credentials.getUserId(), session);
+      return new CreatedAnonymous(session, credentials);
+    } catch (RuntimeException failure) {
+      try {
+        if (session != null)
+          rollbackFacade.rollBackUserAccount(
+              de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation
+                  .builder()
+                  .userId(credentials.getUserId())
+                  .user(session.getUser())
+                  .session(session)
+                  .rollBackUserAccount(true)
+                  .build());
+        else identityProvisioning.compensateCreatedAccount(credentials.getUserId());
+      } catch (RuntimeException compensationFailure) {
+        failure.addSuppressed(compensationFailure);
+      }
+      throw failure;
+    }
   }
 
   private void checkIfConsultingTypeHasAnonymousConsulting(int consultingTypeId) {

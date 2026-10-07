@@ -60,6 +60,11 @@ class ExistingAccountSetupIssuerTest {
   @Mock private OrisoEmailRenderer renderer;
   @Mock private InviteMailDispatchService mail;
   @Mock private PlatformTransactionManager transactions;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityAccountProvisioning
+      provisioning;
+
   @InjectMocks private ExistingAccountSetupIssuer issuer;
 
   private final AtomicLong nextId = new AtomicLong(11);
@@ -67,6 +72,8 @@ class ExistingAccountSetupIssuerTest {
 
   @BeforeEach
   void transactions() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        issuer, "provisioning", provisioning);
     lenient()
         .when(transactions.getTransaction(any()))
         .thenAnswer(ignored -> new SimpleTransactionStatus());
@@ -75,6 +82,21 @@ class ExistingAccountSetupIssuerTest {
   @Test
   void directCreationPersistsOnlyVerifierAndNeverSnapshotsInitialSecretOrSetupUrl() {
     readyToSend();
+    when(provisioning.setupProjection("admin-11"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+                .AccountProjection(
+                "admin-11",
+                "admin@example.org",
+                "admin@example.org",
+                null,
+                null,
+                42L,
+                "de",
+                true,
+                true,
+                java.util.List.of("tenant-admin"),
+                true));
     when(invites.findByActiveSetupIdentityKey("admin-11")).thenReturn(Optional.empty());
     when(initialPasswords.encode("initial-secret")).thenReturn("salted-verifier");
 

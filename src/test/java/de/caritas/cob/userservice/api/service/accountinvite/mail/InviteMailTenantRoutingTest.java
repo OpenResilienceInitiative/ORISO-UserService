@@ -15,7 +15,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.SmtpSendException.Category;
 import de.caritas.cob.userservice.api.exception.SmtpSendException.DeliveryDisposition;
@@ -64,7 +64,7 @@ class InviteMailTenantRoutingTest {
       """
       {"settings":{"featureSystemNotificationEmailsEnabled":%s,"smtpMode":"OWN","smtp":{
         "enabled":true,"host":"mail.traeger-a.example","port":587,"secure":true,
-        "username":"relay","from":"einladung@traeger-a.example","passwordSet":%s}}}
+        "username":"relay","from":"einladung@traeger-a.example","configured":%s}}}
       """;
   private static final String PLATFORM_SETTINGS =
       """
@@ -96,12 +96,14 @@ class InviteMailTenantRoutingTest {
             new TenantSystemEmailRouteService(relay),
             relay);
 
-    var account = new TechnicalUserConfig();
+    var account = new TaskIdentityCredentials();
     account.setClientId("technical");
     account.setClientSecret("test-secret");
-    lenient().when(identityConfig.getTechnicalUser()).thenReturn(account);
     lenient()
-        .when(authentication.loginService("technical", "test-secret"))
+        .when(identityConfig.getTaskIdentity(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(account);
+    lenient()
+        .when(authentication.loginTask(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new IdentityLogin("technical-token", 60, 60, "refresh"));
     var headers = new HttpHeaders();
     headers.setBearerAuth("technical-token");
@@ -229,7 +231,9 @@ class InviteMailTenantRoutingTest {
   @Test
   void unreadableTenantSettings_failWithoutFallingBackToThePlatform() {
     tenantService
-        .expect(once(), requestTo(TENANT_SERVICE + "/tenant/" + OWN_TENANT))
+        .expect(
+            once(),
+            requestTo(TENANT_SERVICE + "/internal/tenants/" + OWN_TENANT + "/system-email-context"))
         .andRespond(withServerError());
 
     assertThatThrownBy(() -> invite(OWN_TENANT, "a@example.org"))
@@ -296,7 +300,9 @@ class InviteMailTenantRoutingTest {
 
   private void givenTenant(long tenantId, String body) {
     tenantService
-        .expect(once(), requestTo(TENANT_SERVICE + "/tenant/" + tenantId))
+        .expect(
+            once(),
+            requestTo(TENANT_SERVICE + "/internal/tenants/" + tenantId + "/system-email-context"))
         .andExpect(method(HttpMethod.GET))
         .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
   }

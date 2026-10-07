@@ -10,7 +10,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -51,11 +51,11 @@ class TenantCreationClientTest {
 
   @BeforeEach
   void setUp() {
-    var technical = new TechnicalUserConfig();
+    var technical = new TaskIdentityCredentials();
     technical.setClientId("synthetic-service");
     technical.setClientSecret("synthetic-password");
-    when(config.getTechnicalUser()).thenReturn(technical);
-    when(identity.loginService("synthetic-service", "synthetic-password"))
+    when(config.getTaskIdentity(org.mockito.ArgumentMatchers.any())).thenReturn(technical);
+    when(identity.loginTask(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new IdentityLogin("synthetic-token", 60, 120, "synthetic-refresh"));
     ReflectionTestUtils.setField(headers, "csrfHeaderProperty", "X-CSRF-TOKEN");
     ReflectionTestUtils.setField(headers, "csrfCookieProperty", "CSRF-TOKEN");

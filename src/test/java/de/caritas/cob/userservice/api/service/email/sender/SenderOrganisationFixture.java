@@ -35,42 +35,13 @@ public final class SenderOrganisationFixture {
         mock(PlatformOperatorOrganisationClient.class);
     lenient().when(platformClient.fetch()).thenReturn(Optional.ofNullable(platform));
 
-    var controllerFactory =
-        mock(
-            de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory
-                .class);
-    var tenantApi =
-        mock(de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi.class);
-    lenient().when(controllerFactory.createControllerApi()).thenReturn(tenantApi);
-    lenient()
-        .when(tenantApi.getApiClient())
-        .thenReturn(mock(de.caritas.cob.userservice.tenantadminservice.generated.ApiClient.class));
-    lenient().when(tenantApi.getTenantById(tenant.getId())).thenReturn(tenant);
-
-    var technicalUser = new de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig();
-    technicalUser.setClientId("technical");
-    technicalUser.setClientSecret("secret");
-    var identityClientConfig =
-        mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
-    lenient().when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    var identityAuthentication =
-        mock(de.caritas.cob.userservice.api.port.out.IdentityAuthentication.class);
-    lenient()
-        .when(identityAuthentication.loginService(any(), any()))
-        .thenReturn(new de.caritas.cob.userservice.api.port.out.IdentityLogin("token", 0, 0, null));
-    var securityHeaderSupplier =
-        mock(de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier.class);
-    lenient()
-        .when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(any()))
-        .thenReturn(new org.springframework.http.HttpHeaders());
-
+    var contextClient =
+        mock(de.caritas.cob.userservice.api.service.notification.TenantSystemEmailClient.class);
+    java.util.Map<String, Object> context =
+        new com.fasterxml.jackson.databind.ObjectMapper().convertValue(tenant, java.util.Map.class);
+    lenient().when(contextClient.readTenant(tenant.getId())).thenReturn(context);
     return new SenderOrganisationResolver(
-        platformClient,
-        new TraegerOrganisationClient(
-            securityHeaderSupplier,
-            identityAuthentication,
-            identityClientConfig,
-            controllerFactory));
+        platformClient, new TraegerOrganisationClient(contextClient));
   }
 
   /**

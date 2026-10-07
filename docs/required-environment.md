@@ -113,32 +113,86 @@ So a new guard needs three things: that message shape, a placeholder line in
 `config.env.example`, and a row in the table above. The cluster side is separate
 — see [ORISO-Helm#272](https://github.com/OpenResilienceInitiative/ORISO-Helm/issues/272).
 
-### Dedicated backend identities
+### Dedicated task identities
 
-Backend calls use two separate confidential clients. Human password and OTP
-login keeps the existing app client. A missing backend secret, reuse of a
-backend client for the app, or reuse of the same secret for both backends stops
-startup. There is no fallback to the old technical or admin passwords.
+UserService sends automatic requests through twelve distinct confidential task
+clients. Human login uses the existing application client. Each outbound task
+requires its own client ID, secret and actual service-account UUID; startup
+rejects missing or repeated credentials and any reuse of the human client.
+The consultant importer is an incoming binding only, so UserService receives
+its client ID and subject without receiving its secret. SMTP synchronization
+belongs to ConsultingTypeService and requires no UserService credential.
 
-**For developers — source configuration and rollout dependencies:**
+**For developers — required identity keys and rollout contract:**
+
 ```text
-IDENTITY_TECHNICAL_CLIENT_ID=backend-technical
-KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET=<separately provisioned technical client secret>
-KEYCLOAK_CONFIG_ADMIN_CLIENTID=backend-admin
-KEYCLOAK_BACKEND_ADMIN_CLIENT_SECRET=<different separately provisioned admin client secret>
-KEYCLOAK_BACKEND_ADMIN_SERVICE_SUBJECT=<actual backend-admin service-account UUID>
+Task suffixes (one separate credential tuple for each):
+CONFIG_WIZARD, INVITE_RESERVATIONS, NOTIFICATION_DISPATCH,
+SYSTEM_EMAIL_DELIVERY, ACCOUNT_PROVISIONING, ACCOUNT_MAINTENANCE,
+OTP, SESSION_EXCHANGE, APPOINTMENT_SYNC, APPOINTMENT_CLEANUP,
+MATRIX_AGENCY, RUNTIME_POLICY
 
-Technical calls: IdentityAuthentication.loginService(clientId, clientSecret).
-Admin REST: client_credentials using backend-admin; no admin username/password.
-Trusted user exchange: administrative token acquired via backend-admin and pinned
-to its subject, azp, expiry and otp-config-admin realm role; tokens with technical
-or realm-admin are rejected. Original app client and requested_subject exchange
-contract retained.
+For each suffix:
+IDENTITY_<suffix>_CLIENT_ID
+KEYCLOAK_<suffix>_CLIENT_SECRET
+IDENTITY_<suffix>_SERVICE_SUBJECT
 
-Deploy reviewed matching Keycloak client/role and Helm configuration first.
-Read actual service-account subjects in each existing realm and keep incoming
-helper subject/client/role checks pinned to those actual values. Fresh import
-UUIDs do not prove an existing realm uses the same subjects. Provision secrets
-outside source; do not commit or log them. Verify all consumers before disabling
-legacy technical/admin accounts. No shared deployment is implied by this patch.
+Incoming CSV importer (no client secret mounted):
+IDENTITY_CONSULTANT_IMPORT_CLIENT_ID=backend-consultant-import
+IDENTITY_CONSULTANT_IMPORT_SERVICE_SUBJECT=<actual service-account UUID>
+
+Three independent Base64 keys, each >=32 decoded bytes:
+ORISO_PROVISIONING_ORIGIN_KEY
+ORISO_MAINTENANCE_ORIGIN_KEY
+ORISO_WIZARD_POLICY_CONTEXT_KEY
+Generate each independently: openssl rand -base64 32
+
+Account creation/maintenance use bounded signed ORISO command ports, not
+Keycloak's native Admin REST. Initial account creation is atomic; retries
+retain only the recorded own attempt and receipt. A known failed outcome
+records compensation intent before local cleanup. Final local domain writes
+and commit intent share a transaction; external finalization retries that
+intent. Expired unfinished attempts use the bounded owned recovery claim:
+absent attempts become tombstones that fence late creation; OPEN attempts
+become RECOVERY_CLAIMED and fence stale commit. Actual kind-specific local
+records are cleaned under the captured journal lock before compensation.
+Native creation stays disabled until its first owned commit.
+
+Anonymous bootstrap records its actual owned session ID and bounded deadline
+with commit intent. Successful existing login clears this phase before tokens
+return. Actual bootstrap failure or expired uncleared bootstrap enters normal
+durable deletion only after confirmed commit and exact user/session matching.
+No committed creator compensation or guessed remote Matrix identity deletion
+is permitted. Creation execution/guest lease defaults to 300 seconds; optional
+oriso.commands.creation-execution-lease-seconds accepts 60..3600.
+
+The required external native identity join is owned by ORISO-Helm:
+.github/workflows/validate-helm-chart.yml, job task-permission-matrix,
+check Native task receivers and durable creation restart.
+It executes RealTaskTokenAuthorizationIT with ORISO_TASK_TOKEN_FIXTURE and
+IdentityCreationNativeRestartIT with ORISO_CREATION_NATIVE_FIXTURE against
+native issuers/custom provider and fails on absent or skipped cases.
+The ordinary H2 runner explicitly excludes only these two native fixture
+suites alongside its documented MariaDB-owned suites; its zero-skip guard
+and critical E2E floors remain enabled.
+
+Before retiring the shared caller or enabling task-only Wizard/reservation
+cleanup, inventory pending invitations and release tasks against the actual
+receiver reservation ledgers. Carry forward only genuinely captured matching
+owner proofs. Rows with no stored proof must be safely drained/reissued by the
+original owner after checking that their unit is unassigned and no live invite
+depends on it; never invent a token or use a shared-credential fallback. Hold
+the affected caller rollout until old invitation acceptance/cancellation/expiry
+and release retry paths have passed. This is a deployment prerequisite, not a
+claim that existing live rows have been migrated.
+
+The original session-exchange unsupported 400/403 limitation is retained.
+No broad impersonation, admin/technical password, legacy shared client secret
+or native administration fallback is provided.
+
+Deploy matching reviewed Keycloak command provider, task clients/roles and
+Helm configuration together. Read actual client/service-account linkage in
+each existing realm; fresh-import UUIDs are not proof of existing subjects.
+Provision secrets outside source. Local verification is not deployment or
+browser/mail acceptance evidence.
 ```
