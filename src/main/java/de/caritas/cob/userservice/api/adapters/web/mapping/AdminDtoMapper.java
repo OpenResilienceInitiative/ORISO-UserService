@@ -23,7 +23,6 @@ import java.util.Map;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpStatus;
@@ -36,7 +35,7 @@ import org.springframework.web.client.HttpClientErrorException;
 public class AdminDtoMapper implements DtoMapperUtils {
 
   private final @NonNull TenantService tenantService;
-  @Autowired private AccountLoginStatusService accountLoginStatusService;
+  private final AccountLoginStatusService accountLoginStatusService;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;

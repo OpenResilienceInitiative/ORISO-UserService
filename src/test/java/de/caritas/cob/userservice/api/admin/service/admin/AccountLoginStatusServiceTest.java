@@ -6,9 +6,12 @@ import static org.mockito.Mockito.*;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import jakarta.ws.rs.ProcessingException;
 import jakarta.ws.rs.ServiceUnavailableException;
+import jakarta.ws.rs.WebApplicationException;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -54,16 +57,15 @@ class AccountLoginStatusServiceTest {
     verifyNoMoreInteractions(lookup);
   }
 
-  @Test
-  void doesNotHideInvalidRequestsOrForbiddenIdentityReads() {
+  @ParameterizedTest
+  @ValueSource(ints = {400, 401, 403})
+  void doesNotHideInvalidOrUnauthorizedIdentityReads(int status) {
     var service = new AccountLoginStatusService(lookup);
-    when(lookup.findEnabledById("invalid")).thenThrow(new jakarta.ws.rs.BadRequestException());
-    when(lookup.findEnabledById("forbidden")).thenThrow(new jakarta.ws.rs.ForbiddenException());
+    var failure = new WebApplicationException(status);
+    when(lookup.findEnabledById("account")).thenThrow(failure);
 
-    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.activeOf("invalid"))
-        .isInstanceOf(jakarta.ws.rs.BadRequestException.class);
-    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.activeOf("forbidden"))
-        .isInstanceOf(jakarta.ws.rs.ForbiddenException.class);
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.activeOf("account"))
+        .isSameAs(failure);
   }
 
   @Test
