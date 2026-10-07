@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.*;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationDeduplicationWriter;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -130,7 +131,8 @@ class MatrixCallTenantIT {
             mock(
                 de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
                     .class),
-            freshEmailCursor());
+            freshEmailCursor(),
+            mock(InternalChatEmailService.class));
     try {
       // Control: this fixture must really enforce tenant isolation before testing the worker.
       TenantContext.setCurrentTenant(7L);

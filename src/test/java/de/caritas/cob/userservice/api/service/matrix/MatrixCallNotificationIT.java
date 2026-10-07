@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationDeduplicationWriter;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
@@ -407,7 +408,8 @@ class MatrixCallNotificationIT {
                 mock(
                     de.caritas.cob.userservice.api.service.notification
                         .AdviceSeekerReplyEmailService.class),
-                freshEmailCursor());
+                freshEmailCursor(),
+                mock(InternalChatEmailService.class));
     var listener = fresh.get();
     try {
       listener.initialize();
@@ -687,7 +689,8 @@ class MatrixCallNotificationIT {
                 mock(
                     de.caritas.cob.userservice.api.service.notification
                         .AdviceSeekerReplyEmailService.class),
-                freshEmailCursor());
+                freshEmailCursor(),
+                mock(InternalChatEmailService.class));
     var listener = freshListener.get();
     try {
       listener.initialize();
@@ -901,7 +904,8 @@ class MatrixCallNotificationIT {
         mock(
             de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
                 .class),
-        freshEmailCursor()) {
+        freshEmailCursor(),
+        mock(InternalChatEmailService.class)) {
       @Override
       void sleep(long millis) throws InterruptedException {
         super.sleep(Math.min(millis, 10));
@@ -1145,7 +1149,8 @@ class MatrixCallNotificationIT {
                 mock(
                     de.caritas.cob.userservice.api.service.notification
                         .AdviceSeekerReplyEmailService.class),
-                freshEmailCursor());
+                freshEmailCursor(),
+                mock(InternalChatEmailService.class));
     var listener = newListener.get();
     try {
       listener.initialize();
