@@ -240,10 +240,13 @@ public class AdviceSeekerReplyEmailService {
     TenantSystemEmailRouteService.Route route;
     OrisoEmailRenderer.RenderedEmail email;
     try {
-      route =
-          routes
-              .resolve(claim.getTenantId())
-              .orElseThrow(() -> new IllegalStateException("Reply email SMTP route is missing"));
+      var configuredRoute = routes.resolve(claim.getTenantId());
+      if (configuredRoute.isEmpty()) {
+        writer.finish(deliveryId, Status.REJECTED);
+        log.info("Reply email delivery {} suppressed by tenant notification policy", deliveryId);
+        return;
+      }
+      route = configuredRoute.get();
       delivery.requireConfigured(route);
       RestrictedTenantDTO tenant = tenants.getRestrictedTenantDataFresh(claim.getTenantId());
       if (tenant == null || !Objects.equals(tenant.getId(), claim.getTenantId())) {

@@ -108,6 +108,15 @@ class TenantSystemEmailRouteServiceTest {
   }
 
   @Test
+  void missingNotificationPolicyIsASetupErrorRatherThanIntentionalSuppression() {
+    when(client.readTenant(40L)).thenReturn(Map.of("settings", Map.of("smtpMode", "PLATFORM")));
+
+    assertThatThrownBy(() -> new TenantSystemEmailRouteService(client).resolve(40L))
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
+        .hasMessageContaining("notification policy");
+  }
+
+  @Test
   void disabledSystemMailSendsNothing() {
     when(client.readTenant(40L))
         .thenReturn(Map.of("settings", Map.of("featureSystemNotificationEmailsEnabled", false)));

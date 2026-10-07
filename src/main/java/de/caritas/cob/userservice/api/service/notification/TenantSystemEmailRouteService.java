@@ -28,8 +28,12 @@ public class TenantSystemEmailRouteService {
   public Optional<Route> resolve(Long tenantId) {
     if (tenantId == null || tenantId <= 0) return Optional.empty();
     Map<?, ?> settings = readSettings(tenantId);
-    if (!Boolean.TRUE.equals(settings.get("featureSystemNotificationEmailsEnabled"))) {
+    Object notificationPolicy = settings.get("featureSystemNotificationEmailsEnabled");
+    if (Boolean.FALSE.equals(notificationPolicy)) {
       return Optional.empty();
+    }
+    if (!Boolean.TRUE.equals(notificationPolicy)) {
+      throw new ConfigurationException("Tenant notification policy is missing or invalid");
     }
     return Optional.of(route(settings));
   }
