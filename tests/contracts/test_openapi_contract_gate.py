@@ -166,8 +166,8 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                # Merged TenantPR303 includes the stored confirmation language consumed here.
-                r"6d7e2d1dcc640af1bd027131f1c217899ad2a70e",
+                # TenantPR304 supplies the six conversation notification channel fields.
+                r"f309d2432d6ad02d17eef13d0aeaffc50c2389b9",
                 re.DOTALL,
             ),
         )
