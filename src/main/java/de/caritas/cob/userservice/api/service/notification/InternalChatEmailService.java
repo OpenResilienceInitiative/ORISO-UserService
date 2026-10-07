@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deserializeNotificationSettingsDTOOrDefaultIfNull;
+import static de.caritas.cob.userservice.api.service.notification.NotificationEmailDiagnostics.*;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
@@ -16,6 +17,7 @@ import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.Status;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.donotdisturb.DoNotDisturbService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
@@ -27,6 +29,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,6 +46,7 @@ public class InternalChatEmailService {
   private final @NonNull SessionRepository sessions;
   private final @NonNull GroupChatParticipantRepository participants;
   private final @NonNull ConsultantRepository consultants;
+  private final @NonNull IdentityAccountStatusLookup identities;
   private final @NonNull MatrixSynapseService matrix;
   private final @NonNull ReplyEmailDeliveryWriter writer;
   private final @NonNull DoNotDisturbService doNotDisturb;
@@ -83,7 +88,7 @@ public class InternalChatEmailService {
   private void reserve(String roomId, String eventId, Consultant actor) {
     if (isBlank(roomId) || isBlank(eventId)) return;
     Session session = resolveGroup(roomId);
-    if (!currentParticipant(session, actor)) return;
+    if (!currentParticipant(session, actor, participantIds(session))) return;
     try {
       writer.reserveInternalIntent(
           actor.getId(),
@@ -110,7 +115,8 @@ public class InternalChatEmailService {
       Session session = resolveGroup(intent.getSourceRoomId());
       Consultant actor =
           consultants.findByIdAndDeleteDateIsNull(intent.getRecipientUserId()).orElse(null);
-      if (!matches(session, intent, actor)) {
+      Set<String> participantIds = participantIds(session);
+      if (!matches(session, intent, actor, participantIds)) {
         writer.finish(id, Status.REJECTED);
         return;
       }
@@ -119,14 +125,9 @@ public class InternalChatEmailService {
         writer.finish(id, Status.REJECTED);
         return;
       }
-      for (String participantId :
-          participants.findByChatId(session.getId()).stream()
-              .map(GroupChatParticipant::getConsultantId)
-              .filter(Objects::nonNull)
-              .distinct()
-              .toList()) {
+      for (String participantId : participantIds) {
         Consultant recipient = consultants.findByIdAndDeleteDateIsNull(participantId).orElse(null);
-        if (!eligibleRecipient(session, actor, recipient)
+        if (!eligibleRecipient(session, actor, recipient, participantIds)
             || !members.contains(recipient.getMatrixUserId())) continue;
         try {
           writer.reserveInternalRecipient(recipient.getId(), intent);
@@ -158,7 +159,9 @@ public class InternalChatEmailService {
               .findByMatrixUserIdAndDeleteDateIsNull(claim.getSourceMatrixUserId())
               .orElse(null);
       recipient = consultants.findByIdAndDeleteDateIsNull(claim.getRecipientUserId()).orElse(null);
-      if (!matches(session, claim, actor) || !eligibleRecipient(session, actor, recipient)) {
+      Set<String> participantIds = participantIds(session);
+      if (!matches(session, claim, actor, participantIds)
+          || !eligibleRecipient(session, actor, recipient, participantIds)) {
         writer.finish(id, Status.REJECTED);
         return;
       }
@@ -176,6 +179,7 @@ public class InternalChatEmailService {
 
     TenantSystemEmailRouteService.Route route;
     OrisoEmailRenderer.RenderedEmail email;
+    Stage setupStage = Stage.TENANT_POLICY;
     try {
       var selectedRoute = routes.resolve(claim.getTenantId());
       if (selectedRoute.isEmpty()) {
@@ -184,17 +188,20 @@ public class InternalChatEmailService {
         return;
       }
       route = selectedRoute.get();
+      setupStage = Stage.TENANT_SMTP;
       delivery.requireConfigured(route);
+      setupStage = Stage.TENANT_CONTEXT;
       var tenant = tenants.getRestrictedTenantDataFresh(claim.getTenantId());
       if (tenant == null || !Objects.equals(tenant.getId(), claim.getTenantId())) {
-        throw new IllegalStateException("Internal-chat email tenant is unavailable");
+        throw failure(Stage.TENANT_CONTEXT, Reason.TENANT_UNAVAILABLE);
       }
       if (multitenancyEnabled && !singleDomainMultitenancy && isBlank(tenant.getSubdomain())) {
-        throw new IllegalStateException("Internal-chat email tenant subdomain is missing");
+        throw failure(Stage.TENANT_CONTEXT, Reason.TENANT_SUBDOMAIN_MISSING);
       }
       String baseUrl =
           AdviceSeekerReplyEmailService.requireBaseUrl(
               multitenancyEnabled ? tenantTemplates.getTenantBaseUrl(tenant) : applicationBaseUrl);
+      setupStage = Stage.TEMPLATE;
       var tenantBrand = branding.resolveNotification(claim.getTenantId(), baseUrl);
       var values = emailBrand.valuesForResolvedBrand(baseUrl, tenantBrand);
       values.put("platformName", values.get("offeringName"));
@@ -210,7 +217,7 @@ public class InternalChatEmailService {
         tone = OrisoEmailRenderer.Tone.DE_INFORMAL;
       email = renderer.render("neue-nachricht-beratung", tone, values);
     } catch (RuntimeException unavailable) {
-      retryPreflight(id, unavailable);
+      retryPreflight(id, setupStage, unavailable);
       return;
     }
     try {
@@ -243,7 +250,8 @@ public class InternalChatEmailService {
         : null;
   }
 
-  private boolean currentParticipant(Session session, Consultant consultant) {
+  private boolean currentParticipant(
+      Session session, Consultant consultant, Set<String> participantIds) {
     return session != null
         && consultant != null
         && consultant.getId() != null
@@ -251,20 +259,22 @@ public class InternalChatEmailService {
         && consultant.getStatus() == ConsultantStatus.IN_PROGRESS
         && !isBlank(consultant.getMatrixUserId())
         && Objects.equals(consultant.getTenantId(), session.getTenantId())
-        && participants.findByChatId(session.getId()).stream()
-            .anyMatch(row -> Objects.equals(row.getConsultantId(), consultant.getId()));
+        && participantIds.contains(consultant.getId());
   }
 
-  private boolean matches(Session session, ReplyEmailDelivery claim, Consultant actor) {
-    return currentParticipant(session, actor)
+  private boolean matches(
+      Session session, ReplyEmailDelivery claim, Consultant actor, Set<String> participantIds) {
+    return currentParticipant(session, actor, participantIds)
+        && identityEnabled(actor.getId())
         && Objects.equals(session.getId(), claim.getSessionId())
         && Objects.equals(session.getTenantId(), claim.getTenantId())
         && Objects.equals(actor.getMatrixUserId(), claim.getSourceMatrixUserId())
         && !isBlank(claim.getSourceEventId());
   }
 
-  private boolean eligibleRecipient(Session session, Consultant actor, Consultant recipient) {
-    return currentParticipant(session, recipient)
+  private boolean eligibleRecipient(
+      Session session, Consultant actor, Consultant recipient, Set<String> participantIds) {
+    return currentParticipant(session, recipient, participantIds)
         && actor != null
         && !Objects.equals(actor.getId(), recipient.getId())
         && !recipient.isAbsent()
@@ -273,24 +283,47 @@ public class InternalChatEmailService {
             || !Boolean.FALSE.equals(
                 deserializeNotificationSettingsDTOOrDefaultIfNull(recipient)
                     .getInternalChatNotificationEnabled()))
+        && identityEnabled(recipient.getId())
         && !doNotDisturb.isInDoNotDisturb(recipient.getId())
         && !isBlank(recipient.getEmail())
         && (isBlank(emailDummySuffix) || !recipient.getEmail().endsWith(emailDummySuffix));
   }
 
+  private boolean identityEnabled(String userId) {
+    return at(Stage.IDENTITY, () -> identities.findEnabledById(userId).orElse(false));
+  }
+
+  private Set<String> participantIds(Session session) {
+    if (session == null) return Set.of();
+    return participants.findByChatId(session.getId()).stream()
+        .map(GroupChatParticipant::getConsultantId)
+        .filter(Objects::nonNull)
+        .collect(Collectors.toSet());
+  }
+
   private List<String> currentMembers(String roomId) {
-    return matrix
-        .getRoomMembers(roomId)
-        .orElseThrow(() -> new IllegalStateException("Internal room membership is unavailable"));
+    return at(
+        Stage.MATRIX_MEMBERSHIP,
+        () ->
+            matrix
+                .getRoomMembers(roomId)
+                .orElseThrow(
+                    () -> failure(Stage.MATRIX_MEMBERSHIP, Reason.DEPENDENCY_UNAVAILABLE)));
   }
 
   private boolean verifiedMatrixEvent(ReplyEmailDelivery claim, Consultant actor) {
-    String token = matrix.loginAsUserAccessToken(actor.getMatrixUserId());
-    if (isBlank(token)) throw new IllegalStateException("Internal Matrix token is unavailable");
+    String token =
+        at(
+            Stage.MATRIX_AUTHENTICATION,
+            () -> matrix.loginAsUserAccessToken(actor.getMatrixUserId()));
+    if (isBlank(token)) throw failure(Stage.MATRIX_AUTHENTICATION, Reason.DEPENDENCY_UNAVAILABLE);
     Map<String, Object> event =
-        matrix
-            .getRoomEvent(claim.getSourceRoomId(), claim.getSourceEventId(), token)
-            .orElseThrow(() -> new IllegalStateException("Internal Matrix event is unavailable"));
+        at(
+            Stage.MATRIX_EVENT,
+            () ->
+                matrix
+                    .getRoomEvent(claim.getSourceRoomId(), claim.getSourceEventId(), token)
+                    .orElseThrow(() -> failure(Stage.MATRIX_EVENT, Reason.DEPENDENCY_UNAVAILABLE)));
     if (!Objects.equals(claim.getSourceEventId(), event.get("event_id"))
         || !Objects.equals(actor.getMatrixUserId(), event.get("sender"))
         || !Objects.equals("m.room.encrypted", event.get("type"))) return false;
@@ -305,10 +338,11 @@ public class InternalChatEmailService {
   }
 
   private void retryPreflight(long id, RuntimeException unavailable) {
+    retryPreflight(id, Stage.ELIGIBILITY, unavailable);
+  }
+
+  private void retryPreflight(long id, Stage stage, RuntimeException unavailable) {
     writer.retryLater(id);
-    log.warn(
-        "Internal-chat email {} preflight unavailable ({})",
-        id,
-        unavailable.getClass().getSimpleName());
+    NotificationEmailDiagnostics.retry(log, "internal-chat", id, stage, unavailable);
   }
 }

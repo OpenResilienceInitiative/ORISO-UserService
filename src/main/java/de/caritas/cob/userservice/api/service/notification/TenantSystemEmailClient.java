@@ -83,11 +83,15 @@ public class TenantSystemEmailClient {
               Void.class);
       if (response.getStatusCode() == HttpStatus.NO_CONTENT) {
         throw new TenantSystemEmailRouteService.ConfigurationException(
+            NotificationEmailDiagnostics.Stage.TENANT_SMTP,
+            NotificationEmailDiagnostics.Reason.OWN_SMTP_DISABLED,
             "OWN tenant SMTP delivery is disabled");
       }
     } catch (HttpClientErrorException ex) {
       if (!isUnprocessable(ex)) throw ex;
       throw new TenantSystemEmailRouteService.ConfigurationException(
+          NotificationEmailDiagnostics.Stage.TENANT_SMTP,
+          NotificationEmailDiagnostics.Reason.OWN_SMTP_INVALID,
           "OWN tenant SMTP configuration is invalid");
     }
   }
