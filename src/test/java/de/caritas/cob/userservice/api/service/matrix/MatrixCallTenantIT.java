@@ -81,6 +81,7 @@ class MatrixCallTenantIT {
   @Autowired private EventNotificationService notificationService;
   @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private MatrixSynapseService matrix;
+  @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
   @MockitoBean private IdentityTombstoneService tombstones;
 
   private MatrixEmailSyncCursorStore freshEmailCursor() {
