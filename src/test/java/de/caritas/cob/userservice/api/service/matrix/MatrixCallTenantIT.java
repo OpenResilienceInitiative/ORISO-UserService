@@ -51,7 +51,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * sync loop.
  */
 @DataJpaTest
-@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
+@TestPropertySource(
+    properties = {
+      "spring.profiles.active=testing,call-notification-account-fixture",
+      "multitenancy.enabled=true"
+    })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
   MatrixCallTenantIT.AopConfiguration.class,
