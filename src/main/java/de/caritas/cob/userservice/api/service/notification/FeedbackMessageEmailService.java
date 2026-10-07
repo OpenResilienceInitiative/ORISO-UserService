@@ -197,10 +197,13 @@ public class FeedbackMessageEmailService {
     TenantSystemEmailRouteService.Route route;
     OrisoEmailRenderer.RenderedEmail email;
     try {
-      route =
-          routes
-              .resolve(claim.getTenantId())
-              .orElseThrow(() -> new IllegalStateException("Feedback email SMTP route is missing"));
+      var configuredRoute = routes.resolve(claim.getTenantId());
+      if (configuredRoute.isEmpty()) {
+        writer.finish(id, Status.REJECTED);
+        log.info("Feedback email delivery {} suppressed by tenant notification policy", id);
+        return;
+      }
+      route = configuredRoute.get();
       delivery.requireConfigured(route);
       var tenant = tenants.getRestrictedTenantDataFresh(claim.getTenantId());
       if (tenant == null || !Objects.equals(tenant.getId(), claim.getTenantId())) {
