@@ -23,12 +23,15 @@ public class CaseHandoverMailSender {
   private final @NonNull TenantService tenants;
   private final @NonNull TenantTemplateSupplier tenantUrls;
   private final @NonNull CaseHandoverMailComposer composer;
+  private final @NonNull CaseHandoverGrantedMailEligibility eligibility;
 
   @Async
   public void send(CaseHandoverEmailNotification.Mail mail) {
     try {
       var route = routes.resolve(mail.tenantId());
       if (route.isEmpty()) return;
+      if (mail.outcome() == CaseHandoverEmailNotification.Outcome.GRANTED
+          && !eligibility.isEligible(mail)) return;
       RestrictedTenantDTO tenant = tenants.getRestrictedTenantData(mail.tenantId());
       if (tenant == null || !Objects.equals(tenant.getId(), mail.tenantId())) {
         throw new TenantSystemEmailRouteService.ConfigurationException(
