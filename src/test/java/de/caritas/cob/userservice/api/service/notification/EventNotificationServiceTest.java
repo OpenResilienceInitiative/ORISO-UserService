@@ -60,6 +60,10 @@ class EventNotificationServiceTest {
   @Mock private IdentityTombstoneService identityTombstoneService;
   @Mock private EventNotificationDeduplicationWriter deduplicationWriter;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService
+      feedUpdateSignalService;
+
   // The real rule, not a mock: ConsultantDisplayNameResolver is the single place that decides
   // which counsellor name may be published (ADR-002 §2).
   @Spy

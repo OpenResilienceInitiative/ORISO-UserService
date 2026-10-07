@@ -16,6 +16,7 @@ class ReplicaSafetyInventoryContractTest {
       Set.of(
           "email-template-cache",
           "matrix-access-token-cache",
+          "matrix-feed-signal-coalescer",
           "matrix-browser-login-locks",
           "matrix-sync-token-cache",
           "matrix-presence-cache",
