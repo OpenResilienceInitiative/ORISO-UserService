@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -743,16 +744,20 @@ class CounsellorOnboardingServiceTest {
   @Test
   void emailVerification_expiryDuringProviderCallDoesNotConsumeGate() {
     AccountInvite pending = pendingEmailInvite();
+    AccountInvite expired = invite();
+    expired.setStatus(AccountInviteStatus.ACCEPTED);
+    expired.setAcceptedByUserId(CONSULTANT_ID);
+    expired.setExpiresAt(LocalDateTime.now().minusSeconds(1));
+    when(accountInviteService.findInviteByToken(RAW_TOKEN)).thenReturn(pending, expired);
     when(identitySecondFactor.finishEmailVerification("enc.lena.b", "123456"))
-        .thenAnswer(
-            invocation -> {
-              pending.setExpiresAt(LocalDateTime.now().minusSeconds(1));
-              return new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
-                  true, false, true, "counsellor@example.org");
-            });
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                true, false, true, "counsellor@example.org"));
     assertThrows(
         AccountInviteLinkException.class,
         () -> service.activateEmailTwoFactor(RAW_TOKEN, "123456"));
+    assertTrue(pending.getExpiresAt().isAfter(LocalDateTime.now()));
+    verify(accountInviteService, times(2)).findInviteByToken(RAW_TOKEN);
     verify(accountInviteService, never()).markTwoFactorActive(anyString());
   }
 
