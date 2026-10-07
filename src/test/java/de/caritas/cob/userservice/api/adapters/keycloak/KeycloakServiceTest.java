@@ -356,6 +356,30 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void getOtpCredential_Should_Throw_When_SuccessfulResponseHasNoBody() {
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    for (var status : new HttpStatus[] {HttpStatus.OK, HttpStatus.NO_CONTENT}) {
+      when(keycloakClient.get(anyString(), any(), eq(OtpInfoDTO.class)))
+          .thenReturn(new ResponseEntity<OtpInfoDTO>(status));
+
+      assertThrows(KeycloakException.class, () -> keycloakService.getOtpCredential(USERNAME));
+    }
+    verifyNoInteractions(keycloakMapper);
+  }
+
+  @Test
+  public void getOtpCredential_Should_Preserve_ValidInactiveCredential() {
+    var info = new OtpInfoDTO().otpSetup(false).otpSecret("setup-secret");
+    var credential = new IdentityOtpCredential(false, "setup-secret", null, null);
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    when(keycloakClient.get(anyString(), any(), eq(OtpInfoDTO.class)))
+        .thenReturn(ResponseEntity.ok(info));
+    when(keycloakMapper.identityOtpCredentialOf(info)).thenReturn(credential);
+
+    assertEquals(credential, keycloakService.getOtpCredential(USERNAME));
+  }
+
+  @Test
   public void getOtpCredential_Should_Throw_When_RequestHasAnError() {
     assertThrows(
         RestClientException.class,
@@ -1557,6 +1581,23 @@ public class KeycloakServiceTest {
     assertThat(this.keycloakService.findById("userId"), equalTo(Optional.empty()));
   }
 
+  @Test
+  public void requiresPasswordChange_Should_ReadOnlyTheCurrentUpdatePasswordAction() {
+    UserRepresentation user = new UserRepresentation();
+    UserResource resource = mock(UserResource.class);
+    UsersResource users = mock(UsersResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(users);
+    when(users.get("userId")).thenReturn(resource);
+    when(resource.toRepresentation()).thenReturn(user);
+
+    user.setRequiredActions(List.of("CONFIGURE_TOTP", "UPDATE_PASSWORD"));
+    assertTrue(keycloakService.requiresPasswordChange("userId"));
+    user.setRequiredActions(List.of("CONFIGURE_TOTP"));
+    assertFalse(keycloakService.requiresPasswordChange("userId"));
+    user.setRequiredActions(null);
+    assertFalse(keycloakService.requiresPasswordChange("userId"));
+  }
+
   /**
    * Stubs the post-create lookup performed by {@code
    * KeycloakService#updateIdentityAttributesAfterCreate}: it fetches the freshly created user via
@@ -2087,6 +2128,22 @@ public class KeycloakServiceTest {
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     doThrow(exception).when(userResource).resetPassword(any());
+  }
+
+  @Test
+  void adminChosenPasswordIsTemporaryButUserChosenPasswordIsPermanent() {
+    UserResource account = mock(UserResource.class);
+    UsersResource users = givenUsersResourceWithAnyUserId(account);
+    when(keycloakClient.getUsersResource()).thenReturn(users);
+
+    keycloakService.updateTemporaryPassword("userId", "initial-secret");
+    keycloakService.updatePassword("userId", "own-secret");
+
+    var credentials =
+        ArgumentCaptor.forClass(org.keycloak.representations.idm.CredentialRepresentation.class);
+    verify(account, times(2)).resetPassword(credentials.capture());
+    assertTrue(credentials.getAllValues().get(0).isTemporary());
+    assertFalse(credentials.getAllValues().get(1).isTemporary());
   }
 
   @Test

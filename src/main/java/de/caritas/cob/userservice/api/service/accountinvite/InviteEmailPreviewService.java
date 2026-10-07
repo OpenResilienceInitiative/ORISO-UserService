@@ -38,12 +38,12 @@ public class InviteEmailPreviewService {
   static final String SAMPLE_EMAIL = "maren.muster@example.org";
   static final String SAMPLE_FIRST_NAME = "Maren";
   static final String SAMPLE_LAST_NAME = "Muster";
-  static final String SAMPLE_SUBJECT = "Ihre Einladung zu ORISO";
+  static final String SAMPLE_SUBJECT = "Ihre Einladung";
   static final String SAMPLE_BODY =
       """
       Hallo {{firstName}} {{lastName}},
 
-      Sie wurden eingeladen, ein Konto auf der ORISO-Plattform einzurichten.
+      Sie wurden eingeladen, ein Konto auf der Plattform einzurichten.
       Bitte schliessen Sie die Einrichtung ueber den folgenden Link ab:
 
       {{inviteLink}}
@@ -52,6 +52,7 @@ public class InviteEmailPreviewService {
       E-Mail, sondern wenden Sie sich an Ihre Ansprechperson.""";
 
   private final @NonNull InviteEmailTemplateRepository templateRepository;
+  private final @NonNull AccountInviteAccessPolicy accessPolicy;
   private final @NonNull InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   private final @NonNull InviteMailDispatchService inviteMailDispatchService;
 
@@ -134,7 +135,8 @@ public class InviteEmailPreviewService {
         mail.plainText(),
         // primaryAction is already null for DPA_SIGNED_NOTICE: the notice carries no accept
         // route, so the preview must not advertise one either.
-        primaryAction);
+        primaryAction,
+        mail.branding());
   }
 
   /** Sample values for the DPA_SIGNED_NOTICE dialect (see DpaSignedNoticeService placeholders). */
@@ -159,9 +161,14 @@ public class InviteEmailPreviewService {
   }
 
   private InviteEmailTemplate findTemplate(Long templateId) {
-    return templateRepository
-        .findById(templateId)
-        .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    InviteEmailTemplate template =
+        templateRepository
+            .findById(templateId)
+            .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    // A preview renders the stored subject and body, so it would read out another
+    // Träger's text just as a send would (ORISO-Admin#1026).
+    accessPolicy.authorizeTemplateUse(template.getTenantId());
+    return template;
   }
 
   /** Mirrors the send path: only tenant invites land on the Admin onboarding route. */
@@ -208,5 +215,6 @@ public class InviteEmailPreviewService {
       String subject,
       String html,
       String plainText,
-      String sampleAcceptUrl) {}
+      String sampleAcceptUrl,
+      BrandedEmail.BrandingSnapshot branding) {}
 }

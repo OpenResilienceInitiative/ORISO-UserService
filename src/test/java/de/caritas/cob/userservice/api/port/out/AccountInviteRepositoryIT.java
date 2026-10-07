@@ -5,7 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -36,6 +40,115 @@ class AccountInviteRepositoryIT {
       LocalDateTime.of(2026, 8, 14, 9, 15).truncatedTo(ChronoUnit.SECONDS);
 
   @Autowired private AccountInviteRepository accountInviteRepository;
+
+  @Test
+  void existingAccountSetupClaimIsSingleUseAndCompletionErasesVerifier() {
+    var invite = persistedSetup("admin-11", LocalDateTime.now().plusDays(1));
+    var now = LocalDateTime.now();
+
+    assertEquals(
+        1,
+        accountInviteRepository.claimExistingAccountSetup(
+            invite.getId(),
+            AccountInvitePurpose.EXISTING_ACCOUNT_SETUP,
+            AccountInviteStatus.EMAIL_SENT,
+            List.of(
+                AccountInviteProvisioningStatus.PENDING, AccountInviteProvisioningStatus.FAILED),
+            AccountInviteProvisioningStatus.IN_PROGRESS,
+            now));
+    assertEquals(
+        0,
+        accountInviteRepository.claimExistingAccountSetup(
+            invite.getId(),
+            AccountInvitePurpose.EXISTING_ACCOUNT_SETUP,
+            AccountInviteStatus.EMAIL_SENT,
+            List.of(
+                AccountInviteProvisioningStatus.PENDING, AccountInviteProvisioningStatus.FAILED),
+            AccountInviteProvisioningStatus.IN_PROGRESS,
+            now));
+    assertEquals(
+        0,
+        accountInviteRepository.completeExistingAccountSetup(
+            invite.getId(),
+            AccountInvitePurpose.EXISTING_ACCOUNT_SETUP,
+            AccountInviteStatus.EMAIL_SENT,
+            AccountInviteProvisioningStatus.IN_PROGRESS,
+            AccountInviteStatus.ACCEPTED,
+            AccountInviteProvisioningStatus.COMPLETED,
+            EmailVerificationStatus.VERIFIED,
+            "other-admin",
+            now));
+    assertEquals(
+        1,
+        accountInviteRepository.completeExistingAccountSetup(
+            invite.getId(),
+            AccountInvitePurpose.EXISTING_ACCOUNT_SETUP,
+            AccountInviteStatus.EMAIL_SENT,
+            AccountInviteProvisioningStatus.IN_PROGRESS,
+            AccountInviteStatus.ACCEPTED,
+            AccountInviteProvisioningStatus.COMPLETED,
+            EmailVerificationStatus.VERIFIED,
+            "admin-11",
+            now));
+
+    var completed = reload(invite);
+    assertEquals(AccountInviteStatus.ACCEPTED, completed.getStatus());
+    assertNull(completed.getActiveSetupIdentityKey());
+    assertNull(completed.getInitialPasswordVerifier());
+  }
+
+  @Test
+  void expiryRetainsOnlyPrivateRecoveryBindingAndNeverTouchesAnInFlightPasswordUpdate() {
+    var expired = persistedSetup("expired-admin", LocalDateTime.now().minusDays(1));
+    var inFlight = persistedSetup("active-admin", LocalDateTime.now().minusDays(1));
+    inFlight.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
+    accountInviteRepository.saveAndFlush(inFlight);
+
+    assertEquals(
+        1,
+        accountInviteRepository.expireElapsedExistingAccountSetup(
+            AccountInvitePurpose.EXISTING_ACCOUNT_SETUP,
+            List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT),
+            AccountInviteStatus.EXPIRED,
+            AccountInviteProvisioningStatus.IN_PROGRESS,
+            LocalDateTime.now()));
+
+    assertEquals(AccountInviteStatus.EXPIRED, reload(expired).getStatus());
+    assertEquals("expired-admin", reload(expired).getActiveSetupIdentityKey());
+    assertEquals("salted-verifier", reload(expired).getInitialPasswordVerifier());
+    assertEquals(AccountInviteStatus.EMAIL_SENT, reload(inFlight).getStatus());
+    assertEquals("salted-verifier", reload(inFlight).getInitialPasswordVerifier());
+
+    assertEquals(
+        1,
+        accountInviteRepository.revokeWhileStatusIn(
+            expired.getId(),
+            List.of(AccountInviteStatus.EXPIRED),
+            "operator-1",
+            LocalDateTime.now()));
+    assertEquals(AccountInviteStatus.REVOKED, reload(expired).getStatus());
+    assertNull(reload(expired).getActiveSetupIdentityKey());
+    assertNull(reload(expired).getInitialPasswordVerifier());
+  }
+
+  private AccountInvite persistedSetup(String identityId, LocalDateTime expiresAt) {
+    return accountInviteRepository.saveAndFlush(
+        AccountInvite.builder()
+            .purpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP)
+            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+            .tenantId(42L)
+            .recipientEmail(identityId + "@example.org")
+            .tokenHash(UUID.randomUUID().toString())
+            .provisionedUserId(identityId)
+            .setupBoundUsername(identityId)
+            .activeSetupIdentityKey(identityId)
+            .initialPasswordVerifier("salted-verifier")
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
+            .expiresAt(expiresAt)
+            .createDate(LocalDateTime.now())
+            .build());
+  }
 
   @AfterEach
   void reset() {

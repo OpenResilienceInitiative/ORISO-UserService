@@ -20,7 +20,6 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
-import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
@@ -96,7 +95,7 @@ public class MatrixSynapseService implements MatrixUserClient {
   private final java.util.Map<String, CachedAccessToken> accessTokenCache =
       new java.util.concurrent.ConcurrentHashMap<>();
 
-  // Rotating a browser-login password and consuming it must be atomic per Matrix identity.
+  // Serialize local account updates; credential stability also holds across replicas and restarts.
   private final java.util.Map<String, java.util.concurrent.locks.ReentrantLock> browserLoginLocks =
       new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -685,9 +684,10 @@ public class MatrixSynapseService implements MatrixUserClient {
    * Creates a device-bound Matrix login for browser E2EE without persisting a Matrix password.
    *
    * <p>Synapse admin impersonation tokens deliberately have no device and therefore cannot upload
-   * encryption keys. A random password is rotated server-side, existing devices remain logged in,
-   * and the password is used exactly once for the standard client login that binds the returned
-   * token to {@code deviceId}.
+   * encryption keys. A stable account credential is derived server-side; ordinary browser logins do
+   * not invalidate another device's interactive authentication. Existing devices remain logged in,
+   * and the standard client login binds the returned token to {@code deviceId}. The credential is
+   * returned only for browser memory, never persisted by the application.
    *
    * @param matrixUserId full local Matrix user ID
    * @param deviceId stable browser device ID
@@ -708,11 +708,12 @@ public class MatrixSynapseService implements MatrixUserClient {
             matrixUserId, ignored -> new java.util.concurrent.locks.ReentrantLock());
     browserLoginLock.lock();
     try {
-      String transientPassword = UUID.randomUUID() + "-" + UUID.randomUUID();
+      String browserCredential =
+          MatrixBrowserCredential.derive(matrixConfig.getRegistrationSharedSecret(), matrixUserId);
       var adminHeaders = getClientHttpHeaders(adminToken);
       adminHeaders.setContentType(MediaType.APPLICATION_JSON);
       var updateBody = new MatrixPasswordUpdateRequestDTO();
-      updateBody.setPassword(transientPassword);
+      updateBody.setPassword(browserCredential);
       updateBody.setLogoutDevices(false);
       var updateUri =
           MatrixUrlBuilder.buildUrl(
@@ -728,7 +729,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       var loginBody = new MatrixLoginRequestDTO();
       loginBody.setType("m.login.password");
       loginBody.setUser(matrixUserId);
-      loginBody.setPassword(transientPassword);
+      loginBody.setPassword(browserCredential);
       loginBody.setDeviceId(deviceId);
       loginBody.setInitialDeviceDisplayName("ORISO Web");
 
@@ -746,7 +747,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       @SuppressWarnings("unchecked")
       var responseBody =
           new java.util.HashMap<>((java.util.Map<String, Object>) response.getBody());
-      responseBody.put("interactive_auth_password", transientPassword);
+      responseBody.put("interactive_auth_password", browserCredential);
       return responseBody;
     } catch (Exception ex) {
       log.error(
