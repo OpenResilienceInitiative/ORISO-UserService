@@ -62,6 +62,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
@@ -143,6 +144,7 @@ class CaseHandoverServiceTest {
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(requester);
     when(userAccountService.retrieveValidatedUser()).thenReturn(asker);
     when(sessionRepository.findById(123L)).thenReturn(Optional.of(session));
+    when(sessionRepository.findByIdForUpdate(123L)).thenReturn(Optional.of(session));
     when(caseHandoverReasonPolicyRepository.findByEnabledTrueOrderByDisplayOrderAscCodeAsc())
         .thenReturn(List.of());
     when(caseHandoverReasonPolicyRepository.findAllByOrderByDisplayOrderAscCodeAsc())
@@ -162,6 +164,189 @@ class CaseHandoverServiceTest {
         .thenReturn(true);
     when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
     when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = CaseHandoverConsentValue.class,
+      names = {"NONE", "OPT_OUT"})
+  void requestAccess_standingAskParksCoAccessWithoutMatrixGrant(CaseHandoverConsentValue baseline) {
+    session.setAlwaysAskBeforeAdditionalAccess(true);
+    session.setMatrixRoomId("!case:example.org");
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(tenantPolicies("Support", 180, baseline, Set.of()));
+    var status = caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "support");
+    assertEquals("PENDING_CLIENT_CONSENT", status.getStatus());
+    assertEquals(CaseHandoverConsentMode.OPT_IN, status.getClientConsent());
+    assertFalse(status.isCanViewContent());
+    assertEquals(previous, session.getConsultant());
+    verify(matrixSynapseService, never()).getRoomMembers(anyString());
+  }
+
+  @Test
+  void requestAccess_standingOffDoesNotWeakenBaselineOptIn() {
+    var status = caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "support");
+    assertEquals("PENDING_CLIENT_CONSENT", status.getStatus());
+    assertFalse(status.isCanViewContent());
+  }
+
+  @Test
+  void consentPreference_disablingDoesNotRewriteAnAlreadyPendingRequest() {
+    session.setAlwaysAskBeforeAdditionalAccess(true);
+    asker.setTenantId(7L);
+    TenantContext.setCurrentTenant(7L);
+    when(sessionRepository.save(any(Session.class))).thenAnswer(i -> i.getArgument(0));
+    try {
+      var first = caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "cover");
+      ArgumentCaptor<CaseHandoverRequest> capture =
+          ArgumentCaptor.forClass(CaseHandoverRequest.class);
+      verify(caseHandoverRequestRepository).save(capture.capture());
+      var frozen = capture.getValue();
+      when(caseHandoverRequestRepository
+              .findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(123L, "requester"))
+          .thenReturn(List.of(frozen));
+      caseHandoverService.updateConsentPreference(123L, false);
+      assertFalse(caseHandoverService.getConsentPreference(123L).alwaysAskBeforeAdditionalAccess());
+      var stillPending = caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "cover");
+      assertEquals(first.getStatus(), stillPending.getStatus());
+      assertEquals(CaseHandoverConsentMode.OPT_IN, frozen.getClientConsent());
+      assertEquals(previous, session.getConsultant());
+      verify(caseHandoverRequestRepository).save(any());
+      frozen.setId(99L);
+      when(caseHandoverRequestRepository.findByIdAndSessionId(99L, 123L))
+          .thenReturn(Optional.of(frozen));
+      var approved = caseHandoverService.resolveClientConsent(123L, 99L, true);
+      assertEquals("GRANTED", approved.getStatus());
+      assertEquals(requester, session.getConsultant());
+      assertFalse(caseHandoverService.getConsentPreference(123L).alwaysAskBeforeAdditionalAccess());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "other-owner",
+        "wrong-tenant",
+        "technical-tenant",
+        "missing-tenant",
+        "user-tenant"
+      })
+  void consentPreference_rejectsReadAndSaveOutsideOwnerTenant(String scenario) {
+    asker.setTenantId(7L);
+    TenantContext.setCurrentTenant(7L);
+    switch (scenario) {
+      case "other-owner" -> {
+        User other = new User();
+        other.setUserId("other");
+        other.setTenantId(7L);
+        when(userAccountService.retrieveValidatedUser()).thenReturn(other);
+      }
+      case "wrong-tenant" -> TenantContext.setCurrentTenant(8L);
+      case "technical-tenant" -> TenantContext.setCurrentTenant(0L);
+      case "missing-tenant" -> TenantContext.clear();
+      case "user-tenant" -> asker.setTenantId(8L);
+      default -> throw new AssertionError(scenario);
+    }
+    try {
+      assertThrows(ForbiddenException.class, () -> caseHandoverService.getConsentPreference(123L));
+      assertThrows(
+          ForbiddenException.class, () -> caseHandoverService.updateConsentPreference(123L, true));
+      assertFalse(session.isAlwaysAskBeforeAdditionalAccess());
+      verify(sessionRepository, never()).save(any());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = de.caritas.cob.userservice.api.model.ConversationType.class,
+      names = {"LIVE_CHAT", "INTERNAL_GROUP", "SELF_HELP"})
+  void consentPreference_rejectsOutOfScopeConversations(
+      de.caritas.cob.userservice.api.model.ConversationType type) {
+    asker.setTenantId(7L);
+    TenantContext.setCurrentTenant(7L);
+    session.setConversationType(type);
+    try {
+      assertThrows(ForbiddenException.class, () -> caseHandoverService.getConsentPreference(123L));
+      assertThrows(
+          ForbiddenException.class, () -> caseHandoverService.updateConsentPreference(123L, true));
+      verify(sessionRepository, never()).save(any());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void consentPreference_rejectsLegacyLiveChatWithNullModality() {
+    asker.setTenantId(7L);
+    TenantContext.setCurrentTenant(7L);
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    try {
+      assertThrows(ForbiddenException.class, () -> caseHandoverService.getConsentPreference(123L));
+      assertThrows(
+          ForbiddenException.class, () -> caseHandoverService.updateConsentPreference(123L, true));
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void consentPreference_singleTenantInstallationStillUsesOwnerAndScopeChecks() {
+    ReflectionTestUtils.setField(caseHandoverService, "preferenceMultitenancyEnabled", false);
+    TenantContext.clear();
+    when(sessionRepository.save(any(Session.class))).thenAnswer(i -> i.getArgument(0));
+    try {
+      assertTrue(
+          caseHandoverService
+              .updateConsentPreference(123L, true)
+              .alwaysAskBeforeAdditionalAccess());
+      assertTrue(caseHandoverService.getConsentPreference(123L).alwaysAskBeforeAdditionalAccess());
+      User other = new User();
+      other.setUserId("other");
+      when(userAccountService.retrieveValidatedUser()).thenReturn(other);
+      assertThrows(
+          ForbiddenException.class, () -> caseHandoverService.updateConsentPreference(123L, false));
+    } finally {
+      ReflectionTestUtils.setField(caseHandoverService, "preferenceMultitenancyEnabled", true);
+    }
+  }
+
+  @Test
+  void consentPreference_ownerSavesAndReadsItWithoutResolvingAnExistingRequest() {
+    asker.setTenantId(7L);
+    TenantContext.setCurrentTenant(7L);
+    when(sessionRepository.save(any(Session.class))).thenAnswer(i -> i.getArgument(0));
+    when(sessionRepository.findByIdForUpdate(123L)).thenReturn(Optional.of(session));
+    try {
+      assertFalse(caseHandoverService.getConsentPreference(123L).alwaysAskBeforeAdditionalAccess());
+      var saved = caseHandoverService.updateConsentPreference(123L, true);
+      assertEquals(123L, saved.sessionId());
+      assertTrue(caseHandoverService.getConsentPreference(123L).alwaysAskBeforeAdditionalAccess());
+      assertEquals(previous, session.getConsultant());
+      assertFalse(Boolean.TRUE.equals(session.getSupervisionOptedOut()));
+      verify(caseHandoverRequestRepository, never()).save(any());
+      verify(matrixSynapseService, never()).getRoomMembers(anyString());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void requestAccess_standingAskPreventsTakeoverBeforeSpecificApproval() {
+    session.setAlwaysAskBeforeAdditionalAccess(true);
+    session.setMatrixRoomId("!case:example.org");
+
+    var status = caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "cover");
+
+    assertEquals("PENDING_CLIENT_CONSENT", status.getStatus());
+    assertEquals(CaseHandoverConsentMode.OPT_IN, status.getClientConsent());
+    assertFalse(status.isCanViewContent());
+    assertEquals(previous, session.getConsultant());
+    verify(sessionRepository, never()).save(any());
+    verify(matrixSynapseService, never()).getRoomMembers(anyString());
   }
 
   @Test
@@ -1430,8 +1615,10 @@ class CaseHandoverServiceTest {
     assertNull(TenantContext.getCurrentTenant());
   }
 
-  @Test
-  void requestAccess_deniesAndKeepsContentLocked_WhenPolicyDoesNotAllowReason() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void requestAccess_deniesAndKeepsContentLocked_WhenPolicyDoesNotAllowReason(boolean alwaysAsk) {
+    session.setAlwaysAskBeforeAdditionalAccess(alwaysAsk);
     when(caseHandoverPolicyCacheService.getEffective(7L))
         .thenReturn(
             new de.caritas.cob.userservice.tenantadminservice.generated.web.model

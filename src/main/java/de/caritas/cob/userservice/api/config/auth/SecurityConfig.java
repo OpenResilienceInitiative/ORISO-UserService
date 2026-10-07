@@ -388,6 +388,8 @@ public class SecurityConfig {
                     "/users/account",
                     "/users/mobiletoken",
                     "/users/sessions/{sessionId:[0-9]+}/data",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/consent-preference",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/consent-preference",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",

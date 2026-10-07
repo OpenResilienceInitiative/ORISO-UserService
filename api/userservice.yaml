@@ -1878,6 +1878,73 @@ paths:
           description: BAD GATEWAY - contact service lookup failed; no upstream details returned
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/case-handover/consent-preference:
+    get:
+      tags: [case-handover-controller]
+      summary: Read the owning advice seeker's saved future additional-access preference
+      description: >-
+        Agency counselling only. Also available with /service prefix. This choice is separate
+        from approval of an individual request. Owner and tenant checks apply.
+      operationId: getCaseHandoverConsentPreference
+      # Dedicated handwritten controller owns both prefixes; prevent a duplicate UsersApi mapping.
+      x-internal: true
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: Saved preference; false retains the centre's existing consent policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseHandoverConsentPreferenceDTO'
+        '401':
+          description: Authentication required
+        '403':
+          description: Not the registered owning advice seeker, wrong tenant or unsupported modality
+        '404':
+          description: Session does not exist
+      security:
+        - Bearer: []
+    put:
+      tags: [case-handover-controller]
+      summary: Save the owning advice seeker's preference to ask before future additional access
+      description: >-
+        Also available with /service prefix. True strengthens allowed future requests to opt-in;
+        false restores the centre's baseline and never weakens its opt-in requirement.
+        Existing individual requests, grants and ownership remain unchanged.
+      operationId: updateCaseHandoverConsentPreference
+      x-internal: true
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseHandoverConsentPreferenceUpdateDTO'
+      responses:
+        '200':
+          description: Persisted preference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseHandoverConsentPreferenceDTO'
+        '400':
+          description: Missing or invalid boolean choice
+        '401':
+          description: Authentication required
+        '403':
+          description: Not the registered owning advice seeker, wrong tenant, unsupported modality or invalid CSRF token
+        '404':
+          description: Session does not exist
+      security:
+        - Bearer: []
   /users/sessions/{sessionId}/supervisors:
     get:
       tags:
@@ -3003,6 +3070,25 @@ components:
             Never contains the help-seeker room id; null for unrelated team-list viewers, legacy
             rows that stored the client room, missing rooms, or inconsistent active assignments.
 
+    CaseHandoverConsentPreferenceUpdateDTO:
+      type: object
+      required: [alwaysAskBeforeAdditionalAccess]
+      properties:
+        alwaysAskBeforeAdditionalAccess:
+          type: boolean
+          nullable: false
+          description: Ask before future allowed additional access; not approval of a current request
+    CaseHandoverConsentPreferenceDTO:
+      type: object
+      required: [sessionId, alwaysAskBeforeAdditionalAccess]
+      properties:
+        sessionId:
+          type: integer
+          format: int64
+        alwaysAskBeforeAdditionalAccess:
+          type: boolean
+          nullable: false
+          description: Stored per-conversation preference; defaults to false
     SessionSupervisorResponseDTO:
       type: object
       description: An active supervision assignment for a session.
