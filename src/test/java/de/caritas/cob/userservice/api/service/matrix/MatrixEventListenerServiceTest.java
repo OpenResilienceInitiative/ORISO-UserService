@@ -84,6 +84,11 @@ class MatrixEventListenerServiceTest {
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
   @Mock private ConsultantMessageStatService consultantMessageStatService;
   @Mock private AdviceSeekerReplyEmailService replyEmailService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
+      internalChatEmailService;
+
   @Mock private MatrixEmailSyncCursorStore emailSyncCursorStore;
   @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
 
@@ -130,7 +135,8 @@ class MatrixEventListenerServiceTest {
             sessionRepository,
             consultantMessageStatService,
             replyEmailService,
-            emailSyncCursorStore);
+            emailSyncCursorStore,
+            internalChatEmailService);
     service.setDiagnosticMetrics(diagnosticMetrics);
     return service;
   }
@@ -204,7 +210,8 @@ class MatrixEventListenerServiceTest {
             sessionRepository,
             consultantMessageStatService,
             replyEmailService,
-            emailSyncCursorStore) {
+            emailSyncCursorStore,
+            internalChatEmailService) {
           @Override
           void sleep(long millis) {
             // deterministic: never actually sleep in the test
@@ -651,7 +658,8 @@ class MatrixEventListenerServiceTest {
             sessionRepository,
             consultantMessageStatService,
             replyEmailService,
-            emailSyncCursorStore) {
+            emailSyncCursorStore,
+            internalChatEmailService) {
           @Override
           void sleep(long millis) {
             // no-op
@@ -685,7 +693,8 @@ class MatrixEventListenerServiceTest {
             sessionRepository,
             consultantMessageStatService,
             replyEmailService,
-            emailSyncCursorStore) {
+            emailSyncCursorStore,
+            internalChatEmailService) {
           @Override
           void sleep(long millis) throws InterruptedException {
             throw new InterruptedException("shutdown");

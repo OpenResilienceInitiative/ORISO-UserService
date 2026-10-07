@@ -4253,6 +4253,13 @@ components:
           # switchable, not opt-in. A counsellor who never opens the settings
           # screen still gets their work queue.
           default: true
+        internalChatNotificationEnabled:
+          type: boolean
+          description: >-
+            Counsellor: a new ordinary internal-group message. Independent of
+            advice-seeker messages and protected professional feedback. Omitted
+            legacy values mean enabled; an omitted PATCH preserves the saved choice.
+          example: true
         feedbackNotificationEnabled:
           type: boolean
           description: >-

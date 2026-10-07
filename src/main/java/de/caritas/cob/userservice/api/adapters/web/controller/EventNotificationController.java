@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.model.NotificationRoomLevel;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService;
+import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
 import jakarta.validation.Valid;
@@ -37,6 +38,7 @@ public class EventNotificationController {
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull TeamDiscussionNotificationService teamDiscussionNotificationService;
   private final @NonNull FeedbackMessageEmailService feedbackMessageEmailService;
+  private final @NonNull InternalChatEmailService internalChatEmailService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
@@ -181,6 +183,13 @@ public class EventNotificationController {
           request.getSenderDisplayName(),
           request.getMentionedUserIds());
       return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+    }
+
+    if (!Boolean.TRUE.equals(request.getFeedbackMailIntent())
+        && request.getMatrixEventId() != null
+        && !request.getMatrixEventId().isBlank()) {
+      internalChatEmailService.onMessageIntent(
+          request.getRoomId(), request.getMatrixEventId(), authenticatedUser);
     }
 
     // #942: the Matrix event id (when the client sends it) keys deduplication,
