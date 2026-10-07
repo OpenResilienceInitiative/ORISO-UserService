@@ -694,6 +694,87 @@ class CounsellorOnboardingServiceTest {
   // --- two-factor ---
 
   @Test
+  void startEmailTwoFactor_pinsRecipientAndDoesNotCompleteGate() {
+    AccountInvite pending = pendingEmailInvite();
+    when(identitySecondFactor.initiateEmailVerification("enc.lena.b", "counsellor@example.org"))
+        .thenReturn(
+            de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart.success());
+    service.startEmailTwoFactor(RAW_TOKEN);
+    verify(identitySecondFactor).initiateEmailVerification("enc.lena.b", "counsellor@example.org");
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+  }
+
+  @Test
+  void activateEmailTwoFactor_correctCodeCompletesWithoutTotpSecret() {
+    AccountInvite pending = pendingEmailInvite();
+    when(identitySecondFactor.finishEmailVerification("enc.lena.b", "123456"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                true, false, true, "counsellor@example.org"));
+    service.activateEmailTwoFactor(RAW_TOKEN, "123456");
+    verify(accountInviteService).markTwoFactorActive(CONSULTANT_ID);
+    verify(identitySecondFactor, never()).setUpOtpCredential(anyString(), anyString(), anyString());
+    assertNull(pending.getTotpPendingSecret());
+  }
+
+  @Test
+  void activateEmailTwoFactor_wrongCodeKeepsGatePending() {
+    pendingEmailInvite();
+    when(identitySecondFactor.finishEmailVerification("enc.lena.b", "000000"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                false, false, true, null));
+    assertThrows(
+        BadRequestException.class, () -> service.activateEmailTwoFactor(RAW_TOKEN, "000000"));
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+  }
+
+  @Test
+  void emailTwoFactor_expiredTokenDoesNotReachIdentityProvider() {
+    AccountInvite expired = invite();
+    expired.setStatus(AccountInviteStatus.ACCEPTED);
+    expired.setAcceptedByUserId(CONSULTANT_ID);
+    expired.setExpiresAt(LocalDateTime.now().minusSeconds(1));
+    inviteResolves(expired);
+    assertThrows(AccountInviteLinkException.class, () -> service.startEmailTwoFactor(RAW_TOKEN));
+    verifyNoInteractions(identitySecondFactor, identityProfileLookup);
+  }
+
+  @Test
+  void emailVerification_expiryDuringProviderCallDoesNotConsumeGate() {
+    AccountInvite pending = pendingEmailInvite();
+    when(identitySecondFactor.finishEmailVerification("enc.lena.b", "123456"))
+        .thenAnswer(
+            invocation -> {
+              pending.setExpiresAt(LocalDateTime.now().minusSeconds(1));
+              return new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                  true, false, true, "counsellor@example.org");
+            });
+    assertThrows(
+        AccountInviteLinkException.class,
+        () -> service.activateEmailTwoFactor(RAW_TOKEN, "123456"));
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+  }
+
+  @Test
+  void emailSetup_inviteBelongingToAnotherRoleIsRejected() {
+    AccountInvite other = invite();
+    other.setTargetRole(AccountInviteTargetRole.TENANT_ADMIN);
+    inviteResolves(other);
+    assertThrows(NotFoundException.class, () -> service.startEmailTwoFactor(RAW_TOKEN));
+    verifyNoInteractions(identitySecondFactor, identityProfileLookup);
+  }
+
+  private AccountInvite pendingEmailInvite() {
+    AccountInvite pending = invite();
+    pending.setStatus(AccountInviteStatus.ACCEPTED);
+    pending.setAcceptedByUserId(CONSULTANT_ID);
+    inviteResolves(pending);
+    profileResolves();
+    return pending;
+  }
+
+  @Test
   void activateTwoFactor_happyPath_marksGateActiveAndClearsPendingSecret() {
     AccountInvite resumable = invite();
     resumable.setStatus(AccountInviteStatus.ACCEPTED);

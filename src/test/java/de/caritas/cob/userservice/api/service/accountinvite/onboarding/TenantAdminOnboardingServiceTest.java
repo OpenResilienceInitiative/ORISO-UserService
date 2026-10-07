@@ -1347,6 +1347,27 @@ class TenantAdminOnboardingServiceTest {
   // --- two-factor ---
 
   @Test
+  void emailTwoFactor_withoutAppSecret_usesInviteRecipientAndActivates() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.ACCEPTED);
+    invite.setAcceptedByUserId("kc-user-1");
+    invite.setTotpPendingSecret(null);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(identityProfileLookup.findById("kc-user-1"))
+        .thenReturn(Optional.of(new IdentityProfile("kc-user-1", "enc.user", null, null, null)));
+    when(identitySecondFactor.initiateEmailVerification("enc.user", invite.getRecipientEmail()))
+        .thenReturn(
+            de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart.success());
+    when(identitySecondFactor.finishEmailVerification("enc.user", "123456"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                true, false, true, invite.getRecipientEmail()));
+    service.startEmailTwoFactor(RAW_TOKEN);
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+    service.activateEmailTwoFactor(RAW_TOKEN, "123456");
+    verify(accountInviteService).markTwoFactorActive("kc-user-1");
+  }
+
+  @Test
   void activateTwoFactor_happyPath_activatesGateAndClearsSecret() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.ACCEPTED);
     invite.setAcceptedByUserId("kc-user-1");
