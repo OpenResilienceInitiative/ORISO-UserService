@@ -60,6 +60,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   EventNotificationDeduplicationWriter.class,
   MatrixCallBindingService.class,
   MatrixCallBindingWriter.class,
+  MatrixCallNotificationIT.ActiveAccountFixture.class,
   MatrixCallLifecycleService.class,
   MatrixCallConversationResolver.class,
   MatrixCallStateService.class,
@@ -75,6 +76,13 @@ class MatrixCallTenantIT {
   @Autowired private ConsultantRepository consultants;
   @Autowired private SessionRepository sessions;
   @Autowired private EventNotificationRepository notifications;
+  @Autowired private javax.sql.DataSource accountDataSource;
+
+  @org.junit.jupiter.api.BeforeEach
+  void initializeAccountLifecycleRows() {
+    MatrixCallNotificationIT.initializeAccountLifecycleTable(accountDataSource);
+  }
+
   @Autowired private MatrixCallBindingRepository bindings;
   @Autowired private MatrixCallInviteNotificationService invites;
   @Autowired private MatrixCallStateService callStates;

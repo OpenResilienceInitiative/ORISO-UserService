@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,7 @@ public class MatrixCallLifecycleService {
   private final UserRepository users;
   private final ConsultantRepository consultants;
   private final EventNotificationService notifications;
+  private final AccountInactivityService accountLifecycle;
 
   @org.springframework.beans.factory.annotation.Value("${matrix.calls.observation-retry-ms:30000}")
   private long observationRetryMillis = 30000;
@@ -118,6 +120,14 @@ public class MatrixCallLifecycleService {
           .map(member -> identity(member, binding.getTenantId()))
           .flatMap(Optional::stream)
           .distinct()
+          // Suspension can leave domain rows and stale Matrix membership in place.
+          // Accounts without a lifecycle row retain their established eligibility.
+          .filter(
+              recipient ->
+                  accountLifecycle
+                      .snapshot(recipient.id())
+                      .map(account -> account.status() == AccountInactivityService.Status.ACTIVE)
+                      .orElse(true))
           .forEach(
               recipient ->
                   notifications.createCallStartedNotification(

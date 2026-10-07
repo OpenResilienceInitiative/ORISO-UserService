@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
+import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.Duration;
 import java.util.List;
@@ -31,6 +32,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Propagation;
@@ -48,7 +50,8 @@ import org.springframework.transaction.annotation.Transactional;
   MatrixCallBindingService.class,
   MatrixCallLifecycleService.class,
   MatrixCallConversationResolver.class,
-  MatrixCallBindingWriter.class
+  MatrixCallBindingWriter.class,
+  MatrixCallNotificationIT.ActiveAccountFixture.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MatrixCallNotificationIT {
@@ -68,6 +71,39 @@ class MatrixCallNotificationIT {
   @MockitoBean private UserRepository users;
   @MockitoBean private ConsultantRepository consultants;
   @MockitoBean private IdentityTombstoneService tombstones;
+  @Autowired private AccountInactivityService accountLifecycle;
+  @Autowired private javax.sql.DataSource accountDataSource;
+
+  @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
+  static class ActiveAccountFixture {
+    @org.springframework.context.annotation.Bean
+    AccountInactivityService accountLifecycle(
+        javax.sql.DataSource dataSource,
+        org.springframework.transaction.PlatformTransactionManager transactionManager) {
+      return new AccountInactivityService(
+          new JdbcTemplate(dataSource),
+          transactionManager,
+          java.time.Clock.systemUTC(),
+          mock(
+              de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityEffects
+                  .class));
+    }
+  }
+
+  @org.junit.jupiter.api.BeforeEach
+  void initializeAccountLifecycleRows() {
+    initializeAccountLifecycleTable(accountDataSource);
+  }
+
+  static void initializeAccountLifecycleTable(javax.sql.DataSource dataSource) {
+    var jdbc = new JdbcTemplate(dataSource);
+    jdbc.execute(
+        "CREATE TABLE IF NOT EXISTS account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,"
+            + "tenant_id BIGINT,assigned_months INT NOT NULL,revision BIGINT NOT NULL,"
+            + "last_activity TIMESTAMP(6) NOT NULL,due_at TIMESTAMP(6) NOT NULL,"
+            + "status VARCHAR(20) NOT NULL,last_error VARCHAR(1000),attempts INT DEFAULT 0 NOT NULL)");
+    jdbc.update("DELETE FROM account_inactivity");
+  }
 
   @Test
   void currentInviteProducesAPersistedNotificationForTheOtherConversationMember() {
@@ -870,6 +906,17 @@ class MatrixCallNotificationIT {
   @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
   void startedAudienceUsesOriginalInviteesAndCurrentAccessEvenWithoutRecipientAttendance(
       boolean groupSource) {
+    assertStartedAudience(groupSource, null);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(AccountInactivityService.Status.class)
+  void startedAudienceRequiresActiveLifecycleEvenIfDomainAndRoomMembershipRemain(
+      AccountInactivityService.Status status) {
+    assertStartedAudience(false, status);
+  }
+
+  private void assertStartedAudience(boolean groupSource, AccountInactivityService.Status status) {
     String source = "!started-audience-source:example";
     String media = "!started-audience-media:example";
     String caller = "@started-caller:example";
@@ -942,6 +989,18 @@ class MatrixCallNotificationIT {
                           "is_video",
                           false))))
           .isTrue();
+      boolean receiverActive = status == null || status == AccountInactivityService.Status.ACTIVE;
+      if (status != null) {
+        accountLifecycle.assignAtCreation(
+            "started-consultant", 7L, 12, 1L, java.time.Instant.now());
+        new JdbcTemplate(accountDataSource)
+            .update(
+                "UPDATE account_inactivity SET status=? WHERE identity_id=?",
+                status.name(),
+                "started-consultant");
+        assertThat(accountLifecycle.snapshot("started-consultant").orElseThrow().status())
+            .isEqualTo(status);
+      }
       // Eligibility changes after the durable invitation, before attendance is observed.
       movedUser.setTenantId(8L);
       when(users.findByMatrixUserIdAndDeleteDateIsNull(deleted)).thenReturn(Optional.empty());
@@ -958,7 +1017,10 @@ class MatrixCallNotificationIT {
               .toList();
       assertThat(started)
           .extracting(event -> event.getRecipientUserId())
-          .containsExactlyInAnyOrder("started-consultant", "started-absent");
+          .containsExactlyInAnyOrder(
+              receiverActive
+                  ? new String[] {"started-consultant", "started-absent"}
+                  : new String[] {"started-absent"});
       assertThat(started)
           .allSatisfy(
               event -> {
@@ -1014,12 +1076,15 @@ class MatrixCallNotificationIT {
               notifications.findAll().stream()
                   .filter(event -> "call.started".equals(event.getEventType())))
           .extracting(event -> event.getRecipientUserId())
-          .containsExactlyInAnyOrder("started-consultant", "started-absent", "started-removed");
+          .containsExactlyInAnyOrder(
+              receiverActive
+                  ? new String[] {"started-consultant", "started-absent", "started-removed"}
+                  : new String[] {"started-absent", "started-removed"});
       lifecycle.handleRoom(media, attendance);
       assertThat(
               notifications.findAll().stream()
                   .filter(event -> "call.started".equals(event.getEventType())))
-          .hasSize(3);
+          .hasSize(receiverActive ? 3 : 2);
     } finally {
       notifications.deleteAll();
       bindingRepository.deleteAll();
