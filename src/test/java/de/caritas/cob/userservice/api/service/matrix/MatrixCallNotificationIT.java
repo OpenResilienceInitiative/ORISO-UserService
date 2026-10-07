@@ -494,6 +494,11 @@ class MatrixCallNotificationIT {
     assertCallCompletionAfterRestart(true, true);
   }
 
+  @Test
+  void observedCallStartNotifiesInvitedCurrentMemberAndSurvivesListenerRestart() {
+    assertCallCompletionAfterRestart(false, false, false);
+  }
+
   private void assertCallCompletionAfterRestart(boolean expireWithoutDeparture, boolean neverJoin) {
     assertCallCompletionAfterRestart(expireWithoutDeparture, neverJoin, false);
   }
@@ -730,7 +735,42 @@ class MatrixCallNotificationIT {
           .during(Duration.ofMillis(300))
           .atMost(Duration.ofSeconds(3))
           .untilAsserted(() -> assertThat(requests.get()).isGreaterThan(beforeAttendance + 2));
+      await()
+          .atMost(Duration.ofSeconds(3))
+          .untilAsserted(
+              () -> {
+                var started =
+                    notifications.findAll().stream()
+                        .filter(event -> "call.started".equals(event.getEventType()))
+                        .toList();
+                assertThat(started).hasSize(neverJoin || !observeMedia ? 0 : 1);
+                assertThat(started)
+                    .allSatisfy(
+                        event -> {
+                          assertThat(event.getRecipientUserId()).isEqualTo("lifecycle-consultant");
+                          assertThat(event.getTenantId()).isEqualTo(7L);
+                          assertThat(event.getParams())
+                              .contains(
+                                  "\"callId\":\"lifecycle-call\"",
+                                  "\"callRoomId\":\"" + media + "\"",
+                                  "\"callType\":\"video\"");
+                          if (groupSource) {
+                            assertThat(event.getSourceSessionId()).isNull();
+                            assertThat(event.getParams()).contains("\"seriesId\":84");
+                          } else {
+                            assertThat(event.getSourceSessionId()).isEqualTo(43L);
+                            assertThat(event.getActionPath())
+                                .isEqualTo(
+                                    "/sessions/consultant/sessionView/!lifecycle-source:example/43");
+                          }
+                        });
+              });
       listener.shutdown();
+      var startedIds =
+          notifications.findAll().stream()
+              .filter(event -> "call.started".equals(event.getEventType()))
+              .map(event -> event.getId())
+              .toList();
       if (change == RecipientChange.REMOVED) {
         when(matrix.getCallRoomMembers(source)).thenReturn(Optional.of(List.of(caller)));
       } else if (change == RecipientChange.OTHER_TENANT) {
@@ -781,6 +821,12 @@ class MatrixCallNotificationIT {
                     !observeMedia
                         || change == RecipientChange.REMOVED
                         || change == RecipientChange.OTHER_TENANT;
+                assertThat(
+                        notifications.findAll().stream()
+                            .filter(event -> "call.started".equals(event.getEventType()))
+                            .map(event -> event.getId())
+                            .toList())
+                    .containsExactlyInAnyOrderElementsOf(startedIds);
                 assertThat(ended).hasSize(excluded ? 0 : neverJoin ? 1 : 2);
                 assertThat(ended)
                     .extracting(event -> event.getRecipientUserId())
@@ -818,6 +864,261 @@ class MatrixCallNotificationIT {
       notifications.deleteAll();
       bindingRepository.deleteAll();
     }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void startedAudienceUsesOriginalInviteesAndCurrentAccessEvenWithoutRecipientAttendance(
+      boolean groupSource) {
+    String source = "!started-audience-source:example";
+    String media = "!started-audience-media:example";
+    String caller = "@started-caller:example";
+    String receiver = "@started-consultant:example";
+    String absent = "@started-absent:example";
+    String removed = "@started-removed:example";
+    String deleted = "@started-deleted:example";
+    String moved = "@started-other-tenant:example";
+    String newcomer = "@started-newcomer:example";
+    long now = System.currentTimeMillis();
+    var owner = startedUser("started-caller", caller);
+    var absentUser = startedUser("started-absent", absent);
+    var removedUser = startedUser("started-removed", removed);
+    var deletedUser = startedUser("started-deleted", deleted);
+    var movedUser = startedUser("started-other-tenant", moved);
+    var newUser = startedUser("started-newcomer", newcomer);
+    for (var user : List.of(owner, absentUser, removedUser, deletedUser, movedUser, newUser)) {
+      when(users.findByMatrixUserIdAndDeleteDateIsNull(user.getMatrixUserId()))
+          .thenReturn(Optional.of(user));
+    }
+    var consultant = mock(Consultant.class);
+    when(consultant.getId()).thenReturn("started-consultant");
+    when(consultant.getTenantId()).thenReturn(7L);
+    when(consultant.getMatrixUserId()).thenReturn(receiver);
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(receiver))
+        .thenReturn(Optional.of(consultant));
+    var session = mock(Session.class);
+    when(session.getId()).thenReturn(143L);
+    when(session.getTenantId()).thenReturn(7L);
+    when(session.getMatrixRoomId()).thenReturn(source);
+    when(sessions.findByMatrixRoomId(source))
+        .thenReturn(groupSource ? Optional.empty() : Optional.of(session));
+    if (groupSource) {
+      var group = mock(de.caritas.cob.userservice.api.model.Chat.class);
+      when(group.getId()).thenReturn(184L);
+      when(group.getChatOwner()).thenReturn(consultant);
+      when(group.getMatrixRoomId()).thenReturn(source);
+      when(chats.findByMatrixRoomId(source)).thenReturn(Optional.of(group));
+    }
+    when(matrix.getCallRoomMembers(source))
+        .thenReturn(Optional.of(List.of(caller, receiver, absent, removed, deleted, moved)));
+    when(matrix.getCallRoomBinding(media, caller))
+        .thenReturn(Optional.of(Map.of("call_id", "started-audience", "source_room_id", source)));
+    var invites =
+        new MatrixCallInviteNotificationService(
+            matrix,
+            conversations,
+            users,
+            consultants,
+            notificationService,
+            callBindings,
+            lifecycle);
+    try {
+      assertThat(
+              invites.handle(
+                  source,
+                  Map.of(
+                      "sender",
+                      caller,
+                      "origin_server_ts",
+                      now,
+                      "content",
+                      Map.of(
+                          "call_id",
+                          "started-audience",
+                          "call_room_id",
+                          media,
+                          "lifetime",
+                          60000,
+                          "is_video",
+                          false))))
+          .isTrue();
+      // Eligibility changes after the durable invitation, before attendance is observed.
+      movedUser.setTenantId(8L);
+      when(users.findByMatrixUserIdAndDeleteDateIsNull(deleted)).thenReturn(Optional.empty());
+      when(matrix.getCallRoomMembers(source))
+          .thenReturn(Optional.of(List.of(caller, receiver, absent, deleted, moved, newcomer)));
+      var attendance =
+          Map.<String, Object>of(
+              "state",
+              Map.of("events", List.of(rtcMember(caller, "started-caller-device", now, false))));
+      assertThat(lifecycle.handleRoom(media, attendance)).isTrue();
+      var started =
+          notifications.findAll().stream()
+              .filter(event -> "call.started".equals(event.getEventType()))
+              .toList();
+      assertThat(started)
+          .extracting(event -> event.getRecipientUserId())
+          .containsExactlyInAnyOrder("started-consultant", "started-absent");
+      assertThat(started)
+          .allSatisfy(
+              event -> {
+                assertThat(event.getTenantId()).isEqualTo(7L);
+                assertThat(event.getParams())
+                    .contains(
+                        "\"roomRef\":\"" + source + "\"",
+                        "\"callId\":\"started-audience\"",
+                        "\"callRoomId\":\"" + media + "\"",
+                        "\"callType\":\"audio\"");
+                if (groupSource) {
+                  assertThat(event.getSourceSessionId()).isNull();
+                  assertThat(event.getParams()).contains("\"seriesId\":184");
+                } else {
+                  assertThat(event.getSourceSessionId()).isEqualTo(143L);
+                }
+                String base =
+                    "started-consultant".equals(event.getRecipientUserId())
+                        ? "/sessions/consultant/sessionView/"
+                        : "/sessions/user/view/";
+                assertThat(event.getActionPath())
+                    .isEqualTo(
+                        base
+                            + (groupSource
+                                ? "!started-audience-source%3Aexample/184"
+                                : source + "/143"));
+              });
+      var initialIds = started.stream().map(event -> event.getId()).toList();
+      lifecycle.handleRoom(media, attendance);
+      assertThat(
+              notifications.findAll().stream()
+                  .filter(event -> "call.started".equals(event.getEventType()))
+                  .map(event -> event.getId())
+                  .toList())
+          .containsExactlyInAnyOrderElementsOf(initialIds);
+      // An original invitee can become authorized again during this same running call.
+      when(matrix.getCallRoomMembers(source))
+          .thenReturn(
+              Optional.of(List.of(caller, receiver, absent, removed, deleted, moved, newcomer)));
+      lifecycle.handleRoom(
+          media,
+          Map.of(
+              "timeline",
+              Map.of(
+                  "events",
+                  List.of(
+                      rtcMember(
+                          removed,
+                          "started-returning-device",
+                          System.currentTimeMillis(),
+                          false)))));
+      assertThat(
+              notifications.findAll().stream()
+                  .filter(event -> "call.started".equals(event.getEventType())))
+          .extracting(event -> event.getRecipientUserId())
+          .containsExactlyInAnyOrder("started-consultant", "started-absent", "started-removed");
+      lifecycle.handleRoom(media, attendance);
+      assertThat(
+              notifications.findAll().stream()
+                  .filter(event -> "call.started".equals(event.getEventType())))
+          .hasSize(3);
+    } finally {
+      notifications.deleteAll();
+      bindingRepository.deleteAll();
+    }
+  }
+
+  @Test
+  void oneBatchRetainsStartBeforeEndAndAnEndedCallDoesNotAnnounceToRestoredInvitees() {
+    String source = "!started-terminal-source:example";
+    String media = "!started-terminal-media:example";
+    String caller = "@started-terminal-caller:example";
+    String receiver = "@started-terminal-receiver:example";
+    String late = "@started-terminal-late:example";
+    long timestamp = System.currentTimeMillis() - 10;
+    for (var user :
+        List.of(
+            startedUser("terminal-caller", caller),
+            startedUser("terminal-receiver", receiver),
+            startedUser("terminal-late", late))) {
+      when(users.findByMatrixUserIdAndDeleteDateIsNull(user.getMatrixUserId()))
+          .thenReturn(Optional.of(user));
+    }
+    var session = mock(Session.class);
+    when(session.getId()).thenReturn(243L);
+    when(session.getTenantId()).thenReturn(7L);
+    when(sessions.findByMatrixRoomId(source)).thenReturn(Optional.of(session));
+    when(matrix.getCallRoomMembers(source)).thenReturn(Optional.of(List.of(caller, receiver)));
+    try {
+      assertThat(
+              callBindings.register(
+                  de.caritas.cob.userservice.api.model.MatrixCallBinding.builder()
+                      .sourceRoomId(source)
+                      .callId("started-terminal")
+                      .mediaRoomId(media)
+                      .callerMatrixId(caller)
+                      .sessionId(243L)
+                      .tenantId(7L)
+                      .invitedAt(timestamp - 100)
+                      .inviteExpiresAt(timestamp + 60000)
+                      .invitedMatrixIds(java.util.Set.of(receiver, late))
+                      .build()))
+          .isTrue();
+      assertThat(
+              lifecycle.handleRoom(
+                  media,
+                  Map.of(
+                      "timeline",
+                      Map.of(
+                          "events",
+                          List.of(
+                              rtcMember(caller, "terminal-device", timestamp, false),
+                              departure(caller, "terminal-device", timestamp, 0))))))
+          .isTrue();
+      var events = notifications.findAll();
+      assertThat(events)
+          .extracting(event -> event.getEventType())
+          .containsExactlyInAnyOrder("call.started", "call.ended", "call.missed");
+      var start =
+          events.stream()
+              .filter(event -> "call.started".equals(event.getEventType()))
+              .findFirst()
+              .orElseThrow();
+      var end =
+          events.stream()
+              .filter(event -> "call.ended".equals(event.getEventType()))
+              .findFirst()
+              .orElseThrow();
+      assertThat(start.getRecipientUserId()).isEqualTo("terminal-receiver");
+      assertThat(end.getRecipientUserId()).isEqualTo("terminal-caller");
+      assertThat(start.getCreateDate()).isBeforeOrEqualTo(end.getCreateDate());
+      when(matrix.getCallRoomMembers(source))
+          .thenReturn(Optional.of(List.of(caller, receiver, late)));
+      lifecycle.handleRoom(
+          media,
+          Map.of(
+              "state",
+              Map.of(
+                  "events",
+                  List.of(
+                      rtcMember(
+                          late, "terminal-late-device", System.currentTimeMillis(), false)))));
+      assertThat(notifications.findAll())
+          .extracting(event -> event.getId())
+          .containsExactlyInAnyOrderElementsOf(
+              events.stream().map(event -> event.getId()).toList());
+    } finally {
+      notifications.deleteAll();
+      bindingRepository.deleteAll();
+    }
+  }
+
+  private User startedUser(String id, String matrixId) {
+    return User.builder()
+        .userId(id)
+        .username(id)
+        .email(id + "@synthetic.oriso.test")
+        .matrixUserId(matrixId)
+        .tenantId(7L)
+        .build();
   }
 
   private static Map<String, Object> syncRoom(

@@ -236,6 +236,27 @@ class MatrixCallTenantIT {
                               .map(binding -> binding.getStartedAt())
                               .orElse(null))
                       .isNotNull());
+      await()
+          .pollInSameThread()
+          .atMost(Duration.ofSeconds(5))
+          .untilAsserted(
+              () -> {
+                var started =
+                    notifications.findAll().stream()
+                        .filter(event -> "call.started".equals(event.getEventType()))
+                        .toList();
+                assertThat(started).hasSize(invitationAlreadyExpired ? 0 : 1);
+                assertThat(started)
+                    .allSatisfy(
+                        event -> {
+                          assertThat(event.getRecipientUserId()).isEqualTo("tenant-receiver");
+                          assertThat(event.getTenantId()).isEqualTo(7L);
+                          assertThat(event.getSourceSessionId()).isEqualTo(session.getId());
+                          assertThat(event.getParams())
+                              .contains(
+                                  "\"callId\":\"tenant-call\"", "\"callRoomId\":\"" + media + "\"");
+                        });
+              });
       if (invitationAlreadyExpired) assertThat(notifications.findAll()).isEmpty();
       response.set(
           Map.of(

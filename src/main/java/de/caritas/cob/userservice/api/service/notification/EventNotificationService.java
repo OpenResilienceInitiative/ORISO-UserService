@@ -924,6 +924,47 @@ public class EventNotificationService {
         session.getTenantId());
   }
 
+  /**
+   * One retained start per original invitee and call, independent of devices and listener restarts.
+   */
+  @Transactional
+  public void createCallStartedNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String callId,
+      String mediaRoomId,
+      boolean video) {
+    var params = session.notificationParams();
+    params.put("callId", callId);
+    params.put("callRoomId", mediaRoomId);
+    params.put("callType", video ? "video" : "audio");
+    String sourceRoom = session.getMatrixRoomId();
+    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
+    String key;
+    try {
+      key =
+          "call.started:"
+              + java.util.HexFormat.of()
+                  .formatHex(
+                      java.security.MessageDigest.getInstance("SHA-256")
+                          .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 unavailable", impossible);
+    }
+    createEventOnce(
+        key,
+        recipientId,
+        "call.started",
+        CATEGORY_SYSTEM,
+        "Call started",
+        "The call has started.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
   @Transactional
   public void createCallEndedNotification(
       de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,

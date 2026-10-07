@@ -109,6 +109,25 @@ public class MatrixCallLifecycleService {
                   attended,
                   event.eventId()));
     }
+    // Announce the observed start to the persisted invitation audience, rechecking access.
+    // Reconcile each batch so an original invitee restored while the call runs is not lost.
+    if (binding.getStartedAt() != null) {
+      binding.getInvitedMatrixIds().stream()
+          .filter(members::contains)
+          .filter(member -> !member.equals(binding.getCallerMatrixId()))
+          .map(member -> identity(member, binding.getTenantId()))
+          .flatMap(Optional::stream)
+          .distinct()
+          .forEach(
+              recipient ->
+                  notifications.createCallStartedNotification(
+                      session,
+                      recipient.id(),
+                      recipient.consultant(),
+                      binding.getCallId(),
+                      binding.getMediaRoomId(),
+                      binding.isVideo()));
+    }
     // Apply the entire room batch before evaluating the last departure.
     if (binding.getMediaObservedAt() != null
         && (binding.getStartedAt() != null || binding.getInviteExpiresAt() <= now)
