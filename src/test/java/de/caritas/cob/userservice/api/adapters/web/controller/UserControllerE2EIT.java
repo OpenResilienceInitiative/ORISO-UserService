@@ -1093,6 +1093,77 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
         .andExpect(jsonPath("liveChatViaSidebar", is(nullValue())));
   }
 
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void patchUserDataShouldStoreAndClearTheAdviceSeekersAnimal() throws Exception {
+    givenABearerToken();
+    givenAValidUser();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
+
+    patchUserData("{\"avatarId\": \"magpie\"}");
+    expectAvatar("avatarId", is("magpie"));
+
+    patchUserData("{\"avatarId\": \"\"}");
+    expectAvatar("avatarId", is(nullValue()));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchUserDataShouldStoreAndClearTheConsultantsMotif() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+
+    patchUserData("{\"avatarKind\": \"ICON\", \"avatarId\": \"magpie\"}");
+    expectAvatar("avatarKind", is("ICON"));
+    expectAvatar("avatarId", is("magpie"));
+
+    patchUserData("{\"avatarKind\": \"INITIALS\", \"avatarId\": \"\"}");
+    expectAvatar("avatarKind", is("INITIALS"));
+    expectAvatar("avatarId", is(nullValue()));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void patchUserDataShouldRejectAnAvatarThatIsNotABundledId() throws Exception {
+    givenAValidUser();
+
+    mockMvc
+        .perform(
+            patch("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"avatarId\": \"https://example.com/me.png\"}")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest());
+  }
+
+  private void patchUserData(String body) throws Exception {
+    mockMvc
+        .perform(
+            patch("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isNoContent());
+  }
+
+  private void expectAvatar(String field, org.hamcrest.Matcher<?> matcher) throws Exception {
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath(field, matcher));
+  }
+
   private void expectLiveChatViaSidebar(boolean expected) throws Exception {
     mockMvc
         .perform(
@@ -2591,6 +2662,9 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     // Pinned: a random true is rejected with 400 for fixtures without a profile email, and which
     // value the shared EasyRandom draws shifts whenever PatchUserDTO gains a field.
     patchUserDTO.setMagicLinkLoginEnabled(false);
+    // A random string is no avatar id (400), and the shared fixtures keep their avatar (#1240).
+    patchUserDTO.setAvatarKind(null);
+    patchUserDTO.setAvatarId(null);
 
     var dailyEnquiries = new EmailToggle();
     dailyEnquiries.setName(EmailType.DAILY_ENQUIRY);
