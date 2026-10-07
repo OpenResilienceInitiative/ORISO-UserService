@@ -158,11 +158,22 @@ class TenantSystemEmailRouteServiceTest {
   }
 
   @Test
+  void transportForPartialLegacySmtpRequiresAnExplicitModeInsteadOfPlatformFallback() {
+    when(client.readTenant(40L))
+        .thenReturn(Map.of("settings", Map.of("smtp", Map.of("host", "smtp.tenant.example"))));
+
+    assertThatThrownBy(() -> new TenantSystemEmailRouteService(client).resolveTransport(40L))
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
+        .hasMessageContaining("smtpMode")
+        .hasMessageNotContaining("smtp.tenant.example");
+  }
+
+  @Test
   void transportForUnclassifiedTenantStaysOnThePlatform() {
     var routes = new TenantSystemEmailRouteService(client);
     var withoutMode = new java.util.HashMap<String, Object>();
     withoutMode.put("smtpMode", null);
-    withoutMode.put("smtp", Map.of("enabled", true, "host", "smtp.tenant.example"));
+    withoutMode.put("smtp", Map.of());
 
     when(client.readTenant(40L)).thenReturn(Map.of("settings", withoutMode));
     assertThat(routes.resolveTransport(40L).mode())
@@ -170,6 +181,27 @@ class TenantSystemEmailRouteServiceTest {
 
     when(client.readTenant(41L)).thenReturn(Map.of("id", 41L));
     assertThat(routes.resolveTransport(41L).mode())
+        .isEqualTo(TenantSystemEmailRouteService.Mode.PLATFORM);
+  }
+
+  @Test
+  void unconfiguredLegacySmtpWithBrandingDoesNotChangeThePlatformCompatibilityRoute() {
+    when(client.readTenant(40L))
+        .thenReturn(
+            Map.of(
+                "settings",
+                Map.of(
+                    "smtp",
+                    Map.of(
+                        "enabled", false,
+                        "secure", false,
+                        "passwordSet", false,
+                        "host", " ",
+                        "username", "",
+                        "from", "",
+                        "emailThemeColor", "#005500"))));
+
+    assertThat(new TenantSystemEmailRouteService(client).resolveTransport(40L).mode())
         .isEqualTo(TenantSystemEmailRouteService.Mode.PLATFORM);
   }
 

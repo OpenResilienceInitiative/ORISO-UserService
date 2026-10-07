@@ -54,12 +54,28 @@ public class TenantSystemEmailRouteService {
   public Route resolveTransport(Long tenantId) {
     if (tenantId == null || tenantId <= 0) return new Route(Mode.PLATFORM, null);
     Map<?, ?> settings = map(tenantClient.readTenant(tenantId).get("settings"));
-    // TenantService never relays a Träger without an explicit mode (legacy rows keep null until
-    // classified), so these mails stay on the platform server as before.
-    if (settings == null || settings.get("smtpMode") == null) {
+    // Keep the legacy platform route only when no tenant transport was configured. Existing
+    // transport data needs an explicit mode; guessing PLATFORM could send from the wrong server.
+    if (settings == null
+        || (settings.get("smtpMode") == null && !hasLegacySmtpConfiguration(settings))) {
       return new Route(Mode.PLATFORM, null);
     }
     return route(settings);
+  }
+
+  private static boolean hasLegacySmtpConfiguration(Map<?, ?> settings) {
+    Map<?, ?> smtp = map(settings.get("smtp"));
+    if (smtp == null) return false;
+    for (String key :
+        new String[] {"enabled", "host", "port", "secure", "username", "from", "passwordSet"}) {
+      Object value = smtp.get(key);
+      if (value != null
+          && !Boolean.FALSE.equals(value)
+          && !(value instanceof String text && text.isBlank())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private Map<?, ?> readSettings(long tenantId) {
