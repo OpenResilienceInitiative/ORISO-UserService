@@ -26,6 +26,7 @@ class ReplyEmailDeliverySchedulerTest {
   @Mock private ReplyEmailDeliveryWriter writer;
   @Mock private AdviceSeekerReplyEmailService service;
   @Mock private FeedbackMessageEmailService feedback;
+  @Mock private InternalChatEmailService internalChat;
   @Mock private ScheduledTaskClaimService claims;
 
   @Test
