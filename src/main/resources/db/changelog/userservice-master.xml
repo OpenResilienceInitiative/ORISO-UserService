@@ -195,6 +195,7 @@
   <include file="db/changelog/changeset/0105_service_notice_draft/0105_changeSet.xml" />
   <include file="db/changelog/changeset/0106_existing_account_setup/0106_changeSet.xml" />
 
+  <include file="db/changelog/changeset/0091_matrix_call_binding/0091_changeSet.xml"/>
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
   <include

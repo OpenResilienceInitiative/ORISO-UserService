@@ -91,6 +91,7 @@ class MatrixEventListenerServiceTest {
 
   @Mock private MatrixEmailSyncCursorStore emailSyncCursorStore;
   @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
+  @Mock private MatrixCallInviteNotificationService callInviteNotifications;
 
   private Logger logger;
   private ListAppender<ILoggingEvent> logAppender;
@@ -134,6 +135,7 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
+            callInviteNotifications,
             replyEmailService,
             emailSyncCursorStore,
             internalChatEmailService);
@@ -209,6 +211,7 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
+            callInviteNotifications,
             replyEmailService,
             emailSyncCursorStore,
             internalChatEmailService) {
@@ -657,6 +660,7 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
+            callInviteNotifications,
             replyEmailService,
             emailSyncCursorStore,
             internalChatEmailService) {
@@ -692,6 +696,7 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
+            callInviteNotifications,
             replyEmailService,
             emailSyncCursorStore,
             internalChatEmailService) {
