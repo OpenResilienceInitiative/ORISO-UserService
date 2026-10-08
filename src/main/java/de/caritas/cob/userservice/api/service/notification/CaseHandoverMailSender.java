@@ -1,8 +1,12 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deserializeNotificationSettingsDTOOrDefaultIfNull;
 import static de.caritas.cob.userservice.api.service.helper.MailService.safeFailureReason;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.net.URI;
@@ -23,16 +27,33 @@ public class CaseHandoverMailSender {
   private final @NonNull TenantService tenants;
   private final @NonNull TenantTemplateSupplier tenantUrls;
   private final @NonNull CaseHandoverMailComposer composer;
+  private final @NonNull SessionRepository sessions;
+  private final @NonNull ReleaseToggleService releaseToggles;
 
   @Async
   public void send(CaseHandoverEmailNotification.Mail mail) {
     try {
       var route = routes.resolve(mail.tenantId());
       if (route.isEmpty()) return;
-      RestrictedTenantDTO tenant = tenants.getRestrictedTenantData(mail.tenantId());
+      RestrictedTenantDTO tenant = tenants.getRestrictedTenantDataFresh(mail.tenantId());
       if (tenant == null || !Objects.equals(tenant.getId(), mail.tenantId())) {
         throw new TenantSystemEmailRouteService.ConfigurationException(
             "Takeover email tenant is unavailable");
+      }
+      if (mail.outcome() == CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED) {
+        var session = sessions.findById(mail.sessionId()).orElse(null);
+        if (session == null
+            || !Objects.equals(session.getTenantId(), mail.tenantId())
+            || !AskerNotificationChannelPolicy.emailAllowed(session, tenant.getSettings())) return;
+        var user = session.getUser();
+        if (user == null
+            || user.getDeleteDate() != null
+            || !Objects.equals(user.getEmail(), mail.recipient())) return;
+        if (releaseToggles.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)
+            && (!user.isNotificationsEnabled()
+                || !Boolean.TRUE.equals(
+                    deserializeNotificationSettingsDTOOrDefaultIfNull(user)
+                        .getReassignmentNotificationEnabled()))) return;
       }
       String baseUrl = tenantUrls.getTenantBaseUrl(tenant);
       if (!hasConfiguredTenantUrl(baseUrl)) {

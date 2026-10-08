@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-    - pre-dev
+    - dev
 
 env:
   REDOCLY_VERSION: 2.40.0
@@ -37,9 +37,8 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-AgencyService
-        # AgencyService dev HEAD. UserService no longer reads counsellorTopicPermission, so this
-        # branch needs no companion pin to ORISO-AgencyService#308.
-        ref: ${{ github.event_name == 'pull_request' && '7780942a8fbef19c11bd6aeacab94d677f3905da' || 'pre-dev' }}
+        # Coordinated task provider preserves agency reservation ownership and strict caller bindings.
+        ref: ${{ github.event_name == 'pull_request' && '5f204f52f0708cb98ade0d9e252f5dc552af3172' || 'dev' }}
         path: .providers/agency
         persist-credentials: false
 
@@ -48,7 +47,7 @@ jobs:
       with:
         repository: OpenResilienceInitiative/ORISO-ConsultingTypeService
         # CTS#164 merged the Admin Settings SMTP fields consumed by this branch into dev.
-        ref: ${{ github.event_name == 'pull_request' && 'fc3404819574f2c38a2e559910a2c84206e9001b' || 'pre-dev' }}
+        ref: ${{ github.event_name == 'pull_request' && 'fc3404819574f2c38a2e559910a2c84206e9001b' || 'dev' }}
         path: .providers/consulting
         persist-credentials: false
 
@@ -56,8 +55,8 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
-        # TenantService PR303 merged the stored confirmation language consumed by this branch into dev.
-        ref: ${{ github.event_name == 'pull_request' && 'af9a5aa3adccfeab37404f5cb30895b34213ef3e' || 'pre-dev' }}
+        # Coordinated task provider includes ownership proofs and all six channel settings.
+        ref: ${{ github.event_name == 'pull_request' && '8dbed496ff7dba01564bc585378752eb5fc149aa' || 'dev' }}
         path: .providers/tenant
         persist-credentials: false
 
