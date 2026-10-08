@@ -19,6 +19,8 @@ import de.caritas.cob.userservice.api.model.Appointment.AppointmentStatus;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
 import de.caritas.cob.userservice.api.model.ConsultantAgency.ConsultantAgencyBase;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
+import de.caritas.cob.userservice.api.model.ConsultantAvatars;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.NotificationsAware;
 import de.caritas.cob.userservice.api.model.Session;
@@ -439,6 +441,9 @@ public class UserServiceMapper {
     if (patchMap.containsKey("liveChatViaSidebar")) {
       consultant.setLiveChatViaSidebar((Boolean) patchMap.get("liveChatViaSidebar"));
     }
+    if (patchMap.containsKey("avatarKind") || patchMap.containsKey("avatarId")) {
+      patchConsultantAvatar(consultant, patchMap);
+    }
     if (patchMap.containsKey("notifyEnquiriesRepeating")) {
       consultant.setNotifyEnquiriesRepeating((Boolean) patchMap.get("notifyEnquiriesRepeating"));
     }
@@ -510,8 +515,33 @@ public class UserServiceMapper {
     if (patchMap.containsKey("emailNotifications")) {
       patchEmailNotificationSettings(adviceSeeker, patchMap);
     }
+    if (patchMap.containsKey("avatarId")) {
+      var avatarId = (String) patchMap.get("avatarId");
+      adviceSeeker.setAvatarId(avatarId == null || avatarId.isBlank() ? null : avatarId.trim());
+    }
 
     return adviceSeeker;
+  }
+
+  /**
+   * The counsellor's own pick in the app (#1240). What the request omits keeps its stored value, as
+   * in the admin form (#1046), except that a motif id sent alone means ICON. The pair goes through
+   * {@link ConsultantAvatars#apply}, so INITIALS or an empty id clears the motif.
+   */
+  private void patchConsultantAvatar(Consultant consultant, Map<String, Object> patchMap) {
+    var avatarId =
+        patchMap.containsKey("avatarId")
+            ? (String) patchMap.get("avatarId")
+            : consultant.getAvatarId();
+    ConsultantAvatarKind avatarKind;
+    if (patchMap.containsKey("avatarKind")) {
+      avatarKind = ConsultantAvatarKind.fromNameOrNull((String) patchMap.get("avatarKind"));
+    } else if (avatarId != null && !avatarId.isBlank()) {
+      avatarKind = ConsultantAvatarKind.ICON;
+    } else {
+      avatarKind = consultant.getAvatarKind();
+    }
+    ConsultantAvatars.apply(consultant, avatarKind, avatarId);
   }
 
   private void patchEmailNotificationSettings(

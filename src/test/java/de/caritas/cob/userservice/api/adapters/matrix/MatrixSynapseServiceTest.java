@@ -903,9 +903,10 @@ class MatrixSynapseServiceTest {
   }
 
   @Test
-  void loginBrowserDevice_rotatesTransientPasswordWithoutLoggingOutExistingDevices() {
+  void loginBrowserDevice_usesInteractiveAuthPasswordWithoutLoggingOutExistingDevices() {
     // Browser E2EE requires a normal Matrix login whose access token is bound to a real device.
-    // The transient password must never become an application credential or invalidate another
+    // The interactive-auth password must never become an application credential or invalidate
+    // another
     // browser's encryption keys.
     matrixConfig.setApiUrl(MATRIX_BASE_URL);
     matrixConfig.setAdminUsername("admin");

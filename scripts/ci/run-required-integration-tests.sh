@@ -46,6 +46,7 @@ run_maven() {
 # would have removed the test from required CI entirely instead of moving it.
 mariadb_owned_tests=(
   DatabaseChangelogDriftIT
+  ConsultantTopicUniqueKeyMariaDbIT
   ConsultantPictureDatabaseIT
   AdminStatisticsRepositoryMariaDbIT
   ProvisioningCompensationMariaDbIT
@@ -84,6 +85,7 @@ required_e2e = {
     "ConversationControllerIT",
     "UserAdminControllerE2EIT",
     "UserControllerE2EIT",
+    "MatrixBrowserDeviceSynapseIT",
 }
 
 tests = failures = errors = skipped = 0

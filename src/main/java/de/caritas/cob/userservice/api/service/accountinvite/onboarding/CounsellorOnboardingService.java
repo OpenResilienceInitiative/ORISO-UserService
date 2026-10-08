@@ -12,6 +12,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
@@ -103,6 +105,10 @@ public class CounsellorOnboardingService {
     resolved.rethrowLinkDeath();
 
     AccountInvite invite = resolved.invite();
+    if (invite.getPurpose() == AccountInvitePurpose.EXISTING_ACCOUNT_SETUP) {
+      // The setup-only wizard needs no topic/agency provisioning lookup.
+      return new CounsellorOnboardingState(invite, false, List.of());
+    }
     if (resolved.pendingTwoFactorResume()) {
       repairMissingTotpSecret(invite);
       return new CounsellorOnboardingState(invite, true, List.of());
@@ -118,6 +124,15 @@ public class CounsellorOnboardingService {
         () -> {
           AccountInvite invite = findCounsellorInvite(rawToken);
           LocalDateTime now = LocalDateTime.now();
+
+          if (invite.getPurpose() == AccountInvitePurpose.EXISTING_ACCOUNT_SETUP
+              && invite.getProvisioningStatus() == AccountInviteProvisioningStatus.IN_PROGRESS) {
+            return ResolvedOnboardingInvite.dead(
+                new AccountInviteLinkException(
+                    "SETUP_OUTCOME_INDETERMINATE".equals(invite.getProvisioningFailureReason())
+                        ? AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED
+                        : AccountInviteLinkException.Reason.SETUP_IN_PROGRESS));
+          }
 
           if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
             AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
@@ -147,6 +162,9 @@ public class CounsellorOnboardingService {
     RegisterCounsellorCommand command = requestedCommand;
     validateRegistration(command);
     AccountInvite invite = findCounsellorInvite(rawToken);
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("This link is for existing-account setup");
+    }
     LocalDateTime now = LocalDateTime.now();
 
     if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
@@ -223,6 +241,22 @@ public class CounsellorOnboardingService {
     return new CounsellorRegistrationResult(consultantId, null, null, false);
   }
 
+  /** Sends the existing SPI challenge to the recipient of a live, accepted invitation. */
+  public void startEmailTwoFactor(String rawToken) {
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    OnboardingEmailSecondFactor.start(invite, identityProfileLookup, identitySecondFactor);
+  }
+
+  public void activateEmailTwoFactor(String rawToken, String oneTimePassword) {
+    if (isBlank(oneTimePassword)) {
+      throw new BadRequestException("otp is required");
+    }
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    OnboardingEmailSecondFactor.verify(
+        invite, oneTimePassword, identityProfileLookup, identitySecondFactor);
+    consumeTwoFactorGate(rawToken);
+  }
+
   /**
    * Confirms the pending TOTP setup with a first one-time password. Same contract as the
    * tenant-admin endpoint: an invalid or rejected code answers 400 (the wizard maps 400/422 to its
@@ -252,6 +286,7 @@ public class CounsellorOnboardingService {
             .findById(invite.getAcceptedByUserId())
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
+    OnboardingEmailSecondFactor.requireInactive(profile, identitySecondFactor);
     boolean valid =
         identitySecondFactor.setUpOtpCredential(
             profile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
@@ -259,7 +294,7 @@ public class CounsellorOnboardingService {
       throw new BadRequestException("Invalid one-time password");
     }
 
-    consumeTwoFactorGate(invite);
+    consumeTwoFactorGate(rawToken);
   }
 
   /**
@@ -315,12 +350,13 @@ public class CounsellorOnboardingService {
 
   /**
    * Terminal consumption of the link once Keycloak accepted the one-time password. The pending
-   * secret is cleared FIRST so the gate transition — which re-reads the invite by its acceptor —
-   * wins over the merge of the detached row loaded before the Keycloak round trip.
+   * token, expiry and pending gate are checked again under the row lock after the remote call.
+   * Clearing the pending secret before marking the gate active preserves the existing transition.
    */
-  private void consumeTwoFactorGate(AccountInvite invite) {
+  private void consumeTwoFactorGate(String rawToken) {
     inTransaction(
         () -> {
+          AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
           invite.setTotpPendingSecret(null);
           invite.setUpdateDate(LocalDateTime.now());
           accountInviteRepository.save(invite);
@@ -589,6 +625,7 @@ public class CounsellorOnboardingService {
     boolean withinExpiryWindow =
         invite.getExpiresAt() == null || !invite.getExpiresAt().isBefore(now);
     return invite.getStatus() == AccountInviteStatus.ACCEPTED
+        && invite.getPurpose() == AccountInvitePurpose.INVITE
         && twoFactorStillPending
         && withinExpiryWindow;
   }

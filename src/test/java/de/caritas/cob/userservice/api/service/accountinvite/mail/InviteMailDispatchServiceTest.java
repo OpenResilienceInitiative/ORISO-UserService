@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailDelivery.Purpose;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +22,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class InviteMailDispatchServiceTest {
+  private static final InviteMailOrigin PLATFORM_INVITE =
+      InviteMailOrigin.platform(Purpose.ACCOUNT_INVITE);
+
   @Mock private InviteMailTransport inviteMailTransport;
   @Mock private EmailBrandingResolver emailBrandingResolver;
 
@@ -29,11 +33,20 @@ class InviteMailDispatchServiceTest {
         de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsFixture.configured(
             username, password),
         inviteMailTransport,
-        InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver));
+        InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver),
+        TenantMailRoutingFixture.platformRoutes(),
+        TenantMailRoutingFixture.unusedRelay());
   }
 
   private void givenNeutralBranding() {
-    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            new EmailBranding(
+                "ORISO",
+                null,
+                "#a5000a",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"));
   }
 
   @Test
@@ -42,7 +55,9 @@ class InviteMailDispatchServiceTest {
     InviteMailSendReceipt receipt = new InviteMailSendReceipt("to@example.org", Instant.now());
     when(inviteMailTransport.send(any(), any(), any(), any(), any())).thenReturn(receipt);
 
-    assertThat(service("smtp-user", "smtp-pass").send("to@example.org", "subject", "body"))
+    assertThat(
+            service("smtp-user", "smtp-pass")
+                .send("to@example.org", "subject", "body", null, null, null, PLATFORM_INVITE))
         .isSameAs(receipt);
     verify(inviteMailTransport)
         .send(
@@ -73,7 +88,8 @@ class InviteMailDispatchServiceTest {
             "Hallo Ada, bitte bestaetigen Sie Ihr Konto.",
             "https://app.example.org/account-invite/tok",
             null,
-            "de");
+            "de",
+            PLATFORM_INVITE);
 
     ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<String> plain = ArgumentCaptor.forClass(String.class);
@@ -95,14 +111,25 @@ class InviteMailDispatchServiceTest {
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("to@example.org", Instant.now()));
 
-    service("smtp-user", "smtp-pass").send("to@example.org", "subject", "body", null, 42L, null);
+    service("smtp-user", "smtp-pass")
+        .send(
+            "to@example.org",
+            "subject",
+            "body",
+            null,
+            42L,
+            null,
+            InviteMailOrigin.of(42L, Purpose.ACCOUNT_INVITE));
 
-    verify(emailBrandingResolver).resolve(42L);
+    verify(emailBrandingResolver).resolvePendingTenant(42L);
   }
 
   @Test
   void missingAdminCredentialsStopBeforeAnyTransportCall() {
-    assertThatThrownBy(() -> service("", "").send("to@example.org", "subject", "body"))
+    assertThatThrownBy(
+            () ->
+                service("", "")
+                    .send("to@example.org", "subject", "body", null, null, null, PLATFORM_INVITE))
         .isInstanceOf(SmtpSendException.class)
         .hasMessageContaining("SMTP username")
         .hasMessageContaining("SMTP password")
@@ -120,17 +147,23 @@ class InviteMailDispatchServiceTest {
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenThrow(new SmtpSendException("handover failed", new RuntimeException("io")));
 
-    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+    assertThatThrownBy(
+            () ->
+                service("u", "p")
+                    .send("to@example.org", "s", "b", null, null, null, PLATFORM_INVITE))
         .isInstanceOf(SmtpSendException.class)
         .hasMessageContaining("handover failed");
   }
 
   @Test
   void renderingFailureIsConfirmedNotSent() {
-    when(emailBrandingResolver.resolve(any()))
+    when(emailBrandingResolver.resolvePendingTenant(any()))
         .thenThrow(new IllegalStateException("branding unavailable"));
 
-    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+    assertThatThrownBy(
+            () ->
+                service("u", "p")
+                    .send("to@example.org", "s", "b", null, null, null, PLATFORM_INVITE))
         .isInstanceOfSatisfying(
             SmtpSendException.class,
             exception -> {
@@ -147,7 +180,10 @@ class InviteMailDispatchServiceTest {
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenThrow(new IllegalStateException("connection disappeared"));
 
-    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+    assertThatThrownBy(
+            () ->
+                service("u", "p")
+                    .send("to@example.org", "s", "b", null, null, null, PLATFORM_INVITE))
         .isInstanceOfSatisfying(
             SmtpSendException.class,
             exception ->

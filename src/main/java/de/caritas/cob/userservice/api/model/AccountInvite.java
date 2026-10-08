@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.model;
 
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
@@ -36,6 +37,10 @@ import lombok.ToString;
       @Index(name = "idx_account_invite_target_role", columnList = "target_role"),
       @Index(name = "idx_account_invite_token_hash", columnList = "token_hash", unique = true),
       @Index(
+          name = "idx_account_invite_active_setup_identity",
+          columnList = "active_setup_identity_key",
+          unique = true),
+      @Index(
           name = "idx_account_invite_active_recipient",
           columnList = "active_recipient_key",
           unique = true)
@@ -45,7 +50,13 @@ import lombok.ToString;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@ToString(exclude = {"tokenHash", "tenantIdReservationToken", "totpPendingSecret"})
+@ToString(
+    exclude = {
+      "tokenHash",
+      "tenantIdReservationToken",
+      "totpPendingSecret",
+      "initialPasswordVerifier"
+    })
 public class AccountInvite {
 
   @Id
@@ -56,6 +67,12 @@ public class AccountInvite {
   @Enumerated(EnumType.STRING)
   @Column(name = "target_role", nullable = false, length = 64)
   private AccountInviteTargetRole targetRole;
+
+  /** Legacy rows and ordinary onboarding are INVITE; setup rows bind an existing identity. */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "purpose", nullable = false, length = 32)
+  @Builder.Default
+  private AccountInvitePurpose purpose = AccountInvitePurpose.INVITE;
 
   @Column(name = "tenant_id")
   private Long tenantId;
@@ -140,6 +157,20 @@ public class AccountInvite {
 
   @Column(name = "provisioned_user_id", length = 36)
   private String provisionedUserId;
+
+  /** Existing-account setup only: the saved login name at the time this link was issued. */
+  @Column(name = "setup_bound_username")
+  private String setupBoundUsername;
+
+  /**
+   * Unique while a setup link can still be sent or redeemed; null on ordinary and terminal rows.
+   */
+  @Column(name = "active_setup_identity_key", length = 36)
+  private String activeSetupIdentityKey;
+
+  /** Setup-only salted verifier, never the credential itself; cleared on terminal transitions. */
+  @Column(name = "initial_password_verifier", length = 255)
+  private String initialPasswordVerifier;
 
   @Column(name = "provisioning_failure_reason", length = 1024)
   private String provisioningFailureReason;

@@ -28,6 +28,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The Admin preview must show what is actually sent (ORISO-UserService#914). The decisive test here
@@ -62,7 +63,11 @@ class InviteEmailPreviewServiceTest {
             de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsFixture.configured(
                 "smtp-user", "smtp-pass"),
             inviteMailTransport,
-            InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver));
+            InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .platformRoutes(),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .unusedRelay());
     previewService =
         new InviteEmailPreviewService(
             templateRepository,
@@ -72,10 +77,79 @@ class InviteEmailPreviewServiceTest {
             new de.caritas.cob.userservice.api.service.notification.AdminPanelUrl(
                 "https://admin.configured.example"));
 
-    when(emailBrandingResolver.resolve(any()))
-        .thenReturn(new EmailBranding("Nord", null, "#f8e71c", null, null));
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            new EmailBranding(
+                "Nord",
+                null,
+                "#f8e71c",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"));
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("to@example.org", Instant.now()));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void previewShouldExposeTheBrandingActuallyUsedByItsSingleRender(boolean image) {
+    String logo = image ? "https://app.example.org/service/tenants/42/logo" : null;
+    when(emailBrandingResolver.resolvePendingTenant(42L))
+        .thenReturn(
+            new EmailBranding(
+                "Resolved Nord",
+                logo,
+                "#246b45",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"));
+    var preview =
+        previewService.preview(
+            new PreviewCommand(
+                null,
+                InviteEmailTemplateKind.TENANT_INVITE,
+                "Invitation",
+                "Sample body",
+                42L,
+                "de"));
+    var branding = JsonMapper.builder().build().valueToTree(preview).path("branding");
+    assertThat(branding.path("brandName").asString()).isEqualTo("Resolved Nord");
+    assertThat(branding.path("accentColor").asString()).isEqualTo("#246b45");
+    assertThat(branding.path("primaryColor").asString()).isEqualTo("#246b45");
+    assertThat(branding.path("logoRendering").asString())
+        .isEqualTo(image ? "IMAGE" : "TEXT_WORDMARK");
+    if (image) {
+      assertThat(branding.path("logoUrl").asString()).isEqualTo(logo);
+      assertThat(preview.html()).contains(logo);
+    } else {
+      assertThat(branding.path("logoUrl").isNull()).isTrue();
+      assertThat(preview.html()).contains("Resolved Nord");
+    }
+    verify(emailBrandingResolver).resolvePendingTenant(42L);
+    org.mockito.Mockito.verifyNoMoreInteractions(emailBrandingResolver);
+  }
+
+  @Test
+  void previewShouldReportTheButtonAndLabelColoursActuallyRendered() {
+    var preview =
+        previewService.preview(
+            new PreviewCommand(
+                null,
+                InviteEmailTemplateKind.TENANT_INVITE,
+                "Invitation",
+                "Sample body",
+                42L,
+                "de"));
+    var branding = JsonMapper.builder().build().valueToTree(preview).path("branding");
+    assertThat(branding.path("accentColor").asString()).isEqualTo("#f8e71c");
+    assertThat(branding.path("primaryColor").asString())
+        .as("a light colour is no longer replaced, the button keeps it")
+        .isEqualTo("#f8e71c");
+    assertThat(branding.path("buttonLabelColor").asString()).isEqualTo("#1f1c00");
+    assertThat(preview.html())
+        .contains("bgcolor=\"" + branding.path("primaryColor").asString() + "\"")
+        .contains(
+            "color:" + branding.path("buttonLabelColor").asString() + ";text-decoration:none");
+    verify(emailBrandingResolver).resolvePendingTenant(42L);
+    org.mockito.Mockito.verifyNoMoreInteractions(emailBrandingResolver);
   }
 
   @Test
@@ -88,7 +162,16 @@ class InviteEmailPreviewServiceTest {
             new PreviewCommand(
                 null, InviteEmailTemplateKind.TENANT_INVITE, subject, body, null, "de"));
 
-    dispatchService.send("to@example.org", subject, body, preview.sampleAcceptUrl(), null, "de");
+    dispatchService.send(
+        "to@example.org",
+        subject,
+        body,
+        preview.sampleAcceptUrl(),
+        null,
+        "de",
+        de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin.platform(
+            de.caritas.cob.userservice.api.service.notification.TenantSystemEmailDelivery.Purpose
+                .ACCOUNT_INVITE));
 
     ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<String> text = ArgumentCaptor.forClass(String.class);
@@ -177,7 +260,7 @@ class InviteEmailPreviewServiceTest {
     when(templateRepository.findById(6L)).thenReturn(Optional.of(foreign));
     org.mockito.Mockito.doThrow(new ForbiddenException("foreign template"))
         .when(accessPolicy)
-        .authorizeTemplateUse(2L);
+        .authorizeTemplateUse(2L, InviteEmailTemplateKind.COUNSELLOR_INVITE);
 
     assertThatThrownBy(() -> previewService.preview(new PreviewCommand(6L, null, null, null, null)))
         .isInstanceOf(ForbiddenException.class);
@@ -197,7 +280,7 @@ class InviteEmailPreviewServiceTest {
   void preview_Should_resolveBrandingForTheRequestedTenant() {
     previewService.preview(new PreviewCommand(null, null, null, null, 21L));
 
-    verify(emailBrandingResolver).resolve(21L);
+    verify(emailBrandingResolver).resolvePendingTenant(21L);
   }
 
   @Test

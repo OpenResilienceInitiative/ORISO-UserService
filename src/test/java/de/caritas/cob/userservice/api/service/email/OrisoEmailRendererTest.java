@@ -28,6 +28,27 @@ class OrisoEmailRendererTest {
 
   private final OrisoEmailRenderer renderer = new OrisoEmailRenderer();
 
+  @Test
+  void pendingLocalesUseReviewedCopyUnlessDevExplicitlyOptsIn() {
+    var devRenderer = new OrisoEmailRenderer(true);
+    var reviewed = renderer.render("willkommen", OrisoEmailRenderer.Tone.DE_FORMAL, brand());
+
+    for (var tone :
+        List.of(
+            OrisoEmailRenderer.Tone.FR,
+            OrisoEmailRenderer.Tone.RU,
+            OrisoEmailRenderer.Tone.TI,
+            OrisoEmailRenderer.Tone.TR)) {
+      var defaultMail = renderer.render("willkommen", tone, brand());
+      assertThat(defaultMail).as("unreviewed %s uses reviewed copy", tone).isEqualTo(reviewed);
+
+      var devMail = devRenderer.render("willkommen", tone, brand());
+      assertThat(devMail.subject()).isNotEqualTo(reviewed.subject());
+      assertThat(devMail.html()).contains("<html lang=\"" + tone.directory() + "\"");
+      assertThat(devMail.text()).isNotEqualTo(reviewed.text());
+    }
+  }
+
   private static Map<String, String> brand() {
     Map<String, String> values = new LinkedHashMap<>();
     values.put("platformName", "Online-Beratung");
@@ -43,6 +64,100 @@ class OrisoEmailRendererTest {
     values.put("unsubscribeUrl", "https://example.org/settings/notifications");
     values.put("appUrl", "https://example.org");
     return values;
+  }
+
+  /**
+   * The generated templates hardcode a white button label. The label is derived from the brand
+   * colour like the web app's on-primary (ADR-026 amendment 2026-10-02), in every shipped tone.
+   */
+  @Test
+  void buttonLabelIsDerivedFromTheBrandColourInEveryTone() {
+    for (var tone : OrisoEmailRenderer.Tone.values()) {
+      Map<String, String> light = brand();
+      light.put("primaryColor", "#f8e71c");
+      light.put("accentColor", "#f8e71c");
+      light.put("loginUrl", "https://example.org/login?token=abc");
+      light.put("expiryMinutes", "15");
+      Map<String, String> dark = new LinkedHashMap<>(light);
+      dark.put("primaryColor", "#1c4f8f");
+      dark.put("accentColor", "#1c4f8f");
+
+      var yellow = renderer.render("anmeldelink", tone, light).html();
+      var blue = renderer.render("anmeldelink", tone, dark).html();
+
+      assertThat(yellow)
+          .as("tone %s keeps the tenant colour on the button", tone)
+          .contains("bgcolor=\"#f8e71c\" style=\"background-color:#f8e71c;")
+          .contains("font-weight:600;color:#1f1c00;text-decoration:none")
+          .doesNotContain("font-weight:600;color:#ffffff;text-decoration:none")
+          .doesNotContain("{{");
+      assertThat(blue)
+          .as("tone %s keeps a white label on a dark colour", tone)
+          .contains("font-weight:600;color:#ffffff;text-decoration:none");
+    }
+  }
+
+  @Test
+  void textLinksInBrandColourAreDarkenedButTheButtonIsNot() {
+    Map<String, String> values = brand();
+    values.put("primaryColor", "#f8e71c");
+    values.put("accentColor", "#f8e71c");
+    values.put("actionUrl", "https://example.org/accept");
+    values.put("actionLabel", "Annehmen");
+    values.put("fallbackHint", "Oder kopieren:");
+    values.put("assurance", "Nicht weitergeben.");
+    values.put("subject", "Einladung");
+    values.put("preheader", "Hallo");
+    values.put("footerNote", "Einladung");
+
+    var html =
+        renderer
+            .render(
+                "einladung-freitext",
+                OrisoEmailRenderer.Tone.DE_FORMAL,
+                values,
+                Map.of("bodyHtml", "<p>Hallo</p>", "bodyText", "Hallo"))
+            .html();
+
+    assertThat(html).contains("background-color:#f8e71c;border-radius:999px;");
+    assertThat(html).doesNotContain("color:#f8e71c;text-decoration:underline");
+    assertThat(html)
+        .containsPattern("color:#[0-9a-f]{6};text-decoration:underline;word-break:break-all");
+  }
+
+  @Test
+  void aCallerThatSuppliesItsOwnLabelColourKeepsIt() {
+    Map<String, String> values = brand();
+    values.put("loginUrl", "https://example.org/login?token=abc");
+    values.put("expiryMinutes", "15");
+    values.put("primaryTextColor", "#010203");
+    values.put("primaryLinkColor", "#040506");
+
+    var html = renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values).html();
+
+    assertThat(html).contains("font-weight:600;color:#010203;text-decoration:none");
+  }
+
+  @Test
+  void aPrimaryColourWithoutHashIsWrittenBackAsValidCss() {
+    for (boolean rolesSupplied : new boolean[] {false, true}) {
+      Map<String, String> values = brand();
+      values.put("primaryColor", "f8e71c");
+      values.put("loginUrl", "https://example.org/login?token=abc");
+      values.put("expiryMinutes", "15");
+      if (rolesSupplied) {
+        values.put("primaryTextColor", "#010203");
+        values.put("primaryLinkColor", "#040506");
+      }
+
+      var html = renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values).html();
+
+      assertThat(html)
+          .as("roles supplied: %s", rolesSupplied)
+          .contains("background-color:#f8e71c;")
+          .doesNotContain("background-color:f8e71c")
+          .doesNotContain("bgcolor=\"f8e71c\"");
+    }
   }
 
   @Test
@@ -72,6 +187,24 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void requestedContactSheetOmitsUnmaintainedFieldsInEveryLanguage() {
+    for (var tone : OrisoEmailRenderer.Tone.values()) {
+      Map<String, String> values = brand();
+      values.put("consultantName", "Centre");
+      values.put("consultantPhone", "+49 30 123");
+      values.put("consultantHours", "");
+      values.put("consultantEmail", "");
+      values.put("messageUrl", "https://example.org/sessions/user/view/session/42");
+
+      var email = renderer.render("beraterin-kontakt", tone, values);
+
+      assertThat(email.html()).contains("+49 30 123").doesNotContain("{{", "bookingUrl");
+      assertThat(email.text()).contains("+49 30 123").doesNotContain("{{", "bookingUrl");
+      assertThat(email.html().split("class=\"row-value\"", -1)).hasSize(3);
+    }
+  }
+
+  @Test
   void keepsAnUnsuppliedPlaceholderVisibleRatherThanBlankingIt() {
     // A visible {{expiryMinutes}} in a sent mail is a bug report. A silent blank
     // is a mail that quietly says the link expires in "" minutes.
@@ -93,11 +226,17 @@ class OrisoEmailRendererTest {
   }
 
   @Test
-  void picksTheEnglishTemplateForEnglishSpeakers() {
-    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.en)).isEqualTo(OrisoEmailRenderer.Tone.EN);
+  void selectsEveryStoredLanguageWithoutGermanFallback() {
     assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.de))
         .isEqualTo(OrisoEmailRenderer.Tone.DE_FORMAL);
-    assertThat(OrisoEmailRenderer.Tone.of(null)).isEqualTo(OrisoEmailRenderer.Tone.DE_FORMAL);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.en)).isEqualTo(OrisoEmailRenderer.Tone.EN);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.fr)).isEqualTo(OrisoEmailRenderer.Tone.FR);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.ru)).isEqualTo(OrisoEmailRenderer.Tone.RU);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.ti)).isEqualTo(OrisoEmailRenderer.Tone.TI);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.tr)).isEqualTo(OrisoEmailRenderer.Tone.TR);
+    assertThatThrownBy(() -> OrisoEmailRenderer.Tone.of(null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("language");
   }
 
   @Test
@@ -137,6 +276,85 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void rendersEveryCallOccasionInEveryToneFromNativeResources() {
+    var devRenderer = new OrisoEmailRenderer(true);
+    Map<String, Map<OrisoEmailRenderer.Tone, String>> subjects =
+        Map.of(
+            "anruf-erinnerung",
+                Map.of(
+                    OrisoEmailRenderer.Tone.DE_FORMAL, "Eine Sitzung beginnt bald",
+                    OrisoEmailRenderer.Tone.DE_INFORMAL, "Eine Sitzung beginnt bald",
+                    OrisoEmailRenderer.Tone.EN, "A session is starting soon",
+                    OrisoEmailRenderer.Tone.FR, "Une session va bientôt commencer",
+                    OrisoEmailRenderer.Tone.RU, "Сеанс скоро начнётся",
+                    OrisoEmailRenderer.Tone.TI, "እቲ ክፍለ ጊዜ ቀልጢፉ ክጅምር እዩ",
+                    OrisoEmailRenderer.Tone.TR, "Bir oturum yakında başlayacak"),
+            "anruf-einladung",
+                Map.of(
+                    OrisoEmailRenderer.Tone.DE_FORMAL, "Sie wurden zu einer Sitzung eingeladen",
+                    OrisoEmailRenderer.Tone.DE_INFORMAL, "Du wurdest zu einer Sitzung eingeladen",
+                    OrisoEmailRenderer.Tone.EN, "You have been invited to a session",
+                    OrisoEmailRenderer.Tone.FR, "Vous êtes invité à une session",
+                    OrisoEmailRenderer.Tone.RU, "Вас пригласили на сеанс",
+                    OrisoEmailRenderer.Tone.TI, "ናብ ክፍለ ጊዜ ተዓዲምኩም",
+                    OrisoEmailRenderer.Tone.TR, "Bir oturuma davet edildiniz"),
+            "anruf-verpasst",
+                Map.of(
+                    OrisoEmailRenderer.Tone.DE_FORMAL, "Sie haben einen Anruf verpasst",
+                    OrisoEmailRenderer.Tone.DE_INFORMAL, "Du hast einen Anruf verpasst",
+                    OrisoEmailRenderer.Tone.EN, "You missed a call",
+                    OrisoEmailRenderer.Tone.FR, "Vous avez manqué un appel",
+                    OrisoEmailRenderer.Tone.RU, "Вы пропустили звонок",
+                    OrisoEmailRenderer.Tone.TI, "ጻውዒት ሓሊፉኩም",
+                    OrisoEmailRenderer.Tone.TR, "Bir aramayı kaçırdınız"));
+
+    for (var occasion : subjects.entrySet()) {
+      for (var toneAndSubject : occasion.getValue().entrySet()) {
+        Map<String, String> values = brand();
+        values.put("callUrl", "https://example.org/calls/open?room=alpha&via=matrix");
+
+        var email = devRenderer.render(occasion.getKey(), toneAndSubject.getKey(), values);
+
+        assertThat(email.subject()).isEqualTo(toneAndSubject.getValue()).doesNotContain("{{");
+        assertThat(email.html())
+            .contains("https://example.org/calls/open?room=alpha&amp;via=matrix")
+            .contains("https://example.org/settings/notifications?mail=" + occasion.getKey())
+            .doesNotContain("{{");
+        assertThat(email.text())
+            .contains("https://example.org/calls/open?room=alpha&via=matrix")
+            .contains("https://example.org/settings/notifications?mail=" + occasion.getKey())
+            .doesNotContain("{{");
+      }
+    }
+  }
+
+  @Test
+  void existingAppointmentStillRendersCompletelyInEveryTone() {
+    for (OrisoEmailRenderer.Tone tone : OrisoEmailRenderer.Tone.values()) {
+      Map<String, String> values = brand();
+      values.put("appointmentDate", "4 August 2026");
+      values.put("appointmentTime", "14:30");
+      values.put("appointmentType", "Video call");
+      values.put("locationName", "Online counselling");
+      values.put("locationAddress", "Secure account");
+      values.put("appointmentUrl", "https://example.org/appointments/42?view=detail&from=mail");
+      values.put("mapUrl", "https://example.org/map?q=mainz&zoom=12");
+
+      var email = renderer.render("termin", tone, values);
+
+      assertThat(email.subject()).contains("4 August 2026").doesNotContain("{{");
+      assertThat(email.html())
+          .contains("https://example.org/appointments/42?view=detail&amp;from=mail")
+          .contains("https://example.org/settings/notifications?mail=termin")
+          .doesNotContain("{{");
+      assertThat(email.text())
+          .contains("https://example.org/appointments/42?view=detail&from=mail")
+          .contains("https://example.org/settings/notifications?mail=termin")
+          .doesNotContain("{{");
+    }
+  }
+
+  @Test
   void doesNotDecorateALinkASecurityMailNeverCarries() {
     Map<String, String> values = brand();
     values.put("loginUrl", "https://example.org/login");
@@ -159,10 +377,11 @@ class OrisoEmailRendererTest {
   void everyTemplateInTheCatalogueRendersInEveryTone() {
     List<String> templateIds = catalogueTemplateIds();
     assertThat(templateIds).as("catalogue.json mails").isNotEmpty();
+    var devRenderer = new OrisoEmailRenderer(true);
 
     for (String id : templateIds) {
       for (OrisoEmailRenderer.Tone tone : OrisoEmailRenderer.Tone.values()) {
-        var email = renderer.render(id, tone, brand());
+        var email = devRenderer.render(id, tone, brand());
         assertThat(email.subject()).as("subject of %s/%s", id, tone).isNotBlank();
         assertThat(email.html()).as("html of %s/%s", id, tone).contains("<!DOCTYPE html>");
         assertThat(email.text()).as("text of %s/%s", id, tone).isNotBlank();

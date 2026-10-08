@@ -5,15 +5,19 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.HtmlUtils;
 
@@ -79,7 +83,7 @@ public class OrisoEmailRenderer {
           + "<tr><td class=\"sp\" style=\"padding:16px 40px 0px 40px;"
           + "font-family:Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif;font-size:13px;"
           + "line-height:20px;color:#5c5555;word-break:break-word;\">{{fallbackHint}}<br>"
-          + "<a href=\"{{actionUrl}}\" style=\"color:{{linkColor}};text-decoration:underline;"
+          + "<a href=\"{{actionUrl}}\" style=\"color:{{primaryColor}};text-decoration:underline;"
           + "word-break:break-all;\">{{actionUrl}}</a></td></tr>";
 
   /** The plain-text half of {@link #CTA_BLOCK_HTML}. */
@@ -121,12 +125,54 @@ public class OrisoEmailRenderer {
   private static final Pattern SENDER_PLACEHOLDER =
       Pattern.compile("\\{\\{(" + SENDER_KEYS + ")}}");
 
+  private static final String OPTIONAL_CONTACT_KEYS =
+      "consultantPhone|consultantHours|consultantEmail";
+
+  private static final Pattern CONTACT_ROW_HTML =
+      Pattern.compile(
+          "<tr><td class=\"row-label\"[^>]*>[^<]*</td><td class=\"row-value\"[^>]*>\\{\\{("
+              + OPTIONAL_CONTACT_KEYS
+              + ")}}</td></tr>");
+
+  private static final Pattern CONTACT_ROW_TEXT =
+      Pattern.compile("(?m)^[^\\n]*\\{\\{(" + OPTIONAL_CONTACT_KEYS + ")}}[^\\n]*(?:\\n|$)");
+
+  /**
+   * The button label in the generated templates is a hardcoded {@code #ffffff} on a cell filled
+   * with {@code {{primaryColor}}}. That only holds for a dark brand colour, so the label colour is
+   * rewritten to {@code {{primaryTextColor}}}: white or a dark tone of the brand hue, derived like
+   * the web app's {@code --m3-on-primary} (ADR-026 amendment 2026-10-02). The generated templates
+   * are never edited here (see the class comment), and the {@code {{ctaBlock}}} markup below must
+   * stay byte-identical to the generated fragment (EmailTemplateIntegrityTest); once the generator
+   * emits the placeholder itself, this rewrite finds nothing to do.
+   */
+  private static final Pattern BUTTON_LABEL_COLOUR =
+      Pattern.compile(
+          "(bgcolor=\"\\{\\{primaryColor}}\"[^>]*>\\s*<a [^>]*?)color:#ffffff",
+          Pattern.CASE_INSENSITIVE);
+
+  /**
+   * A text link coloured {@code {{primaryColor}}} sits on the white card, where the brand colour
+   * itself may be too light to read: it takes {@code {{primaryLinkColor}}}, the brand colour
+   * darkened to 4.5:1.
+   */
+  private static final Pattern BRAND_COLOURED_LINK =
+      Pattern.compile("(?<![-\\w])color:\\{\\{primaryColor}}");
+
   private final Map<String, String> templateCache = new ConcurrentHashMap<>();
 
   private final JsonNode catalogue;
+  private final boolean allowUnreviewedLocales;
 
   public OrisoEmailRenderer() {
+    this(false);
+  }
+
+  @Autowired
+  public OrisoEmailRenderer(
+      @Value("${email.allow-unreviewed-locales:false}") boolean allowUnreviewedLocales) {
     this.catalogue = loadCatalogue();
+    this.allowUnreviewedLocales = allowUnreviewedLocales;
   }
 
   /** Both MIME parts plus the subject, ready to hand to a {@code MimeMessage}. */
@@ -139,7 +185,11 @@ public class OrisoEmailRenderer {
   public enum Tone {
     DE_FORMAL("de-sie"),
     DE_INFORMAL("de-du"),
-    EN("en");
+    EN("en"),
+    FR("fr"),
+    RU("ru"),
+    TI("ti"),
+    TR("tr");
 
     private final String directory;
 
@@ -152,7 +202,20 @@ public class OrisoEmailRenderer {
     }
 
     public static Tone of(LanguageCode languageCode) {
-      return languageCode != null && "en".equalsIgnoreCase(languageCode.name()) ? EN : DE_FORMAL;
+      if (languageCode == null) {
+        throw new IllegalArgumentException("Recipient language is missing");
+      }
+      return switch (languageCode.name().toLowerCase(Locale.ROOT)) {
+        case "de" -> DE_FORMAL;
+        case "en" -> EN;
+        case "fr" -> FR;
+        case "ru" -> RU;
+        case "ti" -> TI;
+        case "tr" -> TR;
+        default ->
+            throw new IllegalArgumentException(
+                "Recipient language has no installed e-mail template: " + languageCode);
+      };
     }
   }
 
@@ -184,20 +247,43 @@ public class OrisoEmailRenderer {
    */
   public RenderedEmail render(
       String templateId, Tone tone, Map<String, String> values, Map<String, String> fragments) {
-    values = withOccasionOnUnsubscribeLink(templateId, values);
+    return renderResolved(templateId, deliveryTone(tone), values, fragments);
+  }
+
+  /** Render installed copy for an operator preview; this does not select a delivery locale. */
+  public RenderedEmail renderForPreview(String templateId, Tone tone, Map<String, String> values) {
+    return renderResolved(templateId, installedPreviewTone(tone), values, Map.of());
+  }
+
+  private RenderedEmail renderResolved(
+      String templateId, Tone tone, Map<String, String> values, Map<String, String> fragments) {
+    values = withDerivedBrandColours(withOccasionOnUnsubscribeLink(templateId, values));
     String html =
         substitute(
             withoutBlankSenderLines(
-                withConditionalBlocks(read(templateId, tone, "html"), values, true), values, true),
+                withoutBlankContactRows(
+                    templateId,
+                    withBrandColourRoles(
+                        withConditionalBlocks(read(templateId, tone, "html"), values, true)),
+                    values,
+                    true),
+                values,
+                true),
             values,
             true);
     String text =
         substitute(
             withoutBlankSenderLines(
-                withConditionalBlocks(read(templateId, tone, "txt"), values, false), values, false),
+                withoutBlankContactRows(
+                    templateId,
+                    withConditionalBlocks(read(templateId, tone, "txt"), values, false),
+                    values,
+                    false),
+                values,
+                false),
             values,
             false);
-    String subject = substitute(subjectOf(templateId, tone), values, false);
+    String subject = substitute(catalogueCopyExact(templateId, tone, "subject"), values, false);
     return new RenderedEmail(
         insertFragments(subject, fragments),
         insertFragments(html, fragments),
@@ -224,20 +310,85 @@ public class OrisoEmailRenderer {
     return decorated;
   }
 
+  /**
+   * Supplies {@code primaryTextColor} and {@code primaryLinkColor} from {@code primaryColor} when
+   * the caller did not, and writes the normalised {@code primaryColor} back (callers that go
+   * through {@link OrisoEmailBrand} always do). A value map without a usable {@code primaryColor}
+   * is left alone, so a placeholder stays visible as a bug report instead of a guessed colour.
+   */
+  private static Map<String, String> withDerivedBrandColours(Map<String, String> values) {
+    String primary = EmailColors.normalize(values.get("primaryColor"));
+    if (primary == null) {
+      return values;
+    }
+    Map<String, String> derived = new LinkedHashMap<>(values);
+    // Write the normalised literal back so a caller's "f8e71c" is valid CSS in the template.
+    derived.put("primaryColor", primary);
+    derived.putIfAbsent("primaryTextColor", EmailColors.onPrimary(primary));
+    derived.putIfAbsent("primaryLinkColor", EmailColors.onLightBackground(primary));
+    return derived;
+  }
+
+  private static String withBrandColourRoles(String htmlTemplate) {
+    String labelled =
+        BUTTON_LABEL_COLOUR.matcher(htmlTemplate).replaceAll("$1color:{{primaryTextColor}}");
+    return BRAND_COLOURED_LINK.matcher(labelled).replaceAll("color:{{primaryLinkColor}}");
+  }
+
   /** The subject line, from the generated catalogue rather than from the document. */
   public String subjectOf(String templateId, Tone tone) {
+    return catalogueCopy(templateId, tone, "subject");
+  }
+
+  /** Trusted mailbox preview copy from the same generated catalogue as the subject. */
+  public String preheaderOf(String templateId, Tone tone) {
+    return catalogueCopy(templateId, tone, "preheader");
+  }
+
+  /** Trusted installed preheader for an operator preview, independent of delivery gating. */
+  public String preheaderForPreview(String templateId, Tone tone) {
+    return catalogueCopyExact(templateId, installedPreviewTone(tone), "preheader");
+  }
+
+  private String catalogueCopy(String templateId, Tone tone, String field) {
+    return catalogueCopyExact(templateId, deliveryTone(tone), field);
+  }
+
+  private String catalogueCopyExact(String templateId, Tone tone, String field) {
     JsonNode node =
-        catalogue
-            .path("mails")
-            .path(templateId)
-            .path("tones")
-            .path(tone.directory())
-            .path("subject");
+        catalogue.path("mails").path(templateId).path("tones").path(tone.directory()).path(field);
     if (node.isMissingNode() || !isNotBlank(node.asText())) {
       throw new IllegalStateException(
-          "no subject for e-mail template '" + templateId + "' in tone " + tone.directory());
+          "no " + field + " for e-mail template '" + templateId + "' in tone " + tone.directory());
     }
     return node.asText();
+  }
+
+  private Tone installedPreviewTone(Tone tone) {
+    if (tone == null) {
+      throw new IllegalArgumentException("Preview e-mail locale is missing");
+    }
+    String release = catalogue.path("locales").path(tone.directory()).path("release").asText();
+    if (!"released".equals(release) && !"pending-human-review".equals(release)) {
+      throw new IllegalStateException(
+          "Unknown e-mail locale release state for " + tone.directory() + ": " + release);
+    }
+    return tone;
+  }
+
+  public Tone deliveryTone(Tone tone) {
+    String release = catalogue.path("locales").path(tone.directory()).path("release").asText();
+    if ("released".equals(release)
+        || ("pending-human-review".equals(release) && allowUnreviewedLocales)) {
+      return tone;
+    }
+    if ("pending-human-review".equals(release)) {
+      log.warn(
+          "E-mail locale {} awaits human review; using reviewed German copy", tone.directory());
+      return Tone.DE_FORMAL;
+    }
+    throw new IllegalStateException(
+        "Unknown e-mail locale release state for " + tone.directory() + ": " + release);
   }
 
   /** Whether the footer of this occasion offers an unsubscribe link (ADR-019). */
@@ -288,6 +439,24 @@ public class OrisoEmailRenderer {
         .replace(
             "{{assuranceBlock}}",
             hasAction ? (html ? ASSURANCE_BLOCK_HTML : ASSURANCE_BLOCK_TEXT) : "");
+  }
+
+  private static String withoutBlankContactRows(
+      String templateId, String template, Map<String, String> values, boolean html) {
+    if (!"beraterin-kontakt".equals(templateId)) {
+      return template;
+    }
+    Matcher matcher = (html ? CONTACT_ROW_HTML : CONTACT_ROW_TEXT).matcher(template);
+    StringBuilder result = new StringBuilder();
+    boolean dropped = false;
+    while (matcher.find()) {
+      String value = values.get(matcher.group(1));
+      boolean omit = value != null && value.isBlank();
+      matcher.appendReplacement(result, omit ? "" : Matcher.quoteReplacement(matcher.group()));
+      dropped |= omit;
+    }
+    matcher.appendTail(result);
+    return dropped && !html ? result.toString().replaceAll("\\n{3,}", "\n\n") : result.toString();
   }
 
   /**

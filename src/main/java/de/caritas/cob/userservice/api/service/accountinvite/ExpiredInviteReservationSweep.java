@@ -28,6 +28,7 @@ public class ExpiredInviteReservationSweep {
   static final String TASK_NAME = "account-invite-expiry-number-release";
 
   private final @NonNull AccountInviteService accountInviteService;
+  private final @NonNull ExistingAccountSetupService accountSetupService;
   private final @NonNull ScheduledTaskClaimService taskClaimService;
   private final @NonNull TenantContextProvider tenantContextProvider;
   private final @NonNull IdentityClientConfig identityClientConfig;
@@ -46,9 +47,14 @@ public class ExpiredInviteReservationSweep {
       }
       lease = acquiredLease.get();
       tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
+      int expiredSetup = accountSetupService.expireElapsedLinks();
+      if (expiredSetup > 0) {
+        log.info("Expired {} elapsed existing-account setup links", expiredSetup);
+      }
       var technicalUser = identityClientConfig.getTechnicalUser();
       var login =
-          identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
+          identityAuthentication.loginService(
+              technicalUser.getClientId(), technicalUser.getClientSecret());
       int expired =
           TechnicalAccessTokenContext.offerDuring(
               login.accessToken(), accountInviteService::expireElapsedInvites);

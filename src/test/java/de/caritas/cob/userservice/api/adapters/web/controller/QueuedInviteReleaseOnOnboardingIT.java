@@ -76,7 +76,8 @@ import org.springframework.test.web.servlet.MockMvc;
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @WithTenant(1L)
-class QueuedInviteReleaseOnOnboardingIT {
+class QueuedInviteReleaseOnOnboardingIT
+    extends de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture {
 
   private static final long TENANT = 79L;
   private static final long NEW_AGENCY = 1276L;
@@ -127,14 +128,14 @@ class QueuedInviteReleaseOnOnboardingIT {
     when(agencyService.getAgencyWithoutCaching(NEW_AGENCY)).thenReturn(null);
     when(topicService.getAllActiveTopicsMap())
         .thenReturn(java.util.Map.of(TOPIC, new TopicDTO().id(TOPIC).name("Sucht")));
-    when(keycloakService.login(anyString(), anyString()))
+    when(keycloakService.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
     when(keycloakService.createUser(any(UserDTO.class), anyString(), anyString()))
         .thenReturn(new CreatedIdentity(ADMIN_ID));
     when(keycloakService.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(false, "SECRET", "QR", IdentityOtpType.APP));
     when(inviteMailDispatchService.send(
-            anyString(), anyString(), anyString(), anyString(), any(), any()))
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenAnswer(call -> new InviteMailSendReceipt(call.getArgument(0), Instant.now()));
     when(operatorDpaContentClient.fetchPublishedDpa())
         .thenReturn(new OperatorDpa("{\"de\":\"<p>AVV</p>\"}", "1"));
@@ -195,7 +196,14 @@ class QueuedInviteReleaseOnOnboardingIT {
     assertThat(sent.getWaitingForUnit()).isNull();
     assertThat(sent.getExpiresAt()).isAfter(LocalDateTime.now().plusDays(29));
     verify(inviteMailDispatchService)
-        .send(eq(sent.getRecipientEmail()), anyString(), anyString(), anyString(), any(), any());
+        .send(
+            eq(sent.getRecipientEmail()),
+            anyString(),
+            anyString(),
+            anyString(),
+            any(),
+            any(),
+            any());
     assertThat(reload(waitingDraft).getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
   }
 

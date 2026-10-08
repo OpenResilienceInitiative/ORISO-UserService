@@ -1,0 +1,14 @@
+RED evidence: delayed device A authentication after device B login
+Base: 05ec3eb14 (unchanged production with per-login UUID password)
+Command: JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./mvnw -B -q -Dtest=MatrixBrowserDeviceConcurrencyTest test
+Result: exit 1; Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+Elapsed test time: 0.802 seconds
+Test: deviceACompletesDelayedInteractiveAuthenticationAfterDeviceBLogsIn
+Assertion: device A's issued credential still authenticates after device B logs in
+Expected HTTP 200; actual HTTP 403
+
+Both browser logins succeeded through separate real MatrixSynapseService instances and
+RestTemplate HTTP clients. Device A's password verification waited on a bounded latch
+until device B had completed its login. The fixture independently stores Synapse's
+current account password and verifies the issued credential against that state.
+No credential values or secret-bearing HTTP request/response bodies are included here.

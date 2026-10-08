@@ -94,6 +94,7 @@ public class AccountInviteService {
   private final @NonNull ReservationLedger ledger;
   private final @NonNull UnitQueue unitQueue;
   private final @NonNull InviteDelivery delivery;
+  private final @NonNull ExistingAccountSetupIssuer existingAccountSetupIssuer;
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand requestedCommand) {
@@ -436,6 +437,9 @@ public class AccountInviteService {
 
   private SendClaim claimForSend(SendInviteCommand command) {
     AccountInvite invite = findAuthorizedInviteForUpdate(command.inviteId());
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("Existing-account setup links use their own delivery flow");
+    }
     InviteEmailTemplate template = findTemplate(command.templateId());
     if (invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
       return new SendClaim(invite, template, null, null);
@@ -490,6 +494,14 @@ public class AccountInviteService {
   public InviteSendResult resendInvite(SendInviteCommand command) {
     AccountInvite current =
         requiresNewTransaction().execute(transaction -> findAuthorizedInvite(command.inviteId()));
+    if (current != null && current.getPurpose() == AccountInvitePurpose.EXISTING_ACCOUNT_SETUP) {
+      // The existing Admin invite-history action is allowed to resend a setup link, but it must
+      // use the bound identity and canonical setup mail, never an ordinary invitation template.
+      AccountInvite sent =
+          existingAccountSetupIssuer.reissueSelectedInvite(
+              current.getTargetRole(), current.getProvisionedUserId(), current.getId());
+      return new InviteSendResult(sent, null, null, null);
+    }
     if (current != null && current.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
       // A waiting invite was never sent: "resend" is its first send (release), same rules.
       return sendInvite(command);
@@ -511,6 +523,10 @@ public class AccountInviteService {
         .execute(
             transaction -> {
               AccountInvite initialOldInvite = findAuthorizedInviteForUpdate(command.inviteId());
+              if (initialOldInvite.getPurpose() != AccountInvitePurpose.INVITE) {
+                throw new BadRequestException(
+                    "Existing-account setup links use their own delivery flow");
+              }
               if (initialOldInvite.getStatus() == AccountInviteStatus.ACCEPTED) {
                 throw new BadRequestException("Accepted invites cannot be resent");
               }
@@ -721,6 +737,12 @@ public class AccountInviteService {
         InviteRowHold.lockByToken(accountInviteRepository, hash(rawToken))
             .orElseThrow(() -> new NotFoundException("Account invite not found"));
 
+    // The ordinary acceptance path provisions a new identity. An existing-account setup token
+    // must never reach it, including its accepted-link resume branch.
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("This link is for existing-account setup");
+    }
+
     LocalDateTime now = LocalDateTime.now();
     if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
       return resolveAlreadyProcessedInvite(invite, now);
@@ -816,7 +838,7 @@ public class AccountInviteService {
   }
 
   /** Resolves an invite by its raw link token without any state checks. */
-  @Transactional(readOnly = true)
+  @Transactional
   public AccountInvite findInviteByToken(String rawToken) {
     if (isBlank(rawToken)) {
       throw new BadRequestException("Invite token is required");
@@ -829,6 +851,27 @@ public class AccountInviteService {
   public AccountInvite requireActiveInvite(String rawToken) {
     AccountInvite invite = findInviteByToken(rawToken);
     LocalDateTime now = LocalDateTime.now();
+    if (invite.getPurpose() == AccountInvitePurpose.EXISTING_ACCOUNT_SETUP) {
+      if (invite.getExpiresAt() == null || !invite.getExpiresAt().isAfter(now)) {
+        throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
+      }
+      if (invite.getProvisioningStatus() == AccountInviteProvisioningStatus.IN_PROGRESS) {
+        throw new AccountInviteLinkException(
+            "SETUP_OUTCOME_INDETERMINATE".equals(invite.getProvisioningFailureReason())
+                ? AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED
+                : AccountInviteLinkException.Reason.SETUP_IN_PROGRESS);
+      }
+      if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
+        throw new AccountInviteLinkException(
+            switch (invite.getStatus()) {
+              case REVOKED -> AccountInviteLinkException.Reason.REVOKED;
+              case SUPERSEDED -> AccountInviteLinkException.Reason.SUPERSEDED;
+              case ACCEPTED -> AccountInviteLinkException.Reason.CONSUMED;
+              default -> AccountInviteLinkException.Reason.NOT_ACTIVE;
+            });
+      }
+      return invite;
+    }
     if (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(now)) {
       throw new BadRequestException("Account invite expired");
     }
@@ -869,6 +912,9 @@ public class AccountInviteService {
   }
 
   private AccountInvite waive(AccountInvite invite, WaiveTwoFactorCommand command) {
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("Existing-account setup requires the normal two-factor gate");
+    }
     if (command == null || isBlank(command.reason())) {
       throw new BadRequestException("Waiver reason is required");
     }
@@ -961,7 +1007,10 @@ public class AccountInviteService {
             .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
     // Hiding another Träger's template from the list is not enough: the id travels in
     // the send request body, so sending with it has to be refused too (ORISO-Admin#1026).
-    accessPolicy.authorizeTemplateUse(template.getTenantId());
+    // The kind rule rides along: a BST admin may not send with a Träger invite text.
+    accessPolicy.authorizeTemplateUse(template.getTenantId(), template.getKind());
+    // Before anything is written: a template without text is refused, never mailed empty.
+    InviteDelivery.requireText(template.getSubject(), withoutActionLink(template.getBody()));
     return template;
   }
 
@@ -1047,12 +1096,19 @@ public class AccountInviteService {
     if (value == null) {
       return "";
     }
+    return render(withoutActionLink(value), invite, acceptUrl);
+  }
+
+  /** A template body as the layout sends it: the {@code {{inviteLink}}} token lifted out. */
+  public static String withoutActionLink(String value) {
+    if (value == null) {
+      return "";
+    }
     String withoutActionLink = ACTION_LINK_TOKEN_LINE.matcher(value).replaceAll("");
     withoutActionLink = ACTION_LINK_TOKEN_INLINE.matcher(withoutActionLink).replaceAll("");
     // Lifting a line out of "text\n\n{{inviteLink}}\n\ntext" would otherwise leave a
     // triple break — a visible hole exactly where the link used to be.
-    withoutActionLink = BLANK_LINE_RUN.matcher(withoutActionLink).replaceAll("\n\n");
-    return render(withoutActionLink, invite, acceptUrl);
+    return BLANK_LINE_RUN.matcher(withoutActionLink).replaceAll("\n\n");
   }
 
   /**

@@ -138,10 +138,22 @@ class UserSessionControllerDelegate {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
       groupSessionList =
           sessionListFacade.retrieveChatsForConsultantByChatIds(consultant, singletonList(chatId));
+      // The chat exists but was filtered out: answer like /users/chat/{chatId} does (#1237).
+      if (!isNotEmpty(groupSessionList.getSessions()) && messenger.existsChat(chatId)) {
+        throw new ForbiddenException(
+            String.format(
+                "Consultant with id %s has no permission for chat with id %s",
+                consultant.getId(), chatId));
+      }
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
       groupSessionList =
           sessionListFacade.retrieveChatsForUserByChatIds(user.getUserId(), singletonList(chatId));
+      if (!isNotEmpty(groupSessionList.getSessions()) && messenger.existsChat(chatId)) {
+        throw new ForbiddenException(
+            String.format(
+                "User with id %s has no permission for chat with id %s", user.getUserId(), chatId));
+      }
     }
 
     consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);
@@ -210,7 +222,9 @@ class UserSessionControllerDelegate {
     }
 
     var userId = authenticatedUser.getUserId();
-    var isNewEnquiry = session.get().getStatus().equals(SessionStatus.NEW);
+    var isNewEnquiry =
+        session.get().getStatus() == SessionStatus.INITIAL
+            || session.get().getStatus() == SessionStatus.NEW;
     if (isNewEnquiry
         && !authenticatedUser
             .getGrantedAuthorities()

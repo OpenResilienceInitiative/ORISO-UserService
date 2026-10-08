@@ -18,6 +18,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTopicPermissionService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
+import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteAccountRoles;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteBoard;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
@@ -34,6 +36,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteRoleChange.Cha
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.UnitQueue;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
+import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail.BrandingSnapshot;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -62,6 +65,8 @@ public class AccountInviteController {
 
   private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull CounsellorInviteProvisioningService counsellorInviteProvisioningService;
+  private final @NonNull ExistingAccountSetupService existingAccountSetupService;
+  private final @NonNull ExistingAccountSetupIssuer existingAccountSetupIssuer;
   private final @NonNull InviteEmailTemplateService templateService;
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
   private final @NonNull InviteEmailPreviewService previewService;
@@ -288,6 +293,37 @@ public class AccountInviteController {
             ? AcceptPhase.PENDING_2FA_ACTIVATION.name()
             : AcceptPhase.COMPLETED.name();
     return ResponseEntity.ok(response);
+  }
+
+  /** Public, single-use setup for the identity already bound to this mailed token. */
+  @PostMapping({
+    "/users/account-invites/{token}/setup",
+    "/service/users/account-invites/{token}/setup"
+  })
+  public ResponseEntity<Map<String, String>> confirmExistingAccountSetup(
+      @PathVariable String token, @RequestBody(required = false) Map<String, Object> request) {
+    if (request == null
+        || request.size() != 1
+        || !(request.get("password") instanceof String password)) {
+      throw new BadRequestException("Only a chosen password is accepted for account setup");
+    }
+    existingAccountSetupService.confirm(token, password);
+    return ResponseEntity.ok(Map.of("phase", "COMPLETED"));
+  }
+
+  /** Replaces a definitive old setup link without ever returning the raw token to the caller. */
+  @PreAuthorize(ADMIN_AUTH)
+  @PostMapping("/useradmin/accounts/{identityId}/setup-link")
+  public ResponseEntity<Map<String, String>> reissueExistingAccountSetup(
+      @PathVariable String identityId, @RequestBody(required = false) Map<String, Object> request) {
+    if (request == null
+        || request.size() != 1
+        || !(request.get("targetRole") instanceof String roleName)) {
+      throw new BadRequestException("Only targetRole is accepted for account setup reissue");
+    }
+    existingAccountSetupIssuer.reissue(
+        parseEnum(AccountInviteTargetRole.class, roleName, "targetRole"), identityId);
+    return ResponseEntity.ok(Map.of("delivery", "SENT"));
   }
 
   @GetMapping("/users/account-invites/{token}")
@@ -556,6 +592,7 @@ public class AccountInviteController {
     public String html;
     public String plainText;
     public String sampleAcceptUrl;
+    public BrandingSnapshot branding;
 
     static InviteEmailPreviewResponseDTO from(InviteEmailPreview preview) {
       InviteEmailPreviewResponseDTO dto = new InviteEmailPreviewResponseDTO();
@@ -567,6 +604,7 @@ public class AccountInviteController {
       dto.html = preview.html();
       dto.plainText = preview.plainText();
       dto.sampleAcceptUrl = preview.sampleAcceptUrl();
+      dto.branding = preview.branding();
       return dto;
     }
   }
@@ -583,6 +621,10 @@ public class AccountInviteController {
   public static class AccountInviteResponseDTO {
     public Long id;
     public String targetRole;
+
+    /** Server-derived link purpose; older clients may treat its absence as INVITE. */
+    public String onboardingPurpose;
+
     public Long tenantId;
     public String recipientEmail;
     public String firstName;
@@ -606,6 +648,10 @@ public class AccountInviteController {
     public String queueProblem;
 
     public String provisioningStatus;
+
+    /** Fixed, admin-only state for a setup link requiring explicit operator recovery. */
+    public String setupRecoveryReason;
+
     public String provisionedUserId;
     public String inviteStatus;
     public String emailVerificationStatus;
@@ -705,6 +751,7 @@ public class AccountInviteController {
         AccountAccessGateStatus accessGateStatus) {
       dto.id = invite.getId();
       dto.targetRole = invite.getTargetRole() == null ? null : invite.getTargetRole().name();
+      dto.onboardingPurpose = invite.getPurpose().name();
       dto.tenantId = invite.getTenantId();
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();
@@ -724,6 +771,12 @@ public class AccountInviteController {
           invite.getWaitingForUnit() == null ? null : invite.getWaitingForUnit().name();
       dto.provisioningStatus =
           invite.getProvisioningStatus() == null ? null : invite.getProvisioningStatus().name();
+      dto.setupRecoveryReason =
+          invite.getPurpose()
+                  == de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose
+                      .EXISTING_ACCOUNT_SETUP
+              ? invite.getProvisioningFailureReason()
+              : null;
       dto.provisionedUserId = invite.getProvisionedUserId();
       dto.inviteStatus = invite.getStatus() == null ? null : invite.getStatus().name();
       dto.emailVerificationStatus =
@@ -768,7 +821,8 @@ public class AccountInviteController {
     "accountCreatedAt",
     "twoFactorDoneAt",
     "completedAt",
-    "accountRoles"
+    "accountRoles",
+    "setupRecoveryReason"
   })
   public static class PublicAccountInviteResponseDTO extends AccountInviteResponseDTO {}
 
@@ -801,6 +855,13 @@ public class AccountInviteController {
      */
     public Boolean editable;
 
+    /**
+     * Whether this is the built-in default for its kind and {@link #language} (platform-owned,
+     * always active, changeable only by the platform admin). The Admin preselects the default that
+     * matches the user's language.
+     */
+    public Boolean systemDefault;
+
     public String kind;
     public String name;
     public String language;
@@ -815,6 +876,7 @@ public class AccountInviteController {
       dto.id = template.getId();
       dto.tenantId = template.getTenantId();
       dto.editable = editable;
+      dto.systemDefault = Boolean.TRUE.equals(template.getSystemDefault());
       dto.kind = template.getKind() == null ? null : template.getKind().name();
       dto.name = template.getName();
       dto.language = template.getLanguage();

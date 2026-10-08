@@ -20,7 +20,6 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
-import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
@@ -69,6 +68,8 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_ROOM_EVENT =
       "/_matrix/client/v3/rooms/{roomId}/event/{eventId}";
   private static final String ENDPOINT_ROOM_MESSAGES = "/_matrix/client/r0/rooms/{roomId}/messages";
+  private static final String ENDPOINT_SEND_TO_DEVICE =
+      "/_matrix/client/v3/sendToDevice/{eventType}/{txnId}";
   private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
 
   // The closed-vocabulary error code in a Synapse error body; never the body's free text.
@@ -96,7 +97,7 @@ public class MatrixSynapseService implements MatrixUserClient {
   private final java.util.Map<String, CachedAccessToken> accessTokenCache =
       new java.util.concurrent.ConcurrentHashMap<>();
 
-  // Rotating a browser-login password and consuming it must be atomic per Matrix identity.
+  // Serialize local account updates; credential stability also holds across replicas and restarts.
   private final java.util.Map<String, java.util.concurrent.locks.ReentrantLock> browserLoginLocks =
       new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -685,9 +686,10 @@ public class MatrixSynapseService implements MatrixUserClient {
    * Creates a device-bound Matrix login for browser E2EE without persisting a Matrix password.
    *
    * <p>Synapse admin impersonation tokens deliberately have no device and therefore cannot upload
-   * encryption keys. A random password is rotated server-side, existing devices remain logged in,
-   * and the password is used exactly once for the standard client login that binds the returned
-   * token to {@code deviceId}.
+   * encryption keys. A stable account credential is derived server-side; ordinary browser logins do
+   * not invalidate another device's interactive authentication. Existing devices remain logged in,
+   * and the standard client login binds the returned token to {@code deviceId}. The credential is
+   * returned only for browser memory, never persisted by the application.
    *
    * @param matrixUserId full local Matrix user ID
    * @param deviceId stable browser device ID
@@ -708,11 +710,12 @@ public class MatrixSynapseService implements MatrixUserClient {
             matrixUserId, ignored -> new java.util.concurrent.locks.ReentrantLock());
     browserLoginLock.lock();
     try {
-      String transientPassword = UUID.randomUUID() + "-" + UUID.randomUUID();
+      String browserCredential =
+          MatrixBrowserCredential.derive(matrixConfig.getRegistrationSharedSecret(), matrixUserId);
       var adminHeaders = getClientHttpHeaders(adminToken);
       adminHeaders.setContentType(MediaType.APPLICATION_JSON);
       var updateBody = new MatrixPasswordUpdateRequestDTO();
-      updateBody.setPassword(transientPassword);
+      updateBody.setPassword(browserCredential);
       updateBody.setLogoutDevices(false);
       var updateUri =
           MatrixUrlBuilder.buildUrl(
@@ -728,7 +731,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       var loginBody = new MatrixLoginRequestDTO();
       loginBody.setType("m.login.password");
       loginBody.setUser(matrixUserId);
-      loginBody.setPassword(transientPassword);
+      loginBody.setPassword(browserCredential);
       loginBody.setDeviceId(deviceId);
       loginBody.setInitialDeviceDisplayName("ORISO Web");
 
@@ -746,7 +749,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       @SuppressWarnings("unchecked")
       var responseBody =
           new java.util.HashMap<>((java.util.Map<String, Object>) response.getBody());
-      responseBody.put("interactive_auth_password", transientPassword);
+      responseBody.put("interactive_auth_password", browserCredential);
       return responseBody;
     } catch (Exception ex) {
       log.error(
@@ -907,6 +910,76 @@ public class MatrixSynapseService implements MatrixUserClient {
           redactor.pseudonym(matrixUserId),
           redactor.scrub(ex.getMessage()));
       return false;
+    }
+  }
+
+  /**
+   * Reversibly blocks authenticated access, including existing Matrix sessions, without erasing
+   * account data or encryption keys. Confirm existence before PUT because Synapse's user endpoint
+   * otherwise creates an account. Completion requires a fresh read of the persisted lock state.
+   */
+  public boolean setAccountSuspended(String matrixUserId, boolean suspended) {
+    try {
+      String token = getAdminToken();
+      if (token == null) return false;
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              "/_synapse/admin/v2/users/{userId}",
+              java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setBearerAuth(token);
+      var read = new HttpEntity<Void>(headers);
+      var existing =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, read, java.util.Map.class);
+      if (existing.getBody() == null) return false;
+      if (!Boolean.valueOf(suspended).equals(existing.getBody().get("locked"))) {
+        var response =
+            restTemplate.exchange(
+                url,
+                org.springframework.http.HttpMethod.PUT,
+                new HttpEntity<>(java.util.Map.of("locked", suspended), headers),
+                java.util.Map.class);
+        if (response.getStatusCode().value() != 200) return false;
+      }
+      var confirmed =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, read, java.util.Map.class);
+      return confirmed.getBody() != null
+          && Boolean.valueOf(suspended).equals(confirmed.getBody().get("locked"));
+    } catch (Exception failure) {
+      log.warn(
+          "Matrix account lock could not be confirmed: type={}",
+          failure.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  /** Reads the reversible access lock without creating or modifying a Matrix identity. */
+  public java.util.Optional<Boolean> getAccountLocked(String matrixUserId) {
+    try {
+      String token = getAdminToken();
+      if (token == null) return java.util.Optional.empty();
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              "/_synapse/admin/v2/users/{userId}",
+              java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(token);
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<Void>(headers),
+              java.util.Map.class);
+      if (response.getBody() != null && response.getBody().get("locked") instanceof Boolean locked)
+        return java.util.Optional.of(locked);
+      return java.util.Optional.empty();
+    } catch (Exception failure) {
+      return java.util.Optional.empty();
     }
   }
 
@@ -1301,6 +1374,70 @@ public class MatrixSynapseService implements MatrixUserClient {
    * @param accessToken the access token
    * @return the send response with event_id
    */
+  /**
+   * Sends a content-free Matrix to-device message to every device of one user, as the technical
+   * admin identity.
+   *
+   * <p>To-device is deliberate: it needs no shared room, writes nothing to any room timeline, and
+   * reaches every logged-in device of the recipient. Nothing is persisted in Matrix, so no
+   * signalling room has to be provisioned and existing users need no migration.
+   *
+   * @param eventType the custom event type, e.g. {@code org.oriso.feed.updated}
+   * @param matrixUserId the fully qualified recipient, e.g. {@code @alice:matrix.example.com}
+   * @param content the event content; pass an empty map for a content-free signal
+   * @return {@code true} when Synapse accepted the message; {@code false} on any failure (this
+   *     method never throws — callers are best-effort)
+   */
+  public boolean sendToDeviceMessage(
+      String eventType, String matrixUserId, java.util.Map<String, Object> content) {
+    if (eventType == null
+        || eventType.isBlank()
+        || matrixUserId == null
+        || matrixUserId.isBlank()) {
+      return false;
+    }
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.debug("No Matrix admin token available; skipping to-device message {}", eventType);
+        return false;
+      }
+
+      var headers = getClientHttpHeaders(adminToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      // { "messages": { "@alice:server": { "*": <content> } } } — "*" = all devices.
+      var body =
+          java.util.Map.<String, Object>of(
+              "messages",
+              java.util.Map.of(
+                  matrixUserId,
+                  java.util.Map.of("*", content == null ? java.util.Map.of() : content)));
+
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_SEND_TO_DEVICE,
+              java.util.Map.of(
+                  "eventType", eventType, "txnId", java.util.UUID.randomUUID().toString()));
+
+      restTemplate.exchange(
+          url,
+          org.springframework.http.HttpMethod.PUT,
+          new HttpEntity<>(body, headers),
+          java.util.Map.class);
+      return true;
+    } catch (Exception ex) {
+      // Best effort by contract: signalling failures must never reach the caller.
+      log.warn(
+          "Matrix Error: Could not send to-device message {} to {}: {}",
+          eventType,
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(ex.getMessage()));
+      return false;
+    }
+  }
+
   public java.util.Map<String, Object> sendMessage(
       String roomId, String message, String accessToken) {
     try {

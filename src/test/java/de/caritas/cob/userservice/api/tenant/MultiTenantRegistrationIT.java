@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -44,6 +45,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
@@ -103,6 +105,11 @@ import org.springframework.test.web.servlet.MvcResult;
 @org.springframework.context.annotation.Import(TenantFixtures.class)
 class MultiTenantRegistrationIT {
 
+  private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy
+      inactivityPolicy =
+          new de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy(
+              24, 7, java.time.Instant.parse("2026-10-06T00:00:00Z"));
+
   private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
@@ -115,15 +122,23 @@ class MultiTenantRegistrationIT {
   @Autowired private UserRepository userRepository;
   @Autowired private SessionRepository sessionRepository;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory
+      ownerFactory;
+
+  private de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures dpaOwner;
+
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
+        IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityLocaleLookup.class,
+        IdentityPasswordChangeRequirement.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,
@@ -145,6 +160,9 @@ class MultiTenantRegistrationIT {
   @MockitoBean TenantCreationClient tenantCreationClient;
   @MockitoBean OperatorDpaContentClient operatorDpaContentClient;
 
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService inactivityEnrollment;
+
   @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
   AuthenticatedUser caller;
 
@@ -164,11 +182,16 @@ class MultiTenantRegistrationIT {
 
   @BeforeEach
   void oneAgencyOfTenantTwo() throws Exception {
+    dpaOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
+            ownerFactory, TENANT);
     when(agencyFacts.find(AGENCY))
         .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, TENANT, false, List.of())));
     // The platform domain resolves to the main tenant, as with single-domain multitenancy.
     when(tenantResolverService.resolve(any())).thenReturn(1L);
     when(((IdentityAuthentication) identityClient).login(anyString(), anyString()))
+        .thenReturn(new IdentityLogin("access", 300, 1800, "refresh"));
+    when(((IdentityAuthentication) identityClient).loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("access", 300, 1800, "refresh"));
     when(((IdentityDummyEmailUpdater) identityClient).updateDummyEmail(anyString(), any()))
         .thenAnswer(call -> call.getArgument(0) + "@dummy.synthetic.oriso.test");
@@ -182,6 +205,10 @@ class MultiTenantRegistrationIT {
         .thenReturn(ChatRecoveryPolicyFixtures.tenant().id(TENANT));
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().id(TENANT).subdomain("synthetic"));
+    when(inactivityEnrollment.capture(
+            TENANT,
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.ASKER))
+        .thenReturn(inactivityPolicy);
     var agency =
         new AgencyDTO()
             .id(AGENCY)
@@ -232,6 +259,7 @@ class MultiTenantRegistrationIT {
       fixtures.removeAll();
     } finally {
       TenantContext.clear();
+      dpaOwner.close();
     }
   }
 
@@ -245,6 +273,12 @@ class MultiTenantRegistrationIT {
         .as(result.getResponse().getContentAsString())
         .isEqualTo(201);
     assertCreatedInTenant();
+    org.mockito.Mockito.verify(inactivityEnrollment)
+        .capture(
+            TENANT,
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.ASKER);
+    org.mockito.Mockito.verify(inactivityEnrollment)
+        .enroll(createdUserIds.getFirst(), TENANT, inactivityPolicy);
   }
 
   @Test
@@ -344,6 +378,8 @@ class MultiTenantRegistrationIT {
         mockMvc
             .perform(
                 put("/users/chat/{chatId}/assign", chat.getId())
+                    // The number alone is refused; the link carries the secret token (#1237).
+                    .queryParam("inviteToken", chat.getInviteToken())
                     .with(
                         org.springframework.security.test.web.servlet.request
                             .SecurityMockMvcRequestPostProcessors.user(createdUserIds.get(0))
@@ -559,6 +595,7 @@ class MultiTenantRegistrationIT {
           chatRepository.save(
               Chat.builder()
                   .topic("Synthetic group")
+                  .conversationType(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP)
                   .consultingTypeId(1)
                   .initialStartDate(java.time.LocalDateTime.now())
                   .startDate(java.time.LocalDateTime.now())

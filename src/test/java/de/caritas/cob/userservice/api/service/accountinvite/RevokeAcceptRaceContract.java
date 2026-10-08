@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
@@ -168,7 +169,9 @@ abstract class RevokeAcceptRaceContract {
   @Autowired private ObservedCaller caller;
 
   @MockitoBean private CreateAdminService createAdminService;
+  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
   @MockitoBean private IdentityAccountRemover identityAccountRemover;
+  @MockitoBean private IdentityPasswordUpdater identityPasswordUpdater;
   @MockitoBean private AcceptTimeAgencyCheck acceptTimeAgencyCheck;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
@@ -420,7 +423,7 @@ abstract class RevokeAcceptRaceContract {
     assertThat(sent).isInstanceOf(RuntimeException.class);
     assertThat(reload(invite).getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
     verify(inviteMailDispatchService, never())
-        .send(anyString(), anyString(), anyString(), any(), any(), any());
+        .send(anyString(), anyString(), anyString(), any(), any(), any(), any());
   }
 
   @Test
@@ -453,7 +456,7 @@ abstract class RevokeAcceptRaceContract {
                 .filter(each -> RECIPIENT.equals(each.getRecipientEmail())))
         .hasSize(1);
     verify(inviteMailDispatchService, never())
-        .send(anyString(), anyString(), anyString(), any(), any(), any());
+        .send(anyString(), anyString(), anyString(), any(), any(), any(), any());
   }
 
   @Test
@@ -499,7 +502,8 @@ abstract class RevokeAcceptRaceContract {
     AccountInvite invite = persistedAgencyAdminInvite();
     Long template = persistedTemplate();
     Object[] rowDuringSmtp = new Object[1];
-    when(inviteMailDispatchService.send(anyString(), anyString(), anyString(), any(), any(), any()))
+    when(inviteMailDispatchService.send(
+            anyString(), anyString(), anyString(), any(), any(), any(), any()))
         .thenAnswer(
             call -> {
               // While SMTP runs, another transaction must get the row at once.
@@ -689,7 +693,8 @@ abstract class RevokeAcceptRaceContract {
       throws Exception {
     AccountInvite invite = persistedAgencyAdminInvite();
     Long template = persistedTemplate();
-    when(inviteMailDispatchService.send(anyString(), anyString(), anyString(), any(), any(), any()))
+    when(inviteMailDispatchService.send(
+            anyString(), anyString(), anyString(), any(), any(), any(), any()))
         .thenAnswer(
             call -> {
               // An admin revokes the replaced invite while the mail server refuses the resend.
@@ -1084,7 +1089,8 @@ abstract class RevokeAcceptRaceContract {
   }
 
   private void mailGoesOut() {
-    when(inviteMailDispatchService.send(anyString(), anyString(), anyString(), any(), any(), any()))
+    when(inviteMailDispatchService.send(
+            anyString(), anyString(), anyString(), any(), any(), any(), any()))
         .thenReturn(
             new de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt(
                 RECIPIENT, java.time.Instant.now()));

@@ -24,6 +24,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
@@ -33,6 +35,7 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
+import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
@@ -79,6 +82,8 @@ class UserAdminControllerAuthorizationIT {
   @MockitoBean private ViolationReportGenerator violationReportGenerator;
 
   @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
+
+  @MockitoBean private ExistingAccountSetupIssuer accountSetupIssuer;
 
   @MockitoBean private AskerUserAdminFacade askerUserAdminFacade;
 
@@ -359,6 +364,9 @@ class UserAdminControllerAuthorizationIT {
     // which can hand `password` a value shorter than its @Size(min = 8) and turn this into a
     // seed-dependent 400. Pin the only min-length-constrained field to a valid value.
     createConsultantDTO.setPassword("SecurePass123!");
+    when(consultantAdminFacade.createNewConsultant(any()))
+        .thenReturn(
+            new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id("consultant-1")));
 
     mvc.perform(
             post(CONSULTANT_PATH)

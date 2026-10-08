@@ -137,10 +137,9 @@ class TeamDiscussionFacadeTest {
 
     var credentials = new AgencyMatrixCredentialsDTO();
     credentials.setMatrixUserId("@agency7:oriso");
-    credentials.setMatrixPassword("secret");
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(credentials));
-    when(matrixSynapseService.loginUser("agency7", "secret")).thenReturn("agency-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@agency7:oriso")).thenReturn("agency-token");
     when(matrixSynapseService.loginAsUserAccessToken("@consultant1:oriso"))
         .thenReturn("consultant-token");
     when(matrixSynapseService.joinRoom(ROOM_ID, "consultant-token")).thenReturn(true);
@@ -237,6 +236,19 @@ class TeamDiscussionFacadeTest {
   @EnableWebMvc
   @Import({SecurityConfig.class, ApiResponseEntityExceptionHandler.class})
   static class TeamHttpSecurityFixture {
+    @Bean
+    de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+        accountInactivityService() {
+      // Account-inactivity gate (UserService #1175): these callers are active.
+      var inactivity =
+          org.mockito.Mockito.mock(
+              de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                  .class);
+      when(inactivity.admit(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+          .thenReturn(true);
+      return inactivity;
+    }
+
     @Bean
     CsrfSecurityProperties csrfSecurityProperties() {
       var properties = new CsrfSecurityProperties();

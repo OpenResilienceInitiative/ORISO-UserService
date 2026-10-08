@@ -96,7 +96,9 @@ public class SecurityConfig {
   @Bean
   @SuppressWarnings("java:S4502") // Disabling CSRF protections is security-sensitive
   public SecurityFilterChain filterChain(
-      HttpSecurity http, Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter)
+      HttpSecurity http,
+      Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter,
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService inactivity)
       throws Exception {
     http.csrf(AbstractHttpConfigurer::disable);
     http.addFilterBefore(new StatelessCsrfFilter(csrfSecurityProperties), CsrfFilter.class);
@@ -104,6 +106,12 @@ public class SecurityConfig {
       http.addFilterBefore(ipPrivacyHeaderFilter, StatelessCsrfFilter.class);
     }
     enableTenantFilterIfMultitenancyEnabled(http);
+    // account.inactivity.enabled controls scheduled execution only. Admission stays fail-closed
+    // during rollout so a human identity without its immutable lifecycle snapshot cannot enter.
+    http.addFilterAfter(
+        new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+            .AccountInactivityAccessFilter(inactivity),
+        SecurityContextHolderAwareRequestFilter.class);
 
     http.addFilterAfter(
         new de.caritas.cob.userservice.api.picture.PictureRequestFilter(),
@@ -115,6 +123,17 @@ public class SecurityConfig {
     http.authorizeHttpRequests(
         authorize ->
             authorize
+                .requestMatchers(
+                    "/users/account-inactivity/access", "/service/users/account-inactivity/access")
+                .permitAll()
+                .requestMatchers(
+                    "/users/account-inactivity",
+                    "/service/users/account-inactivity",
+                    "/users/account-inactivity/activity",
+                    "/service/users/account-inactivity/activity",
+                    "/useradmin/account-inactivity/**",
+                    "/service/useradmin/account-inactivity/**")
+                .authenticated()
                 // Private consultant-owned pictures: keep child routes above all useradmin
                 // catch-alls.
                 .requestMatchers(
@@ -193,7 +212,10 @@ public class SecurityConfig {
                 // This cluster-internal endpoint authenticates with its own dedicated shared
                 // secret because the MatrixRTC gateway is not a Keycloak user. The controller
                 // rejects a missing or invalid secret in constant time.
-                .requestMatchers(HttpMethod.POST, "/internal/matrixrtc/call-policy")
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/internal/matrixrtc/call-policy",
+                    "/internal/matrixrtc/media-access")
                 .permitAll()
                 .requestMatchers(
                     "/users/askers/new",
@@ -228,7 +250,9 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.POST,
                     "/users/account-invites/*/accept",
-                    "/service/users/account-invites/*/accept")
+                    "/service/users/account-invites/*/accept",
+                    "/users/account-invites/*/setup",
+                    "/service/users/account-invites/*/setup")
                 .permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**")
                 .permitAll()
@@ -250,10 +274,14 @@ public class SecurityConfig {
                     HttpMethod.POST,
                     "/users/account-invites/{token}/accept",
                     "/service/users/account-invites/{token}/accept",
+                    "/users/account-invites/{token}/setup",
+                    "/service/users/account-invites/{token}/setup",
                     "/users/account-invites/{token}/onboarding/register",
                     "/service/users/account-invites/{token}/onboarding/register",
                     "/users/account-invites/{token}/onboarding/two-factor",
                     "/service/users/account-invites/{token}/onboarding/two-factor",
+                    "/users/account-invites/{token}/onboarding/two-factor/email",
+                    "/service/users/account-invites/{token}/onboarding/two-factor/email",
                     "/users/account-invites/{token}/onboarding/dpa-forward",
                     "/service/users/account-invites/{token}/onboarding/dpa-forward")
                 .permitAll()
@@ -296,7 +324,6 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/members",
                     "/users/chat/{chatId:[0-9]+}/leave",
                     "/users/chat/{matrixRoomId}/assign",
-                    "/users/consultants/toggleWalkThrough",
                     "/matrix/**",
                     "/service/matrix/**")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
@@ -313,8 +340,17 @@ public class SecurityConfig {
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
                     RESTRICTED_AGENCY_ADMIN)
+                // Uses the platform SMTP credentials: platform admin only.
+                .requestMatchers("/users/system-notification-emails/platform-settings")
+                .access(this::isPlatformAdmin)
                 .requestMatchers("/users/system-notification-emails/test")
-                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .access(this::isPlatformAdmin)
+                .requestMatchers(
+                    "/users/admin/service-notices/drafts",
+                    "/users/admin/service-notices/drafts/**",
+                    "/service/users/admin/service-notices/drafts",
+                    "/service/users/admin/service-notices/drafts/**")
+                .access(this::isPlatformAdmin)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/verify")
                 .hasAnyAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers("/users/password/change")
@@ -338,6 +374,14 @@ public class SecurityConfig {
                     "/users/statistics/consultant",
                     "/service/users/statistics/consultant")
                 .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/sessions/{sessionId:[0-9]+}/contact-sheet-email",
+                    "/service/users/sessions/{sessionId:[0-9]+}/contact-sheet-email")
+                .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.GET, "/users/sessions/{sessionId:[0-9]+}/enquiry/permission")
+                .hasAuthority(USER_DEFAULT)
                 .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
@@ -503,6 +547,11 @@ public class SecurityConfig {
                     "/useradmin/statistics/tutorials",
                     "/service/useradmin/statistics/tutorials")
                 .hasAnyAuthority(TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // An admin's own list sorts (#1263): every admin role that sees a user list keeps
+                // its own; the data is always the caller's, so no other access widens.
+                .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(
                     "/useradmin", "/useradmin/**", "/service/useradmin", "/service/useradmin/**")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
@@ -617,7 +666,13 @@ public class SecurityConfig {
       return new AuthorizationDecision(true);
     }
 
-    if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)) {
+    return isPlatformAdmin(authenticationSupplier, requestContext);
+  }
+
+  private AuthorizationDecision isPlatformAdmin(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    if (!(authenticationSupplier.get() instanceof JwtAuthenticationToken jwtAuthentication)) {
       return new AuthorizationDecision(false);
     }
 

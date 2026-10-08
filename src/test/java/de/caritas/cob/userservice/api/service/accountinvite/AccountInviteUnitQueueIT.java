@@ -121,6 +121,8 @@ class AccountInviteUnitQueueIT {
   @Autowired private AuthenticatedUser caller;
   @Autowired private org.springframework.transaction.PlatformTransactionManager transactions;
 
+  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
+
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private TenantService tenantService;
@@ -142,7 +144,7 @@ class AccountInviteUnitQueueIT {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
         .thenReturn("https://admin.example.org/admin/counsellor-onboarding/token");
     when(inviteMailDispatchService.send(
-            anyString(), anyString(), anyString(), anyString(), any(), any()))
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenAnswer(call -> new InviteMailSendReceipt(call.getArgument(0), Instant.now()));
     // The new agency 500 is free until an admin invite reserves it; afterwards it is RESERVED.
     when(agencyIdAllocationClient.getAvailability(NEW_AGENCY)).thenReturn(IdAllocationStatus.FREE);
@@ -287,7 +289,7 @@ class AccountInviteUnitQueueIT {
     AccountInvite stored = accountInviteRepository.findById(result.invite().getId()).orElseThrow();
     assertThat(stored.getQueuedTemplateId()).isEqualTo(templateId);
     verify(inviteMailDispatchService, never())
-        .send(anyString(), anyString(), anyString(), anyString(), any(), any());
+        .send(anyString(), anyString(), anyString(), anyString(), any(), any(), any());
   }
 
   @Test
@@ -363,7 +365,14 @@ class AccountInviteUnitQueueIT {
         .isAfter(LocalDateTime.now().plusDays(10).minusMinutes(5))
         .isBefore(LocalDateTime.now().plusDays(10).plusMinutes(5));
     verify(inviteMailDispatchService)
-        .send(eq(sent.getRecipientEmail()), anyString(), anyString(), anyString(), any(), any());
+        .send(
+            eq(sent.getRecipientEmail()),
+            anyString(),
+            anyString(),
+            anyString(),
+            any(),
+            any(),
+            any());
   }
 
   @Test
@@ -375,7 +384,7 @@ class AccountInviteUnitQueueIT {
         .thenAnswer(call -> "https://admin.example.org/onboarding/" + call.getArgument(1));
     List<String> mailedLinks = new CopyOnWriteArrayList<>();
     when(inviteMailDispatchService.send(
-            anyString(), anyString(), anyString(), anyString(), any(), any()))
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenAnswer(
             call -> {
               mailedLinks.add(call.getArgument(3));
@@ -444,7 +453,7 @@ class AccountInviteUnitQueueIT {
     service.createInvite(agencyAdmin(NEW_AGENCY));
     var queued = service.createAndSendInvite(counsellor(NEW_AGENCY), templateId);
     when(inviteMailDispatchService.send(
-            anyString(), anyString(), anyString(), anyString(), any(), any()))
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenThrow(
             new SmtpSendException(
                 SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE, "smtp off"));
@@ -463,7 +472,7 @@ class AccountInviteUnitQueueIT {
     service.createInvite(agencyAdmin(NEW_AGENCY));
     var queued = service.createAndSendInvite(counsellor(NEW_AGENCY), templateId);
     when(inviteMailDispatchService.send(
-            anyString(), anyString(), anyString(), anyString(), any(), any()))
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenAnswer(
             call -> {
               // The admin revokes the released invite while the mail server is failing.
@@ -490,7 +499,7 @@ class AccountInviteUnitQueueIT {
     assertThat(draft.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
     assertThat(draft.getExpiresAt()).isNotNull();
     verify(inviteMailDispatchService, never())
-        .send(anyString(), anyString(), anyString(), anyString(), any(), any());
+        .send(anyString(), anyString(), anyString(), anyString(), any(), any(), any());
   }
 
   @Test
@@ -573,7 +582,7 @@ class AccountInviteUnitQueueIT {
 
     assertThat(reload(sent.invite()).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
     verify(inviteMailDispatchService, times(1))
-        .send(anyString(), anyString(), anyString(), anyString(), any(), any());
+        .send(anyString(), anyString(), anyString(), anyString(), any(), any(), any());
   }
 
   @Test
@@ -816,7 +825,7 @@ class AccountInviteUnitQueueIT {
 
   private void verifyNoMailWasSent() {
     verify(inviteMailDispatchService, never())
-        .send(anyString(), anyString(), anyString(), anyString(), any(), any());
+        .send(anyString(), anyString(), anyString(), anyString(), any(), any(), any());
   }
 
   private void givenTheNewTenantCanBeReserved() {

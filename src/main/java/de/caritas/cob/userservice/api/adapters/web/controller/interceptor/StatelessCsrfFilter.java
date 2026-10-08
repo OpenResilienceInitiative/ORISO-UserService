@@ -98,7 +98,8 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
       // authenticates this one exact endpoint with its dedicated policy token, so it cannot
       // provide the browser CSRF cookie/header pair. Keep the exemption exact: sibling internal
       // endpoints must still pass the normal CSRF check.
-      if ("/internal/matrixrtc/call-policy".equals(request.getRequestURI())) {
+      if ("/internal/matrixrtc/call-policy".equals(request.getRequestURI())
+          || "/internal/matrixrtc/media-access".equals(request.getRequestURI())) {
         return true;
       }
       // Magic link endpoints are public login bootstrap endpoints and must work without a CSRF
@@ -124,7 +125,7 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
         }
         // Account-invite acceptance is another public bootstrap endpoint. The random invite token
         // is the bearer secret; the recipient does not have a login session or CSRF cookie yet.
-        if (lowerUri.matches(".*/users/account-invites/[^/]+/accept$")) {
+        if (lowerUri.matches(".*/users/account-invites/[^/]+/(accept|setup)$")) {
           return true;
         }
         // The DPA signed-notice hint is a machine callback from TenantService, not a browser

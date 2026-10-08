@@ -33,7 +33,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -71,14 +70,12 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   private static final String USER_ID = "user-abc";
   private static final String USER_MATRIX_ID = "@asker:example.org";
   private static final String AGENCY_MATRIX_ID = "@agency-svc:example.org";
-  private static final String AGENCY_MATRIX_LOCALPART = "agency-svc";
-  private static final String AGENCY_MATRIX_PASSWORD = "s3cret";
   private static final String AGENCY_TOKEN = "agency-token";
   private static final String USER_TOKEN = "user-token";
   private static final String NEW_ROOM_ID = "!provisioned:example.org";
   private static final String MATRIX_EVENT_ID = "$event-1";
 
-  @InjectMocks private CreateEnquiryMessageFacade createEnquiryMessageFacade;
+  private CreateEnquiryMessageFacade createEnquiryMessageFacade;
 
   @Mock private SessionService sessionService;
   @Mock private MatrixSynapseService matrixSynapseService;
@@ -96,7 +93,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   private de.caritas.cob.userservice.api.service.notification.EventNotificationService
       eventNotificationService;
 
-  // Satisfies @InjectMocks construction (facade uses @NonNull constructor injection); the real
+  // Supplies the facade constructor; the real
   // service is swapped in via setField in @BeforeEach so the orchestration actually runs.
   @Mock private AgencyPreAssignmentRoomService injectedRoomServicePlaceholder;
 
@@ -123,6 +120,18 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
 
   @BeforeEach
   void setUp() {
+    createEnquiryMessageFacade =
+        new CreateEnquiryMessageFacade(
+            sessionService,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            matrixSynapseService,
+            emailNotificationFacade,
+            consultantAgencyService,
+            topicConsultantRoutingService,
+            eventNotificationService,
+            injectedRoomServicePlaceholder,
+            erstantwortPayloadBuilder,
+            matrixSessionSystemMessageService);
     // Wire a REAL room-provisioning service around the mocked Matrix collaborators so the
     // create/invite/join/persist orchestration actually executes when the facade calls it.
     var gateway = new MatrixSessionRoomGateway(matrixSynapseService, matrixConfig);
@@ -160,7 +169,6 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   private AgencyMatrixCredentialsDTO validCredentials() {
     var creds = new AgencyMatrixCredentialsDTO();
     creds.setMatrixUserId(AGENCY_MATRIX_ID);
-    creds.setMatrixPassword(AGENCY_MATRIX_PASSWORD);
     return creds;
   }
 
@@ -179,8 +187,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     // Room-provisioning collaborators (real AgencyPreAssignmentRoomService drives these).
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(matrixSynapseService.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
-        .thenReturn(AGENCY_TOKEN);
+    when(matrixSynapseService.loginAsUserAccessToken(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     var createBody = new MatrixCreateRoomResponseDTO();
     createBody.setRoomId(NEW_ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
@@ -248,8 +255,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
 
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(matrixSynapseService.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
-        .thenReturn(AGENCY_TOKEN);
+    when(matrixSynapseService.loginAsUserAccessToken(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     var createBody = new MatrixCreateRoomResponseDTO();
     createBody.setRoomId(NEW_ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))

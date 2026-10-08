@@ -33,6 +33,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
+import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -321,6 +322,7 @@ public class CaseHandoverService {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull CaseHandoverEmailNotification caseHandoverEmailNotification;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull CaseHandoverMatrixRepairService matrixRepairService;
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
@@ -962,19 +964,21 @@ public class CaseHandoverService {
         || !consultantAgencyIds(requester).contains(session.getAgencyId())) {
       return false;
     }
-    Set<Long> requesterTopicIds = consultantTopicIds(requester);
+    Set<Long> requesterTopicIds = consultantTopicIds(requester, session.getAgencyId());
     if (requesterTopicIds.isEmpty()) {
       return !topicsEnabled;
     }
     return !Collections.disjoint(sessionTopicIds(session), requesterTopicIds);
   }
 
-  private Set<Long> consultantTopicIds(Consultant consultant) {
+  /** #1264: topics held at that centre, plus legacy rows without a centre (every centre). */
+  private Set<Long> consultantTopicIds(Consultant consultant, Long agencyId) {
     Set<ConsultantTopic> topics = consultant.getConsultantTopics();
     if (topics == null) {
       return Set.of();
     }
     return topics.stream()
+        .filter(topic -> topic.getAgencyId() == null || topic.getAgencyId().equals(agencyId))
         .map(ConsultantTopic::getTopicId)
         .filter(Objects::nonNull)
         .collect(Collectors.toSet());
@@ -1504,6 +1508,7 @@ public class CaseHandoverService {
   }
 
   private void notifyGranted(CaseHandoverRequest request) {
+    caseHandoverEmailNotification.ownershipGranted(request);
     Session session = request.getSession();
     Consultant requester = request.getRequesterConsultant();
     String requesterName = resolveConsultantName(requester);
@@ -1860,6 +1865,7 @@ public class CaseHandoverService {
   }
 
   private void notifyPendingConsent(CaseHandoverRequest request) {
+    caseHandoverEmailNotification.consentRequested(request);
     Session session = request.getSession();
     if (session.getUser() == null || session.getUser().getUserId() == null) {
       return;

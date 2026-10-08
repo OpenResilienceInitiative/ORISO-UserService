@@ -70,6 +70,27 @@ class ConsultantPictureJwtHttpTest {
   }
 
   @Autowired WebApplicationContext context;
+
+  @Autowired
+  de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService inactivity;
+
+  @Test
+  void alreadyIssuedBearerCannotAccessPicturesAfterSuspension() throws Exception {
+    jwt(1L, "consultant");
+    mvc.perform(request(get(path("")), 1)).andExpect(status().isOk());
+    assertThat(inactivity.suspend("caller")).isTrue();
+    try {
+      mvc.perform(request(get(path("")), 1)).andExpect(status().isForbidden());
+    } finally {
+      inactivity.reactivate("caller");
+    }
+    assertThat(inactivity.snapshot("caller").orElseThrow().status())
+        .isEqualTo(
+            de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                .Status.ACTIVE);
+    mvc.perform(request(get(path("")), 1)).andExpect(status().isOk());
+  }
+
   @MockitoBean JwtDecoder decoder;
   @MockitoBean ConsultantPictureStore store;
   @MockitoBean ClamAvPictureScanner scanner;

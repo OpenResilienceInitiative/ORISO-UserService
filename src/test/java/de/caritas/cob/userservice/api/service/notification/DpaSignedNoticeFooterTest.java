@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.config.observability.DpaSignedNoticeMetrics;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.DpaSignedNotice;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
@@ -63,11 +64,19 @@ class DpaSignedNoticeFooterTest {
   @Mock private InviteEmailTemplateRepository templateRepository;
   @Mock private TenantService tenantService;
   @Mock private PlatformTransactionManager transactionManager;
+  @Mock private DpaSignedNoticeMetrics metrics;
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
   @Mock private InviteMailTransport inviteMailTransport;
 
   @BeforeEach
   void setUp() {
+    when(tenantService.getPlatformTenantDataFresh())
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(0L)
+                .theming(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Theming()
+                        .primaryColor("#1c4f8f")));
     when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
     when(noticeRepository.save(any(DpaSignedNotice.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -161,7 +170,11 @@ class DpaSignedNoticeFooterTest {
                 "smtp-user", "smtp-pass"),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(
-                brandingResolver, senderOrganisations));
+                brandingResolver, senderOrganisations),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .platformRoutes(),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .unusedRelay());
     DpaSignedNoticeService service =
         new DpaSignedNoticeService(
             signatureReadClient,
@@ -173,6 +186,7 @@ class DpaSignedNoticeFooterTest {
             mailDispatch,
             tenantService,
             transactionManager,
+            metrics,
             new AdminPanelUrl("https://admin.example.org"));
     service.useExecutor(Runnable::run);
 

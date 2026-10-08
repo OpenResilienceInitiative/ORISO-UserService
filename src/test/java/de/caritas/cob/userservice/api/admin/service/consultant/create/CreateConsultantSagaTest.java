@@ -69,6 +69,10 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class CreateConsultantSagaTest {
+  @Mock
+  private de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
+
   @org.mockito.Mock private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
 
   @org.junit.jupiter.api.BeforeEach
@@ -190,6 +194,19 @@ class CreateConsultantSagaTest {
   }
 
   @Test
+  void createNewConsultant_Should_startWithProductToursSwitchedOff() throws Exception {
+    // #1526: tours are opt-in; the counsellor switches them on under Profile -> Help.
+    stubHappyPath();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(captured.getValue().getWalkThroughEnabled(), is(false));
+  }
+
+  @Test
   void createNewConsultant_Should_persistThePasswordChangeRequirement() throws Exception {
     // The administrator chose this password and passed it on, so it is a shared
     // secret until the counsellor replaces it.
@@ -201,6 +218,7 @@ class CreateConsultantSagaTest {
         ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
     verify(consultantService).saveConsultant(captured.capture());
     assertThat(captured.getValue().getPasswordChangeRequired(), is(true));
+    verify(identityPasswordUpdater).updateTemporaryPassword(KEYCLOAK_USER_ID, VALID_PASSWORD);
   }
 
   @Test
@@ -290,6 +308,28 @@ class CreateConsultantSagaTest {
   }
 
   @Test
+  void createNewConsultant_Should_StoreTopicsPerSelectedCentre() throws Exception {
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTopicIds(List.of(7L, 8L));
+    dto.setAgencyIds(List.of(5L, 9L));
+    when(consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+            any(), any(), any()))
+        .thenReturn(java.util.Map.of(5L, java.util.Set.of(7L, 8L), 9L, java.util.Set.of(7L)));
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(
+        captured.getValue().getConsultantTopics().stream()
+            .map(ct -> ct.getAgencyId() + ":" + ct.getTopicId())
+            .collect(java.util.stream.Collectors.toSet()),
+        is(java.util.Set.of("5:7", "5:8", "9:7")));
+  }
+
+  @Test
   void createNewConsultant_Should_PreserveLegacyTopicOnlyRequestsWithoutAgencyIds()
       throws Exception {
     stubHappyPath();
@@ -364,7 +404,7 @@ class CreateConsultantSagaTest {
     stubKeycloakUserCreation();
     doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
         .when(identityPasswordUpdater)
-        .updatePassword(anyString(), anyString());
+        .updateTemporaryPassword(anyString(), anyString());
 
     assertThrows(
         CustomValidationHttpStatusException.class,
@@ -665,7 +705,7 @@ class CreateConsultantSagaTest {
     stubKeycloakUserCreation();
     doThrow(new RuntimeException("keycloak down"))
         .when(identityPasswordUpdater)
-        .updatePassword(anyString(), anyString());
+        .updateTemporaryPassword(anyString(), anyString());
 
     var ex =
         assertThrows(

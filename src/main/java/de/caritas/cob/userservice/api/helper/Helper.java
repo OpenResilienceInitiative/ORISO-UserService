@@ -7,7 +7,7 @@ import java.util.Date;
 import org.apache.commons.lang3.StringUtils;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document.OutputSettings;
-import org.jsoup.safety.Whitelist;
+import org.jsoup.safety.Safelist;
 import org.springframework.stereotype.Component;
 
 /** Helper class */
@@ -40,7 +40,7 @@ public class Helper {
 
     try {
 
-      text = Jsoup.clean(text, StringUtils.EMPTY, Whitelist.none(), outputSettings);
+      text = Jsoup.clean(text, StringUtils.EMPTY, Safelist.none(), outputSettings);
     } catch (Exception exception) {
       throw new InternalServerErrorException("Error while removing HTML from text", exception);
     }

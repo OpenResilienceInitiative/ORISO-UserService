@@ -31,6 +31,7 @@ class ExpiredInviteReservationSweepTest {
   @InjectMocks private ExpiredInviteReservationSweep sweep;
 
   @Mock private AccountInviteService accountInviteService;
+  @Mock private ExistingAccountSetupService accountSetupService;
   @Mock private ScheduledTaskClaimService taskClaimService;
   @Mock private TenantContextProvider tenantContextProvider;
   @Mock private IdentityClientConfig identityClientConfig;
@@ -56,7 +57,7 @@ class ExpiredInviteReservationSweepTest {
 
     sweep.expireElapsedInvites();
 
-    verifyNoInteractions(accountInviteService, identityAuthentication);
+    verifyNoInteractions(accountInviteService, accountSetupService, identityAuthentication);
   }
 
   @Test
@@ -65,12 +66,12 @@ class ExpiredInviteReservationSweepTest {
         new ScheduledTaskClaimService.ClaimLease(
             ExpiredInviteReservationSweep.TASK_NAME, LocalDateTime.of(2026, 9, 21, 18, 0));
     TechnicalUserConfig technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
+    technicalUser.setClientId("technical");
+    technicalUser.setClientSecret("secret");
     when(taskClaimService.tryClaimLease(ExpiredInviteReservationSweep.TASK_NAME, claimDuration))
         .thenReturn(Optional.of(lease));
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.login("technical", "secret"))
+    when(identityAuthentication.loginService("technical", "secret"))
         .thenReturn(new IdentityLogin("token", 60, 60, "refresh"));
     when(accountInviteService.expireElapsedInvites())
         .thenAnswer(
@@ -84,6 +85,7 @@ class ExpiredInviteReservationSweepTest {
     sweep.expireElapsedInvites();
 
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
+    verify(accountSetupService).expireElapsedLinks();
     verify(taskClaimService).release(lease);
     assertThat(TechnicalAccessTokenContext.get()).isEmpty();
   }
