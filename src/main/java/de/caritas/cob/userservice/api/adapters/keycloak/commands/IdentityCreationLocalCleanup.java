@@ -3,8 +3,8 @@ package de.caritas.cob.userservice.api.adapters.keycloak.commands;
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.port.out.*;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.*;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.*;
 import de.caritas.cob.userservice.api.workflow.delete.model.*;
+import de.caritas.cob.userservice.api.workflow.delete.service.ConsultantLocalCleanupActions;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -58,14 +58,8 @@ public class IdentityCreationLocalCleanup {
                   consultant -> {
                     sameTenant(row.getTenantId(), consultant.getTenantId());
                     var target = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
-                    actions
-                        .buildContainerForType(ConsultantDeletionWorkflowDTO.class)
-                        .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
-                        .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
-                        .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
-                        .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
-                        .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
-                        .addActionToExecute(DeleteDatabaseConsultantAction.class)
+                    ConsultantLocalCleanupActions.addAllTo(
+                            actions.buildContainerForType(ConsultantDeletionWorkflowDTO.class))
                         .executeActions(target);
                     if (!target.getDeletionWorkflowErrors().isEmpty()
                         || consultants.existsById(row.getAccountId())) throw incomplete();

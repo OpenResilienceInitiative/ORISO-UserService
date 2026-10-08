@@ -18,13 +18,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabas
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteKeycloakAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteAppointmentServiceConsultantAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteCaseHandoverRequestsForConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteChatAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantDraftMessagesAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantEventNotificationsAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantMessageEmailDeliveriesAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteKeycloakConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMatrixConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
@@ -119,18 +113,13 @@ public class DeleteUserAccountService {
           .addActionToExecute(DeleteKeycloakConsultantAction.class)
           .addActionToExecute(DeleteMatrixConsultantAction.class);
     }
-    actions.addActionToExecute(DeleteDatabaseConsultantAgencyAction.class);
+    ConsultantLocalCleanupActions.addAgencyRelationsTo(actions);
     if (!creationRollback) {
       actions
           .addActionToExecute(DeleteChatAction.class)
           .addActionToExecute(DeleteAppointmentServiceConsultantAction.class);
     }
-    actions
-        .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
-        .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
-        .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
-        .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
-        .addActionToExecute(DeleteDatabaseConsultantAction.class)
+    ConsultantLocalCleanupActions.addAccountArtifactsTo(actions)
         .executeActions(deletionWorkflowDTO);
 
     return deletionWorkflowDTO.getDeletionWorkflowErrors();
