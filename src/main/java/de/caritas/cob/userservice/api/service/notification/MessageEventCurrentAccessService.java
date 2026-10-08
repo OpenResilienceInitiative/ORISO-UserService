@@ -38,6 +38,10 @@ public class MessageEventCurrentAccessService {
       throw new ForbiddenException("Message event caller has no current case tenant access");
     }
     sessionService.assertUserHasAccess(session.getId(), caller);
+    if (session.getStatus()
+        == de.caritas.cob.userservice.api.model.Session.SessionStatus.REJECTED) {
+      throw new ForbiddenException("Rejected conversation is read-only");
+    }
     if (caller.isConsultant()) {
       var actor = consultants.findByIdAndDeleteDateIsNull(caller.getUserId()).orElse(null);
       boolean legacyIdentity =

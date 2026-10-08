@@ -106,7 +106,7 @@ class TeamDiscussionFacadeTest {
             matrixSynapseService,
             matrixCredentialClient,
             featureGate,
-            new TeamDiscussionCreationWriter(teamDiscussionRepository),
+            new TeamDiscussionCreationWriter(teamDiscussionRepository, sessionRepository),
             new TeamDiscussionParticipantWriter(participantRepository),
             roomCleanupService);
     session = new Session();
@@ -122,6 +122,9 @@ class TeamDiscussionFacadeTest {
     consultant.setMatrixUserId("@consultant1:oriso");
 
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    org.mockito.Mockito.lenient()
+        .when(sessionRepository.findByIdForUpdate(SESSION_ID))
+        .thenAnswer(invocation -> sessionRepository.findById(SESSION_ID));
     when(consultantRepository.findById(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
     when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
             CONSULTANT_ID, AGENCY_ID))
@@ -637,6 +640,26 @@ class TeamDiscussionFacadeTest {
     facade.archiveDiscussionIfPresent(session);
 
     assertThat(discussion.isReadOnlyApplied()).isTrue();
+  }
+
+  @Test
+  void rejectedPendingDiscussionCannotBeCertifiedByTheLegacyDefaultOnlyWrite() {
+    session.setStatus(SessionStatus.REJECTED);
+    var discussion =
+        TeamDiscussion.builder()
+            .id(99L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId(ROOM_ID)
+            .status(TeamDiscussion.Status.ARCHIVED)
+            .readOnlyApplied(false)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+    assertThat(facade.getDiscussion(SESSION_ID, CONSULTANT_ID)).isPresent();
+    assertThat(discussion.isReadOnlyApplied()).isFalse();
+    verify(matrixSynapseService, org.mockito.Mockito.never())
+        .setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString());
   }
 
   @Test

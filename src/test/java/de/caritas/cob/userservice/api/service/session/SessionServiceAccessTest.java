@@ -49,6 +49,10 @@ class SessionServiceAccessTest {
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionSupervisionMarkerService supervisionMarkerService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionPendingReadAccess
+      rejectionReadAccess;
+
   private SessionService sessionService;
 
   @BeforeEach
@@ -64,7 +68,8 @@ class SessionServiceAccessTest {
             consultingTypeManager,
             sessionTopicEnrichmentService,
             sessionSupervisorRepository,
-            supervisionMarkerService);
+            supervisionMarkerService,
+            rejectionReadAccess);
 
     lenient()
         .when(

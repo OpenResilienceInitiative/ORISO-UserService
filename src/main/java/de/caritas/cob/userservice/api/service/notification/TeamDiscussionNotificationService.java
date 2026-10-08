@@ -78,7 +78,7 @@ public class TeamDiscussionNotificationService {
       return;
     }
     Session session = sessionOpt.get();
-    if (session.getConsultant() != null) {
+    if (session.getConsultant() != null || session.getStatus() == Session.SessionStatus.REJECTED) {
       // Create/accept race guard: once the case is accepted, an OPEN row must not keep
       // notifying — the facade lazily archives it on next access.
       return;

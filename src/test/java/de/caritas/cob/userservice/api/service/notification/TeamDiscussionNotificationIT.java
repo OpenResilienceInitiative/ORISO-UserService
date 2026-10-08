@@ -402,7 +402,8 @@ class TeamDiscussionNotificationIT {
 
   enum ClosedCase {
     ARCHIVED,
-    ASSIGNED
+    ASSIGNED,
+    REJECTED
   }
 
   @ParameterizedTest
@@ -418,7 +419,9 @@ class TeamDiscussionNotificationIT {
                 discussions.saveAndFlush(discussion);
               } else {
                 var session = sessions.findById(discussion.getSessionId()).orElseThrow();
-                session.setConsultant(consultants.findById(SENDER).orElseThrow());
+                if (closed == ClosedCase.REJECTED)
+                  session.setStatus(Session.SessionStatus.REJECTED);
+                else session.setConsultant(consultants.findById(SENDER).orElseThrow());
                 sessions.save(session);
               }
             });

@@ -96,6 +96,15 @@ public class TeamDiscussionFacade {
     TeamDiscussion discussion;
     try {
       discussion = creationWriter.create(proposed);
+    } catch (de.caritas.cob.userservice.api.exception.httpresponses.ConflictException rejected) {
+      // No ownership or membership committed: compensate only this unused external room.
+      var outcome = matrixSynapseService.purgeRoomOrConfirmGone(roomId);
+      if (outcome == MatrixSynapseService.RoomPurgeOutcome.FAILED) {
+        roomCleanupService.recordFailedCleanup(sessionId, roomId);
+        throw new ResponseStatusException(
+            HttpStatus.BAD_GATEWAY, "Team discussion cleanup failed", rejected);
+      }
+      throw rejected;
     } catch (DataIntegrityViolationException conflict) {
       // The unique session constraint chooses one shared room across service replicas.
       // The failed insert has rolled back before this fresh read begins.
@@ -148,6 +157,17 @@ public class TeamDiscussionFacade {
    * an ARCHIVED discussion whose read-only switch failed gets the power-level call retried.
    */
   private TeamDiscussion reconcileOnAccess(TeamDiscussion discussion, Session session) {
+    if (session.getStatus() == SessionStatus.REJECTED) {
+      // Rejection owns a durable, verified primary+team closure. The legacy default-only
+      // switch must neither downgrade its permissions nor certify an incomplete readback.
+      if (discussion.getStatus() == TeamDiscussion.Status.OPEN) {
+        discussion.setStatus(TeamDiscussion.Status.ARCHIVED);
+        discussion.setArchiveDate(LocalDateTime.now());
+        discussion.setReadOnlyApplied(false);
+        teamDiscussionRepository.save(discussion);
+      }
+      return discussion;
+    }
     boolean sessionAccepted =
         session.getConsultant() != null || session.getStatus() != SessionStatus.NEW;
     if (discussion.getStatus() == TeamDiscussion.Status.OPEN && sessionAccepted) {

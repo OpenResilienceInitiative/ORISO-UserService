@@ -81,6 +81,9 @@ public class SessionService {
   private final @Nullable ConsultantSessionTopicEnrichmentService sessionTopicEnrichmentService;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
   private final @NonNull SessionSupervisionMarkerService supervisionMarkerService;
+  private final @NonNull de.caritas.cob.userservice.api.service.enquiry
+          .EnquiryRejectionPendingReadAccess
+      rejectionReadAccess;
 
   @Value("${feature.topics.enabled}")
   private boolean topicsFeatureEnabled;
@@ -147,8 +150,17 @@ public class SessionService {
    * @param consultant the consultant
    * @param status the status of the session
    */
+  @Transactional
   public void updateConsultantAndStatusForSession(
       Session session, Consultant consultant, SessionStatus status) {
+    var current =
+        sessionRepository
+            .findByIdForUpdate(session.getId())
+            .orElseThrow(() -> new NotFoundException("Session unavailable"));
+    if (current.getStatus() == SessionStatus.REJECTED) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+          "Rejected enquiry cannot be reopened");
+    }
     session.setConsultant(consultant);
     session.setStatus(status);
     saveSession(session);
@@ -287,6 +299,30 @@ public class SessionService {
    * @param session the session
    * @return the {@link Session}
    */
+  /** Finalizes only the still-current enquiry after encrypted Matrix event readback. */
+  @Transactional
+  public Session finalizeEnquiry(Session expected, String language, String matrixRoomId) {
+    var current =
+        sessionRepository
+            .findByIdForUpdate(expected.getId())
+            .orElseThrow(() -> new NotFoundException("Session unavailable"));
+    if (current.getStatus() == SessionStatus.REJECTED
+        || current.getEnquiryMessageDate() != null
+        || !java.util.Objects.equals(current.getTenantId(), expected.getTenantId())
+        || !java.util.Objects.equals(current.getAgencyId(), expected.getAgencyId())
+        || !java.util.Objects.equals(current.getUser().getUserId(), expected.getUser().getUserId())
+        || !java.util.Objects.equals(current.getMatrixRoomId(), expected.getMatrixRoomId())) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+          "Enquiry is no longer available for finalization");
+    }
+    current.setMatrixRoomId(matrixRoomId);
+    current.setStatus(
+        current.getConsultant() == null ? SessionStatus.NEW : SessionStatus.IN_PROGRESS);
+    current.setEnquiryMessageDate(nowInUtc());
+    if (language != null) current.setLanguageCode(LanguageCode.getByCode(language));
+    return saveSession(current);
+  }
+
   public Session saveSession(Session session) {
     if (session.getConversationType() == null) {
       /* ADR-006 addendum 2026-09-04: `teamSession` is NOT a modality. It also marks a
@@ -787,6 +823,10 @@ public class SessionService {
   }
 
   private void checkConsultantAssignment(Consultant consultant, Session session) {
+    if (session.getStatus() == SessionStatus.REJECTED) {
+      if (rejectionReadAccess.canRead(session, consultant)) return;
+      throw new ForbiddenException("No current access to rejected enquiry");
+    }
     if (session.isAdvisedBy(consultant)
         || isSupervisor(consultant, session)
         || isAllowedToAdvise(consultant, session)

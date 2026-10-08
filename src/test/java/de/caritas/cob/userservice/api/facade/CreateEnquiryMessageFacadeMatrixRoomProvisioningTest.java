@@ -161,6 +161,13 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     session.setConsultant(null);
     session.setIsConsultantDirectlySet(false);
     session.setMatrixRoomId(null); // no room yet -> provisioning must run
+    when(sessionService.finalizeEnquiry(session, null, NEW_ROOM_ID))
+        .thenAnswer(
+            invocation -> {
+              session.setStatus(SessionStatus.NEW);
+              session.setEnquiryMessageDate(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+              return session;
+            });
 
     RequestContextHolder.setRequestAttributes(
         new ServletRequestAttributes(Mockito.mock(HttpServletRequest.class)));
@@ -218,8 +225,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     // The already browser-encrypted event is validated in the provisioned room.
     verify(matrixSynapseService).getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN);
 
-    // Session persisted with the provisioned room id (once by the room service, once by the
-    // facade).
+    // The room service persists the provisioned room; the facade then uses locked finalization.
     verify(sessionService, Mockito.atLeastOnce()).saveSession(session);
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
     assertEquals(SessionStatus.NEW, session.getStatus());

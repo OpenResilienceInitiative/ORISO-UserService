@@ -32,6 +32,14 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   @Query("SELECT session FROM Session session WHERE session.id = :sessionId")
   Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
 
+  /** Scalar lock avoids returning an earlier managed Session snapshot after remote call lookup. */
+  @Query(
+      value =
+          "SELECT status FROM session WHERE id=:id AND matrix_room_id=:room AND (tenant_id=:tenant OR (:tenant=1 AND tenant_id IS NULL)) FOR UPDATE",
+      nativeQuery = true)
+  Optional<Integer> lockCallStatus(
+      @Param("id") Long id, @Param("room") String room, @Param("tenant") Long tenant);
+
   /**
    * Refresh only the timestamp of a still-waiting enquiry whose heartbeat is due.
    *

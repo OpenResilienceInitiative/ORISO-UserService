@@ -26,6 +26,8 @@ public class CaseHandoverRequiredConsentMailEligibility {
         || !requiresPersonalConsent(request)) return false;
     var session = request.getSession();
     if (session == null
+        || session.getStatus()
+            == de.caritas.cob.userservice.api.model.Session.SessionStatus.REJECTED
         || !Objects.equals(session.getId(), mail.sessionId())
         || !Objects.equals(session.getTenantId(), mail.tenantId())
         || !Objects.equals(session.getMatrixRoomId(), mail.matrixRoomId())) return false;
