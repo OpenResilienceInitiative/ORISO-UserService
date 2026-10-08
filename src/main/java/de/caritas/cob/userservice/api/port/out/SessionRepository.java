@@ -33,6 +33,17 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
 
   /**
+   * Write the independent standing preference without changing ownership or its optimistic version.
+   * Callers must first lock the session and validate its owner, tenant and conversation scope.
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.alwaysAskBeforeAdditionalAccess = :alwaysAsk WHERE session.id = :sessionId")
+  void updateAdditionalAccessPreference(
+      @Param("sessionId") Long sessionId, @Param("alwaysAsk") boolean alwaysAsk);
+
+  /**
    * Refresh only the timestamp of a still-waiting enquiry whose heartbeat is due.
    *
    * <p>The database checks eligibility and writes under the same row lock used by assignment.
@@ -73,6 +84,13 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @return A list of {@link Session}s for the specific consultant id and status
    */
   List<Session> findByConsultantAndStatusIn(Consultant consultant, List<SessionStatus> statuses);
+
+  @Query(
+      "SELECT session.id FROM Session session "
+          + "WHERE session.consultant = :consultant AND session.status IN :statuses "
+          + "ORDER BY session.id")
+  List<Long> findIdsByConsultantAndStatusInOrderById(
+      @Param("consultant") Consultant consultant, @Param("statuses") List<SessionStatus> statuses);
 
   /**
    * Find a {@link Session} list by a consultant and a session status ordered by update date desc.

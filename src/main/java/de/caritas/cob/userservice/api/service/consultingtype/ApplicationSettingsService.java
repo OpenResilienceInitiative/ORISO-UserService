@@ -37,6 +37,11 @@ public class ApplicationSettingsService {
 
   @Cacheable(value = CacheManagerConfig.APPLICATION_SETTINGS_CACHE)
   public ApplicationSettingsDTO getApplicationSettings() {
+    return fetchApplicationSettings();
+  }
+
+  /** Fresh platform policy snapshot; ordinary settings consumers keep their cache. */
+  public ApplicationSettingsDTO fetchApplicationSettings() {
     ApplicationsettingsControllerApi controllerApi =
         applicationSettingsApiControllerFactory.createControllerApi();
     addDefaultHeaders(controllerApi.getApiClient());

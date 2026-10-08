@@ -5,7 +5,9 @@ import de.caritas.cob.userservice.agencyadminserivce.generated.web.AdminAgencyCo
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -97,6 +99,11 @@ public class AgencyCreationClient {
       }
       return created.getEmbedded().getId();
     } catch (HttpClientErrorException.Conflict exception) {
+      if (exception.getResponseHeaders() != null
+          && "ONE_TOPIC_PER_AGENCY".equals(exception.getResponseHeaders().getFirst("X-Reason"))) {
+        throw new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.ONE_TOPIC_PER_AGENCY, HttpStatus.CONFLICT);
+      }
       throw new ConflictException(
           "Agency creation conflicted — the reserved agency ID is no longer consumable");
     } catch (HttpServerErrorException exception) {

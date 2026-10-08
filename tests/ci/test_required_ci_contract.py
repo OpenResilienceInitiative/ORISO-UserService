@@ -66,6 +66,35 @@ class RequiredCiContractTest(unittest.TestCase):
         )
         self.assertIn("Integration reports contain 4 skipped tests.", result.stderr)
 
+    def test_required_runner_rejects_every_emitted_report(self):
+        runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
+        for report_name in ("PolicyIT$Nested", "OtherEmittedContract"):
+            for defect in (None, "failures", "errors", "skipped"):
+                with self.subTest(report=report_name, defect=defect), tempfile.TemporaryDirectory() as temp_dir:
+                    temp_root = Path(temp_dir)
+                    fake_maven = temp_root / "mvnw"
+                    fake_maven.write_text(
+                        "#!/usr/bin/env python3\n"
+                        "from pathlib import Path\n"
+                        "reports = Path('target/surefire-reports')\n"
+                        "reports.mkdir(parents=True)\n"
+                        "required = ['AppointmentControllerE2EIT', 'ConversationControllerAuthorizationIT', 'ConversationControllerIT', 'UserAdminControllerE2EIT', 'UserControllerE2EIT', 'MatrixBrowserDeviceSynapseIT']\n"
+                        "classes = required + [f'Integration{i}IT' for i in range(69)]\n"
+                        "for name in classes:\n"
+                        "    (reports / f'TEST-{name}.xml').write_text(f'<testsuite name=\"{name}\" tests=\"12\" failures=\"0\" errors=\"0\" skipped=\"0\" />')\n"
+                        f"(reports / 'TEST-{report_name}.xml').write_text('<testsuite name=\"{report_name}\" tests=\"1\" failures=\"{int(defect == 'failures')}\" errors=\"{int(defect == 'errors')}\" skipped=\"{int(defect == 'skipped')}\" />')\n"
+                    )
+                    fake_maven.chmod(0o755)
+                    env = os.environ.copy()
+                    env["ORISO_MAVEN_WRAPPER"] = str(fake_maven)
+                    result = subprocess.run([runner], cwd=temp_root, env=env, capture_output=True, text=True, check=False)
+                    if defect is None:
+                        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                        self.assertIn("reports=76 tests=901 executed=901", result.stdout)
+                    else:
+                        self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+                        self.assertIn(f"{defect}=1", result.stdout)
+
     def test_integration_tests_preserve_the_configured_test_database(self):
         test_root = ROOT / "src/test/java"
         offenders = []

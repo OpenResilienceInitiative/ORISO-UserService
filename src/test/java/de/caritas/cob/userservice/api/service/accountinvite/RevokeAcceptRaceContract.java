@@ -31,11 +31,13 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdA
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.AgencyCreationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup;
+import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import java.time.LocalDateTime;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -182,6 +184,7 @@ abstract class RevokeAcceptRaceContract extends AccountInactivityPolicyHttpFixtu
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
 
   @MockitoBean private TopicService topicService;
+  @MockitoBean private ApplicationSettingsService applicationSettingsService;
   @MockitoBean private AgencyCreationClient agencyCreationClient;
 
   @Autowired private InviteRoleChange roleChange;
@@ -226,6 +229,13 @@ abstract class RevokeAcceptRaceContract extends AccountInactivityPolicyHttpFixtu
                 if (hook != null) hook.run();
               }
             });
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(
+            new ApplicationSettingsDTO()
+                .oneTopicPerAgencyEnabled(
+                    new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                            .FeatureToggleDTO()
+                        .value(false)));
     caller.revokeDecided = new CountDownLatch(1);
     caller.afterWriterRead = null;
     Tenants.actAs(

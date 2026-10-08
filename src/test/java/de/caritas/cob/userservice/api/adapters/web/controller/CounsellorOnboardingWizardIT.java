@@ -176,6 +176,119 @@ class CounsellorOnboardingWizardIT
   /** The accept re-checks the agency with the service token (ORISO-Admin#1026 P2-3). */
   @MockitoBean private AgencyFacts agencyFacts;
 
+  @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+  private de.caritas.cob.userservice.api.service.accountinvite.onboarding.AgencyCreationClient
+      agencyCreationClient;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService
+      applicationSettingsService;
+
+  private static de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+          .ApplicationSettingsDTO
+      oneTopicSettings() {
+    return new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+            .ApplicationSettingsDTO()
+        .oneTopicPerAgencyEnabled(
+            new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                    .FeatureToggleDTO()
+                .value(true));
+  }
+
+  @Test
+  void newAgencyInvite_resolvesThePlatformTopicLimit() throws Exception {
+    String token = "one-topic-resolve-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(applicationSettingsService.fetchApplicationSettings()).thenReturn(oneTopicSettings());
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.oneTopicPerAgencyEnabled").value(true));
+  }
+
+  @Test
+  void newAgencyWithSeveralTopics_isRejectedBeforeProvisioningAndKeepsTheInviteUsable()
+      throws Exception {
+    String token = "one-topic-register-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(applicationSettingsService.fetchApplicationSettings()).thenReturn(oneTopicSettings());
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/register", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+        {"account":{"username":"codex_policy_user","password":"Valid-Test-Password-2026!"},
+         "topicIds":[2,7],"agency":{"name":"New centre"}}
+        """))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.reason").value("ONE_TOPIC_PER_AGENCY"));
+    String tokenHash = sha256(token);
+    assertThat(
+            accountInviteRepository.findAll().stream()
+                .filter(row -> row.getTokenHash().equals(tokenHash))
+                .findFirst()
+                .orElseThrow()
+                .getStatus())
+        .isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(nativeAccounts.commands())
+        .noneMatch(
+            command ->
+                command.operation().equals("account.create")
+                    || command.operation().equals("account.commit"));
+    assertThat(
+            de.caritas.cob.userservice.api.tenant.Tenants.in(
+                79L, () -> consultantRepository.findById(CONSULTANT_ID)))
+        .isEmpty();
+    org.mockito.Mockito.verifyNoInteractions(agencyCreationClient);
+  }
+
+  @Test
+  void newAgencySettingsOutage_isRetryableAndDoesNotConsumeTheInvite() throws Exception {
+    String token = "one-topic-outage-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("unavailable"));
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.reason").value("SETTINGS_UNAVAILABLE"));
+    assertThat(nativeAccounts.commands())
+        .noneMatch(
+            command ->
+                command.operation().equals("account.create")
+                    || command.operation().equals("account.commit"));
+    assertThat(
+            de.caritas.cob.userservice.api.tenant.Tenants.in(
+                79L, () -> consultantRepository.findById(CONSULTANT_ID)))
+        .isEmpty();
+    org.mockito.Mockito.verifyNoInteractions(agencyCreationClient);
+  }
+
+  @Test
+  void existingLegacyCentre_keepsMultipleTopicAssignmentsWithoutReadingThePolicy()
+      throws Exception {
+    String token = "one-topic-legacy-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/register", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+        {"account":{"username":"codex_legacy_topics","password":"Valid-Test-Password-2026!"},"topicIds":[2,7]}
+        """))
+        .andExpect(status().isOk());
+    org.mockito.Mockito.verifyNoInteractions(applicationSettingsService);
+  }
+
   @BeforeEach
   void configureProvisioning() {
     when(agencyFacts.find(anyLong()))

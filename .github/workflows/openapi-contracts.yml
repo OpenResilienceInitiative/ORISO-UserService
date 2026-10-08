@@ -46,7 +46,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-ConsultingTypeService
-        # CTS#164 merged the Admin Settings SMTP fields consumed by this branch into dev.
+        # Coordinated task provider includes Dev af24ae579ff86b8ec18a9cd3a34a0f63f288b646: one-topic and SMTP settings.
         ref: ${{ github.event_name == 'pull_request' && 'fc3404819574f2c38a2e559910a2c84206e9001b' || 'dev' }}
         path: .providers/consulting
         persist-credentials: false

@@ -27,7 +27,7 @@ class EmailTemplateIntegrityTest {
     JsonNode manifest = new ObjectMapper().readTree(EMAILS.resolve("manifest.json").toFile());
     assertEquals(1, manifest.path("schemaVersion").asInt());
     assertEquals(
-        "8bdc3148f62f0e083f455dbad571542abce1b4cc", manifest.path("frontendCommit").asText());
+        "05e4e194cea963ccfdfe7df3d9319ec9333b844d", manifest.path("frontendCommit").asText());
 
     Map<String, String> expected = new TreeMap<>();
     manifest

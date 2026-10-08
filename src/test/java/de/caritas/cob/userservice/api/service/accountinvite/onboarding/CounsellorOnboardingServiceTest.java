@@ -16,6 +16,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -43,7 +44,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.RegisterCounsellorCommand;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -74,6 +77,11 @@ class CounsellorOnboardingServiceTest {
   @Mock private IdentityProfileLookup identityProfileLookup;
   @Mock private AgencyService agencyService;
   @Mock private TopicService topicService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService
+      applicationSettingsService;
+
   @Mock private UsernameTranscoder usernameTranscoder;
   @Mock private AgencyCreationClient agencyCreationClient;
   @Mock private AgencyAdminInviteProvisioningService agencyAdminInviteProvisioningService;
@@ -90,6 +98,15 @@ class CounsellorOnboardingServiceTest {
 
   @BeforeEach
   void setUp() {
+    org.mockito.Mockito.lenient()
+        .when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(
+            new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                    .ApplicationSettingsDTO()
+                .oneTopicPerAgencyEnabled(
+                    new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                            .FeatureToggleDTO()
+                        .value(false)));
     service =
         new CounsellorOnboardingService(
             accountInviteRepository,
@@ -99,6 +116,7 @@ class CounsellorOnboardingServiceTest {
             identityProfileLookup,
             agencyService,
             topicService,
+            applicationSettingsService,
             usernameTranscoder,
             agencyCreationClient,
             agencyAdminInviteProvisioningService,
@@ -576,6 +594,82 @@ class CounsellorOnboardingServiceTest {
     assertTrue(state.topics().isEmpty());
     assertEquals(1, state.availableTopics().size());
     assertEquals(EXTRA_AGENCY_TOPIC_ID, state.availableTopics().get(0).id());
+  }
+
+  @Test
+  void resolveOnboardingInvite_missingOneTopicToggle_answersSettingsUnavailable() {
+    AccountInvite reserved = invite();
+    reserved.setDepartmentId(null);
+    inviteResolves(reserved);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(
+            new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                .ApplicationSettingsDTO());
+
+    var failure =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> service.resolveOnboardingInvite(RAW_TOKEN));
+
+    assertEquals(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, failure.getHttpStatus());
+    assertEquals("SETTINGS_UNAVAILABLE", failure.getCustomHttpHeaders().getFirst("X-Reason"));
+  }
+
+  @Test
+  void resolveOnboardingInvite_missingOneTopicValue_answersSettingsUnavailable() {
+    AccountInvite reserved = invite();
+    reserved.setDepartmentId(null);
+    inviteResolves(reserved);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(
+            new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                    .ApplicationSettingsDTO()
+                .oneTopicPerAgencyEnabled(
+                    new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                        .FeatureToggleDTO()));
+
+    var failure =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> service.resolveOnboardingInvite(RAW_TOKEN));
+
+    assertEquals(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, failure.getHttpStatus());
+    assertEquals("SETTINGS_UNAVAILABLE", failure.getCustomHttpHeaders().getFirst("X-Reason"));
+  }
+
+  @Test
+  void resolveOnboardingInvite_settingsHttpFailure_logsOnlyUpstreamStatus() {
+    AccountInvite reserved = invite();
+    reserved.setDepartmentId(null);
+    inviteResolves(reserved);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenThrow(
+            org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.UNAUTHORIZED,
+                "Unauthorized",
+                org.springframework.http.HttpHeaders.EMPTY,
+                "sensitive-upstream-body".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    try (var logs = LogbackCaptor.forClass(CounsellorOnboardingService.class)) {
+      assertThrows(
+          de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+              .class,
+          () -> service.resolveOnboardingInvite(RAW_TOKEN));
+
+      assertTrue(logs.contains(Level.WARN, "upstream status 401"));
+      assertTrue(
+          logs.events().stream()
+              .noneMatch(event -> event.getFormattedMessage().contains("sensitive-upstream-body")));
+    }
   }
 
   @Test

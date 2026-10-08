@@ -171,6 +171,10 @@ class OpenApiContractGateTest(unittest.TestCase):
                 re.DOTALL,
             ),
         )
+        # This coordinated provider contains the Dev settings revision as well as task APIs.
+        self.assertIn("af24ae579ff86b8ec18a9cd3a34a0f63f288b646", workflow)
+        settings = yaml.safe_load((ROOT / "services/applicationsettingsservice.yaml").read_text())
+        self.assertIn("oneTopicPerAgencyEnabled", settings["components"]["schemas"]["ApplicationSettingsDTO"]["properties"])
         self.assertIn("|| 'dev'", workflow)
         self.assertIn("    - dev", workflow)
         self.assertNotIn("pre-dev", workflow)

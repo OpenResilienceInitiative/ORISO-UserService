@@ -103,6 +103,7 @@ class CaseHandoverPolicyHttpContractTest {
             mock(de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepository.class),
             cacheService,
             mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            mock(de.caritas.cob.userservice.api.service.session.SessionOwnershipService.class),
             mock(de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.class),
             mock(de.caritas.cob.userservice.api.service.user.UserAccountService.class),
             mock(
@@ -115,6 +116,8 @@ class CaseHandoverPolicyHttpContractTest {
             mock(
                 de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService
                     .class),
+            mock(de.caritas.cob.userservice.api.service.ConsultantService.class),
+            mock(de.caritas.cob.userservice.api.helper.AuthenticatedUser.class),
             new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver(),
             claims,
             clock,

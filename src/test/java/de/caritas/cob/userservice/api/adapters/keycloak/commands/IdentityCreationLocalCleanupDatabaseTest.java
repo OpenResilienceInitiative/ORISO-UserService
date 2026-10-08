@@ -51,6 +51,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
   DeleteConsultantEventNotificationsAction.class,
   DeleteConsultantMessageEmailDeliveriesAction.class,
   DeleteDatabaseConsultantAction.class,
+  de.caritas.cob.userservice.api.service.session.SessionOwnershipService.class,
   TeamDiscussionPurgeService.class,
   TeamDiscussionPurgeWriter.class,
   IdentityCreationLocalCleanupDatabaseTest.DatabaseConfig.class

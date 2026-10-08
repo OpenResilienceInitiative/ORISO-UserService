@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
@@ -172,7 +173,10 @@ public class AssignEnquiryFacade {
     if (departmentBound) {
       session.setAgencyId(servingAgencyId);
     }
-    sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
+    var previousConsultant = session.getConsultant();
+    var previousStatus = session.getStatus();
+    var assignment =
+        sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
 
     // Create Matrix room and invite user
     try {
@@ -344,7 +348,8 @@ public class AssignEnquiryFacade {
                 session.getId(), user.getMatrixUserId(), consultant.getMatrixUserId()));
       }
     } catch (Exception e) {
-      rollbackSessionUpdate(session, departmentBound);
+      rollbackSessionUpdate(
+          session, assignment, previousConsultant, previousStatus, departmentBound);
       log.error(
           "Matrix room creation failed for session: {}, rolling back assignment",
           session.getId(),
@@ -360,13 +365,19 @@ public class AssignEnquiryFacade {
         session.getUser(), consultant, TenantContext.getCurrentTenantData(), session);
   }
 
-  private void rollbackSessionUpdate(Session session, boolean departmentBound) {
+  private void rollbackSessionUpdate(
+      Session session,
+      de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange
+          assignment,
+      Consultant previousConsultant,
+      SessionStatus previousStatus,
+      boolean departmentBound) {
     if (nonNull(session)) {
       if (departmentBound) {
-        // The enquiry returns to the queue unaccepted, so it no longer belongs to a department.
         session.setAgencyId(null);
       }
-      sessionService.updateConsultantAndStatusForSession(session, null, NEW);
+      sessionService.compensateConsultantAssignment(
+          session.getId(), assignment, previousConsultant, previousStatus, departmentBound);
     }
   }
 

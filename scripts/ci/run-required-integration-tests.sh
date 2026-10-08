@@ -57,6 +57,7 @@ mariadb_owned_tests=(
   DeleteUserAccountSchedulerMariaDbReplicaIT
   DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT
   SupportRoomMigrationConvergenceIT
+  SessionOwnershipMariaDbIT
   AccountInviteRevokeAcceptRaceMariaDbIT
 )
 # These identity suites require native issued-token/custom-provider fixtures and are
@@ -80,7 +81,7 @@ from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
 
-reports = sorted(Path("target/surefire-reports").glob("TEST-*IT.xml"))
+reports = sorted(Path("target/surefire-reports").glob("TEST-*.xml"))
 # The complete Matrix-only suite produces at least 75 reports / 830 tests. Keep these
 # bounds explicit so Maven cannot silently skip a material part of the suite. The
 # previous 900-test floor included deleted Rocket.Chat-only tests.
