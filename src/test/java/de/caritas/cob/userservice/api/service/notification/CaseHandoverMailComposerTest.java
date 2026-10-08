@@ -89,6 +89,149 @@ class CaseHandoverMailComposerTest {
   }
 
   @Test
+  void temporaryAccessUsesItsOwnAccurateConsentRecipeInAllSevenTones() {
+    prepareBrand();
+    for (var tone : OrisoEmailRenderer.Tone.values()) {
+      var language =
+          tone == OrisoEmailRenderer.Tone.DE_FORMAL || tone == OrisoEmailRenderer.Tone.DE_INFORMAL
+              ? LanguageCode.de
+              : LanguageCode.valueOf(tone.name().toLowerCase());
+      var dialect = tone == OrisoEmailRenderer.Tone.DE_INFORMAL ? Dialect.INFORMAL : Dialect.FORMAL;
+      var mail =
+          new CaseHandoverEmailNotification.Mail(
+              12L,
+              77L,
+              "!room:example.test",
+              CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED,
+              40L,
+              "asker@example.test",
+              language,
+              dialect,
+              de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.CO_ACCESS);
+      var rendered = composer.compose(mail, "https://tenant.example.test");
+      assertThat(rendered.text())
+          .contains(
+              "https://tenant.example.test/sessions/user/view/session/77?caseHandoverRequestId=12")
+          .doesNotContain("{{", "Counsellor Name", "#123");
+      assertThat(rendered.html()).doesNotContain("{{");
+      if (language == LanguageCode.en)
+        assertThat(rendered.text())
+            .contains("temporarily access your conversation")
+            .doesNotContain("You are now responsible");
+    }
+  }
+
+  @Test
+  void publicSmtpMimeFooterSelectsTheExistingConsentPreferenceForEachRequestKind()
+      throws Exception {
+    prepareBrand();
+    for (var accessType :
+        new de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType[] {
+          de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.CO_ACCESS,
+          de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.TAKEOVER
+        }) {
+      var mail =
+          new CaseHandoverEmailNotification.Mail(
+              12L,
+              77L,
+              "!room:example.test",
+              CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED,
+              40L,
+              "asker@example.test",
+              LanguageCode.en,
+              Dialect.FORMAL,
+              accessType);
+      var rendered = composer.compose(mail, "https://tenant.example.test");
+      var expected =
+          "https://tenant.example.test/profile/einstellungen/email?mail="
+              + (accessType
+                      == de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType
+                          .CO_ACCESS
+                  ? "einsicht-angefragt"
+                  : "uebergabe-angefragt");
+      var captured = new java.util.ArrayList<jakarta.mail.Message>();
+      try (var transport = org.mockito.Mockito.mockStatic(jakarta.mail.Transport.class)) {
+        transport
+            .when(
+                () ->
+                    jakarta.mail.Transport.send(
+                        org.mockito.ArgumentMatchers.any(jakarta.mail.Message.class)))
+            .thenAnswer(
+                invocation -> {
+                  captured.add(invocation.getArgument(0));
+                  return null;
+                });
+        assertThat(
+                new de.caritas.cob.userservice.api.service.email.OrisoEmailDispatcher()
+                    .send(
+                        new de.caritas.cob.userservice.api.service.email
+                            .PlatformSmtpSettingsProvider.Settings(
+                            "smtp.invalid",
+                            587,
+                            false,
+                            "test",
+                            "fixture",
+                            "sender@example.test",
+                            "#123456"),
+                        "asker@example.test",
+                        rendered))
+            .isTrue();
+      }
+      assertThat(captured).hasSize(1);
+      var mime = (jakarta.mail.Multipart) captured.getFirst().getContent();
+      for (int part = 0; part < 2; part++) {
+        var body = mime.getBodyPart(part).getContent().toString();
+        if (accessType
+            == de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.CO_ACCESS)
+          assertThat(body).contains(expected).doesNotContain("&mail=");
+        else assertThat(body).doesNotContain("/profile/einstellungen", "unsubscribe", "&mail=");
+      }
+    }
+    var confirmed =
+        composer.compose(
+            mail(CaseHandoverEmailNotification.Outcome.GRANTED, LanguageCode.en, Dialect.FORMAL),
+            "https://tenant.example.test");
+    assertThat(confirmed.text())
+        .contains("/profile/einstellungen/email?mail=uebergabe-bestaetigt")
+        .doesNotContain("&mail=");
+    var confirmations = new java.util.ArrayList<jakarta.mail.Message>();
+    try (var transport = org.mockito.Mockito.mockStatic(jakarta.mail.Transport.class)) {
+      transport
+          .when(
+              () ->
+                  jakarta.mail.Transport.send(
+                      org.mockito.ArgumentMatchers.any(jakarta.mail.Message.class)))
+          .thenAnswer(
+              invocation -> {
+                confirmations.add(invocation.getArgument(0));
+                return null;
+              });
+      assertThat(
+              new de.caritas.cob.userservice.api.service.email.OrisoEmailDispatcher()
+                  .send(
+                      new de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider
+                          .Settings(
+                          "smtp.invalid",
+                          587,
+                          false,
+                          "test",
+                          "fixture",
+                          "sender@example.test",
+                          "#123456"),
+                      "consultant@example.test",
+                      confirmed))
+          .isTrue();
+    }
+    assertThat(confirmations).hasSize(1);
+    var confirmationMime = (jakarta.mail.Multipart) confirmations.getFirst().getContent();
+    for (int part = 0; part < confirmationMime.getCount(); part++) {
+      assertThat(confirmationMime.getBodyPart(part).getContent().toString())
+          .contains("/profile/einstellungen/email?mail=uebergabe-bestaetigt")
+          .doesNotContain("&mail=");
+    }
+  }
+
+  @Test
   void confirmationTellsTheIncomingCounsellorTheyNowOwnTheCase() {
     prepareBrand();
     var rendered =

@@ -280,6 +280,8 @@ public class SecurityConfig {
                     "/service/users/account-invites/{token}/onboarding/register",
                     "/users/account-invites/{token}/onboarding/two-factor",
                     "/service/users/account-invites/{token}/onboarding/two-factor",
+                    "/users/account-invites/{token}/onboarding/two-factor/email",
+                    "/service/users/account-invites/{token}/onboarding/two-factor/email",
                     "/users/account-invites/{token}/onboarding/dpa-forward",
                     "/service/users/account-invites/{token}/onboarding/dpa-forward")
                 .permitAll()
@@ -388,6 +390,8 @@ public class SecurityConfig {
                     "/users/account",
                     "/users/mobiletoken",
                     "/users/sessions/{sessionId:[0-9]+}/data",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/consent-preference",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/consent-preference",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",

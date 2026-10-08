@@ -132,6 +132,19 @@ class UserServiceMapperTest {
   }
 
   @Test
+  void clearingWithoutKindRemovesExplicitMotifsAndInitials() {
+    for (var kind :
+        new ConsultantAvatarKind[] {ConsultantAvatarKind.ICON, ConsultantAvatarKind.INITIALS}) {
+      var consultant = new Consultant();
+      consultant.setAvatarKind(kind);
+      consultant.setAvatarId(kind == ConsultantAvatarKind.ICON ? "magpie" : null);
+      userServiceMapper.consultantOf(consultant, new HashMap<>(Map.of("id", "1", "avatarId", "")));
+      assertThat(consultant.getAvatarKind()).isNull();
+      assertThat(consultant.getAvatarId()).isNull();
+    }
+  }
+
+  @Test
   void consultantPatchWithoutAvatarKeepsTheStoredChoice() {
     var consultant = new Consultant();
     consultant.setAvatarKind(ConsultantAvatarKind.ICON);

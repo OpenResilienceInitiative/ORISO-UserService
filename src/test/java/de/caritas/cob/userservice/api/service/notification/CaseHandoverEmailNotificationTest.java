@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
@@ -79,6 +80,24 @@ class CaseHandoverEmailNotificationTest {
     verifyNoInteractions(sender);
   }
 
+  @ParameterizedTest
+  @EnumSource(AccessType.class)
+  void requiredTakeoverQueuesWithoutOptionalPreferencesWhileCoAccessDoesNot(AccessType type) {
+    var request = request(Status.PENDING_CLIENT_CONSENT, type);
+    request.getSession().getUser().setNotificationsEnabled(false);
+    request
+        .getSession()
+        .getUser()
+        .setNotificationsSettings("{\"reassignmentNotificationEnabled\":false}");
+    when(toggles.isToggleEnabled(
+            de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle
+                .NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(true);
+    transaction.executeWithoutResult(status -> notification.consentRequested(request));
+    if (type == AccessType.TAKEOVER) verify(sender).send(org.mockito.ArgumentMatchers.any());
+    else verifyNoInteractions(sender);
+  }
+
   @Test
   void rolledBackTakeoverSendsNothing() {
     CaseHandoverRequest request = request(Status.PENDING_CLIENT_CONSENT, AccessType.TAKEOVER);
@@ -105,15 +124,26 @@ class CaseHandoverEmailNotificationTest {
   }
 
   @Test
-  void coAccessAndNonPendingConsentNeverSendTakeoverMail() {
+  void coAccessConsentSendsButOnlyTakeoverOwnershipSends() {
+    CaseHandoverRequest pendingCoAccess =
+        request(Status.PENDING_CLIENT_CONSENT, AccessType.CO_ACCESS);
+    CaseHandoverRequest grantedCoAccess = request(Status.GRANTED, AccessType.CO_ACCESS);
+    grantedCoAccess.setId(13L);
+    CaseHandoverRequest nonPendingTakeover = request(Status.GRANTED, AccessType.TAKEOVER);
+    nonPendingTakeover.setId(14L);
     transaction.executeWithoutResult(
         status -> {
-          notification.consentRequested(
-              request(Status.PENDING_CLIENT_CONSENT, AccessType.CO_ACCESS));
-          notification.ownershipGranted(request(Status.GRANTED, AccessType.CO_ACCESS));
-          notification.consentRequested(request(Status.GRANTED, AccessType.TAKEOVER));
+          notification.consentRequested(pendingCoAccess);
+          notification.ownershipGranted(grantedCoAccess);
+          notification.consentRequested(nonPendingTakeover);
         });
-    verifyNoInteractions(sender);
+    var sent = ArgumentCaptor.forClass(CaseHandoverEmailNotification.Mail.class);
+    verify(sender).send(sent.capture());
+    assertThat(sent.getValue().requestId()).isEqualTo(pendingCoAccess.getId());
+    assertThat(sent.getValue().outcome())
+        .isEqualTo(CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED);
+    assertThat(sent.getValue().accessType()).isEqualTo(AccessType.CO_ACCESS);
+    verifyNoMoreInteractions(sender);
   }
 
   @Test
@@ -182,12 +212,14 @@ class CaseHandoverEmailNotificationTest {
         new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
     var tenant = new RestrictedTenantDTO().id(40L);
     when(routes.resolve(40L)).thenReturn(Optional.of(route));
-    when(tenants.getRestrictedTenantData(40L)).thenReturn(tenant);
+    when(tenants.getRestrictedTenantDataFresh(40L)).thenReturn(tenant);
     when(urls.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.test");
     when(composer.compose(queued.getValue(), "https://tenant.example.test"))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("Notice", "<p>Sign in</p>", "Sign in"));
     var requests = mock(CaseHandoverRequestRepository.class);
     when(requests.findById(12L)).thenReturn(Optional.of(request));
+    var sessions = mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class);
+    when(sessions.findById(77L)).thenReturn(Optional.of(request.getSession()));
     var delayedSender =
         new CaseHandoverMailSender(
             routes,
@@ -198,7 +230,9 @@ class CaseHandoverEmailNotificationTest {
             new CaseHandoverGrantedMailEligibility(
                 requests, toggles, mock(AccountInactivityService.class)),
             new CaseHandoverRequiredConsentMailEligibility(
-                requests, mock(AccountInactivityService.class)));
+                requests, mock(AccountInactivityService.class)),
+            sessions,
+            toggles);
 
     request.getRequesterConsultant().setNotificationsEnabled(false);
     delayedSender.send(queued.getValue());

@@ -40,7 +40,54 @@ public class CaseHandoverEmailNotification {
       String recipient,
       LanguageCode language,
       Dialect dialect,
-      String recipientUserId) {
+      String recipientUserId,
+      AccessType accessType) {
+    public Mail(
+        Long requestId,
+        Long sessionId,
+        String matrixRoomId,
+        Outcome outcome,
+        long tenantId,
+        String recipient,
+        LanguageCode language,
+        Dialect dialect,
+        String recipientUserId) {
+      this(
+          requestId,
+          sessionId,
+          matrixRoomId,
+          outcome,
+          tenantId,
+          recipient,
+          language,
+          dialect,
+          recipientUserId,
+          AccessType.TAKEOVER);
+    }
+
+    public Mail(
+        Long requestId,
+        Long sessionId,
+        String matrixRoomId,
+        Outcome outcome,
+        long tenantId,
+        String recipient,
+        LanguageCode language,
+        Dialect dialect,
+        AccessType accessType) {
+      this(
+          requestId,
+          sessionId,
+          matrixRoomId,
+          outcome,
+          tenantId,
+          recipient,
+          language,
+          dialect,
+          null,
+          accessType);
+    }
+
     public Mail(
         Long requestId,
         Long sessionId,
@@ -59,7 +106,8 @@ public class CaseHandoverEmailNotification {
           recipient,
           language,
           dialect,
-          null);
+          null,
+          AccessType.TAKEOVER);
     }
   }
 
@@ -70,9 +118,15 @@ public class CaseHandoverEmailNotification {
   private final @NonNull IdentityClientConfig identityClientConfig;
 
   public void consentRequested(CaseHandoverRequest request) {
-    if (!CaseHandoverRequiredConsentMailEligibility.requiresPersonalConsent(request)) return;
+    if (request == null) return;
+    boolean requiredTakeover =
+        CaseHandoverRequiredConsentMailEligibility.requiresPersonalConsent(request);
+    boolean optionalCoAccess =
+        request.getAccessType() == AccessType.CO_ACCESS
+            && request.getStatus() == Status.PENDING_CLIENT_CONSENT;
+    if (!requiredTakeover && !optionalCoAccess) return;
     User recipient = request.getSession().getUser();
-    if (!hasUsableEmail(recipient)) return;
+    if (requiredTakeover ? !hasUsableEmail(recipient) : !eligible(recipient)) return;
     schedule(
         snapshot(
             request,
@@ -145,7 +199,8 @@ public class CaseHandoverEmailNotification {
         email,
         language,
         dialect,
-        outcome == Outcome.CONSENT_REQUESTED ? request.getSession().getUser().getUserId() : null);
+        outcome == Outcome.CONSENT_REQUESTED ? request.getSession().getUser().getUserId() : null,
+        request.getAccessType());
   }
 
   private void schedule(Mail mail) {

@@ -12,13 +12,16 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -36,6 +39,7 @@ class CaseHandoverMailSenderTest {
   private final CaseHandoverRequestRepository requests = mock(CaseHandoverRequestRepository.class);
   private final ReleaseToggleService toggles = mock(ReleaseToggleService.class);
   private final AccountInactivityService lifecycle = mock(AccountInactivityService.class);
+  private final SessionRepository sessions = mock(SessionRepository.class);
   private CaseHandoverRequest currentRequest;
   private final CaseHandoverMailSender sender =
       new CaseHandoverMailSender(
@@ -45,7 +49,9 @@ class CaseHandoverMailSenderTest {
           urls,
           composer,
           new CaseHandoverGrantedMailEligibility(requests, toggles, lifecycle),
-          new CaseHandoverRequiredConsentMailEligibility(requests, lifecycle));
+          new CaseHandoverRequiredConsentMailEligibility(requests, lifecycle),
+          sessions,
+          toggles);
 
   @BeforeEach
   void currentGrant() {
@@ -83,6 +89,26 @@ class CaseHandoverMailSenderTest {
     when(lifecycle.snapshot("incoming-id")).thenReturn(Optional.empty());
   }
 
+  private final Session session = new Session();
+
+  @BeforeEach
+  void currentRecipient() {
+    var user = new User();
+    user.setUserId("asker-id");
+    user.setTenantId(40L);
+    user.setEmail("asker@example.test");
+    user.setNotificationsEnabled(true);
+    user.setNotificationsSettings("{\"reassignmentNotificationEnabled\":true}");
+    session.setUser(user);
+    session.setTenantId(40L);
+    session.setId(77L);
+    session.setMatrixRoomId("!room");
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    when(sessions.findById(77L)).thenReturn(Optional.of(session));
+    when(toggles.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)).thenReturn(true);
+  }
+
   @Test
   void sendsThroughTheTenantPlatformRouteAndCorrectOutcomePurpose() {
     currentRequest.setStatus(CaseHandoverRequest.Status.PENDING_CLIENT_CONSENT);
@@ -103,11 +129,12 @@ class CaseHandoverMailSenderTest {
     var content =
         new OrisoEmailRenderer.RenderedEmail("New notification", "<p>Sign in</p>", "Sign in");
     when(routes.resolve(40L)).thenReturn(Optional.of(route));
-    when(tenants.getRestrictedTenantData(40L)).thenReturn(tenant);
+    when(tenants.getRestrictedTenantDataFresh(40L)).thenReturn(tenant);
     when(tenant.getId()).thenReturn(40L);
     when(urls.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.test");
     when(composer.compose(mail, "https://tenant.example.test")).thenReturn(content);
 
+    when(sessions.findById(77L)).thenReturn(Optional.of(currentRequest.getSession()));
     sender.send(mail);
 
     verify(delivery)
@@ -132,7 +159,7 @@ class CaseHandoverMailSenderTest {
         new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.OWN, null);
     var otherTenant = mock(RestrictedTenantDTO.class);
     when(routes.resolve(40L)).thenReturn(Optional.of(route));
-    when(tenants.getRestrictedTenantData(40L)).thenReturn(otherTenant);
+    when(tenants.getRestrictedTenantDataFresh(40L)).thenReturn(otherTenant);
     when(otherTenant.getId()).thenReturn(41L);
     sender.send(mail(40L, CaseHandoverEmailNotification.Outcome.GRANTED, "incoming@example.test"));
     verifyNoInteractions(urls, composer, delivery);
@@ -145,7 +172,7 @@ class CaseHandoverMailSenderTest {
             TenantSystemEmailRouteService.Mode.PLATFORM, "#123456");
     var tenant = mock(RestrictedTenantDTO.class);
     when(routes.resolve(40L)).thenReturn(Optional.of(route));
-    when(tenants.getRestrictedTenantData(40L)).thenReturn(tenant);
+    when(tenants.getRestrictedTenantDataFresh(40L)).thenReturn(tenant);
     when(tenant.getId()).thenReturn(40L);
     when(urls.getTenantBaseUrl(tenant)).thenReturn("https://null.example.test");
 
@@ -341,10 +368,181 @@ class CaseHandoverMailSenderTest {
     var tenant = new RestrictedTenantDTO().id(40L);
     var content = new OrisoEmailRenderer.RenderedEmail("Notice", "<p>Sign in</p>", "Sign in");
     when(routes.resolve(40L)).thenReturn(Optional.of(route));
-    when(tenants.getRestrictedTenantData(40L)).thenReturn(tenant);
+    when(tenants.getRestrictedTenantDataFresh(40L)).thenReturn(tenant);
     when(urls.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.test");
     when(composer.compose(mail, "https://tenant.example.test")).thenReturn(content);
     return mail;
+  }
+
+  @Test
+  void newlyDisabledConversationEmailPolicyPreventsTheQueuedCoAccessEmail() {
+    var route =
+        new TenantSystemEmailRouteService.Route(
+            TenantSystemEmailRouteService.Mode.PLATFORM, "#123456");
+    var tenant =
+        new RestrictedTenantDTO()
+            .id(40L)
+            .settings(new Settings().featureAskerEmailAgencyCounsellingEnabled(false));
+    when(routes.resolve(40L)).thenReturn(Optional.of(route));
+    when(tenants.getRestrictedTenantDataFresh(40L)).thenReturn(tenant);
+    when(urls.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.test");
+    sender.send(
+        new CaseHandoverEmailNotification.Mail(
+            12L,
+            77L,
+            "!room",
+            CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED,
+            40L,
+            "asker@example.test",
+            LanguageCode.en,
+            null,
+            "asker-id",
+            CaseHandoverRequest.AccessType.CO_ACCESS));
+    verifyNoInteractions(composer, delivery);
+  }
+
+  @Test
+  void coAccessCannotRedirectTheOriginalRecipientOrSendAfterRejection() {
+    var mail =
+        new CaseHandoverEmailNotification.Mail(
+            12L,
+            77L,
+            "!room",
+            CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED,
+            40L,
+            "asker@example.test",
+            LanguageCode.en,
+            null,
+            "asker-id",
+            CaseHandoverRequest.AccessType.CO_ACCESS);
+    when(routes.resolve(40L))
+        .thenReturn(
+            Optional.of(
+                new TenantSystemEmailRouteService.Route(
+                    TenantSystemEmailRouteService.Mode.PLATFORM, null)));
+    var tenant =
+        new RestrictedTenantDTO()
+            .id(40L)
+            .settings(new Settings().featureAskerEmailAgencyCounsellingEnabled(true));
+    when(tenants.getRestrictedTenantDataFresh(40L)).thenReturn(tenant);
+    when(urls.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.test");
+    sender.send(mail);
+    verify(composer).compose(mail, "https://tenant.example.test");
+    org.mockito.Mockito.clearInvocations(composer, delivery);
+    session.getUser().setUserId("replacement-id");
+    sender.send(mail);
+    verifyNoInteractions(composer, delivery);
+    session.getUser().setUserId("asker-id");
+    session.setStatus(Session.SessionStatus.REJECTED);
+    sender.send(mail);
+    verifyNoInteractions(composer, delivery);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.class)
+  void requiredTakeoverBypassesOptionalAccountGatesWhileCoAccessRetainsThem(
+      de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType type) {
+    var route =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    var tenant =
+        new RestrictedTenantDTO()
+            .id(40L)
+            .settings(new Settings().featureAskerEmailAgencyCounsellingEnabled(true));
+    var content = new OrisoEmailRenderer.RenderedEmail("Notice", "<p>Sign in</p>", "Sign in");
+    var mail =
+        new CaseHandoverEmailNotification.Mail(
+            12L,
+            77L,
+            "!room",
+            CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED,
+            40L,
+            "asker@example.test",
+            LanguageCode.en,
+            null,
+            "asker-id",
+            type);
+    currentRequest.setSession(session);
+    currentRequest.setAccessType(type);
+    currentRequest.setStatus(CaseHandoverRequest.Status.PENDING_CLIENT_CONSENT);
+    currentRequest.setClientConsent(
+        de.caritas.cob.userservice.api.model.CaseHandoverConsentMode.OPT_IN);
+    currentRequest.setPreviousConsultant(null);
+    when(routes.resolve(40L)).thenReturn(Optional.of(route));
+    when(tenants.getRestrictedTenantDataFresh(40L)).thenReturn(tenant);
+    when(urls.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.test");
+    when(composer.compose(mail, "https://tenant.example.test")).thenReturn(content);
+    sender.send(mail);
+    verify(delivery)
+        .sendConfirmed(
+            40L,
+            route,
+            TenantSystemEmailDelivery.Purpose.HANDOVER_REQUESTED,
+            "asker@example.test",
+            content);
+    org.mockito.Mockito.clearInvocations(delivery, composer);
+    session.getUser().setNotificationsEnabled(false);
+    sender.send(mail);
+    assertOptionalAccountOutcome(type);
+    org.mockito.Mockito.clearInvocations(delivery, composer);
+    session.getUser().setNotificationsEnabled(true);
+    tenant.getSettings().setFeatureAskerEmailAgencyCounsellingEnabled(false);
+    sender.send(mail);
+    assertOptionalAccountOutcome(type);
+    org.mockito.Mockito.clearInvocations(delivery, composer);
+    tenant.getSettings().setFeatureAskerEmailAgencyCounsellingEnabled(true);
+    tenant.getSettings().setFeatureAskerEmailEnabled(false);
+    sender.send(mail);
+    assertOptionalAccountOutcome(type);
+    org.mockito.Mockito.clearInvocations(delivery, composer);
+    tenant.getSettings().setFeatureAskerEmailEnabled(true);
+    session.getUser().setNotificationsSettings("{\"reassignmentNotificationEnabled\":false}");
+    sender.send(mail);
+    assertOptionalAccountOutcome(type);
+  }
+
+  private void assertOptionalAccountOutcome(CaseHandoverRequest.AccessType type) {
+    if (type == CaseHandoverRequest.AccessType.CO_ACCESS) verifyNoInteractions(delivery, composer);
+    else
+      verify(delivery)
+          .sendConfirmed(
+              eq(40L),
+              any(),
+              eq(TenantSystemEmailDelivery.Purpose.HANDOVER_REQUESTED),
+              eq("asker@example.test"),
+              any());
+  }
+
+  @Test
+  void legacyAnonymousSessionUsesLiveChatDefaultsAndFreshExplicitOverride() {
+    var route =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    var tenant = new RestrictedTenantDTO().id(40L);
+    var mail =
+        new CaseHandoverEmailNotification.Mail(
+            12L,
+            77L,
+            "!room",
+            CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED,
+            40L,
+            "asker@example.test",
+            LanguageCode.en,
+            null,
+            "asker-id",
+            CaseHandoverRequest.AccessType.CO_ACCESS);
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    when(routes.resolve(40L)).thenReturn(Optional.of(route));
+    when(tenants.getRestrictedTenantDataFresh(40L)).thenReturn(tenant);
+    sender.send(mail);
+    verifyNoInteractions(composer, delivery);
+    tenant.setSettings(new Settings().featureAskerEmailLiveChatEnabled(true));
+    when(urls.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.test");
+    sender.send(mail);
+    verify(composer).compose(mail, "https://tenant.example.test");
+    org.mockito.Mockito.clearInvocations(composer, delivery);
+    tenant.getSettings().setFeatureAskerEmailEnabled(false);
+    sender.send(mail);
+    verifyNoInteractions(composer, delivery);
   }
 
   private static CaseHandoverEmailNotification.Mail mail(

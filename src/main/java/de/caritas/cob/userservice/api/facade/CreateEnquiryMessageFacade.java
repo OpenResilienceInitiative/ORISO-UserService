@@ -109,7 +109,7 @@ public class CreateEnquiryMessageFacade {
     session =
         updateMatrixSession(session, enquiryData.getLanguage(), matrixRoomId, exceptionInformation);
     sendEnquiryNotifications(session, agencyList);
-    postErstantwort(session);
+    postErstantwort(session, enquiryData.getUiLocale());
 
     return new CreateEnquiryMessageResponseDTO()
         .matrixRoomId(matrixRoomId)
@@ -207,7 +207,7 @@ public class CreateEnquiryMessageFacade {
     return session.getUser() == null || session.getUser().isLanguageFormal();
   }
 
-  private void postErstantwort(Session session) {
+  private void postErstantwort(Session session, String uiLocale) {
     try {
       var body =
           erstantwortPayloadBuilder.buildFirstResponseBody(
@@ -224,6 +224,7 @@ public class CreateEnquiryMessageFacade {
                   the User is the same flag AskerDataProvider already uses to pick
                   the German variant everywhere else. */
                   .informal(!isFormalLanguage(session))
+                  .locale(uiLocale)
                   .build());
       if (body == null) {
         return;

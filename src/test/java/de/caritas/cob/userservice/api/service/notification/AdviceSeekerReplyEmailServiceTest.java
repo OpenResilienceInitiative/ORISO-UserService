@@ -778,4 +778,27 @@ class AdviceSeekerReplyEmailServiceTest {
             Map.entry("privacyUrl", "https://tenant.example.net/datenschutz"),
             Map.entry("imprintUrl", "https://tenant.example.net/impressum")));
   }
+
+  @Test
+  void freshlyRevokedConversationPolicySuppressesQueuedReplyWithoutSilencingTheOtherChannel() {
+    when(routes.resolve(7L))
+        .thenReturn(
+            Optional.of(
+                new TenantSystemEmailRouteService.Route(
+                    TenantSystemEmailRouteService.Mode.PLATFORM, null)));
+    var user = asker(true, "asker@example.net");
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(user)));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+    when(tenants.getRestrictedTenantDataFresh(7L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(7L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailAgencyCounsellingEnabled(false)
+                        .featureAskerBrowserAgencyCounsellingEnabled(true)));
+    service.deliverPending(1L);
+    verify(writer).finish(1L, Status.REJECTED);
+    verify(delivery, org.mockito.Mockito.never()).sendReply(anyLong(), any(), any(), any(), any());
+  }
 }

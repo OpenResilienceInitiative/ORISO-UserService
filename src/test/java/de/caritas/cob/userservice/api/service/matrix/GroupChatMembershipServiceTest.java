@@ -84,6 +84,53 @@ class GroupChatMembershipServiceTest {
   }
 
   @Test
+  void resolvedMembersShouldCarryTheStoredAvatarWithoutLoadingNonMembers() throws Exception {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(CONSULTANT_MATRIX_ID)));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultant));
+    when(consultant.getId()).thenReturn("consultant-id");
+    when(consultant.getAvatarKind())
+        .thenReturn(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON);
+    when(consultant.getAvatarId()).thenReturn("magpie");
+    var mapper = new de.caritas.cob.userservice.api.config.AppConfig().objectMapper();
+    var members = groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID);
+    var response = mapper.readTree(mapper.writeValueAsString(members));
+    assertEquals("magpie", response.get(0).path("avatarId").asText());
+    assertEquals("ICON", response.get(0).path("avatarKind").asText());
+    verifyNoInteractions(userRepository);
+  }
+
+  @Test
+  void resolvedAskerShouldCarryItsStoredAnimalAndDropTheClearedChoice() throws Exception {
+    var asker = new de.caritas.cob.userservice.api.model.User();
+    asker.setUserId("asker-id");
+    asker.setUsername("asker");
+    asker.setAvatarId("fox");
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of("@asker:example.org")));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull("@asker:example.org"))
+        .thenReturn(Optional.of(asker));
+    var mapper = new de.caritas.cob.userservice.api.config.AppConfig().objectMapper();
+    var response =
+        mapper.readTree(
+            mapper.writeValueAsString(
+                groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID)));
+    assertEquals("fox", response.get(0).path("avatarId").asText());
+    assertTrue(
+        response.get(0).path("avatarKind").isNull()
+            || response.get(0).path("avatarKind").isMissingNode());
+    asker.setAvatarId(null);
+    var cleared =
+        mapper.readTree(
+            mapper.writeValueAsString(
+                groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID)));
+    assertTrue(
+        cleared.get(0).path("avatarId").isNull()
+            || cleared.get(0).path("avatarId").isMissingNode());
+  }
+
+  @Test
   void memberSnapshotDistinguishesExistingAbsentAndUnknown() {
     when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
         .thenReturn(

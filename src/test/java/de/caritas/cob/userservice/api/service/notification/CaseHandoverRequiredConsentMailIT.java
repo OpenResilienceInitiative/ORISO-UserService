@@ -399,6 +399,38 @@ class CaseHandoverRequiredConsentMailIT {
   }
 
   @Test
+  void currentOwnerCanPersistAndReadTheStandingPreference() {
+    when(actor.retrieveValidatedUser()).thenReturn(seeker);
+    session.setAlwaysAskBeforeAdditionalAccess(false);
+    sessions.save(session);
+    assertThat(
+            handovers
+                .updateConsentPreference(session.getId(), true)
+                .alwaysAskBeforeAdditionalAccess())
+        .isTrue();
+    assertThat(sessions.findById(session.getId()).orElseThrow().isAlwaysAskBeforeAdditionalAccess())
+        .isTrue();
+    assertThat(handovers.getConsentPreference(session.getId()).alwaysAskBeforeAdditionalAccess())
+        .isTrue();
+  }
+
+  @Test
+  void rejectedOwnerCanReadButCannotPersistTheStandingPreference() {
+    when(actor.retrieveValidatedUser()).thenReturn(seeker);
+    session.setAlwaysAskBeforeAdditionalAccess(false);
+    session.setStatus(Session.SessionStatus.REJECTED);
+    sessions.save(session);
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> handovers.updateConsentPreference(session.getId(), true))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    assertThat(sessions.findById(session.getId()).orElseThrow().isAlwaysAskBeforeAdditionalAccess())
+        .isFalse();
+    assertThat(handovers.getConsentPreference(session.getId()).alwaysAskBeforeAdditionalAccess())
+        .isFalse();
+  }
+
+  @Test
   void rejectionBetweenConsentRequestAndApprovalCannotRestoreWriter() {
     session.setConsultant(null);
     session.setStatus(Session.SessionStatus.NEW);
@@ -446,14 +478,22 @@ class CaseHandoverRequiredConsentMailIT {
             Optional.of(
                 new TenantSystemEmailRouteService.Route(
                     TenantSystemEmailRouteService.Mode.PLATFORM, null)));
-    when(tenants.getRestrictedTenantData(7L)).thenReturn(tenant);
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
     when(urls.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.test");
     when(composer.compose(any(), any()))
         .thenReturn(
             new OrisoEmailRenderer.RenderedEmail(
                 "Notice", "<p>Protected consent</p>", "Protected consent"));
     return new CaseHandoverMailSender(
-        routes, delivery, tenants, urls, composer, grantEligibility, consentEligibility);
+        routes,
+        delivery,
+        tenants,
+        urls,
+        composer,
+        grantEligibility,
+        consentEligibility,
+        sessions,
+        toggles);
   }
 
   private Consultant consultant(String label) {

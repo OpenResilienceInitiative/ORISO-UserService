@@ -526,7 +526,8 @@ public class UserServiceMapper {
   /**
    * The counsellor's own pick in the app (#1240). What the request omits keeps its stored value, as
    * in the admin form (#1046), except that a motif id sent alone means ICON. The pair goes through
-   * {@link ConsultantAvatars#apply}, so INITIALS or an empty id clears the motif.
+   * {@link ConsultantAvatars#apply}, so explicit INITIALS keeps initials, while an empty id without
+   * a kind restores the default.
    */
   private void patchConsultantAvatar(Consultant consultant, Map<String, Object> patchMap) {
     var avatarId =
@@ -538,6 +539,8 @@ public class UserServiceMapper {
       avatarKind = ConsultantAvatarKind.fromNameOrNull((String) patchMap.get("avatarKind"));
     } else if (avatarId != null && !avatarId.isBlank()) {
       avatarKind = ConsultantAvatarKind.ICON;
+    } else if (patchMap.containsKey("avatarId")) {
+      avatarKind = null;
     } else {
       avatarKind = consultant.getAvatarKind();
     }

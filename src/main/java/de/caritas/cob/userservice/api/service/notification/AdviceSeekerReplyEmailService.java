@@ -256,6 +256,11 @@ public class AdviceSeekerReplyEmailService {
       if (tenant == null || !Objects.equals(tenant.getId(), claim.getTenantId())) {
         throw failure(Stage.TENANT_CONTEXT, Reason.TENANT_UNAVAILABLE);
       }
+      if (!consultantMail
+          && !AskerNotificationChannelPolicy.emailAllowed(session, tenant.getSettings())) {
+        writer.finish(deliveryId, Status.REJECTED);
+        return;
+      }
       if (multitenancyEnabled && !singleDomainMultitenancy && isBlank(tenant.getSubdomain())) {
         throw failure(Stage.TENANT_CONTEXT, Reason.TENANT_SUBDOMAIN_MISSING);
       }
