@@ -7,9 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogEntry;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogsResult;
@@ -46,7 +50,10 @@ class CaseHandoverControllerTest {
 
   @BeforeEach
   void setUpMockMvc() {
-    mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+    mockMvc =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
   }
 
   @Test
@@ -185,6 +192,36 @@ class CaseHandoverControllerTest {
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(status, response.getBody());
     verify(caseHandoverService).resolveClientConsent(12L, 21L, false);
+  }
+
+  @Test
+  void reclaim_happyPath_returnsTheActiveOwnerStatus() {
+    var status =
+        CaseHandoverStatus.builder().sessionId(13L).status("GRANTED").canViewContent(true).build();
+    when(caseHandoverService.reclaim(13L)).thenReturn(status);
+
+    var response = controller.reclaim(13L);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(status, response.getBody());
+  }
+
+  @Test
+  void reclaim_byAnyoneButTheOriginalCounsellor_isForbidden() throws Exception {
+    when(caseHandoverService.reclaim(13L)).thenThrow(new ForbiddenException("not yours"));
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/reclaim"))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void reclaim_afterAPermanentHandover_isAConflict() throws Exception {
+    when(caseHandoverService.reclaim(13L)).thenThrow(new ConflictException("permanent"));
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/reclaim"))
+        .andExpect(status().isConflict());
   }
 
   @Test
