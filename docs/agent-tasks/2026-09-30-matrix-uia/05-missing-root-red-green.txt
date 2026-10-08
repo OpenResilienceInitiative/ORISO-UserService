@@ -1,0 +1,14 @@
+Scenario: null, empty or blank registration credential root fails safely
+RED isolated baseline: exact source 05ec3eb14
+Command: JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./mvnw -B -q '-Dtest=MatrixBrowserDeviceConcurrencyTest#missingCredentialRootFailsWithoutChangingTheExistingAccountPassword' test
+Result: exit 1; 3 tests, 3 failures, 0 errors, 0 skipped; 0.858 seconds
+Old implementation ignores missing registration root and returns successful device B login.
+Expected failed login, observed successful login, for null, empty and whitespace roots.
+Assertion diagnostics report a boolean only and never a credential-bearing response map.
+
+The safe behavior also requires no HTTP password update and verifies that the original
+device A issued credential remains accepted by the homeserver after the failure.
+
+GREEN final targeted run:
+Command: JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./mvnw -B -q -Dtest=MatrixBrowserDeviceConcurrencyTest,MatrixSynapseServiceTest,MatrixSynapseServiceCredentialLoggingTest test
+Result: exit 0. See 06-http-fixture-final-green.txt for complete per-class counts.

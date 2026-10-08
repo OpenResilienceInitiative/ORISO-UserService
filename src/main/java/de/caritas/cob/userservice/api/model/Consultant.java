@@ -22,6 +22,7 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -34,9 +35,7 @@ import lombok.Setter;
 import org.apache.lucene.analysis.core.LowerCaseFilterFactory;
 import org.apache.lucene.analysis.standard.ClassicTokenizerFactory;
 import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.ParamDef;
 import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.search.annotations.Analyzer;
 import org.hibernate.search.annotations.AnalyzerDef;
@@ -71,10 +70,7 @@ import org.springframework.lang.Nullable;
     filters = {
       @TokenFilterDef(factory = LowerCaseFilterFactory.class),
     })
-@FilterDef(
-    name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
-@Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+@Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION)
 public class Consultant implements TenantAware, NotificationsAware {
 
   protected static final String EMAIL_ANALYZER = "emailAnalyzer";
@@ -87,6 +83,20 @@ public class Consultant implements TenantAware, NotificationsAware {
 
   @Column(name = "matrix_user_id")
   private String matrixUserId;
+
+  @Column(name = "chat_recovery_mode", updatable = false)
+  private String chatRecoveryMode;
+
+  @Column(name = "chat_recovery_policy_revision", updatable = false)
+  private Long chatRecoveryPolicyRevision;
+
+  public String getEffectiveChatRecoveryMode() {
+    return chatRecoveryMode == null ? "RECOVERY_KEY" : chatRecoveryMode;
+  }
+
+  public long getEffectiveChatRecoveryPolicyRevision() {
+    return chatRecoveryPolicyRevision == null ? 0L : chatRecoveryPolicyRevision;
+  }
 
   @Column(name = "username", updatable = false, nullable = false)
   @Size(max = 255)
@@ -177,6 +187,18 @@ public class Consultant implements TenantAware, NotificationsAware {
   @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String adminRemarks;
 
+  /**
+   * Counsellor avatar choice (#1046). Both columns are nullable: existing rows carry no choice and
+   * keep rendering the initials fallback, so no migration of existing data is required. Always
+   * written through {@link ConsultantAvatars#apply} so a half choice cannot be persisted.
+   */
+  @Column(name = "avatar_id", length = 64)
+  private String avatarId;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "avatar_kind", length = 16)
+  private ConsultantAvatarKind avatarKind;
+
   @Column(name = "public_slug", length = 128)
   private String publicSlug;
 
@@ -252,6 +274,47 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Column(name = "encourage_2fa", nullable = false, columnDefinition = "bit default true")
   private Boolean encourage2fa;
 
+  /**
+   * Whether this counsellor must establish a second factor before using the account. A hard gate,
+   * unlike {@link #encourage2fa}. Set for logins provisioned through the admin API, where the
+   * administrator chooses the initial password. Defaults to false, so it never applies
+   * retroactively.
+   */
+  @Column(name = "two_factor_required", nullable = false, columnDefinition = "bit default false")
+  @Builder.Default
+  private Boolean twoFactorRequired = false;
+
+  /** Column default CREATE keeps the old behaviour for every existing counsellor. */
+  @Enumerated(EnumType.STRING)
+  @Column(
+      name = "topic_permission",
+      nullable = false,
+      length = 32,
+      columnDefinition = "varchar(32) default 'CREATE'")
+  @Builder.Default
+  private TopicPermission topicPermission = TopicPermission.CREATE;
+
+  /**
+   * Whether this counsellor must replace their password before using the account. Set for logins
+   * provisioned through the admin API, where the password is shared with at least one other person.
+   * Cleared when the counsellor changes it. Defaults to false.
+   */
+  @Column(
+      name = "password_change_required",
+      nullable = false,
+      columnDefinition = "bit default false")
+  @Builder.Default
+  private Boolean passwordChangeRequired = false;
+
+  /**
+   * Whether this counsellor controls live-chat availability from the navigation rail instead of My
+   * Profile. A per-counsellor preference, stored here so it follows them across browsers and
+   * devices. Defaults to false.
+   */
+  @Column(name = "live_chat_via_sidebar", nullable = false, columnDefinition = "bit default false")
+  @Builder.Default
+  private Boolean liveChatViaSidebar = false;
+
   @Column(
       name = "magic_link_login_enabled",
       nullable = false,
@@ -282,9 +345,11 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Field
   private ConsultantStatus status = ConsultantStatus.IN_PROGRESS;
 
-  @Column(name = "walk_through_enabled", columnDefinition = "tinyint", nullable = false)
+  /** Product tours are opt-in: the counsellor switches them on under Profile -> Help (#1526). */
+  @Column(name = "walk_through_enabled", nullable = false, columnDefinition = "tinyint default 0")
   @JdbcTypeCode(SqlTypes.TINYINT)
-  private Boolean walkThroughEnabled;
+  @Builder.Default
+  private Boolean walkThroughEnabled = false;
 
   @Enumerated(EnumType.STRING)
   @Column(length = 2, nullable = false, columnDefinition = "varchar(2) default 'de'")
@@ -394,6 +459,83 @@ public class Consultant implements TenantAware, NotificationsAware {
                         .createDate(now)
                         .updateDate(now)
                         .build()));
+  }
+
+  /**
+   * Replaces the full set of topics per counselling centre (#1264). Rows that stay are left
+   * untouched for the same unique-key reason as {@link #replaceTopics}; legacy rows without a
+   * centre are dropped. A {@code null} argument leaves the current set untouched.
+   */
+  @JsonIgnore
+  public void replaceTopicsPerAgency(Map<Long, ? extends Collection<Long>> topicIdsByAgencyId) {
+    if (isNull(topicIdsByAgencyId)) {
+      return;
+    }
+    if (isNull(this.consultantTopics)) {
+      this.consultantTopics = new HashSet<>();
+    }
+    var now = LocalDateTime.now();
+    var target = new HashSet<ConsultantTopic>();
+    topicIdsByAgencyId.forEach(
+        (agencyId, topicIds) ->
+            topicIds.stream()
+                .filter(Objects::nonNull)
+                .forEach(
+                    topicId ->
+                        target.add(
+                            ConsultantTopic.builder()
+                                .consultant(this)
+                                .agencyId(agencyId)
+                                .topicId(topicId)
+                                .createDate(now)
+                                .updateDate(now)
+                                .build())));
+    this.consultantTopics.removeIf(ct -> !target.contains(ct));
+    target.removeAll(this.consultantTopics);
+    this.consultantTopics.addAll(target);
+  }
+
+  /**
+   * Adds topics for one counselling centre (#1264) and keeps every existing row, also the same
+   * topic at other centres. A {@code null} or empty collection adds nothing.
+   */
+  @JsonIgnore
+  public void addTopicsForAgency(Long agencyId, Collection<Long> topicIds) {
+    if (isNull(topicIds) || topicIds.isEmpty()) {
+      return;
+    }
+    if (isNull(this.consultantTopics)) {
+      this.consultantTopics = new HashSet<>();
+    }
+    var now = LocalDateTime.now();
+    topicIds.stream()
+        .filter(Objects::nonNull)
+        .distinct()
+        .map(
+            topicId ->
+                ConsultantTopic.builder()
+                    .consultant(this)
+                    .agencyId(agencyId)
+                    .topicId(topicId)
+                    .createDate(now)
+                    .updateDate(now)
+                    .build())
+        .filter(row -> !this.consultantTopics.contains(row))
+        .forEach(this.consultantTopics::add);
+  }
+
+  /**
+   * Create paths (#1264): stores the topics per centre when the flow selected centres, otherwise
+   * keeps the legacy rows without a centre.
+   */
+  @JsonIgnore
+  public void assignInitialTopics(
+      Collection<Long> topicIds, Map<Long, ? extends Collection<Long>> topicIdsByAgencyId) {
+    if (topicIdsByAgencyId != null && !topicIdsByAgencyId.isEmpty()) {
+      replaceTopicsPerAgency(topicIdsByAgencyId);
+    } else {
+      replaceTopics(topicIds);
+    }
   }
 
   @JsonIgnore

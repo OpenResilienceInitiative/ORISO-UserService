@@ -22,6 +22,8 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.time.LocalDateTime;
@@ -39,6 +41,7 @@ import org.springframework.stereotype.Service;
 public class CreateChatFacade {
 
   private final @NonNull ChatService chatService;
+  private final @NonNull GroupAppointmentSeriesEventProducer appointmentEvents;
   private final @NonNull SessionService sessionService;
   private final @NonNull AgencyService agencyService;
   private final @NonNull ChatConverter chatConverter;
@@ -47,6 +50,7 @@ public class CreateChatFacade {
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull de.caritas.cob.userservice.api.port.out.UserRepository userRepository;
   private final @NonNull AgencySilentMembershipService consultantMembership;
+  private final @NonNull GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
 
   /**
    * Creates a group chat in MariaDB and Matrix.
@@ -110,6 +114,7 @@ public class CreateChatFacade {
                   return participant;
                 })
             .toList();
+    groupCounsellingDpaPolicy.requireCreation(chatDTO, agencyId, consultant);
 
     // Create a session for the group (needed for backend logic)
     Session session = new Session();
@@ -129,8 +134,14 @@ public class CreateChatFacade {
     session.setAgencyId(agencyId);
     session.setStatus(SessionStatus.IN_PROGRESS);
     session.setRegistrationType(RegistrationType.REGISTERED);
-    session.setTeamSession(true); // Mark as group chat
-    session.setConversationType(chat.getConversationType());
+    // teamSession keeps the group visible through the team-session queries. It is NOT the
+    // modality (ADR-006 addendum 2026-09-04): the modality is stamped explicitly here, because
+    // this facade is the only producer of INTERNAL_GROUP / SELF_HELP sessions.
+    session.setTeamSession(true);
+    session.setConversationType(
+        chat.getConversationType() == null
+            ? ConversationType.INTERNAL_GROUP
+            : chat.getConversationType());
     session.setLanguageCode(LanguageCode.de); // Default language
     session.setIsConsultantDirectlySet(false); // Not directly assigned
 
@@ -151,7 +162,7 @@ public class CreateChatFacade {
     //
     // An internal team chat has no occurrence to open. It is a persistent room for colleagues,
     // so there is nothing to wait for and nobody to open it for — creating it inactive sent
-    // counsellors into the askers' Waiting Area, countdown and all (#979). It is open on
+    // counsellors into the askers' Waiting Area, countdown and all. It is open on
     // creation.
     chat.setActive(ConversationType.INTERNAL_GROUP.equals(chat.getConversationType()));
     chat = chatService.saveChat(chat);
@@ -215,6 +226,8 @@ public class CreateChatFacade {
         groupChatParticipantRepository.save(gcp);
         joinedParticipants++;
       }
+
+      appointmentEvents.recordCreated(chat);
 
       log.info(
           "Successfully created group chat '{}' with Session ID: {}, Chat ID: {}, Matrix room: {} and {} participants",

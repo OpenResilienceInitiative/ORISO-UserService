@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
 import org.jeasy.random.EasyRandom;
@@ -44,7 +45,16 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @TestPropertySource(properties = "multitenancy.enabled=true")
 @Transactional
-public class CreateConsultantSagaTenantAwareIT {
+public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHttpFixture {
+  @org.junit.jupiter.api.BeforeEach
+  void recoveryPolicyFixture() {
+    org.mockito.Mockito.when(
+            tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
+  }
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
 
   private static final String VALID_USERNAME = "validUsername";
   private static final String VALID_EMAILADDRESS = "valid@emailaddress.de";
@@ -117,6 +127,7 @@ public class CreateConsultantSagaTenantAwareIT {
     // then
     assertThat(consultant.getEmbedded(), notNullValue());
     assertThat(consultant.getEmbedded().getId(), notNullValue());
+    assertDefaultInactivityPolicy(consultant.getEmbedded().getId());
     rollbackDBState();
   }
 

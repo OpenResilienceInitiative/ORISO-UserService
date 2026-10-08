@@ -69,4 +69,12 @@ public interface UserRepository extends CrudRepository<User, String> {
               + "    AND s3.createDate >= ?1"
               + ")")
   List<User> findAllByDeleteDateNullAndNoRunningSessionsAndCreateDateOlderThan(LocalDateTime date);
+
+  /**
+   * Ids of temporary accounts created before {@code createdBefore} and not already being deleted.
+   */
+  @Query(
+      "SELECT u.userId FROM User u WHERE u.temporaryAccount = true AND u.deleteDate IS NULL"
+          + " AND u.createDate < ?1")
+  List<String> findTemporaryAccountIdsCreatedBefore(LocalDateTime createdBefore);
 }

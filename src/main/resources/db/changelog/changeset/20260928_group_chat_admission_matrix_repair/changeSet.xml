@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="20260928-group-chat-admission-matrix-repair" author="oriso">
+    <createTable tableName="group_chat_admission_matrix_repair_task">
+      <column name="id" type="bigint" autoIncrement="true">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="request_id" type="bigint"><constraints nullable="false"/></column>
+      <column name="series_id" type="bigint"><constraints nullable="false"/></column>
+      <column name="consultant_id" type="varchar(36)"><constraints nullable="false"/></column>
+      <column name="room_id" type="varchar(255)"><constraints nullable="false"/></column>
+      <column name="member_id" type="varchar(255)"><constraints nullable="false"/></column>
+      <column name="attempt_count" type="int" defaultValueNumeric="0"><constraints nullable="false"/></column>
+      <column name="last_attempt_at" type="datetime"/>
+      <column name="created_at" type="datetime"><constraints nullable="false"/></column>
+    </createTable>
+    <addUniqueConstraint tableName="group_chat_admission_matrix_repair_task"
+      columnNames="request_id, room_id" constraintName="uq_gcamrt_request_room"/>
+    <createIndex tableName="group_chat_admission_matrix_repair_task" indexName="idx_gcamrt_retry">
+      <column name="last_attempt_at"/>
+      <column name="created_at"/>
+    </createIndex>
+    <rollback><dropTable tableName="group_chat_admission_matrix_repair_task"/></rollback>
+  </changeSet>
+</databaseChangeLog>

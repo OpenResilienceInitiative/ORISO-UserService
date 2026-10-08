@@ -346,6 +346,24 @@ components:
           type: integer
           minimum: 0
           description: Number of visible live-chat enquiries created before this one in the same consulting type and topic, still waiting (status NEW, privacy confirmed, no consultant assigned).
+        agencyId:
+          type: integer
+          format: int64
+          example: 17
+          description: >-
+            The counselling centre bound to this enquiry, so the entry room can resolve its
+            data-protection declaration (agency x topic) once the case has been accepted. When no
+            usable declaration exists, the client uses this coordinate to show the non-blocking
+            missing-policy warning; null while no agency is bound. Additive - older clients can
+            ignore it.
+        mainTopicId:
+          type: integer
+          format: int64
+          example: 3
+          description: >-
+            The enquiry's main topic - second half of the department coordinate the legal text is
+            resolved by; see agencyId. Null when the enquiry carries no topic. Additive - older
+            clients can ignore it.
         status:
           type: string
           enum:

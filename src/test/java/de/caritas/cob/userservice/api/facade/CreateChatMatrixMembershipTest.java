@@ -45,6 +45,9 @@ class CreateChatMatrixMembershipTest {
     var facade =
         new CreateChatFacade(
             chats,
+            mock(
+                de.caritas.cob.userservice.api.service.notification
+                    .GroupAppointmentSeriesEventProducer.class),
             sessions,
             agencies,
             converter,
@@ -52,7 +55,8 @@ class CreateChatMatrixMembershipTest {
             consultants,
             participants,
             users,
-            membership);
+            membership,
+            mock(de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy.class));
     var owner = new Consultant();
     owner.setId("owner");
     owner.setTenantId(40L);

@@ -15,6 +15,9 @@ import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GetChatSeriesOccurrences200ResponseInner;
+import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestAdmitDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestStatusDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
@@ -59,6 +62,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -70,6 +74,7 @@ import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceCommandService;
 import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceQueryService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.RequestedContactSheetService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
@@ -140,7 +145,26 @@ public class UserController implements UsersApi {
   private final @NotNull ChatOccurrenceQueryService chatOccurrenceQueryService;
   private final @NotNull ChatOccurrenceCommandService chatOccurrenceCommandService;
   private final @NotNull GroupChatRoleService groupChatRoleService;
+  private final @NotNull GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   private final @NotNull AuthenticatedUser authenticatedUser;
+  private final @NonNull RequestedContactSheetService requestedContactSheetService;
+  private final @NotNull IdentitySuggestionControllerDelegate identitySuggestionControllerDelegate;
+
+  @Override
+  public ResponseEntity<Void> sendContactSheetEmail(Long sessionId) {
+    requestedContactSheetService.send(sessionId, authenticatedUser.getUserId());
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<
+          java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.GuestIdentitySuggestion>>
+      suggestGuestIdentities(
+          de.caritas.cob.userservice.api.adapters.web.dto.GuestIdentitySuggestionRequest
+              guestIdentitySuggestionRequest) {
+    return identitySuggestionControllerDelegate.suggestGuestIdentities(
+        guestIdentitySuggestionRequest);
+  }
 
   @Override
   public ResponseEntity<Void> userExists(String username) {
@@ -234,6 +258,15 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> acceptEnquiry(@PathVariable Long sessionId) {
     return userRegistrationControllerDelegate.acceptEnquiry(sessionId);
+  }
+
+  /**
+   * Checks permission before the browser sends its encrypted first enquiry. Finalization rechecks
+   * permission independently.
+   */
+  @Override
+  public ResponseEntity<Void> checkEnquiryPermission(@PathVariable Long sessionId) {
+    return userRegistrationControllerDelegate.checkEnquiryPermission(sessionId);
   }
 
   /**
@@ -331,8 +364,22 @@ public class UserController implements UsersApi {
     return userAccountControllerDelegate.updateConsultantData(updateConsultantDTO);
   }
 
+  /**
+   * Returns the languages of all consultants working for the given agency.
+   *
+   * <p>Public by design: anonymous registration reads this list before an account exists. Mapped to
+   * both the direct path and the /service/ prefix because the API gateway forwards /service
+   * unchanged and the deployed frontend calls the prefixed route.
+   *
+   * @param agencyId (required) the agency to read the consultant languages of
+   * @return {@link ResponseEntity} containing {@link LanguageResponseDTO}
+   */
+  @GetMapping(
+      value = {"/users/consultants/languages", "/service/users/consultants/languages"},
+      produces = MediaType.APPLICATION_JSON_VALUE)
   @Override
-  public ResponseEntity<LanguageResponseDTO> getLanguages(Long agencyId) {
+  public ResponseEntity<LanguageResponseDTO> getLanguages(
+      @RequestParam(value = "agencyId", required = true) Long agencyId) {
     return userConsultantControllerDelegate.getLanguages(agencyId);
   }
 
@@ -405,8 +452,15 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<ConsultantSearchResultDTO> searchConsultants(
-      String query, Integer page, Integer perPage, String field, String order) {
-    return userConsultantControllerDelegate.searchConsultants(query, page, perPage, field, order);
+      String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order,
+      Long tenantId,
+      List<Long> agencyId) {
+    return userConsultantControllerDelegate.searchConsultants(
+        query, page, perPage, field, order, new SearchFilter(tenantId, agencyId));
   }
 
   /**
@@ -546,6 +600,38 @@ public class UserController implements UsersApi {
   }
 
   @Override
+  public ResponseEntity<GroupChatJoinRequestStatusDTO> createChatSeriesJoinRequest(
+      Long seriesId, String inviteToken) {
+    return groupChatJoinRequestDelegate.knock(seriesId, inviteToken);
+  }
+
+  @Override
+  public ResponseEntity<GroupChatJoinRequestStatusDTO> getOwnChatSeriesJoinRequest(Long seriesId) {
+    return groupChatJoinRequestDelegate.getOwn(seriesId);
+  }
+
+  @Override
+  public ResponseEntity<Void> cancelOwnChatSeriesJoinRequest(Long seriesId) {
+    return groupChatJoinRequestDelegate.cancelOwn(seriesId);
+  }
+
+  @Override
+  public ResponseEntity<List<GroupChatJoinRequestDTO>> getPendingChatSeriesJoinRequests() {
+    return groupChatJoinRequestDelegate.getPending();
+  }
+
+  @Override
+  public ResponseEntity<Void> admitChatSeriesJoinRequest(
+      Long seriesId, Long requestId, GroupChatJoinRequestAdmitDTO groupChatJoinRequestAdmitDTO) {
+    return groupChatJoinRequestDelegate.admit(seriesId, requestId, groupChatJoinRequestAdmitDTO);
+  }
+
+  @Override
+  public ResponseEntity<Void> declineChatSeriesJoinRequest(Long seriesId, Long requestId) {
+    return groupChatJoinRequestDelegate.decline(seriesId, requestId);
+  }
+
+  @Override
   public ResponseEntity<Void> transferChatSeriesOwnership(
       Long seriesId, TransferOwnershipRequest request) {
     groupChatRoleService.transferPrimaryOwnership(
@@ -583,11 +669,12 @@ public class UserController implements UsersApi {
    * Assign a chat, resolved using its Matrix room ID or stable numeric series ID.
    *
    * @param matrixRoomId Matrix room ID or stable numeric series ID (required)
+   * @param inviteToken secret part of the invite link, required with a numeric series ID
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> assignChat(String matrixRoomId) {
-    return userChatControllerDelegate.assignChat(matrixRoomId);
+  public ResponseEntity<Void> assignChat(String matrixRoomId, String inviteToken) {
+    return userChatControllerDelegate.assignChat(matrixRoomId, inviteToken);
   }
 
   /**

@@ -39,7 +39,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -52,7 +51,7 @@ import org.springframework.http.ResponseEntity;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class CreateChatSimplifiedGroupChatFacadeTest {
 
-  @InjectMocks private CreateChatFacade createChatFacade;
+  private CreateChatFacade createChatFacade;
 
   @Mock private ChatService chatService;
   @Mock private SessionService sessionService;
@@ -60,6 +59,11 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer
+      appointmentEvents;
+
   @Mock private UserRepository userRepository;
   @Mock private AgencySilentMembershipService consultantMembership;
 
@@ -76,10 +80,32 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(consultantMembership.ensureMatrixAccount(any()))
         .thenAnswer(invocation -> ((Consultant) invocation.getArgument(0)).getMatrixUserId());
     when(consultantMembership.joinConsultantIntoRoom(any(), any(), any())).thenReturn(true);
+    var policy = de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy();
+    var realAgencies =
+        (AgencyService)
+            org.springframework.test.util.ReflectionTestUtils.getField(policy, "agencyService");
+    var groupPolicy =
+        new de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy(
+            policy,
+            mock(de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
+            realAgencies);
+    createChatFacade =
+        new CreateChatFacade(
+            chatService,
+            appointmentEvents,
+            sessionService,
+            agencyService,
+            chatConverter,
+            matrixSynapseService,
+            consultantRepository,
+            groupChatParticipantRepository,
+            userRepository,
+            consultantMembership,
+            groupPolicy);
     consultant = mock(Consultant.class);
     when(consultant.getId()).thenReturn("creator-consultant-id");
     when(consultant.getMatrixUserId()).thenReturn("@creator:matrix.org");
-    when(consultant.getTenantId()).thenReturn(1L);
+    when(consultant.getTenantId()).thenReturn(41L);
 
     savedChat = mock(Chat.class);
     when(savedChat.getId()).thenReturn(CHAT_ID);
@@ -113,7 +139,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     createChatFacade.createChatV2(dto, consultant);
     var captured = ArgumentCaptor.forClass(Session.class);
     verify(sessionService, times(2)).saveSession(captured.capture());
-    assertThat(captured.getAllValues().getFirst().getTenantId()).isEqualTo(1L);
+    assertThat(captured.getAllValues().getFirst().getTenantId()).isEqualTo(41L);
   }
 
   private ChatDTO chatDtoWithConsultantIds(List<String> consultantIds) {
@@ -177,7 +203,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("creator-token");
     Consultant participant = mock(Consultant.class);
     when(participant.getId()).thenReturn("participant-1");
-    when(participant.getTenantId()).thenReturn(1L);
+    when(participant.getTenantId()).thenReturn(41L);
     when(participant.getMatrixUserId()).thenReturn("@participant:matrix.org");
     when(consultantRepository.findByIdAndDeleteDateIsNull("participant-1"))
         .thenReturn(Optional.of(participant));
@@ -250,6 +276,33 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     createChatFacade.createChatV1(chatDto, consultant);
 
     verify(unsavedChat).setActive(true);
+  }
+
+  @Test
+  void createSimplifiedGroupChatShouldStampTheSessionAsInternalGroupExplicitly() throws Exception {
+    // ADR-006 addendum 2026-09-04: the group-chat path is the ONLY producer of INTERNAL_GROUP
+    // sessions and stamps the modality itself. SessionService.saveSession no longer derives it
+    // from teamSession, because teamSession also means "Team-Beratungsstelle" 1:1 case.
+    ChatDTO chatDto = chatDtoWithConsultantIds(List.of("dummy-participant"));
+    Consultant participant = mock(Consultant.class);
+    when(participant.getId()).thenReturn("dummy-participant");
+    when(participant.getTenantId()).thenReturn(41L);
+    when(participant.getMatrixUserId()).thenReturn("@dummy:matrix.org");
+    when(consultantRepository.findByIdAndDeleteDateIsNull("dummy-participant"))
+        .thenReturn(Optional.of(participant));
+    // No series fields at all (the mock would answer 0 for repeatCount) -> internal team chat.
+    when(chatDto.getRepeatCount()).thenReturn((Integer) null);
+    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!room:matrix.org"));
+    when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("creator-token");
+
+    createChatFacade.createChatV2(chatDto, consultant);
+
+    ArgumentCaptor<Session> sessionCaptor = ArgumentCaptor.forClass(Session.class);
+    verify(sessionService, times(2)).saveSession(sessionCaptor.capture());
+    Session created = sessionCaptor.getAllValues().get(0);
+    assertThat(created.getConversationType()).isEqualTo(ConversationType.INTERNAL_GROUP);
+    assertThat(created.isTeamSession()).isTrue();
   }
 
   @Test
@@ -410,7 +463,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         .thenReturn("creator-token");
     Consultant participant = mock(Consultant.class);
     when(participant.getId()).thenReturn("participant-1");
-    when(participant.getTenantId()).thenReturn(1L);
+    when(participant.getTenantId()).thenReturn(41L);
     when(participant.getMatrixUserId()).thenReturn("@participant:matrix.org");
     when(consultantMembership.joinConsultantIntoRoom(
             org.mockito.ArgumentMatchers.eq(participant), any(), any()))
@@ -440,11 +493,11 @@ class CreateChatSimplifiedGroupChatFacadeTest {
 
     Consultant p1 = mock(Consultant.class);
     when(p1.getId()).thenReturn("participant-1");
-    when(p1.getTenantId()).thenReturn(1L);
+    when(p1.getTenantId()).thenReturn(41L);
     when(p1.getMatrixUserId()).thenReturn("@p1:matrix.org");
     Consultant p2 = mock(Consultant.class);
     when(p2.getId()).thenReturn("participant-2");
-    when(p2.getTenantId()).thenReturn(1L);
+    when(p2.getTenantId()).thenReturn(41L);
     when(p2.getMatrixUserId()).thenReturn("@p2:matrix.org");
     when(consultantRepository.findByIdAndDeleteDateIsNull("participant-1"))
         .thenReturn(Optional.of(p1));
@@ -479,13 +532,13 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
 
     User tenantUser = mock(User.class);
-    when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system-1"))
+    when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system-41"))
         .thenReturn(Optional.of(tenantUser));
 
     createChatFacade.createChatV1(chatDto, consultant);
 
     // Tenant-scoped lookup resolved on first call → generic lookup never needed
-    verify(userRepository).findByUserIdAndDeleteDateIsNull("group-chat-system-1");
+    verify(userRepository).findByUserIdAndDeleteDateIsNull("group-chat-system-41");
     verify(userRepository, never()).findByUserIdAndDeleteDateIsNull("group-chat-system");
   }
 
@@ -499,7 +552,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
 
     User genericUser = mock(User.class);
-    when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system-1"))
+    when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system-41"))
         .thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system"))
         .thenReturn(Optional.of(genericUser));
@@ -518,7 +571,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("token");
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
 
-    when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system-1"))
+    when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system-41"))
         .thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system"))
         .thenReturn(Optional.empty());

@@ -46,6 +46,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -76,6 +77,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -83,6 +85,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
@@ -102,6 +105,7 @@ import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.notification.RequestedContactSheetService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
@@ -176,12 +180,14 @@ class UserControllerAuthorizationIT {
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
+        IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityLocaleLookup.class,
+        IdentityPasswordChangeRequirement.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,
@@ -208,6 +214,7 @@ class UserControllerAuthorizationIT {
   @MockitoBean private SessionDataService sessionDataService;
   @MockitoBean private SessionArchiveService sessionArchiveService;
   @MockitoBean private SessionConsentService sessionConsentService;
+  @MockitoBean private RequestedContactSheetService requestedContactSheetService;
   @MockitoBean private ConsultantUpdateService consultantUpdateService;
   @MockitoBean private ConsultantService consultantService;
   @MockitoBean private ConsultantPublicSlugService consultantPublicSlugService;
@@ -852,6 +859,41 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoMoreInteractions(consultantAgencyService);
+  }
+
+  @Test
+  void getLanguages_Should_ReturnOkForAnonymousCaller_WhenPathIsServicePrefixed() throws Exception {
+    when(consultantAgencyService.getLanguageCodesOfAgency(1L)).thenReturn(Set.of("de"));
+
+    mvc.perform(
+            get("/service/users/consultants/languages")
+                .param("agencyId", "1")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.languages[0]").value("de"));
+
+    verify(consultantAgencyService).getLanguageCodesOfAgency(1L);
+  }
+
+  @Test
+  void getLanguages_Should_ReturnOkForAnonymousCaller_WhenPathIsUnprefixed() throws Exception {
+    when(consultantAgencyService.getLanguageCodesOfAgency(1L)).thenReturn(Set.of("de"));
+
+    mvc.perform(
+            get("/users/consultants/languages")
+                .param("agencyId", "1")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.languages[0]").value("de"));
+
+    verify(consultantAgencyService).getLanguageCodesOfAgency(1L);
+  }
+
+  @Test
+  void getSessionForId_Should_StillRejectAnonymousCaller_WhenPathIsServicePrefixed()
+      throws Exception {
+    mvc.perform(get("/service/users/sessions/room/1").accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isUnauthorized());
   }
 
   @Test
@@ -2275,7 +2317,8 @@ class UserControllerAuthorizationIT {
       throws Exception {
     var consultant = givenAValidConsultant();
     var updateConsultantDTO = givenAMinimalUpdateConsultantDto(consultant.getEmail());
-    when(consultantUpdateService.updateConsultant(anyString(), any())).thenReturn(consultant);
+    when(consultantUpdateService.updateConsultant(anyString(), any(), eq(false)))
+        .thenReturn(consultant);
 
     mvc.perform(
             put(PATH_GET_USER_DATA)
@@ -2377,6 +2420,39 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isUnauthorized());
 
     verifyNoMoreInteractions(sessionConsentService);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.ANONYMOUS_DEFAULT})
+  void contactSheetRequestAllowsTheAuthenticatedSeeker() throws Exception {
+    when(authenticatedUser.getUserId()).thenReturn("asker");
+    mvc.perform(
+            post("/users/sessions/123/contact-sheet-email")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isNoContent());
+    verify(requestedContactSheetService).send(123L, "asker");
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void contactSheetRequestRejectsConsultants() throws Exception {
+    mvc.perform(
+            post("/users/sessions/123/contact-sheet-email")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isForbidden());
+    verifyNoMoreInteractions(requestedContactSheetService);
+  }
+
+  @Test
+  void contactSheetRequestRequiresAuthentication() throws Exception {
+    mvc.perform(
+            post("/users/sessions/123/contact-sheet-email")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isUnauthorized());
+    verifyNoMoreInteractions(requestedContactSheetService);
   }
 
   @Test

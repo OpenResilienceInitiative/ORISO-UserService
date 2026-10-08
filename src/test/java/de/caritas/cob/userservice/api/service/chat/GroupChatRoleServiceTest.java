@@ -59,12 +59,17 @@ class GroupChatRoleServiceTest {
             .initialStartDate(java.time.LocalDateTime.now())
             .startDate(java.time.LocalDateTime.now())
             .chatOwner(oldOwner)
+            .updateDate(java.time.LocalDateTime.of(2020, 1, 1, 0, 0))
             .build();
     when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(actor, target));
     when(chatRepository.findById(42L)).thenReturn(java.util.Optional.of(series));
     when(consultantRepository.findById("target")).thenReturn(java.util.Optional.of(newOwner));
 
     roleService.transferPrimaryOwnership(42L, "owner", "target");
+
+    // The owner changed, so the chat row changed (FE#1499).
+    org.junit.jupiter.api.Assertions.assertTrue(
+        series.getUpdateDate().isAfter(java.time.LocalDateTime.of(2020, 1, 1, 0, 0)));
 
     org.junit.jupiter.api.Assertions.assertEquals(ParticipantRole.CO_MODERATOR, actor.getRole());
     org.junit.jupiter.api.Assertions.assertEquals(ParticipantRole.OWNER, target.getRole());

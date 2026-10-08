@@ -1,3 +1,0 @@
-
-{{ACTION_LABEL}}:
-{{ACTION_URL}}

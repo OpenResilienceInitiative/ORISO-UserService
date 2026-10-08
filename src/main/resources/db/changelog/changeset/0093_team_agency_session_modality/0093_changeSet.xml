@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- ADR-006 addendum 2026-09-04: team-agency 1:1 cases were persisted as INTERNAL_GROUP because
+       saveSession derived the modality from is_team_session. Re-stamps those rows by registration
+       type; real group chats (group_chat_participant row / shared chat room / system user) are left
+       alone. A scoped backup table preserves the original values for an exact rollback. See
+       migrate.sql and rollback.sql.
+
+       Renumbered from the branch-only 0091 identity because dev already owns 0091 for the active
+       invite recipient migration. A sandbox that recorded the former path may execute 0093 once;
+       the SQL's WHERE clause excludes already-corrected rows, so both histories converge. Future
+       corrections must use a new append-only changeset rather than editing and rerunning this one.
+       -->
+  <changeSet id="0093-team-agency-session-modality" author="frank">
+    <preConditions onFail="HALT">
+      <tableExists tableName="session"/>
+      <tableExists tableName="group_chat_participant"/>
+      <tableExists tableName="chat"/>
+      <columnExists tableName="session" columnName="conversation_type"/>
+      <columnExists tableName="group_chat_participant" columnName="chat_id"/>
+    </preConditions>
+    <sqlFile
+      path="db/changelog/changeset/0093_team_agency_session_modality/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"
+      encoding="UTF-8"/>
+    <rollback>
+      <sqlFile
+        path="db/changelog/changeset/0093_team_agency_session_modality/rollback.sql"
+        relativeToChangelogFile="false" splitStatements="true" stripComments="true"
+        endDelimiter=";" encoding="UTF-8"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

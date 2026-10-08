@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.facade.assignsession;
 
+import static de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static java.util.Objects.nonNull;
@@ -44,6 +45,8 @@ import org.springframework.stereotype.Service;
 public class AssignEnquiryFacade {
 
   private final @NonNull SessionService sessionService;
+  private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
+      dpaPolicy;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull SessionToConsultantVerifier sessionToConsultantVerifier;
   private final @NonNull StatisticsService statisticsService;
@@ -56,6 +59,7 @@ public class AssignEnquiryFacade {
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull AnonymousEnquiryDepartmentResolver anonymousEnquiryDepartmentResolver;
 
   /**
    * "Supervision (auto-assigned)" (grill 2026-07-13): attaches the accepting counsellor's standing
@@ -66,8 +70,6 @@ public class AssignEnquiryFacade {
   private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
 
   private final @NonNull TeamDiscussionFacade teamDiscussionFacade;
-
-  private final @NonNull AnonymousEnquiryConsentGuard anonymousEnquiryConsentGuard;
 
   /**
    * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
@@ -113,12 +115,13 @@ public class AssignEnquiryFacade {
    * @param consultant the consultant to assign
    */
   public void assignAnonymousEnquiry(Session session, Consultant consultant) {
-    /* ADR-018 §9 / ORISO-UserService#927: defence in depth for a bypassed client.
-    Anonymous entry paths only — in Agency Counselling consent is given at
-    registration (ADR-014) and assignRegisteredEnquiry deliberately does not
-    carry this check. */
-    anonymousEnquiryConsentGuard.verifyAnonymousConsent(session);
-    assignEnquiry(session, consultant);
+    /* Consent is deliberately not an assignment precondition. The advice seeker is informed in
+    the entry room after the counselling centre is known and decides whether to continue at their
+    own risk when that centre has no published policy. A server-side assignment guard created a
+    deadlock: the centre had to accept before its notice could be shown, while acceptance required
+    the notice to have been accepted. The current product decision is disclosure, not a write or
+    assignment lock. */
+    assignEnquiry(session, consultant, false, true);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
   }
 
@@ -130,6 +133,14 @@ public class AssignEnquiryFacade {
       Session session,
       Consultant consultant,
       boolean skipConsultantAssignmentAndSessionInProgressChecks) {
+    assignEnquiry(session, consultant, skipConsultantAssignmentAndSessionInProgressChecks, false);
+  }
+
+  private void assignEnquiry(
+      Session session,
+      Consultant consultant,
+      boolean skipConsultantAssignmentAndSessionInProgressChecks,
+      boolean bindDepartment) {
     var consultantSessionDTO =
         ConsultantSessionDTO.builder().consultant(consultant).session(session).build();
     if (!skipConsultantAssignmentAndSessionInProgressChecks) {
@@ -138,6 +149,29 @@ public class AssignEnquiryFacade {
     sessionToConsultantVerifier.verifyPreconditionsForAssignment(
         consultantSessionDTO, skipConsultantAssignmentAndSessionInProgressChecks);
 
+    // ADR-022 decision 1 / ADR-003: a topic-based anonymous enquiry carries no agency until it is
+    // accepted. Bind the accepting counsellor's department here, before the assignment save, so
+    // agency, consultant and status are persisted together.
+    var servingAgencyId = session.getAgencyId();
+    if (bindDepartment && servingAgencyId == null) {
+      servingAgencyId =
+          anonymousEnquiryDepartmentResolver.resolveAgencyId(session, consultant).orElse(null);
+    }
+    if (session.getStatus() == INITIAL || session.getStatus() == NEW) {
+      if (servingAgencyId != null) {
+        dpaPolicy.requireForAgency(servingAgencyId);
+      } else if (bindDepartment) {
+        // A topic queue may have no matching department. The accepting organisation serves it.
+        dpaPolicy.requireForConcreteTenant(consultant.getTenantId());
+      } else {
+        dpaPolicy.requireForAgency((Long) null);
+      }
+    }
+    var departmentBound =
+        bindDepartment && session.getAgencyId() == null && servingAgencyId != null;
+    if (departmentBound) {
+      session.setAgencyId(servingAgencyId);
+    }
     sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
 
     // Create Matrix room and invite user
@@ -177,8 +211,7 @@ public class AssignEnquiryFacade {
             }
 
             var agencyCredentials = agencyCredentialsOpt.get();
-            if (isBlank(agencyCredentials.getMatrixUserId())
-                || isBlank(agencyCredentials.getMatrixPassword())) {
+            if (isBlank(agencyCredentials.getMatrixUserId())) {
               log.warn(
                   "Agency Matrix credentials incomplete for agency {}, falling back to create new room",
                   session.getAgencyId());
@@ -186,13 +219,7 @@ public class AssignEnquiryFacade {
               return;
             }
 
-            // Extract agency Matrix username
-            String agencyMatrixUsername = null;
-            if (agencyCredentials.getMatrixUserId().startsWith("@")) {
-              agencyMatrixUsername = MatrixIds.localpart(agencyCredentials.getMatrixUserId());
-            }
-
-            if (isBlank(agencyMatrixUsername)) {
+            if (!MatrixIds.isUserId(agencyCredentials.getMatrixUserId())) {
               log.warn("Invalid agency Matrix user ID, falling back to create new room");
               createNewMatrixRoomOrFail(session, consultant);
               return;
@@ -200,8 +227,7 @@ public class AssignEnquiryFacade {
 
             // Login as agency service account (room creator)
             String agencyToken =
-                sessionRoomGateway.loginUser(
-                    agencyMatrixUsername, agencyCredentials.getMatrixPassword());
+                sessionRoomGateway.loginAsUser(agencyCredentials.getMatrixUserId());
 
             if (isBlank(agencyToken)) {
               log.error(
@@ -318,7 +344,7 @@ public class AssignEnquiryFacade {
                 session.getId(), user.getMatrixUserId(), consultant.getMatrixUserId()));
       }
     } catch (Exception e) {
-      rollbackSessionUpdate(session);
+      rollbackSessionUpdate(session, departmentBound);
       log.error(
           "Matrix room creation failed for session: {}, rolling back assignment",
           session.getId(),
@@ -334,8 +360,12 @@ public class AssignEnquiryFacade {
         session.getUser(), consultant, TenantContext.getCurrentTenantData());
   }
 
-  private void rollbackSessionUpdate(Session session) {
+  private void rollbackSessionUpdate(Session session, boolean departmentBound) {
     if (nonNull(session)) {
+      if (departmentBound) {
+        // The enquiry returns to the queue unaccepted, so it no longer belongs to a department.
+        session.setAgencyId(null);
+      }
       sessionService.updateConsultantAndStatusForSession(session, null, NEW);
     }
   }

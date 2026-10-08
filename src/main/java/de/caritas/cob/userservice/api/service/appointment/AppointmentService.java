@@ -165,7 +165,7 @@ public class AppointmentService {
   private void addTechnicalUserHeaders(ApiClient apiClient) {
     var techUser = identityClientConfig.getTechnicalUser();
     var identityLogin =
-        identityAuthentication.login(techUser.getUsername(), techUser.getPassword());
+        identityAuthentication.loginService(techUser.getClientId(), techUser.getClientSecret());
     var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
     tenantHeaderSupplier.addTenantHeader(headers);
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
