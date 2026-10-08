@@ -1001,7 +1001,12 @@ class CaseHandoverServiceTest {
         123L, "COUNSELLOR_IS_ILL", "Client disclosed sensitive information.");
 
     verify(matrixSessionSystemMessageService)
-        .postCaseHandoverGrantedMessage(eq(session), anyString(), description.capture());
+        .postCaseHandoverGrantedMessage(
+            eq(session),
+            anyString(),
+            description.capture(),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
     assertEquals(expectedDescription, description.getValue());
     verify(eventNotificationService)
         .createEvent(
@@ -1019,6 +1024,25 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void requestAccess_persistsGrantedRequestConsentModeAndAccessType() {
+    when(caseHandoverRequestRepository.save(any(CaseHandoverRequest.class)))
+        .thenAnswer(
+            invocation -> {
+              CaseHandoverRequest saved = invocation.getArgument(0);
+              saved.setId(42L);
+              return saved;
+            });
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Internal reason.");
+    var metadata =
+        ArgumentCaptor.forClass(MatrixSessionSystemMessageService.GrantedAccessMetadata.class);
+    verify(matrixSessionSystemMessageService)
+        .postCaseHandoverGrantedMessage(eq(session), anyString(), anyString(), metadata.capture());
+    assertEquals(42L, metadata.getValue().requestId());
+    assertEquals(CaseHandoverConsentMode.NONE, metadata.getValue().clientConsent());
+    assertEquals(CaseHandoverRequest.AccessType.TAKEOVER, metadata.getValue().accessType());
+  }
+
+  @Test
   void requestAccess_fallsBackToGermanClientCopyWhenLanguageIsMissing() {
     session.setLanguageCode(null);
     when(eventNotificationService.buildCaseHandoverParams(
@@ -1033,7 +1057,10 @@ class CaseHandoverServiceTest {
             eq(session),
             eq("Requesting Counsellor"),
             eq(
-                "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter."));
+                "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt"
+                    + " weiter."),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
     verify(eventNotificationService)
         .createEvent(
             eq("asker"),
@@ -1056,9 +1083,15 @@ class CaseHandoverServiceTest {
     caseHandoverService.requestAccess(123L, reasonCode, "Client disclosed sensitive information.");
 
     verify(matrixSessionSystemMessageService)
-        .postCaseHandoverGrantedMessage(eq(session), anyString(), description.capture());
+        .postCaseHandoverGrantedMessage(
+            eq(session),
+            anyString(),
+            description.capture(),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
     assertEquals(
-        "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.",
+        "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt"
+            + " weiter.",
         description.getValue());
   }
 
@@ -1341,7 +1374,9 @@ class CaseHandoverServiceTest {
         .postCaseHandoverGrantedMessage(
             org.mockito.ArgumentMatchers.eq(session),
             org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.contains("deinen Fall übernommen"));
+            org.mockito.ArgumentMatchers.contains("deinen Fall übernommen"),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
   }
 
   @Test
@@ -1908,7 +1943,9 @@ class CaseHandoverServiceTest {
         .postCaseHandoverGrantedMessage(
             org.mockito.ArgumentMatchers.eq(session),
             org.mockito.ArgumentMatchers.eq("Requesting Counsellor"),
-            description.capture());
+            description.capture(),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
     assertTrue(description.getValue().contains("zeitlich begrenzten Einblick"));
     assertTrue(description.getValue().contains("3 Stunden"));
     assertTrue(description.getValue().contains("bleibt für dich zuständig"));
@@ -2214,7 +2251,12 @@ class CaseHandoverServiceTest {
     ArgumentCaptor<String> advisorName = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<String> description = ArgumentCaptor.forClass(String.class);
     verify(matrixSessionSystemMessageService)
-        .postCaseHandoverGrantedMessage(eq(session), advisorName.capture(), description.capture());
+        .postCaseHandoverGrantedMessage(
+            eq(session),
+            advisorName.capture(),
+            description.capture(),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
 
     // The username is what the Matrix ID in the same room already exposes.
     assertEquals("beraterin1", advisorName.getValue());
@@ -2230,7 +2272,12 @@ class CaseHandoverServiceTest {
     caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Illness cover.");
 
     verify(matrixSessionSystemMessageService)
-        .postCaseHandoverGrantedMessage(eq(session), eq("Frau M."), anyString());
+        .postCaseHandoverGrantedMessage(
+            eq(session),
+            eq("Frau M."),
+            anyString(),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
   }
 
   private Consultant consultant(String id, String displayName) {

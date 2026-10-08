@@ -22,3 +22,10 @@ The centre's eligibility and denial rules run first. The new choice only strengt
 Existing pending/granted requests keep their frozen decision and consent policy. Changing this preference neither approves them, declines them nor revokes access. Existing approval/revocation paths stay responsible for the individual request. LiveChat, internal groups and self-help rooms do not expose this setting.
 
 Source/API regressions and local database roundtrips are separate from merged deployment, real Dev persistence/access, received mail and human acceptance.
+
+
+### Persisted grant event metadata
+
+`CASE_HANDOVER_GRANTED` Matrix system messages retain their existing display name and localized description. New events also carry a `handover` object with the saved positive `requestId`, `clientConsent` (`NONE`, `OPT_IN`, `OPT_OUT`), and `accessType` (`TAKEOVER`, `CO_ACCESS`). This is captured from the granted request when the server emits the event; the client never reconstructs a past policy from current tenant settings. No internal reason, explanation, or policy authority is included.
+
+The NONE explanation is passive and optional, with no request controls and no automatic notification invitation. Completed takeover copy remains completed takeover copy. Legacy events or invalid/missing metadata retain the description-only rendering. A manual notification shortcut respects the conversation-type channel permissions and opens the existing independent setup message.

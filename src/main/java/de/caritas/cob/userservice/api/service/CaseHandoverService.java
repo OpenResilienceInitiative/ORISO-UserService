@@ -1537,7 +1537,7 @@ public class CaseHandoverService {
                                     request.getMaxAccessDurationMinutes(),
                                     resolveSessionLanguage(session)))
                         : renderClientCopy(clientCopy.grantedDescription(), requesterName));
-    postGrantedChatSystemMessage(session, requesterName, clientDescription);
+    postGrantedChatSystemMessage(session, requesterName, clientDescription, request);
     // #1010 task 1a: the explanation is counsellor-written free text that can reference case
     // content. It is no longer copied into the notification, which kept it in plaintext for good;
     // the handover-request API serves it on demand instead.
@@ -1590,10 +1590,14 @@ public class CaseHandoverService {
    * session's Matrix room. Emission failures must never fail the handover itself.
    */
   private void postGrantedChatSystemMessage(
-      Session session, String requesterName, String description) {
+      Session session, String requesterName, String description, CaseHandoverRequest request) {
     try {
       matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
-          session, requesterName, description);
+          session,
+          requesterName,
+          description,
+          new MatrixSessionSystemMessageService.GrantedAccessMetadata(
+              request.getId(), request.getClientConsent(), effectiveAccessType(request)));
     } catch (RuntimeException exception) {
       log.warn(
           "Case-handover system message for session {} could not be posted: {}",
