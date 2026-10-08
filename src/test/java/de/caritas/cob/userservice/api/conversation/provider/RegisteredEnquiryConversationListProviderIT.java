@@ -152,7 +152,7 @@ public class RegisteredEnquiryConversationListProviderIT {
             .findFirst()
             .orElseThrow();
     draft.setEnquiryMessageDate(null);
-    sessionRepository.save(draft);
+    draft = sessionRepository.save(draft);
     PageableListRequest request = PageableListRequest.builder().count(2).offset(0).build();
 
     ConsultantSessionListResponseDTO before =
