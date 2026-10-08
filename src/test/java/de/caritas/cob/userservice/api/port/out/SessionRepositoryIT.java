@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.model.SessionData;
 import de.caritas.cob.userservice.api.model.SessionData.SessionDataType;
 import de.caritas.cob.userservice.api.model.User;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -26,6 +27,8 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -39,6 +42,7 @@ class SessionRepositoryIT {
   @Autowired private UserRepository userRepository;
 
   @Autowired private EntityManager entityManager;
+  @Autowired private EntityManagerFactory entityManagerFactory;
 
   private User user;
 
@@ -51,6 +55,66 @@ class SessionRepositoryIT {
     }
     session = null;
     user = null;
+  }
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void staleSessionUpdatesPreserveTheIndependentPreferenceAndUnrelatedData() {
+    givenAUser();
+    givenValidSession();
+    session = underTest.save(session);
+    Long id = session.getId();
+    try (var staleWriter = entityManagerFactory.createEntityManager();
+        var preferenceWriter = entityManagerFactory.createEntityManager()) {
+      var stale = staleWriter.find(Session.class, id);
+      preferenceWriter.getTransaction().begin();
+      preferenceWriter.find(Session.class, id).setAlwaysAskBeforeAdditionalAccess(true);
+      preferenceWriter.getTransaction().commit();
+      staleWriter.getTransaction().begin();
+      stale.setPostcode("54321");
+      staleWriter.getTransaction().commit();
+    }
+    var after = underTest.findById(id).orElseThrow();
+    assertTrue(after.isAlwaysAskBeforeAdditionalAccess());
+    assertEquals("54321", after.getPostcode());
+    try (var stalePreferenceWriter = entityManagerFactory.createEntityManager();
+        var unrelatedWriter = entityManagerFactory.createEntityManager()) {
+      var stale = stalePreferenceWriter.find(Session.class, id);
+      unrelatedWriter.getTransaction().begin();
+      unrelatedWriter.find(Session.class, id).setPostcode("12345");
+      unrelatedWriter.getTransaction().commit();
+      stalePreferenceWriter.getTransaction().begin();
+      stale.setAlwaysAskBeforeAdditionalAccess(false);
+      stalePreferenceWriter.getTransaction().commit();
+    }
+    var finalState = underTest.findById(id).orElseThrow();
+    assertFalse(finalState.isAlwaysAskBeforeAdditionalAccess());
+    assertEquals("12345", finalState.getPostcode());
+    session = finalState;
+  }
+
+  @Test
+  void standingAdditionalAccessPreferenceSurvivesClearingThePersistenceContext() {
+    givenAUser();
+    givenValidSession();
+    var saved = underTest.save(session);
+    entityManager.flush();
+    Long id = saved.getId();
+    entityManager.clear();
+    assertFalse(underTest.findById(id).orElseThrow().isAlwaysAskBeforeAdditionalAccess());
+    var reloaded = underTest.findById(id).orElseThrow();
+    reloaded.setAlwaysAskBeforeAdditionalAccess(true);
+    underTest.save(reloaded);
+    entityManager.flush();
+    entityManager.clear();
+    assertTrue(underTest.findById(id).orElseThrow().isAlwaysAskBeforeAdditionalAccess());
+    var enabled = underTest.findById(id).orElseThrow();
+    enabled.setAlwaysAskBeforeAdditionalAccess(false);
+    underTest.save(enabled);
+    entityManager.flush();
+    entityManager.clear();
+    assertFalse(underTest.findById(id).orElseThrow().isAlwaysAskBeforeAdditionalAccess());
+    session = underTest.findById(id).orElseThrow();
   }
 
   @Test

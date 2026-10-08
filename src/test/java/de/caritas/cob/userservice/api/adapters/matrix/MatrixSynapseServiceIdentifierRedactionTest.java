@@ -208,6 +208,41 @@ class MatrixSynapseServiceIdentifierRedactionTest {
     assertThat(logMessages()).anySatisfy(m -> assertThat(m).contains(pseudonym));
   }
 
+  @Test
+  void aFailedFeedSignalDoesNotLogTheRecipientOrTheServerErrorIdentifier() {
+    var config = new MatrixConfig();
+    config.setApiUrl(MATRIX_BASE_URL);
+    config.setAdminUsername("signal-admin");
+    config.setAdminPassword("signal-admin-password");
+    service =
+        new MatrixSynapseService(
+            config,
+            restTemplate,
+            restTemplate,
+            mock(MatrixRoomClient.class),
+            mock(MatrixMediaClient.class),
+            redactor);
+    var recipient = "@" + USERNAME + ":matrix.example.com";
+    mockServer
+        .expect(requestTo(MATRIX_BASE_URL + "/_matrix/client/r0/login"))
+        .andRespond(
+            withSuccess("{\"access_token\":\"signal-admin-token\"}", MediaType.APPLICATION_JSON));
+    mockServer
+        .expect(
+            requestTo(
+                org.hamcrest.Matchers.startsWith(
+                    MATRIX_BASE_URL + "/_matrix/client/v3/sendToDevice/")))
+        .andRespond(withServerError().body("Recipient " + recipient + " is unavailable"));
+
+    assertThat(service.sendToDeviceMessage("org.oriso.feed.updated", recipient, java.util.Map.of()))
+        .isFalse();
+
+    mockServer.verify();
+    assertThat(logMessages()).isNotEmpty().allSatisfy(m -> assertThat(m).doesNotContain(USERNAME));
+    assertThat(logMessages())
+        .anySatisfy(m -> assertThat(m).contains(redactor.pseudonym(recipient)));
+  }
+
   /**
    * A Matrix localpart may contain {@code +}, and form-decoding would turn it into a space — one
    * person with two pseudonyms, in the one place an operator looks for the correlation.

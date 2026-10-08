@@ -77,6 +77,7 @@ import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.BasicConsultingTypeResponseDTO;
@@ -155,7 +156,7 @@ import org.springframework.web.util.UriTemplateHandler;
       "identity.otp-allowed-for-consultants=true"
     })
 @Transactional
-class UserControllerE2EIT {
+class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
     org.mockito.Mockito.when(
@@ -307,7 +308,8 @@ class UserControllerE2EIT {
   @BeforeEach
   public void setUp() throws MatrixCreateUserException {
     dpaOwner =
-        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, 1L);
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
+            ownerFactory, 1L);
     MatrixCreateUserResponseDTO matrixCreateUserResponse = new MatrixCreateUserResponseDTO();
     matrixCreateUserResponse.setUserId("@test-user:matrix.example.org");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
@@ -740,6 +742,37 @@ class UserControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void sessionListShouldReturnTheAskersStoredAnimalAndClearIt() throws Exception {
+    givenABearerToken();
+    givenAValidConsultantWithId("34c3x5b1-0677-4fd2-a7ea-56a71aefd099");
+    givenConsultingTypeServiceResponse();
+    givenAValidTopicServiceResponse();
+    var session = sessionRepository.findById(1215L).orElseThrow();
+    var asker = session.getUser();
+    asker.setAvatarId("fox");
+    userRepository.save(asker);
+    mockMvc
+        .perform(
+            get("/users/sessions/consultants?status=2&count=15&filter=all&offset=0")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("sessions[0].user.avatarId", is("fox")));
+    asker.setAvatarId(null);
+    userRepository.save(asker);
+    mockMvc
+        .perform(
+            get("/users/sessions/consultants?status=2&count=15&filter=all&offset=0")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("sessions[0].user.avatarId", is(nullValue())));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
   void getSessionsForAuthenticatedConsultantShouldRespondWithBadRequestIfOffsetNegative()
       throws Exception {
     givenABearerToken();
@@ -1089,6 +1122,108 @@ class UserControllerE2EIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("liveChatViaSidebar", is(nullValue())));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void patchUserDataShouldStoreAndClearTheAdviceSeekersAnimal() throws Exception {
+    givenABearerToken();
+    givenAValidUser();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
+
+    patchUserData("{\"avatarId\": \"magpie\"}");
+    expectAvatar("avatarId", is("magpie"));
+
+    patchUserData("{\"avatarId\": \"\"}");
+    expectAvatar("avatarId", is(nullValue()));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchUserDataShouldStoreAndClearTheConsultantsMotif() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+
+    patchUserData("{\"avatarKind\": \"ICON\", \"avatarId\": \"magpie\"}");
+    expectAvatar("avatarKind", is("ICON"));
+    expectAvatar("avatarId", is("magpie"));
+
+    patchUserData("{\"avatarKind\": \"INITIALS\", \"avatarId\": \"\"}");
+    expectAvatar("avatarKind", is("INITIALS"));
+    expectAvatar("avatarId", is(nullValue()));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchUserDataShouldDistinguishStandardFromExplicitInitialsAndKeepOtherAccountsUnchanged()
+      throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    var other =
+        StreamSupport.stream(consultantRepository.findAll().spliterator(), false)
+            .filter(candidate -> !candidate.getId().equals(consultant.getId()))
+            .findFirst()
+            .orElseThrow();
+    other.setAvatarKind(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON);
+    other.setAvatarId("owl");
+    consultantRepository.save(other);
+    patchUserData(
+        "{\"avatarKind\":\"ICON\",\"avatarId\":\"magpie\",\"id\":\"" + other.getId() + "\"}");
+    expectAvatar("avatarId", is("magpie"));
+    assertEquals("owl", consultantRepository.findById(other.getId()).orElseThrow().getAvatarId());
+    patchUserData("{\"walkThroughEnabled\":true}");
+    expectAvatar("avatarId", is("magpie"));
+    patchUserData("{\"avatarId\":\"\"}");
+    expectAvatar("avatarKind", is(nullValue()));
+    expectAvatar("avatarId", is(nullValue()));
+    patchUserData("{\"avatarKind\":\"INITIALS\",\"avatarId\":\"\"}");
+    expectAvatar("avatarKind", is("INITIALS"));
+    patchUserData("{\"avatarId\":\"\"}");
+    expectAvatar("avatarKind", is(nullValue()));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void patchUserDataShouldRejectAnAvatarThatIsNotABundledId() throws Exception {
+    givenAValidUser();
+
+    mockMvc
+        .perform(
+            patch("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"avatarId\": \"https://example.com/me.png\"}")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest());
+  }
+
+  private void patchUserData(String body) throws Exception {
+    mockMvc
+        .perform(
+            patch("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isNoContent());
+  }
+
+  private void expectAvatar(String field, org.hamcrest.Matcher<?> matcher) throws Exception {
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath(field, matcher));
   }
 
   private void expectLiveChatViaSidebar(boolean expected) throws Exception {
@@ -1762,6 +1897,18 @@ class UserControllerE2EIT {
     assertNotNull(savedUser);
     assertEquals("de", savedUser.getLanguageCode().toString());
 
+    Object[] inactivity =
+        (Object[])
+            entityManager
+                .createNativeQuery(
+                    "SELECT tenant_id,assigned_months,revision,status FROM account_inactivity WHERE identity_id=:identity")
+                .setParameter("identity", savedUser.getUserId())
+                .getSingleResult();
+    assertEquals(1L, ((Number) inactivity[0]).longValue());
+    assertEquals(24, ((Number) inactivity[1]).intValue());
+    assertEquals(0L, ((Number) inactivity[2]).longValue());
+    assertEquals("ACTIVE", inactivity[3]);
+
     var session = sessionRepository.findByUserUserId(savedUser.getUserId()).get(0);
     assertFalse(session.getIsConsultantDirectlySet());
   }
@@ -2134,6 +2281,8 @@ class UserControllerE2EIT {
     userDTO.setReferer("validRef");
     userDTO.setGroupChatId(null);
     userDTO.setGroupChatInviteToken(null);
+    // EasyRandom would otherwise ask for a temporary account at random.
+    userDTO.setTemporary(false);
   }
 
   private static final String GROUP_INVITE_TOKEN = "q2Vx8mK4TzJ1bR7nW0cY5sLh9dFg3aPe";
@@ -2575,6 +2724,9 @@ class UserControllerE2EIT {
     // Pinned: a random true is rejected with 400 for fixtures without a profile email, and which
     // value the shared EasyRandom draws shifts whenever PatchUserDTO gains a field.
     patchUserDTO.setMagicLinkLoginEnabled(false);
+    // A random string is no avatar id (400), and the shared fixtures keep their avatar (#1240).
+    patchUserDTO.setAvatarKind(null);
+    patchUserDTO.setAvatarId(null);
 
     var dailyEnquiries = new EmailToggle();
     dailyEnquiries.setName(EmailType.DAILY_ENQUIRY);

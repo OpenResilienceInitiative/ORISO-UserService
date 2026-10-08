@@ -363,6 +363,26 @@ class MatrixSessionSystemMessageServiceTest {
   }
 
   @Test
+  void grantedMessage_retainsImmutableRequestModeWithoutInternalExplanation() {
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker.username");
+    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(anyString(), anyString(), eq(ACCESS_TOKEN)))
+        .thenReturn(Map.of("event_id", "$evt"));
+    var metadata =
+        new MatrixSessionSystemMessageService.GrantedAccessMetadata(
+            42L,
+            de.caritas.cob.userservice.api.model.CaseHandoverConsentMode.NONE,
+            de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.TAKEOVER);
+    matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
+        session, "New Advisor", "The counsellor has taken over.", metadata);
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSynapseService).sendMessage(eq(MATRIX_ROOM_ID), body.capture(), eq(ACCESS_TOKEN));
+    assertThat(body.getValue())
+        .contains("\"requestId\":42", "\"clientConsent\":\"NONE\"", "\"accessType\":\"TAKEOVER\"")
+        .doesNotContain("reasonLabel", "explanation", "policyAuthority");
+  }
+
+  @Test
   void postUserLeftChatMessage_shouldNotSendMessage_whenAgencyCredentialsEmpty() {
     var session = sessionWithoutHumanMatrixIds();
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))

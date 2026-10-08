@@ -220,6 +220,7 @@ public class SessionMapper {
 
     var sessionUserDto = new SessionUserDTO();
     sessionUserDto.setId(session.getUser().getUserId());
+    sessionUserDto.setAvatarId(session.getUser().getAvatarId());
     sessionUserDto.setUsername(
         new UsernameTranscoder().decodeUsername(session.getUser().getUsername()));
     sessionUserDto.setDeleted(session.getUser().getDeleteDate() != null);
@@ -241,6 +242,9 @@ public class SessionMapper {
             .id(consultant.getId())
             .firstName(consultant.getFirstName())
             .lastName(consultant.getLastName())
+            .avatarKind(
+                consultant.getAvatarKind() == null ? null : consultant.getAvatarKind().name())
+            .avatarId(consultant.getAvatarId())
         : null;
   }
 
@@ -296,7 +300,9 @@ public class SessionMapper {
             .id(sessionConsultant.getId())
             .firstName(sessionConsultant.getFirstName())
             .lastName(sessionConsultant.getLastName())
-            .displayName(sessionConsultant.getDisplayName());
+            .displayName(sessionConsultant.getDisplayName())
+            .avatarKind(sessionConsultant.getAvatarKind())
+            .avatarId(sessionConsultant.getAvatarId());
     return response.consultant(consultant.build());
   }
 }

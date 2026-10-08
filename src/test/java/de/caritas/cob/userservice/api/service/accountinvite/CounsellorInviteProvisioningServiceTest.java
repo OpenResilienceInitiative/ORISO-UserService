@@ -87,10 +87,10 @@ class CounsellorInviteProvisioningServiceTest {
     when(agencyFacts.find(275L))
         .thenReturn(Optional.of(new AgencyFacts.Agency(275L, 79L, false, List.of())));
     var technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical-user");
-    technicalUser.setPassword("technical-password");
+    technicalUser.setClientId("technical-user");
+    technicalUser.setClientSecret("technical-password");
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.login("technical-user", "technical-password"))
+    when(identityAuthentication.loginService("technical-user", "technical-password"))
         .thenReturn(new IdentityLogin("technical-token", 60, 60, null));
     when(accountInviteRepository.save(any(AccountInvite.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -387,7 +387,7 @@ class CounsellorInviteProvisioningServiceTest {
   void aFailedTechnicalLoginMarksTheInviteFailedInsteadOfLeavingItInProgress() {
     AccountInvite invite = activeCounsellorInvite();
     when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
-    when(identityAuthentication.login("technical-user", "technical-password"))
+    when(identityAuthentication.loginService("technical-user", "technical-password"))
         .thenThrow(new IllegalStateException("identity provider unavailable"));
 
     assertThatThrownBy(

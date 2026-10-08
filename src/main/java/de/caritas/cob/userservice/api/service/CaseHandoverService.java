@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.model.CaseHandoverRequest.Status;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantTopic;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionTopic;
@@ -32,6 +33,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
+import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
 import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
@@ -606,10 +608,63 @@ public class CaseHandoverService {
         .total(matchingCandidates.size());
   }
 
+  @Value("${multitenancy.enabled:true}")
+  private boolean preferenceMultitenancyEnabled = true;
+
+  public record ConsentPreference(Long sessionId, boolean alwaysAskBeforeAdditionalAccess) {}
+
+  @Transactional(readOnly = true)
+  public ConsentPreference getConsentPreference(Long sessionId) {
+    Session session = getSession(sessionId);
+    verifyPreferenceOwner(session);
+    return new ConsentPreference(session.getId(), session.isAlwaysAskBeforeAdditionalAccess());
+  }
+
+  @Transactional
+  public ConsentPreference updateConsentPreference(Long sessionId, boolean alwaysAsk) {
+    Session session = getSessionForUpdate(sessionId);
+    verifyPreferenceOwner(session);
+    session.setAlwaysAskBeforeAdditionalAccess(alwaysAsk);
+    Session saved = sessionRepository.save(session);
+    return new ConsentPreference(saved.getId(), saved.isAlwaysAskBeforeAdditionalAccess());
+  }
+
+  private void verifyPreferenceOwner(Session session) {
+    User user = userAccountService.retrieveValidatedUser();
+    Long tenantId = TenantContext.getCurrentTenant();
+    boolean sessionTenantMatches =
+        Objects.equals(tenantId, session.getTenantId())
+            || (Long.valueOf(1L).equals(tenantId) && session.getTenantId() == null);
+    if (user == null
+        || user.getUserId() == null
+        || session.getUser() == null
+        || !user.getUserId().equals(session.getUser().getUserId())
+        || (preferenceMultitenancyEnabled
+            && (tenantId == null
+                || tenantId <= 0
+                || !sessionTenantMatches
+                || !tenantId.equals(user.getTenantId())))) {
+      throw new ForbiddenException(
+          "Current user is not allowed to change this conversation preference");
+    }
+    if (AskerNotificationChannelPolicy.conversationType(session)
+        != ConversationType.AGENCY_COUNSELLING) {
+      throw new ForbiddenException(
+          "Additional access preference is only available for agency counselling");
+    }
+  }
+
+  private Session getSessionForUpdate(Long sessionId) {
+    return sessionRepository
+        .findByIdForUpdate(sessionId)
+        .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+  }
+
   @Transactional
   public CaseHandoverStatus requestAccess(Long sessionId, String reasonCode, String explanation) {
     Consultant requester = retrieveCurrentConsultant();
-    Session session = getSession(sessionId);
+    // Order preference saves and creation so every new request freezes one committed choice.
+    Session session = getSessionForUpdate(sessionId);
     verifyEligibleForSession(session, requester);
 
     if (isActiveOwner(session, requester)) {
@@ -634,7 +689,12 @@ public class CaseHandoverService {
           session, requester, reason, normalizedExplanation, OUTCOME_ACCESS_DENIED, now);
     }
 
-    CaseHandoverConsentMode clientConsent = effectiveClientConsent(reason);
+    CaseHandoverConsentMode clientConsent =
+        session.isAlwaysAskBeforeAdditionalAccess()
+                && AskerNotificationChannelPolicy.conversationType(session)
+                    == ConversationType.AGENCY_COUNSELLING
+            ? CaseHandoverConsentMode.OPT_IN
+            : effectiveClientConsent(reason);
     boolean clientConsentRequired = clientConsent == CaseHandoverConsentMode.OPT_IN;
     Status status =
         switch (clientConsent) {
@@ -967,6 +1027,7 @@ public class CaseHandoverService {
     if (user != null) {
       SessionUserDTO userDto = new SessionUserDTO();
       userDto.setId(user.getUserId());
+      userDto.setAvatarId(user.getAvatarId());
       userDto.setUsername(decodeUsername(user.getUsername()));
       userDto.setDeleted(user.getDeleteDate() != null);
       dto.user(userDto);
@@ -981,7 +1042,10 @@ public class CaseHandoverService {
               .lastName(consultant.getLastName())
               .username(decodeUsername(consultant.getUsername()))
               // Handover candidates are shown to colleagues (internal surface, #996).
-              .displayName(decodeUsername(consultant.getInternalDisplayNameOrFallback())));
+              .displayName(decodeUsername(consultant.getInternalDisplayNameOrFallback()))
+              .avatarKind(
+                  consultant.getAvatarKind() == null ? null : consultant.getAvatarKind().name())
+              .avatarId(consultant.getAvatarId()));
     }
 
     return dto;
@@ -1477,7 +1541,7 @@ public class CaseHandoverService {
                                     request.getMaxAccessDurationMinutes(),
                                     resolveSessionLanguage(session)))
                         : renderClientCopy(clientCopy.grantedDescription(), requesterName));
-    postGrantedChatSystemMessage(session, requesterName, clientDescription);
+    postGrantedChatSystemMessage(session, requesterName, clientDescription, request);
     // #1010 task 1a: the explanation is counsellor-written free text that can reference case
     // content. It is no longer copied into the notification, which kept it in plaintext for good;
     // the handover-request API serves it on demand instead.
@@ -1530,10 +1594,14 @@ public class CaseHandoverService {
    * session's Matrix room. Emission failures must never fail the handover itself.
    */
   private void postGrantedChatSystemMessage(
-      Session session, String requesterName, String description) {
+      Session session, String requesterName, String description, CaseHandoverRequest request) {
     try {
       matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
-          session, requesterName, description);
+          session,
+          requesterName,
+          description,
+          new MatrixSessionSystemMessageService.GrantedAccessMetadata(
+              request.getId(), request.getClientConsent(), effectiveAccessType(request)));
     } catch (RuntimeException exception) {
       log.warn(
           "Case-handover system message for session {} could not be posted: {}",

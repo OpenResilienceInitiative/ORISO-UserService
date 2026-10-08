@@ -107,6 +107,15 @@ public class UserDTO implements UserRegistrationDTO {
 
   private boolean newUserAccount;
 
+  /**
+   * "Join without an account" from a group invite link (FE#1499): nobody can log in again once the
+   * browser is closed, so the account is deleted after {@code
+   * user.temporary.deleteWorkflow.maxAge}.
+   */
+  @ApiModelProperty(required = false, example = "true")
+  @JsonProperty("temporary")
+  private boolean temporary;
+
   @ApiModelProperty(required = false, example = "\"1\"", position = 12)
   @JsonProperty("tenantId")
   private Long tenantId;

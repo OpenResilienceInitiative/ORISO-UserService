@@ -56,7 +56,7 @@ public class SupervisorAddedEmailNotificationService {
       String accessToken) {
     Long tenantId =
         tenantData != null ? tenantData.getTenantId() : resolveTenantId(sessionUser, supervisor);
-    var route = resolveRoute(tenantId);
+    var route = resolveRoute(tenantId, TenantSystemEmailDelivery.Purpose.SUPERVISOR_ADDED);
     if (route == null) {
       return;
     }
@@ -109,7 +109,7 @@ public class SupervisorAddedEmailNotificationService {
       String accessToken) {
     Long tenantId =
         tenantData != null ? tenantData.getTenantId() : resolveTenantId(sessionUser, supervisor);
-    var route = resolveRoute(tenantId);
+    var route = resolveRoute(tenantId, TenantSystemEmailDelivery.Purpose.SUPERVISOR_REMOVED);
     if (route == null) {
       return;
     }
@@ -163,7 +163,7 @@ public class SupervisorAddedEmailNotificationService {
       return;
     }
     OrisoEmailRenderer.Tone tone = OrisoEmailRenderer.Tone.of(languageCode);
-    var route = resolveRoute(tenantId);
+    var route = resolveRoute(tenantId, TenantSystemEmailDelivery.Purpose.EMAIL_ADDRESS_CHANGED);
     if (route == null) {
       return;
     }
@@ -237,12 +237,17 @@ public class SupervisorAddedEmailNotificationService {
     }
   }
 
-  private TenantSystemEmailRouteService.Route resolveRoute(Long tenantId) {
+  private TenantSystemEmailRouteService.Route resolveRoute(
+      Long tenantId, TenantSystemEmailDelivery.Purpose purpose) {
     if (tenantId == null) {
       return null;
     }
     try {
-      return emailRoutes.resolve(tenantId).orElse(null);
+      // Account-security notices must not be muted by the tenant's notification preference.
+      // The always-sent transport still validates explicit OWN settings without a fallback.
+      return purpose == TenantSystemEmailDelivery.Purpose.EMAIL_ADDRESS_CHANGED
+          ? emailRoutes.resolveTransport(tenantId)
+          : emailRoutes.resolve(tenantId).orElse(null);
     } catch (TenantSystemEmailRouteService.ConfigurationException ex) {
       log.error("System notification configuration for tenant {}: {}", tenantId, ex.getMessage());
       return null;

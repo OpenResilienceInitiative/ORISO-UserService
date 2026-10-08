@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -51,6 +52,7 @@ import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup;
 import java.time.Instant;
 import java.util.List;
@@ -78,7 +80,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
-class CreateAdminServiceIT {
+class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
 
   private static final String VALID_USERNAME = "validUsername";
   private static final String VALID_EMAIL_ADDRESS = "valid@emailaddress.de";
@@ -98,6 +100,7 @@ class CreateAdminServiceIT {
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
+        IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
@@ -226,6 +229,7 @@ class CreateAdminServiceIT {
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isNull();
     assertThat(admin.getId()).isNotNull();
+    assertDefaultInactivityPolicy(admin.getId());
     assertThat(admin.getType()).isEqualTo(AdminType.AGENCY);
     assertThat(admin.getUsername()).isNotNull();
     assertThat(admin.getFirstName()).isNotNull();
