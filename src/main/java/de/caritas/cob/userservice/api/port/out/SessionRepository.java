@@ -13,9 +13,11 @@ import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface SessionRepository extends CrudRepository<Session, Long> {
 
@@ -29,6 +31,30 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT session FROM Session session WHERE session.id = :sessionId")
   Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
+
+  /**
+   * Refresh only the timestamp of a still-waiting enquiry whose heartbeat is due.
+   *
+   * <p>The database checks eligibility and writes under the same row lock used by assignment.
+   * Updating only updateDate prevents a stale heartbeat from overwriting a consultant or status.
+   *
+   * @return one if refreshed, otherwise zero (missing, assigned, no longer waiting, or throttled)
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      """
+      UPDATE Session session SET session.updateDate = :now
+      WHERE session.id = :sessionId
+        AND session.status = :waitingStatus
+        AND session.consultant IS NULL
+        AND (session.updateDate IS NULL OR session.updateDate < :cutoff)
+      """)
+  int touchLiveChatQueueHeartbeat(
+      @Param("sessionId") Long sessionId,
+      @Param("waitingStatus") SessionStatus waitingStatus,
+      @Param("now") LocalDateTime now,
+      @Param("cutoff") LocalDateTime cutoff);
 
   /**
    * Find a {@link Session} by a consultant id and a session status.
@@ -208,6 +234,18 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
 
   Page<Session> findAll(Pageable pageable);
 
+  /** {@code agencyIds} must not be empty. */
+  Page<Session> findByAgencyIdIn(Set<Long> agencyIds, Pageable pageable);
+
+  Page<Session> findByUserUserIdAndAgencyIdIn(
+      String userId, Set<Long> agencyIds, Pageable pageable);
+
+  Page<Session> findByConsultantIdAndAgencyIdIn(
+      String consultantId, Set<Long> agencyIds, Pageable pageable);
+
+  Page<Session> findByConsultingTypeIdAndAgencyIdIn(
+      int consultingTypeId, Set<Long> agencyIds, Pageable pageable);
+
   /**
    * Find the {@link Session}s by consulting type, registration type and pageable.
    *
@@ -284,10 +322,9 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * clears that field for anonymous registrations on purpose, so the in-chat consent gate fires
    * (ADR-018 §9, #927). Requiring it here made those two deliberate decisions cancel each other
    * out: every anonymous live-chat enquiry was invisible to every consultant, the asker clicked and
-   * nothing happened. Consent is taken at entry from the platform-level live-chat privacy notice —
-   * at that point no agency is bound yet, so there is no agency declaration to show — and {@link
-   * de.caritas.cob.userservice.api.facade.assignsession.AnonymousEnquiryConsentGuard} still blocks
-   * the <b>assignment</b> server-side, which is where special-category data starts flowing.
+   * nothing happened. Consent and missing-policy disclosure belong to the client entry flow. They
+   * must not hide an enquiry or block its assignment: the counselling centre is only confirmed by
+   * that assignment, so enforcing consent here would recreate the same cycle.
    */
   @Query(
       "SELECT s FROM Session s "

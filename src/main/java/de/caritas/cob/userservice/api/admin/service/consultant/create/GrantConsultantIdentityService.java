@@ -11,6 +11,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDT
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantResponseDTOBuilder;
 import de.caritas.cob.userservice.api.admin.service.consultant.TransactionalStep;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
@@ -20,6 +22,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionInfo;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -29,7 +32,9 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -56,6 +61,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 public class GrantConsultantIdentityService {
 
+  private final ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
   private static final String GRANT_CONSULTANT_IDENTITY = "grantConsultantIdentity";
 
   private final @NonNull AdminRepository adminRepository;
@@ -69,6 +75,8 @@ public class GrantConsultantIdentityService {
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
+  private final @NonNull AdminScope adminScope;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
@@ -83,12 +91,16 @@ public class GrantConsultantIdentityService {
   public ConsultantAdminResponseDTO grantConsultantIdentityToAdmin(
       String adminId, GrantConsultantIdentityDTO dto) {
 
+    // Looked up across tenants on purpose: an admin of another Träger must be refused (403) by the
+    // scope check below, not reported as unknown.
     var admin =
-        adminRepository
-            .findById(adminId)
+        TenantContext.supplyAcrossTenants(() -> adminRepository.findById(adminId))
             .orElseThrow(
                 () ->
                     new BadRequestException(String.format("Admin with id %s not found", adminId)));
+
+    adminScope.assertMay(Target.admin(admin.getId()));
+    adminScope.assertMay(Target.agencies(dto.getAgencyIds()));
 
     if (consultantRepository.findByIdAndDeleteDateIsNull(adminId).isPresent()) {
       throw new CustomValidationHttpStatusException(
@@ -101,14 +113,19 @@ public class GrantConsultantIdentityService {
           HttpStatusExceptionReason.CONSULTANT_IDENTITY_ALREADY_GRANTED, HttpStatus.CONFLICT);
     }
 
-    consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
-        dto.getTopicIds(), dto.getAgencyIds(), admin.getTenantId());
+    var topicIdsByAgencyId =
+        consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+            dto.getTopicIds(), dto.getAgencyIds(), admin.getTenantId());
 
+    var snapshot = chatRecoveryEnrollmentPolicyService.forNewConsultant(admin.getTenantId());
     assignKeycloakRoles(adminId, dto);
 
     String matrixUserId = createMatrixAccount(admin);
 
     var consultant = buildConsultant(admin, encodedUsername, dto, matrixUserId);
+    consultant.assignInitialTopics(dto.getTopicIds(), topicIdsByAgencyId);
+    consultant.setChatRecoveryMode(snapshot.mode());
+    consultant.setChatRecoveryPolicyRevision(snapshot.revision());
     saveConsultantOrRollback(adminId, dto, consultant);
 
     try {
@@ -136,20 +153,31 @@ public class GrantConsultantIdentityService {
   private String createMatrixAccount(de.caritas.cob.userservice.api.model.Admin admin) {
     try {
       var matrixPassword = userHelper.getRandomPassword();
+      // ADR-002 §2 / #1200: the Synapse displayname is readable by every member of a shared room
+      // via /joined_members, the advice seeker included — so it must never be the real name. An
+      // Admin carries no public display name of its own (nor does GrantConsultantIdentityDTO), so
+      // the resolver falls back to the username the Matrix ID already exposes. The rule is NOT
+      // repeated here: ConsultantDisplayNameResolver stays the only place that decides.
+      var matrixDisplayName =
+          consultantDisplayNameResolver.resolveMatrixDisplayName(null, admin.getUsername());
       var matrixUserId =
-          matrixUserClient.createUserId(
-              admin.getUsername(),
-              matrixPassword,
-              admin.getFirstName() + " " + admin.getLastName());
+          matrixUserClient.createUserId(admin.getUsername(), matrixPassword, matrixDisplayName);
       if (matrixUserId != null) {
         return matrixUserId;
       }
       log.warn(
-          "Matrix user creation response missing user_id while granting consultant identity to admin {}",
+          "Chat account provisioning answered without a user_id while granting consultant identity"
+              + " to admin {}; the consultant is created without a chat identity and must be"
+              + " repaired via POST /useradmin/consultants/{}/chat-identity (#1194)",
+          admin.getId(),
           admin.getId());
     } catch (Exception e) {
       log.error(
-          "Matrix user creation failed while granting consultant identity to admin {}, but continuing",
+          "Chat account provisioning failed while granting consultant identity to admin {};"
+              + " continuing without a chat identity. The consultant cannot be used for"
+              + " counselling until it is repaired via POST"
+              + " /useradmin/consultants/{}/chat-identity (#1194)",
+          admin.getId(),
           admin.getId(),
           e);
     }
@@ -182,6 +210,9 @@ public class GrantConsultantIdentityService {
             .teamConsultant(false)
             .matrixUserId(matrixUserId)
             .encourage2fa(true)
+            // Same kind of account as the admin create path, so it owes the same second factor.
+            // passwordChangeRequired stays false: no new password is chosen here.
+            .twoFactorRequired(true)
             .magicLinkLoginEnabled(false)
             .notifyEnquiriesRepeating(true)
             .notifyNewChatMessageFromAdviceSeeker(true)
@@ -189,13 +220,12 @@ public class GrantConsultantIdentityService {
             .languages(Set.of())
             .tenantId(admin.getTenantId())
             .status(ConsultantStatus.CREATED)
-            .walkThroughEnabled(true)
+            .walkThroughEnabled(false)
             .languageCode(LanguageCode.de)
             .notificationsEnabled(true)
             .notificationsSettings(serializeToJsonString(allActiveNotifications()))
             .build();
 
-    consultant.replaceTopics(dto.getTopicIds());
     return consultant;
   }
 

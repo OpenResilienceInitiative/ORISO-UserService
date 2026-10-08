@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.AssignChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateChatFacade;
@@ -31,6 +33,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
+import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -58,6 +61,7 @@ class UserChatControllerDelegateTest {
   @Mock private UserDtoMapper userDtoMapper;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private GroupChatFeatureGate groupChatFeatureGate;
+  @Mock private GroupChatPermissionService groupChatPermissionService;
 
   @InjectMocks private UserChatControllerDelegate delegate;
 
@@ -87,7 +91,7 @@ class UserChatControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
     assertThat(response.getBody()).isSameAs(createChatResponseDTO);
-    verify(groupChatFeatureGate).requireEnabled(consultant);
+    verify(groupChatFeatureGate).requireEnabled(consultant, chatDTO);
   }
 
   @Test
@@ -125,7 +129,7 @@ class UserChatControllerDelegateTest {
 
   @Test
   void assignChatShouldDelegateAndReturnOk() {
-    var response = delegate.assignChat("!group:matrix.example");
+    var response = delegate.assignChat("!group:matrix.example", null);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(assignChatFacade).assignChat("!group:matrix.example", authenticatedUser);
@@ -133,18 +137,18 @@ class UserChatControllerDelegateTest {
 
   @Test
   void assignChatDelegatesStableNumericSeriesIdentifier() {
-    var response = delegate.assignChat("1013");
+    var response = delegate.assignChat("1013", "link-token");
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(assignChatFacade).assignChat(1013L, authenticatedUser);
+    verify(assignChatFacade).assignChat(1013L, "link-token", authenticatedUser);
   }
 
   @Test
   void assignChatRejectsNumericSeriesIdentifierAboveLongRange() {
-    assertThatThrownBy(() -> delegate.assignChat("9223372036854775808"))
+    assertThatThrownBy(() -> delegate.assignChat("9223372036854775808", null))
         .isInstanceOf(BadRequestException.class);
 
-    verify(assignChatFacade, never()).assignChat(anyLong(), any());
+    verify(assignChatFacade, never()).assignChat(anyLong(), any(), any());
   }
 
   @Test
@@ -218,42 +222,65 @@ class UserChatControllerDelegateTest {
 
   @Test
   void banFromChatShouldBanAdviceSeekerAndReturnNoContent() {
-    var adviceSeeker = adviceSeeker();
+    var chat = chat();
+    var consultant = consultant();
+    when(chatService.getChat(1L)).thenReturn(Optional.of(chat));
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
     when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
-        .thenReturn(Optional.of(adviceSeeker));
-    when(messenger.existsChat(1L)).thenReturn(true);
+        .thenReturn(Optional.of(adviceSeeker()));
     when(messenger.banUserFromChat("advice-seeker-id", 1L)).thenReturn(true);
 
     var response = delegate.banFromChat("chat-user-id", 1L);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    verify(groupChatPermissionService).requireCanModerate(chat, consultant);
     verify(messenger).banUserFromChat("advice-seeker-id", 1L);
   }
 
   @Test
+  void banFromChatShouldRefuseANonModeratorBeforeLookingUpTheMatrixUser() {
+    var chat = chat();
+    var consultant = consultant();
+    when(chatService.getChat(1L)).thenReturn(Optional.of(chat));
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    doThrow(new ForbiddenException("not a moderator"))
+        .when(groupChatPermissionService)
+        .requireCanModerate(chat, consultant);
+
+    assertThatThrownBy(() -> delegate.banFromChat("chat-user-id", 1L))
+        .isInstanceOf(ForbiddenException.class);
+
+    verify(accountManager, never()).findAdviceSeekerByMatrixUserId(any());
+    verify(messenger, never()).banUserFromChat(any(), anyLong());
+  }
+
+  @Test
   void banFromChatShouldThrowNotFoundWhenAdviceSeekerDoesNotExist() {
+    when(chatService.getChat(1L)).thenReturn(Optional.of(chat()));
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant());
     when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> delegate.banFromChat("chat-user-id", 1L))
         .isInstanceOf(NotFoundException.class);
+    verify(messenger, never()).banUserFromChat(any(), anyLong());
   }
 
   @Test
   void banFromChatShouldThrowNotFoundWhenChatDoesNotExist() {
-    when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
-        .thenReturn(Optional.of(adviceSeeker()));
-    when(messenger.existsChat(1L)).thenReturn(false);
+    when(chatService.getChat(1L)).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> delegate.banFromChat("chat-user-id", 1L))
         .isInstanceOf(NotFoundException.class);
+    verify(accountManager, never()).findAdviceSeekerByMatrixUserId(any());
   }
 
   @Test
   void banFromChatShouldThrowNotFoundWhenBanFails() {
+    when(chatService.getChat(1L)).thenReturn(Optional.of(chat()));
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant());
     when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker()));
-    when(messenger.existsChat(1L)).thenReturn(true);
     when(messenger.banUserFromChat(any(), anyLong())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.banFromChat("chat-user-id", 1L))

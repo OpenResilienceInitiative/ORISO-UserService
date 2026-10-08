@@ -124,8 +124,8 @@ start_replica() {
   SPRING_DATA_REDIS_HOST=127.0.0.1 \
   SPRING_DATA_REDIS_PORT="${redis_port}" \
   AGENCY_SERVICE_API_URL="http://127.0.0.1:${agency_stub_port}" \
-  IDENTITY_TECHNICAL_USER_USERNAME=load-test-technical-user \
-  IDENTITY_TECHNICAL_USER_PASSWORD=load-test-technical-user-password \
+  IDENTITY_TECHNICAL_CLIENT_ID=backend-technical \
+  KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET=load-test-technical-client-secret \
   MATRIX_REGISTRATION_SHARED_SECRET=load-test-registration-shared-secret \
   MATRIX_EVENT_LISTENER_ENABLED=false \
   MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,loggers,metrics \

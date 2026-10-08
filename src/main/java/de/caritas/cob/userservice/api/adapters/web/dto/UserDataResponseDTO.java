@@ -26,6 +26,12 @@ public class UserDataResponseDTO {
   @ApiModelProperty(example = "ajsd89-sdf9-sadk-as8j-asdf8jo")
   private String userId;
 
+  @ApiModelProperty(readOnly = true)
+  private String chatRecoveryMode;
+
+  @ApiModelProperty(readOnly = true)
+  private Long chatRecoveryPolicyRevision;
+
   @ApiModelProperty(example = "max.muster", position = 1)
   @JsonSerialize(using = DecodeUsernameJsonSerializer.class)
   private String userName;
@@ -76,13 +82,34 @@ public class UserDataResponseDTO {
 
   private String publicSlugStatus;
 
+  /** Counsellor avatar choice (#1046): ICON, INITIALS or PICTURE; null when nothing was chosen. */
+  private String avatarKind;
+
+  /**
+   * Consultants: id of the chosen counsellor motif, only set together with avatarKind = ICON.
+   * Advice seekers (#1240): id of the chosen animal; null when the default applies.
+   */
+  private String avatarId;
+
   @JsonIgnore private Boolean encourage2fa;
+
+  /** Backs twoFactorAuth.isRequired; not a field of its own on the wire. */
+  @JsonIgnore private Boolean twoFactorRequired;
+
+  /**
+   * The account still carries the password its administrator chose. Travels as its own field: it is
+   * a fact about the password, not about a factor.
+   */
+  private Boolean passwordChangeRequired;
 
   private Boolean magicLinkLoginEnabled;
 
   private Boolean e2eEncryptionEnabled;
 
   private Boolean isWalkThroughEnabled;
+
+  /** Consultants only: live-chat availability is controlled from the navigation rail. */
+  private Boolean liveChatViaSidebar;
 
   private Set<EmailToggle> emailToggles;
 

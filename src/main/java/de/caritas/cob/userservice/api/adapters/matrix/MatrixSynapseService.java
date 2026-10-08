@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRespon
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixLoginRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixPasswordUpdateRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixReactivateUserRequestDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
@@ -19,7 +20,6 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
-import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
@@ -36,7 +36,18 @@ import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriUtils;
 
-/** Service for Matrix Synapse functionalities. */
+/**
+ * Service for Matrix Synapse functionalities.
+ *
+ * <p><b>No log line and no exception message in this class may carry a plain Matrix identifier.</b>
+ * Every username, localpart, Matrix user id and display name goes through {@link
+ * MatrixIdentifierRedactor#pseudonym} first; free text the class did not compose goes through
+ * {@code scrub}.
+ *
+ * <p>The pseudonym is stable and normalised, so an operator can still follow one failed
+ * provisioning end to end. {@code MatrixSynapseServiceIdentifierRedactionTest} reads this file and
+ * fails the build if a raw identifier reappears.
+ */
 @Slf4j
 @Service
 public class MatrixSynapseService implements MatrixUserClient {
@@ -57,13 +68,22 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_ROOM_EVENT =
       "/_matrix/client/v3/rooms/{roomId}/event/{eventId}";
   private static final String ENDPOINT_ROOM_MESSAGES = "/_matrix/client/r0/rooms/{roomId}/messages";
+  private static final String ENDPOINT_SEND_TO_DEVICE =
+      "/_matrix/client/v3/sendToDevice/{eventType}/{txnId}";
   private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
+
+  // The closed-vocabulary error code in a Synapse error body; never the body's free text.
+  private static final java.util.regex.Pattern MATRIX_ERRCODE =
+      java.util.regex.Pattern.compile("\"errcode\"\\s*:\\s*\"([A-Z_]{1,64})\"");
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
   private final RestTemplate matrixLongPollRestTemplate;
   private final MatrixRoomClient matrixRoomClient;
   private final MatrixMediaClient matrixMediaClient;
+
+  // Every identifier that reaches a log line or an exception message goes through this first.
+  private final MatrixIdentifierRedactor redactor;
 
   // Time source for cache-expiry checks. Real deployment uses the wall clock; tests inject a
   // controllable supplier so TTL expiry can be exercised deterministically without sleeping.
@@ -77,7 +97,7 @@ public class MatrixSynapseService implements MatrixUserClient {
   private final java.util.Map<String, CachedAccessToken> accessTokenCache =
       new java.util.concurrent.ConcurrentHashMap<>();
 
-  // Rotating a browser-login password and consuming it must be atomic per Matrix identity.
+  // Serialize local account updates; credential stability also holds across replicas and restarts.
   private final java.util.Map<String, java.util.concurrent.locks.ReentrantLock> browserLoginLocks =
       new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -147,13 +167,15 @@ public class MatrixSynapseService implements MatrixUserClient {
       RestTemplate restTemplate,
       @Qualifier("matrixLongPollRestTemplate") RestTemplate matrixLongPollRestTemplate,
       MatrixRoomClient matrixRoomClient,
-      MatrixMediaClient matrixMediaClient) {
+      MatrixMediaClient matrixMediaClient,
+      MatrixIdentifierRedactor redactor) {
     this(
         matrixConfig,
         restTemplate,
         matrixLongPollRestTemplate,
         matrixRoomClient,
         matrixMediaClient,
+        redactor,
         System::currentTimeMillis);
   }
 
@@ -164,12 +186,14 @@ public class MatrixSynapseService implements MatrixUserClient {
       RestTemplate matrixLongPollRestTemplate,
       MatrixRoomClient matrixRoomClient,
       MatrixMediaClient matrixMediaClient,
+      MatrixIdentifierRedactor redactor,
       java.util.function.LongSupplier nowSupplier) {
     this.matrixConfig = matrixConfig;
     this.restTemplate = restTemplate;
     this.matrixLongPollRestTemplate = matrixLongPollRestTemplate;
     this.matrixRoomClient = matrixRoomClient;
     this.matrixMediaClient = matrixMediaClient;
+    this.redactor = redactor;
     this.nowSupplier = nowSupplier;
   }
 
@@ -195,6 +219,12 @@ public class MatrixSynapseService implements MatrixUserClient {
    */
   public ResponseEntity<MatrixCreateUserResponseDTO> createUser(
       String username, String password, String displayName) throws MatrixCreateUserException {
+    return createUser(username, password, displayName, true);
+  }
+
+  private ResponseEntity<MatrixCreateUserResponseDTO> createUser(
+      String username, String password, String displayName, boolean reactivateReserved)
+      throws MatrixCreateUserException {
 
     try {
       // First, get a nonce from Matrix
@@ -223,42 +253,115 @@ public class MatrixSynapseService implements MatrixUserClient {
 
       HttpEntity<MatrixCreateUserRequestDTO> request = new HttpEntity<>(userCreateRequest, headers);
 
-      log.info("Creating Matrix user: {} at URL: {}", username, nonceUrl);
+      log.info("Creating Matrix user: {} at URL: {}", redactor.pseudonym(username), nonceUrl);
 
       var response =
           restTemplate.postForEntity(nonceUrl, request, MatrixCreateUserResponseDTO.class);
 
       if (nonNull(response.getBody()) && nonNull(response.getBody().getUserId())) {
-        log.info(
-            "Successfully created Matrix user: {} with ID: {}",
-            username,
-            response.getBody().getUserId());
+        log.info("Successfully created Matrix user: {}", redactor.pseudonym(username));
       }
 
       return response;
     } catch (HttpClientErrorException ex) {
       if (isReservedMatrixUserId(ex)) {
+        if (!reactivateReserved) {
+          throw new MatrixCreateUserException(
+              "The homeserver already holds an account for this localpart; it was not reactivated");
+        }
         return reactivateDeletedUser(username, password);
       }
       log.error(
-          "Matrix Error: Could not create user ({}) in Matrix. Status: {}, Response: {}",
-          username,
+          "Matrix Error: Could not create user ({}) in Matrix. Status: {}, errcode: {}",
+          redactor.pseudonym(username),
           ex.getStatusCode(),
-          ex.getResponseBodyAsString());
+          errcodeOf(ex));
       throw new MatrixCreateUserException(
           String.format(
-              "Could not create user (%s) in Matrix: %s", username, ex.getResponseBodyAsString()));
+              "Could not create user (%s) in Matrix: %s errcode=%s",
+              redactor.pseudonym(username), ex.getStatusCode(), errcodeOf(ex)));
     } catch (Exception ex) {
-      log.error("Matrix Error: Could not create user ({}) in Matrix. Reason", username, ex);
+      log.error(
+          "Matrix Error: Could not create user ({}) in Matrix. Reason",
+          redactor.pseudonym(username),
+          ex);
       throw new MatrixCreateUserException(
-          String.format("Could not create user (%s) in Matrix", username));
+          String.format("Could not create user (%s) in Matrix", redactor.pseudonym(username)));
+    }
+  }
+
+  /**
+   * The full Matrix user id for a localpart with a <em>usable</em> account, or {@code null}.
+   * Stricter than {@link #userExists}, which answers 200 for a deactivated user too: occupancy
+   * checks want that one, adoption wants this.
+   */
+  @Override
+  public String findUserId(String localpart) {
+    if (localpart == null || localpart.isBlank()) {
+      return null;
+    }
+    var matrixUserId =
+        "@" + localpart.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
+    var account = readAdminUser(matrixUserId);
+    if (account.isEmpty()) {
+      return null;
+    }
+    if (Boolean.TRUE.equals(account.get().get("deactivated"))) {
+      log.warn(
+          "The homeserver holds a deactivated account for the requested localpart; it is not"
+              + " offered for adoption");
+      return null;
+    }
+    return matrixUserId;
+  }
+
+  /**
+   * The Synapse admin view of one user, or empty when the homeserver does not have it or the lookup
+   * failed. Never throws: empty means "no usable account", which is safe for both cases.
+   */
+  private java.util.Optional<java.util.Map<String, Object>> readAdminUser(String matrixUserId) {
+    try {
+      String adminToken = getAdminAccessToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for a Matrix user lookup");
+        return java.util.Optional.empty();
+      }
+      URI url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<>(headers),
+              java.util.Map.class);
+      @SuppressWarnings("unchecked")
+      java.util.Map<String, Object> body = response.getBody();
+      return java.util.Optional.ofNullable(body);
+    } catch (org.springframework.web.client.HttpClientErrorException.NotFound ex) {
+      return java.util.Optional.empty();
+    } catch (Exception ex) {
+      log.warn(
+          "Could not read the Matrix admin view of a user: {}", redactor.scrub(ex.getMessage()));
+      return java.util.Optional.empty();
     }
   }
 
   @Override
   public String createUserId(String username, String password, String displayName)
       throws MatrixCreateUserException {
-    var response = createUser(username, password, displayName);
+    return userIdOf(createUser(username, password, displayName, true));
+  }
+
+  @Override
+  public String createUserIdWithoutReactivation(
+      String username, String password, String displayName) throws MatrixCreateUserException {
+    return userIdOf(createUser(username, password, displayName, false));
+  }
+
+  private static String userIdOf(ResponseEntity<MatrixCreateUserResponseDTO> response) {
     return response == null || response.getBody() == null ? null : response.getBody().getUserId();
   }
 
@@ -290,7 +393,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       if (existingUser.getBody() == null
           || !Boolean.TRUE.equals(existingUser.getBody().get("deactivated"))) {
         throw new MatrixCreateUserException(
-            String.format("Matrix user (%s) is already active", username));
+            String.format("Matrix user (%s) is already active", redactor.pseudonym(username)));
       }
 
       var reactivateRequest = new MatrixReactivateUserRequestDTO(false);
@@ -311,14 +414,22 @@ public class MatrixSynapseService implements MatrixUserClient {
 
       var body = new MatrixCreateUserResponseDTO();
       body.setUserId(matrixUserId);
-      log.info("Successfully reactivated deleted Matrix user: {}", matrixUserId);
+      log.info(
+          "Successfully reactivated deleted Matrix user: {}", redactor.pseudonym(matrixUserId));
       return ResponseEntity.ok(body);
     } catch (MatrixCreateUserException exception) {
       throw exception;
     } catch (Exception exception) {
-      log.error("Matrix Error: Could not reactivate deleted user ({})", username, exception);
+      // The throwable itself is not passed: a RestTemplate failure message repeats the request
+      // URL, and this endpoint has the Matrix user id in its path. The scrubbed message keeps the
+      // cause; the stack trace below it would have been RestTemplate boilerplate.
+      log.error(
+          "Matrix Error: Could not reactivate deleted user ({}). Reason: {}",
+          redactor.pseudonym(username),
+          redactor.scrub(exception.toString()));
       throw new MatrixCreateUserException(
-          String.format("Could not reactivate deleted Matrix user (%s)", username));
+          String.format(
+              "Could not reactivate deleted Matrix user (%s)", redactor.pseudonym(username)));
     }
   }
 
@@ -358,23 +469,24 @@ public class MatrixSynapseService implements MatrixUserClient {
 
       HttpEntity<MatrixCreateUserRequestDTO> request = new HttpEntity<>(userCreateRequest, headers);
 
-      log.info("Creating Matrix ADMIN user: {} at URL: {}", username, nonceUrl);
+      log.info("Creating Matrix ADMIN user: {} at URL: {}", redactor.pseudonym(username), nonceUrl);
 
       var response =
           restTemplate.postForEntity(nonceUrl, request, MatrixCreateUserResponseDTO.class);
 
       if (nonNull(response.getBody()) && nonNull(response.getBody().getUserId())) {
-        log.info(
-            "Successfully created Matrix ADMIN user: {} with ID: {}",
-            username,
-            response.getBody().getUserId());
+        log.info("Successfully created Matrix ADMIN user: {}", redactor.pseudonym(username));
       }
 
       return response;
     } catch (Exception ex) {
-      log.error("Matrix Error: Could not create ADMIN user ({}): {}", username, ex.getMessage());
+      log.error(
+          "Matrix Error: Could not create ADMIN user ({}): {}",
+          redactor.pseudonym(username),
+          redactor.scrub(ex.getMessage()));
       throw new MatrixCreateUserException(
-          String.format("Could not create ADMIN user (%s) in Matrix", username));
+          String.format(
+              "Could not create ADMIN user (%s) in Matrix", redactor.pseudonym(username)));
     }
   }
 
@@ -410,7 +522,9 @@ public class MatrixSynapseService implements MatrixUserClient {
     try {
       String adminToken = getAdminToken();
       if (adminToken == null) {
-        log.warn("Could not get admin token for Matrix user existence check of {}", matrixUserId);
+        log.warn(
+            "Could not get admin token for Matrix user existence check of {}",
+            redactor.pseudonym(matrixUserId));
         return false;
       }
       URI url =
@@ -428,9 +542,63 @@ public class MatrixSynapseService implements MatrixUserClient {
     } catch (org.springframework.web.client.HttpClientErrorException.NotFound ex) {
       return false;
     } catch (Exception ex) {
-      log.warn("Could not check Matrix user existence for {}: {}", matrixUserId, ex.getMessage());
+      log.warn(
+          "Could not check Matrix user existence for {}: {}",
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(ex.getMessage()));
       return false;
     }
+  }
+
+  /**
+   * Checks user occupancy without interpreting dependency failures as an available username.
+   * Returns false only for a confirmed 404 from the user lookup, true for a successful response,
+   * and throws when occupancy cannot be determined. Existing best-effort callers retain {@link
+   * #userExists(String)} semantics.
+   */
+  public boolean userExistsStrict(String localpart) {
+    if (localpart == null || localpart.isBlank()) {
+      throw new IllegalArgumentException("Matrix localpart must not be blank");
+    }
+    try {
+      // Anonymous availability requests must never invoke login or account bootstrap.
+      String adminToken = matrixConfig.getAvailabilityAdminAccessToken();
+      if (adminToken == null
+          || adminToken.isBlank()
+          || matrixConfig.getServerName() == null
+          || matrixConfig.getServerName().isBlank()) {
+        throw new ServiceUnavailableException("Matrix user availability could not be determined");
+      }
+      String matrixUserId =
+          "@" + localpart.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
+      URI url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      try {
+        var response =
+            restTemplate.exchange(
+                url,
+                org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class);
+        if (response.getStatusCode().is2xxSuccessful()) {
+          return true;
+        }
+        if (response.getStatusCode().value() == 404) {
+          return false;
+        }
+      } catch (HttpStatusCodeException exception) {
+        if (exception.getStatusCode().value() == 404) {
+          return false;
+        }
+      }
+    } catch (RuntimeException exception) {
+      // Do not log upstream exceptions: URLs and messages may contain credentials.
+      throw new ServiceUnavailableException("Matrix user availability could not be determined");
+    }
+    throw new ServiceUnavailableException("Matrix user availability could not be determined");
   }
 
   /**
@@ -447,7 +615,9 @@ public class MatrixSynapseService implements MatrixUserClient {
 
     String adminToken = getAdminAccessToken();
     if (adminToken == null) {
-      log.warn("Matrix admin token unavailable; cannot create user token for {}", matrixUserId);
+      log.warn(
+          "Matrix admin token unavailable; cannot create user token for {}",
+          redactor.pseudonym(matrixUserId));
       return null;
     }
 
@@ -474,16 +644,16 @@ public class MatrixSynapseService implements MatrixUserClient {
       return responseBody;
     } catch (HttpStatusCodeException ex) {
       log.error(
-          "Matrix Error: Could not create login token for user ({}). Status: {}, Response: {}",
-          matrixUserId,
+          "Matrix Error: Could not create login token for user ({}). Status: {}, errcode: {}",
+          redactor.pseudonym(matrixUserId),
           ex.getStatusCode(),
-          ex.getResponseBodyAsString());
+          errcodeOf(ex));
       return null;
     } catch (Exception ex) {
       log.error(
           "Matrix Error: Could not create login token for user ({}). Reason: {}",
-          matrixUserId,
-          ex.getMessage());
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(ex.getMessage()));
       return null;
     }
   }
@@ -516,9 +686,10 @@ public class MatrixSynapseService implements MatrixUserClient {
    * Creates a device-bound Matrix login for browser E2EE without persisting a Matrix password.
    *
    * <p>Synapse admin impersonation tokens deliberately have no device and therefore cannot upload
-   * encryption keys. A random password is rotated server-side, existing devices remain logged in,
-   * and the password is used exactly once for the standard client login that binds the returned
-   * token to {@code deviceId}.
+   * encryption keys. A stable account credential is derived server-side; ordinary browser logins do
+   * not invalidate another device's interactive authentication. Existing devices remain logged in,
+   * and the standard client login binds the returned token to {@code deviceId}. The credential is
+   * returned only for browser memory, never persisted by the application.
    *
    * @param matrixUserId full local Matrix user ID
    * @param deviceId stable browser device ID
@@ -539,11 +710,12 @@ public class MatrixSynapseService implements MatrixUserClient {
             matrixUserId, ignored -> new java.util.concurrent.locks.ReentrantLock());
     browserLoginLock.lock();
     try {
-      String transientPassword = UUID.randomUUID() + "-" + UUID.randomUUID();
+      String browserCredential =
+          MatrixBrowserCredential.derive(matrixConfig.getRegistrationSharedSecret(), matrixUserId);
       var adminHeaders = getClientHttpHeaders(adminToken);
       adminHeaders.setContentType(MediaType.APPLICATION_JSON);
       var updateBody = new MatrixPasswordUpdateRequestDTO();
-      updateBody.setPassword(transientPassword);
+      updateBody.setPassword(browserCredential);
       updateBody.setLogoutDevices(false);
       var updateUri =
           MatrixUrlBuilder.buildUrl(
@@ -559,7 +731,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       var loginBody = new MatrixLoginRequestDTO();
       loginBody.setType("m.login.password");
       loginBody.setUser(matrixUserId);
-      loginBody.setPassword(transientPassword);
+      loginBody.setPassword(browserCredential);
       loginBody.setDeviceId(deviceId);
       loginBody.setInitialDeviceDisplayName("ORISO Web");
 
@@ -577,14 +749,14 @@ public class MatrixSynapseService implements MatrixUserClient {
       @SuppressWarnings("unchecked")
       var responseBody =
           new java.util.HashMap<>((java.util.Map<String, Object>) response.getBody());
-      responseBody.put("interactive_auth_password", transientPassword);
+      responseBody.put("interactive_auth_password", browserCredential);
       return responseBody;
     } catch (Exception ex) {
       log.error(
           "Matrix browser device login failed for user {} and device {}: {}",
-          matrixUserId,
+          redactor.pseudonym(matrixUserId),
           deviceId,
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return null;
     } finally {
       browserLoginLock.unlock();
@@ -621,13 +793,15 @@ public class MatrixSynapseService implements MatrixUserClient {
 
       // If login fails, create the ADMIN user (with admin=true)
       if (token == null) {
-        log.info("Creating Matrix admin user: {}", adminUsername);
+        log.info("Creating Matrix admin user: {}", redactor.pseudonym(adminUsername));
         try {
           // Create admin user manually with admin=true
           createAdminUser(adminUsername, adminPassword);
           token = loginUser(adminUsername, adminPassword);
         } catch (Exception e) {
-          log.warn("Could not create admin user, trying login again: {}", e.getMessage());
+          log.warn(
+              "Could not create admin user, trying login again: {}",
+              redactor.scrub(e.getMessage()));
           token = loginUser(adminUsername, adminPassword);
         }
       }
@@ -640,7 +814,7 @@ public class MatrixSynapseService implements MatrixUserClient {
 
       return token;
     } catch (Exception e) {
-      log.error("Failed to get admin access token: {}", e.getMessage());
+      log.error("Failed to get admin access token: {}", redactor.scrub(e.getMessage()));
       return null;
     }
   }
@@ -680,15 +854,18 @@ public class MatrixSynapseService implements MatrixUserClient {
           restTemplate.exchange(
               url, org.springframework.http.HttpMethod.PUT, request, String.class);
 
+      // The new display name is itself the personal datum, so only the fact of the update is
+      // logged, never the value.
       log.info(
-          "Successfully updated Matrix display name for user: {} to: {}",
-          matrixUserId,
-          displayName);
+          "Successfully updated Matrix display name for user: {}",
+          redactor.pseudonym(matrixUserId));
       return response.getStatusCode().is2xxSuccessful();
 
     } catch (Exception ex) {
       log.warn(
-          "Failed to update Matrix display name for user {}: {}", matrixUserId, ex.getMessage());
+          "Failed to update Matrix display name for user {}: {}",
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(ex.getMessage()));
       return false;
     }
   }
@@ -724,12 +901,85 @@ public class MatrixSynapseService implements MatrixUserClient {
           restTemplate.exchange(
               url, org.springframework.http.HttpMethod.POST, request, String.class);
 
-      log.info("Successfully deactivated Matrix user: {}", matrixUserId);
+      log.info("Successfully deactivated Matrix user: {}", redactor.pseudonym(matrixUserId));
       return response.getStatusCode().is2xxSuccessful();
 
     } catch (Exception ex) {
-      log.warn("Failed to deactivate Matrix user {}: {}", matrixUserId, ex.getMessage());
+      log.warn(
+          "Failed to deactivate Matrix user {}: {}",
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(ex.getMessage()));
       return false;
+    }
+  }
+
+  /**
+   * Reversibly blocks authenticated access, including existing Matrix sessions, without erasing
+   * account data or encryption keys. Confirm existence before PUT because Synapse's user endpoint
+   * otherwise creates an account. Completion requires a fresh read of the persisted lock state.
+   */
+  public boolean setAccountSuspended(String matrixUserId, boolean suspended) {
+    try {
+      String token = getAdminToken();
+      if (token == null) return false;
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              "/_synapse/admin/v2/users/{userId}",
+              java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setBearerAuth(token);
+      var read = new HttpEntity<Void>(headers);
+      var existing =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, read, java.util.Map.class);
+      if (existing.getBody() == null) return false;
+      if (!Boolean.valueOf(suspended).equals(existing.getBody().get("locked"))) {
+        var response =
+            restTemplate.exchange(
+                url,
+                org.springframework.http.HttpMethod.PUT,
+                new HttpEntity<>(java.util.Map.of("locked", suspended), headers),
+                java.util.Map.class);
+        if (response.getStatusCode().value() != 200) return false;
+      }
+      var confirmed =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, read, java.util.Map.class);
+      return confirmed.getBody() != null
+          && Boolean.valueOf(suspended).equals(confirmed.getBody().get("locked"));
+    } catch (Exception failure) {
+      log.warn(
+          "Matrix account lock could not be confirmed: type={}",
+          failure.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  /** Reads the reversible access lock without creating or modifying a Matrix identity. */
+  public java.util.Optional<Boolean> getAccountLocked(String matrixUserId) {
+    try {
+      String token = getAdminToken();
+      if (token == null) return java.util.Optional.empty();
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              "/_synapse/admin/v2/users/{userId}",
+              java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(token);
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<Void>(headers),
+              java.util.Map.class);
+      if (response.getBody() != null && response.getBody().get("locked") instanceof Boolean locked)
+        return java.util.Optional.of(locked);
+      return java.util.Optional.empty();
+    } catch (Exception failure) {
+      return java.util.Optional.empty();
     }
   }
 
@@ -803,7 +1053,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.info("Matrix room {} no longer exists, nothing to purge", matrixRoomId);
       return RoomPurgeOutcome.ALREADY_GONE;
     } catch (Exception ex) {
-      log.warn("Failed to purge Matrix room {}: {}", matrixRoomId, ex.getMessage());
+      log.warn("Failed to purge Matrix room {}: {}", matrixRoomId, redactor.scrub(ex.getMessage()));
       return RoomPurgeOutcome.FAILED;
     }
   }
@@ -833,7 +1083,9 @@ public class MatrixSynapseService implements MatrixUserClient {
 
     String adminToken = getAdminAccessToken();
     if (adminToken == null) {
-      log.warn("Cannot impersonate Matrix user {} without admin token", matrixUserId);
+      log.warn(
+          "Cannot impersonate Matrix user {} without admin token",
+          redactor.pseudonym(matrixUserId));
       return null;
     }
 
@@ -853,16 +1105,21 @@ public class MatrixSynapseService implements MatrixUserClient {
         impersonationTokenCache.put(
             matrixUserId,
             new CachedImpersonationToken(accessToken, now + IMPERSONATION_TOKEN_TTL_MS));
-        log.debug("Obtained admin impersonation token for Matrix user {}", matrixUserId);
+        log.debug(
+            "Obtained admin impersonation token for Matrix user {}",
+            redactor.pseudonym(matrixUserId));
         return accessToken;
       }
 
       log.error(
-          "Matrix admin impersonation login failed for user {} - no access token", matrixUserId);
+          "Matrix admin impersonation login failed for user {} - no access token",
+          redactor.pseudonym(matrixUserId));
       return null;
     } catch (Exception ex) {
       log.error(
-          "Matrix admin impersonation login failed for user {}: {}", matrixUserId, ex.getMessage());
+          "Matrix admin impersonation login failed for user {}: {}",
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(ex.getMessage()));
       return null;
     }
   }
@@ -897,7 +1154,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       HttpEntity<MatrixLoginRequestDTO> request = new HttpEntity<>(loginRequest, headers);
 
       var url = matrixConfig.getApiUrl(ENDPOINT_LOGIN);
-      log.info("Logging in Matrix user: {} at URL: {}", username, url);
+      log.info("Logging in Matrix user: {} at URL: {}", redactor.pseudonym(username), url);
 
       var response = restTemplate.postForEntity(url, request, java.util.Map.class);
 
@@ -905,17 +1162,19 @@ public class MatrixSynapseService implements MatrixUserClient {
         String accessToken = (String) response.getBody().get("access_token");
         accessTokenCache.put(
             username, new CachedAccessToken(accessToken, now + ACCESS_TOKEN_CACHE_TTL_MS));
-        log.info("Successfully logged in Matrix user: {}", username);
+        log.info("Successfully logged in Matrix user: {}", redactor.pseudonym(username));
         return accessToken;
       }
 
-      log.error("Matrix login failed for user: {} - no access token in response", username);
+      log.error(
+          "Matrix login failed for user: {} - no access token in response",
+          redactor.pseudonym(username));
       return null;
     } catch (Exception ex) {
       log.error(
           "Matrix Error: Could not login user ({}) in Matrix. Reason: {}",
-          username,
-          ex.getMessage());
+          redactor.pseudonym(username),
+          redactor.scrub(ex.getMessage()));
       return null;
     }
   }
@@ -1029,7 +1288,7 @@ public class MatrixSynapseService implements MatrixUserClient {
     if (memberToken == null) {
       log.warn(
           "Could not impersonate {} to invite the Matrix admin into {}",
-          memberMatrixUserId,
+          redactor.pseudonym(memberMatrixUserId),
           roomId);
       return false;
     }
@@ -1040,7 +1299,10 @@ public class MatrixSynapseService implements MatrixUserClient {
       inviteUserToRoom(roomId, adminMatrixId, memberToken);
     } catch (Exception e) {
       log.warn(
-          "Inviting Matrix admin {} into {} failed: {}", adminMatrixId, roomId, e.getMessage());
+          "Inviting Matrix admin {} into {} failed: {}",
+          redactor.pseudonym(adminMatrixId),
+          roomId,
+          redactor.scrub(e.getMessage()));
     }
     return joinRoom(roomId, adminToken);
   }
@@ -1097,7 +1359,9 @@ public class MatrixSynapseService implements MatrixUserClient {
       return java.util.Optional.of(members.stream().map(String::valueOf).toList());
     } catch (Exception ex) {
       log.warn(
-          "Matrix Error: Could not read members of room {}: {}", matrixRoomId, ex.getMessage());
+          "Matrix Error: Could not read members of room {}: {}",
+          matrixRoomId,
+          redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
     }
   }
@@ -1110,6 +1374,70 @@ public class MatrixSynapseService implements MatrixUserClient {
    * @param accessToken the access token
    * @return the send response with event_id
    */
+  /**
+   * Sends a content-free Matrix to-device message to every device of one user, as the technical
+   * admin identity.
+   *
+   * <p>To-device is deliberate: it needs no shared room, writes nothing to any room timeline, and
+   * reaches every logged-in device of the recipient. Nothing is persisted in Matrix, so no
+   * signalling room has to be provisioned and existing users need no migration.
+   *
+   * @param eventType the custom event type, e.g. {@code org.oriso.feed.updated}
+   * @param matrixUserId the fully qualified recipient, e.g. {@code @alice:matrix.example.com}
+   * @param content the event content; pass an empty map for a content-free signal
+   * @return {@code true} when Synapse accepted the message; {@code false} on any failure (this
+   *     method never throws — callers are best-effort)
+   */
+  public boolean sendToDeviceMessage(
+      String eventType, String matrixUserId, java.util.Map<String, Object> content) {
+    if (eventType == null
+        || eventType.isBlank()
+        || matrixUserId == null
+        || matrixUserId.isBlank()) {
+      return false;
+    }
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.debug("No Matrix admin token available; skipping to-device message {}", eventType);
+        return false;
+      }
+
+      var headers = getClientHttpHeaders(adminToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      // { "messages": { "@alice:server": { "*": <content> } } } — "*" = all devices.
+      var body =
+          java.util.Map.<String, Object>of(
+              "messages",
+              java.util.Map.of(
+                  matrixUserId,
+                  java.util.Map.of("*", content == null ? java.util.Map.of() : content)));
+
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_SEND_TO_DEVICE,
+              java.util.Map.of(
+                  "eventType", eventType, "txnId", java.util.UUID.randomUUID().toString()));
+
+      restTemplate.exchange(
+          url,
+          org.springframework.http.HttpMethod.PUT,
+          new HttpEntity<>(body, headers),
+          java.util.Map.class);
+      return true;
+    } catch (Exception ex) {
+      // Best effort by contract: signalling failures must never reach the caller.
+      log.warn(
+          "Matrix Error: Could not send to-device message {} to {}: {}",
+          eventType,
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(ex.getMessage()));
+      return false;
+    }
+  }
+
   public java.util.Map<String, Object> sendMessage(
       String roomId, String message, String accessToken) {
     try {
@@ -1138,8 +1466,10 @@ public class MatrixSynapseService implements MatrixUserClient {
       return response.getBody();
     } catch (Exception ex) {
       log.error(
-          "Matrix Error: Could not send message to room ({}). Reason: {}", roomId, ex.getMessage());
-      return java.util.Map.of("error", ex.getMessage());
+          "Matrix Error: Could not send message to room ({}). Reason: {}",
+          roomId,
+          redactor.scrub(ex.getMessage()));
+      return java.util.Map.of("error", redactor.scrub(ex.getMessage()));
     }
   }
 
@@ -1169,7 +1499,7 @@ public class MatrixSynapseService implements MatrixUserClient {
           "Matrix Error: Could not read event {} from room {}: {}",
           eventId,
           roomId,
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
     }
   }
@@ -1217,7 +1547,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.error(
           "Matrix Error: Could not get messages from room ({}). Reason: {}",
           roomId,
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return new java.util.ArrayList<>();
     }
   }
@@ -1252,7 +1582,11 @@ public class MatrixSynapseService implements MatrixUserClient {
       var url =
           MatrixUrlBuilder.buildUrl(matrixConfig, ENDPOINT_SYNC, java.util.Map.of(), queryParams);
 
-      log.info("Syncing Matrix room: {} for user: {} (timeout: {}ms)", roomId, username, timeout);
+      log.info(
+          "Syncing Matrix room: {} for user: {} (timeout: {}ms)",
+          roomId,
+          redactor.pseudonym(username),
+          timeout);
 
       var response =
           matrixLongPollRestTemplate.exchange(
@@ -1310,7 +1644,10 @@ public class MatrixSynapseService implements MatrixUserClient {
 
       return java.util.Map.of("messages", new java.util.ArrayList<>(), "next_batch", "");
     } catch (Exception ex) {
-      log.error("Matrix Error: Could not sync room ({}). Reason: {}", roomId, ex.getMessage());
+      log.error(
+          "Matrix Error: Could not sync room ({}). Reason: {}",
+          roomId,
+          redactor.scrub(ex.getMessage()));
       return java.util.Map.of("messages", new java.util.ArrayList<>(), "next_batch", "");
     }
   }
@@ -1355,7 +1692,7 @@ public class MatrixSynapseService implements MatrixUserClient {
         }
       }
     } catch (Exception e) {
-      log.warn("Failed to extract nonce from response: {}", e.getMessage());
+      log.warn("Failed to extract nonce from response: {}", redactor.scrub(e.getMessage()));
     }
     return null;
   }
@@ -1395,7 +1732,8 @@ public class MatrixSynapseService implements MatrixUserClient {
       return Hex.encodeHexString(macBytes);
     } catch (NoSuchAlgorithmException | InvalidKeyException e) {
       log.error("Failed to generate MAC for Matrix user registration", e);
-      throw new MatrixCreateUserException("Failed to generate MAC: " + e.getMessage());
+      throw new MatrixCreateUserException(
+          "Failed to generate MAC: " + redactor.scrub(e.getMessage()));
     }
   }
 
@@ -1471,17 +1809,32 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.error(
           "Matrix Error: Request to {} failed. Reason: {}",
           sanitizeUrlForLog(url),
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return null;
     }
   }
 
+  /**
+   * Strips the query string and pseudonymises any Matrix user id embedded in the path, so a generic
+   * request log cannot reintroduce a name that every explicit call site above takes care to keep
+   * out.
+   */
   private String sanitizeUrlForLog(String url) {
     if (url == null) {
       return "null";
     }
     int queryStart = url.indexOf('?');
-    return queryStart >= 0 ? url.substring(0, queryStart) : url;
+    return redactor.scrub(queryStart >= 0 ? url.substring(0, queryStart) : url);
+  }
+
+  /**
+   * The Matrix {@code errcode} of a Synapse error body ({@code M_USER_IN_USE}, {@code M_FORBIDDEN},
+   * …), or {@code "unknown"}. Only the code, never the body: the body is free text written by the
+   * homeserver, and whether it repeats the user id is not ours to decide.
+   */
+  private static String errcodeOf(HttpStatusCodeException exception) {
+    var matcher = MATRIX_ERRCODE.matcher(exception.getResponseBodyAsString());
+    return matcher.find() ? matcher.group(1) : "unknown";
   }
 
   /**
@@ -1505,7 +1858,8 @@ public class MatrixSynapseService implements MatrixUserClient {
       // Login to get access token
       String accessToken = loginUser(username, password);
       if (accessToken == null) {
-        log.warn("Could not login Matrix user {} to get joined rooms", username);
+        log.warn(
+            "Could not login Matrix user {} to get joined rooms", redactor.pseudonym(username));
         return java.util.Collections.emptyList();
       }
 
@@ -1530,16 +1884,22 @@ public class MatrixSynapseService implements MatrixUserClient {
             (java.util.List<String>) response.getBody().get("joined_rooms");
         log.info(
             "✅ User {} has {} joined Matrix rooms",
-            username,
+            redactor.pseudonym(username),
             joinedRooms != null ? joinedRooms.size() : 0);
         return joinedRooms != null ? joinedRooms : java.util.Collections.emptyList();
       }
 
-      log.warn("Failed to get joined rooms for user {}: {}", username, response.getStatusCode());
+      log.warn(
+          "Failed to get joined rooms for user {}: {}",
+          redactor.pseudonym(username),
+          response.getStatusCode());
       return java.util.Collections.emptyList();
 
     } catch (Exception e) {
-      log.error("Error getting joined rooms for user {}: {}", username, e.getMessage());
+      log.error(
+          "Error getting joined rooms for user {}: {}",
+          redactor.pseudonym(username),
+          redactor.scrub(e.getMessage()));
       return java.util.Collections.emptyList();
     }
   }
@@ -1547,7 +1907,9 @@ public class MatrixSynapseService implements MatrixUserClient {
   public java.util.List<String> getJoinedRoomsForMatrixUser(String matrixUserId) {
     String accessToken = loginAsUserAccessToken(matrixUserId);
     if (accessToken == null) {
-      log.warn("Could not create Matrix token for {} to get joined rooms", matrixUserId);
+      log.warn(
+          "Could not create Matrix token for {} to get joined rooms",
+          redactor.pseudonym(matrixUserId));
       return java.util.Collections.emptyList();
     }
     return getJoinedRoomsWithToken(accessToken, matrixUserId);
@@ -1576,17 +1938,22 @@ public class MatrixSynapseService implements MatrixUserClient {
             (java.util.List<String>) response.getBody().get("joined_rooms");
         log.info(
             "✅ User {} has {} joined Matrix rooms",
-            principalForLog,
+            redactor.pseudonym(principalForLog),
             joinedRooms != null ? joinedRooms.size() : 0);
         return joinedRooms != null ? joinedRooms : java.util.Collections.emptyList();
       }
 
       log.warn(
-          "Failed to get joined rooms for user {}: {}", principalForLog, response.getStatusCode());
+          "Failed to get joined rooms for user {}: {}",
+          redactor.pseudonym(principalForLog),
+          response.getStatusCode());
       return java.util.Collections.emptyList();
 
     } catch (Exception e) {
-      log.error("Error getting joined rooms for user {}: {}", principalForLog, e.getMessage());
+      log.error(
+          "Error getting joined rooms for user {}: {}",
+          redactor.pseudonym(principalForLog),
+          redactor.scrub(e.getMessage()));
       return java.util.Collections.emptyList();
     }
   }
@@ -1654,8 +2021,8 @@ public class MatrixSynapseService implements MatrixUserClient {
     if (moderatorToken == null) {
       log.warn(
           "Could not obtain moderator token for {}; cannot ban {} from room {}",
-          actingModeratorMatrixUserId,
-          bannedMatrixUserId,
+          redactor.pseudonym(actingModeratorMatrixUserId),
+          redactor.pseudonym(bannedMatrixUserId),
           roomId);
       return false;
     }
@@ -1729,7 +2096,10 @@ public class MatrixSynapseService implements MatrixUserClient {
       }
       return java.util.Optional.empty();
     } catch (Exception ex) {
-      log.warn("Matrix presence lookup failed for {}: {}", matrixUserId, ex.getMessage());
+      log.warn(
+          "Matrix presence lookup failed for {}: {}",
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
     }
   }
@@ -1785,6 +2155,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       return java.util.Optional.of(java.util.Set.of());
     }
 
+    int candidateCount = matrixUserIds.size();
     java.util.Set<String> online = new java.util.HashSet<>();
     int resolved = 0;
     for (String matrixUserId : matrixUserIds) {
@@ -1803,7 +2174,7 @@ public class MatrixSynapseService implements MatrixUserClient {
 
     log.info(
         "Matrix presence: candidates={}, resolved={}, available={}",
-        matrixUserIds.size(),
+        candidateCount,
         resolved,
         online.size());
 

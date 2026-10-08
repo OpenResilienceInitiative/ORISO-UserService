@@ -7,10 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -26,11 +29,16 @@ import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyAdminInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.RegisterCounsellorCommand;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -67,6 +75,9 @@ class CounsellorOnboardingServiceTest {
   @Mock private AgencyService agencyService;
   @Mock private TopicService topicService;
   @Mock private UsernameTranscoder usernameTranscoder;
+  @Mock private AgencyCreationClient agencyCreationClient;
+  @Mock private AgencyAdminInviteProvisioningService agencyAdminInviteProvisioningService;
+  @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
   /**
    * The service drives its short database-only transactions through a {@link TransactionTemplate}
@@ -89,6 +100,9 @@ class CounsellorOnboardingServiceTest {
             agencyService,
             topicService,
             usernameTranscoder,
+            agencyCreationClient,
+            agencyAdminInviteProvisioningService,
+            eventPublisher,
             transactionManager);
   }
 
@@ -138,7 +152,9 @@ class CounsellorOnboardingServiceTest {
         "Dipl.-Soz.Päd.",
         "Lena",
         "Lena B. (Nord)",
-        List.of(DEPARTMENT_TOPIC_ID));
+        List.of(DEPARTMENT_TOPIC_ID),
+        null,
+        null);
   }
 
   // --- resolve ---
@@ -155,6 +171,36 @@ class CounsellorOnboardingServiceTest {
     assertEquals(DEPARTMENT_TOPIC_ID, state.topics().get(0).id());
     assertEquals("Family counselling", state.topics().get(0).name());
     assertEquals(EXTRA_AGENCY_TOPIC_ID, state.topics().get(1).id());
+  }
+
+  @Test
+  void existingAccountSetupWithUncertainClaimDoesNotExposeThePublicWizard() {
+    var setup = invite();
+    setup.setPurpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+    setup.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
+    setup.setProvisioningFailureReason("SETUP_OUTCOME_INDETERMINATE");
+    inviteResolves(setup);
+
+    var failure =
+        assertThrows(
+            AccountInviteLinkException.class, () -> service.resolveOnboardingInvite(RAW_TOKEN));
+    assertEquals(
+        AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED, failure.getReason());
+    verifyNoInteractions(agencyService, topicService);
+  }
+
+  @Test
+  void acceptedExistingAccountSetupCannotResumePublicInviteTwoFactorActivation() {
+    var setup = invite();
+    setup.setPurpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+    setup.setStatus(AccountInviteStatus.ACCEPTED);
+    setup.setTwoFactorStatus(TwoFactorGateStatus.PENDING_SETUP);
+    inviteResolves(setup);
+
+    var failure =
+        assertThrows(
+            AccountInviteLinkException.class, () -> service.resolveOnboardingInvite(RAW_TOKEN));
+    assertEquals(AccountInviteLinkException.Reason.CONSUMED, failure.getReason());
   }
 
   @Test
@@ -193,6 +239,7 @@ class CounsellorOnboardingServiceTest {
     AccountInvite expired = invite();
     expired.setExpiresAt(LocalDateTime.now().minusMinutes(1));
     inviteResolves(expired);
+    when(accountInviteRepository.expireWhileStatusIn(any(), any(), any())).thenReturn(1);
 
     var exception =
         assertThrows(
@@ -200,7 +247,9 @@ class CounsellorOnboardingServiceTest {
 
     assertEquals(AccountInviteLinkException.Reason.EXPIRED, exception.getReason());
     assertEquals(AccountInviteStatus.EXPIRED, expired.getStatus());
-    verify(accountInviteRepository).save(expired);
+    // Conditional, so a revoke or accept that landed meanwhile is never written over.
+    verify(accountInviteRepository)
+        .expireWhileStatusIn(any(), eq(List.of(AccountInviteStatus.EMAIL_SENT)), any());
   }
 
   @Test
@@ -254,7 +303,7 @@ class CounsellorOnboardingServiceTest {
     AccountInvite accepted = invite();
     accepted.setStatus(AccountInviteStatus.ACCEPTED);
     accepted.setProvisionedUserId(CONSULTANT_ID);
-    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any()))
+    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any(), any()))
         .thenReturn(accepted);
     when(usernameTranscoder.encodeUsername("lena.b")).thenReturn("enc.lena.b");
     when(identitySecondFactor.getOtpCredential("enc.lena.b"))
@@ -272,7 +321,8 @@ class CounsellorOnboardingServiceTest {
 
     ArgumentCaptor<ProvisionCounsellorCommand> captor =
         ArgumentCaptor.forClass(ProvisionCounsellorCommand.class);
-    verify(counsellorInviteProvisioningService).acceptInvite(eq(RAW_TOKEN), captor.capture());
+    verify(counsellorInviteProvisioningService)
+        .acceptInvite(eq(RAW_TOKEN), captor.capture(), any());
     ProvisionCounsellorCommand provision = captor.getValue();
     assertEquals("lena.b", provision.username());
     assertEquals("s3cretPassword", provision.password());
@@ -284,6 +334,181 @@ class CounsellorOnboardingServiceTest {
     assertEquals("Lena", provision.displayName());
     assertEquals("Lena B. (Nord)", provision.internalDisplayName());
     assertEquals(List.of(DEPARTMENT_TOPIC_ID), provision.topicIds());
+    assertNull(provision.avatarKind());
+    assertNull(provision.avatarId());
+  }
+
+  @Test
+  void registerCounsellor_carriesTheAvatarChoiceToProvisioning() {
+    AccountInvite deliverable = invite();
+    inviteResolves(deliverable);
+    agencyCoverageResolves();
+
+    AccountInvite accepted = invite();
+    accepted.setStatus(AccountInviteStatus.ACCEPTED);
+    accepted.setProvisionedUserId(CONSULTANT_ID);
+    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any(), any()))
+        .thenReturn(accepted);
+    when(usernameTranscoder.encodeUsername("lena.b")).thenReturn("enc.lena.b");
+    when(identitySecondFactor.getOtpCredential("enc.lena.b"))
+        .thenReturn(
+            new IdentityOtpCredential(false, "TOTPSECRET", "QRBASE64", IdentityOtpType.APP));
+
+    service.registerCounsellor(
+        RAW_TOKEN,
+        new RegisterCounsellorCommand(
+            "lena.b",
+            "s3cretPassword",
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of(DEPARTMENT_TOPIC_ID),
+            "  ICON  ",
+            " motif-24 "));
+
+    ArgumentCaptor<ProvisionCounsellorCommand> captor =
+        ArgumentCaptor.forClass(ProvisionCounsellorCommand.class);
+    verify(counsellorInviteProvisioningService)
+        .acceptInvite(eq(RAW_TOKEN), captor.capture(), any());
+    assertEquals("ICON", captor.getValue().avatarKind());
+    assertEquals("motif-24", captor.getValue().avatarId());
+  }
+
+  @Test
+  void registerCounsellor_newAgency_createsItUnderTheReservedIdAndGrantsAgencyAdmin() {
+    // given: the invite routes to a RESERVED Beratungsstellen-ID — the agency does not exist yet
+    // (ORISO-Admin#998) and the invitee named it in the wizard.
+    inviteResolves(invite());
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(topicService.getAllActiveTopicsMap())
+        .thenReturn(
+            Map.of(
+                DEPARTMENT_TOPIC_ID,
+                new TopicDTO().id(DEPARTMENT_TOPIC_ID).name("Family counselling"),
+                EXTRA_AGENCY_TOPIC_ID,
+                new TopicDTO().id(EXTRA_AGENCY_TOPIC_ID).name("Debt counselling")));
+    AccountInvite accepted = invite();
+    accepted.setStatus(AccountInviteStatus.ACCEPTED);
+    accepted.setProvisionedUserId(CONSULTANT_ID);
+    accepted.setTwoFactorStatus(TwoFactorGateStatus.ACTIVE);
+    // The provisioning creates the agency while it holds the invite row.
+    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any(), any()))
+        .thenAnswer(
+            call -> {
+              call.<de.caritas.cob.userservice.api.service.accountinvite.WizardAccept>getArgument(2)
+                  .createUnit()
+                  .run();
+              return accepted;
+            });
+
+    // when
+    service.registerCounsellor(RAW_TOKEN, newAgencyCommand("Beratungsstelle Musterstadt"));
+
+    // then: the agency is created with the reserved ID, the invite's tenant and the chosen topics
+    verify(agencyCreationClient)
+        .createAgencyWithReservedId(
+            eq(AGENCY_ID),
+            eq("Beratungsstelle Musterstadt"),
+            eq(TENANT_ID),
+            eq(List.of(DEPARTMENT_TOPIC_ID, EXTRA_AGENCY_TOPIC_ID)));
+    // ...and the invitee becomes its Beratungsstellen-Admin
+    verify(counsellorInviteProvisioningService)
+        .acceptInvite(
+            eq(RAW_TOKEN), argThat(cmd -> Boolean.TRUE.equals(cmd.grantAgencyAdmin())), any());
+    // ...which releases the invites queued for this agency
+    verify(eventPublisher)
+        .publishEvent(new InviteUnitCreatedEvent(InviteUnitType.AGENCY, AGENCY_ID, TENANT_ID));
+  }
+
+  @Test
+  void registerCounsellor_newAgencyWithoutName_isRejectedBeforeAnythingIsCreated() {
+    inviteResolves(invite());
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(topicService.getAllActiveTopicsMap())
+        .thenReturn(
+            Map.of(
+                DEPARTMENT_TOPIC_ID,
+                new TopicDTO().id(DEPARTMENT_TOPIC_ID).name("Family counselling")));
+
+    assertThrows(
+        BadRequestException.class,
+        () -> service.registerCounsellor(RAW_TOKEN, newAgencyCommand(null)));
+
+    verifyNoInteractions(agencyCreationClient);
+    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any(), any());
+  }
+
+  @Test
+  void registerCounsellor_existingAgency_createsNoAgencyAndGrantsNoAdmin() {
+    inviteResolves(invite());
+    agencyCoverageResolves();
+    AccountInvite accepted = invite();
+    accepted.setStatus(AccountInviteStatus.ACCEPTED);
+    accepted.setProvisionedUserId(CONSULTANT_ID);
+    accepted.setTwoFactorStatus(TwoFactorGateStatus.ACTIVE);
+    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any(), any()))
+        .thenReturn(accepted);
+
+    service.registerCounsellor(RAW_TOKEN, command());
+
+    verifyNoInteractions(agencyCreationClient);
+    verify(counsellorInviteProvisioningService)
+        .acceptInvite(
+            eq(RAW_TOKEN), argThat(cmd -> !Boolean.TRUE.equals(cmd.grantAgencyAdmin())), any());
+    verify(eventPublisher, never()).publishEvent(any(InviteUnitCreatedEvent.class));
+  }
+
+  @Test
+  void registerCounsellor_emptyActiveTopicList_keepsAnOutOfCoverageTopicA400() {
+    // A tenant with no active topics is an ANSWER, not an outage: the selection is provably
+    // outside the coverage, so it is a client error. Reporting emptiness as a degraded lookup
+    // answered 500 here (CounsellorOnboardingWizardIT CI failure).
+    inviteResolves(invite());
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(DEPARTMENT_TOPIC_ID)));
+    when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
+    var outside = topicSelection(List.of(EXTRA_AGENCY_TOPIC_ID));
+
+    assertThrows(BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, outside));
+
+    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any(), any());
+  }
+
+  @Test
+  void registerCounsellor_topicLookupThrows_stillAnswers400WhenTheAgencyCoverageIsAuthoritative() {
+    // Only the AGENCY lookup can make the decision indeterminate. TopicService contributes the
+    // names and the tenant-wide widening; with AgencyService answering, a topic outside the
+    // invite's coverage is a client error even if that widening cannot be read.
+    inviteResolves(invite());
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(DEPARTMENT_TOPIC_ID)));
+    when(topicService.getAllActiveTopicsMap())
+        .thenThrow(new IllegalStateException("topic service down"));
+    var outside = topicSelection(List.of(EXTRA_AGENCY_TOPIC_ID));
+
+    assertThrows(BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, outside));
+
+    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any(), any());
+  }
+
+  private static RegisterCounsellorCommand newAgencyCommand(String agencyName) {
+    return new RegisterCounsellorCommand(
+        "lena.b",
+        "s3cretPassword",
+        null,
+        null,
+        null,
+        null,
+        null,
+        List.of(DEPARTMENT_TOPIC_ID, EXTRA_AGENCY_TOPIC_ID),
+        agencyName);
+  }
+
+  private static RegisterCounsellorCommand topicSelection(List<Long> topicIds) {
+    return new RegisterCounsellorCommand(
+        "lena.b", "s3cretPassword", null, null, null, null, null, topicIds);
   }
 
   @Test
@@ -295,7 +520,7 @@ class CounsellorOnboardingServiceTest {
     accepted.setStatus(AccountInviteStatus.ACCEPTED);
     accepted.setProvisionedUserId(CONSULTANT_ID);
     accepted.setTwoFactorStatus(TwoFactorGateStatus.WAIVED);
-    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any()))
+    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any(), any()))
         .thenReturn(accepted);
 
     var result = service.registerCounsellor(RAW_TOKEN, command());
@@ -312,26 +537,119 @@ class CounsellorOnboardingServiceTest {
 
     RegisterCounsellorCommand outside =
         new RegisterCounsellorCommand(
-            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(999L));
+            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(999L), null, null);
 
     assertThrows(BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, outside));
-    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any());
+    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any(), any());
   }
 
   @Test
-  void registerCounsellor_missingTopics_isRejected() {
+  void resolveOnboardingInvite_exposesActiveTenantTopicsAndAgencyExistence() {
+    inviteResolves(invite());
+    agencyCoverageResolves();
+
+    var state = service.resolveOnboardingInvite(RAW_TOKEN);
+
+    assertTrue(state.agencyExists());
+    assertEquals(2, state.availableTopics().size());
+    assertTrue(state.availableTopics().stream().anyMatch(t -> t.id().equals(DEPARTMENT_TOPIC_ID)));
+    assertTrue(
+        state.availableTopics().stream().anyMatch(t -> t.id().equals(EXTRA_AGENCY_TOPIC_ID)));
+  }
+
+  @Test
+  void resolveOnboardingInvite_reservedAgencyId_answersNoAgencyAndTenantTopicsOnly() {
+    AccountInvite reserved = invite();
+    reserved.setDepartmentId(null);
+    inviteResolves(reserved);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(topicService.getAllActiveTopicsMap())
+        .thenReturn(
+            Map.of(EXTRA_AGENCY_TOPIC_ID, new TopicDTO().id(EXTRA_AGENCY_TOPIC_ID).name("Debt")));
+
+    var state = service.resolveOnboardingInvite(RAW_TOKEN);
+
+    assertFalse(state.agencyExists());
+    assertTrue(state.topics().isEmpty());
+    assertEquals(1, state.availableTopics().size());
+    assertEquals(EXTRA_AGENCY_TOPIC_ID, state.availableTopics().get(0).id());
+  }
+
+  @Test
+  void registerCounsellor_activeTenantTopicOutsideAgencyCoverage_isAccepted() {
+    inviteResolves(invite());
+    lenient()
+        .when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(DEPARTMENT_TOPIC_ID)));
+    lenient()
+        .when(topicService.getAllActiveTopicsMap())
+        .thenReturn(
+            Map.of(
+                DEPARTMENT_TOPIC_ID,
+                new TopicDTO().id(DEPARTMENT_TOPIC_ID).name("Family counselling"),
+                EXTRA_AGENCY_TOPIC_ID,
+                new TopicDTO().id(EXTRA_AGENCY_TOPIC_ID).name("Debt counselling")));
+    AccountInvite accepted = invite();
+    accepted.setStatus(AccountInviteStatus.ACCEPTED);
+    accepted.setProvisionedUserId("consultant-1");
+    accepted.setTwoFactorStatus(TwoFactorGateStatus.ACTIVE);
+    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any(), any()))
+        .thenReturn(accepted);
+
+    RegisterCounsellorCommand added =
+        new RegisterCounsellorCommand(
+            "lena.b",
+            "s3cretPassword",
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of(DEPARTMENT_TOPIC_ID, EXTRA_AGENCY_TOPIC_ID));
+
+    service.registerCounsellor(RAW_TOKEN, added);
+
+    verify(counsellorInviteProvisioningService)
+        .acceptInvite(
+            eq(RAW_TOKEN),
+            argThat(
+                cmd -> cmd.topicIds().equals(List.of(DEPARTMENT_TOPIC_ID, EXTRA_AGENCY_TOPIC_ID))),
+            any());
+  }
+
+  @Test
+  void registerCounsellor_missingTopics_isRejected_whenTheCoverageOffersSeveralTopics() {
+    // Only a single-topic coverage is picked for the invitee; with two topics they must choose.
+    // The agency itself offers both, so the case does not hinge on the department joining in.
+    inviteResolves(invite());
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenReturn(
+            new AgencyDTO()
+                .id(AGENCY_ID)
+                .topicIds(List.of(DEPARTMENT_TOPIC_ID, EXTRA_AGENCY_TOPIC_ID)));
+    when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
     RegisterCounsellorCommand noTopics =
         new RegisterCounsellorCommand(
-            "lena.b", "s3cretPassword", null, null, null, null, null, List.of());
+            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(), null, null);
 
     assertThrows(BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, noTopics));
+    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any(), any());
   }
 
   @Test
   void registerCounsellor_shortPassword_isRejected() {
     RegisterCounsellorCommand shortPassword =
         new RegisterCounsellorCommand(
-            "lena.b", "short", null, null, null, null, null, List.of(DEPARTMENT_TOPIC_ID));
+            "lena.b",
+            "short",
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of(DEPARTMENT_TOPIC_ID),
+            null,
+            null);
 
     assertThrows(
         BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, shortPassword));
@@ -350,7 +668,7 @@ class CounsellorOnboardingServiceTest {
             () -> service.registerCounsellor(RAW_TOKEN, command()));
 
     assertEquals(AccountInviteLinkException.Reason.CONSUMED, exception.getReason());
-    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any());
+    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any(), any());
   }
 
   @Test
@@ -361,7 +679,7 @@ class CounsellorOnboardingServiceTest {
     AccountInvite accepted = invite();
     accepted.setStatus(AccountInviteStatus.ACCEPTED);
     accepted.setProvisionedUserId(CONSULTANT_ID);
-    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any()))
+    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any(), any()))
         .thenReturn(accepted);
     when(usernameTranscoder.encodeUsername("lena.b")).thenReturn("enc.lena.b");
     when(identitySecondFactor.getOtpCredential("enc.lena.b")).thenReturn(null);
@@ -375,6 +693,91 @@ class CounsellorOnboardingServiceTest {
   }
 
   // --- two-factor ---
+
+  @Test
+  void startEmailTwoFactor_pinsRecipientAndDoesNotCompleteGate() {
+    AccountInvite pending = pendingEmailInvite();
+    when(identitySecondFactor.initiateEmailVerification("enc.lena.b", "counsellor@example.org"))
+        .thenReturn(
+            de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart.success());
+    service.startEmailTwoFactor(RAW_TOKEN);
+    verify(identitySecondFactor).initiateEmailVerification("enc.lena.b", "counsellor@example.org");
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+  }
+
+  @Test
+  void activateEmailTwoFactor_correctCodeCompletesWithoutTotpSecret() {
+    AccountInvite pending = pendingEmailInvite();
+    when(identitySecondFactor.finishEmailVerification("enc.lena.b", "123456"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                true, false, true, "counsellor@example.org"));
+    service.activateEmailTwoFactor(RAW_TOKEN, "123456");
+    verify(accountInviteService).markTwoFactorActive(CONSULTANT_ID);
+    verify(identitySecondFactor, never()).setUpOtpCredential(anyString(), anyString(), anyString());
+    assertNull(pending.getTotpPendingSecret());
+  }
+
+  @Test
+  void activateEmailTwoFactor_wrongCodeKeepsGatePending() {
+    pendingEmailInvite();
+    when(identitySecondFactor.finishEmailVerification("enc.lena.b", "000000"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                false, false, true, null));
+    assertThrows(
+        BadRequestException.class, () -> service.activateEmailTwoFactor(RAW_TOKEN, "000000"));
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+  }
+
+  @Test
+  void emailTwoFactor_expiredTokenDoesNotReachIdentityProvider() {
+    AccountInvite expired = invite();
+    expired.setStatus(AccountInviteStatus.ACCEPTED);
+    expired.setAcceptedByUserId(CONSULTANT_ID);
+    expired.setExpiresAt(LocalDateTime.now().minusSeconds(1));
+    inviteResolves(expired);
+    assertThrows(AccountInviteLinkException.class, () -> service.startEmailTwoFactor(RAW_TOKEN));
+    verifyNoInteractions(identitySecondFactor, identityProfileLookup);
+  }
+
+  @Test
+  void emailVerification_expiryDuringProviderCallDoesNotConsumeGate() {
+    AccountInvite pending = pendingEmailInvite();
+    AccountInvite expired = invite();
+    expired.setStatus(AccountInviteStatus.ACCEPTED);
+    expired.setAcceptedByUserId(CONSULTANT_ID);
+    expired.setExpiresAt(LocalDateTime.now().minusSeconds(1));
+    when(accountInviteService.findInviteByToken(RAW_TOKEN)).thenReturn(pending, expired);
+    when(identitySecondFactor.finishEmailVerification("enc.lena.b", "123456"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                true, false, true, "counsellor@example.org"));
+    assertThrows(
+        AccountInviteLinkException.class,
+        () -> service.activateEmailTwoFactor(RAW_TOKEN, "123456"));
+    assertTrue(pending.getExpiresAt().isAfter(LocalDateTime.now()));
+    verify(accountInviteService, times(2)).findInviteByToken(RAW_TOKEN);
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+  }
+
+  @Test
+  void emailSetup_inviteBelongingToAnotherRoleIsRejected() {
+    AccountInvite other = invite();
+    other.setTargetRole(AccountInviteTargetRole.TENANT_ADMIN);
+    inviteResolves(other);
+    assertThrows(NotFoundException.class, () -> service.startEmailTwoFactor(RAW_TOKEN));
+    verifyNoInteractions(identitySecondFactor, identityProfileLookup);
+  }
+
+  private AccountInvite pendingEmailInvite() {
+    AccountInvite pending = invite();
+    pending.setStatus(AccountInviteStatus.ACCEPTED);
+    pending.setAcceptedByUserId(CONSULTANT_ID);
+    inviteResolves(pending);
+    profileResolves();
+    return pending;
+  }
 
   @Test
   void activateTwoFactor_happyPath_marksGateActiveAndClearsPendingSecret() {
@@ -434,6 +837,34 @@ class CounsellorOnboardingServiceTest {
     var exception =
         assertThrows(
             AccountInviteLinkException.class, () -> service.activateTwoFactor(RAW_TOKEN, "123456"));
+
+    assertEquals(AccountInviteLinkException.Reason.CONSUMED, exception.getReason());
+  }
+
+  @Test
+  void consultantIdForOnboardingPicture_resumableInvite_returnsTheProvisionedConsultant() {
+    AccountInvite resumable = invite();
+    resumable.setStatus(AccountInviteStatus.ACCEPTED);
+    resumable.setAcceptedByUserId(CONSULTANT_ID);
+    resumable.setProvisionedUserId(CONSULTANT_ID);
+    inviteResolves(resumable);
+
+    assertEquals(CONSULTANT_ID, service.consultantIdForOnboardingPicture(RAW_TOKEN));
+  }
+
+  @Test
+  void requireOnboardingPictureInvite_expiredResumeWindow_answersConsumed() {
+    AccountInvite expired = invite();
+    expired.setStatus(AccountInviteStatus.ACCEPTED);
+    expired.setAcceptedByUserId(CONSULTANT_ID);
+    expired.setProvisionedUserId(CONSULTANT_ID);
+    expired.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+    inviteResolves(expired);
+
+    var exception =
+        assertThrows(
+            AccountInviteLinkException.class,
+            () -> service.requireOnboardingPictureInvite(RAW_TOKEN));
 
     assertEquals(AccountInviteLinkException.Reason.CONSUMED, exception.getReason());
   }
@@ -528,13 +959,13 @@ class CounsellorOnboardingServiceTest {
     accepted.setStatus(AccountInviteStatus.ACCEPTED);
     accepted.setProvisionedUserId(CONSULTANT_ID);
     accepted.setTwoFactorStatus(TwoFactorGateStatus.NOT_REQUIRED);
-    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any()))
+    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any(), any()))
         .thenReturn(accepted);
 
     var result = service.registerCounsellor(RAW_TOKEN, command());
 
     assertEquals(CONSULTANT_ID, result.consultantId());
-    verify(counsellorInviteProvisioningService).acceptInvite(eq(RAW_TOKEN), any());
+    verify(counsellorInviteProvisioningService).acceptInvite(eq(RAW_TOKEN), any(), any());
   }
 
   @Test
@@ -554,13 +985,15 @@ class CounsellorOnboardingServiceTest {
             null,
             null,
             null,
-            List.of(EXTRA_AGENCY_TOPIC_ID));
+            List.of(EXTRA_AGENCY_TOPIC_ID),
+            null,
+            null);
 
     assertThrows(
         InternalServerErrorException.class,
         () -> service.registerCounsellor(RAW_TOKEN, commandWithAgencyTopic));
 
-    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any());
+    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any(), any());
   }
 
   @Test
@@ -569,12 +1002,12 @@ class CounsellorOnboardingServiceTest {
     agencyCoverageResolves();
     var commandWithForeignTopic =
         new RegisterCounsellorCommand(
-            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(999L));
+            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(999L), null, null);
 
     assertThrows(
         BadRequestException.class,
         () -> service.registerCounsellor(RAW_TOKEN, commandWithForeignTopic));
 
-    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any());
+    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any(), any());
   }
 }
