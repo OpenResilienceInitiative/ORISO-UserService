@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
@@ -92,11 +93,32 @@ public class TenantAdminOnboardingController {
       @RequestBody(required = false) TwoFactorActivationRequestDTO request) {
     String otp = request == null ? null : request.otp;
     if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
-      counsellorOnboardingService.activateTwoFactor(token, otp);
+      if (request != null && request.method == IdentityOtpType.EMAIL) {
+        counsellorOnboardingService.activateEmailTwoFactor(token, otp);
+      } else {
+        counsellorOnboardingService.activateTwoFactor(token, otp);
+      }
     } else {
-      onboardingService.activateTwoFactor(token, otp);
+      if (request != null && request.method == IdentityOtpType.EMAIL) {
+        onboardingService.activateEmailTwoFactor(token, otp);
+      } else {
+        onboardingService.activateTwoFactor(token, otp);
+      }
     }
     return ResponseEntity.ok().build();
+  }
+
+  @PostMapping({
+    "/users/account-invites/{token}/onboarding/two-factor/email",
+    "/service/users/account-invites/{token}/onboarding/two-factor/email"
+  })
+  public ResponseEntity<Void> startEmailTwoFactor(@PathVariable String token) {
+    if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
+      counsellorOnboardingService.startEmailTwoFactor(token);
+    } else {
+      onboardingService.startEmailTwoFactor(token);
+    }
+    return ResponseEntity.noContent().build();
   }
 
   /**
@@ -286,6 +308,9 @@ public class TenantAdminOnboardingController {
 
   public static class TwoFactorActivationRequestDTO {
     public String otp;
+
+    /** Omission retains the app-only contract used by older wizard clients. */
+    public IdentityOtpType method;
   }
 
   public static class TwoFactorSetupDTO {
@@ -294,6 +319,9 @@ public class TenantAdminOnboardingController {
 
     /** QR code PNG (base64) when Keycloak provides one; the client renders text-only when null. */
     public String qrCodeBase64;
+
+    public List<IdentityOtpType> methods = List.of(IdentityOtpType.EMAIL, IdentityOtpType.APP);
+    public IdentityOtpType defaultMethod = IdentityOtpType.EMAIL;
 
     static TwoFactorSetupDTO of(String secret, String qrCodeBase64) {
       TwoFactorSetupDTO dto = new TwoFactorSetupDTO();
@@ -328,6 +356,10 @@ public class TenantAdminOnboardingController {
     public Long tenantId;
 
     public Long agencyId;
+
+    /** Persisted invitation origin: AUTO/MANUAL reserve a new agency, EXISTING joins one. */
+    public String agencyIdAllocationMode;
+
     public Long departmentId;
 
     /** Counsellor invites only (#997): the invite's coverage — preselected in the wizard. */
@@ -450,6 +482,10 @@ public class TenantAdminOnboardingController {
       dto.lastName = invite.getLastName();
       dto.tenantId = invite.getTenantId();
       dto.agencyId = invite.getAgencyId();
+      dto.agencyIdAllocationMode =
+          invite.getAgencyIdAllocationMode() == null
+              ? null
+              : invite.getAgencyIdAllocationMode().name();
       dto.departmentId = invite.getDepartmentId();
       dto.topics = state.topics().stream().map(TopicOptionDTO::from).toList();
       dto.availableTopics = state.availableTopics().stream().map(TopicOptionDTO::from).toList();
@@ -465,11 +501,7 @@ public class TenantAdminOnboardingController {
         TenantAdminOnboardingInviteResponseDTO dto, AccountInvite invite, boolean resume) {
       if (resume) {
         dto.phase = PHASE_PENDING_2FA_ACTIVATION;
-        if (invite.getTotpPendingSecret() != null) {
-          // The raw token is the only credential, so re-showing the secret to the token holder
-          // exposes nothing new; the QR code is not re-issued (secret-only re-entry).
-          dto.twoFactor = TwoFactorSetupDTO.of(invite.getTotpPendingSecret(), null);
-        }
+        dto.twoFactor = TwoFactorSetupDTO.of(invite.getTotpPendingSecret(), null);
       }
     }
   }
@@ -482,7 +514,7 @@ public class TenantAdminOnboardingController {
     public String consultantId;
 
     /**
-     * Counsellor registrations only: {@code PENDING_2FA_ACTIVATION} while the mandatory TOTP
+     * Counsellor registrations only: {@code PENDING_2FA_ACTIVATION} while the mandatory 2FA
      * activation is open, {@code COMPLETED} when the invite's 2FA gate was waived — the wizard then
      * skips the 2FA step. Tenant-admin registrations always continue with the 2FA step.
      */
@@ -501,7 +533,7 @@ public class TenantAdminOnboardingController {
       TenantAdminRegistrationResponseDTO dto = new TenantAdminRegistrationResponseDTO();
       dto.consultantId = result.consultantId();
       dto.phase = result.twoFactorRequired() ? PHASE_PENDING_2FA_ACTIVATION : PHASE_COMPLETED;
-      if (result.totpSecret() != null) {
+      if (result.twoFactorRequired()) {
         dto.twoFactor = TwoFactorSetupDTO.of(result.totpSecret(), result.totpQrCodeBase64());
       }
       return dto;

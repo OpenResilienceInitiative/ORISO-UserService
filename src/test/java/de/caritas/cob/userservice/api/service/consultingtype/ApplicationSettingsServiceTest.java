@@ -629,8 +629,8 @@ class ApplicationSettingsServiceTest {
 
   private static IdentityClientConfig createTechnicalIdentityClientConfig() {
     TechnicalUserConfig technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical-user");
-    technicalUser.setPassword("technical-password");
+    technicalUser.setClientId("technical-user");
+    technicalUser.setClientSecret("technical-password");
     return createIdentityClientConfig(technicalUser);
   }
 
@@ -654,13 +654,18 @@ class ApplicationSettingsServiceTest {
     }
 
     @Override
-    public IdentityLogin login(String username, String password) {
+    public IdentityLogin loginService(String username, String password) {
       loginCount.incrementAndGet();
       lastUsername = username;
       if (failure != null) {
         throw failure;
       }
       return new IdentityLogin(accessToken, 300, 300, "refresh");
+    }
+
+    @Override
+    public IdentityLogin login(String username, String password) {
+      throw new AssertionError("Technical call must never use a human password grant");
     }
 
     @Override

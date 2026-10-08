@@ -97,11 +97,11 @@ class InviteMailTenantRoutingTest {
             relay);
 
     var account = new TechnicalUserConfig();
-    account.setUsername("technical");
-    account.setPassword("test-secret");
+    account.setClientId("technical");
+    account.setClientSecret("test-secret");
     lenient().when(identityConfig.getTechnicalUser()).thenReturn(account);
     lenient()
-        .when(authentication.login("technical", "test-secret"))
+        .when(authentication.loginService("technical", "test-secret"))
         .thenReturn(new IdentityLogin("technical-token", 60, 60, "refresh"));
     var headers = new HttpHeaders();
     headers.setBearerAuth("technical-token");

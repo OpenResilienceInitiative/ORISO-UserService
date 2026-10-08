@@ -63,7 +63,8 @@ public class AcceptTimeAgencyCheck {
     IdentityLogin login;
     try {
       login =
-          identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
+          identityAuthentication.loginService(
+              technicalUser.getClientId(), technicalUser.getClientSecret());
     } catch (RuntimeException exception) {
       throw new IllegalStateException("Service authentication unavailable", exception);
     }

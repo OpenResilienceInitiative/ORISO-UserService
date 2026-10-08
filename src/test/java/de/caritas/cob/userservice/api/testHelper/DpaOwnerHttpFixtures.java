@@ -20,7 +20,8 @@ public final class DpaOwnerHttpFixtures implements AutoCloseable {
   private final RestTemplate previousTransport;
   private final MockRestServiceServer server;
 
-  private DpaOwnerHttpFixtures(TenantServiceApiControllerFactory factory, long tenantId) {
+  private DpaOwnerHttpFixtures(
+      TenantServiceApiControllerFactory factory, long tenantId, boolean permitTenantLookup) {
     this.factory = factory;
     previousTransport = (RestTemplate) ReflectionTestUtils.getField(factory, "restTemplate");
     // Other external adapters retain their existing transport fixtures.
@@ -32,17 +33,40 @@ public final class DpaOwnerHttpFixtures implements AutoCloseable {
             ExpectedCount.between(0, Integer.MAX_VALUE),
             request -> {
               assertEquals(HttpMethod.GET, request.getMethod());
+              var path = request.getURI().getPath();
               assertTrue(
-                  request.getURI().getPath().endsWith("/tenantadmin/" + tenantId + "/dpa/gate"));
-              assertEquals("0", request.getHeaders().getFirst("tenantId"));
+                  path.endsWith("/tenantadmin/" + tenantId + "/dpa/gate")
+                      || (permitTenantLookup
+                          && (path.endsWith("/tenant/public/id/" + tenantId)
+                              || path.endsWith("/tenant/public/single"))));
+              if (path.contains("/tenantadmin/")) {
+                assertEquals("0", request.getHeaders().getFirst("tenantId"));
+              }
             })
         .andRespond(
-            withSuccess("{\"dpaPublished\":true,\"dpaSigned\":true}", MediaType.APPLICATION_JSON));
+            request -> {
+              if (request.getURI().getPath().contains("/tenant/public/")) {
+                return withSuccess(
+                        "{\"id\":"
+                            + tenantId
+                            + ",\"subdomain\":\"synthetic\",\"settings\":{\"tenantAdminControls\":{\"accountInactivitySettings\":{\"askerMonths\":24,\"consultantMonths\":24,\"otherMonths\":24,\"revision\":0}}}}",
+                        MediaType.APPLICATION_JSON)
+                    .createResponse(request);
+              }
+              return withSuccess(
+                      "{\"dpaPublished\":true,\"dpaSigned\":true}", MediaType.APPLICATION_JSON)
+                  .createResponse(request);
+            });
   }
 
   public static DpaOwnerHttpFixtures permit(
       TenantServiceApiControllerFactory factory, long tenantId) {
-    return new DpaOwnerHttpFixtures(factory, tenantId);
+    return new DpaOwnerHttpFixtures(factory, tenantId, false);
+  }
+
+  public static DpaOwnerHttpFixtures permitWithTenantLookup(
+      TenantServiceApiControllerFactory factory, long tenantId) {
+    return new DpaOwnerHttpFixtures(factory, tenantId, true);
   }
 
   @Override

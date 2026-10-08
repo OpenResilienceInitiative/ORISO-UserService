@@ -185,6 +185,7 @@ class SessionServiceTest {
           CONSULTING_TYPE_ID_SUCHT + "",
           "",
           true,
+          false,
           null,
           null,
           null,

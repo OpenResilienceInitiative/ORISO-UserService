@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.CaseHandoverConsentPreferenceDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CaseHandoverConsentPreferenceUpdateDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogEntry;
@@ -56,6 +58,35 @@ public class CaseHandoverController {
   public ResponseEntity<List<CaseHandoverReason>> updateReasonPolicies(
       @Valid @RequestBody List<CaseHandoverReason> policies) {
     return ResponseEntity.ok(caseHandoverService.updateReasonPolicies(policies));
+  }
+
+  @GetMapping({
+    "/users/sessions/{sessionId}/case-handover/consent-preference",
+    "/service/users/sessions/{sessionId}/case-handover/consent-preference"
+  })
+  public ResponseEntity<CaseHandoverConsentPreferenceDTO> getConsentPreference(
+      @PathVariable Long sessionId) {
+    return ResponseEntity.ok(toPreferenceDto(caseHandoverService.getConsentPreference(sessionId)));
+  }
+
+  @PutMapping({
+    "/users/sessions/{sessionId}/case-handover/consent-preference",
+    "/service/users/sessions/{sessionId}/case-handover/consent-preference"
+  })
+  public ResponseEntity<CaseHandoverConsentPreferenceDTO> updateConsentPreference(
+      @PathVariable Long sessionId,
+      @Valid @RequestBody CaseHandoverConsentPreferenceUpdateDTO preference) {
+    return ResponseEntity.ok(
+        toPreferenceDto(
+            caseHandoverService.updateConsentPreference(
+                sessionId, Boolean.TRUE.equals(preference.getAlwaysAskBeforeAdditionalAccess()))));
+  }
+
+  private CaseHandoverConsentPreferenceDTO toPreferenceDto(
+      CaseHandoverService.ConsentPreference preference) {
+    return new CaseHandoverConsentPreferenceDTO()
+        .sessionId(preference.sessionId())
+        .alwaysAskBeforeAdditionalAccess(preference.alwaysAskBeforeAdditionalAccess());
   }
 
   @GetMapping({
