@@ -381,8 +381,11 @@ public class UserAccountServiceTest {
   @Test
   public void
       deactivateAndFlagUserAccountForDeletion_Should_ContinueWithoutEvent_When_StatisticsServiceThrows() {
+    var targetUser = new User();
+    targetUser.setUserId(USER_ID);
+    assertThat(targetUser.getDeleteDate()).isNull();
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(targetUser));
     Mockito.doAnswer(
             invocation -> {
               User target = invocation.getArgument(0);
@@ -390,21 +393,24 @@ public class UserAccountServiceTest {
               return null;
             })
         .when(deletionLifecycleService)
-        .beginUserDeletion(USER, USER.getUserId());
+        .beginUserDeletion(targetUser, targetUser.getUserId());
     Mockito.doThrow(new RuntimeException("stats service down"))
         .when(statisticsService)
         .fireEvent(any());
 
     accountProvider.deactivateAndFlagUserAccountForDeletion();
 
-    verify(userService).saveUser(USER);
+    verify(userService).saveUser(targetUser);
   }
 
   @Test
   public void
       deactivateAndFlagUserAccountForDeletion_Should_DeactivateKeycloakAccountAndSetDeleteDate() {
+    var targetUser = new User();
+    targetUser.setUserId(USER_ID);
+    assertThat(targetUser.getDeleteDate()).isNull();
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(targetUser));
     Mockito.doAnswer(
             invocation -> {
               User target = invocation.getArgument(0);
@@ -412,17 +418,18 @@ public class UserAccountServiceTest {
               return null;
             })
         .when(deletionLifecycleService)
-        .beginUserDeletion(USER, USER.getUserId());
+        .beginUserDeletion(targetUser, targetUser.getUserId());
 
     this.accountProvider.deactivateAndFlagUserAccountForDeletion();
 
     var ordered = Mockito.inOrder(deletionLifecycleService, userService, identityDeactivator);
-    ordered.verify(deletionLifecycleService).beginUserDeletion(USER, USER.getUserId());
-    ordered.verify(userService).saveUser(USER);
-    ordered.verify(identityDeactivator).deactivateUser(Mockito.eq(USER.getUserId()), any());
-    assertThat(USER.getDeleteDate()).isNotNull();
-    verify(deletionLifecycleService, times(1)).beginUserDeletion(USER, USER.getUserId());
-    verify(userService, times(1)).saveUser(USER);
+    ordered.verify(deletionLifecycleService).beginUserDeletion(targetUser, targetUser.getUserId());
+    ordered.verify(userService).saveUser(targetUser);
+    ordered.verify(identityDeactivator).deactivateUser(Mockito.eq(targetUser.getUserId()), any());
+    assertThat(targetUser.getDeleteDate()).isNotNull();
+    verify(deletionLifecycleService, times(1))
+        .beginUserDeletion(targetUser, targetUser.getUserId());
+    verify(userService, times(1)).saveUser(targetUser);
     verify(statisticsService).fireEvent(any(DeleteAccountStatisticsEvent.class));
   }
 

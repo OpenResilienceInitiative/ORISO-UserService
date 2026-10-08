@@ -56,7 +56,7 @@ jobs:
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
         # Coordinated task provider includes ownership proofs and all six channel settings.
-        ref: ${{ github.event_name == 'pull_request' && '8dbed496ff7dba01564bc585378752eb5fc149aa' || 'dev' }}
+        ref: ${{ github.event_name == 'pull_request' && '7c0883ec8a0ee2ff2b2d096472ad8bfc81bad53c' || 'dev' }}
         path: .providers/tenant
         persist-credentials: false
 

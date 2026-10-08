@@ -2405,7 +2405,8 @@ class AccountInviteServiceTest {
     assertThat(invite.getTenantIdReservationToken()).isNull();
     // No reservation exists, so no availability re-validation and no release compensation.
     verify(tenantIdAllocationClient, never()).getAvailability(anyLong());
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(tenantIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
   }
 
   @Test
@@ -2459,7 +2460,8 @@ class AccountInviteServiceTest {
 
     assertThat(invite.getTenantId()).isEqualTo(21L);
     assertThat(invite.getTenantIdReservationToken()).isEqualTo("res-token-21");
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(tenantIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
   }
 
   @Test
@@ -2508,7 +2510,8 @@ class AccountInviteServiceTest {
 
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
     verify(accountInviteRepository, never()).save(any());
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(tenantIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
   }
 
   @Test
@@ -2617,7 +2620,8 @@ class AccountInviteServiceTest {
 
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
     verify(tenantIdAllocationClient).release(21L, "res-token-21");
-    verify(agencyIdAllocationClient, never()).release(anyLong());
+    verify(agencyIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
     verify(accountInviteRepository, never()).save(any());
   }
 

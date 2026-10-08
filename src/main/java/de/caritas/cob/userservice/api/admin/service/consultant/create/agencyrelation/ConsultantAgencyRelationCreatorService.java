@@ -85,9 +85,10 @@ public class ConsultantAgencyRelationCreatorService {
       de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization read,
       de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
           additions) {
+    var consultant = retrieveConsultant(consultantId);
+    validateImportedRelations(consultant, verifiedAgencies, true);
     identityRoleUpdater.ensureRoles(consultantId, requestedRoles, read, additions);
-    createValidatedRelations(
-        retrieveConsultant(consultantId), verifiedAgencies, requestedRoles, logMethod, true);
+    persistValidatedRelations(consultant, verifiedAgencies);
   }
 
   private void createValidatedRelations(
@@ -96,7 +97,14 @@ public class ConsultantAgencyRelationCreatorService {
       Set<String> roles,
       Consumer<String> logMethod,
       boolean validateImportCoverage) {
-    var ids = agencies.stream().map(AgencyDTO::getId).collect(java.util.stream.Collectors.toSet());
+    validateImportedRelations(consultant, agencies, validateImportCoverage);
+    persistValidatedRelations(consultant, agencies);
+  }
+
+  private void validateImportedRelations(
+      Consultant consultant,
+      java.util.Collection<AgencyDTO> agencies,
+      boolean validateImportCoverage) {
     if (agencies.isEmpty()
         || agencies.stream()
             .anyMatch(
@@ -122,6 +130,12 @@ public class ConsultantAgencyRelationCreatorService {
                   "Imported consultant agencies have incompatible consulting types");
           }
       }
+    }
+  }
+
+  private void persistValidatedRelations(
+      Consultant consultant, java.util.Collection<AgencyDTO> agencies) {
+    for (var agency : agencies) {
       var relation =
           consultantAgencyService.saveConsultantAgency(
               buildConsultantAgency(consultant, agency.getId()));

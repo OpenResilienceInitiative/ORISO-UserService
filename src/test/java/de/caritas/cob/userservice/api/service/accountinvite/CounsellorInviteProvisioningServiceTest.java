@@ -14,7 +14,6 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
-import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
@@ -26,7 +25,6 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -46,13 +44,10 @@ class CounsellorInviteProvisioningServiceTest {
   private final AccountInviteService accountInviteService = mock(AccountInviteService.class);
   private final AccountInviteRepository accountInviteRepository =
       mock(AccountInviteRepository.class);
-  private final ConsultantAdminFacade consultantAdminFacade = mock(ConsultantAdminFacade.class);
   private final ConsultantRepository consultantRepository = mock(ConsultantRepository.class);
   private final CreateConsultantSaga createConsultantSaga = mock(CreateConsultantSaga.class);
   private final IdentityAuthentication identityAuthentication = mock(IdentityAuthentication.class);
   private final IdentityClientConfig identityClientConfig = mock(IdentityClientConfig.class);
-  private final IdentityPasswordUpdater identityPasswordUpdater =
-      mock(IdentityPasswordUpdater.class);
   private final CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService =
       mock(CounsellorAgencyAdminGrantService.class);
   private final de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository
@@ -154,7 +149,6 @@ class CounsellorInviteProvisioningServiceTest {
                 dto -> "self-chosen-password".equals(dto.getPassword())),
             any());
     order.verify(accountInviteService).acceptInvite("raw-token", "created-consultant");
-    verifyNoInteractions(identityPasswordUpdater);
     order.verify(identityProvisioning).completeCreatedAccount("created-consultant");
   }
 
@@ -172,10 +166,10 @@ class CounsellorInviteProvisioningServiceTest {
                         "invited-counsellor", "self-chosen-password", true, null)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("atomic password rejected");
+    verify(createConsultantSaga).createInvitedConsultant(any(), any());
     assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
     assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
     verifyNoInteractions(
-        identityPasswordUpdater,
         identityProvisioning,
         consultantAgencyRelationCreatorService,
         counsellorAgencyAdminGrantService);
@@ -236,7 +230,7 @@ class CounsellorInviteProvisioningServiceTest {
                         "invited-counsellor", "test-password", true, null)))
         .isInstanceOf(NotFoundException.class);
 
-    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+    verify(createConsultantSaga, never()).createInvitedConsultant(any(), any());
     assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
   }
 
@@ -265,7 +259,7 @@ class CounsellorInviteProvisioningServiceTest {
             de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class)
         .hasMessageContaining("already in progress");
 
-    verifyNoInteractions(consultantAdminFacade);
+    verify(createConsultantSaga, never()).createInvitedConsultant(any(), any());
   }
 
   @Test
@@ -428,7 +422,7 @@ class CounsellorInviteProvisioningServiceTest {
     assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
     assertThat(invite.getProvisioningFailureReason())
         .isEqualTo("Service authentication unavailable");
-    verifyNoInteractions(consultantAdminFacade);
+    verify(createConsultantSaga, never()).createInvitedConsultant(any(), any());
     assertThat(TechnicalAccessTokenContext.get()).isEmpty();
   }
 

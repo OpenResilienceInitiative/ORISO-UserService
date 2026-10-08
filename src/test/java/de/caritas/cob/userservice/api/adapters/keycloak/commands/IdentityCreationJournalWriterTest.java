@@ -82,6 +82,25 @@ class IdentityCreationJournalWriterTest {
     assertThat(row.getCreationProof()).isEqualTo("own-proof");
   }
 
+  @Test
+  void completedAttemptReleasesOnlyRequestReplayKeyAndRetainsOwnedHistory() {
+    var repository = mock(IdentityCreationAttemptRepository.class);
+    var row = row("COMMIT_REQUESTED");
+    row.setRequestKey("stable-name-request");
+    when(repository.findByIdForUpdate(row.getId())).thenReturn(Optional.of(row));
+    var writer = new IdentityCreationJournalWriter(repository);
+    var receipt =
+        new KeycloakTaskCommands.CreationResult(
+            UUID.fromString(row.getId()), "new-account", "own-proof", "OPEN");
+    writer.finish(receipt, "COMMITTED");
+    assertThat(row.getRequestKey()).isNull();
+    assertThat(row.getStatus()).isEqualTo("COMMITTED");
+    assertThat(row.getAccountId()).isEqualTo("new-account");
+    assertThat(row.getCreationProof()).isEqualTo("own-proof");
+    assertThatThrownBy(() -> writer.request(receipt, origin(), "COMPENSATION_REQUESTED"))
+        .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+  }
+
   private static AccountInvite invite() {
     return AccountInvite.builder()
         .id(7L)

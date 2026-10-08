@@ -167,7 +167,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
                 # Coordinated task provider, preserving ownership and projection contracts.
-                r"8dbed496ff7dba01564bc585378752eb5fc149aa",
+                r"7c0883ec8a0ee2ff2b2d096472ad8bfc81bad53c",
                 re.DOTALL,
             ),
         )

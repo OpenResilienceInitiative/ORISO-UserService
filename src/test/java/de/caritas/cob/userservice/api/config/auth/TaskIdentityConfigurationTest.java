@@ -9,6 +9,34 @@ import org.junit.jupiter.api.Test;
 
 class TaskIdentityConfigurationTest {
   @Test
+  void packagedTestingProfileCannotSupplyTaskSecretsSubjectsOrProofKeys() throws Exception {
+    var environment = new org.springframework.mock.env.MockEnvironment();
+    environment
+        .getPropertySources()
+        .addLast(
+            new org.springframework.core.io.support.ResourcePropertySource(
+                "packaged-testing", "file:src/main/resources/application-testing.properties"));
+    var settings =
+        org.springframework.boot.context.properties.bind.Binder.get(environment)
+            .bind(
+                "identity",
+                org.springframework.boot.context.properties.bind.Bindable.of(
+                    TaskIdentityConfiguration.class))
+            .get();
+    assertThatThrownBy(settings::validate).isInstanceOf(IllegalStateException.class);
+    for (var task : TaskIdentity.values()) {
+      assertThat(environment.getProperty("identity.tasks." + task.key() + ".client-secret"))
+          .isEmpty();
+      assertThat(environment.getProperty("identity.tasks." + task.key() + ".service-subject"))
+          .isEmpty();
+    }
+    for (var key :
+        java.util.List.of(
+            "provisioning-origin-key", "maintenance-origin-key", "wizard-policy-context-key"))
+      assertThat(environment.getProperty("oriso.commands." + key)).isEmpty();
+  }
+
+  @Test
   void actualUserServiceOutboundRegistryDoesNotRequireConsultingTypeSmtpSecret() {
     assertThat(TaskIdentity.values())
         .extracting(TaskIdentity::key)

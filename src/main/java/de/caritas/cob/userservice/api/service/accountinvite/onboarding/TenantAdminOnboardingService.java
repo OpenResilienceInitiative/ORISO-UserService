@@ -338,7 +338,11 @@ public class TenantAdminOnboardingService {
     } catch (RuntimeException exception) {
       // Every database change rolls back with the exception; the Keycloak account is external
       // state and must be compensated explicitly so a failed registration stays retryable.
-      identityProvisioning.compensateCreatedAccount(admin.getId());
+      try {
+        identityProvisioning.compensateCreatedAccount(admin.getId());
+      } catch (RuntimeException compensationFailure) {
+        exception.addSuppressed(compensationFailure);
+      }
       throw exception;
     }
   }
@@ -390,7 +394,11 @@ public class TenantAdminOnboardingService {
       return new TenantAdminRegistrationResult(
           invite.getTenantId(), otpInfo.secret(), otpInfo.secretQrCode());
     } catch (RuntimeException exception) {
-      identityProvisioning.compensateCreatedAccount(admin.getId());
+      try {
+        identityProvisioning.compensateCreatedAccount(admin.getId());
+      } catch (RuntimeException compensationFailure) {
+        exception.addSuppressed(compensationFailure);
+      }
       throw exception;
     }
   }

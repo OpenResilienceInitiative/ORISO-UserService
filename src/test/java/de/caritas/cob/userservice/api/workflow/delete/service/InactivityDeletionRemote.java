@@ -12,6 +12,9 @@ final class InactivityDeletionRemote implements AutoCloseable {
   final AtomicBoolean unsafeDestructiveCall = new AtomicBoolean();
   final AtomicInteger deactivations = new AtomicInteger();
   final AtomicInteger logouts = new AtomicInteger();
+  final java.util.concurrent.atomic.AtomicReference<Throwable> verificationFailure =
+      new java.util.concurrent.atomic.AtomicReference<>();
+  final AtomicInteger lifecycleStatusCalls = new AtomicInteger();
   private final HttpServer server;
 
   InactivityDeletionRemote() throws Exception {
@@ -41,18 +44,23 @@ final class InactivityDeletionRemote implements AutoCloseable {
               String op;
               if (path.endsWith("/lifecycle-status")) {
                 op = "account.lifecycle-status";
+                lifecycleStatusCalls.incrementAndGet();
                 response =
                     "{\"enabled\":" + enabled.get() + ",\"sessionCount\":0,\"roles\":[\"ASKER\"]}";
               } else if (path.endsWith("/suspension")) {
                 op = "account.suspend";
-                enabled.set(false);
-                logouts.incrementAndGet();
                 status = 204;
               } else throw new AssertionError("Unexpected lifecycle route");
               de.caritas.cob.userservice.api.workflow.accountinactivity.InactivityCommandTestSupport
                   .verify(exchange, body, "inactivity-lock-first", null, op);
-            } catch (Exception invalid) {
-              throw new IllegalStateException(invalid);
+              if (op.equals("account.suspend")) {
+                enabled.set(false);
+                logouts.incrementAndGet();
+              }
+            } catch (Throwable invalid) {
+              verificationFailure.compareAndSet(null, invalid);
+              status = 500;
+              response = "{}";
             }
           } else status = 404;
           exchange.getResponseHeaders().set("Content-Type", "application/json");

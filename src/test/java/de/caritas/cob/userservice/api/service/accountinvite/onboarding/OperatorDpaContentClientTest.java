@@ -52,15 +52,18 @@ class OperatorDpaContentClientTest {
   @Mock private TenantControllerApi tenantControllerApi;
   @Mock private ApiClient apiClient;
 
+  private TaskIdentityCredentials technicalUser;
+
   @BeforeEach
   void setUp() {
-    TaskIdentityCredentials technicalUser = new TaskIdentityCredentials();
+    technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical");
     technicalUser.setClientSecret("secret");
-    when(identityClientConfig.getTaskIdentity(org.mockito.ArgumentMatchers.any()))
+    when(identityClientConfig.getTaskIdentity(
+            de.caritas.cob.userservice.api.config.auth.TaskIdentity.CONFIG_WIZARD))
         .thenReturn(technicalUser);
     IdentityLogin identityLogin = new IdentityLogin("token", 0, 0, null);
-    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.any()))
+    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.same(technicalUser)))
         .thenReturn(identityLogin);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(anyString()))
         .thenReturn(new HttpHeaders());
@@ -255,7 +258,7 @@ class OperatorDpaContentClientTest {
    */
   @Test
   void lookupPublishedDpaReportsUpstreamErrorWhenTheTechnicalUserLoginFails() {
-    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.any()))
+    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.same(technicalUser)))
         .thenThrow(new IllegalStateException("technical user login failed"));
 
     var lookup = clientFor(OPERATOR_TENANT_ID).lookupPublishedDpa();
@@ -266,7 +269,7 @@ class OperatorDpaContentClientTest {
 
   @Test
   void fetchPublishedDpaDoesNotThrowWhenTheTechnicalUserLoginFails() {
-    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.any()))
+    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.same(technicalUser)))
         .thenThrow(new IllegalStateException("technical user login failed"));
 
     assertNull(clientFor(OPERATOR_TENANT_ID).fetchPublishedDpa());

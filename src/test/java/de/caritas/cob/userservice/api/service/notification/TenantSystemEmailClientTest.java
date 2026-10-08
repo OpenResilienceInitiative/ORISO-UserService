@@ -62,6 +62,20 @@ class TenantSystemEmailClientTest {
   }
 
   @Test
+  void internalReadPreservesConfiguredBasePathAndNormalizesWhitespace() {
+    ReflectionTestUtils.setField(
+        client, "tenantServiceApiUrl", "  http://tenantservice.internal:8081/proxy/tenant/40/  ");
+    server
+        .expect(
+            requestTo(
+                "http://tenantservice.internal:8081/proxy/tenant/40/internal/tenants/40/system-email-context"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess("{\"id\":40}", MediaType.APPLICATION_JSON));
+    assertThat(client.readTenant(40L)).containsEntry("id", 40);
+    server.verify();
+  }
+
+  @Test
   void readsFreshRedactedTenantProjectionWithNotificationTask() {
     server
         .expect(

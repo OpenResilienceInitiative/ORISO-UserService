@@ -108,18 +108,22 @@ class AccountInactivityDeletionCompletionTest {
     var mediaBodies = new java.util.ArrayList<String>();
     var appointmentCalls = new AtomicInteger();
     var identityCalls = new AtomicInteger();
+    var lifecycleStatusCalls = new AtomicInteger();
+    var verificationFailure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
     var remote = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     remote.createContext(
         "/",
         exchange -> {
           int status;
           if (exchange.getRequestURI().getPath().startsWith("/realms/test/oriso-commands/v1/")) {
+            lifecycleStatusCalls.incrementAndGet();
             try {
               InactivityCommandTestSupport.verify(exchange, "", id, 7L, "account.lifecycle-status");
-            } catch (Exception invalid) {
-              throw new IllegalStateException(invalid);
+              status = 404;
+            } catch (Throwable invalid) {
+              verificationFailure.compareAndSet(null, invalid);
+              status = 500;
             }
-            status = 404;
           } else if (exchange.getRequestURI().getPath().equals("/internal/lifecycle/forget")) {
             mediaCalls.incrementAndGet();
             mediaBodies.add(
@@ -300,6 +304,8 @@ class AccountInactivityDeletionCompletionTest {
         assertThat(mediaCalls).hasValue(2);
         assertThat(appointmentCalls).hasValue(3);
         assertThat(identityCalls).hasValue(2);
+        assertThat(lifecycleStatusCalls.get()).isPositive();
+        assertThat(verificationFailure.get()).isNull();
         assertThat(users.findById(id)).isEmpty();
       }
     } finally {

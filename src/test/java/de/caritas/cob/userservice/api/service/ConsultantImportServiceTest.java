@@ -56,6 +56,7 @@ class ConsultantImportServiceTest {
   private de.caritas.cob.userservice.api.adapters.keycloak.commands.ConfiguredConsultantImport
       configuredImport;
 
+  @Mock private org.springframework.transaction.PlatformTransactionManager transactions;
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock private AgencyService agencyService;

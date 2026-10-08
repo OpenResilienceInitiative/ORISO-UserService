@@ -568,7 +568,7 @@ class TenantAdminOnboardingServiceTest {
         () -> service.registerTenantAdmin(RAW_TOKEN, validCommand()));
 
     verify(accountInviteRepository, never()).claimForAcceptance(anyLong(), any(), any());
-    verify(createAdminService, never()).createNewTenantAdmin(any());
+    verify(createAdminService, never()).createNewTenantAdminFromInvite(any(), any());
     verify(tenantCreationClient, never()).createTenant(any());
   }
 
@@ -1350,7 +1350,7 @@ class TenantAdminOnboardingServiceTest {
             () -> service.registerTenantAdmin(RAW_TOKEN, validCommand()));
 
     assertEquals(AccountInviteLinkException.Reason.CONSUMED, exception.getReason());
-    verify(createAdminService, never()).createNewTenantAdmin(any());
+    verify(createAdminService, never()).createNewTenantAdminFromInvite(any(), any());
   }
 
   @Test
@@ -1368,11 +1368,13 @@ class TenantAdminOnboardingServiceTest {
             () -> service.registerTenantAdmin(RAW_TOKEN, validCommand()));
 
     assertEquals(AccountInviteLinkException.Reason.CONSUMED, exception.getReason());
-    verify(createAdminService, never()).createNewTenantAdmin(any());
+    verify(createAdminService, never()).createNewTenantAdminFromInvite(any(), any());
   }
 
-  @Test
-  void registerTenantAdmin_tenantCreationFails_rollsBackKeycloakUserAndRethrows() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void registerTenantAdmin_tenantCreationFails_rollsBackKeycloakUserAndRethrows(
+      boolean compensationFails) {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     givenPublishedOperatorDpa();
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
@@ -1392,17 +1394,29 @@ class TenantAdminOnboardingServiceTest {
     when(tenantCreationClient.createTenant(any()))
         .thenThrow(new ConflictException("reservation no longer consumable"));
 
-    assertThrows(
-        ConflictException.class, () -> service.registerTenantAdmin(RAW_TOKEN, validCommand()));
+    var cleanupFailure = new IllegalStateException("journal unavailable");
+    if (compensationFails)
+      doThrow(cleanupFailure).when(identityProvisioning).compensateCreatedAccount("kc-user-1");
+    var original =
+        assertThrows(
+            ConflictException.class, () -> service.registerTenantAdmin(RAW_TOKEN, validCommand()));
+    assertEquals("reservation no longer consumable", original.getMessage());
+    org.assertj.core.api.Assertions.assertThat(original.getSuppressed())
+        .containsExactly(compensationFails ? new Throwable[] {cleanupFailure} : new Throwable[0]);
 
     verify(identityProvisioning).compensateCreatedAccount("kc-user-1");
     verify(eventPublisher, never()).publishEvent(any(InviteUnitCreatedEvent.class));
   }
 
-  @Test
-  void registerTenantAdmin_credentialProviderFails_rollsBackKeycloakUser() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void registerTenantAdmin_credentialProviderFails_rollsBackKeycloakUser(boolean joinsExisting) {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
-    givenPublishedOperatorDpa();
+    if (!joinsExisting) givenPublishedOperatorDpa();
+    if (joinsExisting)
+      invite.setTenantIdAllocationMode(
+          de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode
+              .EXISTING);
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     Admin admin =
@@ -1417,9 +1431,15 @@ class TenantAdminOnboardingServiceTest {
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenThrow(new InternalServerErrorException("credential provider unavailable"));
 
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> service.registerTenantAdmin(RAW_TOKEN, validCommand()));
+    var cleanupFailure = new IllegalStateException("journal unavailable");
+    doThrow(cleanupFailure).when(identityProvisioning).compensateCreatedAccount("kc-user-1");
+    var original =
+        assertThrows(
+            InternalServerErrorException.class,
+            () -> service.registerTenantAdmin(RAW_TOKEN, validCommand()));
+    assertEquals("credential provider unavailable", original.getMessage());
+    org.assertj.core.api.Assertions.assertThat(original.getSuppressed())
+        .containsExactly(cleanupFailure);
 
     verify(identityProvisioning).compensateCreatedAccount("kc-user-1");
     verify(tenantCreationClient, never()).createTenant(any());

@@ -50,10 +50,8 @@ public class TenantSystemEmailClient {
 
   @SuppressWarnings("unchecked")
   public Map<String, Object> readTenant(long tenantId) {
-    String url =
-        endpoint(tenantId, "")
-            .replace(
-                "/tenant/" + tenantId, "/internal/tenants/" + tenantId + "/system-email-context");
+    if (tenantId <= 0) throw new IllegalArgumentException("tenantId must be positive");
+    String url = validatedBase() + "/internal/tenants/" + tenantId + "/system-email-context";
     Map<?, ?> response =
         restTemplate
             .exchange(url, HttpMethod.GET, new HttpEntity<Void>(technicalHeaders()), Map.class)
@@ -191,6 +189,10 @@ public class TenantSystemEmailClient {
 
   private String endpoint(long tenantId, String suffix) {
     if (tenantId <= 0) throw new IllegalArgumentException("tenantId must be positive");
+    return validatedBase() + "/tenant/" + tenantId + suffix;
+  }
+
+  private String validatedBase() {
     if (tenantServiceApiUrl == null || tenantServiceApiUrl.isBlank()) {
       throw new IllegalStateException(
           "tenant.service.api.url (TENANT_SERVICE_API_URL) is required");
@@ -200,6 +202,6 @@ public class TenantSystemEmailClient {
         || base.getHost() == null) {
       throw new IllegalStateException("tenant.service.api.url (TENANT_SERVICE_API_URL) is invalid");
     }
-    return tenantServiceApiUrl.replaceAll("/+$", "") + "/tenant/" + tenantId + suffix;
+    return tenantServiceApiUrl.trim().replaceAll("/+$", "");
   }
 }

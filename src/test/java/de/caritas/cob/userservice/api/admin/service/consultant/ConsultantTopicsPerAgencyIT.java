@@ -454,8 +454,7 @@ class ConsultantTopicsPerAgencyIT {
           .contains(otherTenantTopic);
       assertThat(nativeAccounts.commands())
           .extracting(BoundedIdentityHttpFixtures.Command::operation)
-          .contains("account.read")
-          .doesNotContain("account.roles", "account.create");
+          .doesNotContain("account.read", "account.roles", "account.create");
     } finally {
       java.nio.file.Files.deleteIfExists(file);
     }

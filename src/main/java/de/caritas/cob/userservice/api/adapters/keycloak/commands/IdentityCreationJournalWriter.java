@@ -139,7 +139,7 @@ public class IdentityCreationJournalWriter {
     var terminalState = CreationStatus.fromCode(terminal);
     if (!terminalState.requiredRequest().matches(row)) throw denied();
     terminalState.persist(row);
-    if (terminalState == CreationStatus.COMPENSATED) row.setRequestKey(null);
+    row.setRequestKey(null);
     save(row);
   }
 

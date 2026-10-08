@@ -70,6 +70,7 @@ public class CreateAdminService {
    * Server-side flows only (public invite onboarding): there is no caller, so the tenant comes from
    * the invite, never from the request.
    */
+  @org.springframework.transaction.annotation.Transactional(noRollbackFor = RuntimeException.class)
   public Admin createNewAgencyAdminInTenant(
       CreateAdminDTO createAdminDTO, AccountInvite heldInvite) {
     var origin =

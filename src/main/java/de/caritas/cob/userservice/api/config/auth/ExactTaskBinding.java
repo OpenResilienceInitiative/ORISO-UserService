@@ -30,6 +30,7 @@ final class ExactTaskBinding {
     Object value = realm == null ? null : realm.get("roles");
     return subject.equals(jwt.getSubject())
         && client.equals(jwt.getClaimAsString("azp"))
+        && jwt.getAudience() != null
         && jwt.getAudience().contains(audience)
         && value instanceof Collection<?> roles
         && new HashSet<>(roles).equals(expectedRoles)

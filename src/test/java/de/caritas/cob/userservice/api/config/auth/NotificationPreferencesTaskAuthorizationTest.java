@@ -103,6 +103,22 @@ class NotificationPreferencesTaskAuthorizationTest {
     }
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.NullAndEmptySource
+  void absentAudienceIsForbiddenWithoutFailingTheRequest(String audience) throws Exception {
+    mvc.perform(
+            get("/users/notifications")
+                .header(
+                    "Authorization",
+                    "Bearer "
+                        + token(
+                            "dispatch-subject",
+                            "backend-notification-dispatch",
+                            audience,
+                            List.of("notification-dispatch", "notifications-technical"))))
+        .andExpect(status().isForbidden());
+  }
+
   private static String token(String subject, String client, String audience, List<String> roles)
       throws Exception {
     var jwt =

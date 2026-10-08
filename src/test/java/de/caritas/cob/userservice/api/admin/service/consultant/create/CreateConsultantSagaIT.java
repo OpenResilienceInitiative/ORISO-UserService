@@ -169,17 +169,28 @@ public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
   private de.caritas.cob.userservice.api.config.apiclient.ConsultingTypeServiceApiControllerFactory
       importTypeFactory;
 
-  @Test
-  void laterInvalidImportRowRollsBackEarlierLocalCreationAndPersistsOwnedCompensation()
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void laterInvalidImportRowPreservesEarlierCompletedRowAndReportsFailure(boolean failAfterCreation)
       throws Exception {
     var directory = java.nio.file.Files.createTempDirectory("atomic-import-failure");
     var file = directory.resolve("configured.csv");
     String username = "import" + java.util.UUID.randomUUID().toString().substring(0, 8);
+    String failedUsername =
+        failAfterCreation
+            ? "failed" + java.util.UUID.randomUUID().toString().substring(0, 8)
+            : "ab";
     java.nio.file.Files.writeString(
         file,
         ",424242,"
             + username
-            + ",Given,Family,synthetic@example.org,nein,,8;standard,1\n,424243,ab,Given,Family,next@example.org,nein,,8;standard,1\n");
+            + ",Given,Family,"
+            + username
+            + "@example.org,nein,,8;standard,1\n,424243,"
+            + failedUsername
+            + ",Given,Family,"
+            + failedUsername
+            + "@example.org,nein,,8;standard,1\n");
     Object priorFilename = ReflectionTestUtils.getField(configuredImport, "filename");
     Object priorMultitenancy = ReflectionTestUtils.getField(configuredImport, "multitenancy");
     Object priorImportMultitenancy =
@@ -251,9 +262,40 @@ public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
       policy.setConsultantBoundedToConsultingType(false);
       when(typeApi.getExtendedConsultingTypeById(1)).thenReturn(policy);
       when(importTypeFactory.createControllerApi()).thenReturn(typeApi);
-      var failure = assertThrows(BadRequestException.class, actualImporter::startImport);
-      org.assertj.core.api.Assertions.assertThat(failure.getCause())
-          .hasMessage("Configured consultant import username length is invalid");
+      for (var rowUsername : List.of(username, failedUsername)) {
+        org.assertj.core.api.Assertions.assertThat(
+                importJdbc.queryForObject(
+                    "SELECT COUNT(*) FROM consultant WHERE username=? OR email=?",
+                    Integer.class,
+                    new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+                        .encodeUsername(rowUsername),
+                    rowUsername + "@example.org"))
+            .isZero();
+        org.assertj.core.api.Assertions.assertThat(nativeAccounts.commands())
+            .noneMatch(
+                command ->
+                    command.operation().equals("account.create")
+                        && rowUsername.equals(command.body().get("username")));
+      }
+      org.assertj.core.api.Assertions.assertThat(username).isNotEqualTo(failedUsername);
+      if (failAfterCreation) {
+        RejectSecondImportedRelation.username =
+            new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+                .encodeUsername(failedUsername);
+        importJdbc.execute(
+            "CREATE TRIGGER reject_second_imported_relation BEFORE INSERT ON consultant_agency FOR EACH ROW CALL '"
+                + RejectSecondImportedRelation.class.getName()
+                + "'");
+      }
+      var failure = assertThrows(RuntimeException.class, actualImporter::startImport);
+      if (failAfterCreation)
+        org.assertj.core.api.Assertions.assertThat(failure)
+            .hasStackTraceContaining("synthetic second-row relation refusal");
+      else
+        org.assertj.core.api.Assertions.assertThat(failure)
+            .isInstanceOf(BadRequestException.class)
+            .cause()
+            .hasMessage("Configured consultant import username length is invalid");
       var created =
           nativeAccounts.commands().stream()
               .filter(
@@ -265,18 +307,53 @@ public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
       var attempt = creationAttempts.findById(created.target()).orElseThrow();
       org.assertj.core.api.Assertions.assertThat(
               importedConsultants.findById(attempt.getAccountId()))
-          .isEmpty();
-      org.assertj.core.api.Assertions.assertThat(attempt.getStatus())
-          .isEqualTo("COMPENSATION_REQUESTED");
+          .isPresent();
+      org.assertj.core.api.Assertions.assertThat(attempt.getStatus()).isEqualTo("COMMITTED");
       org.assertj.core.api.Assertions.assertThat(nativeAccounts.commands())
-          .noneMatch(
+          .anyMatch(
               command ->
                   command.operation().equals("account.commit")
                       && command.target().equals(created.target()));
       org.assertj.core.api.Assertions.assertThat(
               nativeAccounts.projections().get(attempt.getAccountId()).enabled())
-          .isFalse();
+          .isTrue();
+      org.assertj.core.api.Assertions.assertThat(nativeAccounts.commands())
+          .noneMatch(
+              command ->
+                  command.operation().equals("account.compensate")
+                      && command.target().equals(created.target()));
+      if (failAfterCreation) {
+        var failedCreate =
+            nativeAccounts.commands().stream()
+                .filter(
+                    command ->
+                        command.operation().equals("account.create")
+                            && failedUsername.equals(command.body().get("username")))
+                .findFirst()
+                .orElseThrow();
+        var failedAttempt = creationAttempts.findById(failedCreate.target()).orElseThrow();
+        org.assertj.core.api.Assertions.assertThat(failedAttempt.getStatus())
+            .isEqualTo("COMPENSATED");
+        org.assertj.core.api.Assertions.assertThat(
+                importedConsultants.findById(failedAttempt.getAccountId()))
+            .isEmpty();
+        org.assertj.core.api.Assertions.assertThat(
+                importJdbc.queryForObject(
+                    "SELECT COUNT(*) FROM consultant_agency WHERE consultant_id=?",
+                    Integer.class,
+                    failedAttempt.getAccountId()))
+            .isZero();
+        org.assertj.core.api.Assertions.assertThat(nativeAccounts.projections())
+            .doesNotContainKey(failedAttempt.getAccountId());
+        org.assertj.core.api.Assertions.assertThat(nativeAccounts.commands())
+            .anyMatch(
+                command ->
+                    command.operation().equals("account.compensate")
+                        && command.target().equals(failedCreate.target()));
+      }
     } finally {
+      importJdbc.execute("DROP TRIGGER IF EXISTS reject_second_imported_relation");
+      RejectSecondImportedRelation.username = null;
       ReflectionTestUtils.setField(configuredImport, "filename", priorFilename);
       ReflectionTestUtils.setField(configuredImport, "multitenancy", priorMultitenancy);
       ReflectionTestUtils.setField(actualImporter, "multiTenancyEnabled", priorImportMultitenancy);
@@ -286,6 +363,45 @@ public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
       try (var paths = java.nio.file.Files.walk(directory)) {
         for (var path : paths.sorted(java.util.Comparator.reverseOrder()).toList())
           java.nio.file.Files.delete(path);
+      }
+    }
+  }
+
+  @Autowired private org.springframework.jdbc.core.JdbcTemplate importJdbc;
+
+  public static class RejectSecondImportedRelation implements org.h2.api.Trigger {
+    static volatile String username;
+    private int consultantColumn;
+
+    @Override
+    public void init(
+        java.sql.Connection connection,
+        String schema,
+        String trigger,
+        String table,
+        boolean before,
+        int type)
+        throws java.sql.SQLException {
+      try (var columns =
+          connection
+              .createStatement()
+              .executeQuery("SELECT * FROM " + schema + "." + table + " WHERE 1=0")) {
+        var metadata = columns.getMetaData();
+        for (int i = 1; i <= metadata.getColumnCount(); i++)
+          if (metadata.getColumnName(i).equalsIgnoreCase("consultant_id")) consultantColumn = i - 1;
+      }
+    }
+
+    @Override
+    public void fire(java.sql.Connection connection, Object[] oldRow, Object[] newRow)
+        throws java.sql.SQLException {
+      try (var query =
+          connection.prepareStatement("SELECT username FROM consultant WHERE consultant_id=?")) {
+        query.setObject(1, newRow[consultantColumn]);
+        try (var row = query.executeQuery()) {
+          if (row.next() && java.util.Objects.equals(username, row.getString(1)))
+            throw new java.sql.SQLException("synthetic second-row relation refusal", "23514");
+        }
       }
     }
   }
@@ -522,9 +638,17 @@ public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
             eq(org.springframework.http.HttpMethod.PUT),
             any(org.springframework.http.HttpEntity.class),
             eq(KeycloakTaskCommands.CreationResult.class));
-    assertThrows(
-        IllegalStateException.class, () -> createConsultantSaga.createNewConsultant(validInput()));
-    org.assertj.core.api.Assertions.assertThat(nativeAccounts.projections()).isEmpty();
+    var input = validInput();
+    var failure =
+        assertThrows(
+            IllegalStateException.class, () -> createConsultantSaga.createNewConsultant(input));
+    org.assertj.core.api.Assertions.assertThat(failure)
+        .hasMessage("Identity provider returned no creation receipt");
+    org.assertj.core.api.Assertions.assertThat(nativeAccounts.commands())
+        .noneMatch(command -> command.operation().equals("account.commit"));
+    org.assertj.core.api.Assertions.assertThat(
+            importedConsultants.findByUsernameAndDeleteDateIsNull(input.getUsername()))
+        .isEmpty();
   }
 
   @Test

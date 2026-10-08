@@ -165,15 +165,30 @@ class IndividualCounsellingDpaGateIT {
                     ((org.springframework.mock.http.client.MockClientHttpRequest) request)
                         .getBodyAsString();
                 if (form.contains("grant_type=client_credentials")) {
+                  var fields =
+                      java.util.Arrays.stream(form.split("&"))
+                          .map(field -> field.split("=", 2))
+                          .collect(
+                              java.util.stream.Collectors.toMap(
+                                  field ->
+                                      java.net.URLDecoder.decode(
+                                          field[0], java.nio.charset.StandardCharsets.UTF_8),
+                                  field ->
+                                      java.net.URLDecoder.decode(
+                                          field[1], java.nio.charset.StandardCharsets.UTF_8)));
                   var task =
                       java.util.Arrays.stream(
                               de.caritas.cob.userservice.api.config.auth.TaskIdentity.values())
                           .filter(
                               candidate ->
-                                  form.contains(
-                                      "client_id=" + identities.require(candidate).getClientId()))
+                                  identities
+                                      .require(candidate)
+                                      .getClientId()
+                                      .equals(fields.get("client_id")))
                           .findFirst()
                           .orElseThrow();
+                  org.assertj.core.api.Assertions.assertThat(fields.get("client_secret"))
+                      .isEqualTo(identities.require(task).getClientSecret());
                   var token =
                       de.caritas
                           .cob

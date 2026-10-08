@@ -403,6 +403,21 @@ class AgencyAdminOnboardingWizardIT
   }
 
   @Test
+  void rejectedAdminInputRetainsRetryableInviteAndFailedProvisioningAudit() throws Exception {
+    String token = seedAgencyAdminInvite(AGENCY, false);
+    var invalidRecipient = seededInvite();
+    invalidRecipient.setRecipientEmail("invalid-email");
+    accountInviteRepository.saveAndFlush(invalidRecipient);
+    register(token, "admin_only", false, null).andExpect(status().isBadRequest());
+    var persisted = seededInvite();
+    assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(persisted.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
+    assertThat(persisted.getProvisionedUserId()).isNull();
+    assertThat(nativeAccounts.commands())
+        .noneMatch(command -> command.operation().equals("account.create"));
+  }
+
+  @Test
   void register_Should_LeaveNoAdminRows_When_AStepAfterTheAdminCreationFails() throws Exception {
     String token = seedAgencyAdminInvite(AGENCY, false);
     failTheAcceptStepFor(ADMIN_ONLY_ID);

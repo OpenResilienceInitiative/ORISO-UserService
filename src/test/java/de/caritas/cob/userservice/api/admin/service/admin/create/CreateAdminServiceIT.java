@@ -383,8 +383,16 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
     var input = easyRandom.nextObject(CreateAdminDTO.class);
     input.setUsername(VALID_USERNAME + java.util.UUID.randomUUID().toString().substring(0, 8));
     input.setEmail(VALID_EMAIL_ADDRESS);
-    assertThrows(IllegalStateException.class, () -> createAdminService.createNewAgencyAdmin(input));
-    assertThat(nativeAccounts.projections()).isEmpty();
+    var failure =
+        assertThrows(
+            IllegalStateException.class, () -> createAdminService.createNewAgencyAdmin(input));
+    assertThat(failure).hasMessage("Identity provider returned no creation receipt");
+    assertThat(nativeAccounts.commands())
+        .noneMatch(command -> command.operation().equals("account.commit"));
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT COUNT(*) FROM admin WHERE username=?", Integer.class, input.getUsername()))
+        .isZero();
   }
 
   @Test

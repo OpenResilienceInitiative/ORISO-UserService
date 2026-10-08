@@ -129,12 +129,19 @@ class AccountLoginStatusServiceTest {
   void boundedHttpReadPreservesConfirmedRowsAndSeparatesOutageFromDeniedAuthority(int status) {
     when(lookup.findEnabledById("first")).thenReturn(Optional.of(false));
     var failure =
-        org.springframework.web.client.HttpClientErrorException.create(
-            org.springframework.http.HttpStatus.valueOf(status),
-            "Fixture",
-            org.springframework.http.HttpHeaders.EMPTY,
-            new byte[0],
-            null);
+        status < 500
+            ? org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.valueOf(status),
+                "Fixture",
+                org.springframework.http.HttpHeaders.EMPTY,
+                new byte[0],
+                null)
+            : org.springframework.web.client.HttpServerErrorException.create(
+                org.springframework.http.HttpStatus.valueOf(status),
+                "Fixture",
+                org.springframework.http.HttpHeaders.EMPTY,
+                new byte[0],
+                null);
     when(lookup.findEnabledById("second")).thenThrow(failure);
     var service = new AccountLoginStatusService(lookup);
     if (status < 500) {

@@ -115,6 +115,8 @@ class InactiveAskerDeletionTest {
                                   .AccountInactivityEffectException.Target.MATRIX));
           assertThat(users.findById(user.getUserId())).isPresent();
         }
+        assertThat(remote.verificationFailure.get()).isNull();
+        assertThat(remote.lifecycleStatusCalls.get()).isPositive();
         assertThat(remote.deactivations.get()).isEqualTo(2);
         assertThat(remote.unsafeDestructiveCall.get()).isFalse();
         assertThat(remote.enabled.get()).isFalse();

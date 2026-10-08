@@ -48,9 +48,6 @@ import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -178,10 +175,7 @@ public class CreateUserFacadeTest {
       identityProvisioning;
 
   @Mock private de.caritas.cob.userservice.api.helper.UserHelper userHelper;
-  @Mock private IdentityClient identityClient;
   @Mock private IdentityAccountRemover identityAccountRemover;
-  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
-  @Mock private IdentityDummyEmailUpdater identityDummyEmailUpdater;
   @Mock private UserService userService;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock private AgencyVerifier agencyVerifier;
@@ -218,7 +212,8 @@ public class CreateUserFacadeTest {
     assertThrows(
         org.springframework.web.server.ResponseStatusException.class,
         () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
-    org.mockito.Mockito.verifyNoInteractions(identityClient, matrixSynapseService, userService);
+    org.mockito.Mockito.verifyNoInteractions(
+        identityProvisioning, matrixSynapseService, userService);
   }
 
   @Test
@@ -380,7 +375,6 @@ public class CreateUserFacadeTest {
     createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
     TenantContext.clear();
     verify(identityProvisioning, times(1)).create(any(), any(), any());
-    org.mockito.Mockito.verifyNoInteractions(identityClient, identityPasswordUpdater);
     verify(createNewSessionFacade, times(1))
         .initializeOwnedRegistration(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any());
@@ -393,27 +387,9 @@ public class CreateUserFacadeTest {
   }
 
   @Test
-  public void
-      updateKeycloakAccountAndCreateDatabaseUserAccount_Should_CallNecessaryMethods_When_EverythingSucceeds() {
-    when(consultingTypeManager.getConsultingTypeSettings(any()))
-        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-
+  void localAccountBuilderDoesNotObtainNativeIdentityAuthority() {
     createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
-
-    org.mockito.Mockito.verifyNoInteractions(identityClient, identityPasswordUpdater);
-  }
-
-  @Test
-  void localAccountBuilderDoesNotObtainPasswordMaintenance() {
-    createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
-    org.mockito.Mockito.verifyNoInteractions(identityClient, identityPasswordUpdater);
-    verify(userService).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
-  }
-
-  @Test
-  void localAccountBuilderDoesNotObtainRoleMaintenance() {
-    createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
-    org.mockito.Mockito.verifyNoInteractions(identityClient, identityPasswordUpdater);
+    org.mockito.Mockito.verifyNoInteractions(identityProvisioning);
     verify(userService).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
   }
 
@@ -965,8 +941,8 @@ public class CreateUserFacadeTest {
 
   @Test
   void anonymousLocalAccountBuilderDoesNotObtainNativeAdminMaintenance() {
-    createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
-    org.mockito.Mockito.verifyNoInteractions(identityClient, identityPasswordUpdater);
+    createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.ANONYMOUS);
+    org.mockito.Mockito.verifyNoInteractions(identityProvisioning);
     verify(userService).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
   }
 
@@ -1014,8 +990,7 @@ public class CreateUserFacadeTest {
             anyBoolean(),
             any(),
             any());
-    org.mockito.Mockito.verifyNoInteractions(
-        identityDummyEmailUpdater, identityPasswordUpdater, identityClient);
+    org.mockito.Mockito.verifyNoInteractions(identityProvisioning);
   }
 
   @Test

@@ -237,4 +237,5 @@
   <include file="db/changelog/changeset/20261007_task_identity_creation/changeSet.xml"/>
   <include file="db/changelog/changeset/20261008_creation_matrix_effects/changeSet.xml"/>
   <include file="db/changelog/changeset/20261007_standing_access_preference_1657/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261008_creation_terminal_replay_keys/changeSet.xml"/>
 </databaseChangeLog>

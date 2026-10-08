@@ -145,7 +145,7 @@ class AccountInviteExistingAgencyIT {
     assertThat(invite.getAgencyId()).isEqualTo(TWO_TOPIC_AGENCY);
     assertThat(invite.getTenantId()).isEqualTo(OWN_TENANT);
     assertThat(invite.getDepartmentId()).isEqualTo(22L);
-    verify(agencyIdAllocationClient, never()).reserve(any(), any());
+    verify(agencyIdAllocationClient, never()).reserveWithProof(any(), any());
   }
 
   @Test
@@ -165,7 +165,7 @@ class AccountInviteExistingAgencyIT {
 
     assertThat(invite.getAgencyId()).isEqualTo(SINGLE_TOPIC_AGENCY);
     assertThat(invite.getTenantId()).isEqualTo(OWN_TENANT);
-    verify(agencyIdAllocationClient, never()).reserve(any(), any());
+    verify(agencyIdAllocationClient, never()).reserveWithProof(any(), any());
   }
 
   @Test

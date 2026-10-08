@@ -383,8 +383,9 @@ class CounsellorOnboardingWizardIT
                 .cookie(CSRF_COOKIE))
         .andExpect(status().isNoContent());
     assertThat(recipients).containsExactly(invite.getRecipientEmail());
-    assertThat(invite.getAcceptedByUserId()).isEqualTo(CONSULTANT_ID);
-    assertThat(invite.getTenantId()).isEqualTo(79L);
+    var persistedInvite = accountInviteRepository.findById(invite.getId()).orElseThrow();
+    assertThat(persistedInvite.getAcceptedByUserId()).isEqualTo(CONSULTANT_ID);
+    assertThat(persistedInvite.getTenantId()).isEqualTo(79L);
     de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures
         .assertAcceptedInvitationReads(boundedIdentityHttp, invite);
     mockMvc

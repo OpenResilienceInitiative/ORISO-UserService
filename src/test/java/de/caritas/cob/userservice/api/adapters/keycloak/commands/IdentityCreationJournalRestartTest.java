@@ -77,6 +77,43 @@ class IdentityCreationJournalRestartTest {
     }
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"COMMITTED", "COMPENSATED"})
+  void terminalReplayKeyReleaseSurvivesRestartWithoutReusingOrReplacingTheOwnedAttempt(
+      String terminal) throws Exception {
+    var source = dataSource();
+    var attempt = UUID.randomUUID();
+    var receipt =
+        new KeycloakTaskCommands.CreationResult(
+            attempt, "original-account", "original-proof", "OPEN");
+    try (var context = open(source, true)) {
+      var journal = context.getBean(IdentityCreationJournalWriter.class);
+      var execution = journal.begin(attempt, origin(), "same-name");
+      journal.created(receipt, origin(), execution);
+      journal.requestAfterSaga(
+          receipt,
+          origin(),
+          terminal.equals("COMMITTED") ? "COMMIT_REQUESTED" : "COMPENSATION_REQUESTED");
+      journal.finish(receipt, terminal);
+    }
+    try (var context = open(source, false)) {
+      var journal = context.getBean(IdentityCreationJournalWriter.class);
+      var original = journal.attempt(attempt);
+      assertThat(original.getRequestKey()).isNull();
+      assertThat(original.getAccountId()).isEqualTo("original-account");
+      assertThat(original.getCreationProof()).isEqualTo("original-proof");
+      assertThat(original.getStatus()).isEqualTo(terminal);
+      assertThatThrownBy(() -> journal.begin(attempt, origin(), "same-name"))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+      var next = UUID.randomUUID();
+      assertThat(journal.begin(next, origin(), "same-name").attemptId()).isEqualTo(next);
+      assertThat(journal.attempt(attempt).getAccountId()).isEqualTo("original-account");
+      assertThat(journal.attempt(next).getAccountId()).isNull();
+      assertThat(journal.attempt(next).getStatus()).isEqualTo("CREATION_REQUESTED");
+    }
+  }
+
   @Test
   void reopenedOpenSagaCannotBeReplayedOrCompensatedByADuplicateRegistration() throws Exception {
     var source = dataSource();
