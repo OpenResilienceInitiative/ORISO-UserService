@@ -341,26 +341,40 @@ class CounsellorOnboardingWizardIT
         .andExpect(jsonPath("$.reason").value("CONSUMED"));
   }
 
-  @Test
-  void emailSetup_publicTokenFlow_requiresVerifiedCodeBeforeConsumption() throws Exception {
-    String token = "email-wizard-" + java.util.UUID.randomUUID();
+  private AccountInvite seedAcceptedEmailInvite(String token) throws Exception {
     AccountInvite invite = seedInvite(token);
     invite.setStatus(AccountInviteStatus.ACCEPTED);
     invite.setAcceptedByUserId(CONSULTANT_ID);
     invite.setProvisionedUserId(CONSULTANT_ID);
     accountInviteRepository.save(invite);
-    when(keycloakService.initiateEmailVerification(
-            "codex_wizard_counsellor", "lisa.simpson@example.org"))
-        .thenReturn(
-            de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart.success());
-    when(keycloakService.finishEmailVerification("codex_wizard_counsellor", "000000"))
-        .thenReturn(
-            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
-                false, false, true, null));
-    when(keycloakService.finishEmailVerification("codex_wizard_counsellor", "123456"))
-        .thenReturn(
-            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
-                true, false, true, "lisa.simpson@example.org"));
+    nativeAccounts.seed(
+        new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+            .AccountProjection(
+            CONSULTANT_ID,
+            "codex_wizard_counsellor",
+            invite.getRecipientEmail(),
+            "Lisa",
+            "Simpson",
+            79L,
+            "de",
+            true,
+            false,
+            List.of("consultant"),
+            false));
+    return invite;
+  }
+
+  @Test
+  void emailSetup_publicTokenFlow_requiresVerifiedCodeBeforeConsumption() throws Exception {
+    String token = "email-wizard-" + java.util.UUID.randomUUID();
+    AccountInvite invite = seedAcceptedEmailInvite(token);
+    var recipients =
+        de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenEmailOtp(
+            boundedIdentityHttp,
+            taskIdentities,
+            "codex_wizard_counsellor",
+            invite.getRecipientEmail(),
+            invite.getRecipientEmail());
 
     mockMvc
         .perform(
@@ -368,6 +382,11 @@ class CounsellorOnboardingWizardIT
                 .header("X-CSRF-Token", CSRF)
                 .cookie(CSRF_COOKIE))
         .andExpect(status().isNoContent());
+    assertThat(recipients).containsExactly(invite.getRecipientEmail());
+    assertThat(invite.getAcceptedByUserId()).isEqualTo(CONSULTANT_ID);
+    assertThat(invite.getTenantId()).isEqualTo(79L);
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures
+        .assertAcceptedInvitationReads(boundedIdentityHttp, invite);
     mockMvc
         .perform(
             post("/users/account-invites/{token}/onboarding/two-factor", token)
@@ -393,7 +412,90 @@ class CounsellorOnboardingWizardIT
   }
 
   @Test
+  void emailSetup_wrongVerifiedRecipientDoesNotConsumeTheInvitation() throws Exception {
+    String token = "email-recipient-" + java.util.UUID.randomUUID();
+    AccountInvite invite = seedAcceptedEmailInvite(token);
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenEmailOtp(
+        boundedIdentityHttp,
+        taskIdentities,
+        "codex_wizard_counsellor",
+        invite.getRecipientEmail(),
+        "another@example.org");
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/two-factor", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"otp\":\"123456\",\"method\":\"EMAIL\"}"))
+        .andExpect(status().isPreconditionFailed());
+    assertThat(accountInviteRepository.findById(invite.getId()).orElseThrow().getTwoFactorStatus())
+        .isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+  }
+
+  @Test
+  void emailSetup_expiredOrConsumedInviteCannotReadOrSend() throws Exception {
+    // Exclude context-startup scheduler traffic, while retaining every request-phase effect.
+    org.mockito.Mockito.clearInvocations(boundedIdentityHttp);
+    for (boolean consumed : new boolean[] {false, true}) {
+      String token = "email-expiry-" + java.util.UUID.randomUUID();
+      var invite = seedAcceptedEmailInvite(token);
+      if (consumed) invite.setTwoFactorStatus(TwoFactorGateStatus.ACTIVE);
+      else invite.setExpiresAt(LocalDateTime.now().minusSeconds(1));
+      accountInviteRepository.save(invite);
+      mockMvc
+          .perform(
+              post("/users/account-invites/{token}/onboarding/two-factor/email", token)
+                  .header("X-CSRF-Token", CSRF)
+                  .cookie(CSRF_COOKIE))
+          .andExpect(status().isGone());
+    }
+    assertThat(nativeAccounts.commands()).isEmpty();
+    org.mockito.Mockito.verifyNoInteractions(boundedIdentityHttp);
+  }
+
+  @Test
+  void emailSetup_validInviteWithoutCsrfCannotReadOrSend() throws Exception {
+    String token = "email-csrf-" + java.util.UUID.randomUUID();
+    seedAcceptedEmailInvite(token);
+    org.mockito.Mockito.clearInvocations(boundedIdentityHttp);
+    mockMvc
+        .perform(post("/users/account-invites/{token}/onboarding/two-factor/email", token))
+        .andExpect(status().isForbidden());
+    org.mockito.Mockito.verifyNoInteractions(boundedIdentityHttp);
+  }
+
+  @Test
+  void emailSetup_existingActiveFactorCannotBeReplaced() throws Exception {
+    String token = "email-active-factor-" + java.util.UUID.randomUUID();
+    var invite = seedAcceptedEmailInvite(token);
+    var recipients =
+        de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenEmailOtp(
+            boundedIdentityHttp,
+            taskIdentities,
+            "codex_wizard_counsellor",
+            invite.getRecipientEmail(),
+            invite.getRecipientEmail());
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenOtp(
+        boundedIdentityHttp,
+        taskIdentities,
+        new de.caritas.cob.userservice.api.model.OtpInfoDTO()
+            .otpSetup(true)
+            .otpType(de.caritas.cob.userservice.api.model.OtpType.APP));
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/two-factor/email", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE))
+        .andExpect(status().isPreconditionFailed());
+    assertThat(recipients).isEmpty();
+    assertThat(accountInviteRepository.findById(invite.getId()).orElseThrow().getTwoFactorStatus())
+        .isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+  }
+
+  @Test
   void emailSetup_unknownTokenIsRejectedBeforeMailAndCsrfStillApplies() throws Exception {
+    org.mockito.Mockito.clearInvocations(boundedIdentityHttp);
     mockMvc
         .perform(post("/users/account-invites/{token}/onboarding/two-factor/email", "unknown"))
         .andExpect(status().isForbidden());
@@ -403,8 +505,8 @@ class CounsellorOnboardingWizardIT
                 .header("X-CSRF-Token", CSRF)
                 .cookie(CSRF_COOKIE))
         .andExpect(status().isNotFound());
-    org.mockito.Mockito.verify(keycloakService, org.mockito.Mockito.never())
-        .initiateEmailVerification(anyString(), anyString());
+    assertThat(nativeAccounts.commands()).isEmpty();
+    org.mockito.Mockito.verifyNoInteractions(boundedIdentityHttp);
   }
 
   @Test

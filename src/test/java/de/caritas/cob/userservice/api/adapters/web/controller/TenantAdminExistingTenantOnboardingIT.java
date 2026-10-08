@@ -232,6 +232,41 @@ class TenantAdminExistingTenantOnboardingIT
   }
 
   @Test
+  void acceptedInviteAppSetupUsesItsBoundedTargetAndRejectsWrongCode() throws Exception {
+    String token = seedExistingTenantInvite();
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/register", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"account\":{\"password\":\"Valid-Test-Password-2026!\"}}"))
+        .andExpect(status().isOk());
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/two-factor", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"otp\":\"000000\",\"method\":\"APP\"}"))
+        .andExpect(status().isBadRequest());
+    assertThat(seededInvite().getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/two-factor", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"otp\":\"123456\",\"method\":\"APP\"}"))
+        .andExpect(status().isOk());
+    assertThat(seededInvite().getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.ACTIVE);
+    assertThat(seededInvite().getAcceptedByUserId()).isEqualTo(NEW_ADMIN_ID);
+    assertThat(seededInvite().getTenantId()).isEqualTo(EXISTING_TENANT);
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures
+        .assertAcceptedInvitationReads(boundedIdentityHttp, seededInvite());
+  }
+
+  @Test
   void forwardDpa_Should_Refuse400_When_TheTenantAlreadyExists() throws Exception {
     String token = seedExistingTenantInvite();
 

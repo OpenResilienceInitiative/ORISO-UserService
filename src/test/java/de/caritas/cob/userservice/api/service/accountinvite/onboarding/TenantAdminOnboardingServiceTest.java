@@ -383,7 +383,7 @@ class TenantAdminOnboardingServiceTest {
             .firstName("Erika")
             .lastName("Beispiel")
             .build();
-    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(admin);
+    when(createAdminService.createNewTenantAdminFromInvite(any(), any())).thenReturn(admin);
     when(identitySecondFactor.getOtpCredential(anyString())).thenReturn(appSetup);
 
     var result = service.registerTenantAdmin(RAW_TOKEN, validCommand());
@@ -395,8 +395,8 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("kc-user-1", invite.getAcceptedByUserId());
     assertEquals(TwoFactorGateStatus.PENDING_SETUP, invite.getTwoFactorStatus());
     assertNull(invite.getTotpPendingSecret());
-    verify(identityAccountRemover, never()).rollbackUser(anyString());
-    when(identityProfileLookup.findById("kc-user-1"))
+    verify(identityProvisioning, never()).compensateCreatedAccount(anyString());
+    when(identityProfileLookup.findById(eq("kc-user-1"), any()))
         .thenReturn(
             Optional.of(
                 new IdentityProfile(
@@ -1433,7 +1433,7 @@ class TenantAdminOnboardingServiceTest {
     invite.setAcceptedByUserId("kc-user-1");
     invite.setTotpPendingSecret(null);
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
-    when(identityProfileLookup.findById("kc-user-1"))
+    when(identityProfileLookup.findById(eq("kc-user-1"), any()))
         .thenReturn(Optional.of(new IdentityProfile("kc-user-1", "enc.user", null, null, null)));
     when(identitySecondFactor.initiateEmailVerification("enc.user", invite.getRecipientEmail()))
         .thenReturn(
@@ -1454,7 +1454,7 @@ class TenantAdminOnboardingServiceTest {
     invite.setAcceptedByUserId("kc-user-1");
     invite.setTotpPendingSecret("TOTPSECRET");
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
-    when(identityProfileLookup.findById("kc-user-1"))
+    when(identityProfileLookup.findById(eq("kc-user-1"), any()))
         .thenReturn(
             Optional.of(
                 new IdentityProfile("kc-user-1", "enc.keycloak-username", null, null, null)));
@@ -1474,7 +1474,7 @@ class TenantAdminOnboardingServiceTest {
     invite.setAcceptedByUserId("kc-user-1");
     invite.setTotpPendingSecret("TOTPSECRET");
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
-    when(identityProfileLookup.findById("kc-user-1"))
+    when(identityProfileLookup.findById(eq("kc-user-1"), any()))
         .thenReturn(
             Optional.of(
                 new IdentityProfile("kc-user-1", "enc.keycloak-username", null, null, null)));

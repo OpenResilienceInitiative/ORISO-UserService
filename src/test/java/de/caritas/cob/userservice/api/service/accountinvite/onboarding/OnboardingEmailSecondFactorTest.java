@@ -27,10 +27,17 @@ class OnboardingEmailSecondFactorTest {
   void setUp() {
     invite =
         AccountInvite.builder()
+            .id(7L)
+            .tenantId(42L)
+            .status(
+                de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.ACCEPTED)
+            .twoFactorStatus(
+                de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus
+                    .PENDING_SETUP)
             .acceptedByUserId("owner")
             .recipientEmail("owner@example.org")
             .build();
-    when(profiles.findById("owner"))
+    when(profiles.findById(eq("owner"), any()))
         .thenReturn(
             Optional.of(
                 new IdentityProfile("owner", "owner-username", null, null, "owner@example.org")));

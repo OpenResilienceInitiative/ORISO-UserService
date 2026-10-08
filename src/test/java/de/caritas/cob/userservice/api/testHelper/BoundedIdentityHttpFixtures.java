@@ -35,6 +35,33 @@ public final class BoundedIdentityHttpFixtures {
     }
   }
 
+  /** Assert the actual signed read requests from a public, persisted invitation flow. */
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  public static void assertAcceptedInvitationReads(
+      RestTemplate http, de.caritas.cob.userservice.api.model.AccountInvite invite)
+      throws java.text.ParseException {
+    assertThat(invite.getPurpose())
+        .isEqualTo(
+            de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose.INVITE);
+    var requests = org.mockito.ArgumentCaptor.forClass(HttpEntity.class);
+    verify(http, atLeastOnce())
+        .exchange(
+            anyString(),
+            eq(HttpMethod.GET),
+            requests.capture(),
+            eq(KeycloakTaskCommands.AccountProjection.class));
+    for (var request : requests.getAllValues()) {
+      var claims =
+          SignedJWT.parse(request.getHeaders().getFirst("X-ORISO-Origin-Authorization"))
+              .getJWTClaimsSet();
+      assertThat(claims.getStringClaim("originKind")).isEqualTo("ONBOARDING");
+      assertThat(claims.getStringClaim("operation")).isEqualTo("account.read");
+      assertThat(claims.getStringClaim("target")).isEqualTo(invite.getAcceptedByUserId());
+      assertThat(claims.getStringClaim("tenantId")).isEqualTo(invite.getTenantId().toString());
+      assertThat(claims.getStringListClaim("roles")).isEmpty();
+    }
+  }
+
   /**
    * External Matrix account port for non-Matrix integration suites. Real receipt/effect guards,
    * independent journal transactions and exact cleanup IDs remain active. Adapter ID matching is
@@ -149,6 +176,61 @@ public final class BoundedIdentityHttpFixtures {
             any(HttpMethod.class),
             any(HttpEntity.class),
             eq(de.caritas.cob.userservice.api.model.OtpInfoDTO.class));
+  }
+
+  /** External email OTP responses; the real dedicated grant and identity adapter remain active. */
+  public static List<String> givenEmailOtp(
+      RestTemplate http,
+      TaskIdentityConfiguration identities,
+      String username,
+      String inviteRecipient,
+      String verifiedRecipient) {
+    var recipients = new ArrayList<String>();
+    doAnswer(
+            invocation -> {
+              String url = invocation.getArgument(0);
+              HttpEntity<?> request = invocation.getArgument(2);
+              assertThat(url).endsWith("/send-verification-mail/" + username);
+              assertThat(invocation.getArgument(1, HttpMethod.class)).isEqualTo(HttpMethod.PUT);
+              assertThat(request.getHeaders().getFirst("Authorization"))
+                  .isEqualTo("Bearer " + taskJwt(TaskIdentity.OTP, identities).getTokenValue());
+              var setup = (de.caritas.cob.userservice.api.model.OtpSetupDTO) request.getBody();
+              assertThat(setup.getEmail()).isEqualTo(inviteRecipient);
+              recipients.add(setup.getEmail());
+              return ResponseEntity.ok(new de.caritas.cob.userservice.api.model.Success());
+            })
+        .when(http)
+        .exchange(
+            anyString(),
+            any(HttpMethod.class),
+            any(HttpEntity.class),
+            eq(de.caritas.cob.userservice.api.model.Success.class));
+    doAnswer(
+            invocation -> {
+              String url = invocation.getArgument(0);
+              HttpEntity<?> request = invocation.getArgument(1);
+              assertThat(url).endsWith("/setup-otp-mail/" + username);
+              assertThat(request.getHeaders().getFirst("Authorization"))
+                  .isEqualTo("Bearer " + taskJwt(TaskIdentity.OTP, identities).getTokenValue());
+              var setup = (de.caritas.cob.userservice.api.model.OtpSetupDTO) request.getBody();
+              if (!"123456".equals(setup.getInitialCode()))
+                throw org.springframework.web.client.HttpClientErrorException.create(
+                    HttpStatus.UNAUTHORIZED,
+                    "Invalid code",
+                    HttpHeaders.EMPTY,
+                    new byte[0],
+                    StandardCharsets.UTF_8);
+              return ResponseEntity.status(HttpStatus.CREATED)
+                  .body(
+                      new de.caritas.cob.userservice.api.model.SuccessWithEmail()
+                          .email(verifiedRecipient));
+            })
+        .when(http)
+        .postForEntity(
+            anyString(),
+            any(HttpEntity.class),
+            eq(de.caritas.cob.userservice.api.model.SuccessWithEmail.class));
+    return recipients;
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})

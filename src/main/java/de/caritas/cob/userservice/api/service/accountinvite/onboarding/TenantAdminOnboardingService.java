@@ -693,7 +693,10 @@ public class TenantAdminOnboardingService {
 
     var profile =
         identityProfileLookup
-            .findById(invite.getAcceptedByUserId())
+            .findById(
+                invite.getAcceptedByUserId(),
+                de.caritas.cob.userservice.api.adapters.keycloak.commands
+                    .IdentityCommandAuthorization.acceptedInviteRead(invite))
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
     OnboardingEmailSecondFactor.requireInactive(profile, identitySecondFactor);
