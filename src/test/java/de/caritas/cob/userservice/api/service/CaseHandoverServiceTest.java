@@ -1489,6 +1489,12 @@ class CaseHandoverServiceTest {
             List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
         .thenReturn(List.of(session));
 
+    session.getUser().setAvatarId("fox");
+    session
+        .getConsultant()
+        .setAvatarKind(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON);
+    session.getConsultant().setAvatarId("magpie");
+
     var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
 
     assertEquals(1, response.getTotal());
@@ -1497,6 +1503,9 @@ class CaseHandoverServiceTest {
     assertEquals(123L, candidate.getSession().getId());
     assertEquals("asker", candidate.getUser().getUsername());
     assertNull(candidate.getUser().getSessionData());
+    assertEquals("fox", candidate.getUser().getAvatarId());
+    assertEquals("ICON", candidate.getConsultant().getAvatarKind());
+    assertEquals("magpie", candidate.getConsultant().getAvatarId());
     assertEquals("previous", candidate.getConsultant().getId());
   }
 

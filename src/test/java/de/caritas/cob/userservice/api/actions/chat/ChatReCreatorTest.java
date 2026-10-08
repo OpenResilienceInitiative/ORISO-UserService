@@ -74,7 +74,7 @@ class ChatReCreatorTest {
         .thenReturn(
             List.of(
                 new ResolvedRoomMember(
-                    OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true)));
+                    OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true, null, null)));
 
     var newRoomId = chatReCreator.recreateMessengerChat(chat);
 
@@ -98,9 +98,11 @@ class ChatReCreatorTest {
         .thenReturn(
             List.of(
                 new ResolvedRoomMember(
-                    OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true),
-                new ResolvedRoomMember(coModeratorMatrixId, "co-id", "co", "Co Moderator", true),
-                new ResolvedRoomMember(askerMatrixId, "asker-id", "asker", "asker", false)));
+                    OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true, null, null),
+                new ResolvedRoomMember(
+                    coModeratorMatrixId, "co-id", "co", "Co Moderator", true, null, null),
+                new ResolvedRoomMember(
+                    askerMatrixId, "asker-id", "asker", "asker", false, null, null)));
     when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(response));
     when(groupChatMembershipService.addMemberToRoom(
@@ -135,8 +137,9 @@ class ChatReCreatorTest {
         .thenReturn(
             List.of(
                 new ResolvedRoomMember(
-                    OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true),
-                new ResolvedRoomMember(askerMatrixId, "asker-id", "asker", "asker", false)));
+                    OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true, null, null),
+                new ResolvedRoomMember(
+                    askerMatrixId, "asker-id", "asker", "asker", false, null, null)));
     when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(response));
     when(groupChatMembershipService.addMemberToRoom(
@@ -237,6 +240,7 @@ class ChatReCreatorTest {
 
   private List<ResolvedRoomMember> ownerRoomMembers() {
     return List.of(
-        new ResolvedRoomMember(OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true));
+        new ResolvedRoomMember(
+            OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true, null, null));
   }
 }

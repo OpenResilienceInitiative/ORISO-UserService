@@ -14,7 +14,11 @@ import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import java.io.IOException;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -23,12 +27,15 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpRequest;
 import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.mock.http.client.MockClientHttpRequest;
 
 /** Actual public join/update APIs: assignment is not proof of begun participation. */
 class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
   @Autowired private UserChatRepository userChats;
   @Autowired private UserRepository users;
   private final AtomicInteger memberReads = new AtomicInteger();
+  private final List<String> membershipWritePaths = new ArrayList<>();
+  private final List<String> invitedMemberBodies = new ArrayList<>();
   private String members = "{\"members\":[]}";
   private int memberStatus = 200;
 
@@ -196,7 +203,21 @@ class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
 
     assertEquals(200, response.statusCode(), response.body());
     assertEquals(0, ownerReads.get());
-    assertEquals(0, matrixWrites.get());
+    // The existing database row is not proof of Matrix access: retry only this member's
+    // idempotent invitation/join without asking the unavailable DPA owner for new enrolment.
+    assertEquals(2, matrixWrites.get());
+    assertEquals(
+        List.of(
+            "POST /_matrix/client/r0/rooms/" + chat.getMatrixRoomId() + "/invite",
+            "POST /_matrix/client/r0/rooms/" + chat.getMatrixRoomId() + "/join"),
+        membershipWritePaths);
+    assertEquals(
+        List.of("{\"user_id\":\"" + existing.getMatrixUserId() + "\"}"), invitedMemberBodies);
+    assertEquals(
+        Set.of(consultant.getId(), existing.getId()),
+        participants.findBySeriesId(chat.getId()).stream()
+            .map(GroupChatParticipant::getConsultantId)
+            .collect(Collectors.toSet()));
     assertEquals(2, participants.findBySeriesId(chat.getId()).size());
   }
 
@@ -357,6 +378,10 @@ class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
         || path.contains("/join/")
         || path.endsWith("/leave")) {
       matrixWrites.incrementAndGet();
+      membershipWritePaths.add(request.getMethod() + " " + path);
+      if (path.endsWith("/invite")) {
+        invitedMemberBodies.add(((MockClientHttpRequest) request).getBodyAsString());
+      }
       return withSuccess(
               "{\"room_id\":\"!synthetic-stored:synthetic.oriso.test\"}",
               MediaType.APPLICATION_JSON)
