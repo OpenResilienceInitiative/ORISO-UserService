@@ -88,19 +88,51 @@ public class CreateNewSessionFacade {
         Lists.newArrayList(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE));
   }
 
+  public NewRegistrationResponseDto initializeOwnedRegistration(
+      UserRegistrationDTO registration,
+      User user,
+      ExtendedConsultingTypeResponseDTO settings,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationEffects.Scope
+          effects) {
+    effects.requireOwner(user.getUserId(), user.getTenantId());
+    return createSessionOrChat(
+        registration,
+        user,
+        settings,
+        Lists.newArrayList(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE),
+        effects);
+  }
+
   private NewRegistrationResponseDto createSessionOrChat(
       UserRegistrationDTO userRegistrationDTO,
       User user,
       ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO,
       List<NewSessionValidationConstraint> validationConstraints) {
+    return createSessionOrChat(
+        userRegistrationDTO, user, extendedConsultingTypeResponseDTO, validationConstraints, null);
+  }
 
+  private NewRegistrationResponseDto createSessionOrChat(
+      UserRegistrationDTO userRegistrationDTO,
+      User user,
+      ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO,
+      List<NewSessionValidationConstraint> validationConstraints,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationEffects.Scope
+          effects) {
     if (isNotBlank(userRegistrationDTO.getConsultantId())) {
       NewRegistrationResponseDto newRegistrationResponseDto =
-          createSessionFacade.createDirectUserSession(
-              userRegistrationDTO.getConsultantId(),
-              convertToUserDTO(userRegistrationDTO),
-              user,
-              extendedConsultingTypeResponseDTO);
+          effects == null
+              ? createSessionFacade.createDirectUserSession(
+                  userRegistrationDTO.getConsultantId(),
+                  convertToUserDTO(userRegistrationDTO),
+                  user,
+                  extendedConsultingTypeResponseDTO)
+              : createSessionFacade.createDirectUserSession(
+                  userRegistrationDTO.getConsultantId(),
+                  convertToUserDTO(userRegistrationDTO),
+                  user,
+                  extendedConsultingTypeResponseDTO,
+                  effects);
       statisticsService.fireEvent(
           new AssignSessionStatisticsEvent(
               userRegistrationDTO.getConsultantId(),
@@ -117,18 +149,32 @@ public class CreateNewSessionFacade {
           convertToUserDTO(userRegistrationDTO), user);
       // Also create a session for group chat users
       sessionId =
-          createSessionFacade.createUserSession(
-              convertToUserDTO(userRegistrationDTO),
-              user,
-              extendedConsultingTypeResponseDTO,
-              validationConstraints);
+          effects == null
+              ? createSessionFacade.createUserSession(
+                  convertToUserDTO(userRegistrationDTO),
+                  user,
+                  extendedConsultingTypeResponseDTO,
+                  validationConstraints)
+              : createSessionFacade.createUserSession(
+                  convertToUserDTO(userRegistrationDTO),
+                  user,
+                  extendedConsultingTypeResponseDTO,
+                  validationConstraints,
+                  effects);
     } else {
       sessionId =
-          createSessionFacade.createUserSession(
-              convertToUserDTO(userRegistrationDTO),
-              user,
-              extendedConsultingTypeResponseDTO,
-              validationConstraints);
+          effects == null
+              ? createSessionFacade.createUserSession(
+                  convertToUserDTO(userRegistrationDTO),
+                  user,
+                  extendedConsultingTypeResponseDTO,
+                  validationConstraints)
+              : createSessionFacade.createUserSession(
+                  convertToUserDTO(userRegistrationDTO),
+                  user,
+                  extendedConsultingTypeResponseDTO,
+                  validationConstraints,
+                  effects);
     }
 
     return new NewRegistrationResponseDto().sessionId(sessionId).status(HttpStatus.CREATED);

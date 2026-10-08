@@ -235,4 +235,5 @@
   <include file="db/changelog/changeset/20261007_user_avatar_1240/changeSet.xml"/>
   <include file="db/changelog/changeset/20261007_task_identity_ownership/changeSet.xml"/>
   <include file="db/changelog/changeset/20261007_task_identity_creation/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261008_creation_matrix_effects/changeSet.xml"/>
 </databaseChangeLog>

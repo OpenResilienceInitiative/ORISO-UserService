@@ -340,6 +340,8 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     matrixCreateUserResponse.setUserId("@test-user:matrix.example.org");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(matrixCreateUserResponse));
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenOwnedMatrixUser(
+        matrixSynapseService, "@test-user:matrix.example.org");
     when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);
 
     when(consultingTypeControllerApi.getApiClient())

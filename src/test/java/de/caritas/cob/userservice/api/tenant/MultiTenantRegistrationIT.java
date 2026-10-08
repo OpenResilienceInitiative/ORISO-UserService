@@ -228,6 +228,8 @@ class MultiTenantRegistrationIT {
     matrixUser.setUserId("@registration:synthetic.oriso.test");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(org.springframework.http.ResponseEntity.ok(matrixUser));
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenOwnedMatrixUser(
+        matrixSynapseService, "@registration:synthetic.oriso.test");
     when(tenantService.getRestrictedTenantDataFresh(anyLong()))
         .thenReturn(ChatRecoveryPolicyFixtures.tenant().id(TENANT));
     when(tenantService.getRestrictedTenantData(anyLong()))

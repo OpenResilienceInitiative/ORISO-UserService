@@ -53,7 +53,7 @@ public class IdentityCreationLocalCompletion {
 
   private IdentityCreationAttempt require(String accountId, Long tenant, Set<String> kinds) {
     var row = journal.ownedAttempt(accountId);
-    if (!Set.of("OPEN").contains(row.getStatus())
+    if (!CreationStatus.in(row, CreationStatus.OPEN)
         || !Objects.equals(row.getTenantId(), tenant)
         || !kinds.contains(row.getRegistrationKind())) throw denied();
     return row;

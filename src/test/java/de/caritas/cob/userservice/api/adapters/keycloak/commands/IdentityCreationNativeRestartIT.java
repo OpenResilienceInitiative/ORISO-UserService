@@ -48,6 +48,15 @@ class IdentityCreationNativeRestartIT {
                 credentials.path("clientId").asText(),
                 credentials.path("clientSecret").asText(),
                 credentials.path("serviceSubject").asText()));
+    var maintenance = fixture.path("maintenance");
+    identities
+        .getTasks()
+        .put(
+            "account-maintenance",
+            new TaskIdentityCredentials(
+                maintenance.path("clientId").asText(),
+                maintenance.path("clientSecret").asText(),
+                maintenance.path("serviceSubject").asText()));
     var routing =
         mock(
             IdentityClientConfig
@@ -73,6 +82,141 @@ class IdentityCreationNativeRestartIT {
             proof,
             issuer.substring(0, split),
             issuer.substring(split + 8));
+  }
+
+  @AfterEach
+  void clearIncomingOrigin() {
+    org.springframework.security.core.context.SecurityContextHolder.clearContext();
+    de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+  }
+
+  @Test
+  void actualNativeExistingImportReadUsesEmptyProofRolesAndOnlyAddsConsultantRoles()
+      throws Exception {
+    var command = command();
+    var id = UUID.randomUUID();
+    var creation = IdentityCreationJournalRestartTest.origin();
+    var receipt = commands.create(id, command, creation.command("account.create", id));
+    commands.commit(receipt, creation.command("account.commit", id));
+    var incoming = fixture.path("importer");
+    var decoder =
+        NimbusJwtDecoder.withJwkSetUri(
+                fixture.path("issuer").asText() + "/protocol/openid-connect/certs")
+            .build();
+    decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(fixture.path("issuer").asText()));
+    var verified = decoder.decode(incoming.path("token").asText());
+    org.springframework.security.core.context.SecurityContextHolder.getContext()
+        .setAuthentication(
+            new org.springframework.security.oauth2.server.resource.authentication
+                .JwtAuthenticationToken(verified, List.of()));
+    var file = directory.resolve("configured.csv");
+    Files.writeString(
+        file,
+        receipt.accountId()
+            + ",42,"
+            + command.username()
+            + ",Test,Fixture,"
+            + command.email()
+            + ",nein,,8;standard,42\n");
+    var captured =
+        new ConfiguredConsultantImport(
+                file.toString(),
+                incoming.path("clientId").asText(),
+                incoming.path("serviceSubject").asText(),
+                "userservice",
+                true)
+            .capture();
+    var parsed = new de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord();
+    parsed.setConsultantId(receipt.accountId());
+    parsed.setUsername(command.username());
+    parsed.setFirstName("Test");
+    parsed.setLastName("Fixture");
+    parsed.setEmail(command.email());
+    parsed.setTenantId(42L);
+    parsed.setAgenciesAndRoleSets("8;standard");
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(parsed.getTenantId());
+    try (var context =
+        IdentityCreationJournalRestartTest.open(source(), true, Clock.systemUTC(), true)) {
+      var repository =
+          context.getBean(de.caritas.cob.userservice.api.port.out.ConsultantRepository.class);
+      var actual =
+          de.caritas.cob.userservice.api.model.Consultant.builder()
+              .id(receipt.accountId())
+              .tenantId(42L)
+              .username(
+                  new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+                      .encodeUsername(command.username()))
+              .email(command.email())
+              .firstName("Test")
+              .lastName("Fixture")
+              .encourage2fa(true)
+              .magicLinkLoginEnabled(false)
+              .notifyEnquiriesRepeating(true)
+              .notifyNewChatMessageFromAdviceSeeker(true)
+              .languageCode(com.neovisionaries.i18n.LanguageCode.de)
+              .build();
+      var localTransaction =
+          new TransactionTemplate(context.getBean(PlatformTransactionManager.class));
+      var persisted =
+          localTransaction.execute(
+              status -> {
+                repository.saveAndFlush(actual);
+                return repository.findById(receipt.accountId()).orElseThrow();
+              });
+      var agencies =
+          List.of(
+              new de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO().id(8L).tenantId(42L));
+      var read =
+          captured.existingRowCapability(
+              captured.records().getFirst(),
+              parsed,
+              persisted,
+              agencies,
+              "account.read",
+              List.of("consultant", "group-chat-consultant"));
+      assertThat(read.roles()).isEmpty();
+      assertThat(commands.read(receipt.accountId(), read).roles()).containsExactly("consultant");
+      var additions =
+          captured.existingRowCapability(
+              captured.records().getFirst(),
+              parsed,
+              persisted,
+              agencies,
+              "account.roles",
+              List.of("consultant", "group-chat-consultant"));
+      commands.roles(
+          receipt.accountId(), List.of("consultant", "group-chat-consultant"), additions);
+      assertThat(commands.read(receipt.accountId(), read).roles())
+          .containsExactlyInAnyOrder("consultant", "group-chat-consultant");
+      assertThatThrownBy(
+              () ->
+                  commands.roles(
+                      receipt.accountId(),
+                      List.of("consultant"),
+                      new IdentityCommandAuthorization(
+                          "IMPORT", "account.roles", receipt.accountId(), "42", List.of())))
+          .isInstanceOf(HttpClientErrorException.Forbidden.class);
+      localTransaction.executeWithoutResult(
+          status -> {
+            var reloaded = repository.findById(receipt.accountId()).orElseThrow();
+            reloaded.setTenantId(99L);
+            repository.saveAndFlush(reloaded);
+          });
+      de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(99L);
+      var foreignTenant =
+          localTransaction.execute(
+              status -> repository.findById(receipt.accountId()).orElseThrow());
+      assertThatThrownBy(
+              () ->
+                  captured.existingRowCapability(
+                      captured.records().getFirst(),
+                      parsed,
+                      foreignTenant,
+                      agencies,
+                      "account.read",
+                      List.of("consultant")))
+          .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+    }
   }
 
   @Test
@@ -157,7 +301,9 @@ class IdentityCreationNativeRestartIT {
         IdentityCreationJournalRestartTest.open(
             source, false, Clock.fixed(expired, ZoneOffset.UTC))) {
       var journal = context.getBean(IdentityCreationJournalWriter.class);
-      var service = new IdentityAccountProvisioning(commands, journal);
+      var service =
+          new IdentityAccountProvisioning(
+              commands, journal, context.getBean(IdentityCreationEffects.class));
       var candidate =
           journal.reconciliationRequired().stream()
               .filter(r -> r.getId().equals(attempt.toString()))
@@ -212,7 +358,9 @@ class IdentityCreationNativeRestartIT {
   private DataSource source() {
     var source = new JdbcDataSource();
     source.setURL(
-        "jdbc:h2:file:" + directory.resolve("journal") + ";MODE=MariaDB;DB_CLOSE_ON_EXIT=FALSE");
+        "jdbc:h2:file:"
+            + directory.resolve("journal")
+            + ";MODE=MariaDB;NON_KEYWORDS=USER;DB_CLOSE_ON_EXIT=FALSE");
     source.setUser("sa");
     return source;
   }

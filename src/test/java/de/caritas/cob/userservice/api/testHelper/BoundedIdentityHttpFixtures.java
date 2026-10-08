@@ -35,6 +35,33 @@ public final class BoundedIdentityHttpFixtures {
     }
   }
 
+  /**
+   * External Matrix account port for non-Matrix integration suites. Real receipt/effect guards,
+   * independent journal transactions and exact cleanup IDs remain active. Adapter ID matching is
+   * separately exercised at its HTTP seam; this fixture supplies a known synthetic acknowledgment.
+   */
+  public static void givenOwnedMatrixUser(
+      de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrix,
+      String syntheticId)
+      throws de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException {
+    doAnswer(
+            call -> {
+              assertThat((String) call.getArgument(0)).isNotBlank();
+              assertThat((String) call.getArgument(1)).isNotBlank();
+              var effect =
+                  (de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect) call.getArgument(3);
+              effect.started(syntheticId);
+              effect.created(syntheticId);
+              var body =
+                  new de.caritas.cob.userservice.api.adapters.matrix.dto
+                      .MatrixCreateUserResponseDTO();
+              body.setUserId(syntheticId);
+              return ResponseEntity.ok(body);
+            })
+        .when(matrix)
+        .createOwnedUser(anyString(), anyString(), anyString(), any());
+  }
+
   public static Jwt taskJwt(TaskIdentity task, TaskIdentityConfiguration identities) {
     var credential = identities.require(task);
     return Jwt.withTokenValue("synthetic-task-" + task.name())

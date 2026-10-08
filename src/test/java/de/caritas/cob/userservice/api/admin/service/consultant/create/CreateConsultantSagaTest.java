@@ -74,6 +74,22 @@ class CreateConsultantSagaTest {
   @org.mockito.Mock private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
 
   @org.junit.jupiter.api.BeforeEach
+  void ownedDownstreamPortFixture() {
+    var scope =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationEffects.Scope
+                .class);
+    org.mockito.Mockito.lenient()
+        .when(scope.user())
+        .thenReturn(
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect.class));
+    org.mockito.Mockito.lenient()
+        .when(identityProvisioning.ownedMatrixEffects(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(scope);
+  }
+
+  @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
     org.mockito.Mockito.lenient()
         .when(chatRecoveryEnrollmentPolicyService.forNewAsker(org.mockito.ArgumentMatchers.any()))
@@ -471,13 +487,13 @@ class CreateConsultantSagaTest {
     // holder the way UserAdminController does is what makes the failure branch reachable at all.
     stubHappyPath();
     PlainCredentialsHolder.set(VALID_USERNAME, null);
-    when(matrixSynapseService.createUserId(any(), any(), any()))
+    when(matrixSynapseService.createOwnedUserId(any(), any(), any(), any()))
         .thenThrow(new MatrixCreateUserException("Synapse is unreachable"));
 
     var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
 
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
-    verify(matrixSynapseService).createUserId(any(), any(), any());
+    verify(matrixSynapseService).createOwnedUserId(any(), any(), any(), any());
     ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
     verify(consultantService).saveConsultant(consultantCaptor.capture());
     assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));
@@ -489,12 +505,12 @@ class CreateConsultantSagaTest {
       throws Exception {
     stubHappyPath();
     PlainCredentialsHolder.set(VALID_USERNAME, null);
-    when(matrixSynapseService.createUserId(any(), any(), any())).thenReturn(null);
+    when(matrixSynapseService.createOwnedUserId(any(), any(), any(), any())).thenReturn(null);
 
     var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
 
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
-    verify(matrixSynapseService).createUserId(any(), any(), any());
+    verify(matrixSynapseService).createOwnedUserId(any(), any(), any(), any());
     ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
     verify(consultantService).saveConsultant(consultantCaptor.capture());
     assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));
@@ -782,7 +798,7 @@ class CreateConsultantSagaTest {
     stubHappyPath();
     PlainCredentialsHolder.set(VALID_USERNAME, null);
     when(userHelper.getRandomPassword()).thenReturn("MatrixPass1!");
-    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
+    when(matrixSynapseService.createOwnedUserId(anyString(), anyString(), anyString(), any()))
         .thenThrow(new RuntimeException("synapse down"));
 
     var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
@@ -797,14 +813,14 @@ class CreateConsultantSagaTest {
   private void givenMatrixProvisioningIsReachable() throws Exception {
     PlainCredentialsHolder.set(VALID_USERNAME, null);
     when(userHelper.getRandomPassword()).thenReturn("MatrixPass1!");
-    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
+    when(matrixSynapseService.createOwnedUserId(anyString(), anyString(), anyString(), any()))
         .thenReturn("@" + VALID_USERNAME + ":matrix.example.org");
   }
 
   private String capturedMatrixDisplayName() throws Exception {
     ArgumentCaptor<String> displayNameCaptor = ArgumentCaptor.forClass(String.class);
     verify(matrixSynapseService)
-        .createUserId(anyString(), anyString(), displayNameCaptor.capture());
+        .createOwnedUserId(anyString(), anyString(), displayNameCaptor.capture(), any());
     return displayNameCaptor.getValue();
   }
 

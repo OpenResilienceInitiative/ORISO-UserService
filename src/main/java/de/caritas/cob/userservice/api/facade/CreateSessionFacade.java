@@ -69,7 +69,17 @@ public class CreateSessionFacade {
       User user,
       ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO,
       List<NewSessionValidationConstraint> validationConstraints) {
+    return createUserSession(
+        userDTO, user, extendedConsultingTypeResponseDTO, validationConstraints, null);
+  }
 
+  public Long createUserSession(
+      UserDTO userDTO,
+      User user,
+      ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO,
+      List<NewSessionValidationConstraint> validationConstraints,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationEffects.Scope
+          effects) {
     if (validationConstraints.contains(
         NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE)) {
       checkIfAlreadyRegisteredToConsultingType(user, extendedConsultingTypeResponseDTO.getId());
@@ -90,7 +100,8 @@ public class CreateSessionFacade {
     var session = initializeSession(userDTO, user, agencyDTO);
 
     try {
-      agencyPreAssignmentRoomService.ensureHoldingRoom(session, user);
+      if (effects == null) agencyPreAssignmentRoomService.ensureHoldingRoom(session, user);
+      else agencyPreAssignmentRoomService.ensureHoldingRoom(session, user, effects);
     } catch (Exception ex) {
       log.error(
           "Failed to provision Matrix holding room for session {}: {}",
@@ -113,6 +124,18 @@ public class CreateSessionFacade {
       UserDTO userDTO,
       User user,
       ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO) {
+    return createDirectUserSession(
+        consultantId, userDTO, user, extendedConsultingTypeResponseDTO, null);
+  }
+
+  public NewRegistrationResponseDto createDirectUserSession(
+      String consultantId,
+      UserDTO userDTO,
+      User user,
+      ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationEffects.Scope
+          effects) {
+    if (effects != null) effects.requireOwner(user.getUserId(), user.getTenantId());
     var consultant = userAccountProvider.retrieveValidatedConsultantById(consultantId);
 
     var existingSession =
@@ -126,14 +149,17 @@ public class CreateSessionFacade {
           .status(HttpStatus.CONFLICT);
     }
 
-    return initializeNewDirectSession(userDTO, user, extendedConsultingTypeResponseDTO, consultant);
+    return initializeNewDirectSession(
+        userDTO, user, extendedConsultingTypeResponseDTO, consultant, effects);
   }
 
   private NewRegistrationResponseDto initializeNewDirectSession(
       UserDTO userDTO,
       User user,
       ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO,
-      Consultant consultant) {
+      Consultant consultant,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationEffects.Scope
+          effects) {
     var agencyDTO = obtainVerifiedAgency(userDTO, extendedConsultingTypeResponseDTO);
     // Direct creation commences counselling immediately; check before persisting it.
     dpaPolicy.requireForAgency(agencyDTO);
@@ -145,7 +171,9 @@ public class CreateSessionFacade {
     session.setStatus(SessionStatus.IN_PROGRESS);
     session = sessionService.saveSession(session);
 
-    directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
+    if (effects == null)
+      directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
+    else directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant, effects);
 
     return new NewRegistrationResponseDto().sessionId(session.getId()).status(HttpStatus.CREATED);
   }

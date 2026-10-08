@@ -52,15 +52,15 @@ public class IdentityCreationJournalWriter {
     var pending =
         repository.findFirstByRequestKeyAndStatusInOrderByUpdateDateDesc(
             key,
-            List.of(
-                "CREATION_REQUESTED",
-                "OPEN",
-                "LOCAL_RECONCILIATION_REQUIRED",
-                "RECOVERY_REQUESTED",
-                "LOCAL_CLEANUP_REQUESTED",
-                "COMMIT_REQUESTED",
-                "COMPENSATION_REQUESTED",
-                "COMMITTED"));
+            CreationStatus.codes(
+                CreationStatus.CREATION_REQUESTED,
+                CreationStatus.OPEN,
+                CreationStatus.LOCAL_RECONCILIATION_REQUIRED,
+                CreationStatus.RECOVERY_REQUESTED,
+                CreationStatus.LOCAL_CLEANUP_REQUESTED,
+                CreationStatus.COMMIT_REQUESTED,
+                CreationStatus.COMPENSATION_REQUESTED,
+                CreationStatus.COMMITTED));
     if (pending.isPresent()) {
       verifyOrigin(pending.get(), origin);
       return claimRequested(pending.get());
@@ -82,7 +82,7 @@ public class IdentityCreationJournalWriter {
         origin.agencyIds().stream()
             .map(String::valueOf)
             .collect(java.util.stream.Collectors.joining(",")));
-    row.setStatus("CREATION_REQUESTED");
+    CreationStatus.CREATION_REQUESTED.persist(row);
     return claimRequested(row);
   }
 
@@ -100,10 +100,10 @@ public class IdentityCreationJournalWriter {
       throw new IllegalStateException("Identity provider returned no creation receipt");
     if (row.getAccountId() != null && !row.getAccountId().equals(receipt.accountId()))
       throw denied();
-    if (!"CREATION_REQUESTED".equals(row.getStatus())) throw denied();
+    if (!CreationStatus.CREATION_REQUESTED.matches(row)) throw denied();
     row.setAccountId(receipt.accountId());
     row.setCreationProof(receipt.creationProof());
-    row.setStatus("OPEN");
+    CreationStatus.OPEN.persist(row);
     row.setExecutionExpiresAt(now().plusSeconds(leaseSeconds));
     save(row);
   }
@@ -113,10 +113,9 @@ public class IdentityCreationJournalWriter {
       KeycloakTaskCommands.CreationResult receipt, IdentityCreationOrigin origin, String state) {
     var row = require(receipt.attemptId());
     verifyReceipt(row, receipt, origin);
-    if (!Set.of("COMMIT_REQUESTED", "COMPENSATION_REQUESTED").contains(state)) throw denied();
-    String terminal = state.equals("COMMIT_REQUESTED") ? "COMMITTED" : "COMPENSATED";
-    if (!Set.of("OPEN", state, terminal).contains(row.getStatus())) throw denied();
-    row.setStatus(state);
+    var requested = CreationStatus.fromCode(state);
+    if (!requested.acceptsRequestFrom(row)) throw denied();
+    requested.persist(row);
     save(row);
   }
 
@@ -137,13 +136,10 @@ public class IdentityCreationJournalWriter {
 
   public void finish(KeycloakTaskCommands.CreationResult receipt, String terminal) {
     var row = require(receipt.attemptId());
-    String expected =
-        terminal.equals("COMMITTED")
-            ? "COMMIT_REQUESTED"
-            : terminal.equals("COMPENSATED") ? "COMPENSATION_REQUESTED" : "";
-    if (!expected.equals(row.getStatus())) throw denied();
-    row.setStatus(terminal);
-    if (terminal.equals("COMPENSATED")) row.setRequestKey(null);
+    var terminalState = CreationStatus.fromCode(terminal);
+    if (!terminalState.requiredRequest().matches(row)) throw denied();
+    terminalState.persist(row);
+    if (terminalState == CreationStatus.COMPENSATED) row.setRequestKey(null);
     save(row);
   }
 
@@ -159,7 +155,7 @@ public class IdentityCreationJournalWriter {
   @Transactional(propagation = Propagation.MANDATORY)
   public void captureAnonymousBootstrap(UUID attemptId, Long sessionId) {
     var row = require(attemptId);
-    if (!"OPEN".equals(row.getStatus())
+    if (!CreationStatus.OPEN.matches(row)
         || !"ANONYMOUS".equals(row.getRegistrationKind())
         || sessionId == null) throw denied();
     row.setBootstrapSessionId(sessionId);
@@ -171,7 +167,7 @@ public class IdentityCreationJournalWriter {
   @Transactional(propagation = Propagation.MANDATORY)
   public void recordAnonymousBootstrapFailure(UUID attemptId, Long sessionId) {
     var row = require(attemptId);
-    if (!Set.of("COMMIT_REQUESTED", "COMMITTED").contains(row.getStatus())
+    if (!CreationStatus.in(row, CreationStatus.COMMIT_REQUESTED, CreationStatus.COMMITTED)
         || !"ANONYMOUS".equals(row.getRegistrationKind())
         || !Objects.equals(row.getBootstrapSessionId(), sessionId)) throw denied();
     row.setBootstrapFailedAt(now());
@@ -181,7 +177,7 @@ public class IdentityCreationJournalWriter {
   @Transactional(propagation = Propagation.MANDATORY)
   public void finishAnonymousBootstrap(UUID attemptId, Long sessionId) {
     var row = require(attemptId);
-    if (!"COMMITTED".equals(row.getStatus())
+    if (!CreationStatus.COMMITTED.matches(row)
         || !"ANONYMOUS".equals(row.getRegistrationKind())
         || !Objects.equals(row.getBootstrapSessionId(), sessionId)) throw denied();
     row.setBootstrapSessionId(null);
@@ -195,7 +191,7 @@ public class IdentityCreationJournalWriter {
 
   public List<IdentityCreationAttempt> pendingAnonymousBootstraps() {
     return repository.findByBootstrapSessionIdIsNotNullAndStatus(
-        "COMMITTED", org.springframework.data.domain.PageRequest.of(0, 100));
+        CreationStatus.COMMITTED.name(), org.springframework.data.domain.PageRequest.of(0, 100));
   }
 
   @Transactional(propagation = Propagation.MANDATORY)
@@ -209,7 +205,8 @@ public class IdentityCreationJournalWriter {
 
   public List<IdentityCreationAttempt> pending() {
     return repository.findByStatusInOrderByUpdateDateAsc(
-        List.of("COMMIT_REQUESTED", "COMPENSATION_REQUESTED"),
+        CreationStatus.codes(
+            CreationStatus.COMMIT_REQUESTED, CreationStatus.COMPENSATION_REQUESTED),
         org.springframework.data.domain.PageRequest.of(0, 100));
   }
 
@@ -218,7 +215,7 @@ public class IdentityCreationJournalWriter {
     var row = require(execution.attemptId());
     verifyOrigin(row, origin);
     verifyExecution(row, execution);
-    if (!"CREATION_REQUESTED".equals(row.getStatus())) throw denied();
+    if (!CreationStatus.CREATION_REQUESTED.matches(row)) throw denied();
     row.setExecutionExpiresAt(null);
     save(row);
   }
@@ -227,19 +224,26 @@ public class IdentityCreationJournalWriter {
   public List<IdentityCreationAttempt> reconciliationRequired() {
     for (var candidate :
         repository.findByStatusInOrderByUpdateDateAsc(
-            List.of("CREATION_REQUESTED", "OPEN", "LOCAL_RECONCILIATION_REQUIRED"),
+            CreationStatus.codes(
+                CreationStatus.CREATION_REQUESTED,
+                CreationStatus.OPEN,
+                CreationStatus.LOCAL_RECONCILIATION_REQUIRED),
             org.springframework.data.domain.PageRequest.of(0, 100))) {
       var row = require(UUID.fromString(candidate.getId()));
-      if (Set.of("CREATION_REQUESTED", "OPEN", "LOCAL_RECONCILIATION_REQUIRED")
-              .contains(row.getStatus())
+      if (CreationStatus.in(
+              row,
+              CreationStatus.CREATION_REQUESTED,
+              CreationStatus.OPEN,
+              CreationStatus.LOCAL_RECONCILIATION_REQUIRED)
           && (row.getExecutionExpiresAt() == null || !row.getExecutionExpiresAt().isAfter(now()))) {
         row.setExecutionClaim(UUID.randomUUID().toString());
-        row.setStatus("RECOVERY_REQUESTED");
+        CreationStatus.RECOVERY_REQUESTED.persist(row);
         save(row);
       }
     }
     return repository.findByStatusInOrderByUpdateDateAsc(
-        List.of("RECOVERY_REQUESTED", "LOCAL_CLEANUP_REQUESTED"),
+        CreationStatus.codes(
+            CreationStatus.RECOVERY_REQUESTED, CreationStatus.LOCAL_CLEANUP_REQUESTED),
         org.springframework.data.domain.PageRequest.of(0, 100));
   }
 
@@ -249,7 +253,7 @@ public class IdentityCreationJournalWriter {
     var row = require(receipt.attemptId());
     if (receipt.executionClaim() == null
         || !Objects.equals(row.getExecutionClaim(), receipt.executionClaim().toString())
-        || !"OPEN".equals(row.getStatus())
+        || !CreationStatus.OPEN.matches(row)
         || row.getExecutionExpiresAt() == null
         || !row.getExecutionExpiresAt().isAfter(now())) throw denied();
     verifyReceipt(row, receipt, IdentityCreationOrigin.pendingFinalization(row));
@@ -258,14 +262,14 @@ public class IdentityCreationJournalWriter {
   public void recovered(
       IdentityCreationAttempt candidate, KeycloakTaskCommands.RecoveryResult result) {
     var row = require(UUID.fromString(candidate.getId()));
-    if (!"RECOVERY_REQUESTED".equals(row.getStatus())
+    if (!CreationStatus.RECOVERY_REQUESTED.matches(row)
         || !Objects.equals(row.getExecutionClaim(), candidate.getExecutionClaim())
         || !UUID.fromString(row.getId()).equals(result.attemptId())) throw denied();
     if ("ABANDONED".equals(result.status())) {
       if (row.getAccountId() != null
           || result.accountId() != null
           || result.creationProof() != null) throw denied();
-      row.setStatus("COMPENSATED");
+      CreationStatus.COMPENSATED.persist(row);
       row.setRequestKey(null);
     } else if (Set.of("RECOVERY_CLAIMED", "COMPENSATED").contains(result.status())) {
       if (result.accountId() == null
@@ -276,7 +280,7 @@ public class IdentityCreationJournalWriter {
               && !row.getCreationProof().equals(result.creationProof()))) throw denied();
       row.setAccountId(result.accountId());
       row.setCreationProof(result.creationProof());
-      row.setStatus("LOCAL_CLEANUP_REQUESTED");
+      CreationStatus.LOCAL_CLEANUP_REQUESTED.persist(row);
     } else throw denied(); // COMMITTED cannot be inferred into either local success or deletion.
     save(row);
   }
@@ -284,7 +288,8 @@ public class IdentityCreationJournalWriter {
   @Transactional(propagation = Propagation.MANDATORY)
   public IdentityCreationAttempt cleanupAttempt(UUID attemptId) {
     var row = require(attemptId);
-    if (!Set.of("LOCAL_CLEANUP_REQUESTED", "COMPENSATION_REQUESTED").contains(row.getStatus())
+    if (!CreationStatus.in(
+            row, CreationStatus.LOCAL_CLEANUP_REQUESTED, CreationStatus.COMPENSATION_REQUESTED)
         || row.getAccountId() == null
         || row.getCreationProof() == null) throw denied();
     return row;
@@ -293,12 +298,12 @@ public class IdentityCreationJournalWriter {
   @Transactional(propagation = Propagation.MANDATORY)
   public void cleanedLocally(UUID attemptId) {
     var row = cleanupAttempt(attemptId);
-    row.setStatus("COMPENSATION_REQUESTED");
+    CreationStatus.COMPENSATION_REQUESTED.persist(row);
     save(row);
   }
 
   private CreationExecution claimRequested(IdentityCreationAttempt row) {
-    if (!"CREATION_REQUESTED".equals(row.getStatus())
+    if (!CreationStatus.CREATION_REQUESTED.matches(row)
         || (row.getExecutionExpiresAt() != null && row.getExecutionExpiresAt().isAfter(now())))
       throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
           "Account creation is already in progress or awaiting local reconciliation");

@@ -23,11 +23,13 @@ public class IdentityCreationLocalCleanup {
   private final AdminAgencyRepository adminAgencies;
   private final ActionsRegistry actions;
   private final JdbcTemplate jdbc;
+  private final IdentityCreationEffects effects;
 
   @Transactional
   public void clean(UUID attemptId) {
     var row =
         journal.cleanupAttempt(attemptId); // lock spans every deletion and the durable next intent
+    effects.clean(attemptId); // rooms, then Matrix identity/restoration, before local/native finish
     switch (row.getRegistrationKind()) {
       case "ASKER", "ANONYMOUS" ->
           users

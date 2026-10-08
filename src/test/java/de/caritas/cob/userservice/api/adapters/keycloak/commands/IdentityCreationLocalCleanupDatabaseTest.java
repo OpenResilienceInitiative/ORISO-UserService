@@ -32,6 +32,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @Import({
   IdentityCreationJournalWriter.class,
   IdentityCreationLocalCleanup.class,
+  IdentityCreationEffects.class,
+  IdentityCreationEffectWriter.class,
   IdentityAnonymousBootstrapFailure.class,
   DeletionLifecycleService.class,
   ActionsRegistry.class,

@@ -151,6 +151,8 @@ class IndividualCounsellingDpaGateIT {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(org.springframework.http.ResponseEntity.ok(matrixIdentity));
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenOwnedMatrixUser(
+        matrix, "@synthetic-anonymous:synthetic.oriso.test");
     downstream = MockRestServiceServer.bindTo(transport).build();
     downstream
         .expect(ExpectedCount.manyTimes(), anything())
@@ -629,6 +631,12 @@ class IndividualCounsellingDpaGateIT {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+        .createOwnedUser(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any());
   }
 
   @org.junit.jupiter.params.ParameterizedTest

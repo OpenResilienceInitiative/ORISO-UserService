@@ -191,7 +191,7 @@ public class CreateUserFacade {
       } else {
         plainUsername = null;
       }
-      provisionMatrixUser(user, plainUsername, activeAttempt);
+      provisionMatrixUser(user, plainUsername, activeAttempt, receipt);
 
       Long sessionId;
       if (invitedGroup.isPresent()) {
@@ -207,7 +207,11 @@ public class CreateUserFacade {
         activeAttempt.register(
             SESSION, identityUserId, () -> deleteSessionsForUser(provisionedUser.get()));
         NewRegistrationResponseDto registration =
-            createNewSessionFacade.initializeNewSession(userDTO, user, consultingTypeSettings);
+            createNewSessionFacade.initializeOwnedRegistration(
+                userDTO,
+                user,
+                consultingTypeSettings,
+                identityProvisioning.ownedMatrixEffects(receipt));
         sessionId = registration.getSessionId();
       }
 
@@ -263,19 +267,32 @@ public class CreateUserFacade {
 
   /** Provisions and persists the Matrix identity needed by browser token bootstrap. */
   public void provisionMatrixUser(User user, String plainUsername) {
-    provisionMatrixUser(user, plainUsername, null);
+    provisionMatrixUser(user, plainUsername, null, null);
+  }
+
+  public void provisionOwnedMatrixUser(
+      User user, String plainUsername, KeycloakTaskCommands.CreationResult receipt) {
+    provisionMatrixUser(user, plainUsername, null, java.util.Objects.requireNonNull(receipt));
   }
 
   private void provisionMatrixUser(
-      User user, String plainUsername, ProvisioningAttempt provisioningAttempt) {
+      User user,
+      String plainUsername,
+      ProvisioningAttempt provisioningAttempt,
+      KeycloakTaskCommands.CreationResult receipt) {
     try {
       if (user == null || isBlank(plainUsername)) {
         throw new IllegalArgumentException("Plain username or user not resolvable");
       }
 
       String matrixPassword = java.util.UUID.randomUUID() + "-" + java.util.UUID.randomUUID();
+      var effects = receipt == null ? null : identityProvisioning.ownedMatrixEffects(receipt);
+      if (effects != null) effects.requireOwner(user.getUserId(), user.getTenantId());
       var matrixResponse =
-          matrixSynapseService.createUser(plainUsername, matrixPassword, plainUsername);
+          receipt == null
+              ? matrixSynapseService.createUser(plainUsername, matrixPassword, plainUsername)
+              : matrixSynapseService.createOwnedUser(
+                  plainUsername, matrixPassword, plainUsername, effects.user());
 
       log.debug(
           "Chat identity provisioning response statusCode={} hasBody={}",
@@ -289,10 +306,7 @@ public class CreateUserFacade {
               CHAT_IDENTITY,
               matrixUserId,
               () -> {
-                if (!matrixSynapseService.deactivateUser(matrixUserId)) {
-                  throw new IllegalStateException(
-                      "Chat identity deactivation was not acknowledged");
-                }
+                identityProvisioning.compensateMatrixEffects(receipt.accountId());
               });
         }
         user.setMatrixUserId(matrixUserId);

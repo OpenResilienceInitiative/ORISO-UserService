@@ -15,18 +15,39 @@ class MatrixOnlyRuntimeConfigurationContractTest {
   private static final Path LOCAL_RUN_EXAMPLE = Path.of("run-local-remote-db.sh.example");
 
   @Test
-  void runtimeLaunchersMustUseTheTechnicalClientSecret() throws IOException {
+  void compatibilityRuntimeLaunchersRetainClientSecretsWithoutPasswordFallback()
+      throws IOException {
     for (var launcher :
         new Path[] {
-          LOCAL_RUN_EXAMPLE,
-          Path.of("scripts/load/run-authenticated-write-replicas.sh"),
-          Path.of("scripts/load/run-seeded-public-read-replicas.sh")
+          LOCAL_RUN_EXAMPLE, Path.of("scripts/load/run-seeded-public-read-replicas.sh")
         }) {
       assertThat(Files.readString(launcher))
           .as(launcher.toString())
           .contains("IDENTITY_TECHNICAL_CLIENT_ID", "KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET")
           .doesNotContain("IDENTITY_TECHNICAL_USER_USERNAME", "IDENTITY_TECHNICAL_USER_PASSWORD");
     }
+  }
+
+  @Test
+  void authenticatedReplicaFixtureUsesDistinctTaskCredentialsAndScopedKeys() throws IOException {
+    assertThat(Files.readString(Path.of("scripts/load/run-authenticated-write-replicas.sh")))
+        .contains(
+            "CONFIG_WIZARD INVITE_RESERVATIONS NOTIFICATION_DISPATCH SYSTEM_EMAIL_DELIVERY",
+            "ACCOUNT_PROVISIONING ACCOUNT_MAINTENANCE OTP SESSION_EXCHANGE APPOINTMENT_SYNC",
+            "APPOINTMENT_CLEANUP MATRIX_AGENCY RUNTIME_POLICY",
+            "IDENTITY_${task}_CLIENT_ID=${task_client}",
+            "KEYCLOAK_${task}_CLIENT_SECRET=$(openssl rand -base64 32)",
+            "IDENTITY_${task}_SERVICE_SUBJECT=load-subject-${task_key}",
+            "ORISO_PROVISIONING_ORIGIN_KEY=$(openssl rand -base64 32)",
+            "ORISO_MAINTENANCE_ORIGIN_KEY=$(openssl rand -base64 32)",
+            "ORISO_WIZARD_POLICY_CONTEXT_KEY=$(openssl rand -base64 32)",
+            "IDENTITY_CONSULTANT_IMPORT_SERVICE_SUBJECT=load-subject-consultant-import",
+            "${task_identity_environment[@]}")
+        .doesNotContain(
+            "IDENTITY_TECHNICAL_USER_USERNAME",
+            "IDENTITY_TECHNICAL_USER_PASSWORD",
+            "KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET",
+            "KEYCLOAK_CONFIG_ADMIN_PASSWORD");
   }
 
   @Test

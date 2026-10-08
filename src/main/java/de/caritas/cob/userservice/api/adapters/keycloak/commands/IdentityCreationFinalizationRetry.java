@@ -22,9 +22,9 @@ public class IdentityCreationFinalizationRetry {
   public void retry() {
     for (var row : journal.reconciliationRequired()) {
       try {
-        if ("RECOVERY_REQUESTED".equals(row.getStatus())) provisioning.recover(row);
+        if (CreationStatus.RECOVERY_REQUESTED.matches(row)) provisioning.recover(row);
         // Recovery may have resolved an absent native creation with its tombstone.
-        if (!"COMPENSATED".equals(journal.attempt(UUID.fromString(row.getId())).getStatus()))
+        if (!CreationStatus.COMPENSATED.matches(journal.attempt(UUID.fromString(row.getId()))))
           cleanup.clean(UUID.fromString(row.getId()));
       } catch (RuntimeException failure) {
         log.warn(
@@ -35,13 +35,13 @@ public class IdentityCreationFinalizationRetry {
     }
     for (var row : journal.pending()) {
       try {
-        if (!java.util.Set.of("COMMIT_REQUESTED", "COMPENSATION_REQUESTED")
-            .contains(row.getStatus())) continue;
+        if (!CreationStatus.in(
+            row, CreationStatus.COMMIT_REQUESTED, CreationStatus.COMPENSATION_REQUESTED)) continue;
         var origin = IdentityCreationOrigin.pendingFinalization(row);
         var receipt =
             new KeycloakTaskCommands.CreationResult(
                 UUID.fromString(row.getId()), row.getAccountId(), row.getCreationProof(), "OPEN");
-        if (row.getStatus().equals("COMMIT_REQUESTED")) provisioning.commit(receipt, origin);
+        if (CreationStatus.COMMIT_REQUESTED.matches(row)) provisioning.commit(receipt, origin);
         else {
           cleanup.clean(receipt.attemptId());
           provisioning.compensate(receipt, origin);

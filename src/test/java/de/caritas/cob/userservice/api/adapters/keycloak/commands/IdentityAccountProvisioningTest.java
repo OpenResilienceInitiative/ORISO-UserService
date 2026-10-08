@@ -28,7 +28,8 @@ class IdentityAccountProvisioningTest {
     org.mockito.Mockito.doThrow(new IllegalStateException("provider unavailable"))
         .when(commands)
         .compensate(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
-    new IdentityAccountProvisioning(commands, journal).compensateForLocalRollback("new-account");
+    new IdentityAccountProvisioning(commands, journal, mock(IdentityCreationEffects.class))
+        .compensateForLocalRollback("new-account");
     var order = org.mockito.Mockito.inOrder(journal, commands);
     order.verify(journal).ownedAttempt("new-account");
     order
@@ -48,7 +49,8 @@ class IdentityAccountProvisioningTest {
   void FailedCompensationKeepsReceiptAndIntentForSafeRetryWithoutGeneralAccountDelete() {
     var commands = mock(IdentityProvisioningCommands.class);
     var journal = mock(IdentityCreationJournalWriter.class);
-    var service = new IdentityAccountProvisioning(commands, journal);
+    var service =
+        new IdentityAccountProvisioning(commands, journal, mock(IdentityCreationEffects.class));
     var origin = origin();
     var receipt =
         new KeycloakTaskCommands.CreationResult(
@@ -72,7 +74,8 @@ class IdentityAccountProvisioningTest {
   void InitialCommandCannotUseTenantOrRolesOutsideTheVerifiedInvitation() {
     var commands = mock(IdentityProvisioningCommands.class);
     var journal = mock(IdentityCreationJournalWriter.class);
-    var service = new IdentityAccountProvisioning(commands, journal);
+    var service =
+        new IdentityAccountProvisioning(commands, journal, mock(IdentityCreationEffects.class));
     var payload =
         new KeycloakTaskCommands.AccountCreation(
             "new",
@@ -94,7 +97,8 @@ class IdentityAccountProvisioningTest {
   void setupReadIsExactToTheOriginalHumanCreatorAndCapturedInitialScope() {
     var commands = mock(IdentityProvisioningCommands.class);
     var journal = mock(IdentityCreationJournalWriter.class);
-    var service = new IdentityAccountProvisioning(commands, journal);
+    var service =
+        new IdentityAccountProvisioning(commands, journal, mock(IdentityCreationEffects.class));
     var row = creationRow();
     row.setOriginKind("HUMAN_ADMIN");
     row.setProvenance("human-admin:creator");
@@ -145,7 +149,8 @@ class IdentityAccountProvisioningTest {
   void heldInvitationRelationsRejectAnotherAccountTenantAndTerminalInvite() {
     var commands = mock(IdentityProvisioningCommands.class);
     var journal = mock(IdentityCreationJournalWriter.class);
-    var service = new IdentityAccountProvisioning(commands, journal);
+    var service =
+        new IdentityAccountProvisioning(commands, journal, mock(IdentityCreationEffects.class));
     var invites = mock(de.caritas.cob.userservice.api.port.out.AccountInviteRepository.class);
     org.springframework.test.util.ReflectionTestUtils.setField(service, "invites", invites);
     var row = creationRow();

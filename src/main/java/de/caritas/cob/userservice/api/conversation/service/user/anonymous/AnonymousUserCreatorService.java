@@ -52,7 +52,7 @@ public class AnonymousUserCreatorService {
       var user =
           createUserFacade.updateIdentityAndCreateAccount(identityUserId, userDto, UserRole.USER);
       createdUser = user;
-      createUserFacade.provisionMatrixUser(user, userDto.getUsername());
+      createUserFacade.provisionOwnedMatrixUser(user, userDto.getUsername(), receipt);
 
     } catch (RuntimeException e) {
       try {

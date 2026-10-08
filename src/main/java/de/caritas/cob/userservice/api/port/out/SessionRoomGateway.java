@@ -19,6 +19,19 @@ public interface SessionRoomGateway {
   String createRoom(String roomName, String roomAlias, String accessToken)
       throws MatrixCreateRoomException;
 
+  /** Only a fresh private-room POST may acknowledge an owned registration effect. */
+  default String createOwnedPrivateRoom(
+      String roomName, String roomAlias, String accessToken, OwnedMatrixEffect effect)
+      throws MatrixCreateRoomException {
+    throw new MatrixCreateRoomException("This adapter cannot attest private-room creation");
+  }
+
+  default String createOwnedPrivateRoomAsUser(
+      String roomName, String roomAlias, String matrixUserId, OwnedMatrixEffect effect)
+      throws MatrixCreateRoomException {
+    throw new MatrixCreateRoomException("This adapter cannot attest private-room creation");
+  }
+
   String createRoomAsUser(String roomName, String roomAlias, String matrixUserId)
       throws MatrixCreateRoomException;
 

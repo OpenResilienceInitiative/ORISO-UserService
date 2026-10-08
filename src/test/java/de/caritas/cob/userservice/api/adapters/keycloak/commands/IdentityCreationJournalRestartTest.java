@@ -138,7 +138,9 @@ class IdentityCreationJournalRestartTest {
     try (var context = open(source, true)) {
       var service =
           new IdentityAccountProvisioning(
-              failed, context.getBean(IdentityCreationJournalWriter.class));
+              failed,
+              context.getBean(IdentityCreationJournalWriter.class),
+              context.getBean(IdentityCreationEffects.class));
       assertThatThrownBy(() -> service.create(firstAttempt, command, origin()))
           .isInstanceOf(IllegalStateException.class);
     }
@@ -155,7 +157,9 @@ class IdentityCreationJournalRestartTest {
     try (var context = open(source, false)) {
       var service =
           new IdentityAccountProvisioning(
-              retried, context.getBean(IdentityCreationJournalWriter.class));
+              retried,
+              context.getBean(IdentityCreationJournalWriter.class),
+              context.getBean(IdentityCreationEffects.class));
       var receipt = service.create(UUID.randomUUID(), command, origin());
       assertThat(receipt.attemptId()).isEqualTo(firstAttempt);
       assertThat(
@@ -395,7 +399,9 @@ class IdentityCreationJournalRestartTest {
         var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
       var service =
           new IdentityAccountProvisioning(
-              commands, context.getBean(IdentityCreationJournalWriter.class));
+              commands,
+              context.getBean(IdentityCreationJournalWriter.class),
+              context.getBean(IdentityCreationEffects.class));
       var active = executor.submit(() -> service.create(UUID.randomUUID(), command, origin()));
       try {
         assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
@@ -479,16 +485,31 @@ class IdentityCreationJournalRestartTest {
 
   static AnnotationConfigApplicationContext open(
       DataSource source, boolean migrate, java.time.Clock clock) throws Exception {
+    return open(source, migrate, clock, false);
+  }
+
+  static AnnotationConfigApplicationContext open(
+      DataSource source, boolean migrate, java.time.Clock clock, boolean localDomain)
+      throws Exception {
     if (migrate)
-      try (var connection = source.getConnection()) {
-        new Liquibase(
-                "db/changelog/changeset/20261007_task_identity_creation/changeSet.xml",
-                new ClassLoaderResourceAccessor(),
-                new JdbcConnection(connection))
-            .update(new Contexts());
-      }
+      for (String changelog :
+          List.of(
+              "db/changelog/changeset/20261007_task_identity_creation/changeSet.xml",
+              "db/changelog/changeset/20261008_creation_matrix_effects/changeSet.xml"))
+        try (var connection = source.getConnection()) {
+          new Liquibase(
+                  changelog, new ClassLoaderResourceAccessor(), new JdbcConnection(connection))
+              .update(new Contexts());
+        }
     var context = new AnnotationConfigApplicationContext();
     context.getEnvironment().setActiveProfiles("isolated-creation-journal");
+    context
+        .getEnvironment()
+        .getPropertySources()
+        .addFirst(
+            new org.springframework.core.env.MapPropertySource(
+                "isolated-domain-ddl",
+                Map.of("fixture.domain.ddl", localDomain ? "update" : "none")));
     context.registerBean(DataSource.class, () -> source);
     context.registerBean(java.time.Clock.class, () -> clock);
     context.register(JournalConfiguration.class);
@@ -501,13 +522,18 @@ class IdentityCreationJournalRestartTest {
   @EnableTransactionManagement
   static class JournalConfiguration {
     @Bean
-    LocalContainerEntityManagerFactoryBean entityManagerFactory(DataSource source) {
+    LocalContainerEntityManagerFactoryBean entityManagerFactory(
+        DataSource source, org.springframework.core.env.Environment environment) {
       var factory = new LocalContainerEntityManagerFactoryBean();
       factory.setDataSource(source);
       factory.setPackagesToScan("de.caritas.cob.userservice.api.model");
       factory.setJpaVendorAdapter(new HibernateJpaVendorAdapter());
       factory.setJpaPropertyMap(
-          Map.of("hibernate.hbm2ddl.auto", "none", "hibernate.show_sql", "false"));
+          Map.of(
+              "hibernate.hbm2ddl.auto",
+              environment.getProperty("fixture.domain.ddl", "none"),
+              "hibernate.show_sql",
+              "false"));
       return factory;
     }
 
@@ -522,6 +548,39 @@ class IdentityCreationJournalRestartTest {
       return new org.springframework.data.jpa.repository.support.JpaRepositoryFactory(
               SharedEntityManagerCreator.createSharedEntityManager(factory))
           .getRepository(IdentityCreationAttemptRepository.class);
+    }
+
+    @Bean
+    de.caritas.cob.userservice.api.port.out.ConsultantRepository consultants(
+        jakarta.persistence.EntityManagerFactory factory) {
+      return new org.springframework.data.jpa.repository.support.JpaRepositoryFactory(
+              SharedEntityManagerCreator.createSharedEntityManager(factory))
+          .getRepository(de.caritas.cob.userservice.api.port.out.ConsultantRepository.class);
+    }
+
+    @Bean
+    org.springframework.jdbc.core.JdbcTemplate jdbc(DataSource source) {
+      return new org.springframework.jdbc.core.JdbcTemplate(source);
+    }
+
+    @Bean
+    de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrix() {
+      return org.mockito.Mockito.mock(
+          de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.class);
+    }
+
+    @Bean
+    IdentityCreationEffectWriter effectsWriter(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+      return new IdentityCreationEffectWriter(jdbc);
+    }
+
+    @Bean
+    IdentityCreationEffects effects(
+        IdentityCreationJournalWriter journal,
+        IdentityCreationEffectWriter writer,
+        org.springframework.jdbc.core.JdbcTemplate jdbc,
+        de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrix) {
+      return new IdentityCreationEffects(journal, writer, jdbc, matrix);
     }
 
     @Bean

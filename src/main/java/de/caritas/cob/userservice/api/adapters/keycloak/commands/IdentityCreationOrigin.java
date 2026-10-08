@@ -138,7 +138,8 @@ public final class IdentityCreationOrigin {
   /** Recovery accepts only a durable previously authorized finalization intent and receipt. */
   static IdentityCreationOrigin pendingRecovery(
       de.caritas.cob.userservice.api.model.IdentityCreationAttempt row) {
-    if (!Set.of("RECOVERY_REQUESTED", "LOCAL_CLEANUP_REQUESTED").contains(row.getStatus())
+    if (!CreationStatus.in(
+            row, CreationStatus.RECOVERY_REQUESTED, CreationStatus.LOCAL_CLEANUP_REQUESTED)
         || row.getExecutionClaim() == null
         || row.getProvenance() == null
         || row.getProvenance().isBlank()
@@ -155,16 +156,16 @@ public final class IdentityCreationOrigin {
 
   static IdentityCreationOrigin pendingFinalization(
       de.caritas.cob.userservice.api.model.IdentityCreationAttempt row) {
-    if (!Set.of(
-                "OPEN",
-                "LOCAL_RECONCILIATION_REQUIRED",
-                "RECOVERY_REQUESTED",
-                "LOCAL_CLEANUP_REQUESTED",
-                "COMMITTED",
-                "COMMIT_REQUESTED",
-                "COMPENSATION_REQUESTED",
-                "COMPENSATED")
-            .contains(row.getStatus())
+    if (!CreationStatus.in(
+            row,
+            CreationStatus.OPEN,
+            CreationStatus.LOCAL_RECONCILIATION_REQUIRED,
+            CreationStatus.RECOVERY_REQUESTED,
+            CreationStatus.LOCAL_CLEANUP_REQUESTED,
+            CreationStatus.COMMITTED,
+            CreationStatus.COMMIT_REQUESTED,
+            CreationStatus.COMPENSATION_REQUESTED,
+            CreationStatus.COMPENSATED)
         || row.getAccountId() == null
         || row.getCreationProof() == null
         || row.getCreationProof().isBlank()

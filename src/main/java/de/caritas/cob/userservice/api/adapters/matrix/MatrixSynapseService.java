@@ -222,10 +222,32 @@ public class MatrixSynapseService implements MatrixUserClient {
     return createUser(username, password, displayName, true);
   }
 
+  /** Internal registration seam: the observer is captured from an owned creation receipt. */
+  public ResponseEntity<MatrixCreateUserResponseDTO> createOwnedUser(
+      String username,
+      String password,
+      String displayName,
+      de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect effect)
+      throws MatrixCreateUserException {
+    java.util.Objects.requireNonNull(effect, "Owned creation requires a durable observer");
+    return createUser(username, password, displayName, true, effect);
+  }
+
   private ResponseEntity<MatrixCreateUserResponseDTO> createUser(
       String username, String password, String displayName, boolean reactivateReserved)
       throws MatrixCreateUserException {
+    return createUser(username, password, displayName, reactivateReserved, null);
+  }
 
+  private ResponseEntity<MatrixCreateUserResponseDTO> createUser(
+      String username,
+      String password,
+      String displayName,
+      boolean reactivateReserved,
+      de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect effect)
+      throws MatrixCreateUserException {
+    String expectedUserId =
+        "@" + username.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
     try {
       // First, get a nonce from Matrix
       var nonceUrl = matrixConfig.getApiUrl(ENDPOINT_REGISTER_USER);
@@ -255,8 +277,15 @@ public class MatrixSynapseService implements MatrixUserClient {
 
       log.info("Creating Matrix user: {} at URL: {}", redactor.pseudonym(username), nonceUrl);
 
+      if (effect != null) effect.started(expectedUserId);
       var response =
           restTemplate.postForEntity(nonceUrl, request, MatrixCreateUserResponseDTO.class);
+      if (effect != null) {
+        if (!expectedUserId.equals(userIdOf(response)))
+          throw new MatrixCreateUserException(
+              "Matrix acknowledged an unexpected identity; ownership remains unresolved");
+        effect.created(expectedUserId);
+      }
 
       if (nonNull(response.getBody()) && nonNull(response.getBody().getUserId())) {
         log.info("Successfully created Matrix user: {}", redactor.pseudonym(username));
@@ -269,8 +298,9 @@ public class MatrixSynapseService implements MatrixUserClient {
           throw new MatrixCreateUserException(
               "The homeserver already holds an account for this localpart; it was not reactivated");
         }
-        return reactivateDeletedUser(username, password);
+        return reactivateDeletedUser(username, password, effect);
       }
+      if (effect != null) effect.rejectedWithoutEffect();
       log.error(
           "Matrix Error: Could not create user ({}) in Matrix. Status: {}, errcode: {}",
           redactor.pseudonym(username),
@@ -356,6 +386,16 @@ public class MatrixSynapseService implements MatrixUserClient {
   }
 
   @Override
+  public String createOwnedUserId(
+      String username,
+      String password,
+      String displayName,
+      de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect effect)
+      throws MatrixCreateUserException {
+    return userIdOf(createOwnedUser(username, password, displayName, effect));
+  }
+
+  @Override
   public String createUserIdWithoutReactivation(
       String username, String password, String displayName) throws MatrixCreateUserException {
     return userIdOf(createUser(username, password, displayName, false));
@@ -371,7 +411,10 @@ public class MatrixSynapseService implements MatrixUserClient {
   }
 
   private ResponseEntity<MatrixCreateUserResponseDTO> reactivateDeletedUser(
-      String username, String password) throws MatrixCreateUserException {
+      String username,
+      String password,
+      de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect effect)
+      throws MatrixCreateUserException {
     String matrixUserId =
         "@" + username.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
     try {
@@ -392,10 +435,13 @@ public class MatrixSynapseService implements MatrixUserClient {
               userUri, org.springframework.http.HttpMethod.GET, adminRequest, java.util.Map.class);
       if (existingUser.getBody() == null
           || !Boolean.TRUE.equals(existingUser.getBody().get("deactivated"))) {
+        if (effect != null && existingUser.getBody() != null) effect.rejectedWithoutEffect();
         throw new MatrixCreateUserException(
             String.format("Matrix user (%s) is already active", redactor.pseudonym(username)));
       }
 
+      // Capture the exact prior inactive state before the first PUT; the second can fail.
+      if (effect != null) effect.restoreDeactivated(matrixUserId);
       var reactivateRequest = new MatrixReactivateUserRequestDTO(false);
       restTemplate.exchange(
           userUri,
@@ -876,6 +922,31 @@ public class MatrixSynapseService implements MatrixUserClient {
    * @param matrixUserId the full Matrix user ID (e.g., @username:domain)
    * @return true if successful, false otherwise
    */
+  /** Restores only the captured inactive flag; it must not erase a pre-existing identity. */
+  public boolean restoreDeactivatedUser(String matrixUserId) {
+    if (matrixUserId == null || matrixUserId.isBlank()) return false;
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null || adminToken.isBlank()) return false;
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      var headers = getClientHttpHeaders(adminToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      var request = new HttpEntity<>(new MatrixReactivateUserRequestDTO(true), headers);
+      var response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.PUT, request, String.class);
+      return response.getStatusCode().is2xxSuccessful();
+    } catch (Exception failure) {
+      log.warn(
+          "Failed to restore inactive Matrix user {}: {}",
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(failure.getMessage()));
+      return false;
+    }
+  }
+
   public boolean deactivateUser(String matrixUserId) {
     try {
       String adminToken = getAdminToken();

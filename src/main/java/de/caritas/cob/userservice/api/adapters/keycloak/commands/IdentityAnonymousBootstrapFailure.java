@@ -25,7 +25,7 @@ public class IdentityAnonymousBootstrapFailure {
     var attempt = journal.ownedAttempt(accountId);
     var user = require(attempt, sessionId);
     journal.recordAnonymousBootstrapFailure(UUID.fromString(attempt.getId()), sessionId);
-    if ("COMMITTED".equals(attempt.getStatus())) markFailed(attempt, user);
+    if (CreationStatus.COMMITTED.matches(attempt)) markFailed(attempt, user);
   }
 
   /**
@@ -34,7 +34,7 @@ public class IdentityAnonymousBootstrapFailure {
   public void complete(String accountId, Long sessionId) {
     var attempt = journal.ownedAttempt(accountId);
     var user = require(attempt, sessionId);
-    if (!"COMMITTED".equals(attempt.getStatus())
+    if (!CreationStatus.COMMITTED.matches(attempt)
         || user.getDeleteDate() != null
         || attempt.getBootstrapFailedAt() != null
         || journal.anonymousBootstrapExpired(attempt)) throw denied();
@@ -43,7 +43,8 @@ public class IdentityAnonymousBootstrapFailure {
 
   public void reconcile(UUID attemptId) {
     var attempt = journal.attemptInSaga(attemptId);
-    if (!"COMMITTED".equals(attempt.getStatus()) || attempt.getBootstrapSessionId() == null) return;
+    if (!CreationStatus.COMMITTED.matches(attempt) || attempt.getBootstrapSessionId() == null)
+      return;
     if (attempt.getBootstrapFailedAt() == null && !journal.anonymousBootstrapExpired(attempt))
       return;
     var user = require(attempt, attempt.getBootstrapSessionId());
@@ -59,7 +60,7 @@ public class IdentityAnonymousBootstrapFailure {
   }
 
   private User require(IdentityCreationAttempt attempt, Long sessionId) {
-    if (!Set.of("COMMITTED", "COMMIT_REQUESTED").contains(attempt.getStatus())
+    if (!CreationStatus.in(attempt, CreationStatus.COMMITTED, CreationStatus.COMMIT_REQUESTED)
         || !"ANONYMOUS".equals(attempt.getRegistrationKind())
         || !"ANONYMOUS".equals(attempt.getOriginKind())
         || sessionId == null

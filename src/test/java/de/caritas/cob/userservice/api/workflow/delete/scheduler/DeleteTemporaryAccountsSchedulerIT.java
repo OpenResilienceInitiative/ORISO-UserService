@@ -41,6 +41,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures;
+import de.caritas.cob.userservice.api.workflow.deactivate.service.DeactivateGroupChatService;
 import de.caritas.cob.userservice.api.workflow.delete.service.AnonymousUserDeletionUnit;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
@@ -107,6 +108,7 @@ class DeleteTemporaryAccountsSchedulerIT {
   private static final String MATRIX_USER_ID = "@temporary-participant:matrix.oriso.org";
 
   @Autowired private DeleteTemporaryAccountsScheduler scheduler;
+  @Autowired private DeactivateGroupChatService groupDeactivation;
   @Autowired private MockMvc mockMvc;
 
   @Autowired
@@ -194,6 +196,8 @@ class DeleteTemporaryAccountsSchedulerIT {
     matrixUser.setUserId(MATRIX_USER_ID);
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(matrixUser));
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenOwnedMatrixUser(
+        matrixSynapseService, MATRIX_USER_ID);
     when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);
 
     when(agencyServiceApiControllerFactory.createControllerApi())
@@ -444,10 +448,12 @@ class DeleteTemporaryAccountsSchedulerIT {
     assertTrue(userChatRepository.findByChatAndUser(group, participant).isPresent());
     ageBy(participant, maxAge.plusMinutes(1));
 
+    // A live group is not an expired scheduled session, even when its participant expires.
+    groupDeactivation.deactivateStaleGroupChats();
     scheduler.performDeletionWorkflow();
 
     assertFalse(userService.getUser(participant.getUserId()).isPresent());
-    assertTrue(chatRepository.existsById(group.getId()));
+    assertTrue(chatRepository.findById(group.getId()).orElseThrow().isActive());
     verify(matrixSynapseService, never()).purgeRoom("!self-help-group:matrix.oriso.org");
   }
 
@@ -515,6 +521,7 @@ class DeleteTemporaryAccountsSchedulerIT {
     chat.setRepetitive(true);
     chat.setChatOwner(consultantRepository.findById(SEEDED_CONSULTANT_ID).orElseThrow());
     chat.setConsultingTypeId(1);
+    chat.setStartDate(LocalDateTime.now());
     chat.setDuration(90);
     chat.setMaxParticipants(10);
     chat.setSourceLanguage("de");

@@ -167,6 +167,8 @@ class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture 
     matrixUserResponse.setUserId("@anonymous:matrix.test");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(matrixUserResponse));
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenOwnedMatrixUser(
+        matrixSynapseService, "@anonymous:matrix.test");
     when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(

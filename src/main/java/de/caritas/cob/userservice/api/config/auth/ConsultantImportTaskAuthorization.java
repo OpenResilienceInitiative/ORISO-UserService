@@ -4,7 +4,6 @@ import java.util.*;
 import java.util.function.Supplier;
 import org.springframework.security.authorization.*;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 
 /** Receiving-only importer; a human role or an unrelated service token cannot import accounts. */
@@ -21,24 +20,7 @@ public final class ConsultantImportTaskAuthorization
   }
 
   public boolean permits(Authentication auth) {
-    if (client == null
-        || client.isBlank()
-        || subject == null
-        || subject.isBlank()
-        || audience == null
-        || audience.isBlank()
-        || !(auth instanceof JwtAuthenticationToken verified)
-        || !verified.isAuthenticated()) return false;
-    var jwt = verified.getToken();
-    var realm = jwt.getClaimAsMap("realm_access");
-    var resources = jwt.getClaimAsMap("resource_access");
-    Object value = realm == null ? null : realm.get("roles");
-    return subject.equals(jwt.getSubject())
-        && client.equals(jwt.getClaimAsString("azp"))
-        && jwt.getAudience().contains(audience)
-        && value instanceof Collection<?> roles
-        && new HashSet<>(roles).equals(Set.of("consultant-import"))
-        && (resources == null || resources.isEmpty());
+    return ExactTaskBinding.permits(auth, client, subject, audience, Set.of("consultant-import"));
   }
 
   @Override

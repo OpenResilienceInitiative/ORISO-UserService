@@ -34,6 +34,36 @@ public class MatrixSessionRoomGateway implements SessionRoomGateway {
   }
 
   @Override
+  public String createOwnedPrivateRoom(
+      String roomName,
+      String roomAlias,
+      String accessToken,
+      de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect effect)
+      throws MatrixCreateRoomException {
+    effect.started(roomAlias);
+    var response = matrixSynapseService.createRoom(roomName, roomAlias, accessToken);
+    String roomId =
+        response == null || response.getBody() == null ? null : response.getBody().getRoomId();
+    if (roomId == null || roomId.isBlank())
+      throw new MatrixCreateRoomException("Private room outcome is unresolved");
+    effect.created(roomId); // before joins, invites or local persistence
+    return roomId;
+  }
+
+  @Override
+  public String createOwnedPrivateRoomAsUser(
+      String roomName,
+      String roomAlias,
+      String matrixUserId,
+      de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect effect)
+      throws MatrixCreateRoomException {
+    String accessToken = matrixSynapseService.loginAsUserAccessToken(matrixUserId);
+    if (accessToken == null || accessToken.isBlank())
+      throw new MatrixCreateRoomException("Could not authenticate room creator");
+    return createOwnedPrivateRoom(roomName, roomAlias, accessToken, effect);
+  }
+
+  @Override
   public String createRoomAsUser(String roomName, String roomAlias, String matrixUserId)
       throws MatrixCreateRoomException {
     var response = matrixSynapseService.createRoomAsMatrixUser(roomName, roomAlias, matrixUserId);

@@ -14,6 +14,18 @@ import org.springframework.transaction.support.*;
 public class IdentityAccountProvisioning {
   private final IdentityProvisioningCommands commands;
   private final IdentityCreationJournalWriter journal;
+  private final IdentityCreationEffects effects;
+
+  public IdentityCreationEffects.Scope ownedMatrixEffects(
+      KeycloakTaskCommands.CreationResult receipt) {
+    return effects.capture(receipt);
+  }
+
+  /** Controlled rollback uses the same durable effect ownership as process-restart recovery. */
+  public void compensateMatrixEffects(String accountId) {
+    var row = journal.ownedAttempt(accountId);
+    effects.clean(UUID.fromString(row.getId()));
+  }
 
   @org.springframework.beans.factory.annotation.Autowired
   private de.caritas.cob.userservice.api.port.out.AccountInviteRepository invites;
@@ -97,7 +109,8 @@ public class IdentityAccountProvisioning {
             org.springframework.security.core.context.SecurityContextHolder.getContext()
                 .getAuthentication());
     var kind = IdentityCreationOrigin.Kind.valueOf(row.getRegistrationKind());
-    if (!Set.of("OPEN", "COMMIT_REQUESTED", "COMMITTED").contains(row.getStatus())
+    if (!CreationStatus.in(
+            row, CreationStatus.OPEN, CreationStatus.COMMIT_REQUESTED, CreationStatus.COMMITTED)
         || !"HUMAN_ADMIN".equals(row.getOriginKind())
         || !Set.of(
                 "human-admin:" + caller.getToken().getSubject(),
@@ -158,6 +171,7 @@ public class IdentityAccountProvisioning {
   private void finalizeCompensation(
       KeycloakTaskCommands.CreationResult receipt, IdentityCreationOrigin origin) {
     journal.requestAfterSaga(receipt, origin, "COMPENSATION_REQUESTED");
+    effects.clean(receipt.attemptId());
     commands.compensate(receipt, origin.command("account.compensate", receipt.attemptId()));
     journal.finish(receipt, "COMPENSATED");
   }
@@ -200,7 +214,7 @@ public class IdentityAccountProvisioning {
 
   public CreatedRelationGrant createdRelationGrant(String accountId) {
     var row = journal.ownedAttempt(accountId);
-    if (!"OPEN".equals(row.getStatus())
+    if (!CreationStatus.OPEN.matches(row)
         || !java.util.Set.of("INVITATION", "IMPORT").contains(row.getOriginKind())
         || !java.util.Set.of("CONSULTANT", "CONSULTANT_AGENCY_ADMIN")
             .contains(row.getRegistrationKind()))

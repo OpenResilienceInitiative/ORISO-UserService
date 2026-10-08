@@ -335,8 +335,11 @@ public class CreateConsultantSaga {
             consultantDisplayNameResolver.resolveMatrixDisplayName(
                 consultantCreationInput.getDisplayName(), plainCreds.getUsername());
         matrixUserId =
-            matrixUserClient.createUserId(
-                plainCreds.getUsername(), matrixPassword, matrixDisplayName);
+            matrixUserClient.createOwnedUserId(
+                plainCreds.getUsername(),
+                matrixPassword,
+                matrixDisplayName,
+                identityProvisioning.ownedMatrixEffects(receipt).user());
 
         if (matrixUserId != null) {
           log.info("Provisioned the chat account of consultant {}", keycloakUserId);

@@ -62,6 +62,22 @@ class CreateUserFacadeMatrixUserTest {
   @org.mockito.Mock private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
 
   @org.junit.jupiter.api.BeforeEach
+  void ownedDownstreamPortFixture() {
+    var scope =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationEffects.Scope
+                .class);
+    org.mockito.Mockito.lenient()
+        .when(scope.user())
+        .thenReturn(
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect.class));
+    org.mockito.Mockito.lenient()
+        .when(identityProvisioning.ownedMatrixEffects(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(scope);
+  }
+
+  @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
     org.mockito.Mockito.lenient()
         .when(agencyVerifier.getVerifiedAgency(any(), org.mockito.ArgumentMatchers.anyInt()))
@@ -175,11 +191,12 @@ class CreateUserFacadeMatrixUserTest {
 
     var matrixResponse = new MatrixCreateUserResponseDTO();
     matrixResponse.setUserId(matrixUserId);
-    when(matrixSynapseService.createUser(eq(plainUsername), anyString(), eq(plainUsername)))
+    when(matrixSynapseService.createOwnedUser(
+            eq(plainUsername), anyString(), eq(plainUsername), any()))
         .thenReturn(ResponseEntity.ok(matrixResponse));
 
-    when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+    when(createNewSessionFacade.initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any()))
         .thenReturn(new NewRegistrationResponseDto().sessionId(1L).status(HttpStatus.CREATED));
     when(agencyService.getAgencyWithoutCaching(Mockito.anyLong())).thenReturn(new AgencyDTO());
 
@@ -187,7 +204,8 @@ class CreateUserFacadeMatrixUserTest {
 
     ArgumentCaptor<String> matrixPasswordCaptor = ArgumentCaptor.forClass(String.class);
     verify(matrixSynapseService)
-        .createUser(eq(plainUsername), matrixPasswordCaptor.capture(), eq(plainUsername));
+        .createOwnedUser(
+            eq(plainUsername), matrixPasswordCaptor.capture(), eq(plainUsername), any());
     assertFalse(matrixPasswordCaptor.getValue().isBlank());
     assertNotEquals(USER_DTO_KREUZBUND.getPassword(), matrixPasswordCaptor.getValue());
     assertThat(createdUser.getMatrixUserId(), is(matrixUserId));

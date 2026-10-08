@@ -154,7 +154,8 @@ class ConsultantChatIdentityRepairIT
   void consultantCreatedWithoutAChatServer_Should_beReportedMissing_findable_andRepairable()
       throws Exception {
     // given: no chat server answers, exactly as in every suite that runs without a Synapse
-    when(matrixSynapseService.createUserId(anyString(), anyString(), any())).thenReturn(null);
+    when(matrixSynapseService.createOwnedUserId(anyString(), anyString(), any(), any()))
+        .thenReturn(null);
 
     // when: an administrator creates a consultant. UserAdminController hands the plain username
     // to the saga through this holder, so setting it is what makes the saga attempt Matrix at all.
@@ -200,7 +201,8 @@ class ConsultantChatIdentityRepairIT
     // and: repairing twice is safe - no second chat account is provisioned. Two calls in total:
     // the one the saga made while the chat server was down, and the one that repaired it.
     consultantChatIdentityService.provisionMissingChatIdentity(consultantId);
-    verify(matrixSynapseService, times(1)).createUserId(anyString(), anyString(), any());
+    verify(matrixSynapseService, times(1))
+        .createOwnedUserId(anyString(), anyString(), any(), any());
     verify(matrixSynapseService, times(1))
         .createUserIdWithoutReactivation(anyString(), anyString(), any());
     assertThat(
@@ -218,7 +220,8 @@ class ConsultantChatIdentityRepairIT
    */
   @Test
   void aChatAccountLeftBehindByAFailedRepair_Should_beAdoptedByTheNextAttempt() throws Exception {
-    when(matrixSynapseService.createUserId(anyString(), anyString(), any())).thenReturn(null);
+    when(matrixSynapseService.createOwnedUserId(anyString(), anyString(), any(), any()))
+        .thenReturn(null);
     PlainCredentialsHolder.set(ORPHAN_USERNAME, null);
     var created =
         this.createConsultantSaga.createNewConsultant(
