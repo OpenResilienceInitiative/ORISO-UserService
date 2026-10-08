@@ -33,6 +33,44 @@ import org.junit.jupiter.api.Test;
 class SessionMapperTest {
 
   @Test
+  void serializedSessionShouldCarryBothParticipantsStoredAvatarChoices() throws Exception {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.getUser().setAvatarId("fox");
+    session
+        .getConsultant()
+        .setAvatarKind(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON);
+    session.getConsultant().setAvatarId("magpie");
+    var mapper = new AppConfig().objectMapper();
+    var response =
+        mapper.readTree(
+            mapper.writeValueAsString(new SessionMapper().toConsultantSessionDto(session)));
+    assertEquals("fox", response.path("user").path("avatarId").asText());
+    assertEquals("ICON", response.path("consultant").path("avatarKind").asText());
+    assertEquals("magpie", response.path("consultant").path("avatarId").asText());
+    var room =
+        mapper.readTree(
+            mapper.writeValueAsString(
+                new SessionMapper()
+                    .toGroupSessionResponse(new SessionMapper().toConsultantSessionDto(session))));
+    assertEquals("magpie", room.path("consultant").path("avatarId").asText());
+    assertEquals("fox", room.path("user").path("avatarId").asText());
+  }
+
+  @Test
+  void clearedAskerAvatarShouldNotCarryThePreviousChoiceInSessionResponse() throws Exception {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.getUser().setAvatarId(null);
+    var mapper = new AppConfig().objectMapper();
+    var response =
+        mapper.readTree(
+            mapper.writeValueAsString(new SessionMapper().toConsultantSessionDto(session)));
+    org.assertj.core.api.Assertions.assertThat(
+            response.path("user").path("avatarId").isNull()
+                || response.path("user").path("avatarId").isMissingNode())
+        .isTrue();
+  }
+
+  @Test
   void convertToSessionDTOShouldProjectConversationType() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setConversationType(ConversationType.LIVE_CHAT);

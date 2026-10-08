@@ -28,4 +28,7 @@ public class SessionUserDTO {
   private boolean isDeleted;
 
   private Map<String, Object> sessionData;
+
+  @ApiModelProperty("Stored animal id; null uses the default avatar")
+  private String avatarId;
 }
