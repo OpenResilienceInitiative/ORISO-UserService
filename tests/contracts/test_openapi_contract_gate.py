@@ -167,11 +167,13 @@ class OpenApiContractGateTest(unittest.TestCase):
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
                 # TenantPR304 supplies the six conversation notification channel fields.
-                r"f309d2432d6ad02d17eef13d0aeaffc50c2389b9",
+                r"5705be45ce94a3c777132c719c826975323c3ccb",
                 re.DOTALL,
             ),
         )
-        self.assertIn("|| 'pre-dev'", workflow)
+        self.assertIn("|| 'dev'", workflow)
+        self.assertIn("    - dev", workflow)
+        self.assertNotIn("pre-dev", workflow)
 
     def test_contract_gate_tests_are_executed_by_ci(self):
         # A gate assertion that never runs protects nothing. Without a job that

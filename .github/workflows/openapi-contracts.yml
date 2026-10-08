@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-    - pre-dev
+    - dev
 
 env:
   REDOCLY_VERSION: 2.40.0
@@ -39,7 +39,7 @@ jobs:
         repository: OpenResilienceInitiative/ORISO-AgencyService
         # AgencyService dev HEAD. UserService no longer reads counsellorTopicPermission, so this
         # branch needs no companion pin to ORISO-AgencyService#308.
-        ref: ${{ github.event_name == 'pull_request' && 'bbdc934477212020b8c43d8bf3cb28a30081156c' || 'pre-dev' }}
+        ref: ${{ github.event_name == 'pull_request' && 'bbdc934477212020b8c43d8bf3cb28a30081156c' || 'dev' }}
         path: .providers/agency
         persist-credentials: false
 
@@ -48,7 +48,7 @@ jobs:
       with:
         repository: OpenResilienceInitiative/ORISO-ConsultingTypeService
         # CTS#164 merged the Admin Settings SMTP fields consumed by this branch into dev.
-        ref: ${{ github.event_name == 'pull_request' && 'fd06f72beab16a92e2d1f1c2b88acbb054254baf' || 'pre-dev' }}
+        ref: ${{ github.event_name == 'pull_request' && 'fd06f72beab16a92e2d1f1c2b88acbb054254baf' || 'dev' }}
         path: .providers/consulting
         persist-credentials: false
 
@@ -57,7 +57,7 @@ jobs:
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
         # TenantService PR304 supplies the six conversation notification channel fields consumed here.
-        ref: ${{ github.event_name == 'pull_request' && 'f309d2432d6ad02d17eef13d0aeaffc50c2389b9' || 'pre-dev' }}
+        ref: ${{ github.event_name == 'pull_request' && '5705be45ce94a3c777132c719c826975323c3ccb' || 'dev' }}
         path: .providers/tenant
         persist-credentials: false
 
