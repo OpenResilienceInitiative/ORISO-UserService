@@ -233,7 +233,7 @@ class EventNotificationMessageAccessIT {
     reader.setTenantId(legacy ? null : Long.valueOf(1L));
     if (legacy) {
       session.setTenantId(null);
-      sessions.save(session);
+      session = sessions.save(session);
     }
     reader.setTeamConsultant(true);
     consultants.saveAndFlush(reader);
