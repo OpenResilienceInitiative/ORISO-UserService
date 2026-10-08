@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
@@ -80,17 +81,25 @@ class CaseHandoverEmailNotificationTest {
 
   @Test
   void coAccessConsentSendsButOnlyTakeoverOwnershipSends() {
+    CaseHandoverRequest pendingCoAccess =
+        request(Status.PENDING_CLIENT_CONSENT, AccessType.CO_ACCESS);
+    CaseHandoverRequest grantedCoAccess = request(Status.GRANTED, AccessType.CO_ACCESS);
+    grantedCoAccess.setId(13L);
+    CaseHandoverRequest nonPendingTakeover = request(Status.GRANTED, AccessType.TAKEOVER);
+    nonPendingTakeover.setId(14L);
     transaction.executeWithoutResult(
         status -> {
-          notification.consentRequested(
-              request(Status.PENDING_CLIENT_CONSENT, AccessType.CO_ACCESS));
-          notification.ownershipGranted(request(Status.GRANTED, AccessType.CO_ACCESS));
-          notification.consentRequested(request(Status.GRANTED, AccessType.TAKEOVER));
+          notification.consentRequested(pendingCoAccess);
+          notification.ownershipGranted(grantedCoAccess);
+          notification.consentRequested(nonPendingTakeover);
         });
-    verify(sender)
-        .send(
-            org.mockito.ArgumentMatchers.argThat(
-                mail -> mail.outcome() == CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED));
+    var sent = ArgumentCaptor.forClass(CaseHandoverEmailNotification.Mail.class);
+    verify(sender).send(sent.capture());
+    assertThat(sent.getValue().requestId()).isEqualTo(pendingCoAccess.getId());
+    assertThat(sent.getValue().outcome())
+        .isEqualTo(CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED);
+    assertThat(sent.getValue().accessType()).isEqualTo(AccessType.CO_ACCESS);
+    verifyNoMoreInteractions(sender);
   }
 
   @Test

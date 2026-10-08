@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
@@ -28,6 +29,17 @@ class ErstantwortLocaleTest {
     assertThat(readers.path("headline").asText()).isEqualTo(heading);
     assertThat(block(payload, "responseDeadline").path("body").asText()).contains("7");
     assertThat(payload.toString()).doesNotContain("{{", "erstantwort.");
+  }
+
+  @Test
+  void germanLocaleWithInformalPreferenceFreezesInformalHeadlineAndBody() throws Exception {
+    var context = ErstantwortContext.builder().locale("de").informal(true).build();
+    var readers = block(payload(context), "whoReadsAlong");
+    assertThat(readers.path("headline").asText()).isEqualTo("Wer Deine Nachricht liest");
+    assertThat(readers.path("body").asText())
+        .isEqualTo(
+            "Deine Nachricht lesen ausschließlich die Fachkräfte der zuständigen Beratungsstelle."
+                + " Alle sind zur Verschwiegenheit verpflichtet.");
   }
 
   @ParameterizedTest
