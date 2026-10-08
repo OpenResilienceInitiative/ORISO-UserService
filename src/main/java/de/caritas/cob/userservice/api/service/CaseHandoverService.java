@@ -674,9 +674,11 @@ public class CaseHandoverService {
   public ConsentPreference updateConsentPreference(Long sessionId, boolean alwaysAsk) {
     Session session = getSessionForUpdate(sessionId);
     verifyPreferenceOwner(session);
+    sessionRepository.updateAdditionalAccessPreference(sessionId, alwaysAsk);
+    // Bulk writes bypass managed state. Keep reads in this transaction consistent with the
+    // database.
     session.setAlwaysAskBeforeAdditionalAccess(alwaysAsk);
-    Session saved = sessionRepository.save(session);
-    return new ConsentPreference(saved.getId(), saved.isAlwaysAskBeforeAdditionalAccess());
+    return new ConsentPreference(session.getId(), session.isAlwaysAskBeforeAdditionalAccess());
   }
 
   private void verifyPreferenceOwner(Session session) {

@@ -230,10 +230,14 @@ public class Session implements TenantAware {
   @Column(name = "is_supervision_opted_out", columnDefinition = "bit default false")
   private Boolean supervisionOptedOut = false;
 
-  /** Future additional access requires an individual approval when enabled; never grants access. */
+  /**
+   * Future additional access requires individual approval when enabled; never grants access.
+   * Updated only by the dedicated preference writer so stale entity merges cannot revert it.
+   */
   @Builder.Default
   @Column(
       name = "always_ask_before_additional_access",
+      updatable = false,
       nullable = false,
       columnDefinition = "bit default false")
   private boolean alwaysAskBeforeAdditionalAccess = false;

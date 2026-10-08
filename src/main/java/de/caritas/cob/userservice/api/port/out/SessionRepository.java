@@ -33,6 +33,17 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
 
   /**
+   * Write the independent standing preference without changing ownership or its optimistic version.
+   * Callers must first lock the session and validate its owner, tenant and conversation scope.
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.alwaysAskBeforeAdditionalAccess = :alwaysAsk WHERE session.id = :sessionId")
+  void updateAdditionalAccessPreference(
+      @Param("sessionId") Long sessionId, @Param("alwaysAsk") boolean alwaysAsk);
+
+  /**
    * Refresh only the timestamp of a still-waiting enquiry whose heartbeat is due.
    *
    * <p>The database checks eligibility and writes under the same row lock used by assignment.

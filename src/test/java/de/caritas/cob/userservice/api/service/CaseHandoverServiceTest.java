@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -220,7 +222,6 @@ class CaseHandoverServiceTest {
     session.setAlwaysAskBeforeAdditionalAccess(true);
     asker.setTenantId(7L);
     TenantContext.setCurrentTenant(7L);
-    when(sessionRepository.save(any(Session.class))).thenAnswer(i -> i.getArgument(0));
     try {
       var first = caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "cover");
       ArgumentCaptor<CaseHandoverRequest> capture =
@@ -280,6 +281,7 @@ class CaseHandoverServiceTest {
           ForbiddenException.class, () -> caseHandoverService.updateConsentPreference(123L, true));
       assertFalse(session.isAlwaysAskBeforeAdditionalAccess());
       verify(sessionRepository, never()).save(any());
+      verify(sessionRepository, never()).updateAdditionalAccessPreference(anyLong(), anyBoolean());
     } finally {
       TenantContext.clear();
     }
@@ -299,6 +301,7 @@ class CaseHandoverServiceTest {
       assertThrows(
           ForbiddenException.class, () -> caseHandoverService.updateConsentPreference(123L, true));
       verify(sessionRepository, never()).save(any());
+      verify(sessionRepository, never()).updateAdditionalAccessPreference(anyLong(), anyBoolean());
     } finally {
       TenantContext.clear();
     }
@@ -322,7 +325,6 @@ class CaseHandoverServiceTest {
   void consentPreference_singleTenantInstallationStillUsesOwnerAndScopeChecks() {
     ReflectionTestUtils.setField(caseHandoverService, "preferenceMultitenancyEnabled", false);
     TenantContext.clear();
-    when(sessionRepository.save(any(Session.class))).thenAnswer(i -> i.getArgument(0));
     try {
       assertTrue(
           caseHandoverService
@@ -343,7 +345,6 @@ class CaseHandoverServiceTest {
   void consentPreference_ownerSavesAndReadsItWithoutResolvingAnExistingRequest() {
     asker.setTenantId(7L);
     TenantContext.setCurrentTenant(7L);
-    when(sessionRepository.save(any(Session.class))).thenAnswer(i -> i.getArgument(0));
     when(sessionRepository.findByIdForUpdate(123L)).thenReturn(Optional.of(session));
     try {
       assertFalse(caseHandoverService.getConsentPreference(123L).alwaysAskBeforeAdditionalAccess());
@@ -352,6 +353,8 @@ class CaseHandoverServiceTest {
       assertTrue(caseHandoverService.getConsentPreference(123L).alwaysAskBeforeAdditionalAccess());
       assertEquals(previous, session.getConsultant());
       assertFalse(Boolean.TRUE.equals(session.getSupervisionOptedOut()));
+      verify(sessionRepository).updateAdditionalAccessPreference(123L, true);
+      verify(sessionRepository, never()).save(any());
       verify(caseHandoverRequestRepository, never()).save(any());
       verify(matrixSynapseService, never()).getRoomMembers(anyString());
     } finally {
