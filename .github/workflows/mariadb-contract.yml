@@ -38,7 +38,7 @@ jobs:
     - name: Verify real MariaDB schema contracts
       run: >-
         ./mvnw -B -Dskip.unit-tests=true
-        -Dtest=DatabaseChangelogDriftIT,ConsultantTopicUniqueKeyMariaDbIT,ConsultantPictureDatabaseIT,SupportRoomMigrationConvergenceIT,AdminStatisticsRepositoryMariaDbIT,ProvisioningCompensationMariaDbIT,ScheduledTaskClaimMariaDbIT,TutorialProgressServiceMariaDbReplicaIT,OrganizerMariaDbReplicaIT,DeactivateGroupChatSchedulerMariaDbReplicaIT,DeleteUserAccountSchedulerMariaDbReplicaIT,DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT,AccountInviteRevokeAcceptRaceMariaDbIT
+        -Dtest=DatabaseChangelogDriftIT,ConsultantTopicUniqueKeyMariaDbIT,ConsultantPictureDatabaseIT,SupportRoomMigrationConvergenceIT,AdminStatisticsRepositoryMariaDbIT,ProvisioningCompensationMariaDbIT,ScheduledTaskClaimMariaDbIT,TutorialProgressServiceMariaDbReplicaIT,OrganizerMariaDbReplicaIT,DeactivateGroupChatSchedulerMariaDbReplicaIT,DeleteUserAccountSchedulerMariaDbReplicaIT,DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT,AccountInviteRevokeAcceptRaceMariaDbIT,SessionOwnershipMariaDbIT
         integration-test
 
     - name: Prove authenticated writes across two replicas

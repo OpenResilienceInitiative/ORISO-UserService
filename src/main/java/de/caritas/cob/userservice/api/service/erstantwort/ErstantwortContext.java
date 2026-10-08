@@ -31,6 +31,9 @@ public class ErstantwortContext {
   /** The tenant's existing {@code languageFormal} flag: a Träger writes one German variant. */
   boolean informal;
 
+  /** UI locale at creation time; never used to rewrite delivered events. */
+  String locale;
+
   String dataPrivacyUrl;
   String imprintUrl;
 

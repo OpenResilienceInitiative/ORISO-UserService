@@ -56,21 +56,6 @@ public class GroupChatParticipantReconciliationService {
                     Function.identity(),
                     (left, right) -> left));
 
-    if (desiredIds.stream().anyMatch(id -> !participantsByConsultantId.containsKey(id))) {
-      // Check additions before removals: a refused update must not leave some
-      // existing moderators removed from Matrix while the database rolls back.
-      groupCounsellingDpaPolicy.requireNewEnrolment(series);
-    }
-
-    var sessionId =
-        participants.stream()
-            .map(GroupChatParticipant::getChatId)
-            .findFirst()
-            .orElseThrow(
-                () ->
-                    new ConflictException(
-                        "Chat Series has no owner participation and cannot be updated"));
-
     // Validate the whole selection before changing any external room membership.
     var selectedConsultants = new LinkedHashMap<String, Consultant>();
     for (var consultantId : desiredIds) {
@@ -84,6 +69,24 @@ public class GroupChatParticipantReconciliationService {
       }
       selectedConsultants.put(consultantId, consultant);
     }
+
+    // Check every newly selected actor before provisioning, joins or removals.
+    // Existing participation cannot exempt another colleague from the admission policy.
+    groupCounsellingDpaPolicy.requireAuthorizedEnrolments(
+        series,
+        selectedConsultants.entrySet().stream()
+            .filter(entry -> !participantsByConsultantId.containsKey(entry.getKey()))
+            .map(entry -> entry.getValue().getMatrixUserId())
+            .toList());
+
+    var sessionId =
+        participants.stream()
+            .map(GroupChatParticipant::getChatId)
+            .findFirst()
+            .orElseThrow(
+                () ->
+                    new ConflictException(
+                        "Chat Series has no owner participation and cannot be updated"));
 
     // Existing database rows do not prove Matrix membership: retry the join too.
     // Complete joins before removing anyone, so a failed replacement keeps existing access.

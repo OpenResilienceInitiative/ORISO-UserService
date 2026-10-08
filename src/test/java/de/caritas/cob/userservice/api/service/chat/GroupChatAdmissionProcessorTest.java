@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.chat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -55,6 +56,10 @@ class GroupChatAdmissionProcessorTest {
 
   @BeforeEach
   void setUp() {
+    ReflectionTestUtils.setField(
+        processor,
+        "dpaPolicy",
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy());
     TransactionSynchronizationManager.initSynchronization();
     request =
         GroupChatJoinRequest.builder()
@@ -67,6 +72,9 @@ class GroupChatAdmissionProcessorTest {
             .build();
     series = mock(Chat.class);
     when(series.getConversationType()).thenReturn(ConversationType.SELF_HELP);
+    var owner = new Consultant();
+    owner.setTenantId(41L);
+    lenient().when(series.getChatOwner()).thenReturn(owner);
     var requester = mock(Consultant.class);
     when(requester.getMatrixUserId()).thenReturn("@r:test");
     when(requests.findByIdForUpdate(7L)).thenReturn(Optional.of(request));

@@ -80,15 +80,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(consultantMembership.ensureMatrixAccount(any()))
         .thenAnswer(invocation -> ((Consultant) invocation.getArgument(0)).getMatrixUserId());
     when(consultantMembership.joinConsultantIntoRoom(any(), any(), any())).thenReturn(true);
-    var policy = de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy();
-    var realAgencies =
-        (AgencyService)
-            org.springframework.test.util.ReflectionTestUtils.getField(policy, "agencyService");
     var groupPolicy =
-        new de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy(
-            policy,
-            mock(de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
-            realAgencies);
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy();
     createChatFacade =
         new CreateChatFacade(
             chatService,

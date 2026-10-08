@@ -40,15 +40,8 @@ class GroupChatParticipantReconciliationServiceTest {
 
   @BeforeEach
   void setUp() {
-    var policy = de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy();
-    var realAgencies =
-        (de.caritas.cob.userservice.api.service.agency.AgencyService)
-            org.springframework.test.util.ReflectionTestUtils.getField(policy, "agencyService");
     var groupPolicy =
-        new GroupCounsellingDpaPolicy(
-            policy,
-            Mockito.mock(de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
-            realAgencies);
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy();
     service =
         new GroupChatParticipantReconciliationService(
             participantRepository,
@@ -61,6 +54,63 @@ class GroupChatParticipantReconciliationServiceTest {
     Mockito.lenient().when(series.getId()).thenReturn(42L);
     Mockito.lenient().when(series.getChatOwner()).thenReturn(ownerConsultant);
     owner = participant(7L, "owner", ParticipantRole.OWNER);
+  }
+
+  @Test
+  void reconcile_ShouldCheckNewActorAdmissionBeforeLazyProvisioningOrAnyMembershipChange() {
+    var newcomer = consultant("newcomer", null);
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("newcomer"))
+        .thenReturn(Optional.of(newcomer));
+    var admission = Mockito.mock(GroupCounsellingDpaPolicy.class);
+    var refusal = new BadRequestException("Actor admission refused");
+    Mockito.doThrow(refusal)
+        .when(admission)
+        .requireAuthorizedEnrolments(series, java.util.Collections.singletonList(null));
+    var guarded =
+        new GroupChatParticipantReconciliationService(
+            participantRepository,
+            consultantRepository,
+            membershipService,
+            consultantMembership,
+            admission);
+
+    org.junit.jupiter.api.Assertions.assertSame(
+        refusal,
+        assertThrows(
+            BadRequestException.class, () -> guarded.reconcile(series, List.of("newcomer"))));
+    verifyNoInteractions(membershipService, consultantMembership);
+    verify(participantRepository, never()).save(Mockito.any());
+    verify(participantRepository, never()).delete(Mockito.any());
+  }
+
+  @Test
+  void reconcile_ShouldClassifyOnlyTheNewActorWithoutLettingAnExistingParticipantExemptThem() {
+    var returning = consultant("returning", "@returning:matrix");
+    var newcomer = consultant("newcomer", "@newcomer:matrix");
+    when(participantRepository.findBySeriesIdForUpdate(42L))
+        .thenReturn(List.of(owner, participant(7L, "returning", ParticipantRole.PARTICIPANT)));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("returning"))
+        .thenReturn(Optional.of(returning));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("newcomer"))
+        .thenReturn(Optional.of(newcomer));
+    when(membershipService.addMemberToRoom(series, "@returning:matrix")).thenReturn(true);
+    when(membershipService.addMemberToRoom(series, "@newcomer:matrix")).thenReturn(true);
+    var admission = Mockito.mock(GroupCounsellingDpaPolicy.class);
+    var guarded =
+        new GroupChatParticipantReconciliationService(
+            participantRepository,
+            consultantRepository,
+            membershipService,
+            consultantMembership,
+            admission);
+
+    guarded.reconcile(series, List.of("returning", "newcomer"));
+
+    var ordering = Mockito.inOrder(admission, membershipService);
+    ordering.verify(admission).requireAuthorizedEnrolments(series, List.of("@newcomer:matrix"));
+    ordering.verify(membershipService).addMemberToRoom(series, "@returning:matrix");
+    ordering.verify(membershipService).addMemberToRoom(series, "@newcomer:matrix");
   }
 
   @Test

@@ -141,7 +141,8 @@ class EventNotificationServiceTest {
             "requesterName",
             "reasonCode",
             "reasonLabel",
-            "caseHandoverRequestId");
+            "caseHandoverRequestId",
+            "conversationType");
   }
 
   @Test
@@ -154,6 +155,26 @@ class EventNotificationServiceTest {
     assertThat(parsed.has("reasonCode")).isFalse();
     assertThat(parsed.has("reasonLabel")).isFalse();
     assertThat(parsed.has("caseHandoverRequestId")).isFalse();
+  }
+
+  @Test
+  void buildCaseHandoverOfferParams_identifiesCaseRequestAndInitiatorWithoutReasonText()
+      throws Exception {
+    JsonNode parsed =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverOfferParams(
+                sessionMock(), "Current Owner", 88L));
+
+    assertThat(parsed.fieldNames())
+        .toIterable()
+        .containsExactlyInAnyOrder(
+            "sessionId", "roomRef", "initiatorName", "caseHandoverRequestId", "conversationType");
+    assertThat(parsed.get("conversationType").asText()).isEqualTo("AGENCY_COUNSELLING");
+    assertThat(parsed.get("sessionId").asLong()).isEqualTo(100L);
+    assertThat(parsed.get("caseHandoverRequestId").asLong()).isEqualTo(88L);
+    assertThat(parsed.get("initiatorName").asText()).isEqualTo("Current Owner");
+    assertThat(parsed.has("reasonCode")).isFalse();
+    assertThat(parsed.has("explanation")).isFalse();
   }
 
   @Test
@@ -312,6 +333,7 @@ class EventNotificationServiceTest {
             "senderDisplayName",
             "contentClass",
             "recipientRole",
+            "conversationType",
             "clientConsent",
             "threadRootId",
             "mentioned",

@@ -385,6 +385,9 @@ public class EventNotificationService {
    */
   private Map<String, Object> baseParams(Session session) {
     Map<String, Object> params = new LinkedHashMap<>();
+    if (session != null)
+      params.put(
+          "conversationType", AskerNotificationChannelPolicy.conversationType(session).name());
     if (session != null && session.getId() != null) {
       params.put("sessionId", session.getId());
     }
@@ -454,6 +457,17 @@ public class EventNotificationService {
       params.put("caseHandoverRequestId", caseHandoverRequestId);
     }
     putIfPresent(params, "clientConsent", clientConsent);
+    return serializeParams(params);
+  }
+
+  /** Redacted recipient-offer metadata. Free-text reason and explanation stay out of events. */
+  public String buildCaseHandoverOfferParams(
+      Session session, String initiatorName, Long caseHandoverRequestId) {
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "initiatorName", initiatorName);
+    if (caseHandoverRequestId != null) {
+      params.put("caseHandoverRequestId", caseHandoverRequestId);
+    }
     return serializeParams(params);
   }
 
