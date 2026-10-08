@@ -54,6 +54,7 @@ import org.springframework.transaction.annotation.Transactional;
   MatrixCallLifecycleService.class,
   MatrixCallConversationResolver.class,
   MatrixCallBindingWriter.class,
+  MatrixCallInviteNotificationService.class,
   MatrixCallNotificationIT.ActiveAccountFixture.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -63,6 +64,7 @@ class MatrixCallNotificationIT {
   @Autowired private MatrixCallBindingService callBindings;
   @Autowired private MatrixCallLifecycleService lifecycle;
   @Autowired private MatrixCallConversationResolver conversations;
+  @Autowired private MatrixCallInviteNotificationService inviteService;
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
 
@@ -97,6 +99,18 @@ class MatrixCallNotificationIT {
   @org.junit.jupiter.api.BeforeEach
   void initializeAccountLifecycleRows() {
     initializeAccountLifecycleTable(accountDataSource);
+    org.mockito.Mockito.lenient()
+        .when(
+            sessions.lockCallStatus(
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(
+            call ->
+                sessions
+                    .findByMatrixRoomId(call.getArgument(1, String.class))
+                    .filter(value -> java.util.Objects.equals(value.getId(), call.getArgument(0)))
+                    .map(value -> value.getStatus() == null ? 0 : value.getStatus().getValue()));
   }
 
   static void initializeAccountLifecycleTable(javax.sql.DataSource dataSource) {
@@ -438,14 +452,7 @@ class MatrixCallNotificationIT {
                 consultants,
                 sessions,
                 mock(ConsultantMessageStatService.class),
-                new MatrixCallInviteNotificationService(
-                    matrix,
-                    conversations,
-                    users,
-                    consultants,
-                    notificationService,
-                    callBindings,
-                    lifecycle),
+                inviteService,
                 mock(
                     de.caritas.cob.userservice.api.service.notification
                         .AdviceSeekerReplyEmailService.class),
@@ -459,11 +466,13 @@ class MatrixCallNotificationIT {
           .untilAsserted(
               () -> {
                 assertThat(notifications.findAll())
-                    .hasSize(1)
-                    .allSatisfy(
+                    .filteredOn(event -> "call.invited".equals(event.getEventType()))
+                    .singleElement()
+                    .satisfies(
                         event -> {
-                          assertThat(event.getEventType()).isEqualTo("call.invited");
                           assertThat(event.getRecipientUserId()).isEqualTo("recovery-receiver");
+                          assertThat(event.getSourceSessionId()).isEqualTo(45L);
+                          assertThat(event.getParams()).contains("\"callId\":\"recovery-call\"");
                         });
               });
       if (losePreviouslyObservedRoom) {
@@ -724,14 +733,7 @@ class MatrixCallNotificationIT {
                 consultants,
                 sessions,
                 mock(ConsultantMessageStatService.class),
-                new MatrixCallInviteNotificationService(
-                    matrix,
-                    conversations,
-                    users,
-                    consultants,
-                    notificationService,
-                    callBindings,
-                    lifecycle),
+                inviteService,
                 mock(
                     de.caritas.cob.userservice.api.service.notification
                         .AdviceSeekerReplyEmailService.class),
@@ -964,15 +966,7 @@ class MatrixCallNotificationIT {
         .thenReturn(Optional.of(List.of(caller, receiver, absent, removed, deleted, moved)));
     when(matrix.getCallRoomBinding(media, caller))
         .thenReturn(Optional.of(Map.of("call_id", "started-audience", "source_room_id", source)));
-    var invites =
-        new MatrixCallInviteNotificationService(
-            matrix,
-            conversations,
-            users,
-            consultants,
-            notificationService,
-            callBindings,
-            lifecycle);
+    var invites = inviteService;
     try {
       assertThat(
               invites.handle(
@@ -1207,15 +1201,7 @@ class MatrixCallNotificationIT {
     when(matrix.getCallRoomBinding(media, caller))
         .thenReturn(Optional.of(Map.of("call_id", "active-audience", "source_room_id", source)));
     when(matrix.ensureAdminInRoom(media, caller)).thenReturn(true);
-    var invites =
-        new MatrixCallInviteNotificationService(
-            matrix,
-            conversations,
-            users,
-            consultants,
-            notificationService,
-            callBindings,
-            lifecycle);
+    var invites = inviteService;
     long timestamp = System.currentTimeMillis() - 100;
     var invite =
         Map.<String, Object>of(
@@ -1378,14 +1364,7 @@ class MatrixCallNotificationIT {
         consultants,
         sessions,
         mock(ConsultantMessageStatService.class),
-        new MatrixCallInviteNotificationService(
-            matrix,
-            conversations,
-            users,
-            consultants,
-            notificationService,
-            callBindings,
-            lifecycle),
+        inviteService,
         mock(
             de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
                 .class),
@@ -1623,14 +1602,7 @@ class MatrixCallNotificationIT {
                 consultants,
                 sessions,
                 mock(ConsultantMessageStatService.class),
-                new MatrixCallInviteNotificationService(
-                    matrix,
-                    conversations,
-                    users,
-                    consultants,
-                    notificationService,
-                    callBindings,
-                    lifecycle),
+                inviteService,
                 mock(
                     de.caritas.cob.userservice.api.service.notification
                         .AdviceSeekerReplyEmailService.class),

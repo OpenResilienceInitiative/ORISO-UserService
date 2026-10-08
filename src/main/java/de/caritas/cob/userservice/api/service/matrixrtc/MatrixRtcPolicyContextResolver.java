@@ -26,6 +26,8 @@ class MatrixRtcPolicyContextResolver {
   public Optional<MatrixRtcPolicyContext> resolve(String sourceRoomId) {
     var supervision = sessionSupervisorRepository.findByMatrixRoomId(sourceRoomId);
     if (supervision.isPresent()) {
+      if (supervision.get().getSession().getStatus() == Session.SessionStatus.REJECTED)
+        return Optional.empty();
       return Optional.of(
           new MatrixRtcPolicyContext(
               supervision.get().getSession().getTenantId(),
@@ -34,6 +36,7 @@ class MatrixRtcPolicyContextResolver {
 
     var session = sessionRepository.findByMatrixRoomId(sourceRoomId);
     if (session.isPresent()) {
+      if (session.get().getStatus() == Session.SessionStatus.REJECTED) return Optional.empty();
       return Optional.of(contextForSession(session.get()));
     }
 
@@ -44,6 +47,12 @@ class MatrixRtcPolicyContextResolver {
 
     return teamDiscussionRepository
         .findByMatrixRoomId(sourceRoomId)
+        .filter(
+            discussion ->
+                sessionRepository
+                    .findById(discussion.getSessionId())
+                    .map(parent -> parent.getStatus() != Session.SessionStatus.REJECTED)
+                    .orElse(true))
         .map(
             discussion ->
                 new MatrixRtcPolicyContext(

@@ -202,6 +202,11 @@ class SessionServiceTest {
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionSupervisionMarkerService supervisionMarkerService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionPendingReadAccess
+      rejectionReadAccess;
+
   @Mock private AgencyService agencyService;
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
@@ -272,6 +277,7 @@ class SessionServiceTest {
 
   @Test
   void updateConsultantAndStatusForSession_Should_SaveSession() {
+    when(sessionRepository.findByIdForUpdate(SESSION.getId())).thenReturn(Optional.of(SESSION));
 
     sessionService.updateConsultantAndStatusForSession(SESSION, CONSULTANT, SessionStatus.NEW);
     verify(sessionRepository, times(1)).save(SESSION);

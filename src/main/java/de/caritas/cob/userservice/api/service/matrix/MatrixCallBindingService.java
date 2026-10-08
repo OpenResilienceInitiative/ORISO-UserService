@@ -36,6 +36,16 @@ public class MatrixCallBindingService {
     }
   }
 
+  /** The locked Session serializes invitations; its FK insert must share the lock's transaction. */
+  @org.springframework.transaction.annotation.Transactional(
+      propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+  public boolean registerWhileSourceLocked(MatrixCallBinding proposed) {
+    var existing = existing(proposed);
+    if (existing.isPresent()) return matches(existing.get(), proposed);
+    bindings.saveAndFlush(proposed);
+    return true;
+  }
+
   public java.util.Set<String> invitedMembers(String sourceRoom, String callId) {
     return bindings
         .findBySourceRoomIdAndCallId(sourceRoom, callId)

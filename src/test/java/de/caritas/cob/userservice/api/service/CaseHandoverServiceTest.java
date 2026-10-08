@@ -143,6 +143,9 @@ class CaseHandoverServiceTest {
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(requester);
     when(userAccountService.retrieveValidatedUser()).thenReturn(asker);
     when(sessionRepository.findById(123L)).thenReturn(Optional.of(session));
+    org.mockito.Mockito.lenient()
+        .when(sessionRepository.findByIdForUpdate(org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(call -> sessionRepository.findById(call.getArgument(0)));
     when(caseHandoverReasonPolicyRepository.findByEnabledTrueOrderByDisplayOrderAscCodeAsc())
         .thenReturn(List.of());
     when(caseHandoverReasonPolicyRepository.findAllByOrderByDisplayOrderAscCodeAsc())

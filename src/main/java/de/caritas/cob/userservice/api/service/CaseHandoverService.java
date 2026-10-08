@@ -609,7 +609,7 @@ public class CaseHandoverService {
   @Transactional
   public CaseHandoverStatus requestAccess(Long sessionId, String reasonCode, String explanation) {
     Consultant requester = retrieveCurrentConsultant();
-    Session session = getSession(sessionId);
+    Session session = getSessionForMutation(sessionId);
     verifyEligibleForSession(session, requester);
 
     if (isActiveOwner(session, requester)) {
@@ -697,11 +697,11 @@ public class CaseHandoverService {
   @Transactional
   public CaseHandoverStatus resolveClientConsent(Long sessionId, Long requestId, boolean approved) {
     User user = userAccountService.retrieveValidatedUser();
+    Session session = getSessionForMutation(sessionId);
     CaseHandoverRequest request =
         caseHandoverRequestRepository
             .findByIdAndSessionId(requestId, sessionId)
             .orElseThrow(() -> new NotFoundException("Case handover request not found"));
-    Session session = request.getSession();
 
     if (session.getUser() == null || !user.getUserId().equals(session.getUser().getUserId())) {
       throw new ForbiddenException("Current user is not allowed to decide this request");
@@ -838,6 +838,18 @@ public class CaseHandoverService {
       throw new ForbiddenException("Current user is not a consultant");
     }
     return consultant;
+  }
+
+  private Session getSessionForMutation(Long sessionId) {
+    var current =
+        sessionRepository
+            .findByIdForUpdate(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+    if (current.getStatus() == Session.SessionStatus.REJECTED) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+          "Rejected enquiry cannot grant case access");
+    }
+    return current;
   }
 
   private Session getSession(Long sessionId) {

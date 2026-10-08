@@ -383,6 +383,51 @@ class CaseHandoverRequiredConsentMailIT {
     REMOVED_REQUEST
   }
 
+  @Test
+  void rejectedEnquiryCannotCreateFreshTakeoverAccess() {
+    session.setStatus(Session.SessionStatus.REJECTED);
+    session.setConsultant(null);
+    sessions.save(session);
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                handovers.requestAccess(
+                    session.getId(), "UNPLANNED_ABSENCE", "Staff-only explanation"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    assertThat(requests.findBySessionId(session.getId())).isEmpty();
+    org.mockito.Mockito.verifyNoInteractions(queuedMail);
+  }
+
+  @Test
+  void rejectionBetweenConsentRequestAndApprovalCannotRestoreWriter() {
+    session.setConsultant(null);
+    session.setStatus(Session.SessionStatus.NEW);
+    sessions.save(session);
+    var mail = queueRequiredConsent();
+    session.setStatus(Session.SessionStatus.REJECTED);
+    sessions.save(session);
+    when(actor.retrieveValidatedUser()).thenReturn(seeker);
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> handovers.resolveClientConsent(session.getId(), mail.requestId(), true))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    assertThat(sessions.findById(session.getId()).orElseThrow().getConsultant()).isNull();
+    assertThat(requests.findById(mail.requestId()).orElseThrow().getStatus())
+        .isEqualTo(CaseHandoverRequest.Status.PENDING_CLIENT_CONSENT);
+  }
+
+  @Test
+  void rejectedEnquirySuppressesAlreadyQueuedRequiredConsentWithoutChangingDoneCompatibility() {
+    session.setConsultant(null);
+    session.setStatus(Session.SessionStatus.NEW);
+    sessions.save(session);
+    var mail = queueRequiredConsent();
+    session.setStatus(Session.SessionStatus.REJECTED);
+    sessions.save(session);
+    delayedSender().send(mail);
+    verifyNoInteractions(delivery);
+  }
+
   private CaseHandoverEmailNotification.Mail queueRequiredConsent() {
     handovers.requestAccess(session.getId(), "UNPLANNED_ABSENCE", "Staff-only explanation");
     var queued = ArgumentCaptor.forClass(CaseHandoverEmailNotification.Mail.class);

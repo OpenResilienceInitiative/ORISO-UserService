@@ -41,6 +41,7 @@ public class MatrixCallInviteNotificationService {
     }
   }
 
+  @org.springframework.transaction.annotation.Transactional
   public boolean handle(String sourceRoom, Map<String, Object> event) {
     if (sourceRoom == null
         || sourceRoom.isBlank()
@@ -67,7 +68,7 @@ public class MatrixCallInviteNotificationService {
         || lifetime > Long.MAX_VALUE - timestamp
         || timestamp > now) return false;
     boolean expired = now - timestamp >= lifetime;
-    var session = conversations.resolve(sourceRoom).orElse(null);
+    var session = conversations.resolveForWriting(sourceRoom).orElse(null);
     if (session == null) return false;
     var members = matrix.getCallRoomMembers(sourceRoom).orElse(null);
     if (members == null || !members.contains(sender)) return false;
@@ -77,7 +78,8 @@ public class MatrixCallInviteNotificationService {
     if (binding == null
         || !callId.equals(binding.get("call_id"))
         || !sourceRoom.equals(binding.get("source_room_id"))) return false;
-    if (!callBindings.register(
+    if (!conversations.lockCurrentForWriting(session)) return false;
+    var proposed =
         de.caritas.cob.userservice.api.model.MatrixCallBinding.builder()
             .sourceRoomId(sourceRoom)
             .callId(callId)
@@ -96,7 +98,12 @@ public class MatrixCallInviteNotificationService {
                         .filter(member -> !member.equals(sender))
                         .filter(member -> identity(member, session.getTenantId()).isPresent())
                         .collect(java.util.stream.Collectors.toSet()))
-            .build())) return false;
+            .build();
+    boolean registered =
+        session.getSessionId() == null
+            ? callBindings.register(proposed)
+            : callBindings.registerWhileSourceLocked(proposed);
+    if (!registered) return false;
     // Only a validated, persistently bound room may grant the listener membership.
     // Observer availability must not suppress a valid invitation. Failed observation is retried
     // from the persisted binding; expiry is gated on actually receiving media-room state.

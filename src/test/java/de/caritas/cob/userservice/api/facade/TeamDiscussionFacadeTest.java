@@ -640,6 +640,26 @@ class TeamDiscussionFacadeTest {
   }
 
   @Test
+  void rejectedPendingDiscussionCannotBeCertifiedByTheLegacyDefaultOnlyWrite() {
+    session.setStatus(SessionStatus.REJECTED);
+    var discussion =
+        TeamDiscussion.builder()
+            .id(99L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId(ROOM_ID)
+            .status(TeamDiscussion.Status.ARCHIVED)
+            .readOnlyApplied(false)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+    assertThat(facade.getDiscussion(SESSION_ID, CONSULTANT_ID)).isPresent();
+    assertThat(discussion.isReadOnlyApplied()).isFalse();
+    verify(matrixSynapseService, org.mockito.Mockito.never())
+        .setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString());
+  }
+
+  @Test
   void getDiscussion_shouldRetryReadOnlyOnArchivedDiscussionUntilApplied() {
     var discussion =
         TeamDiscussion.builder()

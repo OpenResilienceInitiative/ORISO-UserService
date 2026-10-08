@@ -38,6 +38,9 @@ public class SessionToConsultantVerifier {
   /** verifies necessary input data of {@link Session} and {@link Consultant}. */
   public void verifyPreconditionsForAssignment(
       ConsultantSessionDTO consultantSessionDTO, boolean skipSameConsultantAssignmentVerification) {
+    if (consultantSessionDTO.getSession().getStatus() == Session.SessionStatus.REJECTED) {
+      throw new ConflictException("Rejected enquiry cannot be assigned");
+    }
     verifyIfSessionIsAlreadyAssignedToConsultant(
         consultantSessionDTO, skipSameConsultantAssignmentVerification);
 

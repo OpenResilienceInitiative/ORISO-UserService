@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class MatrixCallLifecycleService {
   private final MatrixCallBindingRepository bindings;
+  private final de.caritas.cob.userservice.api.port.out.EnquiryRejectionRepository rejections;
   private final MatrixSynapseService matrix;
   private final MatrixCallConversationResolver conversations;
   private final UserRepository users;
@@ -49,7 +50,7 @@ public class MatrixCallLifecycleService {
         || (binding.getNextObservationAttemptAt() != null
             && binding.getNextObservationAttemptAt() > now)) return;
     binding.deferObservationAttempt(now + Math.max(1, observationRetryMillis));
-    var conversation = conversations.resolve(binding.getSourceRoomId()).orElse(null);
+    var conversation = conversations.resolveForWriting(binding.getSourceRoomId()).orElse(null);
     if (conversation == null
         || !Objects.equals(conversation.getTenantId(), binding.getTenantId())
         || !Objects.equals(conversation.getSessionId(), binding.getSessionId())
@@ -79,12 +80,15 @@ public class MatrixCallLifecycleService {
         || !Objects.equals(session.getTenantId(), binding.getTenantId())) return true;
     var members = matrix.getCallRoomMembers(binding.getSourceRoomId()).orElse(null);
     if (members == null) return true;
+    boolean retainedClosure = !conversations.lockCurrentForWriting(session);
+    if (retainedClosure && !startedBeforeRejection(binding)) return true;
     long now = System.currentTimeMillis();
     if (roomData.get("state") instanceof Map<?, ?>
         || roomData.get("timeline") instanceof Map<?, ?>) {
       binding.recordMediaObservation(now);
     }
     for (var event : memberships(roomData)) {
+      if (retainedClosure && !event.departed()) continue;
       if (event.eventTimestamp() > now
           || !members.contains(event.sender())
           || identity(event.sender(), binding.getTenantId()).isEmpty()) continue;
@@ -113,7 +117,7 @@ public class MatrixCallLifecycleService {
     }
     // Announce the observed start to the persisted invitation audience, rechecking access.
     // Reconcile each batch so an original invitee restored while the call runs is not lost.
-    if (binding.getStartedAt() != null) {
+    if (!retainedClosure && binding.getStartedAt() != null) {
       binding.getInvitedMatrixIds().stream()
           .filter(members::contains)
           .filter(member -> !member.equals(binding.getCallerMatrixId()))
@@ -144,6 +148,7 @@ public class MatrixCallLifecycleService {
                   .max()
                   .orElse(now);
       binding.finish(lastPresenceEnd);
+      if (retainedClosure) return true;
       binding.getDevices().values().stream()
           .filter(MatrixCallDevice::isAttended)
           .map(MatrixCallDevice::getSenderMatrixId)
@@ -187,6 +192,23 @@ public class MatrixCallLifecycleService {
                       binding.isVideo()));
     }
     return true;
+  }
+
+  private boolean startedBeforeRejection(
+      de.caritas.cob.userservice.api.model.MatrixCallBinding binding) {
+    if (binding.getSessionId() == null || binding.getStartedAt() == null) return false;
+    return rejections
+        .findById(binding.getSessionId())
+        .filter(
+            decision ->
+                Objects.equals(decision.getTenantId(), binding.getTenantId())
+                    && Objects.equals(decision.getPrimaryRoomId(), binding.getSourceRoomId())
+                    && binding.getStartedAt()
+                        <= decision
+                            .getRejectedAt()
+                            .toInstant(java.time.ZoneOffset.UTC)
+                            .toEpochMilli())
+        .isPresent();
   }
 
   private List<MatrixRtcMembershipEvent> memberships(Map<String, Object> room) {

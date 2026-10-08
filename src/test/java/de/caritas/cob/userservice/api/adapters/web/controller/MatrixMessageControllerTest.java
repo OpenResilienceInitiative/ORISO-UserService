@@ -87,6 +87,31 @@ class MatrixMessageControllerTest {
   }
 
   @Test
+  void retainedRejectedHistoryCannotMintTokenOrSendMessage() {
+    var session = sessionWithMatrixRoom();
+    session.setStatus(Session.SessionStatus.REJECTED);
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
+    var response =
+        controller.sendMessage(SESSION_ID, Map.of("message", "Blocked synthetic message"));
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    verifyNoInteractions(matrixSynapseService);
+  }
+
+  @Test
+  void retainedRejectedHistoryCannotMintTokenOrUploadFile() {
+    var session = sessionWithMatrixRoom();
+    session.setStatus(Session.SessionStatus.REJECTED);
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
+    var response =
+        controller.uploadFile(
+            SESSION_ID,
+            new MockMultipartFile("file", "synthetic.txt", "text/plain", "blocked".getBytes()));
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    verifyNoInteractions(matrixSynapseService);
+  }
+
+  @Test
   void sendMessage_ShouldThrowForbiddenBeforeMatrixCall_WhenSessionAccessIsDenied() {
     when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenThrow(new ForbiddenException("No permission"));

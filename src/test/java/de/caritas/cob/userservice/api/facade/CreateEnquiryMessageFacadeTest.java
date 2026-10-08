@@ -115,7 +115,7 @@ class CreateEnquiryMessageFacadeTest {
     assertThat(session.getStatus()).isEqualTo(SessionStatus.NEW);
     assertThat(session.getEnquiryMessageDate()).isNotNull();
     assertThat(session.getLanguageCode()).isEqualTo(LanguageCode.de);
-    verify(sessionService).saveSession(session);
+    verify(sessionService).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
     verify(agencyPreAssignmentRoomService, never()).ensureHoldingRoom(session, user);
     verify(matrixSynapseService, never()).sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN);
   }
@@ -187,7 +187,7 @@ class CreateEnquiryMessageFacadeTest {
         .isInstanceOf(InternalServerErrorException.class)
         .hasMessageContaining("requires an encrypted Matrix event");
 
-    verify(sessionService, never()).saveSession(session);
+    verify(sessionService, never()).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
     verify(matrixSynapseService, never()).sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN);
   }
 
@@ -208,7 +208,7 @@ class CreateEnquiryMessageFacadeTest {
         .isInstanceOf(InternalServerErrorException.class)
         .hasMessageContaining("not an encrypted Matrix event");
 
-    verify(sessionService, never()).saveSession(session);
+    verify(sessionService, never()).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
   }
 
   @Test
@@ -228,7 +228,7 @@ class CreateEnquiryMessageFacadeTest {
         .isInstanceOf(InternalServerErrorException.class)
         .hasMessageContaining("was not sent by enquiry user");
 
-    verify(sessionService, never()).saveSession(session);
+    verify(sessionService, never()).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
   }
 
   @Test
@@ -243,7 +243,7 @@ class CreateEnquiryMessageFacadeTest {
         .isInstanceOf(InternalServerErrorException.class)
         .hasMessageContaining("Could not read Matrix enquiry event");
 
-    verify(sessionService, never()).saveSession(session);
+    verify(sessionService, never()).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
   }
 
   @Test
@@ -263,7 +263,7 @@ class CreateEnquiryMessageFacadeTest {
         .isInstanceOf(InternalServerErrorException.class)
         .hasMessageContaining("did not match");
 
-    verify(sessionService, never()).saveSession(session);
+    verify(sessionService, never()).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
   }
 
   @Test
@@ -304,10 +304,20 @@ class CreateEnquiryMessageFacadeTest {
     assertThat(response.getT()).isEmpty();
     verify(matrixSynapseService, never()).loginAsUserAccessToken(MATRIX_USER_ID);
     verify(matrixSynapseService, never()).sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN);
-    verify(sessionService).saveSession(session);
+    verify(sessionService).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
   }
 
   private void givenExistingSession() {
     when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    org.mockito.Mockito.lenient()
+        .when(sessionService.finalizeEnquiry(session, "de", MATRIX_ROOM_ID))
+        .thenAnswer(
+            invocation -> {
+              session.setStatus(
+                  session.getConsultant() == null ? SessionStatus.NEW : SessionStatus.IN_PROGRESS);
+              session.setEnquiryMessageDate(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+              session.setLanguageCode(LanguageCode.de);
+              return session;
+            });
   }
 }

@@ -148,6 +148,17 @@ public class TeamDiscussionFacade {
    * an ARCHIVED discussion whose read-only switch failed gets the power-level call retried.
    */
   private TeamDiscussion reconcileOnAccess(TeamDiscussion discussion, Session session) {
+    if (session.getStatus() == SessionStatus.REJECTED) {
+      // Rejection owns a durable, verified primary+team closure. The legacy default-only
+      // switch must neither downgrade its permissions nor certify an incomplete readback.
+      if (discussion.getStatus() == TeamDiscussion.Status.OPEN) {
+        discussion.setStatus(TeamDiscussion.Status.ARCHIVED);
+        discussion.setArchiveDate(LocalDateTime.now());
+        discussion.setReadOnlyApplied(false);
+        teamDiscussionRepository.save(discussion);
+      }
+      return discussion;
+    }
     boolean sessionAccepted =
         session.getConsultant() != null || session.getStatus() != SessionStatus.NEW;
     if (discussion.getStatus() == TeamDiscussion.Status.OPEN && sessionAccepted) {
