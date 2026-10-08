@@ -22,6 +22,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -68,8 +70,9 @@ class AnonymousUserCreatorServiceTest {
     verifyNoInteractions(rollbackFacade);
   }
 
-  @Test
-  void createAnonymousUserRollsBackWhenMatrixProvisioningFails() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void createAnonymousUserRetainsCreationAndRollbackFailureDiagnostics(boolean rollbackFails) {
     var createdIdentity = new CreatedIdentity();
     createdIdentity.setUserId("user-id");
     var user = new User();
@@ -80,13 +83,29 @@ class AnonymousUserCreatorServiceTest {
     when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
-    doThrow(new InternalServerErrorException("Matrix provisioning failed"))
+    var originalFailure = new InternalServerErrorException("Matrix provisioning failed");
+    var rollbackFailure = new IllegalStateException("owned rollback failed");
+    doThrow(originalFailure)
         .when(createUserFacade)
         .provisionOwnedMatrixUser(user, USER_DTO_SUCHT.getUsername(), receipt);
+    if (rollbackFails) {
+      doThrow(rollbackFailure).when(rollbackFacade).rollBackUserAccount(any());
+    }
 
     assertThatThrownBy(
             () -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT, origin()))
-        .isInstanceOf(InternalServerErrorException.class);
+        .isInstanceOf(InternalServerErrorException.class)
+        .hasMessage("Matrix provisioning failed")
+        .satisfies(
+            translated -> {
+              assertThat(translated.getCause()).isSameAs(originalFailure);
+              if (rollbackFails) {
+                assertThat(translated.getCause().getSuppressed()).hasSize(1);
+                assertThat(translated.getCause().getSuppressed()[0]).isSameAs(rollbackFailure);
+              } else {
+                assertThat(translated.getCause().getSuppressed()).isEmpty();
+              }
+            });
 
     verify(rollbackFacade)
         .rollBackUserAccount(

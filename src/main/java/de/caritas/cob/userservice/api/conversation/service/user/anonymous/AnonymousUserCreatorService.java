@@ -60,7 +60,7 @@ public class AnonymousUserCreatorService {
       } catch (RuntimeException rollbackFailure) {
         e.addSuppressed(rollbackFailure);
       }
-      throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
+      throw new InternalServerErrorException(e.getMessage(), e, LogService::logInternalServerError);
     }
 
     return AnonymousUserCredentials.builder().userId(identityUserId).build();
