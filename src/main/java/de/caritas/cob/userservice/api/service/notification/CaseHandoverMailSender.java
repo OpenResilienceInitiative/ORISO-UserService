@@ -24,6 +24,7 @@ public class CaseHandoverMailSender {
   private final @NonNull TenantTemplateSupplier tenantUrls;
   private final @NonNull CaseHandoverMailComposer composer;
   private final @NonNull CaseHandoverGrantedMailEligibility eligibility;
+  private final @NonNull CaseHandoverRequiredConsentMailEligibility consentEligibility;
 
   @Async
   public void send(CaseHandoverEmailNotification.Mail mail) {
@@ -32,6 +33,8 @@ public class CaseHandoverMailSender {
       if (route.isEmpty()) return;
       if (mail.outcome() == CaseHandoverEmailNotification.Outcome.GRANTED
           && !eligibility.isEligible(mail)) return;
+      if (mail.outcome() == CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED
+          && !consentEligibility.isEligible(mail)) return;
       RestrictedTenantDTO tenant = tenants.getRestrictedTenantData(mail.tenantId());
       if (tenant == null || !Objects.equals(tenant.getId(), mail.tenantId())) {
         throw new TenantSystemEmailRouteService.ConfigurationException(

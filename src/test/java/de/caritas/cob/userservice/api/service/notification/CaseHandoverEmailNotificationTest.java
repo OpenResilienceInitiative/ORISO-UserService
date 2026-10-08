@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest.Status;
@@ -28,6 +29,8 @@ import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
@@ -60,6 +63,20 @@ class CaseHandoverEmailNotificationTest {
     assertThat(sent.getValue().tenantId()).isEqualTo(40L);
     assertThat(sent.getValue().recipient()).isEqualTo("asker@example.test");
     assertThat(sent.getValue().language()).isEqualTo(LanguageCode.en);
+    assertThat(sent.getValue().recipientUserId()).isEqualTo("asker-id");
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = CaseHandoverConsentMode.class,
+      names = {"OPT_OUT", "NONE"})
+  void alreadyPermittedConsentModeCannotQueueMailEvenWithStalePendingStatus(
+      CaseHandoverConsentMode mode) {
+    var request = request(Status.PENDING_CLIENT_CONSENT, AccessType.TAKEOVER);
+    request.setClientConsent(mode);
+    request.setClientConsentRequired(true);
+    transaction.executeWithoutResult(status -> notification.consentRequested(request));
+    verifyNoInteractions(sender);
   }
 
   @Test
@@ -179,7 +196,9 @@ class CaseHandoverEmailNotificationTest {
             urls,
             composer,
             new CaseHandoverGrantedMailEligibility(
-                requests, toggles, mock(AccountInactivityService.class)));
+                requests, toggles, mock(AccountInactivityService.class)),
+            new CaseHandoverRequiredConsentMailEligibility(
+                requests, mock(AccountInactivityService.class)));
 
     request.getRequesterConsultant().setNotificationsEnabled(false);
     delayedSender.send(queued.getValue());
@@ -220,6 +239,7 @@ class CaseHandoverEmailNotificationTest {
         .session(session)
         .requesterConsultant(incoming)
         .status(status)
+        .clientConsentRequired(status == Status.PENDING_CLIENT_CONSENT)
         .accessType(type)
         .build();
   }

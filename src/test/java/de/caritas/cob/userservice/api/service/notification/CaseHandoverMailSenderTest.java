@@ -44,7 +44,8 @@ class CaseHandoverMailSenderTest {
           tenants,
           urls,
           composer,
-          new CaseHandoverGrantedMailEligibility(requests, toggles, lifecycle));
+          new CaseHandoverGrantedMailEligibility(requests, toggles, lifecycle),
+          new CaseHandoverRequiredConsentMailEligibility(requests, lifecycle));
 
   @BeforeEach
   void currentGrant() {
@@ -84,6 +85,15 @@ class CaseHandoverMailSenderTest {
 
   @Test
   void sendsThroughTheTenantPlatformRouteAndCorrectOutcomePurpose() {
+    currentRequest.setStatus(CaseHandoverRequest.Status.PENDING_CLIENT_CONSENT);
+    currentRequest.setClientConsent(
+        de.caritas.cob.userservice.api.model.CaseHandoverConsentMode.OPT_IN);
+    currentRequest.setPreviousConsultant(currentRequest.getSession().getConsultant());
+    var seeker = new de.caritas.cob.userservice.api.model.User();
+    seeker.setUserId("asker-id");
+    seeker.setTenantId(40L);
+    seeker.setEmail("asker@example.test");
+    currentRequest.getSession().setUser(seeker);
     var mail =
         mail(40L, CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED, "asker@example.test");
     var route =
@@ -340,6 +350,14 @@ class CaseHandoverMailSenderTest {
   private static CaseHandoverEmailNotification.Mail mail(
       long tenantId, CaseHandoverEmailNotification.Outcome outcome, String recipient) {
     return new CaseHandoverEmailNotification.Mail(
-        12L, 77L, "!room:example.test", outcome, tenantId, recipient, LanguageCode.en, null);
+        12L,
+        77L,
+        "!room:example.test",
+        outcome,
+        tenantId,
+        recipient,
+        LanguageCode.en,
+        null,
+        outcome == CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED ? "asker-id" : null);
   }
 }
