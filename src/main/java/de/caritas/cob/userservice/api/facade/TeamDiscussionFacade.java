@@ -96,6 +96,15 @@ public class TeamDiscussionFacade {
     TeamDiscussion discussion;
     try {
       discussion = creationWriter.create(proposed);
+    } catch (de.caritas.cob.userservice.api.exception.httpresponses.ConflictException rejected) {
+      // No ownership or membership committed: compensate only this unused external room.
+      var outcome = matrixSynapseService.purgeRoomOrConfirmGone(roomId);
+      if (outcome == MatrixSynapseService.RoomPurgeOutcome.FAILED) {
+        roomCleanupService.recordFailedCleanup(sessionId, roomId);
+        throw new ResponseStatusException(
+            HttpStatus.BAD_GATEWAY, "Team discussion cleanup failed", rejected);
+      }
+      throw rejected;
     } catch (DataIntegrityViolationException conflict) {
       // The unique session constraint chooses one shared room across service replicas.
       // The failed insert has rolled back before this fresh read begins.

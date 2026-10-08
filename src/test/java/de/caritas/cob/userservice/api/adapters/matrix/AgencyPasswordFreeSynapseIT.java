@@ -331,6 +331,8 @@ class AgencyPasswordFreeSynapseIT {
   @Test
   void teamDiscussionCreatesJoinsAndArchivesReadOnlyWithoutPassword() {
     when(sessionRepository.findById(42L)).thenReturn(Optional.of(session));
+    when(sessionRepository.findByIdForUpdate(42L))
+        .thenAnswer(invocation -> sessionRepository.findById(42L));
     when(consultants.findById(consultant.getId())).thenReturn(Optional.of(consultant));
     var relations = mock(ConsultantAgencyRepository.class);
     when(relations.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(consultant.getId(), 7L))
@@ -352,7 +354,7 @@ class AgencyPasswordFreeSynapseIT {
             matrix,
             identities,
             mock(TeamDiscussionFeatureGate.class),
-            new TeamDiscussionCreationWriter(discussions),
+            new TeamDiscussionCreationWriter(discussions, sessionRepository),
             mock(TeamDiscussionParticipantWriter.class),
             mock(TeamDiscussionRoomCleanupService.class));
     var view = facade.getOrCreateDiscussion(42L, consultant.getId());

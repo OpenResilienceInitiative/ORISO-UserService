@@ -106,7 +106,7 @@ class TeamDiscussionFacadeTest {
             matrixSynapseService,
             matrixCredentialClient,
             featureGate,
-            new TeamDiscussionCreationWriter(teamDiscussionRepository),
+            new TeamDiscussionCreationWriter(teamDiscussionRepository, sessionRepository),
             new TeamDiscussionParticipantWriter(participantRepository),
             roomCleanupService);
     session = new Session();
@@ -122,6 +122,9 @@ class TeamDiscussionFacadeTest {
     consultant.setMatrixUserId("@consultant1:oriso");
 
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    org.mockito.Mockito.lenient()
+        .when(sessionRepository.findByIdForUpdate(SESSION_ID))
+        .thenAnswer(invocation -> sessionRepository.findById(SESSION_ID));
     when(consultantRepository.findById(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
     when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
             CONSULTANT_ID, AGENCY_ID))

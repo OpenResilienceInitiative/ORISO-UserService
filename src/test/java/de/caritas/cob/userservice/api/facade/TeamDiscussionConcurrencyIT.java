@@ -51,6 +51,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class TeamDiscussionConcurrencyIT {
   @Autowired private TeamDiscussionRepository discussions;
+
+  @org.springframework.test.context.bean.override.mockito.MockitoBean
+  private SessionRepository sessions;
+
   @Autowired private TeamDiscussionParticipantRepository participants;
   @Autowired private TeamDiscussionCreationWriter writer;
   @Autowired private TeamDiscussionParticipantWriter participantWriter;
@@ -64,7 +68,6 @@ class TeamDiscussionConcurrencyIT {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void simultaneousOpeningReachesOneSharedRoom(boolean samePerson) throws Exception {
-    var sessions = mock(SessionRepository.class);
     var consultants = mock(ConsultantRepository.class);
     var agencies = mock(ConsultantAgencyRepository.class);
     var matrix = mock(MatrixSynapseService.class);
@@ -78,6 +81,7 @@ class TeamDiscussionConcurrencyIT {
     session.setEnquiryMessageDate(java.time.LocalDateTime.now());
     session.setStatus(SessionStatus.NEW);
     when(sessions.findById(42001L)).thenReturn(Optional.of(session));
+    when(sessions.findByIdForUpdate(42001L)).thenAnswer(invocation -> sessions.findById(42001L));
     var agencyCredentials = new AgencyMatrixCredentialsDTO();
     agencyCredentials.setMatrixUserId("@agency7:oriso");
     when(credentials.fetchMatrixCredentials(7L)).thenReturn(Optional.of(agencyCredentials));

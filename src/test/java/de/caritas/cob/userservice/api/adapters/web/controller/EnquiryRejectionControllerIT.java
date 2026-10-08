@@ -779,6 +779,91 @@ class EnquiryRejectionControllerIT {
         .closeRoomForMessagesVerified(anyString(), anyString(), anyString());
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void teamRoomCreatedRemotelyDuringRejectionCannotAcquireLateOwnershipOrJoin(
+      boolean closureAlreadyConfirmed) throws Exception {
+    var room = "!unused-late-team-" + UUID.randomUUID() + ":synthetic.oriso.test";
+    var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+    org.mockito.Mockito.doReturn(closureAlreadyConfirmed)
+        .when(matrixRooms)
+        .closeRoomForMessagesVerified(anyString(), anyString(), anyString());
+    when(matrix.loginAsUserAccessToken("@counsellor:synthetic.oriso.test"))
+        .thenReturn("synthetic-counsellor-token");
+    when(matrix.joinRoom(room, "synthetic-counsellor-token")).thenReturn(true);
+    when(matrix.purgeRoomOrConfirmGone(room))
+        .thenReturn(
+            de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.RoomPurgeOutcome
+                .PURGED);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              executor
+                  .submit(
+                      () -> {
+                        TenantContext.setCurrentTenant(7L);
+                        try {
+                          mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
+                              .andExpect(
+                                  closureAlreadyConfirmed
+                                      ? status().isNoContent()
+                                      : status().isServiceUnavailable());
+                        } finally {
+                          TenantContext.clear();
+                        }
+                        return null;
+                      })
+                  .get(10, java.util.concurrent.TimeUnit.SECONDS);
+              var body =
+                  new de.caritas.cob.userservice.api.adapters.matrix.dto
+                      .MatrixCreateRoomResponseDTO();
+              body.setRoomId(room);
+              return org.springframework.http.ResponseEntity.ok(body);
+            })
+        .when(matrix)
+        .createRoom(anyString(), anyString(), anyString());
+    try {
+      mvc.perform(post("/users/sessions/{sessionId}/team-discussion", sessionId))
+          .andExpect(status().isConflict());
+      assertThat(teamDiscussions.findBySessionId(sessionId)).isEmpty();
+      var decision = rejections.findById(sessionId).orElseThrow();
+      assertThat(decision.getTeamRoomId()).isNull();
+      org.mockito.Mockito.verify(matrix).purgeRoomOrConfirmGone(room);
+      org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+          .inviteUserToRoom(org.mockito.ArgumentMatchers.eq(room), anyString(), anyString());
+      org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+          .joinRoom(org.mockito.ArgumentMatchers.eq(room), anyString());
+      if (!closureAlreadyConfirmed) {
+        assertThat(feed()).isEmpty();
+        decision.setNextAttemptAt(LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+        rejections.saveAndFlush(decision);
+        org.mockito.Mockito.doReturn(true)
+            .when(matrixRooms)
+            .closeRoomForMessagesVerified(anyString(), anyString(), anyString());
+        mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
+            .andExpect(status().isNoContent());
+      }
+      assertThat(rejections.findById(sessionId).orElseThrow().getState())
+          .isEqualTo(EnquiryRejection.State.CONFIRMED);
+      assertThat(feed())
+          .singleElement()
+          .extracting(EventNotification::getEventType)
+          .isEqualTo("request.denied");
+    } finally {
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      // RED cleanup is fixture-owned; a failing old writer may have committed the late row.
+      teamDiscussions
+          .findBySessionId(sessionId)
+          .ifPresent(
+              team -> {
+                teamParticipants.deleteAll(teamParticipants.findByTeamDiscussionId(team.getId()));
+                teamDiscussions.delete(team);
+              });
+    }
+  }
+
+  @Autowired private TeamDiscussionParticipantRepository teamParticipants;
+
   @Test
   void independentPublicAcceptWaitsForTheSameRejectionRowLockThenCannotReopenIt() throws Exception {
     var locked = new java.util.concurrent.CountDownLatch(1);
