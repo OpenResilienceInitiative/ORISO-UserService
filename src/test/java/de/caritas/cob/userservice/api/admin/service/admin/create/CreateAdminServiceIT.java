@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.admin.service.admin.create;
 
-import static de.caritas.cob.userservice.api.config.auth.UserRole.RESTRICTED_AGENCY_ADMIN;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.TOPIC_ADMIN;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.USER_ADMIN;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.EMAIL_NOT_VALID;
@@ -9,39 +8,20 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.UserServiceApplication;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityProfile;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
-import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
@@ -53,34 +33,98 @@ import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Captor;
 import org.mockito.MockitoAnnotations;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @SpringBootTest(classes = UserServiceApplication.class)
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@org.springframework.context.annotation.Import(
+    de.caritas.cob.userservice.api.testHelper.VerifiedRequestCallerFixture.class)
+@TestPropertySource(properties = "spring.profiles.active=testing,verified-request-caller")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
+
+  @MockitoBean(name = "keycloakRestTemplate")
+  private RestTemplate boundedIdentityHttp;
+
+  @MockitoBean private TaskIdentityGrant taskIdentityGrant;
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @Autowired private Environment identityEnvironment;
+  @Autowired private ObjectMapper identityMapper;
+  private BoundedIdentityHttpFixtures.Provider nativeAccounts;
+
+  private void givenBoundedAccounts() {
+    nativeAccounts =
+        BoundedIdentityHttpFixtures.givenProvider(
+            boundedIdentityHttp,
+            taskIdentityGrant,
+            taskIdentities,
+            identityEnvironment,
+            identityMapper,
+            id -> cleanupIdentityId = id);
+    givenHuman("7ad454de-cf29-4557-b8b3-1bf986524de2", 1L, List.of("user-admin", "tenant-admin"));
+  }
+
+  private void givenHuman(String id, Long tenant, List<String> roles) {
+    var token =
+        Jwt.withTokenValue("verified-creator-session")
+            .header("alg", "RS256")
+            .subject(id)
+            .claim("azp", "admin")
+            .claim("preferred_username", "apau1")
+            .claim("tenantId", tenant == null ? null : tenant.toString())
+            .claim("realm_access", Map.of("roles", roles))
+            .issuedAt(Instant.now())
+            .expiresAt(Instant.now().plusSeconds(300))
+            .build();
+    var authentication =
+        new JwtAuthenticationToken(
+            token,
+            List.of(
+                    "AUTHORIZATION_USER_ADMIN",
+                    "AUTHORIZATION_TENANT_ADMIN",
+                    "AUTHORIZATION_CONSULTANT_CREATE")
+                .stream()
+                .map(SimpleGrantedAuthority::new)
+                .toList());
+    SecurityContextHolder.getContext().setAuthentication(authentication);
+    var request = new MockHttpServletRequest();
+    request.setUserPrincipal(authentication);
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void clearBoundedCaller() {
+    SecurityContextHolder.clearContext();
+    RequestContextHolder.resetRequestAttributes();
+  }
 
   private static final String VALID_USERNAME = "validUsername";
   private static final String VALID_EMAIL_ADDRESS = "valid@emailaddress.de";
@@ -97,29 +141,6 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
   @MockitoBean private OrisoEmailRenderer renderer;
   @MockitoBean private InviteMailDispatchService setupMail;
 
-  @MockitoBean(
-      extraInterfaces = {
-        IdentityAccountRemover.class,
-        IdentityAccountStatusLookup.class,
-        IdentityAuthentication.class,
-        IdentityDeactivator.class,
-        IdentityDummyEmailUpdater.class,
-        IdentityEmailAddressUpdater.class,
-        IdentityEmailOwnerLookup.class,
-        IdentityLocaleLookup.class,
-        IdentityPasswordChangeRequirement.class,
-        IdentityPasswordUpdater.class,
-        IdentityProfileLookup.class,
-        IdentityProfileUpdater.class,
-        IdentityRoleLookup.class,
-        IdentityRoleUpdater.class,
-        IdentitySecondFactor.class,
-        IdentityUsernameAvailability.class
-      })
-  private IdentityClient identityClient;
-
-  @MockitoBean private AuthenticatedUser authenticatedUser;
-  @Captor private ArgumentCaptor<UserDTO> userDTOArgumentCaptor;
   private final EasyRandom easyRandom = new EasyRandom();
   private Object originalMultiTenancyEnabled;
   private Object originalIssuerMultiTenancyEnabled;
@@ -130,6 +151,7 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
 
   @BeforeEach
   void setUp() {
+    givenBoundedAccounts();
     MockitoAnnotations.openMocks(this);
     configuredMultitenancy = ReflectionTestUtils.getField(adminScope, "multitenancyEnabled");
     originalMultiTenancyEnabled =
@@ -163,26 +185,8 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
     }
   }
 
-  private CreatedIdentity createdIdentityForSetup(CreateAdminDTO input, boolean multitenancy) {
-    cleanupIdentityId = UUID.randomUUID().toString();
+  private void prepareSetup(boolean multitenancy) {
     ReflectionTestUtils.setField(accountSetupIssuer, "multitenancyEnabled", multitenancy);
-    when(((IdentityProfileLookup) identityClient).findById(cleanupIdentityId))
-        .thenReturn(
-            Optional.of(
-                new IdentityProfile(
-                    cleanupIdentityId,
-                    new UsernameTranscoder().encodeUsername(input.getUsername()),
-                    null,
-                    null,
-                    input.getEmail())));
-    when(((IdentityRoleLookup) identityClient).findAllByUserId(cleanupIdentityId))
-        .thenReturn(List.of("restricted-agency-admin"));
-    when(((IdentityPasswordChangeRequirement) identityClient)
-            .requiresPasswordChange(cleanupIdentityId))
-        .thenReturn(true);
-    CreatedIdentity result = new CreatedIdentity();
-    result.setUserId(cleanupIdentityId);
-    return result;
   }
 
   private void assertIssuedSetup(Admin admin) {
@@ -197,8 +201,9 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
               assertThat(invite.getProvisionedUserId()).isEqualTo(admin.getId());
               assertThat(invite.getTenantId()).isEqualTo(admin.getTenantId());
             });
-    verify((IdentityPasswordChangeRequirement) identityClient)
-        .requiresPasswordChange(cleanupIdentityId);
+    assertThat(nativeAccounts.projections().get(admin.getId()).passwordChangeRequired()).isTrue();
+    assertThat(nativeAccounts.projections().get(admin.getId()).roles())
+        .containsExactlyInAnyOrder("restricted-agency-admin", "user-admin");
   }
 
   @Test
@@ -208,23 +213,21 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
     TenantContext.clear();
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", false);
     CreateAdminDTO createAdminDTO = this.easyRandom.nextObject(CreateAdminDTO.class);
-    createAdminDTO.setUsername(VALID_USERNAME);
+    createAdminDTO.setUsername(
+        VALID_USERNAME + java.util.UUID.randomUUID().toString().substring(0, 8));
     createAdminDTO.setEmail(VALID_EMAIL_ADDRESS);
-    CreatedIdentity createdIdentity = createdIdentityForSetup(createAdminDTO, false);
-    when(identityClient.createUser(any(), anyString(), any())).thenReturn(createdIdentity);
+    prepareSetup(false);
 
     // when
     Admin admin = this.createAdminService.createNewAgencyAdmin(createAdminDTO);
     assertIssuedSetup(admin);
 
     // then
-    verify(identityClient).createUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
-    assertNull(userDTOArgumentCaptor.getValue().getTenantId());
+    assertThat(nativeAccounts.projections().get(admin.getId()).tenantId()).isNull();
 
-    verify((IdentityPasswordUpdater) identityClient)
-        .updateTemporaryPassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    assertThat(nativeAccounts.commands())
+        .extracting(BoundedIdentityHttpFixtures.Command::operation)
+        .contains("account.create", "account.commit");
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isNull();
@@ -246,26 +249,24 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
     ReflectionTestUtils.setField(adminScope, "multitenancyEnabled", true);
     TenantContext.setCurrentTenant(1L);
-    when(authenticatedUser.getTenantId()).thenReturn(1L);
+
     CreateAdminDTO createAdminDTO = this.easyRandom.nextObject(CreateAdminDTO.class);
-    createAdminDTO.setUsername(VALID_USERNAME);
+    createAdminDTO.setUsername(
+        VALID_USERNAME + java.util.UUID.randomUUID().toString().substring(0, 8));
     createAdminDTO.setEmail(VALID_EMAIL_ADDRESS);
-    CreatedIdentity createdIdentity = createdIdentityForSetup(createAdminDTO, true);
-    when(identityClient.createUser(any(), anyString(), any())).thenReturn(createdIdentity);
+    createAdminDTO.setTenantId(1);
+    prepareSetup(true);
 
     // when
     Admin admin = this.createAdminService.createNewAgencyAdmin(createAdminDTO);
     assertIssuedSetup(admin);
 
     // then
-    verify(identityClient).createUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
-    assertNotNull(userDTOArgumentCaptor.getValue().getTenantId());
-    assertEquals(1L, (long) userDTOArgumentCaptor.getValue().getTenantId());
+    assertThat(nativeAccounts.projections().get(admin.getId()).tenantId()).isEqualTo(1L);
 
-    verify((IdentityPasswordUpdater) identityClient)
-        .updateTemporaryPassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    assertThat(nativeAccounts.commands())
+        .extracting(BoundedIdentityHttpFixtures.Command::operation)
+        .contains("account.create", "account.commit");
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isEqualTo(1L);
@@ -285,27 +286,27 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
     // given
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
     TenantContext.setCurrentTenant(0L);
-    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    givenHuman(
+        "7b1e15fe-4039-4ce7-a078-05996ff06676",
+        0L,
+        List.of("user-admin", "tenant-admin", "agency-admin"));
     CreateAdminDTO createAdminDTO = this.easyRandom.nextObject(CreateAdminDTO.class);
     createAdminDTO.setTenantId(1);
-    createAdminDTO.setUsername(VALID_USERNAME);
+    createAdminDTO.setUsername(
+        VALID_USERNAME + java.util.UUID.randomUUID().toString().substring(0, 8));
     createAdminDTO.setEmail(VALID_EMAIL_ADDRESS);
-    CreatedIdentity createdIdentity = createdIdentityForSetup(createAdminDTO, true);
-    when(identityClient.createUser(any(), anyString(), any())).thenReturn(createdIdentity);
+    prepareSetup(true);
 
     // when
     Admin admin = this.createAdminService.createNewAgencyAdmin(createAdminDTO);
     assertIssuedSetup(admin);
 
     // then
-    verify(identityClient).createUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
-    assertNotNull(userDTOArgumentCaptor.getValue().getTenantId());
-    assertEquals(1L, (long) userDTOArgumentCaptor.getValue().getTenantId());
+    assertThat(nativeAccounts.projections().get(admin.getId()).tenantId()).isEqualTo(1L);
 
-    verify((IdentityPasswordUpdater) identityClient)
-        .updateTemporaryPassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    assertThat(nativeAccounts.commands())
+        .extracting(BoundedIdentityHttpFixtures.Command::operation)
+        .contains("account.create", "account.commit");
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isEqualTo(1L);
@@ -318,26 +319,27 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
     // given
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", false);
     TenantContext.setCurrentTenant(0L);
-    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    givenHuman(
+        "7b1e15fe-4039-4ce7-a078-05996ff06676",
+        0L,
+        List.of("user-admin", "tenant-admin", "agency-admin"));
     CreateAdminDTO createAdminDTO = this.easyRandom.nextObject(CreateAdminDTO.class);
     createAdminDTO.setTenantId(1);
-    createAdminDTO.setUsername(VALID_USERNAME);
+    createAdminDTO.setUsername(
+        VALID_USERNAME + java.util.UUID.randomUUID().toString().substring(0, 8));
     createAdminDTO.setEmail(VALID_EMAIL_ADDRESS);
-    CreatedIdentity createdIdentity = createdIdentityForSetup(createAdminDTO, false);
-    when(identityClient.createUser(any(), anyString(), any())).thenReturn(createdIdentity);
+    prepareSetup(false);
 
     // when
     Admin admin = this.createAdminService.createNewAgencyAdmin(createAdminDTO);
     assertIssuedSetup(admin);
 
     // then
-    verify(identityClient).createUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
-    assertNull(userDTOArgumentCaptor.getValue().getTenantId());
+    assertThat(nativeAccounts.projections().get(admin.getId()).tenantId()).isNull();
 
-    verify((IdentityPasswordUpdater) identityClient)
-        .updateTemporaryPassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    assertThat(nativeAccounts.commands())
+        .extracting(BoundedIdentityHttpFixtures.Command::operation)
+        .contains("account.create", "account.commit");
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isNull();
@@ -364,21 +366,33 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
   }
 
   @Test
-  void
-      createNewAdminAgency_Should_throwCustomValidationHttpStatusException_When_keycloakIdIsMissing() {
-    TenantContext.setCurrentTenant(1L);
-    assertThrows(
-        CustomValidationHttpStatusException.class,
-        () -> {
-          // given
-          CreatedIdentity keycloakResponse = easyRandom.nextObject(CreatedIdentity.class);
-          keycloakResponse.setUserId(null);
-          when(identityClient.createUser(any(), anyString(), any())).thenReturn(keycloakResponse);
-          CreateAdminDTO createAgencyAdminDTO = this.easyRandom.nextObject(CreateAdminDTO.class);
-
-          // when
-          this.createAdminService.createNewAgencyAdmin(createAgencyAdminDTO);
-        });
+  void createNewAdminAgency_Should_rejectMissingProviderReceipt() {
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              String endpoint = invocation.getArgument(0);
+              var attempt = UUID.fromString(endpoint.substring(endpoint.lastIndexOf('/') + 1));
+              return org.springframework.http.ResponseEntity.ok(
+                  new KeycloakTaskCommands.CreationResult(attempt, null, "receipt", "OPEN"));
+            })
+        .when(boundedIdentityHttp)
+        .exchange(
+            org.mockito.ArgumentMatchers.contains("/account-creations/"),
+            eq(org.springframework.http.HttpMethod.PUT),
+            any(org.springframework.http.HttpEntity.class),
+            eq(KeycloakTaskCommands.CreationResult.class));
+    var input = easyRandom.nextObject(CreateAdminDTO.class);
+    input.setUsername(VALID_USERNAME + java.util.UUID.randomUUID().toString().substring(0, 8));
+    input.setEmail(VALID_EMAIL_ADDRESS);
+    var failure =
+        assertThrows(
+            IllegalStateException.class, () -> createAdminService.createNewAgencyAdmin(input));
+    assertThat(failure).hasMessage("Identity provider returned no creation receipt");
+    assertThat(nativeAccounts.commands())
+        .noneMatch(command -> command.operation().equals("account.commit"));
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT COUNT(*) FROM admin WHERE username=?", Integer.class, input.getUsername()))
+        .isZero();
   }
 
   @Test

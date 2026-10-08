@@ -15,7 +15,8 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.session.DeactivateSessionActionCommand;
 import de.caritas.cob.userservice.api.actions.session.PostMatrixUserLeftMessageActionCommand;
 import de.caritas.cob.userservice.api.actions.session.SendFinishedAnonymousConversationEventActionCommand;
-import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
+import de.caritas.cob.userservice.api.actions.user.DeactivateAuthorizedIdentityActionCommand;
+import de.caritas.cob.userservice.api.actions.user.IdentityDeactivationTarget;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -76,7 +77,8 @@ class DeactivateAnonymousUserServiceTest {
   void deactivateStaleAnonymousUsers_Should_notUseServices_When_noSessionIsAvailable() {
     this.deactivateAnonymousUserService.deactivateStaleAnonymousUsers();
 
-    verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(User.class);
+    verify(this.actionsRegistry, atLeastOnce())
+        .buildContainerForType(IdentityDeactivationTarget.class);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(Session.class);
   }
 
@@ -84,9 +86,9 @@ class DeactivateAnonymousUserServiceTest {
   void deactivateStaleAnonymousUsers_Should_notPerformAnyDeactivation_When_noSessionIsInProgress() {
     whenSessionRepositoryFindByStatus_ThenReturnUserSessionsWithStatus(
         getAnyStatusWhichIsNotInProgress());
-    var deactivateUserAction = mock(DeactivateKeycloakUserActionCommand.class);
+    var deactivateUserAction = mock(DeactivateAuthorizedIdentityActionCommand.class);
 
-    when(this.actionsRegistry.buildContainerForType(User.class))
+    when(this.actionsRegistry.buildContainerForType(IdentityDeactivationTarget.class))
         .thenReturn(new ActionContainer<>(Set.of(deactivateUserAction)));
     when(this.actionsRegistry.buildContainerForType(Session.class))
         .thenReturn(this.commandMockProvider.getActionContainer(Session.class));
@@ -96,7 +98,8 @@ class DeactivateAnonymousUserServiceTest {
     verify(this.sessionRepository, times(1))
         .findLiveChatSessionsByStatusIn(
             Set.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS), RegistrationType.ANONYMOUS);
-    verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(User.class);
+    verify(this.actionsRegistry, atLeastOnce())
+        .buildContainerForType(IdentityDeactivationTarget.class);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(Session.class);
     verifyNoMoreInteractions(deactivateUserAction);
     verifyNoSessionDeactivationActionsExecuted();
@@ -111,6 +114,7 @@ class DeactivateAnonymousUserServiceTest {
   private void whenSessionRepositoryFindByStatus_ThenReturnUserSessionsWithStatus(
       SessionStatus... sessionStatus) {
     var user = new User();
+    user.setUserId("anonymous-account");
     var userSessions =
         Stream.of(sessionStatus)
             .map(createSessionForUserWithUpdateDateNow(user))
@@ -150,8 +154,8 @@ class DeactivateAnonymousUserServiceTest {
     var user = createUserWithSingleSession(updateDate);
     when(this.sessionRepository.findLiveChatSessionsByStatusIn(any(), any()))
         .thenReturn(new ArrayList<>(user.getSessions()));
-    var deactivateUserAction = mock(DeactivateKeycloakUserActionCommand.class);
-    when(this.actionsRegistry.buildContainerForType(User.class))
+    var deactivateUserAction = mock(DeactivateAuthorizedIdentityActionCommand.class);
+    when(this.actionsRegistry.buildContainerForType(IdentityDeactivationTarget.class))
         .thenReturn(new ActionContainer<>(Set.of(deactivateUserAction)));
     when(this.actionsRegistry.buildContainerForType(Session.class))
         .thenReturn(this.commandMockProvider.getActionContainer(Session.class));
@@ -161,7 +165,8 @@ class DeactivateAnonymousUserServiceTest {
     verify(this.sessionRepository, times(1))
         .findLiveChatSessionsByStatusIn(
             Set.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS), RegistrationType.ANONYMOUS);
-    verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(User.class);
+    verify(this.actionsRegistry, atLeastOnce())
+        .buildContainerForType(IdentityDeactivationTarget.class);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(Session.class);
     verifyNoMoreInteractions(deactivateUserAction);
     verifyNoSessionDeactivationActionsExecuted();
@@ -199,6 +204,7 @@ class DeactivateAnonymousUserServiceTest {
 
   private User createUserWithSingleSession(LocalDateTime updateDate) {
     var user = new User();
+    user.setUserId("anonymous-account");
     user.setUserId("user id");
     var userSessions = Set.of(createSessionForUser(user, updateDate, SessionStatus.IN_PROGRESS));
     user.setSessions(userSessions);
@@ -216,8 +222,8 @@ class DeactivateAnonymousUserServiceTest {
     when(this.sessionRepository.findLiveChatSessionsByStatusIn(any(), any()))
         .thenReturn(new ArrayList<>(user.getSessions()));
 
-    var deactivateUserAction = mock(DeactivateKeycloakUserActionCommand.class);
-    when(this.actionsRegistry.buildContainerForType(User.class))
+    var deactivateUserAction = mock(DeactivateAuthorizedIdentityActionCommand.class);
+    when(this.actionsRegistry.buildContainerForType(IdentityDeactivationTarget.class))
         .thenReturn(new ActionContainer<>(Set.of(deactivateUserAction)));
     when(this.actionsRegistry.buildContainerForType(Session.class))
         .thenReturn(this.commandMockProvider.getActionContainer(Session.class));
@@ -227,9 +233,11 @@ class DeactivateAnonymousUserServiceTest {
     verify(this.sessionRepository, times(1))
         .findLiveChatSessionsByStatusIn(
             Set.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS), RegistrationType.ANONYMOUS);
-    verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(User.class);
+    verify(this.actionsRegistry, atLeastOnce())
+        .buildContainerForType(IdentityDeactivationTarget.class);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(Session.class);
-    verify(deactivateUserAction, times(1)).execute(user);
+    verify(deactivateUserAction, times(1))
+        .execute(org.mockito.ArgumentMatchers.argThat(target -> target.user() == user));
     user.getSessions()
         .forEach(
             session -> {

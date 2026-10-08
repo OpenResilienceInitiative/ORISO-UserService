@@ -8,6 +8,13 @@ public interface MatrixUserClient {
   String createUserId(String username, String password, String displayName)
       throws MatrixCreateUserException;
 
+  /** Registration-only seam; an adapter must explicitly attest creation or prior inactive state. */
+  default String createOwnedUserId(
+      String username, String password, String displayName, OwnedMatrixEffect effect)
+      throws MatrixCreateUserException {
+    throw new MatrixCreateUserException("This adapter cannot attest owned Matrix creation");
+  }
+
   /**
    * Mints a chat account, refusing rather than reactivating one the homeserver already holds. For
    * callers that repair an existing consultant: {@link #createUserId} answers a taken localpart by

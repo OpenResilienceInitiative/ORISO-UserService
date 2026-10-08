@@ -148,12 +148,12 @@ class AccountInviteUnitQueueIT {
         .thenAnswer(call -> new InviteMailSendReceipt(call.getArgument(0), Instant.now()));
     // The new agency 500 is free until an admin invite reserves it; afterwards it is RESERVED.
     when(agencyIdAllocationClient.getAvailability(NEW_AGENCY)).thenReturn(IdAllocationStatus.FREE);
-    when(agencyIdAllocationClient.reserve(NEW_AGENCY, OWN_TENANT))
+    when(agencyIdAllocationClient.reserveWithProof(NEW_AGENCY, OWN_TENANT))
         .thenAnswer(
             call -> {
               when(agencyIdAllocationClient.getAvailability(NEW_AGENCY))
                   .thenReturn(IdAllocationStatus.RESERVED);
-              return NEW_AGENCY;
+              return new AgencyIdAllocationClient.AgencyReservation(NEW_AGENCY, "reservation-500");
             });
     when(agencyIdAllocationClient.getAvailability(EXISTING_AGENCY))
         .thenReturn(IdAllocationStatus.ASSIGNED);
@@ -229,7 +229,7 @@ class AccountInviteUnitQueueIT {
     assertThat(counsellor.getExpiresAt()).isNull();
     assertThat(counsellor.getTokenHash()).isNull();
     assertThat(queue.problemOf(counsellor)).isNull();
-    verify(agencyIdAllocationClient, times(1)).reserve(NEW_AGENCY, OWN_TENANT);
+    verify(agencyIdAllocationClient, times(1)).reserveWithProof(NEW_AGENCY, OWN_TENANT);
   }
 
   @Test
@@ -240,7 +240,7 @@ class AccountInviteUnitQueueIT {
         () -> service.createInvite(counsellor(NEW_AGENCY)),
         HttpStatusExceptionReason.NO_PENDING_UNIT_ADMIN);
     assertNoInviteWasWritten();
-    verify(agencyIdAllocationClient, never()).reserve(any(), any());
+    verify(agencyIdAllocationClient, never()).reserveWithProof(any(), any());
   }
 
   @Test
@@ -314,7 +314,7 @@ class AccountInviteUnitQueueIT {
 
     assertThat(second.getAgencyId()).isEqualTo(first.getAgencyId());
     assertThat(second.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
-    verify(agencyIdAllocationClient, times(1)).reserve(any(), any());
+    verify(agencyIdAllocationClient, times(1)).reserveWithProof(any(), any());
   }
 
   @Test
@@ -328,7 +328,7 @@ class AccountInviteUnitQueueIT {
 
     service.createInvite(agencyAdmin(NEW_AGENCY));
     assertThat(queue.problemOf(reload(counsellor))).isNull();
-    verify(agencyIdAllocationClient, times(1)).reserve(any(), any());
+    verify(agencyIdAllocationClient, times(1)).reserveWithProof(any(), any());
   }
 
   @Test
@@ -538,7 +538,7 @@ class AccountInviteUnitQueueIT {
         .isInstanceOf(ForbiddenException.class);
 
     assertNoInviteWasWritten();
-    verify(agencyIdAllocationClient, never()).reserve(any(), any());
+    verify(agencyIdAllocationClient, never()).reserveWithProof(any(), any());
     verifyNoMailWasSent();
   }
 
@@ -641,14 +641,16 @@ class AccountInviteUnitQueueIT {
     assertThat(agencyAdmin.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
     assertThat(agencyAdmin.getWaitingForUnit()).isEqualTo(InviteUnitType.TENANT);
     assertThat(agencyAdmin.getAgencyId()).isNull();
-    verify(agencyIdAllocationClient, never()).reserve(any(), any());
+    verify(agencyIdAllocationClient, never()).reserveWithProof(any(), any());
 
-    when(agencyIdAllocationClient.reserve(null, NEW_TENANT)).thenReturn(701L);
+    when(agencyIdAllocationClient.reserveWithProof(null, NEW_TENANT))
+        .thenReturn(new AgencyIdAllocationClient.AgencyReservation(701L, "reservation-701"));
     queue.release(InviteUnitType.TENANT, NEW_TENANT, NEW_TENANT);
 
     AccountInvite released = reload(agencyAdmin);
     assertThat(released.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
     assertThat(released.getAgencyId()).isEqualTo(701L);
+    assertThat(released.getAgencyReservationToken()).isEqualTo("reservation-701");
   }
 
   @Test
@@ -666,7 +668,8 @@ class AccountInviteUnitQueueIT {
                 IdAllocationMode.AUTO));
     agencyAdmin.setQueuedTemplateId(templateId);
     accountInviteRepository.saveAndFlush(agencyAdmin);
-    when(agencyIdAllocationClient.reserve(null, NEW_TENANT)).thenReturn(701L);
+    when(agencyIdAllocationClient.reserveWithProof(null, NEW_TENANT))
+        .thenReturn(new AgencyIdAllocationClient.AgencyReservation(701L, "reservation-701"));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
         .thenThrow(new IllegalStateException("accept URL not configured"));
 
@@ -676,7 +679,7 @@ class AccountInviteUnitQueueIT {
     AccountInvite stillWaiting = reload(agencyAdmin);
     assertThat(stillWaiting.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
     assertThat(stillWaiting.getAgencyId()).isNull();
-    verify(agencyIdAllocationClient).release(701L);
+    verify(agencyIdAllocationClient).release(701L, "reservation-701");
   }
 
   @Test

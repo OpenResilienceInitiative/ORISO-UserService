@@ -5,14 +5,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.agencyadminserivce.generated.ApiClient;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.AdminAgencyControllerApi;
+import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyAdminFullResponseDTO;
+import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyAdminServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentity;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -61,14 +65,16 @@ class AgencyCreationClientTest {
   @Mock private ApiClient apiClient;
 
   private AgencyCreationClient client;
+  private TaskIdentityCredentials technicalUser;
 
   @BeforeEach
   void setUp() {
-    var technicalUser = new TechnicalUserConfig();
+    technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical");
     technicalUser.setClientSecret("secret");
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.loginService(anyString(), anyString()))
+    when(identityClientConfig.getTaskIdentity(TaskIdentity.CONFIG_WIZARD))
+        .thenReturn(technicalUser);
+    when(identityAuthentication.loginTask(same(technicalUser)))
         .thenReturn(new IdentityLogin("access-token", 60, 60, "refresh-token"));
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(anyString()))
         .thenReturn(new HttpHeaders());
@@ -84,6 +90,23 @@ class AgencyCreationClientTest {
     ReflectionTestUtils.setField(client, "defaultConsultingType", 1);
   }
 
+  @Test
+  void createAgencyWithReservedIdAuthenticatesWithTheConfigWizardCredentials() {
+    when(adminAgencyControllerApi.createAgency(any(AgencyDTO.class)))
+        .thenReturn(
+            new AgencyAdminFullResponseDTO()
+                .embedded(new AgencyAdminResponseDTO().id(RESERVED_AGENCY_ID)));
+
+    assertThat(
+            client.createAgencyWithReservedId(
+                RESERVED_AGENCY_ID, "Beratungsstelle", TENANT_ID, List.of(3L), "owner-proof"))
+        .isEqualTo(RESERVED_AGENCY_ID);
+
+    verify(identityClientConfig).getTaskIdentity(TaskIdentity.CONFIG_WIZARD);
+    verify(identityAuthentication).loginTask(same(technicalUser));
+    verify(securityHeaderSupplier).getKeycloakAndCsrfHttpHeaders("access-token");
+  }
+
   private void answerWith(HttpStatus status) {
     when(adminAgencyControllerApi.createAgency(any(AgencyDTO.class)))
         .thenThrow(HttpClientErrorException.create(status, status.name(), null, null, null));
@@ -91,7 +114,7 @@ class AgencyCreationClientTest {
 
   private void createAgency() {
     client.createAgencyWithReservedId(
-        RESERVED_AGENCY_ID, "Beratungsstelle", TENANT_ID, List.of(3L));
+        RESERVED_AGENCY_ID, "Beratungsstelle", TENANT_ID, List.of(3L), "owner-proof");
   }
 
   /**

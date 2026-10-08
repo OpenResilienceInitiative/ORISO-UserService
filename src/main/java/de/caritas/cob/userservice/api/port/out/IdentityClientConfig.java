@@ -30,6 +30,9 @@ public interface IdentityClientConfig {
 
   TechnicalUserConfig getTechnicalUser();
 
+  de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials getTaskIdentity(
+      de.caritas.cob.userservice.api.config.auth.TaskIdentity task);
+
   String getEmailDummySuffix();
 
   boolean isOtpAllowed(@NotNull Set<String> roles);

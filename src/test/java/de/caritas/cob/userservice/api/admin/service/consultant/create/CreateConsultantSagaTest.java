@@ -40,7 +40,6 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
@@ -54,7 +53,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
-import org.hibernate.validator.internal.util.CollectionHelper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -74,6 +72,27 @@ class CreateConsultantSagaTest {
       inactivityEnrollment;
 
   @org.mockito.Mock private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
+
+  @org.junit.jupiter.api.BeforeEach
+  void ownedDownstreamPortFixture() {
+    var scope =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationEffects.Scope
+                .class);
+    org.mockito.Mockito.lenient()
+        .when(scope.user())
+        .thenReturn(
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect.class));
+    org.mockito.Mockito.lenient()
+        .when(identityProvisioning.ownedMatrixEffects(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(scope);
+    org.mockito.Mockito.lenient()
+        .when(identityProvisioning.ownedAppointmentEffect(any()))
+        .thenReturn(
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.OwnedAppointmentEffect.class));
+  }
 
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
@@ -97,6 +116,15 @@ class CreateConsultantSagaTest {
   private static final String VALID_EMAIL = "valid@emailaddress.de";
   private static final String VALID_PASSWORD = "ValidPass1!";
 
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityAccountProvisioning
+      identityProvisioning;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.WizardAccountPolicyClient
+      wizardPolicy;
+
+  @Mock private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
   @InjectMocks private CreateConsultantSaga createConsultantSaga;
 
   @Mock private IdentityClient identityClient;
@@ -129,6 +157,10 @@ class CreateConsultantSagaTest {
 
   @BeforeEach
   void setUp() {
+    de.caritas.cob.userservice.api.testHelper.VerifiedCreationCallerFixture.install();
+    org.mockito.Mockito.lenient()
+        .when(adminScope.current())
+        .thenReturn(new de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Platform());
     ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", false);
     ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", false);
     PlainCredentialsHolder.clear();
@@ -137,6 +169,7 @@ class CreateConsultantSagaTest {
 
   @AfterEach
   void tearDown() {
+    org.springframework.security.core.context.SecurityContextHolder.clearContext();
     PlainCredentialsHolder.clear();
     TenantContext.clear();
   }
@@ -175,8 +208,13 @@ class CreateConsultantSagaTest {
     assertThat(response, notNullValue());
     assertThat(response.getEmbedded(), notNullValue());
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
-    verify(identityClient).updateRole(KEYCLOAK_USER_ID, CONSULTANT.getValue());
-    verify(appointmentService, never()).createConsultant(any());
+    org.mockito.Mockito.verify(identityProvisioning)
+        .create(
+            any(),
+            org.mockito.ArgumentMatchers.argThat(
+                command -> command.roles().contains(CONSULTANT.getValue())),
+            any());
+    verify(appointmentService, never()).createOwnedConsultant(any(), any(), any());
   }
 
   @Test
@@ -218,7 +256,13 @@ class CreateConsultantSagaTest {
         ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
     verify(consultantService).saveConsultant(captured.capture());
     assertThat(captured.getValue().getPasswordChangeRequired(), is(true));
-    verify(identityPasswordUpdater).updateTemporaryPassword(KEYCLOAK_USER_ID, VALID_PASSWORD);
+    verify(identityProvisioning)
+        .create(
+            any(),
+            org.mockito.ArgumentMatchers.argThat(
+                command ->
+                    command.passwordTemporary() && VALID_PASSWORD.equals(command.password())),
+            any());
   }
 
   @Test
@@ -365,7 +409,7 @@ class CreateConsultantSagaTest {
 
     createConsultantSaga.createNewConsultant(validCreateConsultantDto());
 
-    verify(appointmentService).createConsultant(any());
+    verify(appointmentService).createOwnedConsultant(any(), any(), any());
   }
 
   @Test
@@ -376,7 +420,7 @@ class CreateConsultantSagaTest {
     when(authenticatedUser.getRoles()).thenReturn(Set.of("admin"));
     doThrow(new RuntimeException("appointment down"))
         .when(appointmentService)
-        .createConsultant(any());
+        .createOwnedConsultant(any(), any(), any());
 
     var ex =
         assertThrows(
@@ -394,39 +438,33 @@ class CreateConsultantSagaTest {
   void createNewConsultant_Should_throwBadRequest_When_passwordMissing() {
     CreateConsultantDTO dto = validCreateConsultantDto();
     dto.setPassword(null);
-    stubKeycloakUserCreation();
 
     assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
   }
 
   @Test
-  void createNewConsultant_Should_throwCustomValidation_When_passwordUpdateFails() {
-    stubKeycloakUserCreation();
-    doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
-        .when(identityPasswordUpdater)
-        .updateTemporaryPassword(anyString(), anyString());
-
+  void createNewConsultant_Should_throwCustomValidation_When_passwordUpdateFails()
+      throws Exception {
+    when(identityProvisioning.create(any(), any(), any()))
+        .thenThrow(
+            new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST));
     assertThrows(
         CustomValidationHttpStatusException.class,
         () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
-
-    verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
-    verify(identityClient, never()).updateRole(anyString(), anyString());
+    verifyNoInteractions(rollbackFacade);
+    verify(consultantService, never()).saveConsultant(any());
   }
 
   @Test
   void createNewConsultant_Should_throwDistributedTransaction_When_roleUpdateFails()
       throws Exception {
-    stubKeycloakUserCreation();
-    doThrow(new RuntimeException("role update failed"))
-        .when(identityClient)
-        .updateRole(anyString(), anyString());
-
+    when(identityProvisioning.create(any(), any(), any()))
+        .thenThrow(new IllegalStateException("atomic role validation failed"));
     assertThrows(
-        DistributedTransactionException.class,
+        IllegalStateException.class,
         () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
-
-    verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
+    verifyNoInteractions(rollbackFacade);
+    verify(consultantService, never()).saveConsultant(any());
   }
 
   @Test
@@ -454,13 +492,13 @@ class CreateConsultantSagaTest {
     // holder the way UserAdminController does is what makes the failure branch reachable at all.
     stubHappyPath();
     PlainCredentialsHolder.set(VALID_USERNAME, null);
-    when(matrixSynapseService.createUserId(any(), any(), any()))
+    when(matrixSynapseService.createOwnedUserId(any(), any(), any(), any()))
         .thenThrow(new MatrixCreateUserException("Synapse is unreachable"));
 
     var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
 
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
-    verify(matrixSynapseService).createUserId(any(), any(), any());
+    verify(matrixSynapseService).createOwnedUserId(any(), any(), any(), any());
     ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
     verify(consultantService).saveConsultant(consultantCaptor.capture());
     assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));
@@ -472,12 +510,12 @@ class CreateConsultantSagaTest {
       throws Exception {
     stubHappyPath();
     PlainCredentialsHolder.set(VALID_USERNAME, null);
-    when(matrixSynapseService.createUserId(any(), any(), any())).thenReturn(null);
+    when(matrixSynapseService.createOwnedUserId(any(), any(), any(), any())).thenReturn(null);
 
     var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
 
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
-    verify(matrixSynapseService).createUserId(any(), any(), any());
+    verify(matrixSynapseService).createOwnedUserId(any(), any(), any(), any());
     ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
     verify(consultantService).saveConsultant(consultantCaptor.capture());
     assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));
@@ -491,8 +529,18 @@ class CreateConsultantSagaTest {
 
     createConsultantSaga.createNewConsultant(dto);
 
-    verify(identityClient).updateRole(KEYCLOAK_USER_ID, CONSULTANT.getValue());
-    verify(identityClient).updateRole(KEYCLOAK_USER_ID, GROUP_CHAT_CONSULTANT.getValue());
+    org.mockito.Mockito.verify(identityProvisioning)
+        .create(
+            any(),
+            org.mockito.ArgumentMatchers.argThat(
+                command -> command.roles().contains(CONSULTANT.getValue())),
+            any());
+    org.mockito.Mockito.verify(identityProvisioning)
+        .create(
+            any(),
+            org.mockito.ArgumentMatchers.argThat(
+                command -> command.roles().contains(GROUP_CHAT_CONSULTANT.getValue())),
+            any());
   }
 
   @Test
@@ -503,14 +551,22 @@ class CreateConsultantSagaTest {
     when(userHelper.getRandomPassword()).thenReturn("GeneratedPass1!");
 
     Consultant consultant =
-        createConsultantSaga.createNewConsultant(
-            importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
+        createConsultantSaga.createImportedConsultant(
+            importRecord,
+            de.caritas.cob.userservice.api.adapters.keycloak.commands.VerifiedImportFixture
+                .authorize(importRecord));
 
     assertThat(consultant, notNullValue());
     org.junit.jupiter.api.Assertions.assertEquals(
         "LOGIN_PASSWORD", consultant.getChatRecoveryMode());
     org.junit.jupiter.api.Assertions.assertEquals(3L, consultant.getChatRecoveryPolicyRevision());
-    verify(identityPasswordUpdater).updatePassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
+    verify(identityProvisioning)
+        .create(
+            any(),
+            org.mockito.ArgumentMatchers.argThat(
+                command ->
+                    !command.passwordTemporary() && "GeneratedPass1!".equals(command.password())),
+            any());
   }
 
   @Test
@@ -523,8 +579,10 @@ class CreateConsultantSagaTest {
     when(userHelper.getRandomPassword()).thenReturn("GeneratedPass1!");
 
     Consultant consultant =
-        createConsultantSaga.createNewConsultant(
-            importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
+        createConsultantSaga.createImportedConsultant(
+            importRecord,
+            de.caritas.cob.userservice.api.adapters.keycloak.commands.VerifiedImportFixture
+                .authorize(importRecord));
 
     assertThat(consultant.getTwoFactorRequired(), is(false));
   }
@@ -537,8 +595,10 @@ class CreateConsultantSagaTest {
     when(userHelper.getRandomPassword()).thenReturn("GeneratedPass1!");
 
     Consultant consultant =
-        createConsultantSaga.createNewConsultant(
-            importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
+        createConsultantSaga.createImportedConsultant(
+            importRecord,
+            de.caritas.cob.userservice.api.adapters.keycloak.commands.VerifiedImportFixture
+                .authorize(importRecord));
 
     assertThat(consultant.getPasswordChangeRequired(), is(false));
   }
@@ -702,26 +762,14 @@ class CreateConsultantSagaTest {
   @Test
   void createNewConsultant_Should_throwDistributedTransaction_When_passwordUpdateThrowsGeneric()
       throws Exception {
-    stubKeycloakUserCreation();
-    doThrow(new RuntimeException("keycloak down"))
-        .when(identityPasswordUpdater)
-        .updateTemporaryPassword(anyString(), anyString());
-
-    var ex =
-        assertThrows(
-            DistributedTransactionException.class,
-            () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
-
-    assertThat(
-        ex.getCustomHttpHeaders().get("X-Reason").get(0),
-        is("DISTRIBUTED_TRANSACTION_FAILED_ON_STEP_UPDATE_USER_PASSWORD_IN_KEYCLOAK"));
-    verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
+    when(identityProvisioning.create(any(), any(), any()))
+        .thenThrow(new IllegalStateException("atomic provider unavailable"));
+    assertThrows(
+        IllegalStateException.class,
+        () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
+    verifyNoInteractions(rollbackFacade);
+    verify(consultantService, never()).saveConsultant(any());
   }
-
-  // ---------------------------------------------------------------------------
-  // ADR-002 §2 / #1200: the Matrix displayname is never the counsellor's real name.
-  // The advice seeker shares the room and reads every member's displayname from /joined_members.
-  // ---------------------------------------------------------------------------
 
   @Test
   void createNewConsultant_Should_provisionMatrixWithThePublicDisplayName() throws Exception {
@@ -755,7 +803,7 @@ class CreateConsultantSagaTest {
     stubHappyPath();
     PlainCredentialsHolder.set(VALID_USERNAME, null);
     when(userHelper.getRandomPassword()).thenReturn("MatrixPass1!");
-    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
+    when(matrixSynapseService.createOwnedUserId(anyString(), anyString(), anyString(), any()))
         .thenThrow(new RuntimeException("synapse down"));
 
     var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
@@ -770,14 +818,14 @@ class CreateConsultantSagaTest {
   private void givenMatrixProvisioningIsReachable() throws Exception {
     PlainCredentialsHolder.set(VALID_USERNAME, null);
     when(userHelper.getRandomPassword()).thenReturn("MatrixPass1!");
-    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
+    when(matrixSynapseService.createOwnedUserId(anyString(), anyString(), anyString(), any()))
         .thenReturn("@" + VALID_USERNAME + ":matrix.example.org");
   }
 
   private String capturedMatrixDisplayName() throws Exception {
     ArgumentCaptor<String> displayNameCaptor = ArgumentCaptor.forClass(String.class);
     verify(matrixSynapseService)
-        .createUserId(anyString(), anyString(), displayNameCaptor.capture());
+        .createOwnedUserId(anyString(), anyString(), displayNameCaptor.capture(), any());
     return displayNameCaptor.getValue();
   }
 
@@ -788,13 +836,13 @@ class CreateConsultantSagaTest {
   }
 
   private void stubKeycloakUserCreation() {
-    when(identityClient.createUser(any(), anyString(), anyString()))
+    when(identityProvisioning.create(any(), any(), any()))
         .thenAnswer(
             invocation -> {
               PlainCredentialsHolder.set(VALID_USERNAME, null);
-              CreatedIdentity response = new CreatedIdentity();
-              response.setUserId(KEYCLOAK_USER_ID);
-              return response;
+              return new de.caritas.cob.userservice.api.adapters.keycloak.commands
+                  .KeycloakTaskCommands.CreationResult(
+                  invocation.getArgument(0), KEYCLOAK_USER_ID, "owned-proof", "OPEN");
             });
   }
 

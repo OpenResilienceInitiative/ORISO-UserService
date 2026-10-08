@@ -10,7 +10,6 @@ import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -92,7 +91,9 @@ public class TenantAdminOnboardingService {
   private final @NonNull CreateAdminService createAdminService;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentitySecondFactor identitySecondFactor;
-  private final @NonNull IdentityAccountRemover identityAccountRemover;
+  private final @NonNull de.caritas.cob.userservice.api.adapters.keycloak.commands
+          .IdentityAccountProvisioning
+      identityProvisioning;
   private final @NonNull IdentityProfileLookup identityProfileLookup;
   private final @NonNull TenantCreationClient tenantCreationClient;
   private final @NonNull OperatorDpaContentClient operatorDpaContentClient;
@@ -279,7 +280,8 @@ public class TenantAdminOnboardingService {
       throw linkDeathException(current);
     }
 
-    var admin = createAdminService.createNewTenantAdminFromInvite(buildAdminDto(invite, command));
+    var admin =
+        createAdminService.createNewTenantAdminFromInvite(buildAdminDto(invite, command), invite);
     try {
       IdentityOtpCredential otpInfo =
           identitySecondFactor.getOtpCredential(
@@ -330,12 +332,17 @@ public class TenantAdminOnboardingService {
           created != null && created.getId() != null ? created.getId() : invite.getTenantId();
       // The Admin's Träger tab dates "Träger angelegt" from this, for co-founders too.
       accountInviteRepository.stampTraegerCreated(invite.getTenantId(), now);
+      identityProvisioning.completeCreatedAccount(admin.getId());
       publishTenantCreated(tenantId);
       return new TenantAdminRegistrationResult(tenantId, otpInfo.secret(), otpInfo.secretQrCode());
     } catch (RuntimeException exception) {
       // Every database change rolls back with the exception; the Keycloak account is external
       // state and must be compensated explicitly so a failed registration stays retryable.
-      identityAccountRemover.rollbackUser(admin.getId());
+      try {
+        identityProvisioning.compensateCreatedAccount(admin.getId());
+      } catch (RuntimeException compensationFailure) {
+        exception.addSuppressed(compensationFailure);
+      }
       throw exception;
     }
   }
@@ -360,7 +367,8 @@ public class TenantAdminOnboardingService {
 
     // The invited person chose this credential. Joining an existing tenant must not turn it into
     // a temporary direct-create password or send an existing-account setup link.
-    var admin = createAdminService.createNewTenantAdminFromInvite(buildAdminDto(invite, command));
+    var admin =
+        createAdminService.createNewTenantAdminFromInvite(buildAdminDto(invite, command), invite);
     try {
       IdentityOtpCredential otpInfo =
           identitySecondFactor.getOtpCredential(
@@ -381,11 +389,16 @@ public class TenantAdminOnboardingService {
           "Tenant-admin onboarding of invite {} joined the existing tenant {}",
           invite.getId(),
           invite.getTenantId());
+      identityProvisioning.completeCreatedAccount(admin.getId());
       publishTenantCreated(invite.getTenantId());
       return new TenantAdminRegistrationResult(
           invite.getTenantId(), otpInfo.secret(), otpInfo.secretQrCode());
     } catch (RuntimeException exception) {
-      identityAccountRemover.rollbackUser(admin.getId());
+      try {
+        identityProvisioning.compensateCreatedAccount(admin.getId());
+      } catch (RuntimeException compensationFailure) {
+        exception.addSuppressed(compensationFailure);
+      }
       throw exception;
     }
   }
@@ -688,7 +701,10 @@ public class TenantAdminOnboardingService {
 
     var profile =
         identityProfileLookup
-            .findById(invite.getAcceptedByUserId())
+            .findById(
+                invite.getAcceptedByUserId(),
+                de.caritas.cob.userservice.api.adapters.keycloak.commands
+                    .IdentityCommandAuthorization.acceptedInviteRead(invite))
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
     OnboardingEmailSecondFactor.requireInactive(profile, identitySecondFactor);

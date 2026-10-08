@@ -7,7 +7,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
@@ -67,13 +67,14 @@ class IdReservationReleaseSchedulerTest {
 
   @Test
   void retryPendingReleases_ShouldAuthenticateAndContinueAfterOneTaskFails() {
-    TechnicalUserConfig technicalUser = new TechnicalUserConfig();
+    TaskIdentityCredentials technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical");
     technicalUser.setClientSecret("secret");
     when(taskClaimService.tryClaimLease(IdReservationReleaseScheduler.TASK_NAME, claimDuration))
         .thenReturn(Optional.of(lease));
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.loginService("technical", "secret"))
+    when(identityClientConfig.getTaskIdentity(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(technicalUser);
+    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new IdentityLogin("token", 60, 60, "refresh"));
     when(processor.pendingTaskIds())
         .thenAnswer(

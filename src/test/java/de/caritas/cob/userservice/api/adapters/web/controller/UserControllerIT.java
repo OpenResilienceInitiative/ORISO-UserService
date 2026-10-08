@@ -140,6 +140,36 @@ import org.springframework.test.web.servlet.MockMvc;
     })
 class UserControllerIT {
 
+  @Test
+  void failedConfiguredImportNeverReturnsSuccessAndRetainsMappedStatuses() throws Exception {
+    for (var failure :
+        List.of(
+            new BadRequestException("invalid configured row"),
+            new ConflictException("atomic username conflict"),
+            new ForbiddenException("invalid importer origin"),
+            new org.springframework.web.server.ResponseStatusException(
+                HttpStatus.BAD_GATEWAY, "Import dependency failed"))) {
+      int expected =
+          failure instanceof BadRequestException
+              ? 400
+              : failure instanceof ConflictException
+                  ? 409
+                  : failure instanceof ForbiddenException ? 403 : 502;
+      doThrow(failure).when(consultantImportService).startImport();
+      mvc.perform(post("/users/consultants/import")).andExpect(status().is(expected));
+    }
+  }
+
+  @Test
+  void failedIdentityDeactivationNeverReturnsSuccessfulSessionDeletion() throws Exception {
+    doThrow(
+            new org.springframework.web.server.ResponseStatusException(
+                HttpStatus.BAD_GATEWAY, "Identity deactivation failed"))
+        .when(sessionDeleteService)
+        .deleteSession(17L);
+    mvc.perform(delete("/users/sessions/17")).andExpect(status().isBadGateway());
+  }
+
   /** The agencyId carried by PATH_GET_CONSULTANTS_FOR_AGENCY. */
   private static final long REQUESTED_AGENCY_ID = 10L;
 

@@ -3,28 +3,22 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
-import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
-import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
-import de.caritas.cob.userservice.api.identity.IdentityOtpType;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
@@ -36,6 +30,7 @@ import de.caritas.cob.userservice.api.tenant.TenantFixtures;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
@@ -56,11 +51,14 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.web.client.RestTemplate;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -68,9 +66,67 @@ import org.springframework.test.web.servlet.ResultActions;
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @WithTenant(1L)
 @Import(TenantFixtures.class)
-class CounsellorTopicPermissionWizardIT {
+class CounsellorTopicPermissionWizardIT
+    extends de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture {
 
   /** The Träger of every invite here; the new counsellor is created in it. */
+  @MockitoBean(name = "keycloakRestTemplate")
+  private RestTemplate boundedIdentityHttp;
+
+  @MockitoBean(name = "restTemplate")
+  private RestTemplate taskAuthHttp;
+
+  @MockitoBean private JwtDecoder taskDecoder;
+  @MockitoBean private TaskIdentityGrant taskIdentityGrant;
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @Autowired private Environment identityEnvironment;
+  @Autowired private ObjectMapper identityMapper;
+  private BoundedIdentityHttpFixtures.Provider nativeAccounts;
+  private final java.util.List<String> createdIdentityIds = new java.util.ArrayList<>();
+  @Autowired private org.springframework.jdbc.core.JdbcTemplate fixtureJdbc;
+  @Autowired private org.springframework.transaction.PlatformTransactionManager fixtureTransactions;
+
+  private void givenTaskAccounts() {
+    nativeAccounts =
+        BoundedIdentityHttpFixtures.givenProvider(
+            boundedIdentityHttp,
+            taskIdentityGrant,
+            taskIdentities,
+            identityEnvironment,
+            identityMapper,
+            body -> {
+              counsellorId = java.util.UUID.randomUUID().toString();
+              return counsellorId;
+            },
+            createdIdentityIds::add);
+    BoundedIdentityHttpFixtures.givenTaskGrants(taskAuthHttp, taskDecoder, taskIdentities);
+    BoundedIdentityHttpFixtures.givenWizardPolicy(
+        taskAuthHttp, taskIdentities, identityEnvironment, identityMapper);
+    BoundedIdentityHttpFixtures.givenOtp(
+        boundedIdentityHttp,
+        taskIdentities,
+        new de.caritas.cob.userservice.api.model.OtpInfoDTO()
+            .otpSetup(false)
+            .otpSecret("SECRET")
+            .otpSecretQrCode("QR")
+            .otpType(de.caritas.cob.userservice.api.model.OtpType.APP));
+    BoundedIdentityHttpFixtures.givenConsultingPolicy(
+        taskAuthHttp,
+        new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+                .ExtendedConsultingTypeResponseDTO()
+            .id(1)
+            .consultantBoundedToConsultingType(false));
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void clearCreatedIdentityRows() {
+    createdIdentityIds.forEach(
+        id ->
+            de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup.consultant(
+                fixtureJdbc, fixtureTransactions, id));
+    createdIdentityIds.clear();
+  }
+
   private static final long INVITE_TENANT = 79L;
 
   /** Created by the mocked admin facade, in the invite's Träger, to receive its permission. */
@@ -97,14 +153,6 @@ class CounsellorTopicPermissionWizardIT {
   private final List<Long> seededInviteIds = new ArrayList<>();
   @Autowired private ConsultantRepository consultantRepository;
 
-  @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
-
-  @MockitoBean
-  private de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation
-          .ConsultantAgencyRelationCreatorService
-      consultantAgencyRelationCreatorService;
-
-  @MockitoBean private KeycloakService keycloakService;
   @MockitoBean private AgencyService agencyService;
   @MockitoBean private TopicService topicService;
 
@@ -113,6 +161,7 @@ class CounsellorTopicPermissionWizardIT {
 
   @BeforeEach
   void upstreams() {
+    givenTaskAccounts();
     when(agencyFacts.find(anyLong()))
         .thenAnswer(
             invocation ->
@@ -126,14 +175,8 @@ class CounsellorTopicPermissionWizardIT {
                 AGENCY_TOPIC_A, topic(AGENCY_TOPIC_A, "Schulden"),
                 AGENCY_TOPIC_B, topic(AGENCY_TOPIC_B, "Sucht"),
                 OTHER_TENANT_TOPIC, topic(OTHER_TENANT_TOPIC, "Migration")));
-    counsellorId = fixtures.consultant(INVITE_TENANT).getId();
-    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
-        .thenReturn(
-            new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id(counsellorId)));
-    when(keycloakService.loginService(anyString(), anyString()))
-        .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
-    when(keycloakService.getOtpCredential(anyString()))
-        .thenReturn(new IdentityOtpCredential(false, "SECRET", "QR", IdentityOtpType.APP));
+    when(tenantService.getRestrictedTenantDataFresh(anyLong()))
+        .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
   }
 
   @AfterEach
@@ -232,6 +275,17 @@ class CounsellorTopicPermissionWizardIT {
   }
 
   @Test
+  void register_create_rejectsATopicOutsideTheInvitesTraeger() throws Exception {
+    String token = seedInvite(TopicPermission.CREATE, null);
+
+    register(token, "[99999]").andExpect(status().isBadRequest());
+
+    assertThat(inviteOf(token).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(nativeAccounts.commands()).isEmpty();
+    assertThat(createdIdentityIds).isEmpty();
+  }
+
+  @Test
   void register_create_acceptsAnotherTraegerTopic() throws Exception {
     String token = seedInvite(TopicPermission.CREATE, null);
 
@@ -271,8 +325,16 @@ class CounsellorTopicPermissionWizardIT {
   // --- helpers -----------------------------------------------------------------------------------
 
   private void agencyOffers(Long... topicIds) {
-    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
-        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(topicIds)));
+    var agency =
+        new AgencyDTO()
+            .id(AGENCY_ID)
+            .tenantId(INVITE_TENANT)
+            .consultingType(1)
+            .teamAgency(false)
+            .topicIds(List.of(topicIds));
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(agency);
+    when(agencyService.getPublicImportAgency(AGENCY_ID, INVITE_TENANT)).thenReturn(agency);
+    when(agencyService.getAgenciesWithoutCaching(any())).thenReturn(List.of(agency));
   }
 
   private static TopicDTO topic(Long id, String name) {

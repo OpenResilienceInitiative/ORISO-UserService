@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="20261007-task-identity-ownership" author="oriso">
+    <addColumn tableName="account_invite"><column name="agency_reservation_token" type="VARCHAR(64)"/></addColumn>
+    <addColumn tableName="id_reservation_release_task"><column name="reservation_token" type="VARCHAR(64)"/></addColumn>
+    <rollback><dropColumn tableName="account_invite" columnName="agency_reservation_token"/><dropColumn tableName="id_reservation_release_task" columnName="reservation_token"/></rollback>
+  </changeSet>
+</databaseChangeLog>

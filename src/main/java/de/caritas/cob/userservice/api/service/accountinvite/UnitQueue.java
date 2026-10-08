@@ -67,6 +67,16 @@ public class UnitQueue {
     if (invite.getTenantId() == null) {
       invite.setTenantId(admin.getTenantId());
     }
+    // Preserve only the proof held by the actual pending admin authorizing this dependency.
+    // Missing legacy proof stays missing; cancellation may never invent ownership.
+    if (java.util.Objects.equals(invite.getTenantId(), admin.getTenantId())) {
+      if (unit == InviteUnitType.AGENCY && java.util.Objects.equals(unitId, admin.getAgencyId())) {
+        invite.setAgencyReservationToken(admin.getAgencyReservationToken());
+      } else if (unit == InviteUnitType.TENANT
+          && java.util.Objects.equals(unitId, admin.getTenantId())) {
+        invite.setTenantIdReservationToken(admin.getTenantIdReservationToken());
+      }
+    }
     invite.setWaitingForUnit(unit);
     invite.setQueuedExpiryDays(AccountInviteService.validExpiryDays(expiresInDays));
     invite.setExpiresAt(null);

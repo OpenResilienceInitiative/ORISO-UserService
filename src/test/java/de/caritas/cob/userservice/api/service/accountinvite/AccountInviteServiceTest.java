@@ -861,7 +861,9 @@ class AccountInviteServiceTest {
   @Test
   void createInvite_Should_throwBadRequest_When_platformCreatesAgencyAdminInviteWithoutTenant() {
     // Lenient: without the guard the invite would be reserved and saved like any other.
-    lenient().when(agencyIdAllocationClient.reserve(null, null)).thenReturn(70L);
+    lenient()
+        .when(agencyIdAllocationClient.reserveWithProof(null, null))
+        .thenReturn(new AgencyIdAllocationClient.AgencyReservation(70L, "owner-proof"));
     lenient()
         .when(agencyIdAllocationClient.getAvailability(70L))
         .thenReturn(IdAllocationStatus.RESERVED);
@@ -877,7 +879,8 @@ class AccountInviteServiceTest {
   void createInvite_Should_keepTheStampedTenant_When_tragerAdminCreatesAgencyAdminInvite() {
     when(accessPolicy.authorizeCreate(any()))
         .thenAnswer(call -> call.<CreateAccountInviteCommand>getArgument(0).withTenantId(7L));
-    when(agencyIdAllocationClient.reserve(null, 7L)).thenReturn(70L);
+    when(agencyIdAllocationClient.reserveWithProof(null, 7L))
+        .thenReturn(new AgencyIdAllocationClient.AgencyReservation(70L, "owner-proof"));
     when(agencyIdAllocationClient.getAvailability(70L)).thenReturn(IdAllocationStatus.RESERVED);
     when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -2402,7 +2405,8 @@ class AccountInviteServiceTest {
     assertThat(invite.getTenantIdReservationToken()).isNull();
     // No reservation exists, so no availability re-validation and no release compensation.
     verify(tenantIdAllocationClient, never()).getAvailability(anyLong());
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(tenantIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
   }
 
   @Test
@@ -2456,7 +2460,8 @@ class AccountInviteServiceTest {
 
     assertThat(invite.getTenantId()).isEqualTo(21L);
     assertThat(invite.getTenantIdReservationToken()).isEqualTo("res-token-21");
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(tenantIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
   }
 
   @Test
@@ -2505,7 +2510,8 @@ class AccountInviteServiceTest {
 
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
     verify(accountInviteRepository, never()).save(any());
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(tenantIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
   }
 
   @Test
@@ -2530,7 +2536,7 @@ class AccountInviteServiceTest {
 
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
     verify(accountInviteRepository, never()).save(any());
-    verify(tenantIdAllocationClient).release(21L);
+    verify(tenantIdAllocationClient).release(21L, "res-token-21");
   }
 
   @Test
@@ -2558,7 +2564,7 @@ class AccountInviteServiceTest {
 
     assertThatThrownBy(() -> service.createInvite(command))
         .isInstanceOf(IllegalStateException.class);
-    verify(tenantIdAllocationClient).release(21L);
+    verify(tenantIdAllocationClient).release(21L, "res-token-21");
   }
 
   @Test
@@ -2567,7 +2573,8 @@ class AccountInviteServiceTest {
     when(tenantIdAllocationClient.reserve(null))
         .thenReturn(new TenantIdReservation(36L, "res-token-36"));
     when(tenantIdAllocationClient.getAvailability(36L)).thenReturn(IdAllocationStatus.RESERVED);
-    when(agencyIdAllocationClient.reserve(null, 36L)).thenReturn(5L);
+    when(agencyIdAllocationClient.reserveWithProof(null, 36L))
+        .thenReturn(new AgencyIdAllocationClient.AgencyReservation(5L, "agency-owner-proof"));
     when(agencyIdAllocationClient.getAvailability(5L)).thenReturn(IdAllocationStatus.RESERVED);
 
     AccountInvite invite =
@@ -2586,7 +2593,8 @@ class AccountInviteServiceTest {
 
     assertThat(invite.getTenantId()).isEqualTo(36L);
     assertThat(invite.getAgencyId()).isEqualTo(5L);
-    verify(agencyIdAllocationClient).reserve(null, 36L);
+    assertThat(invite.getAgencyReservationToken()).isEqualTo("agency-owner-proof");
+    verify(agencyIdAllocationClient).reserveWithProof(null, 36L);
   }
 
   @Test
@@ -2594,7 +2602,7 @@ class AccountInviteServiceTest {
     givenTenantIdFreeLocally(21L);
     when(tenantIdAllocationClient.reserve(21L))
         .thenReturn(new TenantIdReservation(21L, "res-token-21"));
-    when(agencyIdAllocationClient.reserve(9L, 21L))
+    when(agencyIdAllocationClient.reserveWithProof(9L, 21L))
         .thenThrow(new ConflictException("agencyId 9 is already assigned or reserved"));
 
     var command =
@@ -2611,8 +2619,9 @@ class AccountInviteServiceTest {
             IdAllocationMode.MANUAL);
 
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
-    verify(tenantIdAllocationClient).release(21L);
-    verify(agencyIdAllocationClient, never()).release(anyLong());
+    verify(tenantIdAllocationClient).release(21L, "res-token-21");
+    verify(agencyIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
     verify(accountInviteRepository, never()).save(any());
   }
 

@@ -142,6 +142,19 @@ public class AgencyService {
     return emptyList();
   }
 
+  /** CSV importer uses the public projection without forwarding its userservice-only bearer. */
+  public AgencyDTO getPublicImportAgency(Long agencyId, Long verifiedRowTenant) {
+    var api = getAgencyControllerApi();
+    var headers = securityHeaderSupplier.getCsrfHttpHeaders();
+    if (verifiedRowTenant != null) headers.set("tenantId", verifiedRowTenant.toString());
+    headers.forEach(
+        (key, value) -> api.getApiClient().addDefaultHeader(key, value.iterator().next()));
+    return api.getAgenciesByIds(List.of(agencyId)).stream()
+        .map(this::fromOriginalAgency)
+        .findFirst()
+        .orElse(null);
+  }
+
   private AgencyControllerApi getAgencyControllerApi() {
     return agencyServiceApiControllerFactory.createControllerApi();
   }

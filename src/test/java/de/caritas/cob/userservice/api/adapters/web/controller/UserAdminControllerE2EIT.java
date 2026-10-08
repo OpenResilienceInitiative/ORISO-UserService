@@ -21,6 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
@@ -33,6 +34,7 @@ import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerF
 import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
@@ -45,25 +47,6 @@ import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityProfile;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
-import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
@@ -74,6 +57,7 @@ import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup;
 import de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
@@ -88,24 +72,25 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
 import net.minidev.json.JSONArray;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.keycloak.admin.client.Keycloak;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.test.context.TestSecurityContextHolder;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -139,6 +124,18 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
   public static final int PAGE_SIZE = 10;
   @Autowired private MockMvc mockMvc;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+      lifecycle;
+
+  private final java.util.Map<String, Instant> fixtureLifecycleRows =
+      new java.util.LinkedHashMap<>();
+  @MockitoBean private TaskIdentityGrant taskGrants;
+  @MockitoBean private org.springframework.security.oauth2.jwt.JwtDecoder taskJwtDecoder;
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @Autowired private Environment environment;
+  private BoundedIdentityHttpFixtures.Provider identityProvider;
 
   @Autowired private ObjectMapper objectMapper;
 
@@ -185,29 +182,6 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockitoBean private Keycloak keycloak;
-
-  @MockitoBean(
-      extraInterfaces = {
-        IdentityAccountRemover.class,
-        IdentityAccountStatusLookup.class,
-        IdentityAuthentication.class,
-        IdentityDeactivator.class,
-        IdentityDummyEmailUpdater.class,
-        IdentityEmailAddressUpdater.class,
-        IdentityEmailOwnerLookup.class,
-        IdentityLocaleLookup.class,
-        IdentityPasswordChangeRequirement.class,
-        IdentityPasswordUpdater.class,
-        IdentityProfileLookup.class,
-        IdentityProfileUpdater.class,
-        IdentityRoleLookup.class,
-        IdentityRoleUpdater.class,
-        IdentitySecondFactor.class,
-        IdentityUsernameAvailability.class
-      })
-  IdentityClient identityClient;
-
   @MockitoBean TenantService tenantService;
 
   @MockitoBean private EmailBrandingResolver branding;
@@ -226,6 +200,9 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
   @AfterEach
   void reset() {
+    fixtureLifecycleRows.forEach(
+        (id, capturedAt) -> lifecycle.discardUncompletedCreation(id, 24, 0, capturedAt));
+    fixtureLifecycleRows.clear();
     try {
       if (cleanupConsultant) {
         ExistingAccountSetupFixtureCleanup.consultant(
@@ -234,6 +211,17 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
         ExistingAccountSetupFixtureCleanup.admin(jdbcTemplate, transactions, cleanupIdentityId);
       }
     } finally {
+      if (cleanupIdentityId != null) {
+        new TransactionTemplate(transactions)
+            .executeWithoutResult(
+                status -> {
+                  jdbcTemplate.update(
+                      "DELETE FROM identity_creation_attempt WHERE account_id = ?",
+                      cleanupIdentityId);
+                  jdbcTemplate.update(
+                      "DELETE FROM account_inactivity WHERE identity_id = ?", cleanupIdentityId);
+                });
+      }
       identityConfig.setDisplayNameAllowedForConsultants(false);
     }
   }
@@ -253,11 +241,22 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     when(topicControllerApi.getApiClient())
         .thenReturn(new de.caritas.cob.userservice.topicservice.generated.ApiClient());
 
-    CreatedIdentity keycloakResponse = new CreatedIdentity();
-    createdIdentityId = UUID.randomUUID().toString();
-    keycloakResponse.setUserId(createdIdentityId);
-    when(identityClient.createUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(keycloakResponse);
+    createdIdentityId = null;
+    cleanupIdentityId = null;
+    identityProvider =
+        BoundedIdentityHttpFixtures.givenProvider(
+            keycloakRestTemplate,
+            taskGrants,
+            taskIdentities,
+            environment,
+            objectMapper,
+            id -> {
+              createdIdentityId = id;
+              cleanupIdentityId = id;
+            });
+    BoundedIdentityHttpFixtures.givenTaskGrants(restTemplate, taskJwtDecoder, taskIdentities);
+    givenVerifiedHuman(
+        "1c80e100-266f-4a02-a3a3-703f236f4a63", 0L, List.of("tenant-admin", "agency-admin"));
     var resolved = new EmailBranding("Test product", null, "#124078", null, null);
     when(branding.resolve(Mockito.nullable(Long.class))).thenReturn(resolved);
     when(brandValues.values(Mockito.eq(resolved), Mockito.nullable(Long.class)))
@@ -271,29 +270,9 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
   private void givenCurrentSetupIdentity(
       String username, String email, AccountInviteTargetRole role, boolean consultant) {
-    cleanupIdentityId = createdIdentityId;
     cleanupConsultant = consultant;
-    when(((IdentityProfileLookup) identityClient).findById(createdIdentityId))
-        .thenReturn(
-            Optional.of(
-                new IdentityProfile(
-                    createdIdentityId,
-                    new UsernameTranscoder().encodeUsername(username),
-                    null,
-                    null,
-                    email)));
-    String realmRole =
-        switch (role) {
-          case TENANT_ADMIN -> "tenant-admin";
-          case AGENCY_ADMIN -> "restricted-agency-admin";
-          case COUNSELLOR -> "consultant";
-          default -> throw new IllegalArgumentException("Unsupported test role");
-        };
-    when(((IdentityRoleLookup) identityClient).findAllByUserId(createdIdentityId))
-        .thenReturn(List.of(realmRole));
-    when(((IdentityPasswordChangeRequirement) identityClient)
-            .requiresPasswordChange(createdIdentityId))
-        .thenReturn(true);
+    // The actual bounded creation command supplies the identity and setup-required projection.
+
   }
 
   private void assertIssuedSetup(AccountInviteTargetRole role, Long tenantId) {
@@ -308,8 +287,12 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
               assertThat(invite.getTargetRole()).isEqualTo(role);
               assertThat(invite.getTenantId()).isEqualTo(tenantId);
             });
-    Mockito.verify((IdentityPasswordChangeRequirement) identityClient)
-        .requiresPasswordChange(createdIdentityId);
+    assertThat(identityProvider.commands())
+        .anySatisfy(
+            command -> {
+              assertThat(command.operation()).isEqualTo("account.read");
+              assertThat(command.target()).isEqualTo(createdIdentityId);
+            });
   }
 
   @Test
@@ -656,6 +639,12 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     // given
     String adminId = "6d15b3ff-2394-4d9f-9ea5-e958afe6a65c";
     when(authenticatedUser.getUserId()).thenReturn(adminId);
+    var ownedAdmin = adminRepository.findById(adminId).orElseThrow();
+    givenVerifiedHuman(
+        adminId,
+        ownedAdmin.getTenantId(),
+        List.of(
+            ownedAdmin.getType() == AdminType.TENANT ? "tenant-admin" : "restricted-agency-admin"));
     when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(true);
     when(authenticatedUser.isSingleTenantAdmin()).thenReturn(false);
 
@@ -687,6 +676,12 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     // given
     String adminId = "6584f4a9-a7f0-42f0-b929-ab5c99c0802d";
     when(authenticatedUser.getUserId()).thenReturn(adminId);
+    var ownedAdmin = adminRepository.findById(adminId).orElseThrow();
+    givenVerifiedHuman(
+        adminId,
+        ownedAdmin.getTenantId(),
+        List.of(
+            ownedAdmin.getType() == AdminType.TENANT ? "tenant-admin" : "restricted-agency-admin"));
     when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(false);
     when(authenticatedUser.isSingleTenantAdmin()).thenReturn(true);
     // #968: self-patch dispatches to patchTenantAdmin, which scopes to the caller's tenant.
@@ -726,6 +721,12 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     // still exercises the same-tenant path.
     String adminId = "6584f4a9-a7f0-42f0-b929-ab5c99c0802d";
     when(authenticatedUser.getUserId()).thenReturn(adminId);
+    var ownedAdmin = adminRepository.findById(adminId).orElseThrow();
+    givenVerifiedHuman(
+        adminId,
+        ownedAdmin.getTenantId(),
+        List.of(
+            ownedAdmin.getType() == AdminType.TENANT ? "tenant-admin" : "restricted-agency-admin"));
     when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(false);
     when(authenticatedUser.isSingleTenantAdmin()).thenReturn(true);
     when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
@@ -762,6 +763,12 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     // given
     String adminId = "6584f4a9-a7f0-42f0-b929-ab5c99c0802d";
     when(authenticatedUser.getUserId()).thenReturn(adminId);
+    var ownedAdmin = adminRepository.findById(adminId).orElseThrow();
+    givenVerifiedHuman(
+        adminId,
+        ownedAdmin.getTenantId(),
+        List.of(
+            ownedAdmin.getType() == AdminType.TENANT ? "tenant-admin" : "restricted-agency-admin"));
     when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(false);
     when(authenticatedUser.isSingleTenantAdmin()).thenReturn(false);
 
@@ -1000,6 +1007,66 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     JSONArray embedded = JsonPath.read(contentAsString, "_embedded");
 
     assertAllElementsAreOfAdminType(embedded, AdminType.TENANT);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdminsKeepsProtectedPlatformMetadataWithoutReadingItsNativeStatus()
+      throws Exception {
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(authenticatedUser.getTenantId()).thenReturn(0L);
+    when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
+        .thenReturn(new RestrictedTenantDTO().subdomain("subdomain").name("name"));
+    String protectedId = "7b1e15fe-4039-4ce7-a078-05996ff06676";
+    String ordinaryId = "382517bc-7b9d-4c44-8d33-6b8638201c98";
+    for (String id : List.of(protectedId, ordinaryId)) {
+      var admin = adminRepository.findById(id).orElseThrow();
+      identityProvider.seed(
+          new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+              .AccountProjection(
+              id,
+              admin.getUsername(),
+              admin.getEmail(),
+              admin.getFirstName(),
+              admin.getLastName(),
+              admin.getTenantId(),
+              "de",
+              true,
+              false,
+              List.of("tenant-admin"),
+              false));
+    }
+
+    var response =
+        mockMvc
+            .perform(
+                get(
+                    "/useradmin/tenantadmins/search?query=*&page=1&perPage=100&order=ASC&field=FIRSTNAME"))
+            .andExpect(status().isOk())
+            .andReturn();
+    var rows = objectMapper.readTree(response.getResponse().getContentAsString()).path("_embedded");
+    com.fasterxml.jackson.databind.JsonNode protectedRow = null;
+    com.fasterxml.jackson.databind.JsonNode ordinaryRow = null;
+    for (var row : rows) {
+      var account = row.path("_embedded");
+      if (protectedId.equals(account.path("id").asText())) protectedRow = account;
+      if (ordinaryId.equals(account.path("id").asText())) ordinaryRow = account;
+    }
+    assertThat(protectedRow).isNotNull();
+    assertThat(protectedRow.path("username").asText()).isEqualTo("nbaile8");
+    assertThat(protectedRow.path("active").isNull() || protectedRow.path("active").isMissingNode())
+        .isTrue();
+    assertThat(ordinaryRow).isNotNull();
+    assertThat(ordinaryRow.path("active").isBoolean()).isTrue();
+    assertThat(ordinaryRow.path("active").asBoolean()).isTrue();
+    assertThat(identityProvider.commands())
+        .noneMatch(
+            command ->
+                command.operation().equals("account.read") && command.target().equals(protectedId));
+    assertThat(identityProvider.commands())
+        .anyMatch(
+            command ->
+                command.operation().equals("account.read") && command.target().equals(ordinaryId));
   }
 
   @Test
@@ -1474,5 +1541,47 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     String content = result.getResponse().getContentAsString();
     assertIssuedSetup(AccountInviteTargetRole.TENANT_ADMIN, 1L);
     return JsonPath.read(content, "_embedded.id");
+  }
+
+  private void givenVerifiedHuman(String id, Long tenant, List<String> roles) {
+    var previous =
+        org.springframework.security.core.context.SecurityContextHolder.getContext()
+            .getAuthentication();
+    if (previous == null) return;
+    if (lifecycle.snapshot(id).isEmpty()) {
+      var capturedAt = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+      lifecycle.assignAtCreation(id, tenant, 24, 0, capturedAt);
+      fixtureLifecycleRows.put(id, capturedAt);
+    }
+    var token =
+        Jwt.withTokenValue("synthetic-human-session")
+            .header("alg", "RS256")
+            .subject(id)
+            .claim("azp", "app")
+            .claim("tenantId", tenant == null ? null : tenant.toString())
+            .claim("realm_access", Map.of("roles", roles))
+            .issuedAt(Instant.now())
+            .expiresAt(Instant.now().plusSeconds(300))
+            .build();
+    TestSecurityContextHolder.setAuthentication(
+        new JwtAuthenticationToken(token, previous.getAuthorities()));
+    adminRepository
+        .findById(id)
+        .ifPresent(
+            admin ->
+                identityProvider.seed(
+                    new de.caritas.cob.userservice.api.adapters.keycloak.commands
+                        .KeycloakTaskCommands.AccountProjection(
+                        id,
+                        new UsernameTranscoder().decodeUsername(admin.getUsername()),
+                        admin.getEmail(),
+                        admin.getFirstName(),
+                        admin.getLastName(),
+                        admin.getTenantId(),
+                        "de",
+                        true,
+                        false,
+                        roles,
+                        false)));
   }
 }

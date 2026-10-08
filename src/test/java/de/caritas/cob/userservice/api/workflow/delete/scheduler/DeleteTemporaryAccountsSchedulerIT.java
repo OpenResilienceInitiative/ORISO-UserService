@@ -13,7 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControlle
 import de.caritas.cob.userservice.api.config.apiclient.ConsultingTypeServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.ConversationType;
@@ -38,7 +39,9 @@ import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettings
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures;
+import de.caritas.cob.userservice.api.workflow.deactivate.service.DeactivateGroupChatService;
 import de.caritas.cob.userservice.api.workflow.delete.service.AnonymousUserDeletionUnit;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
@@ -62,7 +65,6 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.keycloak.admin.client.Keycloak;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -70,13 +72,13 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
 import org.springframework.http.RequestEntity;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.web.client.RestTemplate;
@@ -106,7 +108,13 @@ class DeleteTemporaryAccountsSchedulerIT {
   private static final String MATRIX_USER_ID = "@temporary-participant:matrix.oriso.org";
 
   @Autowired private DeleteTemporaryAccountsScheduler scheduler;
+  @Autowired private DeactivateGroupChatService groupDeactivation;
   @Autowired private MockMvc mockMvc;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService
+      deletionLifecycle;
+
   @Autowired private ObjectMapper objectMapper;
   @Autowired private UserRepository userRepository;
   @Autowired private SessionRepository sessionRepository;
@@ -117,6 +125,12 @@ class DeleteTemporaryAccountsSchedulerIT {
   @Autowired private UserChatRepository userChatRepository;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private AnonymousUserDeletionUnit accountRemover;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService
+      fixtureDeletion;
+
+  @Autowired private org.springframework.transaction.PlatformTransactionManager fixtureTransactions;
   @Autowired private ChatAgencyRepository chatAgencyRepository;
 
   private static final String SEEDED_CONSULTANT_ID = "0b3b1cc6-be98-4787-aa56-212259d811b9";
@@ -130,8 +144,16 @@ class DeleteTemporaryAccountsSchedulerIT {
 
   @MockitoBean private TenantService tenantService;
   @MockitoBean private MatrixSynapseService matrixSynapseService;
-  @MockitoBean private Keycloak keycloak;
-  @MockitoSpyBean private KeycloakService identityAccounts;
+  @MockitoBean private TaskIdentityGrant taskGrants;
+  @MockitoBean private org.springframework.security.oauth2.jwt.JwtDecoder taskJwtDecoder;
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @Autowired private Environment environment;
+
+  @MockitoBean
+  @Qualifier("keycloakRestTemplate")
+  private RestTemplate keycloakRestTemplate;
+
+  private BoundedIdentityHttpFixtures.Provider identityProvider;
   @MockitoBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
   @MockitoBean private ConsultingTypeControllerApi consultingTypeControllerApi;
 
@@ -156,6 +178,10 @@ class DeleteTemporaryAccountsSchedulerIT {
 
   @BeforeEach
   void setUp() throws Exception {
+    identityProvider =
+        BoundedIdentityHttpFixtures.givenProvider(
+            keycloakRestTemplate, taskGrants, taskIdentities, environment, objectMapper, id -> {});
+    BoundedIdentityHttpFixtures.givenTaskGrants(restTemplate, taskJwtDecoder, taskIdentities);
     deleteSchedulerClaim();
     // Registration requires the agency's signed AVV (#1327).
     dpaOwner =
@@ -170,6 +196,8 @@ class DeleteTemporaryAccountsSchedulerIT {
     matrixUser.setUserId(MATRIX_USER_ID);
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(matrixUser));
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenOwnedMatrixUser(
+        matrixSynapseService, MATRIX_USER_ID);
     when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);
 
     when(agencyServiceApiControllerFactory.createControllerApi())
@@ -205,8 +233,33 @@ class DeleteTemporaryAccountsSchedulerIT {
     try {
       for (var userId : registeredUserIds) {
         try {
-          // The remover reports most failures as returned errors, not exceptions.
-          var errors = accountRemover.deleteUser(userId);
+          var errors =
+              new org.springframework.transaction.support.TransactionTemplate(fixtureTransactions)
+                  .execute(
+                      status -> {
+                        var owned = userRepository.findByIdForDeletionUpdate(userId);
+                        if (owned.isEmpty())
+                          return java.util.List
+                              .<de.caritas.cob.userservice.api.workflow.delete.model
+                                      .DeletionWorkflowError>
+                                  of();
+                        var user = owned.get();
+                        deletionLifecycle.beginUserDeletion(
+                            user, "temporary-account-fixture-cleanup");
+                        // Teardown owns this callback-recorded fixture account and ends its
+                        // test-only delay.
+                        user.setDeletionPausedUntil(null);
+                        user.setDeletionReadOnlyUntil(
+                            LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+                        userRepository.save(user);
+                        java.util.List<
+                                de.caritas.cob.userservice.api.workflow.delete.model
+                                    .DeletionWorkflowError>
+                            result =
+                                org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                                    fixtureDeletion, "performUserDeletion", user);
+                        return result;
+                      });
           if (!errors.isEmpty()) {
             failures.add(
                 new IllegalStateException(
@@ -244,7 +297,14 @@ class DeleteTemporaryAccountsSchedulerIT {
 
     assertFalse(userService.getUser(participant.getUserId()).isPresent());
     assertTrue(sessionRepository.findByUserUserId(participant.getUserId()).isEmpty());
-    verify(identityAccounts).deleteUser(participant.getUserId());
+    org.assertj.core.api.Assertions.assertThat(identityProvider.commands())
+        .anySatisfy(
+            command -> {
+              org.assertj.core.api.Assertions.assertThat(command.operation())
+                  .isEqualTo("account.delete");
+              org.assertj.core.api.Assertions.assertThat(command.target())
+                  .isEqualTo(participant.getUserId());
+            });
     verify(matrixSynapseService).deactivateUser(eq(MATRIX_USER_ID));
   }
 
@@ -257,7 +317,11 @@ class DeleteTemporaryAccountsSchedulerIT {
     scheduler.performDeletionWorkflow();
 
     assertTrue(userService.getUser(participant.getUserId()).isPresent());
-    verify(identityAccounts, never()).deleteUser(participant.getUserId());
+    org.assertj.core.api.Assertions.assertThat(identityProvider.commands())
+        .noneMatch(
+            command ->
+                command.operation().equals("account.delete")
+                    && command.target().equals(participant.getUserId()));
     claimService.release(otherReplica);
   }
 
@@ -280,7 +344,73 @@ class DeleteTemporaryAccountsSchedulerIT {
     scheduler.performDeletionWorkflow();
 
     assertTrue(userService.getUser(participant.getUserId()).isPresent());
-    verify(identityAccounts, never()).deleteUser(participant.getUserId());
+    org.assertj.core.api.Assertions.assertThat(identityProvider.commands())
+        .noneMatch(
+            command ->
+                command.operation().equals("account.delete")
+                    && command.target().equals(participant.getUserId()));
+  }
+
+  @Test
+  void anExpiredTemporaryAccountMarkedAfterSelectionIsKeptWhileDeletionIsPaused() throws Exception {
+    var participant = register(true);
+    ageBy(participant, maxAge.plusMinutes(1));
+    assertTrue(
+        userRepository
+            .findTemporaryAccountIdsCreatedBefore(LocalDateTime.now().minus(maxAge))
+            .contains(participant.getUserId()));
+    var stored = userRepository.findById(participant.getUserId()).orElseThrow();
+    deletionLifecycle.beginUserDeletion(stored, "fixture-selection-race");
+    stored.setDeletionReadOnlyUntil(LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+    deletionLifecycle.pauseUserDeletion(
+        stored, "Fixture pause after candidate selection", 1, "fixture-owner");
+    userRepository.save(stored);
+
+    assertTrue(accountRemover.deleteUser(participant.getUserId()).isEmpty());
+    scheduler.performDeletionWorkflow();
+
+    var retained = userRepository.findById(participant.getUserId()).orElseThrow();
+    assertTrue(retained.getDeleteDate() != null);
+    assertTrue(
+        retained.getDeletionPausedUntil().isAfter(LocalDateTime.now(java.time.ZoneOffset.UTC)));
+    assertTrue(userChatRepository.findByChatAndUser(inviteGroup, retained).isPresent());
+    org.assertj.core.api.Assertions.assertThat(identityProvider.commands())
+        .noneMatch(
+            command ->
+                command.operation().equals("account.delete")
+                    && command.target().equals(participant.getUserId()));
+    verify(matrixSynapseService, never()).deactivateUser(MATRIX_USER_ID);
+  }
+
+  @Test
+  void anExpiredTemporaryAccountMarkedAfterSelectionIsKeptUntilReadOnlySafeguardEnds()
+      throws Exception {
+    var participant = register(true);
+    ageBy(participant, maxAge.plusMinutes(1));
+    assertTrue(
+        userRepository
+            .findTemporaryAccountIdsCreatedBefore(LocalDateTime.now().minus(maxAge))
+            .contains(participant.getUserId()));
+    var stored = userRepository.findById(participant.getUserId()).orElseThrow();
+    deletionLifecycle.beginUserDeletion(stored, "fixture-selection-race");
+    stored.setDeletionReadOnlyUntil(LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(1));
+    userRepository.save(stored);
+
+    assertTrue(accountRemover.deleteUser(participant.getUserId()).isEmpty());
+    scheduler.performDeletionWorkflow();
+
+    var retained = userRepository.findById(participant.getUserId()).orElseThrow();
+    assertTrue(retained.getDeleteDate() != null);
+    assertTrue(
+        retained.getDeletionReadOnlyUntil().isAfter(LocalDateTime.now(java.time.ZoneOffset.UTC)));
+    assertTrue(retained.getDeletionPausedUntil() == null);
+    assertTrue(userChatRepository.findByChatAndUser(inviteGroup, retained).isPresent());
+    org.assertj.core.api.Assertions.assertThat(identityProvider.commands())
+        .noneMatch(
+            command ->
+                command.operation().equals("account.delete")
+                    && command.target().equals(participant.getUserId()));
+    verify(matrixSynapseService, never()).deactivateUser(MATRIX_USER_ID);
   }
 
   @Test
@@ -291,7 +421,11 @@ class DeleteTemporaryAccountsSchedulerIT {
     scheduler.performDeletionWorkflow();
 
     assertTrue(userService.getUser(member.getUserId()).isPresent());
-    verify(identityAccounts, never()).deleteUser(member.getUserId());
+    org.assertj.core.api.Assertions.assertThat(identityProvider.commands())
+        .noneMatch(
+            command ->
+                command.operation().equals("account.delete")
+                    && command.target().equals(member.getUserId()));
   }
 
   @Test
@@ -303,7 +437,8 @@ class DeleteTemporaryAccountsSchedulerIT {
     assertTrue(
         StreamSupport.stream(userRepository.findAll().spliterator(), false)
             .noneMatch(user -> registration.getEmail().equals(user.getEmail())));
-    verify(identityAccounts, never()).createUser(any(UserDTO.class));
+    org.assertj.core.api.Assertions.assertThat(identityProvider.commands())
+        .noneMatch(command -> command.operation().equals("account.create"));
   }
 
   @Test
@@ -313,10 +448,12 @@ class DeleteTemporaryAccountsSchedulerIT {
     assertTrue(userChatRepository.findByChatAndUser(group, participant).isPresent());
     ageBy(participant, maxAge.plusMinutes(1));
 
+    // A live group is not an expired scheduled session, even when its participant expires.
+    groupDeactivation.deactivateStaleGroupChats();
     scheduler.performDeletionWorkflow();
 
     assertFalse(userService.getUser(participant.getUserId()).isPresent());
-    assertTrue(chatRepository.existsById(group.getId()));
+    assertTrue(chatRepository.findById(group.getId()).orElseThrow().isActive());
     verify(matrixSynapseService, never()).purgeRoom("!self-help-group:matrix.oriso.org");
   }
 
@@ -384,6 +521,7 @@ class DeleteTemporaryAccountsSchedulerIT {
     chat.setRepetitive(true);
     chat.setChatOwner(consultantRepository.findById(SEEDED_CONSULTANT_ID).orElseThrow());
     chat.setConsultingTypeId(1);
+    chat.setStartDate(LocalDateTime.now());
     chat.setDuration(90);
     chat.setMaxParticipants(10);
     chat.setSourceLanguage("de");

@@ -3,8 +3,6 @@ package de.caritas.cob.userservice.api.workflow.accountinactivity;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.sun.net.httpserver.HttpServer;
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient;
-import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -14,7 +12,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
-import org.keycloak.admin.client.KeycloakBuilder;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -154,8 +151,9 @@ class AccountInactivityBootstrapTest {
     volatile boolean blockInventory;
     volatile boolean failInventory;
     final AtomicInteger pages = new AtomicInteger();
+    final java.util.concurrent.atomic.AtomicReference<Throwable> httpFailure =
+        new java.util.concurrent.atomic.AtomicReference<>();
     final HttpServer server;
-    final org.keycloak.admin.client.Keycloak kc;
     final AccountInactivityService lifecycle;
     final AccountInactivityBootstrap bootstrap;
 
@@ -165,56 +163,85 @@ class AccountInactivityBootstrapTest {
       server.createContext(
           "/",
           exchange -> {
-            var path = exchange.getRequestURI().getPath();
-            String response;
-            int status = 200;
-            if (path.endsWith("/clients")) {
-              if (failInventory) status = 503;
-              int run = inventoryStarts.incrementAndGet();
-              if (run == 1) inventoryEntered.countDown();
-              else secondInventoryEntered.countDown();
-              if (blockInventory && run == 1) {
-                try {
-                  releaseInventory.await(5, java.util.concurrent.TimeUnit.SECONDS);
-                } catch (InterruptedException interrupted) {
-                  Thread.currentThread().interrupt();
+            try {
+              var json = new com.fasterxml.jackson.databind.ObjectMapper();
+              var request = json.readTree(exchange.getRequestBody().readAllBytes());
+              var proof =
+                  com.nimbusds.jose.JWSObject.parse(
+                      exchange.getRequestHeaders().getFirst("X-ORISO-Origin-Authorization"));
+              if (!proof.verify(
+                  new com.nimbusds.jose.crypto.MACVerifier(
+                      "different-test-only-origin-key-32".getBytes(StandardCharsets.UTF_8))))
+                throw new AssertionError("Invalid inventory origin signature");
+              assertThat(exchange.getRequestMethod()).isEqualTo("POST");
+              assertThat(exchange.getRequestURI().getPath())
+                  .isEqualTo("/realms/test/oriso-commands/v1/account-inventory");
+              assertThat(exchange.getRequestHeaders().getFirst("Authorization"))
+                  .isEqualTo("Bearer bounded-maintenance-token");
+              assertThat(request.get("cutoff").asText()).isEqualTo("2026-02-01T00:00:00Z");
+              int first = request.get("first").asInt();
+              int max = request.get("max").asInt();
+              assertThat(max).isEqualTo(1);
+              assertThat(proof.getPayload().toJSONObject())
+                  .containsEntry("operation", "account.inventory")
+                  .containsEntry("originKind", "LIFECYCLE")
+                  .containsEntry("roles", List.of())
+                  .containsEntry(
+                      "target", "cutoff:2026-02-01T00:00:00Z/first:" + first + "/max:" + max);
+              int status = failInventory ? 503 : 200;
+              if (first == 0) {
+                int run = inventoryStarts.incrementAndGet();
+                if (run == 1) inventoryEntered.countDown();
+                else secondInventoryEntered.countDown();
+                if (blockInventory && run == 1) {
+                  try {
+                    releaseInventory.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                  } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                  }
                 }
               }
-            }
-            if (path.endsWith("/users")) {
               pages.incrementAndGet();
-              var query = exchange.getRequestURI().getQuery();
-              int first =
-                  Integer.parseInt(
-                      java.util.Arrays.stream(query.split("&"))
-                          .filter(p -> p.startsWith("first="))
-                          .findFirst()
-                          .orElse("first=0")
-                          .substring(6));
-              response = first < people.size() ? "[" + people.get(first) + "]" : "[]";
-            } else if (path.endsWith("/clients"))
-              response = withClients.get() ? "[{\"id\":\"app\",\"clientId\":\"oriso\"}]" : "[]";
-            else if (path.endsWith("/role-mappings/realm/composite"))
-              response =
-                  realmRoles.getOrDefault(
-                      path.split("/users/")[1].split("/")[0],
-                      "[{\"name\":\"global-support-admin\"}]");
-            else if (path.endsWith("/role-mappings/clients/app/composite"))
-              response = clientRoles.getOrDefault(path.split("/users/")[1].split("/")[0], "[]");
-            else {
-              String id = path.substring(path.lastIndexOf('/') + 1);
-              response =
-                  people.stream()
-                      .filter(p -> p.contains("\"id\":\"" + id + "\""))
-                      .findFirst()
-                      .orElse("{}");
-              if (response.equals("{}")) status = 404;
+              var accounts = new java.util.ArrayList<java.util.Map<String, Object>>();
+              if (first < people.size()) {
+                var person = json.readTree(people.get(first));
+                String id = person.get("id").asText();
+                var effectiveRoles = new java.util.HashSet<String>();
+                for (var role :
+                    json.readTree(
+                        realmRoles.getOrDefault(id, "[{\"name\":\"global-support-admin\"}]")))
+                  effectiveRoles.add(role.get("name").asText());
+                if (withClients.get())
+                  for (var role : json.readTree(clientRoles.getOrDefault(id, "[]")))
+                    effectiveRoles.add(role.get("name").asText());
+                accounts.add(
+                    java.util.Map.of(
+                        "id",
+                        id,
+                        "tenantId",
+                        0L,
+                        "createdTimestamp",
+                        person.get("createdTimestamp").asLong(),
+                        "eligibleHuman",
+                        !person.has("serviceAccountClientId")
+                            && !AccountInactivityIdentityRoles.isPureTechnical(effectiveRoles)));
+              }
+              String response =
+                  json.writeValueAsString(
+                      java.util.Map.of("accounts", accounts, "hasMore", first < people.size()));
+              var bytes = response.getBytes(StandardCharsets.UTF_8);
+              exchange.getResponseHeaders().set("Content-Type", "application/json");
+              exchange.sendResponseHeaders(status, bytes.length);
+              exchange.getResponseBody().write(bytes);
+              exchange.close();
+            } catch (Throwable failure) {
+              httpFailure.set(failure);
+              try {
+                exchange.sendResponseHeaders(500, -1);
+              } finally {
+                exchange.close();
+              }
             }
-            var bytes = response.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(status, bytes.length);
-            exchange.getResponseBody().write(bytes);
-            exchange.close();
           });
       server.start();
       var ds = new DriverManagerDataSource("jdbc:h2:mem:bootstrap;DB_CLOSE_DELAY=-1", "sa", "");
@@ -258,18 +285,38 @@ class AccountInactivityBootstrapTest {
                   throw new AssertionError();
                 }
               });
-      kc =
-          KeycloakBuilder.builder()
-              .serverUrl("http://127.0.0.1:" + server.getAddress().getPort())
-              .realm("test")
-              .authorization("test-token")
-              .build();
-      var config = new KeycloakConfig();
-      config.setRealm("test");
+      var identities = new de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration();
+      identities
+          .getTasks()
+          .put(
+              "account-maintenance",
+              new de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials(
+                  "backend-account-maintenance", "test-maintenance-secret", "maintenance-subject"));
+      var grants =
+          org.mockito.Mockito.mock(
+              de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant.class);
+      org.mockito.Mockito.when(
+              grants.token(
+                  de.caritas.cob.userservice.api.config.auth.TaskIdentity.ACCOUNT_MAINTENANCE))
+          .thenReturn("bounded-maintenance-token");
+      var commands =
+          new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands(
+              new RestTemplate(new org.springframework.http.client.JdkClientHttpRequestFactory()),
+              identities,
+              grants,
+              new de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityOriginProof(
+                  java.util.Base64.getEncoder().encodeToString(new byte[32]),
+                  java.util.Base64.getEncoder()
+                      .encodeToString(
+                          "different-test-only-origin-key-32".getBytes(StandardCharsets.UTF_8)),
+                  clock),
+              "http://127.0.0.1:" + server.getAddress().getPort(),
+              "test");
       bootstrap =
           new AccountInactivityBootstrap(
               jdbc,
-              new KeycloakClient(new RestTemplate(), kc, config),
+              new de.caritas.cob.userservice.api.adapters.keycloak.commands
+                  .KeycloakInactivityInventory(jdbc, commands),
               lifecycle,
               clock,
               new DataSourceTransactionManager(ds),
@@ -277,9 +324,9 @@ class AccountInactivityBootstrapTest {
     }
 
     public void close() {
-      kc.close();
       server.stop(0);
       httpWorkers.shutdownNow();
+      assertThat(httpFailure.get()).isNull();
     }
   }
 }

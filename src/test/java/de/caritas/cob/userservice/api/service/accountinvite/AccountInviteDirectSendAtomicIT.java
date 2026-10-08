@@ -118,8 +118,8 @@ class AccountInviteDirectSendAtomicIT {
     when(tenantIdAllocationClient.reserve(null))
         .thenReturn(new TenantIdReservation(17L, "reservation-17"));
     when(tenantIdAllocationClient.getAvailability(17L)).thenReturn(IdAllocationStatus.RESERVED);
-    when(tenantIdAllocationClient.release(17L)).thenReturn(true);
-    when(agencyIdAllocationClient.release(23L)).thenReturn(true);
+    when(tenantIdAllocationClient.release(17L, "reservation-17")).thenReturn(true);
+    when(agencyIdAllocationClient.release(23L, "reservation-23")).thenReturn(true);
     templateId =
         templateRepository
             .save(
@@ -157,7 +157,7 @@ class AccountInviteDirectSendAtomicIT {
         .isInstanceOf(SmtpSendException.class);
 
     assertThat(accountInviteRepository.count()).isZero();
-    verify(tenantIdAllocationClient).release(17L);
+    verify(tenantIdAllocationClient).release(17L, "reservation-17");
     verifyNoInteractions(deliveryFailureRecorder);
 
     service.createAndSendInvite(tenantAdminInvite(), templateId);
@@ -173,7 +173,8 @@ class AccountInviteDirectSendAtomicIT {
 
   @Test
   void directSend_ShouldReleaseTenantAndAgencyReservationsWhenSmtpRejects() {
-    when(agencyIdAllocationClient.reserve(null, 17L)).thenReturn(23L);
+    when(agencyIdAllocationClient.reserveWithProof(null, 17L))
+        .thenReturn(new AgencyIdAllocationClient.AgencyReservation(23L, "reservation-23"));
     when(agencyIdAllocationClient.getAvailability(23L)).thenReturn(IdAllocationStatus.RESERVED);
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://example.org/invite/token");
@@ -186,8 +187,8 @@ class AccountInviteDirectSendAtomicIT {
         .isSameAs(failure);
 
     assertThat(accountInviteRepository.count()).isZero();
-    verify(tenantIdAllocationClient).release(17L);
-    verify(agencyIdAllocationClient).release(23L);
+    verify(tenantIdAllocationClient).release(17L, "reservation-17");
+    verify(agencyIdAllocationClient).release(23L, "reservation-23");
   }
 
   @Test
@@ -207,12 +208,13 @@ class AccountInviteDirectSendAtomicIT {
         .satisfies(exception -> assertThat(exception.getSuppressed()).hasSize(1));
 
     assertThat(accountInviteRepository.findAll()).hasSize(1);
-    verify(tenantIdAllocationClient, never()).release(17L);
+    verify(tenantIdAllocationClient, never()).release(17L, "reservation-17");
   }
 
   @Test
   void directSend_ShouldPersistTenantReleaseRetryAndStillReleaseAgency() {
-    when(agencyIdAllocationClient.reserve(null, 17L)).thenReturn(23L);
+    when(agencyIdAllocationClient.reserveWithProof(null, 17L))
+        .thenReturn(new AgencyIdAllocationClient.AgencyReservation(23L, "reservation-23"));
     when(agencyIdAllocationClient.getAvailability(23L)).thenReturn(IdAllocationStatus.RESERVED);
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://example.org/invite/token");
@@ -220,18 +222,19 @@ class AccountInviteDirectSendAtomicIT {
     doThrow(failure)
         .when(inviteMailDispatchService)
         .send(any(), any(), any(), any(), any(), any(), any());
-    when(tenantIdAllocationClient.release(17L)).thenReturn(false);
+    when(tenantIdAllocationClient.release(17L, "reservation-17")).thenReturn(false);
 
     assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminAgencyInvite(), templateId))
         .isSameAs(failure);
 
-    verify(agencyIdAllocationClient).release(23L);
+    verify(agencyIdAllocationClient).release(23L, "reservation-23");
     assertThat(reservationReleaseTaskRepository.findAll())
         .singleElement()
         .satisfies(
             task -> {
               assertThat(task.getAllocationType()).isEqualTo(IdReservationReleaseType.TENANT);
               assertThat(task.getReservedId()).isEqualTo(17L);
+              assertThat(task.getReservationToken()).isEqualTo("reservation-17");
               assertThat(task.getAttemptCount()).isEqualTo(1);
               assertThat(task.getLastAttemptAt()).isNotNull();
             });
@@ -268,7 +271,7 @@ class AccountInviteDirectSendAtomicIT {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any());
-    verify(tenantIdAllocationClient, never()).release(17L);
+    verify(tenantIdAllocationClient, never()).release(17L, "reservation-17");
 
     assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminInvite(), templateId))
         .isInstanceOf(

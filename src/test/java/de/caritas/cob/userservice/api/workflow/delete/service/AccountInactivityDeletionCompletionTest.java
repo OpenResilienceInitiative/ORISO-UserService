@@ -108,13 +108,22 @@ class AccountInactivityDeletionCompletionTest {
     var mediaBodies = new java.util.ArrayList<String>();
     var appointmentCalls = new AtomicInteger();
     var identityCalls = new AtomicInteger();
+    var lifecycleStatusCalls = new AtomicInteger();
+    var verificationFailure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
     var remote = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     remote.createContext(
         "/",
         exchange -> {
           int status;
-          if (exchange.getRequestURI().getPath().startsWith("/admin/")) {
-            status = 404;
+          if (exchange.getRequestURI().getPath().startsWith("/realms/test/oriso-commands/v1/")) {
+            lifecycleStatusCalls.incrementAndGet();
+            try {
+              InactivityCommandTestSupport.verify(exchange, "", id, 7L, "account.lifecycle-status");
+              status = 404;
+            } catch (Throwable invalid) {
+              verificationFailure.compareAndSet(null, invalid);
+              status = 500;
+            }
           } else if (exchange.getRequestURI().getPath().equals("/internal/lifecycle/forget")) {
             mediaCalls.incrementAndGet();
             mediaBodies.add(
@@ -144,6 +153,14 @@ class AccountInactivityDeletionCompletionTest {
       tech.setClientId("test");
       tech.setClientSecret("test");
       config.setTechnicalUser(tech);
+      var taskIdentities = new TaskIdentityConfiguration();
+      taskIdentities
+          .getTasks()
+          .put(
+              "appointment-cleanup",
+              new TaskIdentityCredentials(
+                  "backend-appointment-cleanup", "synthetic-cleanup-secret", "cleanup-subject"));
+      ReflectionTestUtils.setField(config, "taskIdentities", taskIdentities);
       var security = new SecurityHeaderSupplier(new AuthenticatedUser());
       ReflectionTestUtils.setField(security, "csrfHeaderProperty", "X-CSRF");
       ReflectionTestUtils.setField(security, "csrfCookieProperty", "CSRF");
@@ -151,6 +168,11 @@ class AccountInactivityDeletionCompletionTest {
           new IdentityAuthentication() {
             public IdentityLogin login(String u, String p) {
               return new IdentityLogin("external-test-token", 60, 60, "unused");
+            }
+
+            public IdentityLogin loginTask(
+                de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials task) {
+              return loginService(task.getClientId(), task.getClientSecret());
             }
 
             public IdentityLogin loginService(String clientId, String clientSecret) {
@@ -177,6 +199,15 @@ class AccountInactivityDeletionCompletionTest {
       ReflectionTestUtils.setField(appointments, "appointmentFeatureEnabled", true);
       var remover =
           new IdentityAccountRemover() {
+            public void deleteUser(
+                String subject,
+                de.caritas.cob.userservice.api.adapters.keycloak.commands
+                        .IdentityCommandAuthorization
+                    origin) {
+              origin.requireLifecycleDeletion(id);
+              deleteUser(subject);
+            }
+
             public void deleteUser(String subject) {
               transport.delete(url + "/identity/" + subject);
             }
@@ -200,22 +231,14 @@ class AccountInactivityDeletionCompletionTest {
           .registerSingleton("identity", new DeleteKeycloakAskerAction(remover));
       var service = new InactiveAskerDeletionService(users, new ActionsRegistry(context));
       context.getBeanFactory().registerSingleton("deletion", service);
-      var kcConfig = new de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig();
-      kcConfig.setRealm("test");
       var matrixConfig = new de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig();
       matrixConfig.setApiUrl(url);
-      try (var kc =
-          org.keycloak.admin.client.KeycloakBuilder.builder()
-              .serverUrl(url)
-              .realm("test")
-              .authorization("test-token")
-              .build()) {
+      {
         var effects =
             new DefaultAccountInactivityEffects(
                 jdbc,
                 transactions,
-                new de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient(
-                    transport, kc, kcConfig),
+                InactivityCommandTestSupport.lifecycle(jdbc, url),
                 new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService(
                     matrixConfig,
                     transport,
@@ -281,6 +304,8 @@ class AccountInactivityDeletionCompletionTest {
         assertThat(mediaCalls).hasValue(2);
         assertThat(appointmentCalls).hasValue(3);
         assertThat(identityCalls).hasValue(2);
+        assertThat(lifecycleStatusCalls.get()).isPositive();
+        assertThat(verificationFailure.get()).isNull();
         assertThat(users.findById(id)).isEmpty();
       }
     } finally {

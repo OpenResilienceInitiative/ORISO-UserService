@@ -6,17 +6,13 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.exception.ImportException;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
-import java.io.FileReader;
 import java.io.IOException;
-import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -31,13 +27,13 @@ import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
-import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVRecord;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
+@lombok.extern.slf4j.Slf4j
 @RequiredArgsConstructor
 public class ConsultantImportService {
 
@@ -50,7 +46,18 @@ public class ConsultantImportService {
   @Value("${multitenancy.enabled}")
   private Boolean multiTenancyEnabled;
 
-  private final @NonNull IdentityUsernameAvailability identityUsernameAvailability;
+  private final @NonNull de.caritas.cob.userservice.api.adapters.keycloak.commands
+          .IdentityCreationLocalCompletion
+      localCompletion;
+  private final @NonNull de.caritas.cob.userservice.api.adapters.keycloak.commands
+          .IdentityAccountProvisioning
+      identityProvisioning;
+  private final @NonNull de.caritas.cob.userservice.api.adapters.keycloak.commands
+          .ConfiguredConsultantImport
+      configuredImport;
+  private final @NonNull de.caritas.cob.userservice.api.facade.rollback.RollbackFacade
+      rollbackFacade;
+  private final @NonNull org.springframework.transaction.PlatformTransactionManager transactions;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull AgencyService agencyService;
@@ -71,197 +78,259 @@ public class ConsultantImportService {
 
     this.protocolFile = protocolFilename + "." + System.currentTimeMillis();
 
-    Reader in;
+    var captured = configuredImport.capture();
     List<CSVRecord> records;
-    String logMessage;
-    Consultant consultant;
 
-    try {
-      in = new FileReader(importFilename);
-      records = CSVFormat.DEFAULT.parse(in).getRecords();
-    } catch (Exception exception) {
-      throw new InternalServerErrorException(exception.getMessage());
-    }
+    records = captured.records();
 
     for (CSVRecord record : records) {
-
+      var createdAccountId = new java.util.concurrent.atomic.AtomicReference<String>();
       try {
+        new org.springframework.transaction.support.TransactionTemplate(transactions)
+            .executeWithoutResult(
+                status -> {
+                  String logMessage;
+                  Consultant consultant = null;
+                  Consultant existingTarget = null;
+                  ImportRecord importRecord = getImportRecord(record);
 
-        ImportRecord importRecord = getImportRecord(record);
+                  // Check if username is valid
+                  if (importRecord.getConsultantId() == null
+                      && !userHelper.isUsernameValid(importRecord.getUsername())) {
+                    throw new ImportException(
+                        "Configured consultant import username length is invalid");
+                  }
 
-        // Check if username is valid
-        if (importRecord.getConsultantId() == null
-            && !userHelper.isUsernameValid(importRecord.getUsername())) {
-          writeToImportLog(
-              String.format(
-                  "Username length is invalid. Skipping import for %s",
-                  importRecord.getUsername()));
-          continue;
-        }
+                  String[] agencyRoleSetArray =
+                      importRecord.getAgenciesAndRoleSets().split(DELIMITER);
 
-        String[] agencyRoleSetArray = importRecord.getAgenciesAndRoleSets().split(DELIMITER);
+                  HashSet<String> roles = new HashSet<>();
+                  HashSet<Long> agencyIds = new HashSet<>();
+                  List<AgencyDTO> verifiedAgencies = new ArrayList<>();
+                  List<Boolean> formalLanguageList = new ArrayList<>();
+                  for (String agencyRoleSet : agencyRoleSetArray) {
 
-        HashSet<String> roles = new HashSet<>();
-        HashSet<Long> agencyIds = new HashSet<>();
-        List<Boolean> formalLanguageList = new ArrayList<>();
-        for (String agencyRoleSet : agencyRoleSetArray) {
+                    if (!agencyRoleSet.contains(AGENCY_ROLE_DELIMITER)) {
+                      throw new ImportException(
+                          String.format(
+                              "Consultant %s could not be imported: Invalid agency roleset %s",
+                              importRecord.getUsername(), agencyRoleSet));
+                    }
+                    String[] agencyRoleArray = agencyRoleSet.split(AGENCY_ROLE_DELIMITER);
 
-          if (!agencyRoleSet.contains(AGENCY_ROLE_DELIMITER)) {
-            throw new ImportException(
-                String.format(
-                    "Consultant %s could not be imported: Invalid agency roleset %s",
-                    importRecord.getUsername(), agencyRoleSet));
-          }
-          String[] agencyRoleArray = agencyRoleSet.split(AGENCY_ROLE_DELIMITER);
+                    AgencyDTO agency =
+                        agencyService.getPublicImportAgency(
+                            Long.valueOf(agencyRoleArray[0]), importRecord.getTenantId());
 
-          AgencyDTO agency =
-              agencyService.getAgencyWithoutCaching(Long.valueOf(agencyRoleArray[0]));
+                    if (agency == null) {
+                      throw new ImportException(
+                          String.format(
+                              "Consultant %s could not be imported: Invalid agency id %s",
+                              importRecord.getUsername(), agencyRoleArray[0]));
+                    }
 
-          if (agency == null) {
-            throw new ImportException(
-                String.format(
-                    "Consultant %s could not be imported: Invalid agency id %s",
-                    importRecord.getUsername(), agencyRoleArray[0]));
-          }
+                    agencyIds.add(Long.valueOf(agencyRoleArray[0]));
+                    verifiedAgencies.add(agency);
 
-          agencyIds.add(Long.valueOf(agencyRoleArray[0]));
+                    ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO =
+                        consultingTypeManager.getConsultingTypeSettings(agency.getConsultingType());
 
-          ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO =
-              consultingTypeManager.getConsultingTypeSettings(agency.getConsultingType());
+                    if (!extendedConsultingTypeResponseDTO
+                        .getRoles()
+                        .getConsultant()
+                        .getRoleSets()
+                        .containsKey(agencyRoleArray[1])) {
+                      throw new ImportException(
+                          String.format(
+                              "Consultant %s could not be imported: invalid role set %s for agency id %s and consulting type %s",
+                              importRecord.getUsername(),
+                              agencyRoleArray[1],
+                              agencyRoleArray[0],
+                              extendedConsultingTypeResponseDTO.getSlug()));
+                    }
 
-          if (!extendedConsultingTypeResponseDTO
-              .getRoles()
-              .getConsultant()
-              .getRoleSets()
-              .containsKey(agencyRoleArray[1])) {
-            throw new ImportException(
-                String.format(
-                    "Consultant %s could not be imported: invalid role set %s for agency id %s and consulting type %s",
-                    importRecord.getUsername(),
-                    agencyRoleArray[1],
-                    agencyRoleArray[0],
-                    extendedConsultingTypeResponseDTO.getSlug()));
-          }
+                    for (Map.Entry<String, List<String>> roleSet :
+                        extendedConsultingTypeResponseDTO
+                            .getRoles()
+                            .getConsultant()
+                            .getRoleSets()
+                            .entrySet()) {
+                      if (roleSet.getKey().equals(agencyRoleArray[1])) {
+                        roles.addAll(roleSet.getValue());
+                        break;
+                      }
+                    }
 
-          for (Map.Entry<String, List<String>> roleSet :
-              extendedConsultingTypeResponseDTO
-                  .getRoles()
-                  .getConsultant()
-                  .getRoleSets()
-                  .entrySet()) {
-            if (roleSet.getKey().equals(agencyRoleArray[1])) {
-              roles.addAll(roleSet.getValue());
-              break;
-            }
-          }
+                    formalLanguageList.add(extendedConsultingTypeResponseDTO.getLanguageFormal());
 
-          formalLanguageList.add(extendedConsultingTypeResponseDTO.getLanguageFormal());
+                    if (isTrue(agency.getTeamAgency())) {
+                      importRecord.setTeamConsultant(true);
+                    }
+                  }
 
-          if (isTrue(agency.getTeamAgency())) {
-            importRecord.setTeamConsultant(true);
-          }
-        }
+                  if (!roles.contains("consultant")
+                      || !java.util.Set.of("consultant", "group-chat-consultant").containsAll(roles)
+                      || verifiedAgencies.stream()
+                          .anyMatch(
+                              agency ->
+                                  agency.getTenantId() != null
+                                      && !java.util.Objects.equals(
+                                          agency.getTenantId(), importRecord.getTenantId())))
+                    throw new ImportException(
+                        "Configured import row exceeds its tenant or consultant role scope");
 
-        if (formalLanguageList.size() == 1) {
-          importRecord.setFormalLanguage(formalLanguageList.get(0));
-        } else {
-          if (formalLanguageList.contains(Boolean.TRUE)
-              && formalLanguageList.contains(Boolean.FALSE)) {
-            importRecord.setFormalLanguage(FORMAL_LANGUAGE_DEFAULT);
-          } else {
-            importRecord.setFormalLanguage(formalLanguageList.get(0));
-          }
-        }
+                  if (formalLanguageList.size() == 1) {
+                    importRecord.setFormalLanguage(formalLanguageList.get(0));
+                  } else {
+                    if (formalLanguageList.contains(Boolean.TRUE)
+                        && formalLanguageList.contains(Boolean.FALSE)) {
+                      importRecord.setFormalLanguage(FORMAL_LANGUAGE_DEFAULT);
+                    } else {
+                      importRecord.setFormalLanguage(formalLanguageList.get(0));
+                    }
+                  }
 
-        if (importRecord.getConsultantId() == null) {
-          Optional<Consultant> consultantOptional =
-              consultantService.findConsultantByUsernameOrEmail(
-                  importRecord.getUsername(), importRecord.getEmail());
+                  if (importRecord.getConsultantId() == null) {
+                    Optional<Consultant> consultantOptional =
+                        consultantService.findConsultantByUsernameOrEmail(
+                            importRecord.getUsername(), importRecord.getEmail());
 
-          if (consultantOptional.isPresent()) {
-            writeToImportLog(
-                String.format(
-                    "Consultant with username %s (%s) exists and won't be " + "imported.",
-                    importRecord.getUsername(), importRecord.getUsernameEncoded()));
-            continue;
-          }
+                    if (consultantOptional.isPresent()) {
+                      writeToImportLog(
+                          String.format(
+                              "Consultant with username %s (%s) exists and won't be " + "imported.",
+                              importRecord.getUsername(), importRecord.getUsernameEncoded()));
+                      return;
+                    }
 
-          // Check if decoded username is already taken
-          if (!identityUsernameAvailability.isUsernameAvailable(importRecord.getUsername())) {
-            writeToImportLog(
-                String.format(
-                    "Could not create Keycloak user for old id %s - username or e-mail address is already taken.",
-                    importRecord.getIdOld()));
-            continue;
-          }
+                  } else {
 
-        } else {
+                    Optional<Consultant> currentConsultant =
+                        consultantService.getConsultant(importRecord.getConsultantId());
 
-          Optional<Consultant> currentConsultant =
-              consultantService.getConsultant(importRecord.getConsultantId());
+                    if (currentConsultant.isPresent()) {
+                      existingTarget = currentConsultant.get();
+                      if (!java.util.Objects.equals(
+                          currentConsultant.get().getTenantId(), importRecord.getTenantId()))
+                        throw new ImportException(
+                            "Configured import row targets an existing consultant in another tenant");
+                      UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
+                      if (!importRecord
+                          .getUsername()
+                          .equals(
+                              usernameTranscoder.decodeUsername(
+                                  currentConsultant.get().getUsername()))) {
+                        writeToImportLog(
+                            String.format(
+                                "Username of consultant with id %s has changed (From %s to %s). Name changing currently not implemented. Skipped entry.",
+                                importRecord.getConsultantId(),
+                                usernameTranscoder.decodeUsername(
+                                    currentConsultant.get().getUsername()),
+                                importRecord.getUsername()));
+                        return;
+                      }
+                    } else {
+                      writeToImportLog(
+                          String.format(
+                              "Consultant with id %s not found. Skipped entry.",
+                              importRecord.getConsultantId()));
+                      return;
+                    }
+                  }
 
-          if (currentConsultant.isPresent()) {
-            UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
-            if (!importRecord
-                .getUsername()
-                .equals(usernameTranscoder.decodeUsername(currentConsultant.get().getUsername()))) {
-              writeToImportLog(
-                  String.format(
-                      "Username of consultant with id %s has changed (From %s to %s). Name changing currently not implemented. Skipped entry.",
-                      importRecord.getConsultantId(),
-                      usernameTranscoder.decodeUsername(currentConsultant.get().getUsername()),
-                      importRecord.getUsername()));
-              continue;
-            }
-          } else {
-            writeToImportLog(
-                String.format(
-                    "Consultant with id %s not found. Skipped entry.",
-                    importRecord.getConsultantId()));
-            continue;
-          }
-        }
+                  logMessage = "=== BEGIN === " + importRecord.getUsername() + " ===";
+                  writeToImportLog(logMessage);
 
-        logMessage = "=== BEGIN === " + importRecord.getUsername() + " ===";
-        writeToImportLog(logMessage);
+                  if (importRecord.getConsultantId() == null) {
+                    consultant =
+                        this.createConsultantSaga.createImportedConsultant(
+                            importRecord,
+                            captured.authorize(record, importRecord, roles, verifiedAgencies));
 
-        if (importRecord.getConsultantId() == null) {
-          consultant = this.createConsultantSaga.createNewConsultant(importRecord, roles);
+                    createdAccountId.set(consultant.getId());
+                    importRecord.setConsultantId(consultant.getId());
+                    logMessage = "Keycloak-ID: " + consultant.getId();
+                    writeToImportLog(logMessage);
 
-          importRecord.setConsultantId(consultant.getId());
-          logMessage = "Keycloak-ID: " + consultant.getId();
-          writeToImportLog(logMessage);
+                    logMessage = "Roles: " + String.join(",", roles);
+                    writeToImportLog(logMessage);
 
-          logMessage = "Roles: " + String.join(",", roles);
-          writeToImportLog(logMessage);
+                    logMessage = "Matrix-ID: " + consultant.getMatrixUserId();
+                    writeToImportLog(logMessage);
+                  }
 
-          logMessage = "Matrix-ID: " + consultant.getMatrixUserId();
-          writeToImportLog(logMessage);
-        }
+                  // create relations to agencies
+                  logMessage =
+                      "Agencies: "
+                          + agencyIds.stream()
+                              .map(String::valueOf)
+                              .collect(Collectors.joining(","));
+                  writeToImportLog(logMessage);
+                  if (createdAccountId.get() != null) {
+                    this.consultantAgencyRelationCreatorService.createOwnedCreationRelations(
+                        createdAccountId.get(), verifiedAgencies, roles, this::writeToImportLog);
+                  } else {
+                    var read =
+                        captured.existingRowCapability(
+                            record,
+                            importRecord,
+                            existingTarget,
+                            verifiedAgencies,
+                            "account.read",
+                            roles);
+                    var additions =
+                        captured.existingRowCapability(
+                            record,
+                            importRecord,
+                            existingTarget,
+                            verifiedAgencies,
+                            "account.roles",
+                            roles);
+                    this.consultantAgencyRelationCreatorService.createExistingImportedRelations(
+                        importRecord.getConsultantId(),
+                        verifiedAgencies,
+                        roles,
+                        this::writeToImportLog,
+                        read,
+                        additions);
+                  }
 
-        // create relations to agencies
-        logMessage =
-            "Agencies: " + agencyIds.stream().map(String::valueOf).collect(Collectors.joining(","));
-        writeToImportLog(logMessage);
-        this.consultantAgencyRelationCreatorService.createConsultantAgencyRelations(
-            importRecord.getConsultantId(), agencyIds, roles, this::writeToImportLog);
-
-        logMessage = "=== END === " + importRecord.getUsername() + " ===" + NEWLINE_CHAR;
-        writeToImportLog(logMessage);
-
+                  if (createdAccountId.get() != null)
+                    localCompletion.importedConsultant(consultant);
+                  logMessage = "=== END === " + importRecord.getUsername() + " ===" + NEWLINE_CHAR;
+                  writeToImportLog(logMessage);
+                });
       } catch (ImportException wontImportException) {
+        compensateCreation(createdAccountId.get(), wontImportException);
         writeToImportLog(wontImportException.getMessage());
-        break;
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
+            "Configured consultant import contains an invalid row", wontImportException);
       } catch (Exception fileNotFoundException) {
-        fileNotFoundException.printStackTrace();
-        break;
+        compensateCreation(createdAccountId.get(), fileNotFoundException);
+        log.warn(
+            "Configured consultant import failed ({})",
+            fileNotFoundException.getClass().getSimpleName());
+        if (fileNotFoundException instanceof org.springframework.web.client.RestClientException)
+          throw new org.springframework.web.server.ResponseStatusException(
+              org.springframework.http.HttpStatus.BAD_GATEWAY,
+              "Consultant import dependency failed",
+              fileNotFoundException);
+        if (fileNotFoundException instanceof RuntimeException failure) throw failure;
+        throw new de.caritas.cob.userservice.api.exception.httpresponses
+            .InternalServerErrorException(
+            "Configured consultant import failed", fileNotFoundException);
       }
     }
+  }
 
+  private void compensateCreation(String accountId, Exception failure) {
+    if (accountId == null) return;
     try {
-      in.close();
-    } catch (IOException e) {
-      e.printStackTrace();
+      var created = consultantService.getConsultant(accountId);
+      if (created.isPresent()) rollbackFacade.rollbackConsultantAccount(created.get());
+      else identityProvisioning.compensateForLocalRollback(accountId);
+    } catch (RuntimeException compensationFailure) {
+      failure.addSuppressed(compensationFailure);
     }
   }
 

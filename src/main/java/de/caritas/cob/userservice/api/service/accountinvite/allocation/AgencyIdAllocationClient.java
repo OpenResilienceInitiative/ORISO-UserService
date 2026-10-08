@@ -40,11 +40,23 @@ public class AgencyIdAllocationClient {
    *
    * @throws ConflictException when the requested ID is already assigned or reserved (upstream 409)
    */
+  public record AgencyReservation(long agencyId, String token) {
+    @Override
+    public String toString() {
+      return "AgencyReservation[agencyId=" + agencyId + "]";
+    }
+  }
+
   public long reserve(Long requestedAgencyId, Long tenantId) {
+    return reserveWithProof(requestedAgencyId, tenantId).agencyId();
+  }
+
+  public AgencyReservation reserveWithProof(Long requestedAgencyId, Long tenantId) {
     var request =
         new AgencyIdReservationRequestDTO().agencyId(requestedAgencyId).tenantId(tenantId);
     try {
-      return createControllerApi().reserveAgencyId(request).getAgencyId();
+      var reserved = createControllerApi().reserveAgencyId(request);
+      return new AgencyReservation(reserved.getAgencyId(), reserved.getToken());
     } catch (HttpClientErrorException.Conflict exception) {
       throw new ConflictException(
           "agencyId " + requestedAgencyId + " is already assigned or reserved");
@@ -64,8 +76,19 @@ public class AgencyIdAllocationClient {
    *     callers can retain a durable retry task without masking the original creation failure
    */
   public boolean release(long agencyId) {
+    if (TechnicalAccessTokenContext.offered().isPresent()) {
+      return false;
+    }
+    return release(agencyId, null);
+  }
+
+  public boolean release(long agencyId, String reservationToken) {
+    if (TechnicalAccessTokenContext.offered().isPresent()
+        && (reservationToken == null || reservationToken.isBlank())) {
+      return false;
+    }
     try {
-      createControllerApi().releaseAgencyIdReservation(agencyId);
+      createControllerApi().releaseAgencyIdReservation(agencyId, reservationToken);
       return true;
     } catch (HttpClientErrorException.NotFound exception) {
       log.info("Agency ID reservation {} was already released", agencyId);

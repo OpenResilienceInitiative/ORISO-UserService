@@ -48,10 +48,10 @@ public class IdReservationReleaseScheduler {
         // No work, no service session: the technical identity is only used when a release is due.
         return;
       }
-      var technicalUser = identityClientConfig.getTechnicalUser();
-      var login =
-          identityAuthentication.loginService(
-              technicalUser.getClientId(), technicalUser.getClientSecret());
+      var technicalUser =
+          identityClientConfig.getTaskIdentity(
+              de.caritas.cob.userservice.api.config.auth.TaskIdentity.INVITE_RESERVATIONS);
+      var login = identityAuthentication.loginTask(technicalUser);
       // Ambient (not explicit) because the allocation clients are shared with the admin-triggered
       // invite flow, which must keep sending the admin's own token. Scoped to the releases only.
       for (Long taskId : pendingTaskIds) {

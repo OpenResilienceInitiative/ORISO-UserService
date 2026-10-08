@@ -96,7 +96,8 @@ class DpaSignedNoticeServiceTest {
     when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenReturn(List.of());
-    when(identityLocaleLookup.findLocaleById(anyString())).thenReturn(Optional.empty());
+    when(identityLocaleLookup.findLocaleById(anyString(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(Optional.empty());
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().name("Träger Nord e.V."));
     service =
@@ -169,7 +170,9 @@ class DpaSignedNoticeServiceTest {
     // given a forward created by a logged-in admin
     givenSignatures(forwardedSignature("kc-admin-1"));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
-    when(identityLocaleLookup.findLocaleById("kc-admin-1")).thenReturn(Optional.of("en"));
+    when(identityLocaleLookup.findLocaleById(
+            org.mockito.ArgumentMatchers.eq("kc-admin-1"), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(Optional.of("en"));
 
     // when
     service.onSignatureHint(TENANT_ID);
@@ -598,7 +601,7 @@ class DpaSignedNoticeServiceTest {
     // endpoint keeps its documented 202 without every collaborator being individually defensive
     givenSignatures(forwardedSignature("kc-admin-1"));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
-    when(identityLocaleLookup.findLocaleById(anyString()))
+    when(identityLocaleLookup.findLocaleById(anyString(), org.mockito.ArgumentMatchers.any()))
         .thenThrow(new IllegalStateException("token expired"));
 
     assertDoesNotThrow(() -> service.onSignatureHint(TENANT_ID));

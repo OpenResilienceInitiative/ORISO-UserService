@@ -31,7 +31,7 @@ import lombok.ToString;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@ToString
+@ToString(exclude = "reservationToken")
 public class IdReservationReleaseTask {
 
   @Id
@@ -48,6 +48,9 @@ public class IdReservationReleaseTask {
   /** Tenant header needed when retrying an AgencyService release outside the request thread. */
   @Column(name = "tenant_context_id")
   private Long tenantContextId;
+
+  @Column(name = "reservation_token", length = 64)
+  private String reservationToken;
 
   @Column(name = "attempt_count", nullable = false)
   @Builder.Default

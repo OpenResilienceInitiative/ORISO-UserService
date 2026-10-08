@@ -52,6 +52,17 @@ class ExistingAccountSetupServiceTest {
   @BeforeEach
   void transactionBoundary() {
     lenient()
+        .when(identities.findById(org.mockito.ArgumentMatchers.anyString(), any()))
+        .thenAnswer(call -> identities.findById(call.getArgument(0)));
+    lenient()
+        .when(roles.findAllByUserId(org.mockito.ArgumentMatchers.anyString(), any()))
+        .thenAnswer(call -> roles.findAllByUserId(call.getArgument(0)));
+    lenient()
+        .when(
+            passwordChangeRequirement.requiresPasswordChange(
+                org.mockito.ArgumentMatchers.anyString(), any()))
+        .thenAnswer(call -> passwordChangeRequirement.requiresPasswordChange(call.getArgument(0)));
+    lenient()
         .when(transactions.getTransaction(any()))
         .thenAnswer(ignored -> new SimpleTransactionStatus());
   }
@@ -68,8 +79,8 @@ class ExistingAccountSetupServiceTest {
 
     service.confirm("mailed-token", "new-secret");
 
-    verify(passwords).updatePassword("admin-11", "new-secret");
-    verify(initialPasswords).matches("new-secret", "salted-verifier");
+    verify(passwords).updatePassword(eq("admin-11"), eq("new-secret"), any());
+    verify(initialPasswords, org.mockito.Mockito.times(2)).matches("new-secret", "salted-verifier");
     verify(invites)
         .completeExistingAccountSetup(
             eq(11L),
@@ -157,7 +168,7 @@ class ExistingAccountSetupServiceTest {
                     "counsellor@example.org",
                     encoded))
         .isInstanceOf(ConflictException.class);
-    verify(passwords, never()).updatePassword(any(), any());
+    verify(passwords, never()).updatePassword(any(), any(), any());
   }
 
   @Test
@@ -173,7 +184,7 @@ class ExistingAccountSetupServiceTest {
                     "counsellor@example.org",
                     "enc.***"))
         .isInstanceOf(ConflictException.class);
-    verify(passwords, never()).updatePassword(any(), any());
+    verify(passwords, never()).updatePassword(any(), any(), any());
   }
 
   @Test
@@ -184,7 +195,7 @@ class ExistingAccountSetupServiceTest {
 
     assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret"))
         .isInstanceOf(ConflictException.class);
-    verify(passwords, never()).updatePassword(any(), any());
+    verify(passwords, never()).updatePassword(any(), any(), any());
   }
 
   @Test
@@ -199,7 +210,7 @@ class ExistingAccountSetupServiceTest {
                 assertThat(failure.getReason())
                     .isEqualTo(AccountInviteLinkException.Reason.EXPIRED));
     verify(invites, never()).claimExistingAccountSetup(any(), any(), any(), any(), any(), any());
-    verify(passwords, never()).updatePassword(any(), any());
+    verify(passwords, never()).updatePassword(any(), any(), any());
   }
 
   @Test
@@ -219,7 +230,7 @@ class ExistingAccountSetupServiceTest {
                   failure -> assertThat(failure.getReason()).isEqualTo(reason));
         });
     verify(invites, never()).claimExistingAccountSetup(any(), any(), any(), any(), any(), any());
-    verify(passwords, never()).updatePassword(any(), any());
+    verify(passwords, never()).updatePassword(any(), any(), any());
   }
 
   @Test
@@ -235,7 +246,7 @@ class ExistingAccountSetupServiceTest {
     verify(invites)
         .revokeStaleExistingAccountSetup(
             eq(11L), any(), any(), any(), any(), eq("SETUP_IDENTITY_CHANGED"), any());
-    verify(passwords, never()).updatePassword(any(), any());
+    verify(passwords, never()).updatePassword(any(), any(), any());
   }
 
   @Test
@@ -250,7 +261,7 @@ class ExistingAccountSetupServiceTest {
     verify(invites)
         .revokeStaleExistingAccountSetup(
             eq(11L), any(), any(), any(), any(), eq("SETUP_IDENTITY_CHANGED"), any());
-    verify(passwords, never()).updatePassword(any(), any());
+    verify(passwords, never()).updatePassword(any(), any(), any());
   }
 
   @Test
@@ -270,7 +281,7 @@ class ExistingAccountSetupServiceTest {
     verify(invites)
         .revokeStaleExistingAccountSetup(
             eq(11L), any(), any(), any(), any(), eq("SETUP_TEMPORARY_PASSWORD_REPLACED"), any());
-    verify(passwords, never()).updatePassword(any(), any());
+    verify(passwords, never()).updatePassword(any(), any(), any());
   }
 
   @Test
@@ -281,7 +292,7 @@ class ExistingAccountSetupServiceTest {
         .thenReturn(1);
     doThrow(new IllegalStateException("provider detail"))
         .when(passwords)
-        .updatePassword("admin-11", "new-secret");
+        .updatePassword(eq("admin-11"), eq("new-secret"), any());
 
     assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret"))
         .isInstanceOf(IllegalStateException.class)
@@ -309,7 +320,7 @@ class ExistingAccountSetupServiceTest {
     assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("operator review");
-    verify(passwords).updatePassword("admin-11", "new-secret");
+    verify(passwords).updatePassword(eq("admin-11"), eq("new-secret"), any());
     verify(invites)
         .recordIndeterminateExistingAccountSetup(
             eq(11L), any(), any(), any(), eq("SETUP_OUTCOME_INDETERMINATE"), any());
@@ -330,7 +341,7 @@ class ExistingAccountSetupServiceTest {
     verify(invites)
         .releaseExistingAccountSetup(
             eq(11L), any(), any(), any(), any(), eq("SETUP_PASSWORD_UNCHANGED"), any());
-    verify(passwords, never()).updatePassword(any(), any());
+    verify(passwords, never()).updatePassword(any(), any(), any());
   }
 
   @Test
@@ -345,7 +356,7 @@ class ExistingAccountSetupServiceTest {
             failure ->
                 org.assertj.core.api.Assertions.assertThat(failure.getReason())
                     .isEqualTo(AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED));
-    verify(passwords, never()).updatePassword(any(), any());
+    verify(passwords, never()).updatePassword(any(), any(), any());
   }
 
   private AccountInvite setupInvite() {

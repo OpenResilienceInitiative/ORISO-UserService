@@ -64,11 +64,65 @@ public class AppointmentService {
       ObjectMapper mapper = getObjectMapper(false);
       ConsultantApi appointmentConsultantApi =
           this.appointmentConsultantServiceApiControllerFactory.createControllerApi();
-      addTechnicalUserHeaders(appointmentConsultantApi.getApiClient());
+      addTechnicalUserHeaders(
+          appointmentConsultantApi.getApiClient(),
+          de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_SYNC);
       de.caritas.cob.userservice.appointmentservice.generated.web.model.ConsultantDTO consultant =
           getConsultantDTO(consultantAdminResponseDTO, mapper);
       appointmentConsultantApi.createConsultant(consultant);
     }
+  }
+
+  /** Only the unfinished native creation's exact UUID/tenant can record a cleanup obligation. */
+  public void createOwnedConsultant(
+      ConsultantAdminResponseDTO response,
+      Long tenantId,
+      de.caritas.cob.userservice.api.port.out.OwnedAppointmentEffect effect) {
+    if (!appointmentFeatureEnabled)
+      throw new IllegalStateException("Owned appointment creation is disabled");
+    if (response == null || response.getEmbedded() == null || effect == null)
+      throw new IllegalArgumentException("Original appointment creation authority required");
+    var consultant = getConsultantDTO(response, getObjectMapper(false));
+    String id = response.getEmbedded().getId();
+    if (id == null || !id.equals(consultant.getId()))
+      throw new IllegalArgumentException("Appointment payload differs from its owned account");
+    var api = appointmentConsultantServiceApiControllerFactory.createControllerApi();
+    addCapturedTenantTaskHeaders(
+        api.getApiClient(),
+        de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_SYNC,
+        tenantId);
+    effect.started(id, tenantId);
+    var created = api.createConsultantWithHttpInfo(consultant);
+    if (created == null || !HttpStatus.OK.equals(created.getStatusCode()))
+      throw new RestClientException("Appointment creation outcome is unacknowledged");
+    effect.created(id); // the bundled POST contract keys this record by the supplied native UUID
+  }
+
+  /** Restart cleanup uses the captured tenant, independently of a rolled-back consultant row. */
+  public void deleteOwnedCreationConsultant(String id, Long tenantId) {
+    if (!appointmentFeatureEnabled)
+      throw new IllegalStateException("Owned appointment cleanup is disabled and remains pending");
+    if (id == null || id.isBlank())
+      throw new IllegalArgumentException("Owned consultant ID required");
+    var api = appointmentConsultantServiceApiControllerFactory.createControllerApi();
+    addCapturedTenantTaskHeaders(
+        api.getApiClient(),
+        de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_CLEANUP,
+        tenantId);
+    try {
+      api.deleteConsultant(id);
+    } catch (HttpClientErrorException failure) {
+      acceptDeletionIfConsultantNotFoundInAppointmentService(failure, id);
+    }
+  }
+
+  private void addCapturedTenantTaskHeaders(
+      ApiClient api, de.caritas.cob.userservice.api.config.auth.TaskIdentity task, Long tenantId) {
+    var login = identityAuthentication.loginTask(identityClientConfig.getTaskIdentity(task));
+    var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(login.accessToken());
+    if (tenantId != null) headers.set("tenantId", tenantId.toString());
+    else headers.remove("tenantId");
+    headers.forEach((key, value) -> api.addDefaultHeader(key, value.iterator().next()));
   }
 
   private de.caritas.cob.userservice.appointmentservice.generated.web.model.ConsultantDTO
@@ -108,7 +162,9 @@ public class AppointmentService {
 
     if (consultantAdminResponseDTO != null) {
       ObjectMapper mapper = getObjectMapper(false);
-      addTechnicalUserHeaders(appointmentConsultantApi.getApiClient());
+      addTechnicalUserHeaders(
+          appointmentConsultantApi.getApiClient(),
+          de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_SYNC);
       try {
         de.caritas.cob.userservice.appointmentservice.generated.web.model.ConsultantDTO consultant =
             mapper.readValue(
@@ -141,7 +197,9 @@ public class AppointmentService {
         this.appointmentConsultantServiceApiControllerFactory.createControllerApi();
 
     if (consultantId != null && !consultantId.isEmpty()) {
-      addTechnicalUserHeaders(appointmentConsultantApi.getApiClient());
+      addTechnicalUserHeaders(
+          appointmentConsultantApi.getApiClient(),
+          de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_CLEANUP);
       try {
         appointmentConsultantApi.deleteConsultant(consultantId);
       } catch (HttpClientErrorException ex) {
@@ -162,10 +220,10 @@ public class AppointmentService {
   }
 
   @SuppressWarnings("Duplicates")
-  private void addTechnicalUserHeaders(ApiClient apiClient) {
-    var techUser = identityClientConfig.getTechnicalUser();
-    var identityLogin =
-        identityAuthentication.loginService(techUser.getClientId(), techUser.getClientSecret());
+  private void addTechnicalUserHeaders(
+      ApiClient apiClient, de.caritas.cob.userservice.api.config.auth.TaskIdentity task) {
+    var techUser = identityClientConfig.getTaskIdentity(task);
+    var identityLogin = identityAuthentication.loginTask(techUser);
     var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
     tenantHeaderSupplier.addTenantHeader(headers);
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
@@ -179,7 +237,9 @@ public class AppointmentService {
     AgencyApi controllerApi =
         this.appointmentAgencyServiceApiControllerFactory.createControllerApi();
 
-    addTechnicalUserHeaders(controllerApi.getApiClient());
+    addTechnicalUserHeaders(
+        controllerApi.getApiClient(),
+        de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_SYNC);
     var agencies =
         agencyList.stream()
             .map(CreateConsultantAgencyDTO::getAgencyId)
@@ -196,7 +256,9 @@ public class AppointmentService {
     }
     de.caritas.cob.userservice.appointmentservice.generated.web.AskerApi controllerApi =
         this.appointmentAskerServiceApiControllerFactory.createControllerApi();
-    addTechnicalUserHeaders(controllerApi.getApiClient());
+    addTechnicalUserHeaders(
+        controllerApi.getApiClient(),
+        de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_CLEANUP);
     controllerApi.deleteAskerData(askerId);
   }
 
@@ -231,7 +293,9 @@ public class AppointmentService {
         this.appointmentConsultantServiceApiControllerFactory.createControllerApi();
 
     if (consultantId != null && !consultantId.isEmpty()) {
-      addTechnicalUserHeaders(appointmentConsultantApi.getApiClient());
+      addTechnicalUserHeaders(
+          appointmentConsultantApi.getApiClient(),
+          de.caritas.cob.userservice.api.config.auth.TaskIdentity.APPOINTMENT_SYNC);
       try {
         appointmentConsultantApi.patchConsultant(
             consultantId,

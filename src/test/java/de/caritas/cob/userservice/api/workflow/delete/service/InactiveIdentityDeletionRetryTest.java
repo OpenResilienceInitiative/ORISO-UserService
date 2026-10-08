@@ -15,7 +15,16 @@ class InactiveIdentityDeletionRetryTest {
     var remote =
         new IdentityAccountRemover() {
           public void deleteUser(String id) {
-            throw new jakarta.ws.rs.NotFoundException();
+            throw new UnsupportedOperationException("Explicit deletion capability required");
+          }
+
+          public void deleteUser(
+              String id,
+              de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+                  origin) {
+            origin.requireLifecycleDeletion(id);
+            throw new org.springframework.web.client.HttpClientErrorException(
+                org.springframework.http.HttpStatus.NOT_FOUND);
           }
 
           public void rollbackUser(String id) {
@@ -23,6 +32,7 @@ class InactiveIdentityDeletionRetryTest {
           }
         };
     var user = new User("person", null, "test", "test@example.invalid", false);
+    user.setDeleteDate(java.time.LocalDateTime.now());
     var outcome = new AskerDeletionWorkflowDTO(user, new ArrayList<>());
     new DeleteKeycloakAskerAction(remote).execute(outcome);
     assertThat(outcome.getDeletionWorkflowErrors()).isEmpty();

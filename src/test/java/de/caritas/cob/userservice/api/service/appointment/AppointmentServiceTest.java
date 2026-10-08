@@ -15,7 +15,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDT
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentAgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentAskerServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentConsultantServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -91,7 +90,7 @@ class AppointmentServiceTest {
     appointmentService = spy(createAppointmentService());
     nonSpiedAppointmentService = createAppointmentService();
 
-    when(identityAuthentication.loginService(any(), any())).thenReturn(identityLogin);
+    when(identityAuthentication.loginTask(any())).thenReturn(identityLogin);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(any())).thenReturn(httpHeaders);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(httpHeaders);
     when(consultantDTO.getId()).thenReturn("testId");
@@ -150,7 +149,12 @@ class AppointmentServiceTest {
   @Test
   void
       deleteConsultant_Should_ProceedWithDeletion_WhenAppointmentsIsEnabledAndAppointmentServiceThrowsExceptionOtherThan404() {
-    var identityClientConfig = easyRandom.nextObject(IdentityConfig.class);
+    var identityClientConfig = org.mockito.Mockito.mock(IdentityClientConfig.class);
+    org.mockito.Mockito.lenient()
+        .when(identityClientConfig.getTaskIdentity(any()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials(
+                "appointment-task", "synthetic", "subject"));
     setField(nonSpiedAppointmentService, "identityClientConfig", identityClientConfig);
     setField(nonSpiedAppointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     when(httpClientErrorException.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
@@ -200,7 +204,12 @@ class AppointmentServiceTest {
   }
 
   private void givenAnIdentityClientConfig() {
-    var identityClientConfig = easyRandom.nextObject(IdentityConfig.class);
+    var identityClientConfig = org.mockito.Mockito.mock(IdentityClientConfig.class);
+    org.mockito.Mockito.lenient()
+        .when(identityClientConfig.getTaskIdentity(any()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials(
+                "appointment-task", "synthetic", "subject"));
     setField(appointmentService, "identityClientConfig", identityClientConfig);
   }
 
@@ -345,7 +354,12 @@ class AppointmentServiceTest {
 
   @Test
   void patchConsultant_Should_RethrowException_When_AppointmentServiceThrowsNon404() {
-    var identityClientConfig = easyRandom.nextObject(IdentityConfig.class);
+    var identityClientConfig = org.mockito.Mockito.mock(IdentityClientConfig.class);
+    org.mockito.Mockito.lenient()
+        .when(identityClientConfig.getTaskIdentity(any()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials(
+                "appointment-task", "synthetic", "subject"));
     setField(nonSpiedAppointmentService, "identityClientConfig", identityClientConfig);
     setField(nonSpiedAppointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     when(httpClientErrorException.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);

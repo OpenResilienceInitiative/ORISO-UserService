@@ -12,11 +12,15 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant;
+import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.model.Session;
@@ -33,6 +37,7 @@ import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig
 import de.caritas.cob.userservice.api.testConfig.KeycloakTestConfig;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
@@ -45,15 +50,19 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.env.Environment;
+import org.springframework.http.HttpEntity;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.web.client.RestTemplate;
 
 @SpringBootTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -70,6 +79,13 @@ class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture 
   @Autowired private DeleteUserAnonymousScheduler deleteUserAnonymousScheduler;
 
   @Autowired private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.conversation.service.user.anonymous
+          .AnonymousUsernameRegistry
+      anonymousUsernameRegistry;
+
+  private String originalAnonymousUsernamePrefix;
 
   @Autowired private SessionRepository sessionRepository;
 
@@ -99,9 +115,48 @@ class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture 
   @MockitoSpyBean UserAgencyRepository userAgencyRepository;
 
   private Session currentSession;
+  @Autowired private ObjectMapper objectMapper;
+  @Autowired private Environment environment;
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @MockitoBean private TaskIdentityGrant taskGrants;
+  @MockitoBean private org.springframework.security.oauth2.jwt.JwtDecoder taskJwtDecoder;
+
+  @MockitoBean
+  @Qualifier("keycloakRestTemplate")
+  private RestTemplate keycloakRestTemplate;
+
+  @MockitoBean
+  @Qualifier("restTemplate")
+  private RestTemplate restTemplate;
+
+  private BoundedIdentityHttpFixtures.Provider identityProvider;
 
   @BeforeEach
   public void setup() throws MatrixCreateUserException {
+    originalAnonymousUsernamePrefix =
+        (String)
+            org.springframework.test.util.ReflectionTestUtils.getField(
+                anonymousUsernameRegistry, "usernamePrefix");
+    // Use a per-test namespace while preserving the real allocation and occupancy checks.
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        anonymousUsernameRegistry,
+        "usernamePrefix",
+        originalAnonymousUsernamePrefix
+            + java.util.UUID.randomUUID().toString().replace("-", "")
+            + "-");
+    identityProvider =
+        BoundedIdentityHttpFixtures.givenProvider(
+            keycloakRestTemplate, taskGrants, taskIdentities, environment, objectMapper, id -> {});
+    BoundedIdentityHttpFixtures.givenTaskGrants(restTemplate, taskJwtDecoder, taskIdentities);
+    var login = new KeycloakLoginResponseDTO();
+    login.setAccessToken("synthetic-human-token");
+    login.setRefreshToken("synthetic-human-refresh");
+    org.mockito.Mockito.when(
+            restTemplate.postForEntity(
+                org.mockito.ArgumentMatchers.endsWith("/token"),
+                org.mockito.ArgumentMatchers.any(HttpEntity.class),
+                org.mockito.ArgumentMatchers.eq(KeycloakLoginResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(login));
     dpaOwner =
         de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
             ownerFactory, 1L);
@@ -112,6 +167,8 @@ class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture 
     matrixUserResponse.setUserId("@anonymous:matrix.test");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(matrixUserResponse));
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenOwnedMatrixUser(
+        matrixSynapseService, "@anonymous:matrix.test");
     when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
@@ -136,6 +193,9 @@ class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture 
 
   @AfterEach
   public void cleanDatabase() {
+    if (originalAnonymousUsernamePrefix != null)
+      org.springframework.test.util.ReflectionTestUtils.setField(
+          anonymousUsernameRegistry, "usernamePrefix", originalAnonymousUsernamePrefix);
     dpaOwner.close();
     this.sessionRepository.deleteAll();
     deleteSchedulerClaim();
@@ -201,6 +261,55 @@ class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture 
 
     assertSessionAndUserDoNotExistInDatabase(
         currentSession.getId(), currentSession.getUser().getUserId());
+  }
+
+  @Test
+  void completedRegisteredConversationProtectsTheSameAccountFromAnonymousDeletion() {
+    prepareCurrentSessionForDeletion();
+    var oldDate = LocalDateTime.now().minusMinutes(deletionPeriodInMinutes + 1);
+    var registered =
+        sessionRepository.save(
+            Session.builder()
+                .user(currentSession.getUser())
+                .consultingTypeId(currentSession.getConsultingTypeId())
+                .agencyId(currentSession.getAgencyId())
+                .registrationType(Session.RegistrationType.REGISTERED)
+                .conversationType(currentSession.getConversationType())
+                .postcode("00000")
+                .languageCode(currentSession.getLanguageCode())
+                .status(SessionStatus.DONE)
+                .isConsultantDirectlySet(false)
+                .createDate(oldDate)
+                .updateDate(oldDate)
+                .tenantId(currentSession.getTenantId())
+                .build());
+    var before = sessionRepository.findById(registered.getId()).orElseThrow();
+    var priorUpdateDate = before.getUpdateDate();
+    String userId = currentSession.getUser().getUserId();
+    org.junit.jupiter.api.Assertions.assertEquals(userId, before.getUser().getUserId());
+    assertTrue(identityProvider.projections().get(userId).enabled());
+
+    deleteUserAnonymousScheduler.performDeletionWorkflow();
+
+    var retainedAnonymous = sessionRepository.findById(currentSession.getId()).orElseThrow();
+    var retainedRegistered = sessionRepository.findById(registered.getId()).orElseThrow();
+    org.junit.jupiter.api.Assertions.assertEquals(
+        Session.RegistrationType.ANONYMOUS, retainedAnonymous.getRegistrationType());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        SessionStatus.DONE, retainedAnonymous.getStatus());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        Session.RegistrationType.REGISTERED, retainedRegistered.getRegistrationType());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        SessionStatus.DONE, retainedRegistered.getStatus());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        priorUpdateDate, retainedRegistered.getUpdateDate());
+    org.junit.jupiter.api.Assertions.assertEquals(userId, retainedRegistered.getUser().getUserId());
+    assertTrue(userService.getUser(userId).isPresent());
+    assertTrue(identityProvider.projections().get(userId).enabled());
+    org.assertj.core.api.Assertions.assertThat(identityProvider.commands())
+        .noneMatch(
+            command ->
+                command.operation().equals("account.delete") && command.target().equals(userId));
   }
 
   private void prepareCurrentSessionForDeletion() {

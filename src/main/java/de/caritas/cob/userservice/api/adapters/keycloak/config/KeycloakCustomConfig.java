@@ -12,11 +12,12 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "keycloak.config")
 public class KeycloakCustomConfig {
 
-  @lombok.ToString.Exclude @NotBlank private String adminClientSecret;
+  // Compatibility metadata only; no native runtime Admin client is constructed.
+  @lombok.ToString.Exclude private String adminClientSecret;
 
-  @NotBlank private String adminClientId;
+  private String adminClientId;
 
-  @NotBlank private String adminServiceSubject;
+  private String adminServiceSubject;
 
   @NotBlank private String appClientId;
 }

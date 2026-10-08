@@ -5,6 +5,8 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.anything;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
+import de.caritas.cob.userservice.api.config.auth.TaskIdentity;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -13,10 +15,14 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import java.net.URI;
+import java.net.URLDecoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -41,7 +47,7 @@ import org.springframework.web.client.RestTemplate;
 
 /** Shared real HTTP/security/repositories; only incoming identity and outgoing HTTP fixtures. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("testing")
+@ActiveProfiles({"testing", "individual-dpa-caller", "verified-request-caller"})
 @TestPropertySource(
     properties = {
       "matrix.adminUsername=synthetic-matrix-admin",
@@ -70,6 +76,7 @@ abstract class GroupCounsellingDpaHttpFixture {
   @Autowired protected ChatAgencyRepository agencies;
   @Autowired protected GroupChatParticipantRepository participants;
   @Autowired protected JdbcTemplate database;
+  @Autowired protected TaskIdentityConfiguration identities;
 
   @Autowired
   @Qualifier("restTemplate")
@@ -93,6 +100,10 @@ abstract class GroupCounsellingDpaHttpFixture {
         database.queryForObject(
                 "SELECT COUNT(*) FROM user WHERE user_id = 'group-chat-system-41'", Integer.class)
             > 0;
+    for (var task : TaskIdentity.values()) {
+      var jwt = BoundedIdentityHttpFixtures.taskJwt(task, identities);
+      when(jwtDecoder.decode(jwt.getTokenValue())).thenReturn(jwt);
+    }
     downstream = MockRestServiceServer.bindTo(transport).build();
     downstream
         .expect(ExpectedCount.between(0, Integer.MAX_VALUE), anything())
@@ -100,8 +111,37 @@ abstract class GroupCounsellingDpaHttpFixture {
             request -> {
               String path = request.getURI().getPath();
               if (path.endsWith("/token")) {
+                var form = new org.springframework.util.LinkedMultiValueMap<String, String>();
+                for (var field :
+                    ((org.springframework.mock.http.client.MockClientHttpRequest) request)
+                        .getBodyAsString()
+                        .split("&")) {
+                  var pair = field.split("=", 2);
+                  form.add(
+                      URLDecoder.decode(pair[0], StandardCharsets.UTF_8),
+                      URLDecoder.decode(pair.length == 2 ? pair[1] : "", StandardCharsets.UTF_8));
+                }
+                if ("client_credentials".equals(form.getFirst("grant_type"))) {
+                  var task =
+                      Arrays.stream(TaskIdentity.values())
+                          .filter(
+                              candidate ->
+                                  identities
+                                      .require(candidate)
+                                      .getClientId()
+                                      .equals(form.getFirst("client_id")))
+                          .findFirst()
+                          .orElseThrow();
+                  assertEquals(
+                      identities.require(task).getClientSecret(), form.getFirst("client_secret"));
+                  var token = BoundedIdentityHttpFixtures.taskJwt(task, identities).getTokenValue();
+                  return withSuccess(
+                          "{\"access_token\":\"" + token + "\",\"expires_in\":300}",
+                          MediaType.APPLICATION_JSON)
+                      .createResponse(request);
+                }
                 return withSuccess(
-                        "{\"access_token\":\"synthetic-service-token\",\"expires_in\":60,\"refresh_expires_in\":60,\"refresh_token\":\"synthetic-refresh\"}",
+                        "{\"access_token\":\"synthetic-human-token\",\"expires_in\":300,\"refresh_expires_in\":300,\"refresh_token\":\"synthetic-refresh\"}",
                         MediaType.APPLICATION_JSON)
                     .createResponse(request);
               }
@@ -128,7 +168,10 @@ abstract class GroupCounsellingDpaHttpFixture {
                 ownerReads.incrementAndGet();
                 assertEquals("0", request.getHeaders().getFirst("tenantId"));
                 assertEquals(
-                    "Bearer synthetic-service-token",
+                    "Bearer "
+                        + BoundedIdentityHttpFixtures.taskJwt(
+                                TaskIdentity.RUNTIME_POLICY, identities)
+                            .getTokenValue(),
                     request.getHeaders().getFirst("Authorization"));
                 return ownerStatus == 200
                     ? withSuccess(gate, MediaType.APPLICATION_JSON).createResponse(request)
@@ -138,6 +181,13 @@ abstract class GroupCounsellingDpaHttpFixture {
               }
               if (path.equals("/tenantadmin/42/dpa/gate")) {
                 recipientOwnerReads.incrementAndGet();
+                assertEquals("0", request.getHeaders().getFirst("tenantId"));
+                assertEquals(
+                    "Bearer "
+                        + BoundedIdentityHttpFixtures.taskJwt(
+                                TaskIdentity.RUNTIME_POLICY, identities)
+                            .getTokenValue(),
+                    request.getHeaders().getFirst("Authorization"));
                 return withSuccess(
                         "{\"dpaPublished\":true,\"dpaSigned\":true}", MediaType.APPLICATION_JSON)
                     .createResponse(request);
@@ -189,7 +239,8 @@ abstract class GroupCounsellingDpaHttpFixture {
         consultant.getUsername(),
         "consultant",
         OWNER,
-        "{\"topic\":\"Synthetic AVV group\",\"agencyId\":410,\"startDate\":\"2999-01-01\",\"startTime\":\"12:00\",\"duration\":60,\"repetitive\":false,"
+        "{\"topic\":\"Synthetic AVV"
+            + " group\",\"agencyId\":410,\"startDate\":\"2999-01-01\",\"startTime\":\"12:00\",\"duration\":60,\"repetitive\":false,"
             + (external ? "\"repeatCount\":1," : "")
             + "\"timezone\":\"UTC\",\"modality\":\"TEXT\",\"consultantIds\":[]}");
   }

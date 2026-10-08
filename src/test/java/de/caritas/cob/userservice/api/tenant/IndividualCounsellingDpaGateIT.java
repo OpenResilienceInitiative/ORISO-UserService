@@ -27,7 +27,7 @@ import org.springframework.web.client.RestTemplate;
 
 /** Public HTTP requests use the real permission checks, counselling facades and H2 repositories. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("testing")
+@ActiveProfiles({"testing", "individual-dpa-caller", "verified-request-caller"})
 @TestPropertySource(
     properties = {
       "feature.topics.enabled=false",
@@ -39,6 +39,8 @@ import org.springframework.web.client.RestTemplate;
 @Import({TenantFixtures.class, IndividualCounsellingDpaGateIT.IncomingIdentityFixture.class})
 class IndividualCounsellingDpaGateIT {
   @org.springframework.boot.test.context.TestConfiguration
+  @org.springframework.context.annotation.Profile("individual-dpa-caller")
+  @Import(de.caritas.cob.userservice.api.testHelper.VerifiedRequestCallerFixture.class)
   static class IncomingIdentityFixture {
     // AppConfig's broad scan also discovers TenantServiceTest.CacheTestConfig's stub.
     // Select the real external adapter for these public API journeys.
@@ -49,25 +51,6 @@ class IndividualCounsellingDpaGateIT {
         org.springframework.cache.CacheManager cacheManager) {
       return new de.caritas.cob.userservice.api.admin.service.tenant.TenantService(
           factory, cacheManager);
-    }
-
-    // The stock factory's injected servlet request loses the caller in this synthetic-JWT
-    // context. Keep production JWT mapping and permissions; supply the dispatched request.
-    @org.springframework.context.annotation.Bean
-    @org.springframework.context.annotation.Primary
-    @org.springframework.context.annotation.Scope(
-        value = "request",
-        proxyMode = org.springframework.context.annotation.ScopedProxyMode.TARGET_CLASS)
-    de.caritas.cob.userservice.api.helper.AuthenticatedUser mappedCaller() {
-      var request =
-          ((org.springframework.web.context.request.ServletRequestAttributes)
-                  org.springframework.web.context.request.RequestContextHolder
-                      .currentRequestAttributes())
-              .getRequest();
-      var config = new de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig();
-      config.setPrincipalAttribute("preferred_username");
-      return config.authenticatedUser(
-          request, new de.caritas.cob.userservice.api.helper.UsernameTranscoder());
     }
   }
 
@@ -84,7 +67,20 @@ class IndividualCounsellingDpaGateIT {
   private RestTemplate transport;
 
   @MockitoBean private JwtDecoder jwtDecoder;
-  @MockitoBean private KeycloakService identityAuthentication;
+  @Autowired private KeycloakService identityAuthentication;
+
+  @MockitoBean(name = "keycloakRestTemplate")
+  private RestTemplate boundedHttp;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant grants;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration identities;
+
+  @Autowired private org.springframework.core.env.Environment environment;
+  @Autowired private com.fasterxml.jackson.databind.ObjectMapper mapper;
+  private de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.Provider provider;
   @MockitoBean private de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrix;
   @Autowired private de.caritas.cob.userservice.api.port.out.UserRepository users;
   @Autowired private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultants;
@@ -106,18 +102,6 @@ class IndividualCounsellingDpaGateIT {
 
   @BeforeEach
   void externalServices() throws Exception {
-    org.mockito.Mockito.when(
-            identityAuthentication.login(
-                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(
-            new de.caritas.cob.userservice.api.port.out.IdentityLogin(
-                "synthetic-human-token", 60, 60, "synthetic-refresh"));
-    org.mockito.Mockito.when(
-            identityAuthentication.loginService(
-                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(
-            new de.caritas.cob.userservice.api.port.out.IdentityLogin(
-                "synthetic-service-token", 60, 0, null));
     when(matrix.loginAsUserAccessToken(org.mockito.ArgumentMatchers.anyString()))
         .thenReturn("synthetic-matrix-token");
     when(matrix.getRoomEvent(
@@ -140,23 +124,25 @@ class IndividualCounsellingDpaGateIT {
             org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(true);
     anonymousIdentityId = java.util.UUID.randomUUID().toString();
-    when(identityAuthentication.isUsernameAvailable(org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(true);
-    when(identityAuthentication.createUser(
-            org.mockito.ArgumentMatchers.any(
-                de.caritas.cob.userservice.api.adapters.web.dto.UserDTO.class)))
-        .thenAnswer(
-            call -> {
+    provider =
+        de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenProvider(
+            boundedHttp,
+            grants,
+            identities,
+            environment,
+            mapper,
+            body -> {
               if (refuseIdentityProvisioning)
-                throw new IllegalStateException("The external fixture refuses provisioning writes");
-              return new de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity(
-                  anonymousIdentityId);
-            });
-    when(identityAuthentication.updateDummyEmail(
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.any(
-                de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate.class)))
-        .thenReturn("synthetic-anonymous@synthetic.oriso.test");
+                throw new IllegalStateException("External fixture refuses atomic creation");
+              return anonymousIdentityId;
+            },
+            id -> {});
+    for (var task : de.caritas.cob.userservice.api.config.auth.TaskIdentity.values()) {
+      var jwt =
+          de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.taskJwt(
+              task, identities);
+      when(jwtDecoder.decode(jwt.getTokenValue())).thenReturn(jwt);
+    }
     var matrixIdentity =
         new de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO();
     matrixIdentity.setUserId("@synthetic-anonymous:synthetic.oriso.test");
@@ -165,6 +151,8 @@ class IndividualCounsellingDpaGateIT {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(org.springframework.http.ResponseEntity.ok(matrixIdentity));
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenOwnedMatrixUser(
+        matrix, "@synthetic-anonymous:synthetic.oriso.test");
     downstream = MockRestServiceServer.bindTo(transport).build();
     downstream
         .expect(ExpectedCount.manyTimes(), anything())
@@ -172,6 +160,54 @@ class IndividualCounsellingDpaGateIT {
             request -> {
               var path = request.getURI().getPath();
 
+              if (path.endsWith("/token")) {
+                var form =
+                    ((org.springframework.mock.http.client.MockClientHttpRequest) request)
+                        .getBodyAsString();
+                if (form.contains("grant_type=client_credentials")) {
+                  var fields =
+                      java.util.Arrays.stream(form.split("&"))
+                          .map(field -> field.split("=", 2))
+                          .collect(
+                              java.util.stream.Collectors.toMap(
+                                  field ->
+                                      java.net.URLDecoder.decode(
+                                          field[0], java.nio.charset.StandardCharsets.UTF_8),
+                                  field ->
+                                      java.net.URLDecoder.decode(
+                                          field[1], java.nio.charset.StandardCharsets.UTF_8)));
+                  var task =
+                      java.util.Arrays.stream(
+                              de.caritas.cob.userservice.api.config.auth.TaskIdentity.values())
+                          .filter(
+                              candidate ->
+                                  identities
+                                      .require(candidate)
+                                      .getClientId()
+                                      .equals(fields.get("client_id")))
+                          .findFirst()
+                          .orElseThrow();
+                  org.assertj.core.api.Assertions.assertThat(fields.get("client_secret"))
+                      .isEqualTo(identities.require(task).getClientSecret());
+                  var token =
+                      de.caritas
+                          .cob
+                          .userservice
+                          .api
+                          .testHelper
+                          .BoundedIdentityHttpFixtures
+                          .taskJwt(task, identities)
+                          .getTokenValue();
+                  return withSuccess(
+                          "{\"access_token\":\"" + token + "\",\"expires_in\":300}",
+                          MediaType.APPLICATION_JSON)
+                      .createResponse(request);
+                }
+                return withSuccess(
+                        "{\"access_token\":\"synthetic-human-token\",\"expires_in\":300,\"refresh_expires_in\":300,\"refresh_token\":\"synthetic-refresh\"}",
+                        MediaType.APPLICATION_JSON)
+                    .createResponse(request);
+              }
               if (path.endsWith("/consultingtypes/1/extended")) {
                 return withSuccess(
                         "{\"id\":1,\"registration\":{},\"groupChat\":{\"isGroupChat\":false}}",
@@ -603,15 +639,19 @@ class IndividualCounsellingDpaGateIT {
     org.junit.jupiter.api.Assertions.assertEquals(403, result.statusCode(), result.body());
     org.junit.jupiter.api.Assertions.assertTrue(
         result.body().contains("DPA_NEW_COUNSELLING_NOT_ALLOWED"), result.body());
-    org.mockito.Mockito.verify(identityAuthentication, org.mockito.Mockito.never())
-        .createUser(
-            org.mockito.ArgumentMatchers.any(
-                de.caritas.cob.userservice.api.adapters.web.dto.UserDTO.class));
+    org.assertj.core.api.Assertions.assertThat(provider.commands())
+        .noneMatch(command -> command.operation().equals("account.create"));
     org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
         .createUser(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+        .createOwnedUser(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any());
   }
 
   @org.junit.jupiter.params.ParameterizedTest

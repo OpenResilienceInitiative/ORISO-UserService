@@ -71,6 +71,7 @@ public class ReservationLedger {
     private final Long tenantId;
     private final String tenantToken;
     private final Long agencyId;
+    private final String agencyToken;
     private final boolean reservedTenant;
     private final boolean reservedAgency;
     private final AtomicBoolean undone = new AtomicBoolean();
@@ -79,11 +80,13 @@ public class ReservationLedger {
         Long tenantId,
         String tenantToken,
         Long agencyId,
+        String agencyToken,
         boolean reservedTenant,
         boolean reservedAgency) {
       this.tenantId = tenantId;
       this.tenantToken = tenantToken;
       this.agencyId = agencyId;
+      this.agencyToken = agencyToken;
       this.reservedTenant = reservedTenant;
       this.reservedAgency = reservedAgency;
     }
@@ -94,6 +97,10 @@ public class ReservationLedger {
 
     public String tenantToken() {
       return tenantToken;
+    }
+
+    public String agencyToken() {
+      return agencyToken;
     }
 
     public Long agencyId() {
@@ -150,6 +157,7 @@ public class ReservationLedger {
             tenantId,
             tenant != null ? tenant.token() : null,
             target.agencyId(),
+            null,
             reservedTenant,
             false);
     try {
@@ -158,8 +166,24 @@ public class ReservationLedger {
             target.role() == AccountInviteTargetRole.AGENCY_ADMIN
                 && sharesAgencyReservation(target.agencyId(), tenantId, null);
         if (!shares) {
-          Long agencyId = agencyIdAllocationClient.reserve(target.agencyId(), tenantId);
-          held = new Held(tenantId, held.tenantToken, agencyId, reservedTenant, true);
+          var reserved = agencyIdAllocationClient.reserveWithProof(target.agencyId(), tenantId);
+          held =
+              new Held(
+                  tenantId,
+                  held.tenantToken,
+                  reserved.agencyId(),
+                  reserved.token(),
+                  reservedTenant,
+                  true);
+        } else {
+          held =
+              new Held(
+                  tenantId,
+                  held.tenantToken,
+                  target.agencyId(),
+                  sharedAgencyToken(target.agencyId(), tenantId),
+                  reservedTenant,
+                  false);
         }
       }
       revalidate(held);
@@ -177,10 +201,12 @@ public class ReservationLedger {
       return;
     }
     if (held.reservedAgency && held.agencyId != null) {
-      releaseQuietly("agency", () -> agencyIdAllocationClient.release(held.agencyId));
+      releaseQuietly(
+          "agency", () -> agencyIdAllocationClient.release(held.agencyId, held.agencyToken));
     }
     if (held.reservedTenant && held.tenantId != null) {
-      releaseQuietly("tenant", () -> tenantIdAllocationClient.release(held.tenantId));
+      releaseQuietly(
+          "tenant", () -> tenantIdAllocationClient.release(held.tenantId, held.tenantToken));
     }
   }
 
@@ -191,11 +217,18 @@ public class ReservationLedger {
   public Long reserveAgencyOnRelease(AccountInvite invite) {
     if (!IdAllocationMode.reservesAnId(invite.getAgencyIdAllocationMode())
         || sharesAgencyReservation(invite.getAgencyId(), invite.getTenantId(), invite.getId())) {
+      if (invite.getAgencyReservationToken() == null && invite.getAgencyId() != null) {
+        invite.setAgencyReservationToken(
+            sharedAgencyToken(invite.getAgencyId(), invite.getTenantId()));
+      }
       return invite.getAgencyId();
     }
-    Long agencyId = agencyIdAllocationClient.reserve(invite.getAgencyId(), invite.getTenantId());
-    undoOnRollback(new Held(invite.getTenantId(), null, agencyId, false, true));
-    return agencyId;
+    var reserved =
+        agencyIdAllocationClient.reserveWithProof(invite.getAgencyId(), invite.getTenantId());
+    invite.setAgencyReservationToken(reserved.token());
+    undoOnRollback(
+        new Held(invite.getTenantId(), null, reserved.agencyId(), reserved.token(), false, true));
+    return reserved.agencyId();
   }
 
   /**
@@ -231,12 +264,20 @@ public class ReservationLedger {
     if (unneeded != null
         && unneeded[0]
         && stillReserved("tenant", () -> tenantIdAllocationClient.getAvailability(tenantId))) {
-      taskIds.add(saveReleaseTask(IdReservationReleaseType.TENANT, tenantId, tenantId, now));
+      taskIds.add(
+          saveReleaseTask(
+              IdReservationReleaseType.TENANT, tenantId, tenantId, tenantOwnerToken(invite), now));
     }
     if (unneeded != null
         && unneeded[1]
         && stillReserved("agency", () -> agencyIdAllocationClient.getAvailability(agencyId))) {
-      taskIds.add(saveReleaseTask(IdReservationReleaseType.AGENCY, agencyId, tenantId, now));
+      taskIds.add(
+          saveReleaseTask(
+              IdReservationReleaseType.AGENCY,
+              agencyId,
+              tenantId,
+              invite.getAgencyReservationToken(),
+              now));
     }
     processAfterCommit(taskIds);
   }
@@ -355,6 +396,21 @@ public class ReservationLedger {
   }
 
   /** A further or replacement admin of a new Beratungsstelle shares the earlier reservation. */
+  private String sharedAgencyToken(Long agencyId, Long tenantId) {
+    return accountInviteRepository
+        .findFirstByAgencyIdAndTenantIdAndAgencyReservationTokenIsNotNullOrderByCreateDateDesc(
+            agencyId, tenantId)
+        .map(AccountInvite::getAgencyReservationToken)
+        .orElse(null);
+  }
+
+  private String tenantOwnerToken(AccountInvite invite) {
+    if (invite.getTenantIdReservationToken() != null) return invite.getTenantIdReservationToken();
+    return sharedTenantReservation(invite.getTenantId())
+        .map(TenantIdReservation::token)
+        .orElse(null);
+  }
+
   private boolean sharesAgencyReservation(Long agencyId, Long tenantId, Long excludedInviteId) {
     return agencyId != null
         && accountInviteRepository.existsAgencyAdminReservation(
@@ -388,13 +444,18 @@ public class ReservationLedger {
   }
 
   private Long saveReleaseTask(
-      IdReservationReleaseType type, Long reservedId, Long tenantContextId, LocalDateTime now) {
+      IdReservationReleaseType type,
+      Long reservedId,
+      Long tenantContextId,
+      String reservationToken,
+      LocalDateTime now) {
     return releaseTaskRepository
         .saveAndFlush(
             IdReservationReleaseTask.builder()
                 .allocationType(type)
                 .reservedId(reservedId)
                 .tenantContextId(tenantContextId)
+                .reservationToken(reservationToken)
                 .createDate(now)
                 .build())
         .getId();

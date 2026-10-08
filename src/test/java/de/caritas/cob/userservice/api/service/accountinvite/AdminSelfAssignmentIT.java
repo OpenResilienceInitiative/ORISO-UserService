@@ -112,6 +112,9 @@ class AdminSelfAssignmentIT {
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
   @Autowired private ConsultantTopicRepository consultantTopicRepository;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.consultingtype.TopicService topicService;
+
   @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private GrantConsultantIdentityService grantConsultantIdentityService;

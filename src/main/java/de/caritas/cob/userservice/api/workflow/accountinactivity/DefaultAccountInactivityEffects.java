@@ -3,10 +3,9 @@ package de.caritas.cob.userservice.api.workflow.accountinactivity;
 import static de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityEffectException.Code.*;
 import static de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityEffectException.Target.*;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.port.out.IdentityInactivityLifecycle;
 import de.caritas.cob.userservice.api.workflow.delete.service.InactiveAskerDeletionService;
-import jakarta.ws.rs.NotFoundException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -17,6 +16,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.client.HttpClientErrorException;
 
 /** Coordinates confirmed external effects; its recovery metadata commits before any mutation. */
 @Component
@@ -27,7 +27,7 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
 
   private final JdbcTemplate jdbc;
   private final TransactionTemplate durable;
-  private final KeycloakClient keycloak;
+  private final IdentityInactivityLifecycle keycloak;
   private final MatrixSynapseService matrix;
   private final AccountInactivityMediaClient media;
   private final ObjectProvider<InactiveAskerDeletionService> deletion;
@@ -35,7 +35,7 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
   public DefaultAccountInactivityEffects(
       JdbcTemplate jdbc,
       PlatformTransactionManager manager,
-      KeycloakClient keycloak,
+      IdentityInactivityLifecycle keycloak,
       MatrixSynapseService matrix,
       AccountInactivityMediaClient media,
       ObjectProvider<InactiveAskerDeletionService> deletion) {
@@ -51,34 +51,7 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
   @Override
   public Set<Role> currentRoles(String id) {
     try {
-      var user = keycloak.getUsersResource().get(id);
-      if (user.toRepresentation().getServiceAccountClientId() != null) return Set.of(Role.UNKNOWN);
-      Set<Role> roles = new HashSet<>();
-      for (var role : user.roles().realmLevel().listEffective()) {
-        var name = role.getName();
-        if (name != null
-            && (name.equals("offline_access")
-                || name.equals("uma_authorization")
-                || name.startsWith("default-roles-"))) continue;
-        classify(roles, name);
-      }
-      // Enumerate effective client roles as well, including roles inherited through groups.
-      for (var client : keycloak.getRealmResource().clients().findAll()) {
-        for (var role : user.roles().clientLevel(client.getId()).listEffective()) {
-          var name = role.getName();
-          if ("account".equals(client.getClientId())
-              && Set.of(
-                      "manage-account",
-                      "manage-account-links",
-                      "view-profile",
-                      "view-consent",
-                      "manage-consent",
-                      "view-applications",
-                      "delete-account")
-                  .contains(name)) continue;
-          classify(roles, name);
-        }
-      }
+      Set<Role> roles = new HashSet<>(keycloak.status(id).roles());
       if (jdbc.queryForObject(
               "SELECT COUNT(*) FROM consultant WHERE consultant_id=?", Long.class, id)
           > 0) roles.add(Role.CONSULTANT);
@@ -92,26 +65,13 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
     }
   }
 
-  private void classify(Set<Role> roles, String name) {
-    if (name == null) roles.add(Role.UNKNOWN);
-    else if (name.equals("user") || name.equals("anonymous")) roles.add(Role.ASKER);
-    else if (name.equals("consultant")) roles.add(Role.CONSULTANT);
-    else roles.add(Role.OTHER);
-  }
-
   @Override
   public boolean suspend(String id) {
     capture(id, false);
     try {
-      var user = keycloak.getUsersResource().get(id);
-      var representation = user.toRepresentation();
-      if (!Boolean.FALSE.equals(representation.isEnabled())) {
-        representation.setEnabled(false);
-        user.update(representation);
-      }
-      user.logout();
-      if (!Boolean.FALSE.equals(user.toRepresentation().isEnabled())
-          || !user.getUserSessions().isEmpty())
+      keycloak.suspend(id);
+      var state = keycloak.status(id);
+      if (state.enabled() || state.sessionCount() != 0)
         throw new AccountInactivityEffectException(KEYCLOAK, UNCONFIRMED);
     } catch (AccountInactivityEffectException failure) {
       throw failure;
@@ -136,11 +96,8 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
         throw new AccountInactivityEffectException(MATRIX, UNCONFIRMED);
     media.restore(matrixStates(id).stream().map(MatrixAccess::id).toList());
     try {
-      var user = keycloak.getUsersResource().get(id);
-      var representation = user.toRepresentation();
-      representation.setEnabled(original.enabled());
-      user.update(representation);
-      if (!Boolean.valueOf(original.enabled()).equals(user.toRepresentation().isEnabled()))
+      keycloak.restoreOriginalAccess(id);
+      if (original.enabled() != keycloak.status(id).enabled())
         throw new AccountInactivityEffectException(KEYCLOAK, UNCONFIRMED);
     } catch (AccountInactivityEffectException failure) {
       throw failure;
@@ -180,7 +137,7 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
       if (!finalRoles.equals(Set.of(Role.ASKER)))
         throw new AccountInactivityEffectException(KEYCLOAK, ROLE_CHANGED);
     }
-    var errors = deletion.getObject().delete(id);
+    var errors = deletion.getObject().delete(id, keycloak.authorizeDeletion(id));
     if (errors == null) throw new AccountInactivityEffectException(DATABASE, UNCONFIRMED);
     if (!errors.isEmpty()) {
       var target = errors.getFirst().getDeletionTargetType();
@@ -201,9 +158,9 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
 
   private boolean keycloakGone(String id) {
     try {
-      keycloak.getUsersResource().get(id).toRepresentation();
+      keycloak.status(id);
       return false;
-    } catch (NotFoundException absent) {
+    } catch (HttpClientErrorException.NotFound absent) {
       return true;
     } catch (RuntimeException failure) {
       return false;
@@ -245,10 +202,7 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
           }
           boolean enabled;
           try {
-            var representation = keycloak.getUsersResource().get(id).toRepresentation();
-            if (representation.isEnabled() == null)
-              throw new AccountInactivityEffectException(KEYCLOAK, UNCONFIRMED);
-            enabled = representation.isEnabled();
+            enabled = keycloak.status(id).enabled();
           } catch (AccountInactivityEffectException failure) {
             throw failure;
           } catch (RuntimeException failure) {

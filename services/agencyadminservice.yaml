@@ -114,6 +114,11 @@ paths:
           schema:
             type: integer
             format: int64
+        - name: reservationToken
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         '204':
           description: NO CONTENT - reservation was released
@@ -1097,6 +1102,9 @@ components:
         - consultingType
         - external
       properties:
+        reservationToken:
+          type: string
+          writeOnly: true
         name:
           type: string
           maxLength: 100
@@ -1942,6 +1950,8 @@ components:
       required:
         - agencyId
       properties:
+        token:
+          type: string
         agencyId:
           type: integer
           format: int64

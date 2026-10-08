@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.workflow.delete.action.consultant;
 
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.CONSULTANT;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.KEYCLOAK;
-import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
@@ -58,21 +57,21 @@ public class DeleteKeycloakConsultantActionTest {
   public void
       execute_Should_deleteKeycloakUserAndReturnEmptyList_When_consultantDeletionIsSuccessful() {
     ConsultantDeletionWorkflowDTO workflowDTO =
-        new ConsultantDeletionWorkflowDTO(new Consultant(), emptyList());
+        new ConsultantDeletionWorkflowDTO(markedConsultant(), new ArrayList<>());
 
     this.deleteKeycloakConsultantAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
     assertThat(workflowErrors, hasSize(0));
-    verify(this.identityAccountRemover, times(1)).deleteUser(any());
+    verify(this.identityAccountRemover, times(1)).deleteUser(any(), any());
   }
 
   @Test
   public void
       execute_Should_returnExpectedWorkflowErrorAndLogError_When_consultantDeletionFailes() {
-    Consultant consultant = new Consultant();
+    Consultant consultant = markedConsultant();
     consultant.setId("consultantId");
-    doThrow(new RuntimeException()).when(this.identityAccountRemover).deleteUser(any());
+    doThrow(new RuntimeException()).when(this.identityAccountRemover).deleteUser(any(), any());
     ConsultantDeletionWorkflowDTO workflowDTO =
         new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
 
@@ -91,11 +90,11 @@ public class DeleteKeycloakConsultantActionTest {
 
   @Test
   public void execute_Should_notReturnWorkflowErrorIfUserCouldNotBeFoundInKeycloak() {
-    Consultant consultant = new Consultant();
+    Consultant consultant = markedConsultant();
     consultant.setId("consultantId");
     doThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND))
         .when(this.identityAccountRemover)
-        .deleteUser(any());
+        .deleteUser(any(), any());
     ConsultantDeletionWorkflowDTO workflowDTO =
         new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
 
@@ -108,5 +107,12 @@ public class DeleteKeycloakConsultantActionTest {
                 Level.WARN,
                 "No user with id consultantId could be found in keycloak, but proceeding with further actions."))
         .isTrue();
+  }
+
+  private Consultant markedConsultant() {
+    var target = new Consultant();
+    target.setId("consultantId");
+    target.setDeleteDate(java.time.LocalDateTime.now());
+    return target;
   }
 }

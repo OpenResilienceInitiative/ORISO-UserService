@@ -76,6 +76,53 @@ class MatrixSynapseServiceTest {
   }
 
   @Test
+  void restorePriorInactiveAccountSendsOnlyDeactivatedFlagOverActualHttpWithoutErasure()
+      throws Exception {
+    var request = new java.util.concurrent.atomic.AtomicReference<java.util.Map<String, Object>>();
+    var path = new java.util.concurrent.atomic.AtomicReference<String>();
+    var method = new java.util.concurrent.atomic.AtomicReference<String>();
+    var authorization = new java.util.concurrent.atomic.AtomicReference<String>();
+    var server =
+        com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext(
+        "/",
+        exchange -> {
+          path.set(exchange.getRequestURI().getPath());
+          method.set(exchange.getRequestMethod());
+          authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+          request.set(
+              new com.fasterxml.jackson.databind.ObjectMapper()
+                  .readValue(exchange.getRequestBody(), java.util.Map.class));
+          byte[] response = "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(200, response.length);
+          exchange.getResponseBody().write(response);
+          exchange.close();
+        });
+    server.start();
+    try {
+      matrixConfig.setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
+      var service =
+          org.mockito.Mockito.spy(
+              new MatrixSynapseService(
+                  matrixConfig,
+                  new RestTemplate(),
+                  matrixLongPollRestTemplate,
+                  matrixRoomClient,
+                  matrixMediaClient,
+                  REDACTOR));
+      org.mockito.Mockito.doReturn(ADMIN_TOKEN).when(service).getAdminToken();
+      assertThat(service.restoreDeactivatedUser(MATRIX_USER_ID)).isTrue();
+      assertThat(path.get()).isEqualTo("/_synapse/admin/v2/users/@seeker:matrix.example.com");
+      assertThat(method.get()).isEqualTo("PUT");
+      assertThat(authorization.get()).isEqualTo("Bearer admin-token");
+      assertThat(request.get())
+          .containsExactly(org.assertj.core.api.Assertions.entry("deactivated", true));
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  @Test
   void makeMatrixRequestShouldUseDedicatedLongPollRestTemplate() {
     var responseBody = Map.<String, Object>of("next_batch", "sync-token");
     when(matrixLongPollRestTemplate.exchange(
@@ -613,6 +660,26 @@ class MatrixSynapseServiceTest {
   }
 
   @Test
+  void ownedRegistrationDoesNotAdoptForeignAcknowledgedIdentity() {
+    matrixConfig.setServerName("matrix.example.com");
+    when(restTemplate.getForEntity(REGISTER_URL, String.class))
+        .thenReturn(ResponseEntity.ok("{\"nonce\":\"nonce-abc\"}"));
+    var body = new MatrixCreateUserResponseDTO();
+    body.setUserId("@foreign:matrix.example.com");
+    when(restTemplate.postForEntity(
+            eq(REGISTER_URL), any(HttpEntity.class), eq(MatrixCreateUserResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(body));
+    var effect =
+        org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect.class);
+    assertThatThrownBy(
+            () -> matrixSynapseService().createOwnedUser("newuser", "secret", "New User", effect))
+        .isInstanceOf(MatrixCreateUserException.class);
+    verify(effect).started("@newuser:matrix.example.com");
+    verify(effect, never()).created(any());
+    verify(effect, never()).restoreDeactivated(any());
+  }
+
+  @Test
   void createUser_missingNonce_throwsMatrixCreateUserException() {
     // Registration cannot proceed without a Synapse-issued nonce.
     when(restTemplate.getForEntity(REGISTER_URL, String.class))
@@ -707,6 +774,50 @@ class MatrixSynapseServiceTest {
         (MatrixPasswordUpdateRequestDTO) updateCaptor.getAllValues().get(1).getBody();
     assertThat(passwordUpdate.getPassword()).isEqualTo("new-secret");
     assertThat(passwordUpdate.isLogoutDevices()).isFalse();
+  }
+
+  @Test
+  void ownedReactivationCapturesPriorInactiveStateBeforeFirstPutEvenWhenPasswordUpdateFails() {
+    matrixConfig.setServerName("matrix.example.com");
+    stubAdminLogin();
+    when(restTemplate.getForEntity(REGISTER_URL, String.class))
+        .thenReturn(ResponseEntity.ok("{\"nonce\":\"n\"}"));
+    when(restTemplate.postForEntity(
+            eq(REGISTER_URL), any(HttpEntity.class), eq(MatrixCreateUserResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,
+                "Reserved",
+                null,
+                "{\"errcode\":\"M_USER_IN_USE\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+    var uri =
+        URI.create(
+            "https://matrix.example.com/_synapse/admin/v2/users/%40newuser%3Amatrix.example.com");
+    when(restTemplate.exchange(eq(uri), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("deactivated", true)));
+    when(restTemplate.exchange(eq(uri), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of()))
+        .thenThrow(
+            new org.springframework.web.client.ResourceAccessException("password response lost"));
+    var effect =
+        org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect.class);
+    assertThatThrownBy(
+            () ->
+                matrixSynapseService()
+                    .createOwnedUser("newuser", "test-only-password", "New User", effect))
+        .isInstanceOf(MatrixCreateUserException.class);
+    var order = org.mockito.Mockito.inOrder(restTemplate, effect);
+    order.verify(effect).started("@newuser:matrix.example.com");
+    order
+        .verify(restTemplate)
+        .exchange(eq(uri), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
+    order.verify(effect).restoreDeactivated("@newuser:matrix.example.com");
+    order
+        .verify(restTemplate, times(2))
+        .exchange(eq(uri), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class));
+    verify(effect, never()).created(any());
+    verify(effect, never()).rejectedWithoutEffect();
   }
 
   @Test

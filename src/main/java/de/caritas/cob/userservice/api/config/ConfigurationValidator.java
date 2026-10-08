@@ -31,12 +31,6 @@ public class ConfigurationValidator {
   @Value("${identity.openid-connect-url:}")
   private String identityOpenIdConnectUrl;
 
-  @Value("${identity.technical-user.client-id:}")
-  private String identityTechnicalClientId;
-
-  @Value("${identity.technical-user.client-secret:}")
-  private String identityTechnicalClientSecret;
-
   @Value("${consulting.type.service.api.url:}")
   private String consultingTypeServiceApiUrl;
 
@@ -83,13 +77,6 @@ public class ConfigurationValidator {
     }
     if (isEmpty(identityOpenIdConnectUrl)) {
       missingConfigs.add("identity.openid-connect-url (IDENTITY_OPENID_CONNECT_URL)");
-    }
-    if (isEmpty(identityTechnicalClientId)) {
-      missingConfigs.add("identity.technical-user.client-id (IDENTITY_TECHNICAL_CLIENT_ID)");
-    }
-    if (isEmpty(identityTechnicalClientSecret)) {
-      missingConfigs.add(
-          "identity.technical-user.client-secret (KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET)");
     }
     if (isEmpty(consultingTypeServiceApiUrl)) {
       missingConfigs.add("consulting.type.service.api.url (CONSULTING_TYPE_SERVICE_API_URL)");

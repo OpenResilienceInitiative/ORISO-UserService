@@ -3,13 +3,11 @@ package de.caritas.cob.userservice.api.facade.rollback;
 import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.service.UserAgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
-import java.time.LocalDateTime;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +22,9 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class RollbackFacade {
 
-  private final @NonNull IdentityAccountRemover identityAccountRemover;
+  private final @NonNull de.caritas.cob.userservice.api.adapters.keycloak.commands
+          .IdentityAccountProvisioning
+      identityProvisioning;
   private final @NonNull UserAgencyService userAgencyService;
   private final @NonNull SessionService sessionService;
   private final @NonNull UserService userService;
@@ -36,9 +36,9 @@ public class RollbackFacade {
         "Initiating rollback of consultant account. Consultant id: {}",
         consultant.getId(),
         consultant.getUsername());
-    consultant.setDeleteDate(LocalDateTime.now());
+    identityProvisioning.compensateForLocalRollback(consultant.getId());
     List<DeletionWorkflowError> deletionWorkflowErrors =
-        deleteUserAccountService.performConsultantDeletion(consultant);
+        deleteUserAccountService.performConsultantCreationRollback(consultant);
     if (nonNull(deletionWorkflowErrors) && !deletionWorkflowErrors.isEmpty()) {
       deletionWorkflowErrors.stream()
           .forEach(e -> log.error("Consultant delete error during rollback: ", e));
@@ -52,6 +52,12 @@ public class RollbackFacade {
    * @param rollbackUser {@link RollbackUserAccountInformation}
    */
   public void rollBackUserAccount(RollbackUserAccountInformation rollbackUser) {
+    if (rollbackUser.isRollBackUserAccount()) {
+      if (rollbackUser.getUserId() == null)
+        throw new org.springframework.security.access.AccessDeniedException(
+            "Creation rollback requires its owned identity attempt");
+      identityProvisioning.compensateForLocalRollback(rollbackUser.getUserId());
+    }
     rollbackUserAgency(rollbackUser);
     rollbackSession(rollbackUser);
     rollbackKeycloakAndMariaDbAccount(rollbackUser);
@@ -71,9 +77,6 @@ public class RollbackFacade {
 
   private void rollbackKeycloakAndMariaDbAccount(RollbackUserAccountInformation rollbackUser) {
     if (rollbackUser.isRollBackUserAccount()) {
-      if (nonNull(rollbackUser.getUserId())) {
-        identityAccountRemover.rollbackUser(rollbackUser.getUserId());
-      }
       if (nonNull(rollbackUser.getUser())) {
         userService.deleteUser(rollbackUser.getUser());
       }

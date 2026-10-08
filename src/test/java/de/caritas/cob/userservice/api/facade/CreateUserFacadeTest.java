@@ -1,8 +1,6 @@
 package de.caritas.cob.userservice.api.facade;
 
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE;
-import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.CREATED_IDENTITY_WITHOUT_USER_ID;
-import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.CREATED_IDENTITY_WITH_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_SUCHT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ERROR;
@@ -50,10 +48,6 @@ import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -97,17 +91,39 @@ public class CreateUserFacadeTest {
   @org.mockito.Mock private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
 
   @org.junit.jupiter.api.BeforeEach
+  void ownedDownstreamPortFixture() {
+    var scope =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationEffects.Scope
+                .class);
+    org.mockito.Mockito.lenient()
+        .when(scope.user())
+        .thenReturn(
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect.class));
+    org.mockito.Mockito.lenient()
+        .when(identityProvisioning.ownedMatrixEffects(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(scope);
+  }
+
+  @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
+    org.mockito.Mockito.lenient()
+        .when(agencyVerifier.getVerifiedAgency(any(), org.mockito.ArgumentMatchers.anyInt()))
+        .thenAnswer(
+            call -> new AgencyDTO().id(call.getArgument(0)).consultingType(call.getArgument(1)));
+    org.mockito.Mockito.lenient()
+        .when(userHelper.getDummyEmail(anyString()))
+        .thenAnswer(call -> call.getArgument(0) + "@beratungcaritas.de");
     createUserFacade =
         new CreateUserFacade(
             chatRecoveryEnrollmentPolicyService,
             inactivityEnrollment,
             de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
             userVerifier,
-            identityClient,
-            identityAccountRemover,
-            identityPasswordUpdater,
-            identityDummyEmailUpdater,
+            localCompletion,
+            identityProvisioning,
+            userHelper,
             userService,
             consultingTypeManager,
             agencyVerifier,
@@ -149,10 +165,17 @@ public class CreateUserFacadeTest {
   }
 
   private CreateUserFacade createUserFacade;
-  @Mock private IdentityClient identityClient;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationLocalCompletion
+      localCompletion;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityAccountProvisioning
+      identityProvisioning;
+
+  @Mock private de.caritas.cob.userservice.api.helper.UserHelper userHelper;
   @Mock private IdentityAccountRemover identityAccountRemover;
-  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
-  @Mock private IdentityDummyEmailUpdater identityDummyEmailUpdater;
   @Mock private UserService userService;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock private AgencyVerifier agencyVerifier;
@@ -189,7 +212,8 @@ public class CreateUserFacadeTest {
     assertThrows(
         org.springframework.web.server.ResponseStatusException.class,
         () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
-    org.mockito.Mockito.verifyNoInteractions(identityClient, matrixSynapseService, userService);
+    org.mockito.Mockito.verifyNoInteractions(
+        identityProvisioning, matrixSynapseService, userService);
   }
 
   @Test
@@ -246,7 +270,7 @@ public class CreateUserFacadeTest {
   public void
       createUserAccountWithInitializedConsultingType_Should_AbortBeforeDependentWrites_When_IdentityProviderReturnsNoUserId() {
     PlainCredentialsHolder.set("plain-user", null);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITHOUT_USER_ID);
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(null));
 
     assertThrows(
         IdentityProvisioningException.class,
@@ -254,7 +278,8 @@ public class CreateUserFacadeTest {
 
     verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
     verify(createNewSessionFacade, never())
-        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+        .initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any());
     assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
@@ -263,7 +288,7 @@ public class CreateUserFacadeTest {
       createUserAccountWithInitializedConsultingType_Should_CompensateIdentity_When_DatabaseUserCreationFails()
           throws Exception {
     PlainCredentialsHolder.set("plain-user", "plain-password");
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any(), any()))
@@ -279,10 +304,18 @@ public class CreateUserFacadeTest {
         .createUser(any(), any(), any(), any(), anyBoolean(), any(), snapshotCaptor.capture());
     org.junit.jupiter.api.Assertions.assertEquals(
         new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3), snapshotCaptor.getValue());
-    verify(identityAccountRemover).rollbackUser(USER_ID);
-    verify(matrixSynapseService, never()).createUser(any(), any(), any());
+    var failedCreationOrder = org.mockito.Mockito.inOrder(identityProvisioning, userService);
+    failedCreationOrder.verify(identityProvisioning).prepareLocalRollback(USER_ID);
+    failedCreationOrder
+        .verify(identityProvisioning)
+        .compensate(
+            org.mockito.ArgumentMatchers.argThat(
+                r -> java.util.Objects.equals(r.accountId(), USER_ID)),
+            any());
+    verify(matrixSynapseService, never()).createOwnedUser(any(), any(), any(), any());
     verify(createNewSessionFacade, never())
-        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+        .initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any());
     assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
@@ -297,11 +330,10 @@ public class CreateUserFacadeTest {
     // that path is actually supposed to do.
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
-    doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
 
-    when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+    when(createNewSessionFacade.initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any()))
         .thenReturn(mock(NewRegistrationResponseDto.class));
     givenAFullyPersistedUser();
     givenMatrixProvisioningSucceeds();
@@ -310,10 +342,11 @@ public class CreateUserFacadeTest {
     try {
       createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
 
-      verify(identityClient).createUser(any());
-      verify(matrixSynapseService).createUser(any(), any(), any());
+      verify(identityProvisioning).create(any(), any(), any());
+      verify(matrixSynapseService).createOwnedUser(any(), any(), any(), any());
       verify(createNewSessionFacade)
-          .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+          .initializeOwnedRegistration(
+              any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any());
       // The plaintext password must not survive the registration.
       assertThat(PlainCredentialsHolder.get(), nullValue());
     } finally {
@@ -328,11 +361,10 @@ public class CreateUserFacadeTest {
     TenantContext.setCurrentTenant(1L);
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
-    doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
 
-    when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+    when(createNewSessionFacade.initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any()))
         .thenReturn(mock(NewRegistrationResponseDto.class));
     when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
         .thenReturn(new RestrictedTenantDTO());
@@ -342,73 +374,31 @@ public class CreateUserFacadeTest {
 
     createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
     TenantContext.clear();
-    verify(identityClient, times(1)).createUser(any(UserDTO.class));
-    verify(identityClient, times(1)).updateRole(any(), any(UserRole.class));
-    verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
+    verify(identityProvisioning, times(1)).create(any(), any(), any());
     verify(createNewSessionFacade, times(1))
-        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+        .initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any());
     verify(statisticsService, times(1)).fireEvent(any());
     verify(matrixSynapseService, never()).deactivateUser(anyString());
     verify(sessionService, never()).deleteSession(any(Session.class));
     verify(userService, never()).deleteUser(any(User.class));
-    verify(identityAccountRemover, never()).rollbackUser(anyString());
+    verify(identityProvisioning, never()).compensate(any(), any());
     verify(welcomeEmailService, times(1)).sendWelcomeEmail(any(User.class), anyString());
   }
 
   @Test
-  public void
-      updateKeycloakAccountAndCreateDatabaseUserAccount_Should_CallNecessaryMethods_When_EverythingSucceeds() {
-    when(consultingTypeManager.getConsultingTypeSettings(any()))
-        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
-
+  void localAccountBuilderDoesNotObtainNativeIdentityAuthority() {
     createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
-
-    verify(identityClient, times(1)).updateRole(any(), any(UserRole.class));
-    verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
-  }
-
-  @Test
-  public void
-      updateIdentityAndCreateAccount_Should_AbortBeforeDatabaseWrite_When_PasswordUpdateFails() {
-    RuntimeException identityFailure = new RuntimeException("password update failed");
-    doThrow(identityFailure).when(identityPasswordUpdater).updatePassword(anyString(), anyString());
-
-    RuntimeException propagated =
-        assertThrows(
-            RuntimeException.class,
-            () ->
-                createUserFacade.updateIdentityAndCreateAccount(
-                    USER_ID, USER_DTO_SUCHT, UserRole.USER));
-
-    assertThat(propagated, is(identityFailure));
-    verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
-  }
-
-  @Test
-  public void
-      updateIdentityAndCreateAccount_Should_AbortBeforeDatabaseWrite_When_RoleUpdateFails() {
-    RuntimeException identityFailure = new RuntimeException("role update failed");
-    doThrow(identityFailure).when(identityClient).updateRole(anyString(), any(UserRole.class));
-
-    RuntimeException propagated =
-        assertThrows(
-            RuntimeException.class,
-            () ->
-                createUserFacade.updateIdentityAndCreateAccount(
-                    USER_ID, USER_DTO_SUCHT, UserRole.USER));
-
-    assertThat(propagated, is(identityFailure));
-    verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
+    org.mockito.Mockito.verifyNoInteractions(identityProvisioning);
+    verify(userService).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
   }
 
   @Test
   void
-      createUserAccountWithInitializedConsultingType_Should_CompensateIdentity_When_RoleUpdateFails() {
+      createUserAccountWithInitializedConsultingType_Should_AbortBeforeLocalWrites_When_AtomicIdentityCommandRejectsRoles() {
     PlainCredentialsHolder.set("plain-user", "plain-password");
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     RuntimeException identityFailure = new RuntimeException("role update failed");
-    doThrow(identityFailure).when(identityClient).updateRole(anyString(), any(UserRole.class));
+    doThrow(identityFailure).when(identityProvisioning).create(any(), any(), any());
 
     RuntimeException propagated =
         assertThrows(
@@ -417,7 +407,7 @@ public class CreateUserFacadeTest {
 
     assertThat(propagated, is(identityFailure));
     verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
-    verify(identityAccountRemover).rollbackUser(USER_ID);
+    verify(identityProvisioning, never()).compensate(any(), any());
     assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
@@ -431,7 +421,6 @@ public class CreateUserFacadeTest {
         () -> {
           when(consultingTypeManager.getConsultingTypeSettings(any()))
               .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-          doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
           when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any(), any()))
               .thenThrow(new IllegalArgumentException());
 
@@ -449,7 +438,7 @@ public class CreateUserFacadeTest {
           throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
     givenMatrixProvisioningSucceeds();
     User user = givenAFullyPersistedUser();
     Chat group =
@@ -472,12 +461,18 @@ public class CreateUserFacadeTest {
 
     assertThat(propagated, is(joinFailure));
     // The membership references the user row, and the user row references the identity.
-    var compensation = inOrder(groupInviteRegistration, userService, identityAccountRemover);
+    var compensation = inOrder(groupInviteRegistration, userService, identityProvisioning);
     compensation.verify(groupInviteRegistration).leave(group, user);
     compensation.verify(userService).deleteUser(user);
-    compensation.verify(identityAccountRemover).rollbackUser(USER_ID);
+    compensation
+        .verify(identityProvisioning)
+        .compensate(
+            org.mockito.ArgumentMatchers.argThat(
+                r -> java.util.Objects.equals(r.accountId(), USER_ID)),
+            any());
     verify(createNewSessionFacade, never())
-        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+        .initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any());
   }
 
   @Test
@@ -486,7 +481,7 @@ public class CreateUserFacadeTest {
           throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
     givenMatrixProvisioningSucceeds();
     User user = givenAFullyPersistedUser();
     Chat group =
@@ -524,7 +519,7 @@ public class CreateUserFacadeTest {
       USER_DTO_SUCHT.setTemporary(false);
     }
 
-    verify(identityClient, never()).createUser(any());
+    verify(identityProvisioning, never()).create(any(), any(), any());
     verify(userService, never()).saveUser(any());
   }
 
@@ -534,7 +529,7 @@ public class CreateUserFacadeTest {
           throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
     givenMatrixProvisioningSucceeds();
     User user = givenAFullyPersistedUser();
     Chat group =
@@ -558,6 +553,13 @@ public class CreateUserFacadeTest {
     verify(groupInviteRegistration).join(group, user);
   }
 
+  private static de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+          .CreationResult
+      receipt(String id) {
+    return new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+        .CreationResult(java.util.UUID.randomUUID(), id, "captured-own-proof", "OPEN");
+  }
+
   private User givenAFullyPersistedUser() {
     User user = new User();
     user.setUsername("dbUser");
@@ -572,9 +574,9 @@ public class CreateUserFacadeTest {
   private void givenBasicRegistrationStubs() throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
-    when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
+    when(createNewSessionFacade.initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any()))
         .thenReturn(mock(NewRegistrationResponseDto.class));
     when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     givenMatrixProvisioningSucceeds();
@@ -584,7 +586,7 @@ public class CreateUserFacadeTest {
     var matrixResponseBody = new MatrixCreateUserResponseDTO();
     matrixResponseBody.setUserId("@registered:matrix.example.org");
     lenient()
-        .when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+        .when(matrixSynapseService.createOwnedUser(anyString(), anyString(), anyString(), any()))
         .thenReturn(ResponseEntity.ok(matrixResponseBody));
   }
 
@@ -598,7 +600,8 @@ public class CreateUserFacadeTest {
     matrixResponseBody.setUserId("@plainuser:matrix.example.org");
     try {
       PlainCredentialsHolder.set("plainuser", "plainpw");
-      when(matrixSynapseService.createUser(eq("plainuser"), anyString(), eq("plainuser")))
+      when(matrixSynapseService.createOwnedUser(
+              eq("plainuser"), anyString(), eq("plainuser"), any()))
           .thenReturn(ResponseEntity.ok(matrixResponseBody));
 
       createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
@@ -607,7 +610,7 @@ public class CreateUserFacadeTest {
     }
 
     verify(matrixSynapseService, times(1))
-        .createUser(eq("plainuser"), anyString(), eq("plainuser"));
+        .createOwnedUser(eq("plainuser"), anyString(), eq("plainuser"), any());
     assertThat(user.getMatrixUserId(), is("@plainuser:matrix.example.org"));
     verify(userService, times(2)).saveUser(any());
   }
@@ -621,12 +624,13 @@ public class CreateUserFacadeTest {
     User user = givenAFullyPersistedUser();
     var matrixResponseBody = new MatrixCreateUserResponseDTO();
     matrixResponseBody.setUserId("@dbUser:matrix.example.org");
-    when(matrixSynapseService.createUser(eq("dbUser"), anyString(), eq("dbUser")))
+    when(matrixSynapseService.createOwnedUser(eq("dbUser"), anyString(), eq("dbUser"), any()))
         .thenReturn(ResponseEntity.ok(matrixResponseBody));
 
     createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
 
-    verify(matrixSynapseService, times(1)).createUser(eq("dbUser"), anyString(), eq("dbUser"));
+    verify(matrixSynapseService, times(1))
+        .createOwnedUser(eq("dbUser"), anyString(), eq("dbUser"), any());
     assertThat(user.getMatrixUserId(), is("@dbUser:matrix.example.org"));
   }
 
@@ -637,7 +641,7 @@ public class CreateUserFacadeTest {
     PlainCredentialsHolder.clear();
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
     when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     // userService.createUser/saveUser left unstubbed -> null user, no username to resolve
 
@@ -645,10 +649,15 @@ public class CreateUserFacadeTest {
         InternalServerErrorException.class,
         () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
 
-    verify(matrixSynapseService, never()).createUser(any(), any(), any());
+    verify(matrixSynapseService, never()).createOwnedUser(any(), any(), any(), any());
     verify(createNewSessionFacade, never())
-        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
-    verify(identityAccountRemover).rollbackUser(USER_ID);
+        .initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any());
+    verify(identityProvisioning)
+        .compensate(
+            org.mockito.ArgumentMatchers.argThat(
+                r -> java.util.Objects.equals(r.accountId(), USER_ID)),
+            any());
     assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
@@ -659,10 +668,10 @@ public class CreateUserFacadeTest {
     PlainCredentialsHolder.clear();
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
     when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     User user = givenAFullyPersistedUser();
-    when(matrixSynapseService.createUser(any(), any(), any()))
+    when(matrixSynapseService.createOwnedUser(any(), any(), any(), any()))
         .thenThrow(new MatrixCreateUserException("boom"));
 
     assertThrows(
@@ -670,9 +679,14 @@ public class CreateUserFacadeTest {
         () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
 
     verify(createNewSessionFacade, never())
-        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+        .initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any());
     verify(userService).deleteUser(user);
-    verify(identityAccountRemover).rollbackUser(USER_ID);
+    verify(identityProvisioning)
+        .compensate(
+            org.mockito.ArgumentMatchers.argThat(
+                r -> java.util.Objects.equals(r.accountId(), USER_ID)),
+            any());
     assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
@@ -683,10 +697,11 @@ public class CreateUserFacadeTest {
     PlainCredentialsHolder.clear();
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
     when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     User user = givenAFullyPersistedUser();
-    when(matrixSynapseService.createUser(any(), any(), any())).thenReturn(ResponseEntity.ok(null));
+    when(matrixSynapseService.createOwnedUser(any(), any(), any(), any()))
+        .thenReturn(ResponseEntity.ok(null));
 
     assertThrows(
         InternalServerErrorException.class,
@@ -694,9 +709,14 @@ public class CreateUserFacadeTest {
 
     assertThat(user.getMatrixUserId(), nullValue());
     verify(createNewSessionFacade, never())
-        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+        .initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any());
     verify(userService).deleteUser(user);
-    verify(identityAccountRemover).rollbackUser(USER_ID);
+    verify(identityProvisioning)
+        .compensate(
+            org.mockito.ArgumentMatchers.argThat(
+                r -> java.util.Objects.equals(r.accountId(), USER_ID)),
+            any());
     verify(userService, times(1)).saveUser(any());
   }
 
@@ -706,9 +726,9 @@ public class CreateUserFacadeTest {
           throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
-    when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
+    when(createNewSessionFacade.initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any()))
         .thenThrow(new RuntimeException("Matrix room initialization failed"));
     User user = givenAFullyPersistedUser();
     givenMatrixProvisioningSucceeds();
@@ -720,16 +740,20 @@ public class CreateUserFacadeTest {
 
     assertThat(exception.getMessage(), is("Matrix room initialization failed"));
     verify(userService).deleteUser(user);
-    verify(identityAccountRemover).rollbackUser(USER_ID);
+    verify(identityProvisioning)
+        .compensate(
+            org.mockito.ArgumentMatchers.argThat(
+                r -> java.util.Objects.equals(r.accountId(), USER_ID)),
+            any());
   }
 
   @Test
   void failedDatabaseDeletionStillDiscardsTheUncompletedLifecycle() throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
-    when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
+    when(createNewSessionFacade.initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any()))
         .thenThrow(new RuntimeException("Matrix room initialization failed"));
     User user = givenAFullyPersistedUser();
     givenMatrixProvisioningSucceeds();
@@ -740,7 +764,11 @@ public class CreateUserFacadeTest {
         () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
 
     verify(inactivityEnrollment).discardUncompletedCreation(USER_ID, inactivityPolicy);
-    verify(identityAccountRemover).rollbackUser(USER_ID);
+    verify(identityProvisioning)
+        .compensate(
+            org.mockito.ArgumentMatchers.argThat(
+                r -> java.util.Objects.equals(r.accountId(), USER_ID)),
+            any());
   }
 
   @Test
@@ -756,15 +784,14 @@ public class CreateUserFacadeTest {
     matrixResponse.setUserId("@plainuser:matrix.example.org");
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt(USER_ID));
     when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any(), any()))
         .thenReturn(user);
     when(userService.saveUser(any(User.class))).thenReturn(user);
-    when(matrixSynapseService.createUser(eq("plainuser"), anyString(), eq("plainuser")))
+    when(matrixSynapseService.createOwnedUser(eq("plainuser"), anyString(), eq("plainuser"), any()))
         .thenReturn(ResponseEntity.ok(matrixResponse));
-    when(matrixSynapseService.deactivateUser("@plainuser:matrix.example.org")).thenReturn(true);
-    when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+    when(createNewSessionFacade.initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any()))
         .thenThrow(new InternalServerErrorException("session initialization failed"));
     when(sessionService.getSessionsForUser(user)).thenReturn(List.of(partialSession));
 
@@ -773,11 +800,16 @@ public class CreateUserFacadeTest {
         () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
 
     var compensationOrder =
-        inOrder(matrixSynapseService, sessionService, userService, identityAccountRemover);
+        inOrder(matrixSynapseService, sessionService, userService, identityProvisioning);
     compensationOrder.verify(sessionService).deleteSession(partialSession);
-    compensationOrder.verify(matrixSynapseService).deactivateUser("@plainuser:matrix.example.org");
+    compensationOrder.verify(identityProvisioning).compensateMatrixEffects(USER_ID);
     compensationOrder.verify(userService).deleteUser(user);
-    compensationOrder.verify(identityAccountRemover).rollbackUser(USER_ID);
+    compensationOrder
+        .verify(identityProvisioning)
+        .compensate(
+            org.mockito.ArgumentMatchers.argThat(
+                r -> java.util.Objects.equals(r.accountId(), USER_ID)),
+            any());
     assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
@@ -802,16 +834,16 @@ public class CreateUserFacadeTest {
 
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
-    when(identityClient.createUser(any())).thenReturn(firstIdentity, replayIdentity);
+    when(identityProvisioning.create(any(), any(), any()))
+        .thenReturn(receipt("first-id"), receipt("replay-id"));
     when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any(), any()))
         .thenReturn(firstUser, replayUser);
     when(userService.saveUser(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
-    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+    when(matrixSynapseService.createOwnedUser(anyString(), anyString(), anyString(), any()))
         .thenReturn(
             ResponseEntity.ok(firstMatrixResponse), ResponseEntity.ok(replayMatrixResponse));
-    when(matrixSynapseService.deactivateUser("@first:matrix.example.org")).thenReturn(true);
-    when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+    when(createNewSessionFacade.initializeOwnedRegistration(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class), any()))
         .thenThrow(new InternalServerErrorException("first attempt failed"))
         .thenReturn(replayRegistration);
     when(sessionService.getSessionsForUser(firstUser)).thenReturn(List.of(partialSession));
@@ -826,13 +858,21 @@ public class CreateUserFacadeTest {
 
     assertThat(replaySessionId, is(99L));
     verify(sessionService).deleteSession(partialSession);
-    verify(matrixSynapseService).deactivateUser("@first:matrix.example.org");
+    verify(identityProvisioning).compensateMatrixEffects("first-id");
     verify(matrixSynapseService, never()).deactivateUser("@replay:matrix.example.org");
     verify(userService).deleteUser(firstUser);
     verify(userService, never()).deleteUser(replayUser);
-    verify(identityAccountRemover).rollbackUser("first-id");
-    verify(identityAccountRemover, never()).rollbackUser("replay-id");
-    verify(identityClient, times(2)).createUser(any(UserDTO.class));
+    verify(identityProvisioning)
+        .compensate(
+            org.mockito.ArgumentMatchers.argThat(
+                r -> java.util.Objects.equals(r.accountId(), "first-id")),
+            any());
+    verify(identityProvisioning, never())
+        .compensate(
+            org.mockito.ArgumentMatchers.argThat(
+                r -> java.util.Objects.equals(r.accountId(), "replay-id")),
+            any());
+    verify(identityProvisioning, times(2)).create(any(), any(), any());
     assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
@@ -883,7 +923,6 @@ public class CreateUserFacadeTest {
   void updateIdentityAndCreateAccount_Should_ClearPrivacyConfirmations_When_RoleIsAnonymous() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
     User user = new User();
     user.setTermsAndConditionsConfirmation(LocalDateTime.now());
     user.setDataPrivacyConfirmation(LocalDateTime.now());
@@ -901,19 +940,10 @@ public class CreateUserFacadeTest {
   }
 
   @Test
-  void
-      updateIdentityAndCreateAccount_Should_ThrowInternalServerError_When_KeycloakFailsForAnonymousUser() {
-    doThrow(new RuntimeException("kc down"))
-        .when(identityClient)
-        .updateRole(anyString(), any(UserRole.class));
-
-    assertThrows(
-        InternalServerErrorException.class,
-        () ->
-            createUserFacade.updateIdentityAndCreateAccount(
-                USER_ID, USER_DTO_SUCHT, UserRole.ANONYMOUS));
-
-    verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
+  void anonymousLocalAccountBuilderDoesNotObtainNativeAdminMaintenance() {
+    createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.ANONYMOUS);
+    org.mockito.Mockito.verifyNoInteractions(identityProvisioning);
+    verify(userService).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
   }
 
   @Test
@@ -938,30 +968,29 @@ public class CreateUserFacadeTest {
   }
 
   @Test
-  void updateIdentityAndCreateAccount_Should_CallUpdateDummyEmail_When_EmailIsBlank() {
+  void localAccountUsesTheSameDerivedDummyEmailAsAtomicProviderCreation() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doNothing().when(identityClient).updateRole(anyString(), any(UserRole.class));
-    doNothing()
-        .when(identityPasswordUpdater)
-        .updatePassword(anyString(), org.mockito.ArgumentMatchers.nullable(String.class));
-    when(identityDummyEmailUpdater.updateDummyEmail(
-            anyString(), any(IdentityDummyEmailUpdate.class)))
-        .thenReturn("dummy@example.com");
     when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any(), any()))
         .thenReturn(new User());
-    UserDTO userDtoWithBlankEmail =
+    var request =
         UserDTO.builder()
             .email("")
             .username(USER_DTO_SUCHT.getUsername())
             .postcode(USER_DTO_SUCHT.getPostcode())
             .consultingType(USER_DTO_SUCHT.getConsultingType())
             .build();
-
-    createUserFacade.updateIdentityAndCreateAccount(USER_ID, userDtoWithBlankEmail, UserRole.USER);
-
-    verify(identityDummyEmailUpdater, times(1))
-        .updateDummyEmail(eq(USER_ID), any(IdentityDummyEmailUpdate.class));
+    createUserFacade.updateIdentityAndCreateAccount(USER_ID, request, UserRole.USER);
+    verify(userService)
+        .createUser(
+            eq(USER_ID),
+            any(),
+            any(),
+            eq(USER_ID + "@beratungcaritas.de"),
+            anyBoolean(),
+            any(),
+            any());
+    org.mockito.Mockito.verifyNoInteractions(identityProvisioning);
   }
 
   @Test

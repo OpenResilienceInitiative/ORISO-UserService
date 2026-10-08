@@ -150,7 +150,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-AgencyService.*"
-                r"bbdc934477212020b8c43d8bf3cb28a30081156c",
+                r"5f204f52f0708cb98ade0d9e252f5dc552af3172",
                 re.DOTALL,
             ),
         )
@@ -158,7 +158,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-ConsultingTypeService.*"
-                r"af24ae579ff86b8ec18a9cd3a34a0f63f288b646",
+                r"fc3404819574f2c38a2e559910a2c84206e9001b",
                 re.DOTALL,
             ),
         )
@@ -166,11 +166,15 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                # TenantPR304 supplies the six conversation notification channel fields.
-                r"5705be45ce94a3c777132c719c826975323c3ccb",
+                # Coordinated task provider, preserving ownership and projection contracts.
+                r"7c0883ec8a0ee2ff2b2d096472ad8bfc81bad53c",
                 re.DOTALL,
             ),
         )
+        # This coordinated provider contains the Dev settings revision as well as task APIs.
+        self.assertIn("af24ae579ff86b8ec18a9cd3a34a0f63f288b646", workflow)
+        settings = yaml.safe_load((ROOT / "services/applicationsettingsservice.yaml").read_text())
+        self.assertIn("oneTopicPerAgencyEnabled", settings["components"]["schemas"]["ApplicationSettingsDTO"]["properties"])
         self.assertIn("|| 'dev'", workflow)
         self.assertIn("    - dev", workflow)
         self.assertNotIn("pre-dev", workflow)

@@ -29,6 +29,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Maps;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
@@ -49,6 +50,8 @@ import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerF
 import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentity;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -78,6 +81,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.BasicConsultingTypeResponseDTO;
@@ -87,6 +91,7 @@ import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.Cookie;
 import java.net.URI;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -111,8 +116,6 @@ import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.admin.client.token.TokenManager;
-import org.keycloak.representations.idm.UserRepresentation;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -123,12 +126,17 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.RequestEntity;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.test.context.TestSecurityContextHolder;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -172,7 +180,78 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
+  @Autowired
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.ConfiguredConsultantImport
+      configuredImport;
+
+  @Autowired private de.caritas.cob.userservice.api.service.ConsultantImportService actualImporter;
+  @Autowired private org.springframework.core.env.Environment importerEnvironment;
+
+  @Test
+  void actualConfiguredImporterRejectsInvalidUsernameWith400BeforeCreatingAnyAccount()
+      throws Exception {
+    var directory = java.nio.file.Files.createTempDirectory("invalid-import-row");
+    var file = directory.resolve("consultants.csv");
+    java.nio.file.Files.writeString(
+        file, ",1,ab,First,Last,synthetic@example.com,nein,,10;roleA\r\n");
+    Object priorFile = ReflectionTestUtils.getField(configuredImport, "filename");
+    Object priorProtocol = ReflectionTestUtils.getField(actualImporter, "protocolFilename");
+    try {
+      ReflectionTestUtils.setField(configuredImport, "filename", file.toString());
+      ReflectionTestUtils.setField(
+          actualImporter, "protocolFilename", directory.resolve("protocol").toString());
+      var jwt =
+          Jwt.withTokenValue("synthetic-importer-token")
+              .header("alg", "RS256")
+              .subject(
+                  importerEnvironment.getRequiredProperty(
+                      "identity.consultant-import.service-subject"))
+              .claim(
+                  "azp",
+                  importerEnvironment.getRequiredProperty("identity.consultant-import.client-id"))
+              .audience(List.of("userservice"))
+              .claim("realm_access", Map.of("roles", List.of("consultant-import")))
+              .issuedAt(Instant.now())
+              .expiresAt(Instant.now().plusSeconds(60))
+              .build();
+      int before = identityProvider.commands().size();
+      mockMvc
+          .perform(
+              post("/users/consultants/import")
+                  .with(
+                      org.springframework.security.test.web.servlet.request
+                          .SecurityMockMvcRequestPostProcessors.authentication(
+                          new org.springframework.security.oauth2.server.resource.authentication
+                              .JwtAuthenticationToken(jwt, List.of())))
+                  .cookie(CSRF_COOKIE)
+                  .header(CSRF_HEADER, CSRF_VALUE))
+          .andExpect(status().isBadRequest());
+      assertThat(identityProvider.commands()).hasSize(before);
+    } finally {
+      ReflectionTestUtils.setField(configuredImport, "filename", priorFile);
+      ReflectionTestUtils.setField(actualImporter, "protocolFilename", priorProtocol);
+      try (var paths = java.nio.file.Files.walk(directory)) {
+        for (var path : paths.sorted(java.util.Comparator.reverseOrder()).toList())
+          java.nio.file.Files.delete(path);
+      }
+    }
+  }
+
   @Autowired private MockMvc mockMvc;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+      lifecycle;
+
+  private final java.util.Map<String, Instant> fixtureLifecycleRows =
+      new java.util.LinkedHashMap<>();
+
+  @MockitoBean private TaskIdentityGrant taskGrants;
+  @MockitoBean private org.springframework.security.oauth2.jwt.JwtDecoder taskJwtDecoder;
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @Autowired private Environment environment;
+  private List<BoundedIdentityHttpFixtures.Command> signedCommands;
+  private BoundedIdentityHttpFixtures.Provider identityProvider;
 
   @Autowired private jakarta.persistence.EntityManager entityManager;
 
@@ -261,6 +340,9 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
   @AfterEach
   void reset() {
+    fixtureLifecycleRows.forEach(
+        (id, capturedAt) -> lifecycle.discardUncompletedCreation(id, 24, 0, capturedAt));
+    fixtureLifecycleRows.clear();
     dpaOwner.close();
     de.caritas.cob.userservice.api.tenant.TenantContext.clear();
     if (nonNull(user)) {
@@ -307,6 +389,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
   @BeforeEach
   public void setUp() throws MatrixCreateUserException {
+    boundedIdentityProviderFixture();
     dpaOwner =
         de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
             ownerFactory, 1L);
@@ -314,6 +397,8 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     matrixCreateUserResponse.setUserId("@test-user:matrix.example.org");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(matrixCreateUserResponse));
+    de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures.givenOwnedMatrixUser(
+        matrixSynapseService, "@test-user:matrix.example.org");
     when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);
 
     when(consultingTypeControllerApi.getApiClient())
@@ -652,6 +737,10 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     mockMvc
         .perform(
             get("/users/notifications")
+                .with(
+                    org.springframework.security.test.web.servlet.request
+                        .SecurityMockMvcRequestPostProcessors.authentication(
+                        notificationAuthentication()))
                 .param("email", "emigration@consultant.de")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
@@ -671,6 +760,10 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     mockMvc
         .perform(
             get("/users/notifications")
+                .with(
+                    org.springframework.security.test.web.servlet.request
+                        .SecurityMockMvcRequestPostProcessors.authentication(
+                        notificationAuthentication()))
                 .param("email", "fd639b0e-4e90-415e-9cd4-372781b71ce4@beratungcaritas.de")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
@@ -706,6 +799,10 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     mockMvc
         .perform(
             get("/users/notifications")
+                .with(
+                    org.springframework.security.test.web.servlet.request
+                        .SecurityMockMvcRequestPostProcessors.authentication(
+                        notificationAuthentication()))
                 .param("email", "dummymail@dummy.de")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
@@ -1271,10 +1368,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     assertEquals(
         patchUserDTO.getPreferredLanguage().getValue(), savedUser.getLanguageCode().toString());
 
-    var userRepCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
-    verify(userResource).update(userRepCaptor.capture());
-    var locale = userRepCaptor.getValue().getAttributes().get("locale");
-    assertEquals(patchUserDTO.getPreferredLanguage().toString(), locale.get(0));
+    assertSignedLocaleUpdate(1);
 
     assertThat(savedUser.isNotificationsEnabled()).isTrue();
     assertThat(savedUser.getNotificationsSettings())
@@ -1306,10 +1400,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
         patchUserDTO.getPreferredLanguage().toString(),
         savedConsultant.getLanguageCode().toString());
 
-    var userRepCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
-    verify(userResource).update(userRepCaptor.capture());
-    var locale = userRepCaptor.getValue().getAttributes().get("locale");
-    assertEquals(patchUserDTO.getPreferredLanguage().toString(), locale.get(0));
+    assertSignedLocaleUpdate(1);
 
     assertThat(savedConsultant.isNotificationsEnabled()).isTrue();
     assertThat(savedConsultant.getNotificationsSettings())
@@ -1338,10 +1429,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     assertTrue(savedConsultant.isPresent());
     assertEquals(false, savedConsultant.get().getEncourage2fa());
 
-    var userRepCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
-    verify(userResource).update(userRepCaptor.capture());
-    var locale = userRepCaptor.getValue().getAttributes().get("locale");
-    assertEquals(patchUserDTO.getPreferredLanguage().toString(), locale.get(0));
+    assertSignedLocaleUpdate(1);
   }
 
   @Test
@@ -1372,10 +1460,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
         patchUserDTO.getPreferredLanguage().toString(),
         savedConsultant.getLanguageCode().toString());
 
-    var userRepCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
-    verify(userResource).update(userRepCaptor.capture());
-    var locale = userRepCaptor.getValue().getAttributes().get("locale");
-    assertEquals(patchUserDTO.getPreferredLanguage().toString(), locale.get(0));
+    assertSignedLocaleUpdate(1);
 
     givenAFullPatchDto(true);
     mockMvc
@@ -1394,9 +1479,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
         patchUserDTO.getPreferredLanguage().toString(),
         savedConsultant.getLanguageCode().toString());
 
-    verify(userResource, times(2)).update(userRepCaptor.capture());
-    locale = userRepCaptor.getValue().getAttributes().get("locale");
-    assertEquals(patchUserDTO.getPreferredLanguage().toString(), locale.get(0));
+    assertSignedLocaleUpdate(2);
   }
 
   @Test
@@ -2283,6 +2366,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     userDTO.setGroupChatInviteToken(null);
     // EasyRandom would otherwise ask for a temporary account at random.
     userDTO.setTemporary(false);
+    userDTO.setTenantId(1L);
   }
 
   private static final String GROUP_INVITE_TOKEN = "q2Vx8mK4TzJ1bR7nW0cY5sLh9dFg3aPe";
@@ -2356,14 +2440,22 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   }
 
   private void givenAValidKeycloakUpdateLocaleResponse(String id) {
+    givenVerifiedHuman(
+        id,
+        user != null ? user.getTenantId() : consultant.getTenantId(),
+        user != null ? "user" : "consultant");
+  }
 
-    var usersResource = mock(UsersResource.class);
-    userResource = mock(UserResource.class);
-    when(usersResource.get(id)).thenReturn(userResource);
-
-    var realmResource = mock(RealmResource.class);
-    when(realmResource.users()).thenReturn(usersResource);
-    when(keycloak.realm(anyString())).thenReturn(realmResource);
+  private void assertSignedLocaleUpdate(int count) {
+    var profiles =
+        signedCommands.stream()
+            .filter(command -> command.operation().equals("account.profile"))
+            .toList();
+    assertThat(profiles).hasSize(count);
+    assertThat(profiles.getLast().body())
+        .containsOnlyKeys("preferredLanguage")
+        .containsEntry("preferredLanguage", patchUserDTO.getPreferredLanguage().toString());
+    verify(keycloak, never()).realm(anyString());
   }
 
   private void givenAnInvalidKeycloakLoginResponseFailingPassword() {
@@ -2493,6 +2585,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     assertThat(user.getChatRecoveryPolicyRevision()).isEqualTo(revision);
     when(authenticatedUser.getUserId()).thenReturn(user.getUserId());
     when(authenticatedUser.getUsername()).thenReturn(user.getUsername());
+    givenVerifiedHuman(user.getUserId(), user.getTenantId(), "user");
     entityManager.clear();
   }
 
@@ -2523,6 +2616,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     assertThat(consultant.getChatRecoveryPolicyRevision()).isEqualTo(revision);
     when(authenticatedUser.getUserId()).thenReturn(consultant.getId());
     when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
+    givenVerifiedHuman(consultant.getId(), consultant.getTenantId(), "consultant");
     entityManager.clear();
   }
 
@@ -2534,6 +2628,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anAuthority"));
+    givenVerifiedHuman(consultant.getId(), consultant.getTenantId(), "consultant");
   }
 
   private void givenConsultantOwesASecondFactorAndAPasswordChange() {
@@ -2560,6 +2655,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anAuthority"));
+    givenVerifiedHuman(consultant.getId(), consultant.getTenantId(), "consultant");
   }
 
   private void givenTheAuthenticatedClient(User client) {
@@ -2570,6 +2666,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     when(authenticatedUser.getUsername()).thenReturn(client.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anotherAuthority"));
+    givenVerifiedHuman(user.getUserId(), user.getTenantId(), "user");
   }
 
   private void givenAValidUser() {
@@ -2580,6 +2677,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     when(authenticatedUser.getUsername()).thenReturn(user.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anotherAuthority"));
+    givenVerifiedHuman(user.getUserId(), user.getTenantId(), "user");
   }
 
   private void givenConsultingTypeServiceResponse(Integer consultingTypeId) {
@@ -2783,5 +2881,78 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
   private void givenDisplayNameAllowedForConsultants() {
     identityConfig.setDisplayNameAllowedForConsultants(true);
+  }
+
+  private void givenVerifiedHuman(String id, Long tenant, String role) {
+    var previous =
+        org.springframework.security.core.context.SecurityContextHolder.getContext()
+            .getAuthentication();
+    if (previous == null) return;
+    if (lifecycle.snapshot(id).isEmpty()) {
+      var capturedAt = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+      lifecycle.assignAtCreation(id, tenant, 24, 0, capturedAt);
+      fixtureLifecycleRows.put(id, capturedAt);
+    }
+    var token =
+        Jwt.withTokenValue("synthetic-human-session")
+            .header("alg", "RS256")
+            .subject(id)
+            .claim("azp", "app")
+            .claim("tenantId", tenant == null ? null : tenant.toString())
+            .claim("realm_access", Map.of("roles", List.of(role)))
+            .issuedAt(Instant.now())
+            .expiresAt(Instant.now().plusSeconds(300))
+            .build();
+    TestSecurityContextHolder.setAuthentication(
+        new JwtAuthenticationToken(token, previous.getAuthorities()));
+    if (user != null && id.equals(user.getUserId())) {
+      identityProvider.seed(
+          new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+              .AccountProjection(
+              id,
+              usernameTranscoder.decodeUsername(user.getUsername()),
+              user.getEmail(),
+              null,
+              null,
+              tenant,
+              user.getLanguageCode() == null ? "de" : user.getLanguageCode().toString(),
+              true,
+              false,
+              List.of(role),
+              false));
+    } else if (consultant != null && id.equals(consultant.getId())) {
+      identityProvider.seed(
+          new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+              .AccountProjection(
+              id,
+              usernameTranscoder.decodeUsername(consultant.getUsername()),
+              consultant.getEmail(),
+              consultant.getFirstName(),
+              consultant.getLastName(),
+              tenant,
+              consultant.getLanguageCode() == null ? "de" : consultant.getLanguageCode().toString(),
+              true,
+              false,
+              List.of(role),
+              Boolean.TRUE.equals(consultant.getPasswordChangeRequired())));
+    }
+  }
+
+  private JwtAuthenticationToken notificationAuthentication() {
+    var token = taskJwt(TaskIdentity.NOTIFICATION_DISPATCH);
+    return new JwtAuthenticationToken(
+        token, List.of(new SimpleGrantedAuthority(AuthorityValue.NOTIFICATIONS_TECHNICAL)));
+  }
+
+  private Jwt taskJwt(TaskIdentity task) {
+    return BoundedIdentityHttpFixtures.taskJwt(task, taskIdentities);
+  }
+
+  private void boundedIdentityProviderFixture() {
+    identityProvider =
+        BoundedIdentityHttpFixtures.givenProvider(
+            keycloakRestTemplate, taskGrants, taskIdentities, environment, objectMapper, id -> {});
+    signedCommands = identityProvider.commands();
+    BoundedIdentityHttpFixtures.givenTaskGrants(restTemplate, taskJwtDecoder, taskIdentities);
   }
 }

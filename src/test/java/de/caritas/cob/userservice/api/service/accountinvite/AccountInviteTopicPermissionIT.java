@@ -137,7 +137,8 @@ class AccountInviteTopicPermissionIT {
     givenAgency(NEW_STYLE_AGENCY, OWN_TENANT, List.of(51L, 52L));
     givenAgency(TOPICLESS_AGENCY, OWN_TENANT, List.of());
     givenAgency(FOREIGN_AGENCY, FOREIGN_TENANT, List.of(31L));
-    when(agencyIdAllocationClient.reserve(any(), any())).thenReturn(4711L);
+    when(agencyIdAllocationClient.reserveWithProof(any(), any()))
+        .thenReturn(new AgencyIdAllocationClient.AgencyReservation(4711L, "owned-agency-proof"));
     when(agencyIdAllocationClient.getAvailability(anyLong()))
         .thenReturn(IdAllocationStatus.RESERVED);
   }

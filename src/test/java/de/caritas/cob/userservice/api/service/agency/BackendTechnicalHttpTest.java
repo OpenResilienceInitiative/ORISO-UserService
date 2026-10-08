@@ -8,7 +8,7 @@ import static org.mockito.Mockito.when;
 import com.sun.net.httpserver.HttpServer;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
@@ -53,15 +53,23 @@ class BackendTechnicalHttpTest {
       String url = "http://127.0.0.1:" + server.getAddress().getPort();
       var config = new IdentityConfig();
       config.setOpenidConnectUrl(url);
-      var technical = new TechnicalUserConfig();
-      technical.setClientId("backend-technical");
+      var technical = new TaskIdentityCredentials();
+      technical.setClientId("backend-matrix-agency");
       technical.setClientSecret("synthetic-client-secret");
-      config.setTechnicalUser(technical);
+      var tasks = new de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration();
+      technical.setServiceSubject("matrix-task-subject");
+      tasks.getTasks().put("matrix-agency", technical);
+      ReflectionTestUtils.setField(config, "taskIdentities", tasks);
       var authClient =
           new KeycloakAuthClient(new RestTemplate(), mock(AuthenticatedUser.class), config);
       ReflectionTestUtils.setField(authClient, "keycloakClientId", "app");
       IdentityAuthentication auth =
           new IdentityAuthentication() {
+            public IdentityLogin loginTask(
+                de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials task) {
+              return loginService(task.getClientId(), task.getClientSecret());
+            }
+
             public IdentityLogin loginService(String username, String password) {
               var response = authClient.loginService(username, password);
               return new IdentityLogin(response.getAccessToken(), response.getExpiresIn(), 0, null);
@@ -96,7 +104,7 @@ class BackendTechnicalHttpTest {
       assertThat(tokenForm.get())
           .contains(
               "grant_type=client_credentials",
-              "client_id=backend-technical",
+              "client_id=backend-matrix-agency",
               "client_secret=synthetic-client-secret")
           .doesNotContain("username=", "password=", "refresh_token=");
       authClient.loginUser("human", "human-password");

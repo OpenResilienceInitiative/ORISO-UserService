@@ -58,11 +58,10 @@ public class QueuedInviteReleaseListener {
       return Optional.empty();
     }
     try {
-      var technicalUser = identityClientConfig.getTechnicalUser();
-      return Optional.of(
-          identityAuthentication
-              .loginService(technicalUser.getClientId(), technicalUser.getClientSecret())
-              .accessToken());
+      var technicalUser =
+          identityClientConfig.getTaskIdentity(
+              de.caritas.cob.userservice.api.config.auth.TaskIdentity.INVITE_RESERVATIONS);
+      return Optional.of(identityAuthentication.loginTask(technicalUser).accessToken());
     } catch (RuntimeException exception) {
       log.warn(
           "Technical login for the invite release failed ({}); releasing without it",

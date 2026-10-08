@@ -23,22 +23,8 @@ class ConfigurationValidatorTest {
   }
 
   @Test
-  void validateConfigurationShouldRejectMissingIdentityTechnicalClientId() {
-    setField(validator, "identityTechnicalClientId", "");
-
-    assertThatThrownBy(validator::validateConfiguration)
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("identity.technical-user.client-id (IDENTITY_TECHNICAL_CLIENT_ID)");
-  }
-
-  @Test
-  void validateConfigurationShouldRejectMissingIdentityTechnicalClientSecret() {
-    setField(validator, "identityTechnicalClientSecret", " ");
-
-    assertThatThrownBy(validator::validateConfiguration)
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining(
-            "identity.technical-user.client-secret (KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET)");
+  void validateConfigurationShouldAllowAbsentRetiredSharedIdentityCredentials() {
+    assertThatCode(validator::validateConfiguration).doesNotThrowAnyException();
   }
 
   /**
@@ -84,8 +70,6 @@ class ConfigurationValidatorTest {
     setField(validator, "keycloakAuthServerUrl", "https://auth.example");
     setField(validator, "keycloakRealm", "online-beratung");
     setField(validator, "identityOpenIdConnectUrl", "https://auth.example/openid-connect");
-    setField(validator, "identityTechnicalClientId", "backend-technical");
-    setField(validator, "identityTechnicalClientSecret", "secret");
     setField(validator, "consultingTypeServiceApiUrl", "https://consulting-type.example/service");
     setField(validator, "tenantServiceApiUrl", "https://tenant.example/service");
     setField(validator, "agencyServiceApiUrl", "https://agency.example/service");

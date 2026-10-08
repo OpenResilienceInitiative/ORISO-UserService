@@ -12,6 +12,9 @@ final class InactivityDeletionRemote implements AutoCloseable {
   final AtomicBoolean unsafeDestructiveCall = new AtomicBoolean();
   final AtomicInteger deactivations = new AtomicInteger();
   final AtomicInteger logouts = new AtomicInteger();
+  final java.util.concurrent.atomic.AtomicReference<Throwable> verificationFailure =
+      new java.util.concurrent.atomic.AtomicReference<>();
+  final AtomicInteger lifecycleStatusCalls = new AtomicInteger();
   private final HttpServer server;
 
   InactivityDeletionRemote() throws Exception {
@@ -35,18 +38,30 @@ final class InactivityDeletionRemote implements AutoCloseable {
             if (enabled.get() || !locked.get() || logouts.get() == 0)
               unsafeDestructiveCall.set(true);
             status = 503;
-          } else if (path.endsWith("/logout")) {
-            logouts.incrementAndGet();
-            status = 204;
-          } else if (path.endsWith("/role-mappings/realm/composite"))
-            response = "[{\"name\":\"user\"}]";
-          else if (path.endsWith("/clients") || path.endsWith("/sessions")) response = "[]";
-          else if (path.endsWith("/users/inactivity-lock-first")) {
-            if (method.equals("PUT")) {
-              enabled.set(body.matches("(?s).*\\\"enabled\\\"\\s*:\\s*true.*"));
-              status = 204;
+          } else if (path.startsWith(
+              "/realms/test/oriso-commands/v1/accounts/inactivity-lock-first/")) {
+            try {
+              String op;
+              if (path.endsWith("/lifecycle-status")) {
+                op = "account.lifecycle-status";
+                lifecycleStatusCalls.incrementAndGet();
+                response =
+                    "{\"enabled\":" + enabled.get() + ",\"sessionCount\":0,\"roles\":[\"ASKER\"]}";
+              } else if (path.endsWith("/suspension")) {
+                op = "account.suspend";
+                status = 204;
+              } else throw new AssertionError("Unexpected lifecycle route");
+              de.caritas.cob.userservice.api.workflow.accountinactivity.InactivityCommandTestSupport
+                  .verify(exchange, body, "inactivity-lock-first", null, op);
+              if (op.equals("account.suspend")) {
+                enabled.set(false);
+                logouts.incrementAndGet();
+              }
+            } catch (Throwable invalid) {
+              verificationFailure.compareAndSet(null, invalid);
+              status = 500;
+              response = "{}";
             }
-            response = "{\"id\":\"inactivity-lock-first\",\"enabled\":" + enabled.get() + "}";
           } else status = 404;
           exchange.getResponseHeaders().set("Content-Type", "application/json");
           if (status == 204) exchange.sendResponseHeaders(status, -1);

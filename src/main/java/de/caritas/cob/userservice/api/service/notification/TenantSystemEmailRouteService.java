@@ -69,16 +69,7 @@ public class TenantSystemEmailRouteService {
     if (smtp == null) {
       throw new ConfigurationException("OWN tenant SMTP settings are missing");
     }
-    Object port = smtp.get("port");
-    if (!Boolean.TRUE.equals(smtp.get("enabled"))
-        || blank(smtp.get("host"))
-        || !(port instanceof Number number)
-        || number.intValue() < 1
-        || number.intValue() > 65535
-        || !(smtp.get("secure") instanceof Boolean)
-        || blank(smtp.get("username"))
-        || blank(smtp.get("from"))
-        || !Boolean.TRUE.equals(smtp.get("passwordSet"))) {
+    if (!Boolean.TRUE.equals(smtp.get("enabled")) || !Boolean.TRUE.equals(smtp.get("configured"))) {
       throw new ConfigurationException("OWN tenant SMTP configuration is incomplete");
     }
     return new Route(Mode.OWN, color);

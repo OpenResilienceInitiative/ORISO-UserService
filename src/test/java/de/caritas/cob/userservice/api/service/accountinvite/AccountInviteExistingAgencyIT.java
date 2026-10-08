@@ -145,7 +145,7 @@ class AccountInviteExistingAgencyIT {
     assertThat(invite.getAgencyId()).isEqualTo(TWO_TOPIC_AGENCY);
     assertThat(invite.getTenantId()).isEqualTo(OWN_TENANT);
     assertThat(invite.getDepartmentId()).isEqualTo(22L);
-    verify(agencyIdAllocationClient, never()).reserve(any(), any());
+    verify(agencyIdAllocationClient, never()).reserveWithProof(any(), any());
   }
 
   @Test
@@ -165,7 +165,7 @@ class AccountInviteExistingAgencyIT {
 
     assertThat(invite.getAgencyId()).isEqualTo(SINGLE_TOPIC_AGENCY);
     assertThat(invite.getTenantId()).isEqualTo(OWN_TENANT);
-    verify(agencyIdAllocationClient, never()).reserve(any(), any());
+    verify(agencyIdAllocationClient, never()).reserveWithProof(any(), any());
   }
 
   @Test
@@ -251,7 +251,8 @@ class AccountInviteExistingAgencyIT {
   @Test
   void createInvite_Should_StillReserve_When_TheAdminSendsManual() {
     actAsPlatformAdmin();
-    when(agencyIdAllocationClient.reserve(500L, OWN_TENANT)).thenReturn(500L);
+    when(agencyIdAllocationClient.reserveWithProof(500L, OWN_TENANT))
+        .thenReturn(new AgencyIdAllocationClient.AgencyReservation(500L, "owned-agency-proof"));
     when(agencyIdAllocationClient.getAvailability(anyLong()))
         .thenReturn(IdAllocationStatus.RESERVED);
 
@@ -271,7 +272,8 @@ class AccountInviteExistingAgencyIT {
                 IdAllocationMode.MANUAL));
 
     assertThat(invite.getAgencyId()).isEqualTo(500L);
-    verify(agencyIdAllocationClient).reserve(500L, OWN_TENANT);
+    verify(agencyIdAllocationClient).reserveWithProof(500L, OWN_TENANT);
+    assertThat(invite.getAgencyReservationToken()).isEqualTo("owned-agency-proof");
     verify(agencyFacts, never()).find(anyLong());
   }
 

@@ -1,7 +1,10 @@
 package de.caritas.cob.userservice.api.service.agency;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -10,7 +13,8 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentity;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -40,6 +44,7 @@ class AgencyMatrixCredentialClientTest {
   private IdentityAuthentication identityAuthentication;
   private IdentityClientConfig identityClientConfig;
   private AgencyMatrixCredentialClient agencyMatrixCredentialClient;
+  private TaskIdentityCredentials technicalUser;
 
   @BeforeEach
   void setUp() {
@@ -85,12 +90,16 @@ class AgencyMatrixCredentialClientTest {
     var result = agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID);
 
     assertThat(result).contains(credentials);
+    verify(identityClientConfig).getTaskIdentity(TaskIdentity.MATRIX_AGENCY);
+    verify(identityAuthentication).loginTask(same(technicalUser));
     mockServer.verify();
   }
 
   @Test
   void fetchMatrixCredentialsShouldReturnEmptyWhenAgencyIdIsNull() {
     assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(null)).isEmpty();
+    verifyNoInteractions(identityClientConfig, identityAuthentication);
+    mockServer.verify();
   }
 
   @Test
@@ -112,12 +121,13 @@ class AgencyMatrixCredentialClientTest {
 
   @Test
   void fetchMatrixCredentialsShouldReturnEmptyWhenTechnicalUserLoginFails() {
-    var technicalUser = new TechnicalUserConfig();
+    technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical");
     technicalUser.setClientSecret("secret");
 
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.loginService("technical", "secret"))
+    when(identityClientConfig.getTaskIdentity(TaskIdentity.MATRIX_AGENCY))
+        .thenReturn(technicalUser);
+    when(identityAuthentication.loginTask(same(technicalUser)))
         .thenThrow(new BadRequestException("Keycloak unavailable"));
 
     assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).isEmpty();
@@ -151,13 +161,14 @@ class AgencyMatrixCredentialClientTest {
   }
 
   private void stubTechnicalUserLogin(String accessToken) {
-    var technicalUser = new TechnicalUserConfig();
+    technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical");
     technicalUser.setClientSecret("secret");
 
     var loginResponse = new IdentityLogin(accessToken, 0, 0, "refresh-token");
 
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.loginService("technical", "secret")).thenReturn(loginResponse);
+    when(identityClientConfig.getTaskIdentity(TaskIdentity.MATRIX_AGENCY))
+        .thenReturn(technicalUser);
+    when(identityAuthentication.loginTask(same(technicalUser))).thenReturn(loginResponse);
   }
 }

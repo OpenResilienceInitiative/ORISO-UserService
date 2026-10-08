@@ -33,6 +33,75 @@ public class ConsultantTopicAgencyCompatibilityValidator {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private de.caritas.cob.userservice.api.service.consultingtype.TopicService topicService;
+
+  /** CREATE invitation choices include active topics of the exact invitation tenant. */
+  public void validateHeldInvitationTopics(
+      String id,
+      Collection<AgencyDTO> agencies,
+      Long tenantId,
+      de.caritas.cob.userservice.api.model.AccountInvite invite) {
+    assertAgenciesBelongToTenant(new ArrayList<>(agencies), tenantId);
+    if (!Objects.equals(invite.getTenantId(), tenantId)
+        || !Objects.equals(invite.getProvisionedUserId(), id)
+        || agencies.size() != 1
+        || !Objects.equals(agencies.iterator().next().getId(), invite.getAgencyId()))
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Invitation topics have a foreign relation target");
+    var allowed =
+        agencies.stream()
+            .flatMap(
+                agency ->
+                    (agency.getTopicIds() == null ? List.<Long>of() : agency.getTopicIds())
+                        .stream())
+            .collect(Collectors.toSet());
+    if (invite.getDepartmentId() != null) allowed.add(invite.getDepartmentId());
+    var permission =
+        de.caritas.cob.userservice.api.service.accountinvite.TopicPermissionPolicy.effective(
+            invite);
+    var chosen = consultantTopicRepository.findTopicIdsByConsultantId(id);
+    if (permission == de.caritas.cob.userservice.api.model.TopicPermission.CREATE
+        && !allowed.containsAll(chosen)) {
+      de.caritas.cob.userservice.api.tenant.TenantContext.runIn(
+          tenantId, () -> allowed.addAll(topicService.getAllActiveTopicsMap().keySet()));
+    } else if (permission == de.caritas.cob.userservice.api.model.TopicPermission.NONE
+        && invite.getDepartmentId() != null) {
+      allowed.retainAll(Set.of(invite.getDepartmentId()));
+    }
+    if (!allowed.containsAll(chosen)
+        || (permission == de.caritas.cob.userservice.api.model.TopicPermission.NONE
+            && invite.getDepartmentId() == null
+            && chosen.stream().distinct().count() > 1))
+      throw new BadRequestException(
+          "Topics exceed the held invitation's current tenant permission");
+  }
+
+  public void validateCurrentTopicsAgainstVerifiedAgencies(
+      String id, Collection<AgencyDTO> added, Long tenantId) {
+    var all = new java.util.ArrayList<AgencyDTO>(added);
+    for (var old : assignedAgencyIdsOf(id)) {
+      if (all.stream().noneMatch(agency -> java.util.Objects.equals(agency.getId(), old))) {
+        var actual = agencyService.getPublicImportAgency(old, tenantId);
+        if (actual == null)
+          throw new BadRequestException("Assigned consultant agency no longer exists");
+        all.add(actual);
+      }
+    }
+    assertAgenciesBelongToTenant(all, tenantId);
+    var topics = consultantTopicRepository.findTopicIdsByConsultantId(id);
+    var offered =
+        all.stream()
+            .flatMap(
+                agency ->
+                    (agency.getTopicIds() == null ? List.<Long>of() : agency.getTopicIds())
+                        .stream())
+            .collect(java.util.stream.Collectors.toSet());
+    if (!offered.containsAll(topics))
+      throw new BadRequestException(
+          "Imported agencies do not cover the consultant's existing topics");
+  }
+
   /**
    * @return the topics per selected centre (#1264): each topic is stored for every selected centre
    *     that offers it

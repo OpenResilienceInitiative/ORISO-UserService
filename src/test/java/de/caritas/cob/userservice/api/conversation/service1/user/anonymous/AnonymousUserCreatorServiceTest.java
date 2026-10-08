@@ -18,11 +18,12 @@ import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -32,7 +33,11 @@ class AnonymousUserCreatorServiceTest {
 
   @InjectMocks private AnonymousUserCreatorService anonymousUserCreatorService;
   @Mock private CreateUserFacade createUserFacade;
-  @Mock private IdentityClient identityClient;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityAccountProvisioning
+      identityProvisioning;
+
   @Mock private IdentityAuthentication identityAuthentication;
   @Mock private RollbackFacade rollbackFacade;
 
@@ -43,59 +48,108 @@ class AnonymousUserCreatorServiceTest {
     var identityLogin = new IdentityLogin("access-token", 300, 600, "refresh-token");
     var user = new User();
 
-    when(identityClient.createUser(USER_DTO_SUCHT)).thenReturn(createdIdentity);
+    var receipt =
+        new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+            .CreationResult(java.util.UUID.randomUUID(), "user-id", "own-proof", "OPEN");
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
     when(identityAuthentication.login(USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
         .thenReturn(identityLogin);
 
-    var credentials = anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
+    var credentials = anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT, origin());
 
+    verify(identityAuthentication, never()).login(anyString(), anyString());
+    credentials = anonymousUserCreatorService.authenticateCreatedUser(USER_DTO_SUCHT, credentials);
     assertThat(credentials.getUserId()).isEqualTo("user-id");
     assertThat(credentials.getAccessToken()).isEqualTo("access-token");
     assertThat(credentials.getExpiresIn()).isEqualTo(300);
     assertThat(credentials.getRefreshToken()).isEqualTo("refresh-token");
     assertThat(credentials.getRefreshExpiresIn()).isEqualTo(600);
-    verify(createUserFacade).provisionMatrixUser(user, USER_DTO_SUCHT.getUsername());
+    verify(createUserFacade).provisionOwnedMatrixUser(user, USER_DTO_SUCHT.getUsername(), receipt);
     verifyNoInteractions(rollbackFacade);
   }
 
-  @Test
-  void createAnonymousUserRollsBackWhenMatrixProvisioningFails() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void createAnonymousUserRetainsCreationAndRollbackFailureDiagnostics(boolean rollbackFails) {
     var createdIdentity = new CreatedIdentity();
     createdIdentity.setUserId("user-id");
     var user = new User();
 
-    when(identityClient.createUser(USER_DTO_SUCHT)).thenReturn(createdIdentity);
+    var receipt =
+        new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+            .CreationResult(java.util.UUID.randomUUID(), "user-id", "own-proof", "OPEN");
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
-    doThrow(new InternalServerErrorException("Matrix provisioning failed"))
+    var originalFailure = new InternalServerErrorException("Matrix provisioning failed");
+    var rollbackFailure = new IllegalStateException("owned rollback failed");
+    doThrow(originalFailure)
         .when(createUserFacade)
-        .provisionMatrixUser(user, USER_DTO_SUCHT.getUsername());
+        .provisionOwnedMatrixUser(user, USER_DTO_SUCHT.getUsername(), receipt);
+    if (rollbackFails) {
+      doThrow(rollbackFailure).when(rollbackFacade).rollBackUserAccount(any());
+    }
 
-    assertThatThrownBy(() -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT))
-        .isInstanceOf(InternalServerErrorException.class);
+    assertThatThrownBy(
+            () -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT, origin()))
+        .isInstanceOf(InternalServerErrorException.class)
+        .hasMessage("Matrix provisioning failed")
+        .satisfies(
+            translated -> {
+              assertThat(translated.getCause()).isSameAs(originalFailure);
+              if (rollbackFails) {
+                assertThat(translated.getCause().getSuppressed()).hasSize(1);
+                assertThat(translated.getCause().getSuppressed()[0]).isSameAs(rollbackFailure);
+              } else {
+                assertThat(translated.getCause().getSuppressed()).isEmpty();
+              }
+            });
 
-    verify(rollbackFacade).rollBackUserAccount(any());
+    verify(rollbackFacade)
+        .rollBackUserAccount(
+            org.mockito.ArgumentMatchers.argThat(
+                rollback -> rollback.getUser() == user && "user-id".equals(rollback.getUserId())));
     verify(identityAuthentication, never()).login(anyString(), anyString());
   }
 
   @Test
-  void createAnonymousUserRollsBackWhenIdentityLoginFails() {
+  void loginAfterCommitFailsWithoutMisusingCreatorCompensation() {
     var createdIdentity = new CreatedIdentity();
     createdIdentity.setUserId("user-id");
     var user = new User();
 
-    when(identityClient.createUser(USER_DTO_SUCHT)).thenReturn(createdIdentity);
+    var receipt =
+        new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+            .CreationResult(java.util.UUID.randomUUID(), "user-id", "own-proof", "OPEN");
+    when(identityProvisioning.create(any(), any(), any())).thenReturn(receipt);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
     when(identityAuthentication.login(USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
         .thenThrow(new BadRequestException("login failed"));
 
-    assertThatThrownBy(() -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT))
-        .isInstanceOf(InternalServerErrorException.class);
+    assertThatThrownBy(
+            () ->
+                anonymousUserCreatorService.authenticateCreatedUser(
+                    USER_DTO_SUCHT,
+                    anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT, origin())))
+        .isInstanceOf(BadRequestException.class);
+    verify(createUserFacade).provisionOwnedMatrixUser(user, USER_DTO_SUCHT.getUsername(), receipt);
+    verifyNoInteractions(rollbackFacade);
+  }
 
-    verify(createUserFacade).provisionMatrixUser(user, USER_DTO_SUCHT.getUsername());
-    verify(rollbackFacade).rollBackUserAccount(any());
+  private static de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationOrigin
+      origin() {
+    var request =
+        de.caritas.cob.userservice.api.adapters.web.dto.UserDTO.builder()
+            .username("Anonymous-test")
+            .password("fixture-password")
+            .termsAccepted("true")
+            .postcode("00000")
+            .consultingType("1")
+            .build();
+    return de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationOrigin
+        .checkedAnonymous(request, null);
   }
 }

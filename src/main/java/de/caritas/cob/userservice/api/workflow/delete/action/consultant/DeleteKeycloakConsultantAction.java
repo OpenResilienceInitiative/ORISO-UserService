@@ -31,7 +31,10 @@ public class DeleteKeycloakConsultantAction extends DeleteKeycloakUserAction
   @Override
   public void execute(ConsultantDeletionWorkflowDTO actionTarget) {
     try {
-      this.deleteUserWithId(actionTarget.getConsultant().getId());
+      this.deleteUserWithId(
+          actionTarget.getConsultant().getId(),
+          de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+              .persistedDeletion(actionTarget.getConsultant(), "account.delete"));
     } catch (Exception e) {
       log.error("UserService delete workflow error: ", e);
       actionTarget

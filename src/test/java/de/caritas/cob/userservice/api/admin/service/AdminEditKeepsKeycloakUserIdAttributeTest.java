@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.admin.service;
 
-import static java.util.Collections.singletonList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
@@ -35,7 +34,6 @@ import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -43,21 +41,14 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.keycloak.admin.client.resource.UserResource;
-import org.keycloak.admin.client.resource.UsersResource;
-import org.keycloak.representations.idm.UserRepresentation;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 /**
- * Editing an admin or consultant in the Admin UI goes {@code UpdateAdminService} / {@code
- * ConsultantUpdateService} → real {@link KeycloakService} → Keycloak's user update. Keycloak
- * replaces the whole attribute map on that call, so the representation the services send must still
- * carry the {@code userId} attribute — it feeds the custom {@code userId} JWT claim the
- * AgencyService uses to scope a Beratungsstellen-Admin to their own agencies.
+ * Admin UI edits send bounded profile patches; provider-owned claim attributes never enter the
+ * request. Native provider merge behavior is covered by the real-image contract suite.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -73,8 +64,13 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
   @Mock private KeycloakMapper keycloakMapper;
   @Mock private UserHelper userHelper;
   @Mock private KeycloakAuthClient keycloakAuthClient;
-  @Mock private UsersResource usersResource;
-  @Mock private UserResource userResource;
+  private com.sun.net.httpserver.HttpServer receiver;
+  private Map<String, Object> received;
+  private Throwable receiverFailure;
+  private Admin persistedAdmin;
+  private de.caritas.cob.userservice.api.admin.service.admin.AdminScope scope;
+  private static final byte[] KEY =
+      "different-test-only-origin-key-32".getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
   @Mock private AdminRepository adminRepository;
   @Mock private RetrieveAdminService retrieveAdminService;
@@ -92,7 +88,7 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
   private ConsultantUpdateService consultantUpdateService;
 
   @BeforeEach
-  void setUp() {
+  void setUp() throws Exception {
     keycloakService =
         new KeycloakService(
             authenticatedUser,
@@ -101,7 +97,9 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
             keycloakClient,
             keycloakMapper,
             userHelper,
-            keycloakAuthClient);
+            keycloakAuthClient,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.config.auth.TaskIdentityTokenVerifier.class));
     setField(keycloakService, "multiTenancyEnabled", true);
     setField(keycloakService, "genericKeycloakError", "keycloak error");
 
@@ -122,47 +120,130 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
             topicAgencyCompatibilityValidator,
             new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver());
 
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-    when(usersResource.get(ADMIN_ID)).thenReturn(userResource);
-    when(usersResource.search(any(), any(), any())).thenReturn(List.of());
+    var identities = new de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration();
+    identities
+        .getTasks()
+        .put(
+            "account-maintenance",
+            new de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials(
+                "backend-account-maintenance", "test-maintenance-secret", "maintenance-subject"));
+    var grants =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant.class);
+    when(grants.token(de.caritas.cob.userservice.api.config.auth.TaskIdentity.ACCOUNT_MAINTENANCE))
+        .thenReturn("bounded-maintenance-token");
+    receiver =
+        com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+    receiver.createContext(
+        "/realms/test/oriso-commands/v1/accounts/" + ADMIN_ID + "/profile",
+        exchange -> {
+          try {
+            assertThat(exchange.getRequestMethod(), is("PATCH"));
+            assertThat(
+                exchange.getRequestHeaders().getFirst("Authorization"),
+                is("Bearer bounded-maintenance-token"));
+            var proof =
+                com.nimbusds.jose.JWSObject.parse(
+                    exchange.getRequestHeaders().getFirst("X-ORISO-Origin-Authorization"));
+            assertThat(proof.verify(new com.nimbusds.jose.crypto.MACVerifier(KEY)), is(true));
+            assertThat(proof.getPayload().toJSONObject().get("originKind"), is("HUMAN_ADMIN"));
+            assertThat(proof.getPayload().toJSONObject().get("target"), is(ADMIN_ID));
+            assertThat(proof.getPayload().toJSONObject().get("operation"), is("account.profile"));
+            received =
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(exchange.getRequestBody(), Map.class);
+            org.assertj.core.api.Assertions.assertThat(received.keySet())
+                .isSubsetOf("username", "email", "firstName", "lastName", "tenantId");
+            exchange.sendResponseHeaders(204, -1);
+          } catch (Throwable failure) {
+            receiverFailure = failure;
+            exchange.sendResponseHeaders(500, -1);
+          } finally {
+            exchange.close();
+          }
+        });
+    receiver.start();
+    var commands =
+        new de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands(
+            new org.springframework.web.client.RestTemplate(
+                new org.springframework.http.client.JdkClientHttpRequestFactory()),
+            identities,
+            grants,
+            new de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityOriginProof(
+                java.util.Base64.getEncoder().encodeToString(new byte[32]),
+                java.util.Base64.getEncoder().encodeToString(KEY),
+                java.time.Clock.systemUTC()),
+            "http://127.0.0.1:" + receiver.getAddress().getPort(),
+            "test");
+    scope =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class);
+    when(adminRepository.findById(ADMIN_ID))
+        .thenAnswer(call -> Optional.ofNullable(persistedAdmin));
+    var consultants =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.ConsultantRepository.class);
+    when(consultants.findById(ADMIN_ID))
+        .thenAnswer(call -> consultantService.getConsultant(ADMIN_ID));
+    setField(keycloakService, "taskCommands", commands);
+    setField(
+        keycloakService,
+        "commandOrigins",
+        new de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityMaintenanceOrigins(
+            scope,
+            adminRepository,
+            consultants,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.UserRepository.class)));
+    var jwt =
+        org.springframework.security.oauth2.jwt.Jwt.withTokenValue("verified-human-session")
+            .header("alg", "RS256")
+            .subject("operator")
+            .claim("realm_access", Map.of("roles", List.of("user-admin")))
+            .build();
+    org.springframework.security.core.context.SecurityContextHolder.getContext()
+        .setAuthentication(
+            new org.springframework.security.oauth2.server.resource.authentication
+                .JwtAuthenticationToken(
+                jwt,
+                List.of(
+                    new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                        "AUTHORIZATION_USER_ADMIN"),
+                    new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                        "AUTHORIZATION_TENANT_ADMIN"))));
   }
 
-  private void givenKeycloakHoldsUserWithIdentityAttributes(String email) {
-    var stored = new UserRepresentation();
-    stored.setId(ADMIN_ID);
-    stored.setUsername("hello");
-    stored.setEmail(email);
-    stored.setAttributes(
-        new LinkedHashMap<>(
-            Map.of(
-                "userId", singletonList(ADMIN_ID),
-                "locale", singletonList("de"),
-                "tenantId", singletonList("2"),
-                "username", singletonList("hello"),
-                "userName", singletonList("hello"))));
-    when(userResource.toRepresentation()).thenReturn(stored);
+  @org.junit.jupiter.api.AfterEach
+  void release() {
+    if (receiver != null) receiver.stop(0);
+    org.springframework.security.core.context.SecurityContextHolder.clearContext();
   }
 
-  private UserRepresentation representationSentToKeycloak() {
-    var captor = ArgumentCaptor.forClass(UserRepresentation.class);
-    verify(userResource).update(captor.capture());
-    return captor.getValue();
+  private Map<String, Object> representationSentToKeycloak() {
+    org.assertj.core.api.Assertions.assertThat(receiverFailure).isNull();
+    org.assertj.core.api.Assertions.assertThat(received)
+        .isNotNull()
+        .doesNotContainKeys("attributes", "userId", "locale", "roles", "enabled");
+    verify(scope).assertMay(any());
+    verify(keycloakClient, org.mockito.Mockito.never()).getUsersResource();
+    return received;
   }
 
   private Admin storedAdmin(Long tenantId) {
-    return Admin.builder()
-        .id(ADMIN_ID)
-        .username(ENCODED_USERNAME)
-        .tenantId(tenantId)
-        .email("old@example.org")
-        .firstName("Old")
-        .lastName("Name")
-        .build();
+    persistedAdmin =
+        Admin.builder()
+            .id(ADMIN_ID)
+            .username(ENCODED_USERNAME)
+            .tenantId(tenantId)
+            .email("old@example.org")
+            .firstName("Old")
+            .lastName("Name")
+            .build();
+    return persistedAdmin;
   }
 
   @Test
-  void updateAgencyAdmin_Should_sendUserIdAndLocaleAlongWithTheNewProfile() {
-    givenKeycloakHoldsUserWithIdentityAttributes("old@example.org");
+  void updateAgencyAdmin_Should_sendBoundedProfileWithoutProviderOwnedAttributes() {
     when(retrieveAdminService.findAdmin(ADMIN_ID, Admin.AdminType.AGENCY))
         .thenReturn(storedAdmin(2L));
     var update =
@@ -171,18 +252,14 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
     updateAdminService.updateAgencyAdmin(ADMIN_ID, update);
 
     var sent = representationSentToKeycloak();
-    assertThat(sent.getFirstName(), is("New"));
-    assertThat(sent.getEmail(), is("new@example.org"));
-    assertThat(sent.getUsername(), is("hello"));
-    assertThat(sent.getAttributes().get("userId"), is(singletonList(ADMIN_ID)));
-    assertThat(sent.getAttributes().get("locale"), is(singletonList("de")));
-    assertThat(sent.getAttributes().get("tenantId"), is(singletonList("2")));
-    assertThat(sent.getAttributes().get("username"), is(singletonList("hello")));
+    assertThat(sent.get("firstName"), is("New"));
+    assertThat(sent.get("email"), is("new@example.org"));
+    assertThat(sent.get("username"), is("hello"));
+    assertThat(sent.get("tenantId"), is("2"));
   }
 
   @Test
-  void updateAgencyAdmin_Should_keepUserId_When_adminHasNoTenant() {
-    givenKeycloakHoldsUserWithIdentityAttributes("old@example.org");
+  void updateAgencyAdmin_Should_omitTenantAndProviderOwnedAttributes_When_adminHasNoTenant() {
     when(retrieveAdminService.findAdmin(ADMIN_ID, Admin.AdminType.AGENCY))
         .thenReturn(storedAdmin(null));
     var update =
@@ -191,13 +268,11 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
     updateAdminService.updateAgencyAdmin(ADMIN_ID, update);
 
     var sent = representationSentToKeycloak();
-    assertThat(sent.getAttributes().get("userId"), is(singletonList(ADMIN_ID)));
-    assertThat(sent.getAttributes().get("tenantId"), is(singletonList("2")));
+    org.assertj.core.api.Assertions.assertThat(sent).doesNotContainKey("tenantId");
   }
 
   @Test
-  void patchAgencyAdmin_Should_sendUserIdAlongWithTheNewProfile() {
-    givenKeycloakHoldsUserWithIdentityAttributes("old@example.org");
+  void patchAgencyAdmin_Should_sendBoundedProfileWithoutProviderOwnedAttributes() {
     when(retrieveAdminService.findAdmin(ADMIN_ID, Admin.AdminType.AGENCY))
         .thenReturn(storedAdmin(2L));
     var patch = new PatchAdminDTO().firstname("New").lastname("Name").email("old@example.org");
@@ -205,13 +280,10 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
     updateAdminService.patchAgencyAdmin(ADMIN_ID, patch);
 
     var sent = representationSentToKeycloak();
-    assertThat(sent.getAttributes().get("userId"), is(singletonList(ADMIN_ID)));
-    assertThat(sent.getAttributes().get("locale"), is(singletonList("de")));
   }
 
   @Test
-  void updateTenantAdmin_Should_sendUserIdAndMovedTenantId() {
-    givenKeycloakHoldsUserWithIdentityAttributes("old@example.org");
+  void updateTenantAdmin_Should_sendOnlyBoundedProfileAndRequestedTenant() {
     when(retrieveAdminService.findAdmin(ADMIN_ID, Admin.AdminType.TENANT))
         .thenReturn(storedAdmin(2L));
     var update =
@@ -224,27 +296,23 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
     updateAdminService.updateTenantAdmin(ADMIN_ID, update);
 
     var sent = representationSentToKeycloak();
-    assertThat(sent.getAttributes().get("userId"), is(singletonList(ADMIN_ID)));
-    assertThat(sent.getAttributes().get("tenantId"), is(singletonList("5")));
+    assertThat(sent.get("tenantId"), is("5"));
   }
 
   @Test
-  void patchTenantAdmin_Should_sendUserIdAlongWithTheNewProfile() {
-    givenKeycloakHoldsUserWithIdentityAttributes("old@example.org");
+  void patchTenantAdmin_Should_sendBoundedProfileWithoutProviderOwnedAttributes() {
     when(retrieveAdminService.findAdmin(ADMIN_ID, Admin.AdminType.TENANT))
         .thenReturn(storedAdmin(2L));
     var patch = new PatchAdminDTO().firstname("New").lastname("Name").email("old@example.org");
 
     updateAdminService.patchTenantAdmin(ADMIN_ID, patch);
 
-    assertThat(
-        representationSentToKeycloak().getAttributes().get("userId"), is(singletonList(ADMIN_ID)));
+    representationSentToKeycloak();
   }
 
   @Test
-  void updateAgencyAdmin_Should_keepUserId_When_multiTenancyIsDisabled() {
+  void updateAgencyAdmin_Should_omitTenant_When_multiTenancyIsDisabled() {
     setField(keycloakService, "multiTenancyEnabled", false);
-    givenKeycloakHoldsUserWithIdentityAttributes("old@example.org");
     when(retrieveAdminService.findAdmin(ADMIN_ID, Admin.AdminType.AGENCY))
         .thenReturn(storedAdmin(2L));
     var update =
@@ -253,13 +321,11 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
     updateAdminService.updateAgencyAdmin(ADMIN_ID, update);
 
     var sent = representationSentToKeycloak();
-    assertThat(sent.getAttributes().get("userId"), is(singletonList(ADMIN_ID)));
-    assertThat(sent.getAttributes().get("tenantId"), is(singletonList("2")));
+    org.assertj.core.api.Assertions.assertThat(sent).doesNotContainKey("tenantId");
   }
 
   @Test
-  void updateConsultant_Should_sendUserIdAlongWithTheNewProfile() {
-    givenKeycloakHoldsUserWithIdentityAttributes("old@example.org");
+  void updateConsultant_Should_sendBoundedProfileWithoutProviderOwnedAttributes() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
     // EasyRandom fills random topics; these fixtures model a consultant without any.
     consultant.setConsultantTopics(new HashSet<>());
@@ -287,17 +353,14 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
     consultantUpdateService.updateConsultant(ADMIN_ID, update);
 
     var sent = representationSentToKeycloak();
-    assertThat(sent.getFirstName(), is("New"));
-    assertThat(sent.getUsername(), is("hello"));
-    assertThat(sent.getAttributes().get("userId"), is(singletonList(ADMIN_ID)));
-    assertThat(sent.getAttributes().get("locale"), is(singletonList("de")));
-    assertThat(sent.getAttributes().get("tenantId"), is(singletonList("2")));
+    assertThat(sent.get("firstName"), is("New"));
+    assertThat(sent.get("username"), is("hello"));
+    assertThat(sent.get("tenantId"), is("2"));
   }
 
   @Test
-  void updateConsultant_Should_keepUserId_When_multiTenancyIsDisabled() {
+  void updateConsultant_Should_omitTenant_When_multiTenancyIsDisabled() {
     setField(keycloakService, "multiTenancyEnabled", false);
-    givenKeycloakHoldsUserWithIdentityAttributes("old@example.org");
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
     // EasyRandom fills random topics; these fixtures model a consultant without any.
     consultant.setConsultantTopics(new HashSet<>());
@@ -325,11 +388,9 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
     consultantUpdateService.updateConsultant(ADMIN_ID, update);
 
     var sent = representationSentToKeycloak();
-    assertThat(sent.getEmail(), is("new@example.org"));
-    assertThat(sent.getUsername(), is("plainname"));
-    assertThat(sent.getAttributes().get("userId"), is(singletonList(ADMIN_ID)));
-    assertThat(sent.getAttributes().get("tenantId"), is(singletonList("2")));
-    assertThat(sent.getAttributes().get("username"), is(singletonList("plainname")));
+    assertThat(sent.get("email"), is("new@example.org"));
+    assertThat(sent.get("username"), is("plainname"));
+    org.assertj.core.api.Assertions.assertThat(sent).doesNotContainKey("tenantId");
   }
 
   @Test
@@ -358,15 +419,11 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
 
     consultantUpdateService.updateConsultant(ADMIN_ID, update);
 
-    verify(userResource, org.mockito.Mockito.never()).update(any());
+    org.assertj.core.api.Assertions.assertThat(received).isNull();
   }
 
   @Test
-  void updateAgencyAdmin_Should_notRelyOnAnyStoredAttribute_When_keycloakHoldsNone() {
-    var stored = new UserRepresentation();
-    stored.setId(ADMIN_ID);
-    stored.setEmail("old@example.org");
-    when(userResource.toRepresentation()).thenReturn(stored);
+  void updateAgencyAdmin_Should_notSendNativeAttributeRepresentations() {
     when(retrieveAdminService.findAdmin(ADMIN_ID, Admin.AdminType.AGENCY))
         .thenReturn(storedAdmin(2L));
     var update =
@@ -375,8 +432,7 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
     updateAdminService.updateAgencyAdmin(ADMIN_ID, update);
 
     var sent = representationSentToKeycloak();
-    assertThat(sent.getAttributes().get("username"), is(singletonList("hello")));
-    assertThat(sent.getAttributes().get("tenantId"), is(singletonList("2")));
-    assertThat(sent.getAttributes().containsKey("userId"), is(false));
+    assertThat(sent.get("tenantId"), is("2"));
+    org.assertj.core.api.Assertions.assertThat(sent).doesNotContainKeys("attributes", "userId");
   }
 }

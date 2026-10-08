@@ -99,6 +99,19 @@ class AnonymousUserDeletionCandidatesTest {
     assertThat(deletionCandidates.findOverdueAnonymousUserIds()).containsExactly(USER_ID);
   }
 
+  @Test
+  void oldDoneRegisteredSiblingPreservesTheAccountEvenWhenAnAnonymousSessionIsOverdue() {
+    var user = anonymousUser();
+    var anonymous = createSessionForUser(user, overdueUpdateDate(), SessionStatus.DONE);
+    var registered = createSessionForUser(user, overdueUpdateDate(), SessionStatus.DONE);
+    registered.setId(999L);
+    registered.setRegistrationType(RegistrationType.REGISTERED);
+    user.setSessions(Set.of(anonymous, registered));
+    when(sessionRepository.findByStatusInAndRegistrationType(any(), any()))
+        .thenReturn(List.of(anonymous));
+    assertThat(deletionCandidates.findOverdueAnonymousUserIds()).isEmpty();
+  }
+
   private SessionStatus[] getAnyStatusWhichIsNotDone() {
     List<SessionStatus> anyStatusNotDone = new ArrayList<>(List.of(SessionStatus.values()));
     anyStatusNotDone.remove(SessionStatus.DONE);
@@ -147,6 +160,7 @@ class AnonymousUserDeletionCandidatesTest {
     session.setId((long) sessionStatus.getValue());
     session.setUpdateDate(updateDate);
     session.setStatus(sessionStatus);
+    session.setRegistrationType(RegistrationType.ANONYMOUS);
     session.setUser(user);
     return session;
   }

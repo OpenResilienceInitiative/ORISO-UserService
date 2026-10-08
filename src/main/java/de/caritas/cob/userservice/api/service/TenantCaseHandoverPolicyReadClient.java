@@ -94,9 +94,10 @@ public class TenantCaseHandoverPolicyReadClient {
       String operationName) {
     IdentityLogin login = null;
     try {
-      var technical = identityClientConfig.getTechnicalUser();
-      login =
-          identityAuthentication.loginService(technical.getClientId(), technical.getClientSecret());
+      var technical =
+          identityClientConfig.getTaskIdentity(
+              de.caritas.cob.userservice.api.config.auth.TaskIdentity.RUNTIME_POLICY);
+      login = identityAuthentication.loginTask(technical);
       if (login == null || login.accessToken() == null || login.accessToken().isBlank())
         throw new IllegalStateException("Service authentication unavailable");
       var api = tenantServiceFactory.createControllerApi();

@@ -68,6 +68,11 @@ class RegisteredOnlyInactivityGuardTest {
             throw new UnsupportedOperationException();
           }
 
+          public IdentityLogin loginTask(
+              de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials task) {
+            return loginService(task.getClientId(), task.getClientSecret());
+          }
+
           public IdentityLogin loginService(String clientId, String clientSecret) {
             throw new UnsupportedOperationException();
           }

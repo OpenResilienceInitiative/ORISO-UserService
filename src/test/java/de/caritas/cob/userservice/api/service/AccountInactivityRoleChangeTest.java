@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.*;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import java.time.*;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -40,15 +41,30 @@ class AccountInactivityRoleChangeTest {
             new AccountInactivityEnrollmentTest.ExternalEffects());
     lifecycle.assignAtCreation("person", 1L, 24, 0, clock.instant());
     var remoteWrites = new AtomicInteger();
-    IdentityRoleUpdater remote = (id, roles) -> remoteWrites.incrementAndGet();
+    IdentityRoleUpdater remote = new RecordingRoleUpdater(remoteWrites);
     var proxyFactory = new AspectJProxyFactory(remote);
     proxyFactory.addAspect(new AccountInactivityRoleMutationAspect(lifecycle));
     IdentityRoleUpdater gateway = proxyFactory.getProxy();
     gateway.ensureRoles("person", List.of("user-admin"));
     assertThat(remoteWrites.get()).isEqualTo(1);
     assertThat(lifecycle.suspend("person")).isTrue();
+    assertThat(lifecycle.snapshot("person").orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.SUSPENDED);
     assertThatThrownBy(() -> gateway.ensureRoles("person", List.of("consultant")))
         .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
     assertThat(remoteWrites.get()).isEqualTo(1);
+  }
+
+  private static final class RecordingRoleUpdater implements IdentityRoleUpdater {
+    private final AtomicInteger writes;
+
+    private RecordingRoleUpdater(AtomicInteger writes) {
+      this.writes = writes;
+    }
+
+    @Override
+    public void ensureRoles(String id, Collection<String> roles) {
+      writes.incrementAndGet();
+    }
   }
 }

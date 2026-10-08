@@ -42,6 +42,7 @@ class InactiveAskerDeletionTest {
         "DELETE FROM account_inactivity_matrix_state WHERE identity_id=?", "inactivity-lock-first");
     jdbc.update(
         "DELETE FROM account_inactivity_access_state WHERE identity_id=?", "inactivity-lock-first");
+    jdbc.update("DELETE FROM account_inactivity WHERE identity_id=?", "inactivity-lock-first");
     jdbc.update("DELETE FROM user WHERE user_id=?", "inactivity-lock-first");
   }
 
@@ -59,6 +60,10 @@ class InactiveAskerDeletionTest {
         "CREATE TABLE IF NOT EXISTS account_inactivity_matrix_state(identity_id"
             + " VARCHAR(36),matrix_user_id VARCHAR(255),original_locked BOOLEAN NOT NULL,PRIMARY"
             + " KEY(identity_id,matrix_user_id))");
+    jdbc.execute(
+        "CREATE TABLE IF NOT EXISTS account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,assigned_months INT DEFAULT 24,revision BIGINT DEFAULT 0,last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,due_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,status VARCHAR(20),last_error VARCHAR(1000),attempts INT DEFAULT 0)");
+    jdbc.update(
+        "INSERT INTO account_inactivity(identity_id,tenant_id,assigned_months,revision,last_activity,due_at,status,attempts) VALUES('inactivity-lock-first',NULL,24,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'DELETING',0)");
     committedFixture = true;
     var user =
         new User("inactivity-lock-first", null, "lock-first", "lock-first@example.invalid", false);
@@ -85,22 +90,14 @@ class InactiveAskerDeletionTest {
           .registerSingleton("matrixDeletion", new DeleteMatrixAskerAction(matrix, sessions));
       var deletion = new InactiveAskerDeletionService(users, new ActionsRegistry(context));
       context.getBeanFactory().registerSingleton("deletion", deletion);
-      var keycloakConfig =
-          new de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig();
-      keycloakConfig.setRealm("test");
-      try (var kc =
-          org.keycloak.admin.client.KeycloakBuilder.builder()
-              .serverUrl(remote.url())
-              .realm("test")
-              .authorization("test-token")
-              .build()) {
+      {
         var effects =
             new de.caritas.cob.userservice.api.workflow.accountinactivity
                 .DefaultAccountInactivityEffects(
                 jdbc,
                 transactions,
-                new de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient(
-                    transport, kc, keycloakConfig),
+                de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .InactivityCommandTestSupport.lifecycle(jdbc, remote.url()),
                 matrix,
                 new de.caritas.cob.userservice.api.workflow.accountinactivity
                     .AccountInactivityMediaClient(
@@ -118,6 +115,8 @@ class InactiveAskerDeletionTest {
                                   .AccountInactivityEffectException.Target.MATRIX));
           assertThat(users.findById(user.getUserId())).isPresent();
         }
+        assertThat(remote.verificationFailure.get()).isNull();
+        assertThat(remote.lifecycleStatusCalls.get()).isPositive();
         assertThat(remote.deactivations.get()).isEqualTo(2);
         assertThat(remote.unsafeDestructiveCall.get()).isFalse();
         assertThat(remote.enabled.get()).isFalse();

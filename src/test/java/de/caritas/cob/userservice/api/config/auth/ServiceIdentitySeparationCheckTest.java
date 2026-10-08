@@ -1,62 +1,176 @@
 package de.caritas.cob.userservice.api.config.auth;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakCustomConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 
 class ServiceIdentitySeparationCheckTest {
-  private final KeycloakCustomConfig admin = new KeycloakCustomConfig();
-  private final IdentityClientConfig identity = mock(IdentityClientConfig.class);
-  private final TechnicalUserConfig technical = new TechnicalUserConfig();
-  private final ServiceIdentitySeparationCheck check =
-      new ServiceIdentitySeparationCheck(admin, identity);
-
-  private void configure() {
-    admin.setAdminClientId("backend-admin");
-    admin.setAppClientId("app");
-    admin.setAdminClientSecret("synthetic-admin-secret");
-    admin.setAdminServiceSubject("admin-service-subject");
-    technical.setClientId("backend-technical");
-    technical.setClientSecret("synthetic-technical-secret");
-    when(identity.getTechnicalUser()).thenReturn(technical);
+  @Test
+  void taskOnlyStartupNeedsNoRetiredTechnicalOrAdminCredentials() {
+    var human = new KeycloakCustomConfig();
+    human.setAppClientId("app");
+    var identities = mock(IdentityClientConfig.class);
+    for (var task : TaskIdentity.values()) {
+      when(identities.getTaskIdentity(task))
+          .thenReturn(
+              new TaskIdentityCredentials(
+                  "backend-" + task.key(),
+                  "synthetic-secret-" + task.key(),
+                  "subject-" + task.key()));
+    }
+    assertThatCode(() -> configured(human, identities).verifyBackendClients())
+        .doesNotThrowAnyException();
+    verify(identities, never()).getTechnicalUser();
   }
 
   @Test
-  void distinctClientsAndSecretsAreAccepted() {
-    configure();
-    check.verifyBackendClients();
+  void taskMayNotReuseHumanClientOrAnotherTaskCredential() {
+    var human = new KeycloakCustomConfig();
+    human.setAppClientId("app");
+    var identities = mock(IdentityClientConfig.class);
+    for (var task : TaskIdentity.values()) {
+      when(identities.getTaskIdentity(task))
+          .thenReturn(
+              new TaskIdentityCredentials(
+                  "backend-" + task.key(),
+                  "synthetic-secret-" + task.key(),
+                  "subject-" + task.key()));
+    }
+    when(identities.getTaskIdentity(TaskIdentity.OTP))
+        .thenReturn(new TaskIdentityCredentials("app", "synthetic-secret-otp", "subject-otp"));
+    assertThatThrownBy(() -> configured(human, identities).verifyBackendClients())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageNotContaining("synthetic-secret");
+    when(identities.getTaskIdentity(TaskIdentity.OTP))
+        .thenReturn(
+            new TaskIdentityCredentials(
+                "backend-otp", "synthetic-secret-account-maintenance", "subject-otp"));
+    assertThatThrownBy(() -> configured(human, identities).verifyBackendClients())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageNotContaining("synthetic-secret");
   }
 
-  @ParameterizedTest
-  @ValueSource(
-      strings = {
-        "same-clients",
-        "admin-app",
-        "technical-app",
-        "same-secrets",
-        "missing-secret",
-        "missing-admin-subject"
-      })
-  void unsafeClientConfigurationAbortsStartupWithoutExposingSecrets(String reason) {
-    configure();
-    switch (reason) {
-      case "same-clients" -> technical.setClientId("backend-admin");
-      case "admin-app" -> admin.setAdminClientId("app");
-      case "technical-app" -> technical.setClientId("app");
-      case "same-secrets" -> technical.setClientSecret("synthetic-admin-secret");
-      case "missing-secret" -> technical.setClientSecret("");
-      case "missing-admin-subject" -> admin.setAdminServiceSubject(" ");
-    }
+  @Test
+  void incomingImporterMayNotReuseRuntimeTaskSubjectOrHumanClient() {
+    var human = new KeycloakCustomConfig();
+    human.setAppClientId("app");
+    var identities = org.mockito.Mockito.mock(IdentityClientConfig.class);
+    for (var task : TaskIdentity.values())
+      when(identities.getTaskIdentity(task))
+          .thenReturn(
+              new TaskIdentityCredentials(
+                  "backend-" + task.key(),
+                  "synthetic-secret-" + task.key(),
+                  "subject-" + task.key()));
+    var check = configured(human, identities);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "consultantImportClientId", "app");
+    assertThatThrownBy(check::verifyBackendClients).isInstanceOf(IllegalStateException.class);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "consultantImportClientId", "backend-consultant-import");
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "consultantImportSubject", "subject-otp");
+    assertThatThrownBy(check::verifyBackendClients).isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void signingKeysCannotReuseAClientSecretOrEachOther() {
+    var human = new KeycloakCustomConfig();
+    human.setAppClientId("app");
+    var identities = org.mockito.Mockito.mock(IdentityClientConfig.class);
+    for (var task : TaskIdentity.values())
+      when(identities.getTaskIdentity(task))
+          .thenReturn(
+              new TaskIdentityCredentials(
+                  "backend-" + task.key(),
+                  "synthetic-secret-" + task.key(),
+                  "subject-" + task.key()));
+    var check = configured(human, identities);
+    String encoded =
+        java.util.Base64.getEncoder()
+            .encodeToString(
+                "maintenance-synthetic-key-32bytes"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "provisioningOriginKey", encoded);
     assertThatThrownBy(check::verifyBackendClients)
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageNotContaining("synthetic-admin-secret")
-        .hasMessageNotContaining("synthetic-technical-secret")
-        .hasNoCause();
+        .hasMessageNotContaining(encoded);
+    check = configured(human, identities);
+    when(identities.getTaskIdentity(TaskIdentity.OTP))
+        .thenReturn(new TaskIdentityCredentials("backend-otp", encoded, "subject-otp"));
+    assertThatThrownBy(check::verifyBackendClients)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageNotContaining(encoded);
+  }
+
+  @Test
+  void wizardPolicyKeyCannotReuseAnOriginKeyOrTaskSecret() {
+    var human = new KeycloakCustomConfig();
+    human.setAppClientId("app");
+    var identities = mock(IdentityClientConfig.class);
+    for (var task : TaskIdentity.values())
+      when(identities.getTaskIdentity(task))
+          .thenReturn(
+              new TaskIdentityCredentials(
+                  "backend-" + task.key(),
+                  "synthetic-secret-" + task.key(),
+                  "subject-" + task.key()));
+    var check = configured(human, identities);
+    String reused =
+        java.util.Base64.getEncoder()
+            .encodeToString(
+                "maintenance-synthetic-key-32bytes"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "wizardPolicyContextKey", reused);
+    assertThatThrownBy(check::verifyBackendClients)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageNotContaining(reused);
+    check = configured(human, identities);
+    reused =
+        java.util.Base64.getEncoder()
+            .encodeToString(
+                "wizard-policy-synthetic-key-32bytes"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    when(identities.getTaskIdentity(TaskIdentity.OTP))
+        .thenReturn(new TaskIdentityCredentials("backend-otp", reused, "subject-otp"));
+    assertThatThrownBy(check::verifyBackendClients)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageNotContaining(reused);
+  }
+
+  private ServiceIdentitySeparationCheck configured(
+      KeycloakCustomConfig human, IdentityClientConfig identities) {
+    var check = new ServiceIdentitySeparationCheck(human, identities);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "consultantImportClientId", "backend-consultant-import");
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "consultantImportSubject", "import-service-subject");
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check,
+        "provisioningOriginKey",
+        java.util.Base64.getEncoder()
+            .encodeToString(
+                "provisioning-synthetic-key-32byte"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check,
+        "maintenanceOriginKey",
+        java.util.Base64.getEncoder()
+            .encodeToString(
+                "maintenance-synthetic-key-32bytes"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check,
+        "wizardPolicyContextKey",
+        java.util.Base64.getEncoder()
+            .encodeToString(
+                "wizard-policy-synthetic-key-32bytes"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    return check;
   }
 }

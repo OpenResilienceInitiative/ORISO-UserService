@@ -39,6 +39,16 @@ import org.springframework.test.util.ReflectionTestUtils;
 public class CreateAnonymousEnquiryFacadeTest {
 
   private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationLocalCompletion
+      localCompletion;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityAccountProvisioning
+      identityProvisioning;
+
+  @Mock private de.caritas.cob.userservice.api.facade.rollback.RollbackFacade rollbackFacade;
   @Mock private AnonymousUserCreatorService anonymousUserCreatorService;
   @Mock private AnonymousConversationCreatorService anonymousConversationCreatorService;
   @Mock private AnonymousUsernameRegistry usernameRegistry;
@@ -46,10 +56,30 @@ public class CreateAnonymousEnquiryFacadeTest {
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Spy private TenantContextProvider tenantContextProvider = new TenantContextProvider();
 
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands
+          .IdentityAnonymousBootstrapFailure
+      bootstrapFailure;
+
   @org.junit.jupiter.api.BeforeEach
   void realDpaPolicyFixture() {
+    org.mockito.Mockito.lenient()
+        .when(usernameRegistry.generateUniqueUsername())
+        .thenReturn("Anonymous-test");
+    org.mockito.Mockito.lenient()
+        .when(userHelper.getRandomPassword())
+        .thenReturn("fixture-anonymous-password");
+    org.mockito.Mockito.lenient()
+        .when(anonymousUserCreatorService.authenticateCreatedUser(any(), any()))
+        .thenAnswer(call -> call.getArgument(1));
     createAnonymousEnquiryFacade =
         new CreateAnonymousEnquiryFacade(
+            localCompletion,
+            identityProvisioning,
+            new de.caritas.cob.userservice.api.adapters.keycloak.commands
+                .IdentityCreationLocalTransactions(),
+            bootstrapFailure,
+            rollbackFacade,
             anonymousUserCreatorService,
             de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
             anonymousConversationCreatorService,
@@ -57,6 +87,34 @@ public class CreateAnonymousEnquiryFacadeTest {
             userHelper,
             consultingTypeManager,
             tenantContextProvider);
+  }
+
+  @Test
+  void failedDurableCompletionCleansOnlyItsCreatedSessionAndUser() {
+    var credentials = AnonymousUserCredentials.builder().userId("new-user").build();
+    var session = new Session();
+    var user = new de.caritas.cob.userservice.api.model.User();
+    user.setUserId("new-user");
+    session.setUser(user);
+    when(anonymousUserCreatorService.createAnonymousUser(any(), any())).thenReturn(credentials);
+    when(anonymousConversationCreatorService.createAnonymousConversation(any(), any()))
+        .thenReturn(session);
+    org.mockito.Mockito.doThrow(new IllegalStateException("journal unavailable"))
+        .when(localCompletion)
+        .anonymousSession(org.mockito.ArgumentMatchers.eq("new-user"), any());
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                createAnonymousEnquiryFacade.createAnonymousEnquiry(
+                    new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT), true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("journal unavailable");
+    org.mockito.Mockito.verify(rollbackFacade)
+        .rollBackUserAccount(
+            org.mockito.ArgumentMatchers.argThat(
+                rollback ->
+                    rollback.getSession() == session
+                        && rollback.getUser() == user
+                        && "new-user".equals(rollback.getUserId())));
   }
 
   EasyRandom easyRandom = new EasyRandom();
@@ -74,7 +132,7 @@ public class CreateAnonymousEnquiryFacadeTest {
             .build();
     Session session = easyRandom.nextObject(Session.class);
     session.setMatrixRoomId(null);
-    when(anonymousUserCreatorService.createAnonymousUser(any())).thenReturn(credentials);
+    when(anonymousUserCreatorService.createAnonymousUser(any(), any())).thenReturn(credentials);
     when(anonymousConversationCreatorService.createAnonymousConversation(any(), any()))
         .thenReturn(session);
 
@@ -115,7 +173,7 @@ public class CreateAnonymousEnquiryFacadeTest {
         easyRandom.nextObject(CreateAnonymousEnquiryDTO.class);
     anonymousEnquiryDTO.setConsultingType(CONSULTING_TYPE_ID_SUCHT);
     AnonymousUserCredentials credentials = easyRandom.nextObject(AnonymousUserCredentials.class);
-    when(anonymousUserCreatorService.createAnonymousUser(any())).thenReturn(credentials);
+    when(anonymousUserCreatorService.createAnonymousUser(any(), any())).thenReturn(credentials);
     Session session = easyRandom.nextObject(Session.class);
     when(anonymousConversationCreatorService.createAnonymousConversation(any(), any()))
         .thenReturn(session);
@@ -126,7 +184,7 @@ public class CreateAnonymousEnquiryFacadeTest {
 
     createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiryDTO);
 
-    verify(anonymousUserCreatorService, times(1)).createAnonymousUser(any());
+    verify(anonymousUserCreatorService, times(1)).createAnonymousUser(any(), any());
     verify(anonymousConversationCreatorService, times(1)).createAnonymousConversation(any(), any());
     verify(consultingTypeManager, times(1))
         .getConsultingTypeSettings(anonymousEnquiryDTO.getConsultingType());
@@ -172,7 +230,7 @@ public class CreateAnonymousEnquiryFacadeTest {
     createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiry());
 
     assertNull(writtenIn.get());
-    verify(anonymousUserCreatorService).createAnonymousUser(any());
+    verify(anonymousUserCreatorService).createAnonymousUser(any(), any());
   }
 
   private CreateAnonymousEnquiryDTO anonymousEnquiry() {
@@ -186,7 +244,7 @@ public class CreateAnonymousEnquiryFacadeTest {
 
   private AtomicReference<Long> givenCreationRecordsItsTenant() {
     var writtenIn = new AtomicReference<Long>();
-    when(anonymousUserCreatorService.createAnonymousUser(any()))
+    when(anonymousUserCreatorService.createAnonymousUser(any(), any()))
         .thenAnswer(
             call -> {
               writtenIn.set(TenantContext.getCurrentTenant());

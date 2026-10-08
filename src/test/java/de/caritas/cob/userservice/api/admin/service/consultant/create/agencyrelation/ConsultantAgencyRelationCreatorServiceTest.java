@@ -50,6 +50,10 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
   private final EasyRandom easyRandom = new EasyRandom();
 
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityAccountProvisioning
+      identityProvisioning;
+
   @InjectMocks
   private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
 
@@ -72,6 +76,100 @@ public class ConsultantAgencyRelationCreatorServiceTest {
   private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
 
   @Mock private ApplicationEventPublisher eventPublisher;
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"foreign-tenant", "uncovered-topic", "incompatible-type"})
+  void invalidExistingImportNeverAddsNativeRolesOrLocalRelations(String refusal) {
+    var target = new Consultant();
+    target.setId("existing-import-target");
+    target.setTenantId(42L);
+    when(consultantRepository.findByIdAndDeleteDateIsNull(target.getId()))
+        .thenReturn(Optional.of(target));
+    var topicRows =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository.class);
+    var agencyRows =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.class);
+    var actualValidator =
+        new ConsultantTopicAgencyCompatibilityValidator(
+            agencyService, consultantRepository, agencyRows, topicRows);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        consultantAgencyRelationCreatorService,
+        "consultantTopicAgencyCompatibilityValidator",
+        actualValidator);
+    var agency =
+        new AgencyDTO()
+            .id(8L)
+            .tenantId(refusal.equals("foreign-tenant") ? 99L : 42L)
+            .consultingType(1);
+    if (refusal.equals("uncovered-topic")) {
+      when(topicRows.findTopicIdsByConsultantId(target.getId())).thenReturn(List.of(99L));
+    }
+    if (refusal.equals("incompatible-type")) {
+      target.setConsultantAgencies(
+          java.util.Set.of(ConsultantAgency.builder().agencyId(2L).build()));
+      when(consultingTypeManager.isConsultantBoundedToAgency(1)).thenReturn(true);
+      when(agencyService.getPublicImportAgency(2L, 42L))
+          .thenReturn(new AgencyDTO().id(2L).tenantId(42L).consultingType(2));
+    }
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            consultantAgencyRelationCreatorService.createExistingImportedRelations(
+                target.getId(), List.of(agency), Set.of("consultant"), ignored -> {}, null, null));
+    verifyNoInteractions(
+        identityRoleUpdater,
+        consultantAgencyService,
+        consultantAgencyRelationFinalizer,
+        eventPublisher);
+  }
+
+  @Test
+  void ownedInitialRelationsRejectForeignTenantAgencyOrAdminRoleBeforeAnyLocalEffect() {
+    var consultant = new Consultant();
+    consultant.setId("new-account");
+    consultant.setTenantId(42L);
+    when(consultantRepository.findByIdAndDeleteDateIsNull("new-account"))
+        .thenReturn(Optional.of(consultant));
+    when(identityProvisioning.createdRelationGrant("new-account"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.adapters.keycloak.commands
+                .IdentityAccountProvisioning.CreatedRelationGrant(
+                "new-account", 42L, List.of("consultant"), List.of(8L)));
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () ->
+            consultantAgencyRelationCreatorService.createOwnedCreationRelations(
+                "new-account",
+                List.of(new AgencyDTO().id(9L).tenantId(42L)),
+                Set.of("consultant"),
+                ignored -> {}));
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () ->
+            consultantAgencyRelationCreatorService.createOwnedCreationRelations(
+                "new-account",
+                List.of(new AgencyDTO().id(8L).tenantId(42L)),
+                Set.of("user-admin"),
+                ignored -> {}));
+    consultant.setTenantId(99L);
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () ->
+            consultantAgencyRelationCreatorService.createOwnedCreationRelations(
+                "new-account",
+                List.of(new AgencyDTO().id(8L).tenantId(42L)),
+                Set.of("consultant"),
+                ignored -> {}));
+    verifyNoInteractions(
+        identityRoleUpdater,
+        identityRoleLookup,
+        consultantAgencyService,
+        consultantAgencyRelationFinalizer,
+        eventPublisher);
+  }
 
   /**
    * US#1060: an agency assignment that stops at the database row leaves the counsellor locked out

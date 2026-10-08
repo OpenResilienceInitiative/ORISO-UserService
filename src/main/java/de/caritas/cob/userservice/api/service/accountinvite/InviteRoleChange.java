@@ -200,6 +200,7 @@ public class InviteRoleChange {
       invite.setTenantIdReservationToken(held.tenantToken());
     }
     invite.setAgencyId(held.agencyId());
+    invite.setAgencyReservationToken(held.agencyToken());
     long days =
         invite.getQueuedExpiryDays() == null
             ? AccountInviteService.DEFAULT_EXPIRY_DAYS

@@ -254,21 +254,7 @@ class SupervisorAddedEmailNotificationServiceTest {
                     "smtpMode",
                     mode,
                     "smtp",
-                    Map.of(
-                        "enabled",
-                        true,
-                        "host",
-                        "smtp.tenant.example",
-                        "port",
-                        587,
-                        "secure",
-                        false,
-                        "username",
-                        "sender",
-                        "from",
-                        "sender@tenant.example",
-                        "passwordSet",
-                        true))));
+                    Map.of("enabled", true, "configured", true))));
     ReflectionTestUtils.setField(service, "emailRoutes", new TenantSystemEmailRouteService(client));
 
     service.notifyEmailAddressChanged(

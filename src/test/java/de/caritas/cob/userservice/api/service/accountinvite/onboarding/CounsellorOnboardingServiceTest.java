@@ -398,7 +398,9 @@ class CounsellorOnboardingServiceTest {
   void registerCounsellor_newAgency_createsItUnderTheReservedIdAndGrantsAgencyAdmin() {
     // given: the invite routes to a RESERVED Beratungsstellen-ID — the agency does not exist yet
     // (ORISO-Admin#998) and the invitee named it in the wizard.
-    inviteResolves(invite());
+    var reservedInvite = invite();
+    reservedInvite.setAgencyReservationToken("owner-proof");
+    inviteResolves(reservedInvite);
     when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
     when(topicService.getAllActiveTopicsMap())
         .thenReturn(
@@ -430,7 +432,8 @@ class CounsellorOnboardingServiceTest {
             eq(AGENCY_ID),
             eq("Beratungsstelle Musterstadt"),
             eq(TENANT_ID),
-            eq(List.of(DEPARTMENT_TOPIC_ID, EXTRA_AGENCY_TOPIC_ID)));
+            eq(List.of(DEPARTMENT_TOPIC_ID, EXTRA_AGENCY_TOPIC_ID)),
+            org.mockito.ArgumentMatchers.eq("owner-proof"));
     // ...and the invitee becomes its Beratungsstellen-Admin
     verify(counsellorInviteProvisioningService)
         .acceptInvite(
@@ -880,7 +883,7 @@ class CounsellorOnboardingServiceTest {
     resumable.setAcceptedByUserId(CONSULTANT_ID);
     resumable.setTotpPendingSecret("TOTPSECRET");
     inviteResolves(resumable);
-    when(identityProfileLookup.findById(CONSULTANT_ID))
+    when(identityProfileLookup.findById(eq(CONSULTANT_ID), any()))
         .thenReturn(
             Optional.of(
                 new IdentityProfile(CONSULTANT_ID, "enc.lena.b", "Lena", "Beraterin", "mail")));
@@ -901,7 +904,7 @@ class CounsellorOnboardingServiceTest {
     resumable.setAcceptedByUserId(CONSULTANT_ID);
     resumable.setTotpPendingSecret("TOTPSECRET");
     inviteResolves(resumable);
-    when(identityProfileLookup.findById(CONSULTANT_ID))
+    when(identityProfileLookup.findById(eq(CONSULTANT_ID), any()))
         .thenReturn(
             Optional.of(
                 new IdentityProfile(CONSULTANT_ID, "enc.lena.b", "Lena", "Beraterin", "mail")));
@@ -979,7 +982,7 @@ class CounsellorOnboardingServiceTest {
   }
 
   private void profileResolves() {
-    when(identityProfileLookup.findById(CONSULTANT_ID))
+    when(identityProfileLookup.findById(eq(CONSULTANT_ID), any()))
         .thenReturn(
             Optional.of(
                 new IdentityProfile(CONSULTANT_ID, "enc.lena.b", "Lena", "Beraterin", "mail")));

@@ -132,6 +132,32 @@ if [[ ! -f "${jar_path}" ]]; then
   exit 1
 fi
 
+# Disposable, independent credentials configure the same strict task boundary as the real jar.
+# Keep them only in this process environment; no fixture values enter logs or files.
+task_identity_environment=()
+for task in CONFIG_WIZARD INVITE_RESERVATIONS NOTIFICATION_DISPATCH SYSTEM_EMAIL_DELIVERY \
+  ACCOUNT_PROVISIONING ACCOUNT_MAINTENANCE OTP SESSION_EXCHANGE APPOINTMENT_SYNC \
+  APPOINTMENT_CLEANUP MATRIX_AGENCY RUNTIME_POLICY; do
+  task_key="$(printf '%s' "${task}" | tr '[:upper:]_' '[:lower:]-')"
+  task_client="backend-${task_key}"
+  if [[ "${task}" == OTP ]]; then
+    task_client=backend-account-otp
+  fi
+  task_identity_environment+=(
+    "IDENTITY_${task}_CLIENT_ID=${task_client}"
+    "KEYCLOAK_${task}_CLIENT_SECRET=$(openssl rand -base64 32)"
+    "IDENTITY_${task}_SERVICE_SUBJECT=load-subject-${task_key}"
+  )
+done
+task_identity_environment+=(
+  "IDENTITY_CONSULTANT_IMPORT_CLIENT_ID=backend-consultant-import"
+  "IDENTITY_CONSULTANT_IMPORT_SERVICE_SUBJECT=load-subject-consultant-import"
+  "TASK_IDENTITY_AUDIENCE=userservice"
+  "ORISO_PROVISIONING_ORIGIN_KEY=$(openssl rand -base64 32)"
+  "ORISO_MAINTENANCE_ORIGIN_KEY=$(openssl rand -base64 32)"
+  "ORISO_WIZARD_POLICY_CONTEXT_KEY=$(openssl rand -base64 32)"
+)
+
 start_replica() {
   local port="$1"
   local log_file="$2"
@@ -150,8 +176,7 @@ start_replica() {
     SPRING_DATA_REDIS_HOST=127.0.0.1 \
     SPRING_DATA_REDIS_PORT="${redis_port}" \
     IDENTITY_OPENID_CONNECT_URL="${identity_url}" \
-    IDENTITY_TECHNICAL_CLIENT_ID=backend-technical \
-    KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET=load-test-technical-client-secret \
+    "${task_identity_environment[@]}" \
     MATRIX_REGISTRATION_SHARED_SECRET=load-test-registration-shared-secret \
     KEYCLOAK_AUTH_SERVER_URL="http://127.0.0.1:${jwk_stub_port}/auth" \
     MATRIX_EVENT_LISTENER_ENABLED=false \

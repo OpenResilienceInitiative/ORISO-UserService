@@ -27,6 +27,14 @@ public class AgencyPreAssignmentRoomService {
   private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
 
   public void ensureHoldingRoom(Session session, User user) {
+    ensureHoldingRoom(session, user, null);
+  }
+
+  public void ensureHoldingRoom(
+      Session session,
+      User user,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationEffects.Scope
+          effects) {
     if (session == null || user == null) {
       return;
     }
@@ -85,11 +93,16 @@ public class AgencyPreAssignmentRoomService {
       return;
     }
 
+    if (effects != null) effects.requireOwner(user.getUserId(), user.getTenantId());
     String roomAlias = buildRoomAlias(session.getId());
     String roomName = buildRoomName(session, credentials.getMatrixUserId());
 
     try {
-      String roomId = sessionRoomGateway.createRoom(roomName, roomAlias, agencyToken);
+      String roomId =
+          effects == null
+              ? sessionRoomGateway.createRoom(roomName, roomAlias, agencyToken)
+              : sessionRoomGateway.createOwnedPrivateRoom(
+                  roomName, roomAlias, agencyToken, effects.privateRoom());
       if (isBlank(roomId)) {
         log.error("Matrix create room returned empty body for session {}", session.getId());
         return;

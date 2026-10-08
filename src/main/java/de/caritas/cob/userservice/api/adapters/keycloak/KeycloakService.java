@@ -2,19 +2,13 @@ package de.caritas.cob.userservice.api.adapters.keycloak;
 
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.PASSWORD_NOT_VALID;
-import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE;
-import static java.lang.Boolean.TRUE;
-import static java.util.Objects.isNull;
-import static java.util.Objects.nonNull;
 
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -52,39 +46,24 @@ import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
-import jakarta.ws.rs.NotAuthorizedException;
-import jakarta.ws.rs.NotFoundException;
-import jakarta.ws.rs.core.Response;
-import java.net.URI;
 import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import lombok.Synchronized;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 import org.keycloak.admin.client.resource.UserResource;
-import org.keycloak.admin.client.resource.UsersResource;
-import org.keycloak.representations.idm.CredentialRepresentation;
-import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.util.ObjectUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
@@ -130,6 +109,16 @@ public class KeycloakService
   private final @NonNull KeycloakMapper keycloakMapper;
   private final @NonNull UserHelper userHelper;
   private final @NonNull KeycloakAuthClient keycloakAuthClient;
+  private final @NonNull de.caritas.cob.userservice.api.config.auth.TaskIdentityTokenVerifier
+      taskIdentityTokenVerifier;
+
+  @Autowired @org.springframework.context.annotation.Lazy
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+      taskCommands;
+
+  @Autowired @org.springframework.context.annotation.Lazy
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityMaintenanceOrigins
+      commandOrigins;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
@@ -165,32 +154,16 @@ public class KeycloakService
   }
 
   public void changeLanguage(final String userId, final String locale) {
-    UserResource userResource = keycloakClient.getUsersResource().get(userId);
-    var user = userResource.toRepresentation();
-
-    changeLanguageForTheUser(locale, userResource, user);
+    var authorization = commandOrigins.current(userId, "account.profile", List.of());
+    taskCommands.profile(userId, Map.of("preferredLanguage", locale), authorization);
   }
 
+  /** Retired test/source compatibility seam: arbitrary native representations are forbidden. */
+  @Deprecated
   protected void changeLanguageForTheUser(
-      String locale, UserResource userResource, UserRepresentation user) {
-    if (needToUpdateLocale(locale, user)) {
-      // Accounts created outside the UserService (Keycloak console, imports) can come back
-      // without any attribute map — the language switch on login must not 500 on them.
-      if (user.getAttributes() == null) {
-        user.setAttributes(new HashMap<>());
-      }
-      user.getAttributes().put(LOCALE, Lists.newArrayList(locale));
-      userResource.update(user);
-    } else {
-      log.debug("Skipping language update in keycloak");
-    }
-  }
-
-  private boolean needToUpdateLocale(String locale, UserRepresentation userRepresentation) {
-    var attributes = userRepresentation.getAttributes();
-    return attributes == null
-        || !attributes.containsKey(LOCALE)
-        || !attributes.get(LOCALE).contains(locale);
+      String locale, UserResource ignored, UserRepresentation user) {
+    throw new org.springframework.security.access.AccessDeniedException(
+        "Native account maintenance has been retired");
   }
 
   @Override
@@ -208,6 +181,14 @@ public class KeycloakService
     var response = keycloakAuthClient.loginService(clientId, clientSecret);
     // Service accounts have no human refresh session; never propagate a provider refresh token.
     return new IdentityLogin(response.getAccessToken(), response.getExpiresIn(), 0, null);
+  }
+
+  @Override
+  public IdentityLogin loginTask(
+      de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials identity) {
+    var grant = loginService(identity.getClientId(), identity.getClientSecret());
+    taskIdentityTokenVerifier.verify(identity, grant.accessToken());
+    return grant;
   }
 
   @Override
@@ -239,13 +220,10 @@ public class KeycloakService
 
   @Override
   public void updateEmailByUsername(String username, String emailAddress) {
-    var lowerEmailAddress = emailAddress.toLowerCase(Locale.ROOT);
-    var usersResource = keycloakClient.getUsersResource();
-    var userRepresentation = usersResource.search(username).get(0);
-    if (!lowerEmailAddress.equals(userRepresentation.getEmail())) {
-      userRepresentation.setEmail(lowerEmailAddress);
-      usersResource.get(userRepresentation.getId()).update(userRepresentation);
-    }
+    var existing = findByUsername(username);
+    if (existing.isEmpty())
+      throw new KeycloakException("Account not found for email synchronization");
+    updateEmail(existing.getFirst().getId(), emailAddress.toLowerCase(Locale.ROOT));
   }
 
   @Override
@@ -266,20 +244,29 @@ public class KeycloakService
    */
   @Override
   public Optional<IdentityEmailOwner> findByEmail(String email) {
-    return keycloakClient.getUsersResource().search(email, 0, Integer.MAX_VALUE).stream()
-        .filter(userRepresentation -> email.equalsIgnoreCase(userRepresentation.getEmail()))
-        .findFirst()
-        .map(userRepresentation -> new IdentityEmailOwner(userRepresentation.getUsername()));
+    try {
+      return taskCommands
+          .provisioningSearch(
+              "email",
+              email,
+              de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+                  .registrationAvailability(email, TenantContext.getCurrentTenant()))
+          .stream()
+          .filter(user -> email.equalsIgnoreCase(user.email()))
+          .findFirst()
+          .map(user -> new IdentityEmailOwner(user.username()));
+    } catch (HttpClientErrorException.Forbidden foreignOwner) {
+      // A foreign exact match is occupied, but its identity must not be disclosed.
+      return Optional.of(new IdentityEmailOwner(null));
+    }
   }
 
   @Override
   public IdentityOtpCredential getOtpCredential(String userName) {
     var requestUrl = getOtpUrl(ENDPOINT_OTP_INFO, userName);
     var response =
-        withFreshAdminTokenOnUnauthorized(
-            "otp-fetch",
-            () ->
-                keycloakClient.get(keycloakClient.getBearerToken(), requestUrl, OtpInfoDTO.class));
+        withFreshOtpTokenOnUnauthorized(
+            "otp-fetch", () -> keycloakClient.get(otpBearerToken(), requestUrl, OtpInfoDTO.class));
 
     var body = response.getBody();
     if (body == null) {
@@ -294,11 +281,11 @@ public class KeycloakService
     var requestUrl = getOtpUrl(ENDPOINT_OTP_SETUP, userName);
 
     try {
-      withFreshAdminTokenOnUnauthorized(
+      withFreshOtpTokenOnUnauthorized(
           "otp-setup",
           () ->
               keycloakClient.putForEntity(
-                  keycloakClient.getBearerToken(), requestUrl, otpSetupDTO, OtpInfoDTO.class));
+                  otpBearerToken(), requestUrl, otpSetupDTO, OtpInfoDTO.class));
       return true;
     } catch (HttpClientErrorException exception) {
       if (exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)) {
@@ -312,9 +299,8 @@ public class KeycloakService
   @Override
   public void deleteOtpCredential(String userName) {
     var requestUrl = getOtpUrl(ENDPOINT_OTP_TEARDOWN, userName);
-    withFreshAdminTokenOnUnauthorized(
-        "otp-delete",
-        () -> keycloakClient.delete(keycloakClient.getBearerToken(), requestUrl, Void.class));
+    withFreshOtpTokenOnUnauthorized(
+        "otp-delete", () -> keycloakClient.delete(otpBearerToken(), requestUrl, Void.class));
   }
 
   @Override
@@ -323,11 +309,11 @@ public class KeycloakService
     var requestUrl = getOtpUrl(ENDPOINT_OTP_VERIFY_EMAIL, username);
 
     try {
-      withFreshAdminTokenOnUnauthorized(
+      withFreshOtpTokenOnUnauthorized(
           "email-verification-start",
           () ->
               keycloakClient.putForEntity(
-                  keycloakClient.getBearerToken(), requestUrl, otpSetupDTO, Success.class));
+                  otpBearerToken(), requestUrl, otpSetupDTO, Success.class));
       return IdentityEmailVerificationStart.success();
     } catch (RestClientException exception) {
       return IdentityEmailVerificationStart.failure(
@@ -344,14 +330,11 @@ public class KeycloakService
       // The OTP SPI also returns 401 for an invalid or expired code. Only a bearer challenge
       // identifies a failed service session; repeating a rejected code consumes another attempt.
       var response =
-          withFreshAdminTokenOnUnauthorized(
+          withFreshOtpTokenOnUnauthorized(
               "email-verification-finish",
               () ->
                   keycloakClient.postForEntity(
-                      keycloakClient.getBearerToken(),
-                      requestUrl,
-                      otpSetupDTO,
-                      SuccessWithEmail.class),
+                      otpBearerToken(), requestUrl, otpSetupDTO, SuccessWithEmail.class),
               KeycloakService::isBearerChallenge);
       return keycloakMapper.identityEmailVerificationOf(response);
     } catch (HttpClientErrorException exception) {
@@ -364,17 +347,24 @@ public class KeycloakService
     }
   }
 
+  private String otpBearerToken() {
+    var identity =
+        identityClientConfig.getTaskIdentity(
+            de.caritas.cob.userservice.api.config.auth.TaskIdentity.OTP);
+    return loginTask(identity).accessToken();
+  }
+
   private String getOtpUrl(String endpoint, String username) {
     var decodedUsername = usernameTranscoder.decodeUsername(username);
     return identityClientConfig.getOtpUrl(
         endpoint, java.util.regex.Matcher.quoteReplacement(decodedUsername));
   }
 
-  private <T> T withFreshAdminTokenOnUnauthorized(String operation, Supplier<T> request) {
-    return withFreshAdminTokenOnUnauthorized(operation, request, exception -> true);
+  private <T> T withFreshOtpTokenOnUnauthorized(String operation, Supplier<T> request) {
+    return withFreshOtpTokenOnUnauthorized(operation, request, exception -> true);
   }
 
-  private <T> T withFreshAdminTokenOnUnauthorized(
+  private <T> T withFreshOtpTokenOnUnauthorized(
       String operation, Supplier<T> request, Predicate<HttpClientErrorException> retryable) {
     try {
       return request.get();
@@ -385,11 +375,11 @@ public class KeycloakService
       }
 
       log.warn(
-          "Keycloak admin session was unauthorized for {} request, forcing token refresh and"
+          "Keycloak OTP service grant was unauthorized for {} request, forcing token refresh and"
               + " retrying once",
           operation);
       recordRetry(operation);
-      keycloakClient.refreshAdminSession();
+      // Each retry obtains a fresh grant for the dedicated OTP service account.
       return request.get();
     }
   }
@@ -405,453 +395,120 @@ public class KeycloakService
    * @return provider-neutral created identity
    */
   public CreatedIdentity createUser(final UserDTO user) {
-    return createUser(user, null, null);
+    throw new org.springframework.security.access.AccessDeniedException(
+        "Account creation requires a verified typed provisioning origin");
   }
 
-  /**
-   * Creates a user with firstname and lastname in Keycloak and returns its Keycloak user ID.
-   *
-   * @param user {@link UserDTO}
-   * @param firstName first name of user
-   * @param lastName last name of user
-   * @return provider-neutral created identity
-   */
-  public CreatedIdentity createUser(
-      final UserDTO user, final String firstName, final String lastName) {
-    var locale =
-        isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
-    var kcUser = getUserRepresentation(user, firstName, lastName, locale);
-    for (int attempt = 0; attempt < 2; attempt++) {
-      try (var response = keycloakClient.getUsersResource().create(kcUser)) {
-        if (response.getStatus() == HttpStatus.UNAUTHORIZED.value() && attempt == 0) {
-          log.warn(
-              "Keycloak admin session was unauthorized while creating a user, forcing token refresh and retrying once");
-          recordRetry("admin-session-refresh");
-          keycloakClient.refreshAdminSession();
-          continue;
-        }
-        if (response.getStatus() == HttpStatus.CREATED.value()) {
-          final String createdUserId = getCreatedUserId(response.getLocation());
-          try {
-            updateIdentityAttributesAfterCreate(user, createdUserId);
-          } catch (Exception exception) {
-            log.error(
-                "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
-                createdUserId,
-                exception);
-            rollbackUser(createdUserId);
-            throw new InternalServerErrorException(
-                String.format(
-                    "Could not persist mandatory keycloak user attributes for user %s",
-                    createdUserId),
-                exception);
-          }
-          return new CreatedIdentity(createdUserId);
-        }
-        throw createUserFailure(user, response);
-      }
-    }
-    throw new IllegalStateException("Unreachable Keycloak create-user retry state");
+  @Override
+  public CreatedIdentity createUser(final UserDTO user, String firstName, String lastName) {
+    throw new org.springframework.security.access.AccessDeniedException(
+        "Account creation requires a verified typed provisioning origin");
   }
 
-  /**
-   * Builds the failure for a non-201 Keycloak create-user response.
-   *
-   * <p>Returns the exception rather than throwing it, and rather than recording the detail in a
-   * field the caller reads afterwards. {@code genericKeycloakError} is {@code @Value}-injected
-   * configuration on a singleton bean, so writing the current request's Keycloak response into it
-   * corrupted it for the life of the JVM and let concurrent failures read each other's detail -
-   * request A could be handed the raw Keycloak body belonging to request B, which carries B's
-   * username and e-mail. Nothing else needs the value to outlive the throw, so it does not.
-   *
-   * <p>Only the HTTP status leaves this method - in the log line and in the exception message. The
-   * Keycloak response body echoes the submitted username and e-mail on validation errors, and the
-   * UserDTO carries both, so neither is safe to propagate to a log aggregator or to an
-   * operator-facing error page. Duplicate detection still reads the body in-memory here but the
-   * body does not outlive the method.
-   */
-  private RuntimeException createUserFailure(UserDTO user, Response response) {
-    final int status = response.getStatus();
-    String rawResponse = "";
-
-    try {
-      // Read once from response stream; this is the most stable source across Keycloak versions.
-      rawResponse = Optional.ofNullable(response.readEntity(String.class)).orElse("");
-    } catch (Exception e) {
-      log.warn("Could not read raw Keycloak error response: {}", e.getMessage());
-    }
-
-    String combinedError = rawResponse.toLowerCase();
-
-    if (errorMatchesMarker(combinedError, identityClientConfig.getErrorMessageDuplicatedEmail())
-        || (status == HttpStatus.CONFLICT.value() && combinedError.contains("email"))) {
-      return new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
-    }
-
-    if (errorMatchesMarker(combinedError, identityClientConfig.getErrorMessageDuplicatedUsername())
-        || (status == HttpStatus.CONFLICT.value() && combinedError.contains("username"))) {
-      return new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
-    }
-
-    log.warn("Keycloak create-user failed. status={}", status);
-
-    return new InternalServerErrorException(
-        String.format("%s: Keycloak responded with status %s", genericKeycloakError, status));
-  }
-
-  /**
-   * Null-safe check whether the (lower-cased) Keycloak error response contains the configured
-   * duplicate-account marker. A missing/blank marker simply does not match (the status-based
-   * fallback still applies) instead of throwing an NPE that would mask a 409 CONFLICT as a 500.
-   */
-  private boolean errorMatchesMarker(String combinedError, String marker) {
-    return marker != null && !marker.isBlank() && combinedError.contains(marker.toLowerCase());
-  }
-
-  /**
-   * Returns true if the given username does not exist in Keycloak yet or false if it already
-   * exists.
-   *
-   * @param username (decoded or encoded)
-   * @return true if does not exist, else false
-   */
+  @Override
   public boolean isUsernameAvailable(String username) {
-    List<UserRepresentation> keycloakDecodedUserList =
-        findByUsername(usernameTranscoder.decodeUsername(username));
-    List<UserRepresentation> keycloakEncodedUserList =
-        findByUsername(usernameTranscoder.encodeUsername(username));
-
-    return Stream.concat(keycloakDecodedUserList.stream(), keycloakEncodedUserList.stream())
-        .noneMatch(user -> doesUsernameMatch(username, user));
+    String decoded = usernameTranscoder.decodeUsername(username);
+    String encoded = usernameTranscoder.encodeUsername(username);
+    return availability(decoded) && (decoded.equals(encoded) || availability(encoded));
   }
 
-  private boolean doesUsernameMatch(String username, UserRepresentation user) {
-    return user.getUsername().equalsIgnoreCase(usernameTranscoder.decodeUsername(username))
-        || user.getUsername().equalsIgnoreCase(usernameTranscoder.encodeUsername(username));
-  }
-
-  @Synchronized
-  private boolean isEmailNotAvailable(String email) {
-    return keycloakClient.getUsersResource().search(email, 0, Integer.MAX_VALUE).stream()
-        .anyMatch(userRepresentation -> userRepresentation.getEmail().equals(email));
-  }
-
-  private CredentialRepresentation getCredentialRepresentation(
-      final String password, boolean temporary) {
-    var credentials = new CredentialRepresentation();
-    credentials.setType(CredentialRepresentation.PASSWORD);
-    credentials.setValue(password);
-    credentials.setTemporary(temporary);
-
-    return credentials;
-  }
-
-  private UserRepresentation getUserRepresentation(
-      final UserDTO user, final String firstName, final String lastName) {
-    return getUserRepresentation(user, firstName, lastName, null);
-  }
-
-  private UserRepresentation getUserRepresentation(
-      final UserDTO user, final String firstName, final String lastName, final String locale) {
-    return getUserRepresentation(
-        user.getUsername(), user.getEmail(), user.getTenantId(), firstName, lastName, locale);
-  }
-
-  private UserRepresentation getUserRepresentation(final IdentityProfileUpdate profile) {
-    return getUserRepresentation(
-        profile.username(),
-        profile.email(),
-        profile.tenantId(),
-        profile.firstName(),
-        profile.lastName(),
-        null);
-  }
-
-  private UserRepresentation getUserRepresentation(
-      final String username,
-      final String email,
-      final Long tenantId,
-      final String firstName,
-      final String lastName,
-      final String locale) {
-    var kcUser = new UserRepresentation();
-    // Decode the username before setting it in Keycloak (Keycloak expects original username, not
-    // encoded)
-    kcUser.setUsername(usernameTranscoder.decodeUsername(username));
-    kcUser.setEmail(email);
-    kcUser.setEmailVerified(true);
-    if (nonNull(firstName)) {
-      kcUser.setFirstName(firstName);
-    }
-    if (nonNull(lastName)) {
-      kcUser.setLastName(lastName);
-    }
-    if (nonNull(locale)) {
-      kcUser.singleAttribute(LOCALE, locale);
-    }
-    kcUser.setEnabled(true);
-
-    putUsernameAttributes(username, kcUser);
-    updateTenantId(tenantId, kcUser);
-
-    return kcUser;
-  }
-
-  private void putUsernameAttributes(String username, UserRepresentation kcUser) {
-    Map<String, List<String>> attributes =
-        kcUser.getAttributes() == null ? new HashMap<>() : new HashMap<>(kcUser.getAttributes());
-    var decodedUsername = usernameTranscoder.decodeUsername(username);
-    attributes.put(USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
-    attributes.put(LEGACY_USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
-    kcUser.setAttributes(attributes);
-  }
-
-  private void updateTenantId(Long configuredTenantId, UserRepresentation kcUser) {
-    if (TRUE.equals(multiTenancyEnabled)) {
-      Map<String, List<String>> attributes =
-          kcUser.getAttributes() == null ? new HashMap<>() : new HashMap<>(kcUser.getAttributes());
-      var tenantId = resolveTenantId(configuredTenantId);
-      if (tenantId != null) {
-        attributes.put(TENANT_ID_ATTRIBUTE, Collections.singletonList(tenantId.toString()));
-      }
-      kcUser.setAttributes(attributes);
+  private boolean availability(String exactUsername) {
+    try {
+      return taskCommands
+          .provisioningSearch(
+              "username",
+              exactUsername,
+              de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+                  .registrationAvailability(exactUsername, TenantContext.getCurrentTenant()))
+          .isEmpty();
+    } catch (HttpClientErrorException.Forbidden foreignOwner) {
+      return false;
     }
   }
 
-  private void updateIdentityAttributesAfterCreate(UserDTO userDTO, String keycloakUserId) {
-    var userResource = keycloakClient.getUsersResource().get(keycloakUserId);
-    var representation = userResource.toRepresentation();
-    Map<String, List<String>> attributes =
-        representation.getAttributes() == null
-            ? new LinkedHashMap<>()
-            : new LinkedHashMap<>(representation.getAttributes());
-
-    attributes.put(USER_ID_ATTRIBUTE, Collections.singletonList(keycloakUserId));
-    var decodedUsername = usernameTranscoder.decodeUsername(userDTO.getUsername());
-    attributes.put(USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
-    attributes.put(LEGACY_USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
-    var tenantId = resolveTenantId(userDTO);
-    if (tenantId != null) {
-      attributes.put(TENANT_ID_ATTRIBUTE, Collections.singletonList(tenantId.toString()));
-    }
-
-    representation.setAttributes(attributes);
-    userResource.update(representation);
-  }
-
-  private Long resolveTenantId(UserDTO userDTO) {
-    return resolveTenantId(userDTO.getTenantId());
-  }
-
-  private Long resolveTenantId(Long configuredTenantId) {
-    if (configuredTenantId != null) {
-      return configuredTenantId;
-    }
-    if (TRUE.equals(multiTenancyEnabled) && TenantContext.getCurrentTenant() != null) {
-      return TenantContext.getCurrentTenant();
-    }
-    return null;
-  }
-
-  private String getCreatedUserId(final URI location) {
-    if (nonNull(location)) {
-      String path = location.getPath();
-      return path.substring(path.lastIndexOf('/') + 1);
-    }
-
-    return null;
-  }
-
-  /**
-   * Assigns the role "user" to the given user ID.
-   *
-   * @param userId Keycloak user ID
-   */
-  public void updateUserRole(final String userId) {
+  @Override
+  public void updateUserRole(String userId) {
     updateRole(userId, "user");
   }
 
   @Override
-  public void ensureRoles(final String userId, final Collection<String> roleNames) {
-    var requestedRoles = new LinkedHashSet<>(roleNames);
-    if (requestedRoles.isEmpty()) {
-      return;
-    }
-
-    try {
-      ensureRolesOnce(userId, requestedRoles);
-    } catch (NotAuthorizedException e) {
-      log.warn(
-          "Keycloak admin session was unauthorized while ensuring {} roles for user {}, forcing"
-              + " token refresh and retrying once",
-          requestedRoles.size(),
-          userId);
-      recordRetry("admin-session-refresh");
-      keycloakClient.refreshAdminSession();
-      ensureRolesOnce(userId, requestedRoles);
-    }
-  }
-
-  private void ensureRolesOnce(final String userId, final Collection<String> requestedRoles) {
-    var assignedRoles =
-        getUserRoles(userId).stream()
-            .map(RoleRepresentation::getName)
-            .filter(roleName -> nonNull(roleName))
-            .collect(Collectors.toCollection(LinkedHashSet::new));
-    var missingRoles = new LinkedHashSet<>(requestedRoles);
-    missingRoles.removeAll(assignedRoles);
-    if (!missingRoles.isEmpty()) {
-      updateRolesOnce(userId, missingRoles);
-    }
-  }
-
-  /**
-   * Assigns the given {@link UserRole} to the given user ID.
-   *
-   * @param userId Keycloak user ID
-   * @param role {@link UserRole}
-   */
-  public void updateRole(final String userId, final UserRole role) {
-    this.updateRole(userId, role.getValue());
+  public void ensureRoles(String userId, Collection<String> names) {
+    var wanted = new LinkedHashSet<>(findAllByUserId(userId));
+    if (!wanted.addAll(names)) return;
+    taskCommands.roles(userId, wanted, commandOrigins.current(userId, "account.roles", wanted));
   }
 
   @Override
-  public void removeRoleIfPresent(final String userId, final String roleName) {
-    // Get realm and user resources
-    var realmResource = keycloakClient.getRealmResource();
-    UsersResource userRessource = realmResource.users();
-    UserResource user = userRessource.get(userId);
-    // Remove role
-    var optionalRole = findRole(user, roleName);
-    if (optionalRole.isPresent()) {
-      RoleRepresentation roleRepresentation =
-          realmResource.roles().get(optionalRole.get()).toRepresentation();
-      if (roleRepresentation != null) {
-        user.roles().realmLevel().remove(Collections.singletonList(roleRepresentation));
-      }
-    }
+  public void ensureRoles(
+      String userId,
+      Collection<String> names,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          readOrigin,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          roleOrigin) {
+    var wanted = new LinkedHashSet<>(findAllByUserId(userId, readOrigin));
+    if (!wanted.addAll(names)) return;
+    taskCommands.roles(userId, wanted, roleOrigin);
   }
 
-  Optional<String> findRole(UserResource user, String roleName) {
-
-    List<RoleRepresentation> userRoles = user.roles().realmLevel().listAll();
-    if (userRoles != null) {
-      return userRoles.stream()
-          .filter(role -> role.getName() != null && role.getName().equals(roleName))
-          .map(RoleRepresentation::getName)
-          .findFirst();
-    }
-    return Optional.empty();
+  @Override
+  public void updateRole(String userId, UserRole role) {
+    updateRole(userId, role.getValue());
   }
 
-  /**
-   * Assigns the role with the given name to the given user ID.
-   *
-   * @param userId Keycloak user ID
-   * @param roleName Keycloak role name
-   */
-  public void updateRole(final String userId, final String roleName) {
-    try {
-      updateRolesOnce(userId, Collections.singletonList(roleName));
-    } catch (NotAuthorizedException e) {
-      log.warn(
-          "Keycloak admin session was unauthorized while assigning role {} to user {}, forcing"
-              + " token refresh and retrying once",
-          roleName,
-          userId);
-      recordRetry("admin-session-refresh");
-      keycloakClient.refreshAdminSession();
-      updateRolesOnce(userId, Collections.singletonList(roleName));
-    }
+  @Override
+  public void updateRole(String userId, String role) {
+    ensureRoles(userId, List.of(role));
   }
 
-  private void updateRolesOnce(final String userId, final Collection<String> roleNames) {
-    // Get realm and user resources
-    var realmResource = keycloakClient.getRealmResource();
-    UsersResource userRessource = realmResource.users();
-    UserResource user = userRessource.get(userId);
+  @Override
+  public void removeRoleIfPresent(String userId, String role) {
+    var wanted = new LinkedHashSet<>(findAllByUserId(userId));
+    if (wanted.remove(role))
+      taskCommands.roles(userId, wanted, commandOrigins.current(userId, "account.roles", wanted));
+  }
 
-    var roleRepresentations =
-        roleNames.stream()
-            .map(roleName -> realmResource.roles().get(roleName).toRepresentation())
-            .peek(
-                roleRepresentation -> {
-                  if (isNull(roleRepresentation.getAttributes())) {
-                    roleRepresentation.setAttributes(new LinkedHashMap<>());
-                  }
-                })
-            .toList();
-    user.roles().realmLevel().add(roleRepresentations);
-
-    if (areRolesAssigned(user, roleNames)) {
-      log.debug("Added {} roles to {}", roleNames.size(), userId);
-      return;
-    }
-
-    for (int attempt = 0; attempt < 3; attempt++) {
-      recordRetry("role-visibility");
-      try {
-        Thread.sleep(100L);
-      } catch (InterruptedException interruptedException) {
-        Thread.currentThread().interrupt();
-        throw new KeycloakException(
-            "Interrupted while verifying role assignment for user " + userId);
-      }
-      if (areRolesAssigned(user, roleNames)) {
-        log.debug("Added {} roles to {} after retry {}", roleNames.size(), userId, attempt + 1);
-        return;
-      }
-    }
-
-    throw new KeycloakException("Could not update user role");
+  @Deprecated
+  Optional<String> findRole(UserResource ignored, String roleName) {
+    throw new org.springframework.security.access.AccessDeniedException(
+        "Native account role resources have been retired");
   }
 
   private void recordRetry(String operation) {
-    if (outboundHttpMetrics != null) {
-      outboundHttpMetrics.recordRetry("keycloak", operation);
-    }
-  }
-
-  private boolean areRolesAssigned(UserResource user, Collection<String> roleNames) {
-    Set<String> assignedRoleNames =
-        user.roles().realmLevel().listAll().stream()
-            .map(RoleRepresentation::getName)
-            .filter(roleName -> nonNull(roleName))
-            .map(roleName -> roleName.toLowerCase(Locale.ROOT))
-            .collect(Collectors.toSet());
-    return roleNames.stream()
-        .map(roleName -> roleName.toLowerCase(Locale.ROOT))
-        .allMatch(assignedRoleNames::contains);
-  }
-
-  /**
-   * Updates the Keycloak password for a user.
-   *
-   * @param userId Keycloak user ID
-   * @param password user password
-   */
-  @Override
-  public void updatePassword(final String userId, final String password) {
-    resetPassword(userId, password, false);
+    if (outboundHttpMetrics != null) outboundHttpMetrics.recordRetry("keycloak", operation);
   }
 
   @Override
-  public void updateTemporaryPassword(final String userId, final String password) {
-    resetPassword(userId, password, true);
+  public void updatePassword(String userId, String password) {
+    updatePassword(userId, password, commandOrigins.current(userId, "account.password", List.of()));
   }
 
-  private void resetPassword(final String userId, final String password, boolean temporary) {
-    var newCredentials = getCredentialRepresentation(password, temporary);
-    var userResource = keycloakClient.getUsersResource().get(userId);
+  @Override
+  public void updatePassword(
+      String userId,
+      String password,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          authorization) {
+    resetPassword(userId, password, false, authorization);
+  }
 
+  @Override
+  public void updateTemporaryPassword(String userId, String password) {
+    resetPassword(
+        userId, password, true, commandOrigins.current(userId, "account.password", List.of()));
+  }
+
+  private void resetPassword(
+      String id,
+      String password,
+      boolean temporary,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          authorization) {
     try {
-      userResource.resetPassword(newCredentials);
-      log.debug("Updated user credentials for {}", userId);
+      taskCommands.password(id, password, temporary, authorization);
     } catch (Exception exception) {
-      if (isPasswordPolicyViolation(exception)) {
-        log.warn("Keycloak rejected password for user {} due to password policy", userId);
+      if (isPasswordPolicyViolation(exception))
         throw new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST);
-      }
       throw exception;
     }
   }
@@ -898,287 +555,179 @@ public class KeycloakService
    * @return the dummy email address
    */
   @Override
-  public String updateDummyEmail(
-      final String userId, final IdentityDummyEmailUpdate identityUpdate) {
-    var dummyEmail = userHelper.getDummyEmail(userId);
-    var user = new UserDTO();
-    user.setUsername(identityUpdate.username());
-    user.setEmail(dummyEmail);
-    user.setTenantId(identityUpdate.tenantId());
-    var userResource = keycloakClient.getUsersResource().get(userId);
-    userResource.update(
-        withExistingAttributes(userResource, getUserRepresentation(user, null, null)));
-    log.debug("Set email dummy for {} to {}", userId, dummyEmail);
-    return dummyEmail;
+  public String updateDummyEmail(String id, IdentityDummyEmailUpdate update) {
+    String email = userHelper.getDummyEmail(id);
+    taskCommands.profile(
+        id, Map.of("email", email), commandOrigins.current(id, "account.profile", List.of()));
+    return email;
   }
 
-  /**
-   * Updates first name, last name and email address of user with given id in keycloak.
-   *
-   * @param userId Keycloak user ID
-   * @param profile provider-neutral profile values to persist
-   */
   @Override
-  public void updateProfile(final String userId, final IdentityProfileUpdate profile) {
-    var userResource = keycloakClient.getUsersResource().get(userId);
-    var existing = userResource.toRepresentation();
-    verifyEmail(existing, profile.email());
-    userResource.update(withExistingAttributes(existing, getUserRepresentation(profile)));
-  }
-
-  /**
-   * Keycloak's user update replaces the whole attribute map when the representation carries one. A
-   * representation built only from the profile values therefore silently dropped every attribute it
-   * did not know about — above all {@code userId}, the custom claim the AgencyService needs to
-   * scope a Beratungsstellen-Admin to their own agencies (their agency list answered 403 after the
-   * first admin edit). Merge the profile attributes onto the attributes Keycloak currently holds so
-   * an update never removes what creation wrote.
-   */
-  private UserRepresentation withExistingAttributes(
-      UserResource userResource, UserRepresentation update) {
-    UserRepresentation existing;
+  public void updateProfile(String id, IdentityProfileUpdate profile) {
+    var patch = new LinkedHashMap<String, Object>();
+    patch.put("username", usernameTranscoder.decodeUsername(profile.username()));
+    patch.put("email", profile.email());
+    var caller =
+        org.springframework.security.core.context.SecurityContextHolder.getContext()
+            .getAuthentication();
+    boolean ownAccount =
+        caller
+                instanceof
+                org.springframework.security.oauth2.server.resource.authentication
+                            .JwtAuthenticationToken
+                        verified
+            && id.equals(verified.getToken().getSubject());
+    if (multiTenancyEnabled && !ownAccount && profile.tenantId() != null)
+      patch.put("tenantId", profile.tenantId().toString());
+    if (profile.firstName() != null) patch.put("firstName", profile.firstName());
+    if (profile.lastName() != null) patch.put("lastName", profile.lastName());
     try {
-      existing = userResource.toRepresentation();
-    } catch (RuntimeException e) {
-      log.warn("Could not read current keycloak user before update; attributes may be lost", e);
-      existing = null;
-    }
-    return withExistingAttributes(existing, update);
-  }
-
-  private UserRepresentation withExistingAttributes(
-      UserRepresentation existing, UserRepresentation update) {
-    if (existing == null || existing.getAttributes() == null) {
-      return update;
-    }
-    Map<String, List<String>> merged = new LinkedHashMap<>(existing.getAttributes());
-    if (update.getAttributes() != null) {
-      merged.putAll(update.getAttributes());
-    }
-    update.setAttributes(merged);
-    return update;
-  }
-
-  private void verifyEmail(UserRepresentation userRepresentation, String email) {
-    if (hasEmailAddressChanged(userRepresentation, email)) {
-      verifyEmailAvailable(email);
-    }
-  }
-
-  private void verifyEmailAvailable(String email) {
-    if (isEmailNotAvailable(email)) {
+      taskCommands.profile(id, patch, commandOrigins.current(id, "account.profile", List.of()));
+    } catch (HttpClientErrorException.Conflict duplicate) {
       throw new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
   }
 
-  private boolean hasEmailAddressChanged(UserRepresentation userRepresentation, String email) {
-    if (userRepresentation != null && userRepresentation.getEmail() != null) {
-      return !userRepresentation.getEmail().equals(email);
-    } else {
-      return !ObjectUtils.isEmpty(email);
+  private void updateEmail(String id, String email) {
+    try {
+      taskCommands.profile(
+          id, Map.of("email", email), commandOrigins.current(id, "account.profile", List.of()));
+    } catch (HttpClientErrorException.Conflict duplicate) {
+      throw new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
   }
 
-  /**
-   * Updates the email address of user with given id in keycloak.
-   *
-   * @param userId Keycloak user ID
-   * @param emailAddress the email address to set
-   */
-  private void updateEmail(String userId, String emailAddress) {
-    var userResource = keycloakClient.getUsersResource().get(userId);
-    UserRepresentation representation = userResource.toRepresentation();
-    if (!hasEmailAddressChanged(representation, emailAddress)) {
-      return;
-    }
-    verifyEmailAvailable(emailAddress);
-    representation.setEmail(emailAddress);
-    userResource.update(representation);
-  }
-
-  /**
-   * Delete the user if something went wrong during the registration process.
-   *
-   * @param userId Keycloak user ID
-   */
   @Override
-  public void rollbackUser(String userId) {
-    try {
-      deleteUser(userId);
-      log.debug("User {} has been removed due to rollback", userId);
-    } catch (Exception e) {
-      log.error("Keycloak error: User could not be removed/rolled back: {}", userId);
-    }
+  public void rollbackUser(String id) {
+    throw new org.springframework.security.access.AccessDeniedException(
+        "Rollback requires its owned creation attempt and receipt");
   }
 
-  /**
-   * Deletes the user with the given user id in keycloak.
-   *
-   * @param userId the userId
-   */
   @Override
-  public void deleteUser(String userId) {
-    try {
-      removeUserIfPresent(userId);
-    } catch (NotAuthorizedException e) {
-      log.warn(
-          "Keycloak admin session was unauthorized for deleting user {}, forcing token refresh"
-              + " and retrying once",
-          userId);
-      keycloakClient.refreshAdminSession();
-      removeUserIfPresent(userId);
-    }
+  public void deleteUser(String id) {
+    deleteUser(id, commandOrigins.current(id, "account.delete", List.of()));
   }
 
-  private void removeUserIfPresent(String userId) {
-    try {
-      keycloakClient.getUsersResource().get(userId).remove();
-    } catch (NotFoundException e) {
-      log.warn("User {} not found in Keycloak, skipping deletion.", userId);
-    }
-  }
-
-  /**
-   * Returns the names of all realm roles currently assigned to the given user.
-   *
-   * @param userId Keycloak user ID
-   * @return the realm role names assigned to the user
-   */
   @Override
-  public List<String> findAllByUserId(String userId) {
-    try {
-      return getUserRoles(userId).stream()
-          .map(RoleRepresentation::getName)
-          .collect(Collectors.toList());
-    } catch (Exception ex) {
-      var error = String.format("Could not get roles for user id %s", userId);
-      log.error("Keycloak error: " + error, ex);
-      throw new KeycloakException(error);
-    }
+  public void deleteUser(
+      String id,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          origin) {
+    taskCommands.delete(id, origin);
   }
 
-  private Optional<UserRole> toUserRole(RoleRepresentation roleRepresentation) {
-    return UserRole.getRoleByValue(roleRepresentation.getName());
+  @Override
+  public List<String> findAllByUserId(String id) {
+    return findAllByUserId(id, commandOrigins.current(id, "account.read", List.of()));
   }
 
-  private List<RoleRepresentation> getUserRoles(String userId) {
-    return keycloakClient.getUsersResource().get(userId).roles().realmLevel().listAll();
+  @Override
+  public List<String> findAllByUserId(
+      String id,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          origin) {
+    return read(id, origin).map(user -> user.roles()).orElse(List.of());
   }
 
-  /**
-   * Returns a list of {@link UserRepresentation} containing all users that match the given search
-   * string.
-   *
-   * @param username Keycloak user name
-   * @return {@link List} of found users
-   */
   public List<UserRepresentation> findByUsername(String username) {
     try {
-      return keycloakClient.getUsersResource().search(username);
-    } catch (NotAuthorizedException e) {
-      log.warn(
-          "Keycloak admin session was unauthorized while searching for username, forcing token"
-              + " refresh and retrying once");
-      keycloakClient.refreshAdminSession();
-      return keycloakClient.getUsersResource().search(username);
+      return taskCommands
+          .provisioningSearch(
+              "username",
+              username,
+              de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+                  .registrationAvailability(username, TenantContext.getCurrentTenant()))
+          .stream()
+          .map(
+              user -> {
+                var representation = new UserRepresentation();
+                representation.setId(user.id());
+                representation.setUsername(user.username());
+                representation.setEmail(user.email());
+                return representation;
+              })
+          .toList();
+    } catch (HttpClientErrorException.Forbidden foreignOwner) {
+      return List.of();
     }
   }
 
-  @Override
-  public Optional<Boolean> findEnabledById(String userId) {
+  private Optional<
+          de.caritas.cob.userservice.api.adapters.keycloak.commands.KeycloakTaskCommands
+              .AccountProjection>
+      read(
+          String id,
+          de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+              origin) {
     try {
-      return findEnabledByIdOnce(userId);
-    } catch (NotAuthorizedException unauthorized) {
-      log.warn(
-          "Keycloak admin session was unauthorized while reading account status, forcing token"
-              + " refresh and retrying once");
-      keycloakClient.refreshAdminSession();
-      return findEnabledByIdOnce(userId);
-    }
-  }
-
-  private Optional<Boolean> findEnabledByIdOnce(String userId) {
-    try {
-      var user = keycloakClient.getUsersResource().get(userId).toRepresentation();
-      return user == null ? Optional.empty() : Optional.ofNullable(user.isEnabled());
-    } catch (NotFoundException missing) {
+      return Optional.ofNullable(taskCommands.read(id, origin));
+    } catch (HttpClientErrorException.NotFound absent) {
       return Optional.empty();
     }
   }
 
   @Override
-  public Optional<IdentityProfile> findById(String userId) {
-    try {
-      UserResource userResource = keycloakClient.getUsersResource().get(userId);
-      if (userResource == null) {
-        return Optional.empty();
-      }
-      var user = userResource.toRepresentation();
-      if (user == null) {
-        return Optional.empty();
-      }
-      return Optional.of(
-          new IdentityProfile(
-              user.getId(),
-              user.getUsername(),
-              user.getFirstName(),
-              user.getLastName(),
-              user.getEmail()));
-    } catch (NotFoundException ex) {
-      return Optional.empty();
-    }
+  public Optional<Boolean> findEnabledById(String id) {
+    if (commandOrigins.protectedPlatformStatusUnavailable(id)) return Optional.empty();
+    return read(id, commandOrigins.current(id, "account.read", List.of()))
+        .map(user -> user.enabled());
   }
 
   @Override
-  public boolean requiresPasswordChange(String userId) {
-    try {
-      UserResource userResource = keycloakClient.getUsersResource().get(userId);
-      if (userResource == null) {
-        return false;
-      }
-      var user = userResource.toRepresentation();
-      return user != null
-          && user.getRequiredActions() != null
-          && user.getRequiredActions().contains("UPDATE_PASSWORD");
-    } catch (NotFoundException missing) {
-      return false;
-    }
+  public Optional<IdentityProfile> findById(String id) {
+    return findById(id, commandOrigins.current(id, "account.read", List.of()));
   }
 
-  /**
-   * The user's account language ({@code locale} attribute, the one {@link #changeLanguage} writes).
-   * Empty when the user or the attribute does not exist (callers fall back to the default).
-   */
   @Override
-  public Optional<String> findLocaleById(String userId) {
-    try {
-      UserResource userResource = keycloakClient.getUsersResource().get(userId);
-      if (userResource == null) {
-        return Optional.empty();
-      }
-      var user = userResource.toRepresentation();
-      if (user == null || user.getAttributes() == null) {
-        return Optional.empty();
-      }
-      return Optional.ofNullable(user.getAttributes().get(LOCALE)).stream()
-          .flatMap(List::stream)
-          .filter(StringUtils::isNotBlank)
-          .findFirst();
-    } catch (NotFoundException ex) {
-      return Optional.empty();
-    }
+  public Optional<IdentityProfile> findById(
+      String id,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          origin) {
+    return read(id, origin)
+        .map(
+            user ->
+                new IdentityProfile(
+                    user.id(), user.username(), user.firstName(), user.lastName(), user.email()));
   }
 
-  /**
-   * Deactivates the user account.
-   *
-   * @param userId the user id to be deactivated
-   */
   @Override
-  public void deactivateUser(String userId) {
-    var userResource = keycloakClient.getUsersResource().get(userId);
-    var userRepresentation = userResource.toRepresentation();
-    userRepresentation.setEnabled(false);
-    userResource.update(userRepresentation);
+  public boolean requiresPasswordChange(String id) {
+    return requiresPasswordChange(id, commandOrigins.current(id, "account.read", List.of()));
+  }
+
+  @Override
+  public boolean requiresPasswordChange(
+      String id,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          origin) {
+    return read(id, origin).map(user -> user.passwordChangeRequired()).orElse(false);
+  }
+
+  @Override
+  public Optional<String> findLocaleById(String id) {
+    return findLocaleById(id, commandOrigins.current(id, "account.read", List.of()));
+  }
+
+  @Override
+  public Optional<String> findLocaleById(
+      String id,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          origin) {
+    return read(id, origin)
+        .map(user -> user.preferredLanguage())
+        .filter(locale -> !locale.isBlank());
+  }
+
+  @Override
+  public void deactivateUser(String id) {
+    deactivateUser(id, commandOrigins.current(id, "account.deactivate", List.of()));
+  }
+
+  @Override
+  public void deactivateUser(
+      String id,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          origin) {
+    taskCommands.deactivate(id, origin);
   }
 }

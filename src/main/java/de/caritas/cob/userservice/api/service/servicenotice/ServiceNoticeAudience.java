@@ -137,10 +137,12 @@ public class ServiceNoticeAudience {
     }
     return Optional.of(
         new MailTarget(
-            admin.get().getEmail(), admin.get().getTenantId(), tone(userId, counsellorAccount)));
+            admin.get().getEmail(),
+            admin.get().getTenantId(),
+            tone(admin.get(), counsellorAccount)));
   }
 
-  private OrisoEmailRenderer.Tone tone(String userId, Consultant counsellorAccount) {
+  private OrisoEmailRenderer.Tone tone(Admin persistedRecipient, Consultant counsellorAccount) {
     if (counsellorAccount != null && counsellorAccount.getLanguageCode() != null) {
       var tone = toneOrGerman(counsellorAccount.getLanguageCode());
       return tone == OrisoEmailRenderer.Tone.DE_FORMAL && !counsellorAccount.isLanguageFormal()
@@ -149,7 +151,10 @@ public class ServiceNoticeAudience {
     }
     // An admin without a counsellor account has only the identity provider's account language.
     return locales
-        .findLocaleById(userId)
+        .findLocaleById(
+            persistedRecipient.getId(),
+            de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+                .persistedRecipient(persistedRecipient))
         .map(locale -> LanguageCode.getByCode(locale.trim().toLowerCase(Locale.ROOT)))
         .map(ServiceNoticeAudience::toneOrGerman)
         .orElse(OrisoEmailRenderer.Tone.DE_FORMAL);

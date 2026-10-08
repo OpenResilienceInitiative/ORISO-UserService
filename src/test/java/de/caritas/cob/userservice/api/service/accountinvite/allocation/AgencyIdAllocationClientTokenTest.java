@@ -33,7 +33,8 @@ class AgencyIdAllocationClientTokenTest {
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders("service-token"))
         .thenReturn(new HttpHeaders());
 
-    TechnicalAccessTokenContext.offerDuring("service-token", () -> client.release(23L));
+    TechnicalAccessTokenContext.offerDuring(
+        "service-token", () -> client.release(23L, "owner-proof"));
 
     verify(securityHeaderSupplier).getKeycloakAndCsrfHttpHeaders("service-token");
     verify(securityHeaderSupplier, never()).getKeycloakAndCsrfHttpHeaders();
@@ -47,7 +48,7 @@ class AgencyIdAllocationClientTokenTest {
     when(api.getApiClient()).thenReturn(mock(ApiClient.class));
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(new HttpHeaders());
 
-    client.release(23L);
+    client.release(23L, "owner-proof");
 
     verify(securityHeaderSupplier).getKeycloakAndCsrfHttpHeaders();
     verify(securityHeaderSupplier, never()).getKeycloakAndCsrfHttpHeaders(any(String.class));

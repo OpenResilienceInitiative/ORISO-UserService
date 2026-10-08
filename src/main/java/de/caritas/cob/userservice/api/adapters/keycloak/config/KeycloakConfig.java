@@ -127,10 +127,11 @@ public class KeycloakConfig {
     return value != null && !value.isBlank();
   }
 
-  @Bean
-  public Keycloak keycloak(OutboundHttpMetrics outboundHttpMetrics) {
-    return new KeycloakAdminClientTransport(outboundHttpMetrics)
-        .create(authServerUrl, realm, config);
+  /** No production bean: runtime native administration has been retired. */
+  @Deprecated
+  public Keycloak keycloak(OutboundHttpMetrics ignored) {
+    throw new org.springframework.security.access.AccessDeniedException(
+        "Native administrator client construction has been retired");
   }
 
   @URL private String authServerUrl;

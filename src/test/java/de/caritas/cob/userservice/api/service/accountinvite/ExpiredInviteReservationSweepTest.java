@@ -1,12 +1,14 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentity;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
@@ -65,13 +67,14 @@ class ExpiredInviteReservationSweepTest {
     var lease =
         new ScheduledTaskClaimService.ClaimLease(
             ExpiredInviteReservationSweep.TASK_NAME, LocalDateTime.of(2026, 9, 21, 18, 0));
-    TechnicalUserConfig technicalUser = new TechnicalUserConfig();
+    TaskIdentityCredentials technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical");
     technicalUser.setClientSecret("secret");
     when(taskClaimService.tryClaimLease(ExpiredInviteReservationSweep.TASK_NAME, claimDuration))
         .thenReturn(Optional.of(lease));
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.loginService("technical", "secret"))
+    when(identityClientConfig.getTaskIdentity(TaskIdentity.INVITE_RESERVATIONS))
+        .thenReturn(technicalUser);
+    when(identityAuthentication.loginTask(same(technicalUser)))
         .thenReturn(new IdentityLogin("token", 60, 60, "refresh"));
     when(accountInviteService.expireElapsedInvites())
         .thenAnswer(
@@ -84,6 +87,8 @@ class ExpiredInviteReservationSweepTest {
 
     sweep.expireElapsedInvites();
 
+    verify(identityClientConfig).getTaskIdentity(TaskIdentity.INVITE_RESERVATIONS);
+    verify(identityAuthentication).loginTask(same(technicalUser));
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     verify(accountSetupService).expireElapsedLinks();
     verify(taskClaimService).release(lease);

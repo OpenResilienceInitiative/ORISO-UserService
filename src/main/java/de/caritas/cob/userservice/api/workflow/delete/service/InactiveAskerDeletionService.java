@@ -19,6 +19,14 @@ public class InactiveAskerDeletionService {
   private final ActionsRegistry actions;
 
   public List<DeletionWorkflowError> delete(String identityId) {
+    return delete(identityId, null);
+  }
+
+  public List<DeletionWorkflowError> delete(
+      String identityId,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+          authorization) {
+    if (authorization != null) authorization.requireLifecycleDeletion(identityId);
     var user = users.findById(identityId);
     // Realm-only legacy identities and retries after a local-row deletion still own remote
     // appointment data and content addressed by identity ID. Never treat a missing row as proof
@@ -30,7 +38,7 @@ public class InactiveAskerDeletionService {
               identityOnly.setUserId(identityId);
               return identityOnly;
             });
-    var outcome = new AskerDeletionWorkflowDTO(target, new ArrayList<>());
+    var outcome = new AskerDeletionWorkflowDTO(target, new ArrayList<>(), authorization);
     // Stop on the first incomplete system. In particular, keep session room ids after a Matrix
     // failure and keep the identity/account row until every preceding cleanup step is confirmed.
     List<Class<? extends ActionCommand<AskerDeletionWorkflowDTO>>> steps =

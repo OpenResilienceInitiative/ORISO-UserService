@@ -10,6 +10,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
 
 public interface UserRepository extends CrudRepository<User, String> {
+  @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+  @org.springframework.data.jpa.repository.Query("select u from User u where u.userId = :id")
+  java.util.Optional<User> findByIdForDeletionUpdate(
+      @org.springframework.data.repository.query.Param("id") String id);
 
   @EntityGraph(attributePaths = "userAgencies")
   Optional<User> findByUserIdAndDeleteDateIsNull(String userId);

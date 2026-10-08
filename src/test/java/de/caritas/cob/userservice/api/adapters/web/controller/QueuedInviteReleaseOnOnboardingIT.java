@@ -13,20 +13,17 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
-import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
-import de.caritas.cob.userservice.api.identity.IdentityOtpType;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
@@ -48,6 +45,7 @@ import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.Cookie;
@@ -65,10 +63,13 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.client.RestTemplate;
 
 /** Of several admins for the same new Träger, the first creates it and the others join it. */
 @SpringBootTest
@@ -79,10 +80,64 @@ import org.springframework.test.web.servlet.MockMvc;
 class QueuedInviteReleaseOnOnboardingIT
     extends de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture {
 
+  @MockitoBean(name = "keycloakRestTemplate")
+  private RestTemplate boundedIdentityHttp;
+
+  @MockitoBean(name = "restTemplate")
+  private RestTemplate taskAuthHttp;
+
+  @MockitoBean private JwtDecoder taskDecoder;
+  @MockitoBean private TaskIdentityGrant taskIdentityGrant;
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @Autowired private Environment identityEnvironment;
+  @Autowired private ObjectMapper identityMapper;
+  private BoundedIdentityHttpFixtures.Provider nativeAccounts;
+  private final java.util.List<String> createdIdentityIds = new java.util.ArrayList<>();
+  @Autowired private org.springframework.jdbc.core.JdbcTemplate fixtureJdbc;
+  @Autowired private org.springframework.transaction.PlatformTransactionManager fixtureTransactions;
+
+  private void givenTaskAccounts() {
+    nativeAccounts =
+        BoundedIdentityHttpFixtures.givenProvider(
+            boundedIdentityHttp,
+            taskIdentityGrant,
+            taskIdentities,
+            identityEnvironment,
+            identityMapper,
+            body -> adminId,
+            createdIdentityIds::add);
+    BoundedIdentityHttpFixtures.givenTaskGrants(taskAuthHttp, taskDecoder, taskIdentities);
+    BoundedIdentityHttpFixtures.givenWizardPolicy(
+        taskAuthHttp, taskIdentities, identityEnvironment, identityMapper);
+    BoundedIdentityHttpFixtures.givenOtp(
+        boundedIdentityHttp,
+        taskIdentities,
+        new de.caritas.cob.userservice.api.model.OtpInfoDTO()
+            .otpSetup(false)
+            .otpSecret("SECRET")
+            .otpSecretQrCode("QR")
+            .otpType(de.caritas.cob.userservice.api.model.OtpType.APP));
+    BoundedIdentityHttpFixtures.givenConsultingPolicy(
+        taskAuthHttp,
+        new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+                .ExtendedConsultingTypeResponseDTO()
+            .id(1)
+            .consultantBoundedToConsultingType(false));
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void clearCreatedIdentityRows() {
+    createdIdentityIds.forEach(
+        id ->
+            de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup.admin(
+                fixtureJdbc, fixtureTransactions, id));
+    createdIdentityIds.clear();
+  }
+
   private static final long TENANT = 79L;
   private static final long NEW_AGENCY = 1276L;
   private static final long NEW_TENANT = 4242L;
-  private static final String ADMIN_ID = "c0a1e5e5-1026-4a4a-9d1e-000000000005";
+  private String adminId;
   private static final String CSRF = "it-csrf-token";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF);
 
@@ -102,7 +157,6 @@ class QueuedInviteReleaseOnOnboardingIT
   @Autowired private AdminRepository adminRepository;
   @Autowired private AdminAgencyRepository adminAgencyRepository;
 
-  @MockitoBean private KeycloakService keycloakService;
   @MockitoBean private AgencyService agencyService;
   @MockitoBean private AgencyCreationClient agencyCreationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
@@ -120,6 +174,10 @@ class QueuedInviteReleaseOnOnboardingIT
 
   @BeforeEach
   void upstreams() {
+    adminId = UUID.randomUUID().toString();
+    givenTaskAccounts();
+    when(tenantService.getRestrictedTenantDataFresh(anyLong()))
+        .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
     when(agencyFacts.find(anyLong()))
         .thenAnswer(
             invocation ->
@@ -128,12 +186,6 @@ class QueuedInviteReleaseOnOnboardingIT
     when(agencyService.getAgencyWithoutCaching(NEW_AGENCY)).thenReturn(null);
     when(topicService.getAllActiveTopicsMap())
         .thenReturn(java.util.Map.of(TOPIC, new TopicDTO().id(TOPIC).name("Sucht")));
-    when(keycloakService.loginService(anyString(), anyString()))
-        .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
-    when(keycloakService.createUser(any(UserDTO.class), anyString(), anyString()))
-        .thenReturn(new CreatedIdentity(ADMIN_ID));
-    when(keycloakService.getOtpCredential(anyString()))
-        .thenReturn(new IdentityOtpCredential(false, "SECRET", "QR", IdentityOtpType.APP));
     when(inviteMailDispatchService.send(
             anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenAnswer(call -> new InviteMailSendReceipt(call.getArgument(0), Instant.now()));
@@ -141,7 +193,9 @@ class QueuedInviteReleaseOnOnboardingIT
         .thenReturn(new OperatorDpa("{\"de\":\"<p>AVV</p>\"}", "1"));
     when(tenantCreationClient.createTenant(any()))
         .thenReturn(new MultilingualTenantDTO().id(NEW_TENANT));
-    when(agencyIdAllocationClient.reserve(null, NEW_TENANT)).thenReturn(1777L);
+    when(agencyIdAllocationClient.reserveWithProof(null, NEW_TENANT))
+        .thenReturn(
+            new AgencyIdAllocationClient.AgencyReservation(1777L, "owned-queue-agency-proof"));
     templateId =
         templateRepository
             .save(
@@ -165,8 +219,8 @@ class QueuedInviteReleaseOnOnboardingIT
     // The new admin lives in the new Träger, not in the one the requests resolved to.
     Tenants.acrossAll(
         () -> {
-          adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(ADMIN_ID));
-          adminRepository.findById(ADMIN_ID).ifPresent(adminRepository::delete);
+          adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(adminId));
+          adminRepository.findById(adminId).ifPresent(adminRepository::delete);
         });
   }
 
@@ -218,7 +272,8 @@ class QueuedInviteReleaseOnOnboardingIT
     AccountInvite released = reload(waitingAgencyAdmin);
     assertThat(released.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
     assertThat(released.getAgencyId()).isEqualTo(1777L);
-    verify(agencyIdAllocationClient).reserve(null, NEW_TENANT);
+    verify(agencyIdAllocationClient).reserveWithProof(null, NEW_TENANT);
+    assertThat(released.getAgencyReservationToken()).isEqualTo("owned-queue-agency-proof");
   }
 
   @Test
@@ -267,7 +322,7 @@ class QueuedInviteReleaseOnOnboardingIT
         .andExpect(jsonPath("$.tenantId").value(NEW_TENANT));
 
     verify(tenantCreationClient, never()).createTenant(any());
-    verify(agencyIdAllocationClient, never()).reserve(any(), anyLong());
+    verify(agencyIdAllocationClient, never()).reserveWithProof(any(), anyLong());
   }
 
   private org.springframework.test.web.servlet.ResultActions registerNewTenant(

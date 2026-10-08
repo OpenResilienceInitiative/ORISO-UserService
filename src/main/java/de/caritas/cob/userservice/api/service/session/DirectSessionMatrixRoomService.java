@@ -36,6 +36,14 @@ public class DirectSessionMatrixRoomService {
    * session object back.
    */
   public void provisionRoomForDirectSession(Session session, Consultant consultant) {
+    provisionRoomForDirectSession(session, consultant, null);
+  }
+
+  public void provisionRoomForDirectSession(
+      Session session,
+      Consultant consultant,
+      de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCreationEffects.Scope
+          effects) {
     if (session == null || consultant == null) {
       return;
     }
@@ -68,8 +76,13 @@ public class DirectSessionMatrixRoomService {
       var roomName = "Session " + session.getId() + " - " + consultant.getUsername();
       var roomAlias = "session_" + session.getId();
 
+      if (effects != null) effects.requireOwner(user.getUserId(), user.getTenantId());
       var roomId =
-          sessionRoomGateway.createRoomAsUser(roomName, roomAlias, consultant.getMatrixUserId());
+          effects == null
+              ? sessionRoomGateway.createRoomAsUser(
+                  roomName, roomAlias, consultant.getMatrixUserId())
+              : sessionRoomGateway.createOwnedPrivateRoomAsUser(
+                  roomName, roomAlias, consultant.getMatrixUserId(), effects.privateRoom());
       if (roomId == null) {
         log.error(
             "Matrix createRoomAsConsultant returned no room id for session {}", session.getId());

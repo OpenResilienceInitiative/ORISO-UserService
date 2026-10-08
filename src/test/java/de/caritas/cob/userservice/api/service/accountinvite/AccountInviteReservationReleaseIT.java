@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.IdReservationReleaseTask;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdA
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseType;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
@@ -71,6 +73,8 @@ class AccountInviteReservationReleaseIT {
   private static final long FOREIGN_RESERVED_AGENCY = 501L;
   private static final long EXISTING_AGENCY = 1L;
   private static final long NEW_TENANT = 900L;
+  private static final String AGENCY_PROOF = "agency-owner-proof-500";
+  private static final String TENANT_PROOF = "reservation-token-900";
 
   @TestConfiguration
   static class CallerConfig {
@@ -84,6 +88,7 @@ class AccountInviteReservationReleaseIT {
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private IdReservationReleaseTaskRepository releaseTaskRepository;
   @Autowired private AuthenticatedUser caller;
+  @Autowired private IdReservationReleaseProcessor releaseProcessor;
 
   @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
 
@@ -102,14 +107,18 @@ class AccountInviteReservationReleaseIT {
     when(identityEmailOwnerLookup.findByEmail(anyString())).thenReturn(Optional.empty());
     // The new agency 500 is free until an admin invite reserves it; afterwards it is RESERVED.
     when(agencyIdAllocationClient.getAvailability(NEW_AGENCY)).thenReturn(IdAllocationStatus.FREE);
-    when(agencyIdAllocationClient.reserve(NEW_AGENCY, OWN_TENANT))
+    when(agencyIdAllocationClient.reserveWithProof(NEW_AGENCY, OWN_TENANT))
         .thenAnswer(
             call -> {
               when(agencyIdAllocationClient.getAvailability(NEW_AGENCY))
                   .thenReturn(IdAllocationStatus.RESERVED);
-              return NEW_AGENCY;
+              return new AgencyIdAllocationClient.AgencyReservation(NEW_AGENCY, AGENCY_PROOF);
             });
-    when(agencyIdAllocationClient.release(anyLong())).thenReturn(true);
+    when(agencyIdAllocationClient.release(anyLong(), anyString()))
+        .thenAnswer(
+            call ->
+                (long) call.getArgument(0) == NEW_AGENCY
+                    && AGENCY_PROOF.equals(call.getArgument(1)));
     when(agencyIdAllocationClient.getAvailability(EXISTING_AGENCY))
         .thenReturn(IdAllocationStatus.ASSIGNED);
     when(agencyService.getAgenciesWithoutCaching(java.util.List.of(EXISTING_AGENCY)))
@@ -124,8 +133,12 @@ class AccountInviteReservationReleaseIT {
     when(tenantIdAllocationClient.getAvailability(NEW_TENANT))
         .thenReturn(IdAllocationStatus.RESERVED);
     when(tenantIdAllocationClient.reserve(NEW_TENANT))
-        .thenReturn(new TenantIdReservation(NEW_TENANT, "reservation-token-900"));
-    when(tenantIdAllocationClient.release(anyLong())).thenReturn(true);
+        .thenReturn(new TenantIdReservation(NEW_TENANT, TENANT_PROOF));
+    when(tenantIdAllocationClient.release(anyLong(), anyString()))
+        .thenAnswer(
+            call ->
+                (long) call.getArgument(0) == NEW_TENANT
+                    && TENANT_PROOF.equals(call.getArgument(1)));
     actAsTenantAdmin();
   }
 
@@ -140,10 +153,11 @@ class AccountInviteReservationReleaseIT {
   @Test
   void revokingTheOnlyAdminInviteOfANewAgency_Should_ReleaseItsNumber() {
     AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY));
+    assertThat(reload(admin).getAgencyReservationToken()).isEqualTo(AGENCY_PROOF);
 
     service.revokeInvite(admin.getId());
 
-    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY);
+    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY, AGENCY_PROOF);
     assertThat(releaseTaskRepository.count()).isZero();
   }
 
@@ -153,23 +167,28 @@ class AccountInviteReservationReleaseIT {
     AccountInvite second = service.createInvite(agencyAdmin(NEW_AGENCY));
 
     service.revokeInvite(first.getId());
-    verify(agencyIdAllocationClient, never()).release(anyLong());
+    verify(agencyIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
 
     service.revokeInvite(second.getId());
-    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY);
+    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY, AGENCY_PROOF);
   }
 
   @Test
   void revokingTheAdmin_Should_KeepTheNumber_WhileCounsellorsWaitForTheAgency() {
     AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY));
     AccountInvite waiting = service.createInvite(counsellor(NEW_AGENCY));
+    assertThat(reload(waiting).getAgencyReservationToken()).isEqualTo(AGENCY_PROOF);
+    assertThat(reload(admin).getAgencyReservationToken()).isEqualTo(AGENCY_PROOF);
 
     service.revokeInvite(admin.getId());
-    verify(agencyIdAllocationClient, never()).release(anyLong());
+    assertThat(reload(admin).getAgencyReservationToken()).isEqualTo(AGENCY_PROOF);
+    verify(agencyIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
 
     // The last invite that still needed the number is gone.
     service.revokeInvite(waiting.getId());
-    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY);
+    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY, AGENCY_PROOF);
   }
 
   @Test
@@ -185,8 +204,10 @@ class AccountInviteReservationReleaseIT {
 
     service.revokeInvite(invite.getId());
 
-    verify(agencyIdAllocationClient, never()).release(anyLong());
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(agencyIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
+    verify(tenantIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
   }
 
   @Test
@@ -213,7 +234,53 @@ class AccountInviteReservationReleaseIT {
 
     service.revokeInvite(row.getId());
 
-    verify(agencyIdAllocationClient, never()).release(anyLong());
+    verify(agencyIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
+  }
+
+  @Test
+  void waitingInviteMustNotAdoptOwnerProofFromAnotherTenant() {
+    when(agencyIdAllocationClient.getAvailability(FOREIGN_RESERVED_AGENCY))
+        .thenReturn(IdAllocationStatus.RESERVED);
+    accountInviteRepository.saveAndFlush(
+        AccountInvite.builder()
+            .targetRole(AccountInviteTargetRole.AGENCY_ADMIN)
+            .tenantId(99L)
+            .recipientEmail("foreign-owner@example.org")
+            .agencyId(FOREIGN_RESERVED_AGENCY)
+            .agencyIdAllocationMode(IdAllocationMode.MANUAL)
+            .agencyReservationToken("foreign-owner-proof")
+            .status(AccountInviteStatus.REVOKED)
+            .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
+            .emailVerificationStatus(EmailVerificationStatus.PENDING)
+            .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+            .createDate(LocalDateTime.now())
+            .updateDate(LocalDateTime.now())
+            .build());
+    var waiting =
+        accountInviteRepository.saveAndFlush(
+            AccountInvite.builder()
+                .targetRole(AccountInviteTargetRole.COUNSELLOR)
+                .tenantId(OWN_TENANT)
+                .recipientEmail("local-waiting@example.org")
+                .agencyId(FOREIGN_RESERVED_AGENCY)
+                .agencyIdAllocationMode(IdAllocationMode.MANUAL)
+                .waitingForUnit(InviteUnitType.AGENCY)
+                .status(AccountInviteStatus.WAITING_FOR_UNIT)
+                .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
+                .emailVerificationStatus(EmailVerificationStatus.PENDING)
+                .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+                .createDate(LocalDateTime.now())
+                .updateDate(LocalDateTime.now())
+                .build());
+
+    service.revokeInvite(waiting.getId());
+
+    verify(agencyIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
+    assertThat(releaseTaskRepository.findAll())
+        .singleElement()
+        .satisfies(task -> assertThat(task.getReservationToken()).isNull());
   }
 
   @Test
@@ -223,10 +290,11 @@ class AccountInviteReservationReleaseIT {
     AccountInvite second = service.createInvite(newTenantAdmin());
 
     service.revokeInvite(first.getId());
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(tenantIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
 
     service.revokeInvite(second.getId());
-    verify(tenantIdAllocationClient, times(1)).release(NEW_TENANT);
+    verify(tenantIdAllocationClient, times(1)).release(NEW_TENANT, TENANT_PROOF);
   }
 
   // --- expiry -----------------------------------------------------------------------------------
@@ -240,7 +308,7 @@ class AccountInviteReservationReleaseIT {
     service.expireElapsedInvites();
 
     assertThat(reload(admin).getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
-    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY);
+    verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY, AGENCY_PROOF);
   }
 
   @Test
@@ -253,7 +321,8 @@ class AccountInviteReservationReleaseIT {
 
     assertThat(reload(first).getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
     assertThat(reload(second).getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
-    verify(agencyIdAllocationClient, never()).release(anyLong());
+    verify(agencyIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
   }
 
   @Test
@@ -263,7 +332,28 @@ class AccountInviteReservationReleaseIT {
     service.expireElapsedInvites();
 
     assertThat(reload(admin).getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    verify(agencyIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
+  }
+
+  @Test
+  void legacyReleaseTaskWithoutOwnerProof_ShouldStayPending() {
+    var task =
+        releaseTaskRepository.saveAndFlush(
+            IdReservationReleaseTask.builder()
+                .allocationType(IdReservationReleaseType.AGENCY)
+                .reservedId(FOREIGN_RESERVED_AGENCY)
+                .tenantContextId(OWN_TENANT)
+                .createDate(LocalDateTime.now())
+                .build());
+
+    assertThat(releaseProcessor.process(task.getId())).isFalse();
+    var pending = releaseTaskRepository.findById(task.getId()).orElseThrow();
+    assertThat(pending.getReservationToken()).isNull();
+    assertThat(pending.getAttemptCount()).isEqualTo(1);
     verify(agencyIdAllocationClient, never()).release(anyLong());
+    verify(agencyIdAllocationClient, never())
+        .release(anyLong(), org.mockito.ArgumentMatchers.nullable(String.class));
   }
 
   // --- helpers ----------------------------------------------------------------------------------

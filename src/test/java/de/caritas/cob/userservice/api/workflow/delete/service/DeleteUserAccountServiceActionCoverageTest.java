@@ -145,6 +145,22 @@ class DeleteUserAccountServiceActionCoverageTest {
         .containsExactlyElementsOf(EXPECTED_CONSULTANT_CHAIN);
   }
 
+  @Test
+  void creationRollbackRegistersOnlyLocalActions() {
+    when(actionsRegistry.buildContainerForType(ConsultantDeletionWorkflowDTO.class))
+        .thenReturn(consultantContainer);
+    when(consultantContainer.addActionToExecute(any())).thenReturn(consultantContainer);
+    deleteUserAccountService.performConsultantCreationRollback(new Consultant());
+    assertThat(registeredActions(consultantContainer))
+        .containsExactly(
+            DeleteDatabaseConsultantAgencyAction.class,
+            DeleteCaseHandoverRequestsForConsultantAction.class,
+            DeleteConsultantDraftMessagesAction.class,
+            DeleteConsultantEventNotificationsAction.class,
+            DeleteConsultantMessageEmailDeliveriesAction.class,
+            DeleteDatabaseConsultantAction.class);
+  }
+
   @SuppressWarnings({"rawtypes", "unchecked"})
   private static List<Class> registeredActions(ActionContainer<?> container) {
     ArgumentCaptor<Class> captor = ArgumentCaptor.forClass(Class.class);

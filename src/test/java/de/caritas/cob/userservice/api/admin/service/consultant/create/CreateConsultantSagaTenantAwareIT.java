@@ -1,32 +1,30 @@
 package de.caritas.cob.userservice.api.admin.service.consultant.create;
 
-import static de.caritas.cob.userservice.api.config.auth.UserRole.CONSULTANT;
-import static de.caritas.cob.userservice.api.config.auth.UserRole.GROUP_CHAT_CONSULTANT;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.UserServiceApplication;
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.TaskIdentityGrant;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
+import de.caritas.cob.userservice.api.testHelper.BoundedIdentityHttpFixtures;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -35,19 +33,31 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.env.Environment;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @SpringBootTest(classes = UserServiceApplication.class)
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@org.springframework.context.annotation.Import(
+    de.caritas.cob.userservice.api.testHelper.VerifiedRequestCallerFixture.class)
+@TestPropertySource(properties = "spring.profiles.active=testing,verified-request-caller")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @TestPropertySource(properties = "multitenancy.enabled=true")
 @Transactional
 public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHttpFixture {
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
+    givenBoundedAccounts();
     org.mockito.Mockito.when(
             tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
         .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
@@ -55,6 +65,61 @@ public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHt
 
   @MockitoBean
   private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
+
+  @MockitoBean(name = "keycloakRestTemplate")
+  private RestTemplate boundedIdentityHttp;
+
+  @MockitoBean private TaskIdentityGrant taskIdentityGrant;
+  @Autowired private TaskIdentityConfiguration taskIdentities;
+  @Autowired private Environment identityEnvironment;
+  @Autowired private ObjectMapper identityMapper;
+  private BoundedIdentityHttpFixtures.Provider nativeAccounts;
+
+  private void givenBoundedAccounts() {
+    nativeAccounts =
+        BoundedIdentityHttpFixtures.givenProvider(
+            boundedIdentityHttp,
+            taskIdentityGrant,
+            taskIdentities,
+            identityEnvironment,
+            identityMapper,
+            id -> {});
+    givenHuman("7ad454de-cf29-4557-b8b3-1bf986524de2", 1L, List.of("user-admin", "tenant-admin"));
+  }
+
+  private void givenHuman(String id, Long tenant, List<String> roles) {
+    var token =
+        Jwt.withTokenValue("verified-creator-session")
+            .header("alg", "RS256")
+            .subject(id)
+            .claim("azp", "admin")
+            .claim("preferred_username", "apau1")
+            .claim("tenantId", tenant == null ? null : tenant.toString())
+            .claim("realm_access", Map.of("roles", roles))
+            .issuedAt(Instant.now())
+            .expiresAt(Instant.now().plusSeconds(300))
+            .build();
+    var authentication =
+        new JwtAuthenticationToken(
+            token,
+            List.of(
+                    "AUTHORIZATION_USER_ADMIN",
+                    "AUTHORIZATION_TENANT_ADMIN",
+                    "AUTHORIZATION_CONSULTANT_CREATE")
+                .stream()
+                .map(SimpleGrantedAuthority::new)
+                .toList());
+    SecurityContextHolder.getContext().setAuthentication(authentication);
+    var request = new MockHttpServletRequest();
+    request.setUserPrincipal(authentication);
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void clearBoundedCaller() {
+    SecurityContextHolder.clearContext();
+    RequestContextHolder.resetRequestAttributes();
+  }
 
   private static final String VALID_USERNAME = "validUsername";
   private static final String VALID_EMAILADDRESS = "valid@emailaddress.de";
@@ -65,8 +130,6 @@ public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHt
   @Autowired private ConsultantRepository consultantRepository;
 
   @MockitoBean private TenantAdminService tenantAdminService;
-
-  @MockitoBean private KeycloakService keycloakService;
 
   private final EasyRandom easyRandom = new EasyRandom();
 
@@ -104,8 +167,6 @@ public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHt
     createConsultantForTenant("otherTenantUser1", 2L);
     createConsultantForTenant("otherTenantUser2", 2L);
 
-    when(keycloakService.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     var tenant =
         new TenantDTO()
             .licensing(new Licensing().allowedNumberOfUsers(2))
@@ -115,9 +176,12 @@ public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHt
     when(tenantAdminService.getTenantById(Mockito.anyLong())).thenReturn(tenant);
 
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
-    createConsultantDTO.setUsername(VALID_USERNAME);
+    createConsultantDTO.setUsername(
+        VALID_USERNAME + java.util.UUID.randomUUID().toString().substring(0, 8));
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
+    createConsultantDTO.setPublicSlug(null);
     createConsultantDTO.setIsGroupchatConsultant(false);
+    createConsultantDTO.setAgencyIds(List.of());
     createConsultantDTO.setTenantId(1L);
 
     // when
@@ -138,8 +202,6 @@ public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHt
     // into a comparison, so creating the first consultant for such a tenant died with a
     // NullPointerException and the admin saw a bare 500. No limit configured means no limit.
     TenantContext.setCurrentTenant(1L);
-    when(keycloakService.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     var tenant =
         new TenantDTO()
             .licensing(new Licensing().allowedNumberOfUsers(null))
@@ -149,9 +211,12 @@ public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHt
     when(tenantAdminService.getTenantById(Mockito.anyLong())).thenReturn(tenant);
 
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
-    createConsultantDTO.setUsername(VALID_USERNAME);
+    createConsultantDTO.setUsername(
+        VALID_USERNAME + java.util.UUID.randomUUID().toString().substring(0, 8));
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
+    createConsultantDTO.setPublicSlug(null);
     createConsultantDTO.setIsGroupchatConsultant(false);
+    createConsultantDTO.setAgencyIds(List.of());
     createConsultantDTO.setTenantId(1L);
 
     ConsultantAdminResponseDTO consultant =
@@ -167,8 +232,6 @@ public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHt
     // The previous guard was `assert nonNull(...)`, which Java disables at runtime unless -ea is
     // passed — so it never protected anything in production.
     TenantContext.setCurrentTenant(1L);
-    when(keycloakService.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     var tenant =
         new TenantDTO()
             .settings(
@@ -177,9 +240,12 @@ public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHt
     when(tenantAdminService.getTenantById(Mockito.anyLong())).thenReturn(tenant);
 
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
-    createConsultantDTO.setUsername(VALID_USERNAME);
+    createConsultantDTO.setUsername(
+        VALID_USERNAME + java.util.UUID.randomUUID().toString().substring(0, 8));
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
+    createConsultantDTO.setPublicSlug(null);
     createConsultantDTO.setIsGroupchatConsultant(false);
+    createConsultantDTO.setAgencyIds(List.of());
     createConsultantDTO.setTenantId(1L);
 
     ConsultantAdminResponseDTO consultant =
@@ -194,8 +260,6 @@ public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHt
       createNewConsultant_Should_addConsultantAndGroupChatConsultantRole_When_isGroupChatConsultantFlagIsEnabled() {
     // given
     TenantContext.setCurrentTenant(1L);
-    when(keycloakService.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     var tenant =
         new TenantDTO()
             .licensing(new Licensing().allowedNumberOfUsers(1))
@@ -206,9 +270,12 @@ public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHt
 
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setTenantId(TENANT_ID);
-    createConsultantDTO.setUsername(VALID_USERNAME);
+    createConsultantDTO.setUsername(
+        VALID_USERNAME + java.util.UUID.randomUUID().toString().substring(0, 8));
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
+    createConsultantDTO.setPublicSlug(null);
     createConsultantDTO.setIsGroupchatConsultant(true);
+    createConsultantDTO.setAgencyIds(List.of());
     createConsultantDTO.setTenantId(1L);
 
     // when
@@ -216,9 +283,9 @@ public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHt
         createConsultantSaga.createNewConsultant(createConsultantDTO);
 
     // then
-    verify(keycloakService, times(2)).updateRole(anyString(), anyString());
-    verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
-    verify(keycloakService).updateRole(anyString(), eq(GROUP_CHAT_CONSULTANT.getValue()));
+    org.assertj.core.api.Assertions.assertThat(
+            nativeAccounts.projections().get(consultant.getEmbedded().getId()).roles())
+        .containsExactlyInAnyOrder("consultant", "group-chat-consultant");
 
     assertThat(consultant.getEmbedded(), notNullValue());
     assertThat(consultant.getEmbedded().getId(), notNullValue());

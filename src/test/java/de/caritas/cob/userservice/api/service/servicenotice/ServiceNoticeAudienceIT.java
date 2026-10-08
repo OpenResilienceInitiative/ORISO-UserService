@@ -162,11 +162,17 @@ class ServiceNoticeAudienceIT {
   @Test
   void theMailGoesToTheCurrentAddressInTheAccountLanguage() {
     agencyAdmin("admin-en", 7L, "lead@centre-a.org", 101L);
-    when(locales.findLocaleById("admin-en")).thenReturn(Optional.of("en"));
+    when(locales.findLocaleById(
+            org.mockito.ArgumentMatchers.eq("admin-en"), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(Optional.of("en"));
     agencyAdmin("admin-unknown", 8L, "lead@centre-b.org", 201L);
-    when(locales.findLocaleById("admin-unknown")).thenReturn(Optional.of("xx"));
+    when(locales.findLocaleById(
+            org.mockito.ArgumentMatchers.eq("admin-unknown"), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(Optional.of("xx"));
     agencyAdmin("admin-none", 8L, "other@centre-b.org", 202L);
-    when(locales.findLocaleById("admin-none")).thenReturn(Optional.empty());
+    when(locales.findLocaleById(
+            org.mockito.ArgumentMatchers.eq("admin-none"), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(Optional.empty());
 
     assertThat(audience.mailTarget("admin-en"))
         .contains(new MailTarget("lead@centre-a.org", 7L, Tone.EN));

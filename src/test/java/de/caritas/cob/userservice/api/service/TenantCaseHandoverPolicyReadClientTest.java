@@ -6,7 +6,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -37,13 +37,17 @@ class TenantCaseHandoverPolicyReadClientTest {
   final TenantCaseHandoverPolicyReadClient client =
       new TenantCaseHandoverPolicyReadClient(factory, identity, config, headers);
 
+  private TaskIdentityCredentials technical;
+
   @BeforeEach
   void setup() {
-    var technical = new TechnicalUserConfig();
+    technical = new TaskIdentityCredentials();
     technical.setClientId("synthetic-service");
     technical.setClientSecret("synthetic-password");
-    when(config.getTechnicalUser()).thenReturn(technical);
-    when(identity.loginService("synthetic-service", "synthetic-password"))
+    when(config.getTaskIdentity(
+            de.caritas.cob.userservice.api.config.auth.TaskIdentity.RUNTIME_POLICY))
+        .thenReturn(technical);
+    when(identity.loginTask(org.mockito.ArgumentMatchers.same(technical)))
         .thenReturn(new IdentityLogin("synthetic-token", 60, 120, "synthetic-refresh"));
     ReflectionTestUtils.setField(headers, "csrfHeaderProperty", "X-CSRF-TOKEN");
     ReflectionTestUtils.setField(headers, "csrfCookieProperty", "CSRF-TOKEN");
@@ -77,6 +81,9 @@ class TenantCaseHandoverPolicyReadClientTest {
         .isEqualTo(180);
     assertThat(reasons.get("COUNSELLOR_ON_HOLIDAY").getClientConsentRequired().getValue())
         .isFalse();
+    verify(config)
+        .getTaskIdentity(de.caritas.cob.userservice.api.config.auth.TaskIdentity.RUNTIME_POLICY);
+    verify(identity).loginTask(org.mockito.ArgumentMatchers.same(technical));
     verify(identity, never()).logout(anyString(), anyString());
     verifyNoInteractions(requestUser);
     server.verify();
@@ -189,7 +196,7 @@ class TenantCaseHandoverPolicyReadClientTest {
 
   @Test
   void missingTokenCannotIssueUnauthenticatedRead() {
-    when(identity.loginService(anyString(), anyString()))
+    when(identity.loginTask(org.mockito.ArgumentMatchers.same(technical)))
         .thenReturn(new IdentityLogin("", 0, 0, "synthetic-refresh"));
     assertThatThrownBy(() -> client.getTenantPermissionPolicies(40L)).hasNoCause();
     verify(identity, never()).logout(anyString(), anyString());
@@ -198,7 +205,7 @@ class TenantCaseHandoverPolicyReadClientTest {
 
   @Test
   void loginFailureCannotExposeCredentialsOrAttemptLogout() {
-    when(identity.loginService(anyString(), anyString()))
+    when(identity.loginTask(org.mockito.ArgumentMatchers.same(technical)))
         .thenThrow(new IllegalStateException("synthetic-password"));
     assertThatThrownBy(() -> client.getTenantPermissionPolicies(40L))
         .hasMessageNotContaining("synthetic-password")

@@ -808,6 +808,22 @@
         "oriso.matrix.feed_signal"
       ],
       "status": "bounded"
+    },
+    {
+      "id": "owned-identity-creation-finalization",
+      "source": "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/commands/IdentityCreationFinalizationRetry.java",
+      "kind": "scheduler",
+      "owner": "identity-profile",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retry"
+      ],
+      "decision": "Expired executions and every local write are fenced by refreshed pessimistic journal locks and execution nonces. Native owner-bound recovery claims/tombstones fence late create and stale commit. Compensation and commit are idempotent for the exact owned receipt. Local cleanup and guest bootstrap completion/deletion recheck the same durable row under lock; unconfirmed external effects remain retryable. Database concurrency/restart and native recovery race tests cover these boundaries; no exactly-once external delivery is claimed.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
     }
   ]
 }

@@ -182,13 +182,13 @@ class IdentityConfigTest {
   }
 
   @Test
-  void technicalUserShouldRejectNull() {
+  void retiredTechnicalUserConfigurationIsNotRequired() {
     givenAValidIdentityConfig();
     identityConfig.setTechnicalUser(null);
 
     violations = validator.validate(identityConfig);
 
-    assertValidationError("technicalUser", "must not be null");
+    assertEquals(0, violations.size());
   }
 
   private void givenAValidIdentityConfig() {

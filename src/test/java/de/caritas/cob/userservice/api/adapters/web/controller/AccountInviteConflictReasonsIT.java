@@ -1,7 +1,9 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -135,13 +137,26 @@ class AccountInviteConflictReasonsIT {
   @Test
   void sendInvite_Should_Answer409UnitNotCreated_While_TheInviteWaitsForItsAgency()
       throws Exception {
-    when(agencyIdAllocationClient.reserve(4402L, 1L)).thenReturn(4402L);
+    String reservationProof = "conflict-reason-agency-owner-proof";
+    when(agencyIdAllocationClient.reserveWithProof(4402L, 1L))
+        .thenReturn(new AgencyIdAllocationClient.AgencyReservation(4402L, reservationProof));
     when(agencyIdAllocationClient.getAvailability(anyLong()))
         .thenReturn(IdAllocationStatus.RESERVED);
-    createInvite(
-            "{\"targetRole\":\"AGENCY_ADMIN\",\"tenantId\":1,\"recipientEmail\":"
-                + "\"founder@example.org\",\"agencyId\":4402,\"agencyIdAllocationMode\":\"MANUAL\"}")
-        .andExpect(status().isCreated());
+    String founder =
+        createInvite(
+                "{\"targetRole\":\"AGENCY_ADMIN\",\"tenantId\":1,\"recipientEmail\":"
+                    + "\"founder@example.org\",\"agencyId\":4402,\"agencyIdAllocationMode\":\"MANUAL\"}")
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.tenantId").value(1))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    Number founderId = JsonPath.read(founder, "$.id");
+    var reservedInvite = accountInviteRepository.findById(founderId.longValue()).orElseThrow();
+    assertThat(reservedInvite.getTenantId()).isEqualTo(1L);
+    assertThat(reservedInvite.getAgencyId()).isEqualTo(4402L);
+    assertThat(reservedInvite.getAgencyReservationToken()).isEqualTo(reservationProof);
+    verify(agencyIdAllocationClient).reserveWithProof(4402L, 1L);
     String waiting =
         createInvite(counsellorInto(4402L))
             .andExpect(status().isCreated())

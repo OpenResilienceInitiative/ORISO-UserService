@@ -11,7 +11,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
@@ -50,11 +50,11 @@ class TenantSystemEmailClientTest {
         new TenantSystemEmailClient(restTemplate, authentication, identityConfig, headerSupplier);
     ReflectionTestUtils.setField(
         client, "tenantServiceApiUrl", "http://tenantservice.internal:8081");
-    var account = new TechnicalUserConfig();
+    var account = new TaskIdentityCredentials();
     account.setClientId("technical");
     account.setClientSecret("test-secret");
-    when(identityConfig.getTechnicalUser()).thenReturn(account);
-    when(authentication.loginService("technical", "test-secret"))
+    when(identityConfig.getTaskIdentity(org.mockito.ArgumentMatchers.any())).thenReturn(account);
+    when(authentication.loginTask(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new IdentityLogin("technical-token", 60, 60, "refresh"));
     var headers = new HttpHeaders();
     headers.setBearerAuth("technical-token");
@@ -62,19 +62,40 @@ class TenantSystemEmailClientTest {
   }
 
   @Test
-  void readsFreshRedactedTenantSettingsWithTechnicalToken() {
+  void internalReadPreservesConfiguredBasePathAndNormalizesWhitespace() {
+    ReflectionTestUtils.setField(
+        client, "tenantServiceApiUrl", "  http://tenantservice.internal:8081/proxy/tenant/40/  ");
     server
-        .expect(once(), requestTo("http://tenantservice.internal:8081/tenant/40"))
+        .expect(
+            requestTo(
+                "http://tenantservice.internal:8081/proxy/tenant/40/internal/tenants/40/system-email-context"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess("{\"id\":40}", MediaType.APPLICATION_JSON));
+    assertThat(client.readTenant(40L)).containsEntry("id", 40);
+    server.verify();
+  }
+
+  @Test
+  void readsFreshRedactedTenantProjectionWithNotificationTask() {
+    server
+        .expect(
+            once(),
+            requestTo(
+                "http://tenantservice.internal:8081/internal/tenants/40/system-email-context"))
         .andExpect(method(HttpMethod.GET))
         .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer technical-token"))
         .andRespond(
             withSuccess(
-                "{\"settings\":{\"smtpMode\":\"OWN\",\"smtp\":{\"passwordSet\":true}}}",
+                "{\"id\":40,\"settings\":{\"smtpMode\":\"OWN\",\"smtp\":{\"configured\":true}}}",
                 MediaType.APPLICATION_JSON));
 
     Map<String, Object> tenant = client.readTenant(40L);
 
-    assertThat(tenant).containsKey("settings");
+    assertThat(tenant).containsEntry("id", 40).containsKey("settings");
+    assertThat(tenant.toString()).doesNotContain("passwordSet", "password", "host", "username");
+    org.mockito.Mockito.verify(identityConfig)
+        .getTaskIdentity(
+            de.caritas.cob.userservice.api.config.auth.TaskIdentity.NOTIFICATION_DISPATCH);
     server.verify();
   }
 

@@ -11,4 +11,10 @@ public class AskerDeletionWorkflowDTO {
 
   private User user;
   private List<DeletionWorkflowError> deletionWorkflowErrors;
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization
+      lifecycleDeletionAuthorization;
+
+  public AskerDeletionWorkflowDTO(User user, List<DeletionWorkflowError> errors) {
+    this(user, errors, null);
+  }
 }

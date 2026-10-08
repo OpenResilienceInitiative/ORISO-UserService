@@ -1,10 +1,11 @@
 package de.caritas.cob.userservice.api.service.archive;
 
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
-import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
+import de.caritas.cob.userservice.api.actions.user.DeactivateAuthorizedIdentityActionCommand;
+import de.caritas.cob.userservice.api.actions.user.IdentityDeactivationTarget;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityCommandAuthorization;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -50,10 +51,20 @@ public class SessionDeleteService {
 
     var user = session.getUser();
     if (user.getSessions().size() == 1) {
+      var authentication =
+          org.springframework.security.core.context.SecurityContextHolder.getContext()
+              .getAuthentication();
+      if (!(authentication
+          instanceof
+          org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken
+                  caller))
+        throw new org.springframework.security.access.AccessDeniedException(
+            "Verified session deletion caller required");
+      var deactivationOrigin = IdentityCommandAuthorization.lastSessionDeletion(session, caller);
       actionsRegistry
-          .buildContainerForType(User.class)
-          .addActionToExecute(DeactivateKeycloakUserActionCommand.class)
-          .executeActions(user);
+          .buildContainerForType(IdentityDeactivationTarget.class)
+          .addActionToExecute(DeactivateAuthorizedIdentityActionCommand.class)
+          .executeActions(new IdentityDeactivationTarget(user, deactivationOrigin));
     }
 
     var deleteSession = new SessionDeletionWorkflowDTO(session, null);

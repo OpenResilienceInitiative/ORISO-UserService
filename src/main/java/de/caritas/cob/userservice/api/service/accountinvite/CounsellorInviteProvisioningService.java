@@ -1,8 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.*;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
-import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -12,7 +11,8 @@ import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -29,17 +29,17 @@ public class CounsellorInviteProvisioningService {
 
   private static final String DEFAULT_ROLE_SET = "CONSULTANT_DEFAULT";
 
+  private final @NonNull IdentityAccountProvisioning identityProvisioning;
   private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull AccountInviteRepository accountInviteRepository;
-  private final @NonNull ConsultantAdminFacade consultantAdminFacade;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull CreateConsultantSaga createConsultantSaga;
   private final @NonNull CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
   private final @NonNull AcceptTimeAgencyCheck acceptTimeAgencyCheck;
+  private final @NonNull ConsultantInitialRolesForInvite initialRolePolicy;
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
-  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
@@ -79,6 +79,17 @@ public class CounsellorInviteProvisioningService {
     validate(command, invite);
     InviteRowHold.hold(accountInviteRepository, invite, LocalDateTime.now());
     wizard.createUnit().run();
+    boolean initialAgencyAdmin =
+        agencyAdminAlsoCounselling
+            || (Boolean.TRUE.equals(command.grantAgencyAdmin())
+                && wizard.role() != null
+                && invite.getAgencyIdAllocationMode() != null
+                && invite.getAgencyIdAllocationMode() != IdAllocationMode.EXISTING
+                && invite.getAgencyReservationToken() != null
+                && !invite.getAgencyReservationToken().isBlank());
+    if (Boolean.TRUE.equals(command.grantAgencyAdmin()) && !initialAgencyAdmin)
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Invitation does not authorize agency administrator rights");
 
     invite.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
     invite.setProvisioningFailureReason(null);
@@ -94,6 +105,17 @@ public class CounsellorInviteProvisioningService {
       // leaving it IN_PROGRESS, which would answer every retry with 409.
       technicalAccessToken = acceptTimeAgencyCheck.serviceToken();
       acceptTimeAgencyCheck.requireLiveAgency(invite, technicalAccessToken);
+      var policy = initialRolePolicy.resolve(invite);
+      var initialRoles = new java.util.LinkedHashSet<String>(policy.roles());
+      if (initialAgencyAdmin)
+        initialRoles.addAll(java.util.List.of("restricted-agency-admin", "user-admin"));
+      var origin =
+          IdentityCreationOrigin.heldInvitation(
+              invite,
+              initialAgencyAdmin
+                  ? IdentityCreationOrigin.Kind.CONSULTANT_AGENCY_ADMIN
+                  : IdentityCreationOrigin.Kind.CONSULTANT,
+              initialRoles);
       // The service identity is ambient ONLY around the remote calls that need it: consultant
       // creation and agency assignment reach TenantService/AgencyService/ConsultingTypeService
       // through the shared admin services, which read the bearer from the header supplier.
@@ -101,14 +123,15 @@ public class CounsellorInviteProvisioningService {
       var consultant =
           TechnicalAccessTokenContext.callWith(
               technicalAccessToken,
-              () -> consultantAdminFacade.createNewConsultant(toConsultant(command, invite)));
+              () ->
+                  createConsultantSaga.createInvitedConsultant(
+                      toConsultant(command, invite), origin));
       if (consultant.getEmbedded() == null || consultant.getEmbedded().getId() == null) {
         throw new IllegalStateException("Consultant provisioning returned no user id");
       }
       consultantId = consultant.getEmbedded().getId();
       // The invitee chose this secret, unlike an administrator using the shared create path.
       // Complete the identity-provider change before clearing our flag or accepting the invite.
-      identityPasswordUpdater.updatePassword(consultantId, command.password());
       alignRequirementsWithInvite(consultantId, invite);
       invite.setProvisionedUserId(consultantId);
       invite.setUpdateDate(LocalDateTime.now());
@@ -118,11 +141,11 @@ public class CounsellorInviteProvisioningService {
       TechnicalAccessTokenContext.runWith(
           technicalAccessToken,
           () ->
-              consultantAgencyRelationCreatorService.createNewConsultantAgency(
+              consultantAgencyRelationCreatorService.createOwnedCreationRelations(
                   createdConsultantId,
-                  new CreateConsultantAgencyDTO()
-                      .agencyId(invite.getAgencyId())
-                      .roleSetKey(DEFAULT_ROLE_SET)));
+                  java.util.List.of(policy.agency()),
+                  policy.roles(),
+                  LogService::logInfo));
       // The invite is about exactly one centre, so the chosen topics belong to it (#1264).
       consultantTopicRepository.assignUnscopedTopicsToAgency(
           createdConsultantId, invite.getAgencyId());
@@ -142,7 +165,9 @@ public class CounsellorInviteProvisioningService {
       accepted.setProvisioningStatus(AccountInviteProvisioningStatus.COMPLETED);
       accepted.setProvisioningFailureReason(null);
       accepted.setUpdateDate(LocalDateTime.now());
-      return accountInviteRepository.save(accepted);
+      var saved = accountInviteRepository.save(accepted);
+      identityProvisioning.completeCreatedAccount(consultantId);
+      return saved;
     } catch (RuntimeException failure) {
       rollbackPartiallyCreatedConsultant(consultantId, technicalAccessToken, failure);
       invite.setProvisionedUserId(null);

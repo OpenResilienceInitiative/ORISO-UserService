@@ -8,7 +8,6 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.service.UserAgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -24,7 +23,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 public class RollbackFacadeTest {
 
   @InjectMocks private RollbackFacade rollbackFacade;
-  @Mock private IdentityAccountRemover identityAccountRemover;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.IdentityAccountProvisioning
+      identityProvisioning;
+
   @Mock private UserAgencyService userAgencyService;
   @Mock private SessionService sessionService;
   @Mock private UserService userService;
@@ -39,7 +42,17 @@ public class RollbackFacadeTest {
     // when
     rollbackFacade.rollbackConsultantAccount(consultant);
     // then
-    verify(deleteUserAccountService, times(1)).performConsultantDeletion(consultant);
+    verify(deleteUserAccountService, times(1)).performConsultantCreationRollback(consultant);
+  }
+
+  @Test
+  void unfinishedCreationDoesNotEnrollInOrdinaryDeletionScheduler() {
+    var consultant = new Consultant();
+    consultant.setId(USER_ID);
+    rollbackFacade.rollbackConsultantAccount(consultant);
+    org.assertj.core.api.Assertions.assertThat(consultant.getDeleteDate()).isNull();
+    verify(identityProvisioning).compensateForLocalRollback(USER_ID);
+    verify(deleteUserAccountService).performConsultantCreationRollback(consultant);
   }
 
   @Test
@@ -74,7 +87,7 @@ public class RollbackFacadeTest {
 
     rollbackFacade.rollBackUserAccount(rbUserInfo);
 
-    verify(identityAccountRemover, times(1)).rollbackUser(USER_ID);
+    verify(identityProvisioning, times(1)).compensateForLocalRollback(USER_ID);
   }
 
   @Test
@@ -84,7 +97,11 @@ public class RollbackFacadeTest {
     User user = easyRandom.nextObject(User.class);
     user.setUserId(USER_ID);
     RollbackUserAccountInformation rbUserInfo =
-        RollbackUserAccountInformation.builder().user(user).rollBackUserAccount(true).build();
+        RollbackUserAccountInformation.builder()
+            .userId(USER_ID)
+            .user(user)
+            .rollBackUserAccount(true)
+            .build();
 
     rollbackFacade.rollBackUserAccount(rbUserInfo);
 

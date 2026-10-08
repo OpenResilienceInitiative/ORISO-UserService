@@ -5,6 +5,7 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 import static org.apache.commons.lang3.Validate.notNull;
 
 import com.google.common.collect.Lists;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.*;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
@@ -16,12 +17,9 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -36,6 +34,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 @Service
+@org.springframework.transaction.annotation.Transactional
 @RequiredArgsConstructor
 public class CreateAdminService {
 
@@ -45,9 +44,10 @@ public class CreateAdminService {
   @Value("${feature.multitenancy.with.single.domain.enabled}")
   private boolean multitenancyWithSingleDomain;
 
-  private final @NonNull IdentityClient identityClient;
-  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
-  private final @NonNull IdentityAccountRemover identityAccountRemover;
+  private final @NonNull de.caritas.cob.userservice.api.adapters.keycloak.commands
+          .IdentityCreationLocalCompletion
+      localCompletion;
+  private final @NonNull IdentityAccountProvisioning identityProvisioning;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull UserHelper userHelper;
   private final @NonNull AdminRepository adminRepository;
@@ -59,26 +59,59 @@ public class CreateAdminService {
 
   public Admin createNewAgencyAdmin(CreateAdminDTO createAdminDTO) {
     setTenantId(createAdminDTO);
-    return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY, true);
+    return createNewAdmin(
+        createAdminDTO,
+        Admin.AdminType.AGENCY,
+        true,
+        humanOrigin(createAdminDTO, Admin.AdminType.AGENCY));
   }
 
   /**
    * Server-side flows only (public invite onboarding): there is no caller, so the tenant comes from
    * the invite, never from the request.
    */
-  public Admin createNewAgencyAdminInTenant(CreateAdminDTO createAdminDTO) {
-    notNull(createAdminDTO.getTenantId());
-    // The invited administrator chose this credential; only direct creations use a temporary one.
-    return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY, false);
+  @org.springframework.transaction.annotation.Transactional(noRollbackFor = RuntimeException.class)
+  public Admin createNewAgencyAdminInTenant(
+      CreateAdminDTO createAdminDTO, AccountInvite heldInvite) {
+    var origin =
+        IdentityCreationOrigin.heldInvitation(
+            heldInvite,
+            IdentityCreationOrigin.Kind.AGENCY_ADMIN,
+            getDefaultRoles(Admin.AdminType.AGENCY).stream().map(UserRole::getValue).toList());
+    return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY, false, origin);
   }
 
   public Admin createNewTenantAdmin(CreateAdminDTO createAdminDTO) {
-    return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT, true);
+    return createNewAdmin(
+        createAdminDTO,
+        Admin.AdminType.TENANT,
+        true,
+        humanOrigin(createAdminDTO, Admin.AdminType.TENANT));
   }
 
   /** The invited person chose this password themselves during redemption. */
-  public Admin createNewTenantAdminFromInvite(CreateAdminDTO createAdminDTO) {
-    return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT, false);
+  public Admin createNewTenantAdminFromInvite(
+      CreateAdminDTO createAdminDTO, AccountInvite heldInvite) {
+    var origin =
+        IdentityCreationOrigin.heldInvitation(
+            heldInvite,
+            IdentityCreationOrigin.Kind.TENANT_ADMIN,
+            getDefaultRoles(Admin.AdminType.TENANT).stream().map(UserRole::getValue).toList());
+    return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT, false, origin);
+  }
+
+  private IdentityCreationOrigin humanOrigin(CreateAdminDTO request, Admin.AdminType type) {
+    Long tenant = request.getTenantId() == null ? null : request.getTenantId().longValue();
+    return IdentityCreationOrigin.checkedHuman(
+        adminScope,
+        IdentityCreationOrigin.verifiedCaller(
+            org.springframework.security.core.context.SecurityContextHolder.getContext()
+                .getAuthentication()),
+        tenant,
+        type == Admin.AdminType.TENANT
+            ? IdentityCreationOrigin.Kind.TENANT_ADMIN
+            : IdentityCreationOrigin.Kind.AGENCY_ADMIN,
+        getDefaultRoles(type).stream().map(UserRole::getValue).toList());
   }
 
   List<UserRole> getDefaultRoles(Admin.AdminType adminType) {
@@ -120,27 +153,42 @@ public class CreateAdminService {
   }
 
   private Admin createNewAdmin(
-      final CreateAdminDTO createAdminDTO, Admin.AdminType adminType, boolean temporaryPassword) {
+      final CreateAdminDTO createAdminDTO,
+      Admin.AdminType adminType,
+      boolean temporaryPassword,
+      IdentityCreationOrigin origin) {
     var inactivityPolicy =
         inactivityEnrollment.capture(
             createAdminDTO.getTenantId() == null ? null : createAdminDTO.getTenantId().longValue(),
             de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.OTHER);
-    final String keycloakUserId = createUser(createAdminDTO);
+    final UserDTO validated = buildValidatedUserDTO(createAdminDTO);
     final String password =
         StringUtils.isNotBlank(createAdminDTO.getPassword())
             ? createAdminDTO.getPassword()
             : userHelper.getRandomPassword();
+    var receipt =
+        identityProvisioning.create(
+            java.util.UUID.randomUUID(),
+            new KeycloakTaskCommands.AccountCreation(
+                new UsernameTranscoder().decodeUsername(validated.getUsername()),
+                validated.getEmail(),
+                createAdminDTO.getFirstname(),
+                createAdminDTO.getLastname(),
+                null,
+                validated.getTenantId(),
+                password,
+                temporaryPassword,
+                origin.roles(),
+                origin.registrationKind()),
+            origin);
+    identityProvisioning.acquireLocalSaga(receipt);
+    final String keycloakUserId = receipt.accountId();
     Admin saved = null;
     try {
-      if (temporaryPassword) {
-        identityPasswordUpdater.updateTemporaryPassword(keycloakUserId, password);
-      } else {
-        identityPasswordUpdater.updatePassword(keycloakUserId, password);
-      }
-      getDefaultRoles(adminType).forEach(role -> identityClient.updateRole(keycloakUserId, role));
       var admin = buildAdmin(createAdminDTO, adminType, keycloakUserId);
       saved = adminRepository.saveAndFlush(admin);
       inactivityEnrollment.enroll(keycloakUserId, admin.getTenantId(), inactivityPolicy);
+      if (temporaryPassword) localCompletion.admin(saved);
     } catch (CustomValidationHttpStatusException e) {
       rollbackProvisioning(saved, keycloakUserId, inactivityPolicy);
       throw e;
@@ -172,6 +220,8 @@ public class CreateAdminService {
       Admin saved,
       String keycloakUserId,
       de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy policy) {
+    // The owned failed outcome is durable before independently committed local deletion.
+    identityProvisioning.compensateForLocalRollback(keycloakUserId);
     compensate(
         "admin row",
         () -> {
@@ -180,7 +230,6 @@ public class CreateAdminService {
     compensate(
         "inactivity lifecycle",
         () -> inactivityEnrollment.discardUncompletedCreation(keycloakUserId, policy));
-    compensate("identity account", () -> identityAccountRemover.rollbackUser(keycloakUserId));
   }
 
   private void compensate(String resource, Runnable action) {
@@ -194,16 +243,6 @@ public class CreateAdminService {
                   + ": "
                   + failure.getClass().getSimpleName());
     }
-  }
-
-  private String createUser(final CreateAdminDTO createAgencyAdminDTO) {
-    final UserDTO userDto = buildValidatedUserDTO(createAgencyAdminDTO);
-
-    final CreatedIdentity response =
-        identityClient.createUser(
-            userDto, createAgencyAdminDTO.getFirstname(), createAgencyAdminDTO.getLastname());
-
-    return CreatedIdentity.requireUserId(response);
   }
 
   private UserDTO buildValidatedUserDTO(final CreateAdminDTO createAdminDTO) {

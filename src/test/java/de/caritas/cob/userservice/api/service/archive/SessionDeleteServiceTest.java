@@ -8,9 +8,9 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.actions.registry.ActionContainer;
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
-import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
+import de.caritas.cob.userservice.api.actions.user.DeactivateAuthorizedIdentityActionCommand;
+import de.caritas.cob.userservice.api.actions.user.IdentityDeactivationTarget;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -66,13 +66,31 @@ class SessionDeleteServiceTest {
 
     verify(sessionService).getSession(sessionId);
     verify(actionContainerDelete).executeActions(any(SessionDeletionWorkflowDTO.class));
-    verify(actionContainerDeactivate).executeActions(any(User.class));
+    verify(actionContainerDeactivate).executeActions(any(IdentityDeactivationTarget.class));
     verify(actionsRegistry).buildContainerForType(SessionDeletionWorkflowDTO.class);
-    verify(actionsRegistry).buildContainerForType(User.class);
+    verify(actionsRegistry).buildContainerForType(IdentityDeactivationTarget.class);
     verify(statisticsService).fireEvent(any(ArchiveOrDeleteSessionStatisticsEvent.class));
   }
 
+  @org.junit.jupiter.api.AfterEach
+  void clearSecurity() {
+    org.springframework.security.core.context.SecurityContextHolder.clearContext();
+  }
+
   private long givenAPresentSession(boolean isOnlySession) {
+    var jwt =
+        org.springframework.security.oauth2.jwt.Jwt.withTokenValue("verified-human-test")
+            .header("alg", "RS256")
+            .subject("consultant-caller")
+            .build();
+    org.springframework.security.core.context.SecurityContextHolder.getContext()
+        .setAuthentication(
+            new org.springframework.security.oauth2.server.resource.authentication
+                .JwtAuthenticationToken(
+                jwt,
+                java.util.List.of(
+                    new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                        "AUTHORIZATION_CONSULTANT_DEFAULT"))));
     var sessionId = easyRandom.nextLong();
     var session = easyRandom.nextObject(Session.class);
     if (isOnlySession) {
@@ -95,12 +113,13 @@ class SessionDeleteServiceTest {
     return actionContainer;
   }
 
-  private ActionContainer<User> givenActionRegistryDeactivatesKeycloakUser() {
+  private ActionContainer<IdentityDeactivationTarget> givenActionRegistryDeactivatesKeycloakUser() {
     @SuppressWarnings("unchecked")
-    var actionContainer = (ActionContainer<User>) mock(ActionContainer.class);
-    when(actionContainer.addActionToExecute(DeactivateKeycloakUserActionCommand.class))
+    var actionContainer = (ActionContainer<IdentityDeactivationTarget>) mock(ActionContainer.class);
+    when(actionContainer.addActionToExecute(DeactivateAuthorizedIdentityActionCommand.class))
         .thenReturn(actionContainer);
-    when(actionsRegistry.buildContainerForType(User.class)).thenReturn(actionContainer);
+    when(actionsRegistry.buildContainerForType(IdentityDeactivationTarget.class))
+        .thenReturn(actionContainer);
 
     return actionContainer;
   }

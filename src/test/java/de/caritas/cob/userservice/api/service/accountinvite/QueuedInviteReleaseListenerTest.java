@@ -3,7 +3,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
@@ -35,11 +35,12 @@ class QueuedInviteReleaseListenerTest {
 
   @Test
   void onUnitCreated_Should_ReleaseWithoutAnAmbientServiceToken() {
-    var technicalUser = new TechnicalUserConfig();
+    var technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical");
     technicalUser.setClientSecret("secret");
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.loginService("technical", "secret"))
+    when(identityClientConfig.getTaskIdentity(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(technicalUser);
+    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new IdentityLogin("token", 60, 60, "refresh"));
     var ambientDuringRelease = new AtomicReference<Object>("not called");
     when(unitQueue.release(InviteUnitType.AGENCY, 7L, 3L))

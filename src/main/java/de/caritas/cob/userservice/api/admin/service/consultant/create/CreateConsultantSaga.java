@@ -11,11 +11,13 @@ import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.keycloak.commands.*;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantResponseDTOBuilder;
 import de.caritas.cob.userservice.api.admin.service.consultant.TransactionalStep;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
@@ -36,10 +38,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.model.ConsultantAvatars;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
@@ -70,8 +69,9 @@ public class CreateConsultantSaga {
   private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
       inactivityEnrollment;
   private static final String CREATE_CONSULTANT = "createConsultant";
-  private final @NonNull IdentityClient identityClient;
-  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
+  private final @NonNull IdentityAccountProvisioning identityProvisioning;
+  private final @NonNull WizardAccountPolicyClient wizardPolicy;
+  private final @NonNull AdminScope adminScope;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull UserHelper userHelper;
@@ -99,9 +99,11 @@ public class CreateConsultantSaga {
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   private Consultant createNewConsultantWithoutAppointment(
-      CreateConsultantDTO createConsultantDTO) {
+      CreateConsultantDTO createConsultantDTO, IdentityCreationOrigin origin) {
     setCurrentTenant(createConsultantDTO);
-    validateTenantId(createConsultantDTO);
+    if (!java.util.Objects.equals(origin.tenantId(), createConsultantDTO.getTenantId()))
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Consultant request exceeds its originating tenant");
     ensureTenantIdResolved(createConsultantDTO);
     java.util.Map<Long, java.util.Set<Long>> topicIdsByAgencyId = null;
     if (createConsultantDTO.getAgencyIds() != null
@@ -113,7 +115,7 @@ public class CreateConsultantSaga {
               createConsultantDTO.getTenantId());
     }
 
-    assertLicensesNotExceeded(createConsultantDTO);
+    assertLicensesNotExceeded(createConsultantDTO, origin);
 
     this.userAccountInputValidator.validateAbsence(
         new CreateConsultantDTOAbsenceInputAdapter(createConsultantDTO));
@@ -125,7 +127,7 @@ public class CreateConsultantSaga {
     var roles = asSet(CONSULTANT.getValue());
     addGroupChatConsultantRole(createConsultantDTO, roles);
 
-    return createNewConsultant(consultantCreationInput, roles);
+    return createNewConsultant(consultantCreationInput, origin);
   }
 
   /**
@@ -139,7 +141,23 @@ public class CreateConsultantSaga {
   @Transactional
   public ConsultantAdminResponseDTO createNewConsultant(CreateConsultantDTO createConsultantDTO)
       throws DistributedTransactionException {
-    Consultant newConsultant = this.createNewConsultantWithoutAppointment(createConsultantDTO);
+    setCurrentTenant(createConsultantDTO);
+    validateTenantId(createConsultantDTO);
+    ensureTenantIdResolved(createConsultantDTO);
+    var roles = asSet(CONSULTANT.getValue());
+    addGroupChatConsultantRole(createConsultantDTO, roles);
+    var origin =
+        IdentityCreationOrigin.checkedHumanForAgencies(
+            adminScope,
+            IdentityCreationOrigin.verifiedCaller(
+                org.springframework.security.core.context.SecurityContextHolder.getContext()
+                    .getAuthentication()),
+            createConsultantDTO.getTenantId(),
+            createConsultantDTO.getAgencyIds(),
+            IdentityCreationOrigin.Kind.CONSULTANT,
+            roles);
+    Consultant newConsultant =
+        this.createNewConsultantWithoutAppointment(createConsultantDTO, origin);
 
     // adminRemarks intentionally stays at the builder's fail-closed default (null) here: this
     // DTO is also the appointment-service payload. ConsultantAdminService#createNewConsultant
@@ -150,13 +168,33 @@ public class CreateConsultantSaga {
     if (appointmentFeatureEnabled) {
       createConsultantInAppointmentServiceOrRollback(newConsultant, consultantAdminResponseDTO);
     }
+    identityProvisioning.completeCreatedAccount(newConsultant.getId());
     return consultantAdminResponseDTO;
+  }
+
+  /** Called with a held verified invitation; outer invite acceptance owns commit/compensation. */
+  @Transactional
+  public ConsultantAdminResponseDTO createInvitedConsultant(
+      CreateConsultantDTO request, IdentityCreationOrigin origin) {
+    if (!"INVITATION".equals(origin.originKindForPolicy())
+        || !java.util.Set.of("CONSULTANT", "CONSULTANT_AGENCY_ADMIN")
+            .contains(origin.registrationKind()))
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Invited consultant needs invitation authorization");
+    var consultant = createNewConsultantWithoutAppointment(request, origin);
+    var response = ConsultantResponseDTOBuilder.getInstance(consultant).buildResponseDTO();
+    if (appointmentFeatureEnabled)
+      createConsultantInAppointmentServiceOrRollback(consultant, response);
+    return response;
   }
 
   private void createConsultantInAppointmentServiceOrRollback(
       Consultant newConsultant, ConsultantAdminResponseDTO consultantAdminResponseDTO) {
     try {
-      this.appointmentService.createConsultant(consultantAdminResponseDTO);
+      this.appointmentService.createOwnedConsultant(
+          consultantAdminResponseDTO,
+          newConsultant.getTenantId(),
+          identityProvisioning.ownedAppointmentEffect(newConsultant.getId()));
     } catch (Exception e) {
       log.error(
           "User with id {}, who has roles {}, has created a consultant with id {} but the appointment service returned an error: {}",
@@ -214,15 +252,25 @@ public class CreateConsultantSaga {
    * @param roles the roles to add to given {@link Consultant}
    * @return the generated {@link Consultant}
    */
+  /** Legacy callers cannot authorize arbitrary CSV records without the configured-file permit. */
+  @Deprecated
+  public Consultant createNewConsultant(ImportRecord ignored, Set<String> roles) {
+    throw new org.springframework.security.access.AccessDeniedException(
+        "Configured CSV row authorization is required");
+  }
+
   @Transactional
-  public Consultant createNewConsultant(ImportRecord importRecord, Set<String> roles) {
-    ConsultantCreationInput consultantCreationInput =
-        new ImportRecordCreationInputAdapter(importRecord);
-    return createNewConsultant(consultantCreationInput, roles);
+  public Consultant createImportedConsultant(
+      ImportRecord importRecord, IdentityCreationOrigin origin) {
+    if (!"IMPORT".equals(origin.originKindForPolicy())
+        || !"CONSULTANT".equals(origin.registrationKind()))
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Consultant import requires captured row authorization");
+    return createNewConsultant(new ImportRecordCreationInputAdapter(importRecord), origin);
   }
 
   private Consultant createNewConsultant(
-      ConsultantCreationInput consultantCreationInput, Set<String> roles) {
+      ConsultantCreationInput consultantCreationInput, IdentityCreationOrigin origin) {
 
     // MATRIX MIGRATION: Get plain credentials from ThreadLocal (captured during JSON
     // deserialization)
@@ -236,7 +284,6 @@ public class CreateConsultantSaga {
             consultantCreationInput.getTenantId(),
             de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
                 .CONSULTANT);
-    String keycloakUserId = createKeycloakUser(consultantCreationInput);
 
     String password = consultantCreationInput.getPassword();
     if ((password == null || password.isEmpty())
@@ -248,8 +295,31 @@ public class CreateConsultantSaga {
     } else {
       log.info("Using provided password for consultant creation");
     }
-    updateKeycloakPasswordOrRollback(consultantCreationInput, keycloakUserId, password);
-    updateKeyloakRolesOrRollback(roles, keycloakUserId, consultantCreationInput);
+    var dto =
+        buildUserDTO(
+            consultantCreationInput.getUserName(),
+            consultantCreationInput.getEmail(),
+            consultantCreationInput.getTenantId());
+    userAccountInputValidator.validateUserDTO(dto);
+    var receipt =
+        identityProvisioning.create(
+            java.util.UUID.randomUUID(),
+            new KeycloakTaskCommands.AccountCreation(
+                new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+                    .decodeUsername(dto.getUsername()),
+                dto.getEmail(),
+                consultantCreationInput.getFirstName(),
+                consultantCreationInput.getLastName(),
+                null,
+                dto.getTenantId(),
+                password,
+                !"INVITATION".equals(origin.originKindForPolicy())
+                    && consultantCreationInput.isPasswordChangeRequired(),
+                origin.roles(),
+                origin.registrationKind()),
+            origin);
+    identityProvisioning.acquireLocalSaga(receipt);
+    String keycloakUserId = receipt.accountId();
 
     // MATRIX MIGRATION: Create Matrix user for consultant with a random password that is never
     // persisted. User-scoped Matrix tokens are minted via Synapse admin login-as-user.
@@ -268,8 +338,11 @@ public class CreateConsultantSaga {
             consultantDisplayNameResolver.resolveMatrixDisplayName(
                 consultantCreationInput.getDisplayName(), plainCreds.getUsername());
         matrixUserId =
-            matrixUserClient.createUserId(
-                plainCreds.getUsername(), matrixPassword, matrixDisplayName);
+            matrixUserClient.createOwnedUserId(
+                plainCreds.getUsername(),
+                matrixPassword,
+                matrixDisplayName,
+                identityProvisioning.ownedMatrixEffects(receipt).user());
 
         if (matrixUserId != null) {
           log.info("Provisioned the chat account of consultant {}", keycloakUserId);
@@ -330,58 +403,6 @@ public class CreateConsultantSaga {
     }
   }
 
-  private void updateKeycloakPasswordOrRollback(
-      ConsultantCreationInput consultantCreationInput, String keycloakUserId, String password) {
-    try {
-      if (consultantCreationInput.isPasswordChangeRequired()) {
-        identityPasswordUpdater.updateTemporaryPassword(keycloakUserId, password);
-      } else {
-        identityPasswordUpdater.updatePassword(keycloakUserId, password);
-      }
-    } catch (CustomValidationHttpStatusException e) {
-      rollbackCreateNewConsultant(
-          buildConsultantDataForRollback(consultantCreationInput, keycloakUserId));
-      throw e;
-    } catch (Exception e) {
-      log.error(
-          "Unable to update password or roles for user with encoded username {}",
-          consultantCreationInput.getEncodedUsername());
-      rollbackCreateNewConsultant(
-          buildConsultantDataForRollback(consultantCreationInput, keycloakUserId));
-      throw new DistributedTransactionException(
-          e,
-          DistributedTransactionInfo.builder()
-              .name(CREATE_CONSULTANT)
-              .completedTransactionalOperations(
-                  newArrayList(TransactionalStep.CREATE_ACCOUNT_IN_KEYCLOAK))
-              .failedStep(TransactionalStep.UPDATE_USER_PASSWORD_IN_KEYCLOAK)
-              .build());
-    }
-  }
-
-  private void updateKeyloakRolesOrRollback(
-      Set<String> roles, String keycloakUserId, ConsultantCreationInput consultantCreationInput) {
-    try {
-      roles.forEach(roleName -> identityClient.updateRole(keycloakUserId, roleName));
-    } catch (Exception e) {
-      log.error(
-          "Unable to update roles for user with keycloak id {}. Initiating user rollback.",
-          keycloakUserId);
-      rollbackCreateNewConsultant(
-          buildConsultantDataForRollback(consultantCreationInput, keycloakUserId));
-      throw new DistributedTransactionException(
-          e,
-          DistributedTransactionInfo.builder()
-              .completedTransactionalOperations(
-                  newArrayList(
-                      TransactionalStep.CREATE_ACCOUNT_IN_KEYCLOAK,
-                      TransactionalStep.UPDATE_USER_PASSWORD_IN_KEYCLOAK))
-              .name(CREATE_CONSULTANT)
-              .failedStep(TransactionalStep.UPDATE_USER_ROLES_IN_KEYCLOAK)
-              .build());
-    }
-  }
-
   private Consultant createConsultantInMariaDBOrRollback(
       ConsultantCreationInput consultantCreationInput,
       String keycloakUserId,
@@ -438,28 +459,6 @@ public class CreateConsultantSaga {
     if (isGlobalTenantContext()) {
       throw new BadRequestException("TenantId must be set if consultant is created by superadmin");
     }
-  }
-
-  private String createKeycloakUser(ConsultantCreationInput consultantCreationInput) {
-    // MATRIX MIGRATION: Use PLAIN username for Keycloak (Keycloak rejects encrypted usernames)
-    String plainUsername = consultantCreationInput.getUserName();
-
-    // Store plain username in ThreadLocal for Matrix creation
-    de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(plainUsername, null);
-
-    UserDTO userDto =
-        buildUserDTO(
-            plainUsername,
-            consultantCreationInput.getEmail(),
-            consultantCreationInput.getTenantId());
-
-    this.userAccountInputValidator.validateUserDTO(userDto);
-
-    CreatedIdentity response =
-        identityClient.createUser(
-            userDto, consultantCreationInput.getFirstName(), consultantCreationInput.getLastName());
-
-    return CreatedIdentity.requireUserId(response);
   }
 
   private static Consultant buildConsultantDataForRollback(
@@ -560,7 +559,8 @@ public class CreateConsultantSaga {
    * TenantService outage as "unlimited" would let creations slip past a limit that is merely
    * unreadable at that moment.
    */
-  private void assertLicensesNotExceeded(CreateConsultantDTO createConsultantDTO) {
+  private void assertLicensesNotExceeded(
+      CreateConsultantDTO createConsultantDTO, IdentityCreationOrigin origin) {
     if (!multiTenancyEnabled) {
       return;
     }
@@ -577,7 +577,14 @@ public class CreateConsultantSaga {
 
     TenantDTO tenant;
     try {
-      tenant = tenantAdminService.getTenantById(tenantId);
+      if (java.util.Set.of("INVITATION", "IMPORT").contains(origin.originKindForPolicy())) {
+        var policy = wizardPolicy.read(origin);
+        tenant = new TenantDTO();
+        var licensing =
+            new de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing();
+        licensing.setAllowedNumberOfUsers(policy.allowedNumberOfUsers());
+        tenant.setLicensing(licensing);
+      } else tenant = tenantAdminService.getTenantById(tenantId);
     } catch (RestClientException exception) {
       log.warn(
           "TenantService could not be reached for tenant {}; refusing consultant creation because"

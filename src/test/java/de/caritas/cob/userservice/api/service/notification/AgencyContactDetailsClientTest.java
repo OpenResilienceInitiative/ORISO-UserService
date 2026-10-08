@@ -10,7 +10,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
@@ -172,11 +172,11 @@ class AgencyContactDetailsClientTest {
   }
 
   private void technicalIdentity() {
-    var account = new TechnicalUserConfig();
+    var account = new TaskIdentityCredentials();
     account.setClientId("technical");
     account.setClientSecret("test-secret");
-    when(identityConfig.getTechnicalUser()).thenReturn(account);
-    when(authentication.loginService("technical", "test-secret"))
+    when(identityConfig.getTaskIdentity(org.mockito.ArgumentMatchers.any())).thenReturn(account);
+    when(authentication.loginTask(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new IdentityLogin("technical-token", 60, 60, "refresh"));
     var authorization = new HttpHeaders();
     authorization.setBearerAuth("technical-token");
