@@ -31,9 +31,10 @@ import org.springframework.web.client.HttpClientErrorException;
  *       configured platform logo → no image at all, in which case the layout renders the text
  *       wordmark. Stored inline images are exposed through TenantService's public HTTP asset
  *       endpoint because mail clients block {@code data:} URIs.
- *   <li><b>Accent colour</b> — tenant {@code theming.primaryColor} → {@link
- *       EmailColors#PLATFORM_ACCENT_DARK}. Contrast-safe foregrounds are derived from it in {@link
- *       EmailBranding}; a colour below 4.5:1 against white is rejected.
+ *   <li><b>Brand colour</b> — tenant {@code theming.primaryColor} → platform theming {@code
+ *       primaryColor} → neutral installation default {@value #DEFAULT_PRIMARY_COLOR}. The colour is
+ *       used as configured; the button label and link colour are derived from it in {@link
+ *       EmailBranding} (see {@link #resolveAccentColor(RestrictedTenantDTO)}).
  *   <li><b>Footer</b> — the imprint/privacy URLs built from the same tenant resolved above (via
  *       {@link TenantTemplateSupplier#getTenantBaseUrl(RestrictedTenantDTO)}, never from the
  *       ambient {@link TenantContext}). Platform mail uses the configured application URL. Missing
@@ -55,6 +56,12 @@ public class EmailBrandingResolver {
 
   @Value("${multitenancy.enabled}")
   private boolean multitenancyEnabled;
+
+  /**
+   * Neutral installation default, used only when neither tenant nor platform theming has a usable
+   * colour (ADR-026 amendment 2026-10-02). Not a brand colour; exempt from the too-pale rule.
+   */
+  static final String DEFAULT_PRIMARY_COLOR = "#000000";
 
   /** Bound on distinct keys held, so a pathological tenant id space cannot grow this unbounded. */
   private static final int MAX_CACHE_ENTRIES = 1000;
@@ -172,12 +179,16 @@ public class EmailBrandingResolver {
     String brandName =
         tenant != null && !isBlank(tenant.getName()) ? tenant.getName() : configuredPlatformName;
 
+    String logoUrl = resolveLogoUrl(tenant, theming);
+    EmailLogoDimensions dimensions = resolveLogoDimensions(tenant, theming, logoUrl);
     return new EmailBranding(
         brandName,
-        resolveLogoUrl(tenant, theming),
-        resolveAccentColor(theming),
+        logoUrl,
+        resolveAccentColor(tenant),
         resolveFooterUrl(tenant, "/impressum"),
-        resolveFooterUrl(tenant, "/datenschutz"));
+        resolveFooterUrl(tenant, "/datenschutz"),
+        dimensions == null ? null : dimensions.width(),
+        dimensions == null ? null : dimensions.height());
   }
 
   /** Notification links must belong to the exact existing recipient tenant. */
@@ -198,12 +209,16 @@ public class EmailBrandingResolver {
     }
     Theming theming = tenant.getTheming();
     String brandName = !isBlank(tenant.getName()) ? tenant.getName() : configuredPlatformName;
+    String logoUrl = resolveLogoUrl(tenant, theming);
+    EmailLogoDimensions dimensions = resolveLogoDimensions(tenant, theming, logoUrl);
     return new EmailBranding(
         brandName,
-        resolveLogoUrl(tenant, theming),
-        resolveAccentColor(theming),
+        logoUrl,
+        resolveAccentColor(tenant),
         expected + "/impressum",
-        expected + "/datenschutz");
+        expected + "/datenschutz",
+        dimensions == null ? null : dimensions.width(),
+        dimensions == null ? null : dimensions.height());
   }
 
   private static String requireBaseUrl(String value) {
@@ -247,6 +262,22 @@ public class EmailBrandingResolver {
     return firstPartyLogo(platformLogoUrl);
   }
 
+  private EmailLogoDimensions resolveLogoDimensions(
+      RestrictedTenantDTO tenant, Theming theming, String logoUrl) {
+    if (tenant == null
+        || theming == null
+        || logoUrl == null
+        || firstPartyLogo(theming.getLogo(), theming.getAssociationLogo()) != null) return null;
+    String baseUrl = firstAbsoluteUrl(applicationBaseUrl);
+    if (baseUrl == null
+        || tenant.getId() == null
+        || !logoUrl.equals(baseUrl + "/service/tenant/public/branding/" + tenant.getId() + "/logo"))
+      return null;
+    // Match the endpoint exactly: non-null logo takes precedence, even when invalid.
+    return EmailLogoDimensions.read(
+        theming.getLogo() != null ? theming.getLogo() : theming.getAssociationLogo());
+  }
+
   private boolean isStoredImage(String value) {
     return !isBlank(value) && firstAbsoluteUrl(value) == null;
   }
@@ -282,51 +313,58 @@ public class EmailBrandingResolver {
   }
 
   /**
-   * The accent of the <b>light</b> rendering — the only rendering the platform ships today.
+   * The brand colour of the mail: the stripe and button fill, used as configured (ADR-026 amendment
+   * 2026-10-02, the same token logic as the web frontend).
    *
-   * <p>Chain: {@code theming.primaryColor} → {@link EmailColors#PLATFORM_ACCENT_DARK}. Two steps,
-   * deliberately, per the binding decision on ORISO-UserService#914:
+   * <p>Chain: the tenant's {@code theming.primaryColor} → the platform tenant's {@code
+   * theming.primaryColor} → {@link #DEFAULT_PRIMARY_COLOR}. A colour counts as usable under the web
+   * app's own rule, {@link EmailColors#usablePrimary(String)}: a hex colour that is not too pale. A
+   * light chromatic colour such as yellow is usable; the button label is derived from it later (see
+   * {@link EmailBranding#buttonLabelColor()}), not by rejecting the colour. TenantService already
+   * inherits missing theming values from the platform tenant, so the second step only matters for a
+   * tenant colour that is present but unusable (near-grey) or a tenant that does not exist yet.
    *
-   * <ul>
-   *   <li>Light rendering uses the <em>dark</em> accent. {@code primaryColor} is exactly that — a
-   *       light-mode token — so it is the tenant-level input and needs no further candidates.
-   *   <li>{@code secondaryColor} is <b>not</b> a candidate. ORISO-Admin's {@code buildSeedUpdate}
-   *       writes it as {@code null} on every theming save, so a step reading it could never resolve
-   *       and would only obscure which value actually reaches the mail.
-   *   <li>The SMTP setting {@code globalSmtpEmailThemeColor} ("E-Mail Designfarbe") is <b>not</b> a
-   *       candidate either. The mail follows the product colour rule and nothing else; an SMTP
-   *       transport setting is not a design token.
-   * </ul>
+   * <p>The default is pure black, a neutral installation value and not a brand colour, so an
+   * installation without any usable colour sends black mail instead of failing or borrowing another
+   * installation's red. It is chroma 0, so it deliberately bypasses the "too pale" filter; its
+   * button label is white (21:1).
    *
-   * <p><b>Seam for the dark rendering — the single place it plugs in.</b> The colour rule says a
-   * dark rendering must invert and use the <em>light</em> accent (the rose tone), never a darkened
-   * or otherwise derived variant of the dark one. That value does not exist here: the tenant
-   * contract this service consumes ({@code services/tenantservice.yaml → Theming}) exposes only
-   * {@code logo}, {@code associationLogo}, {@code favicon}, {@code primaryColor} and {@code
-   * secondaryColor}; {@code theming.accent} is dropped on save and is tracked as
-   * OpenResilienceInitiative/ORISO-TenantService#154. Deriving a substitute rose here would hide
-   * that gap, so nothing is derived and the mail renders light-only (see the {@code color-scheme:
-   * light only} opt-out in canonical generated mail resources).
-   *
-   * <p>Once #154 lands, carry a separate light-accent value for dark rendering and update the
-   * canonical frontend mail generator. Keep the renderer and resource generation aligned; no
-   * substitute accent is derived here.
+   * <p>{@code theming.accent} and {@code theming.signal} are read from TenantService but not used:
+   * mail has no dark rendering yet (the layout opts out with {@code color-scheme: light only}), and
+   * {@code secondaryColor} is not a candidate because ORISO-Admin writes it as {@code null}. The
+   * SMTP setting {@code globalSmtpEmailThemeColor} is not a candidate either: a transport setting
+   * is not a design token.
    */
-  private String resolveAccentColor(Theming theming) {
-    String color = theming == null ? null : EmailColors.firstValid(theming.getPrimaryColor());
-    if (color == null) {
-      return EmailColors.PLATFORM_ACCENT_DARK;
+  private String resolveAccentColor(RestrictedTenantDTO tenant) {
+    Theming theming = tenant == null ? null : tenant.getTheming();
+    String configured = theming == null ? null : theming.getPrimaryColor();
+    String own = EmailColors.usablePrimary(configured);
+    if (own != null) {
+      return own;
     }
-    double contrast = EmailColors.contrastRatio(color, "#ffffff");
-    if (contrast < 4.5d) {
+    if (!isBlank(configured)) {
       log.warn(
-          "Tenant email primary color {} has insufficient contrast with white ({}); using the"
-              + " platform primary",
-          color,
-          String.format(Locale.ROOT, "%.2f", contrast));
-      return EmailColors.PLATFORM_ACCENT_DARK;
+          "Tenant email primary color {} is not usable (invalid or too pale); using the platform"
+              + " theming color",
+          configured);
     }
-    return color;
+    boolean isPlatformTenant =
+        tenant != null && TenantContext.TECHNICAL_TENANT_ID.equals(tenant.getId());
+    if (!isPlatformTenant) {
+      RestrictedTenantDTO platform = loadPlatformTenantQuietly();
+      Theming platformTheming = platform == null ? null : platform.getTheming();
+      String inherited =
+          EmailColors.usablePrimary(
+              platformTheming == null ? null : platformTheming.getPrimaryColor());
+      if (inherited != null) {
+        return inherited;
+      }
+    }
+    log.warn(
+        "Neither the tenant nor the platform theming has a usable primaryColor; sending mail with"
+            + " the neutral default {}",
+        DEFAULT_PRIMARY_COLOR);
+    return DEFAULT_PRIMARY_COLOR;
   }
 
   private String resolveFooterUrl(RestrictedTenantDTO tenant, String fallbackPath) {

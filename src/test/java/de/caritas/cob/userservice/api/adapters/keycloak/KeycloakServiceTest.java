@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
@@ -59,6 +60,7 @@ import jakarta.ws.rs.NotAuthorizedException;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -89,6 +91,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestClientException;
@@ -152,6 +155,66 @@ public class KeycloakServiceTest {
   public void tearDown() {
     logCaptor.detach();
     authLogCaptor.detach();
+  }
+
+  @Test
+  void findEnabledById_Should_RefreshUnauthorizedSessionAndRetryOnce() {
+    var resource = mock(UserResource.class);
+    var representation = new UserRepresentation();
+    representation.setEnabled(false);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("account-id")).thenReturn(resource);
+    when(resource.toRepresentation())
+        .thenThrow(new jakarta.ws.rs.NotAuthorizedException("expired"))
+        .thenReturn(representation);
+
+    org.assertj.core.api.Assertions.assertThat(keycloakService.findEnabledById("account-id"))
+        .contains(false);
+    verify(keycloakClient).refreshAdminSession();
+    verify(resource, times(2)).toRepresentation();
+  }
+
+  @Test
+  void findEnabledById_Should_NotRepeatAnUnauthorizedRetry() {
+    var resource = mock(UserResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("account-id")).thenReturn(resource);
+    when(resource.toRepresentation())
+        .thenThrow(new jakarta.ws.rs.NotAuthorizedException("expired"));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> keycloakService.findEnabledById("account-id"))
+        .isInstanceOf(jakarta.ws.rs.NotAuthorizedException.class);
+    verify(keycloakClient).refreshAdminSession();
+    verify(resource, times(2)).toRepresentation();
+  }
+
+  @Test
+  void findEnabledById_Should_ReadTheActualLoginFlag() {
+    var resource = mock(UserResource.class);
+    var representation = new UserRepresentation();
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("account-id")).thenReturn(resource);
+    when(resource.toRepresentation()).thenReturn(representation);
+    representation.setEnabled(false);
+    org.assertj.core.api.Assertions.assertThat(keycloakService.findEnabledById("account-id"))
+        .contains(false);
+    representation.setEnabled(true);
+    org.assertj.core.api.Assertions.assertThat(keycloakService.findEnabledById("account-id"))
+        .contains(true);
+    representation.setEnabled(null);
+    org.assertj.core.api.Assertions.assertThat(keycloakService.findEnabledById("account-id"))
+        .isEmpty();
+  }
+
+  @Test
+  void findEnabledById_Should_NotTreatMissingIdentityAsDisabled() {
+    var resource = mock(UserResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("missing")).thenReturn(resource);
+    when(resource.toRepresentation()).thenThrow(new jakarta.ws.rs.NotFoundException());
+    org.assertj.core.api.Assertions.assertThat(keycloakService.findEnabledById("missing"))
+        .isEmpty();
   }
 
   @Test
@@ -1772,11 +1835,36 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void finishEmailVerification_Should_NotRetryInvalidCodeUnauthorized() {
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    var invalidCode =
+        org.springframework.web.client.HttpClientErrorException.create(
+            HttpStatus.UNAUTHORIZED,
+            "Unauthorized",
+            new HttpHeaders(),
+            "{\"error\":\"invalid_grant\",\"error_description\":\"Invalid code\"}"
+                .getBytes(StandardCharsets.UTF_8),
+            StandardCharsets.UTF_8);
+    when(keycloakClient.postForEntity(any(), any(), any(), any())).thenThrow(invalidCode);
+    var expected = new IdentityEmailVerification(false, false, true, null);
+    when(keycloakMapper.identityEmailVerificationOf(invalidCode)).thenReturn(expected);
+
+    var result = keycloakService.finishEmailVerification(USERNAME, "invalid-code");
+
+    assertThat(result, is(expected));
+    verify(keycloakClient, times(1)).postForEntity(any(), any(), any(), any());
+    verify(keycloakClient, never()).refreshAdminSession();
+  }
+
+  @Test
   public void finishEmailVerification_Should_RecordOperationSpecificRetry_OnInitialUnauthorized() {
     var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
     keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    var headers = new HttpHeaders();
+    headers.set(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
     var unauthorized =
-        new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
+        org.springframework.web.client.HttpClientErrorException.create(
+            HttpStatus.UNAUTHORIZED, "Unauthorized", headers, new byte[0], StandardCharsets.UTF_8);
     var responseEntity =
         new ResponseEntity<>(
             new de.caritas.cob.userservice.api.model.SuccessWithEmail(), HttpStatus.CREATED);
@@ -1798,6 +1886,73 @@ public class KeycloakServiceTest {
     verify(keycloakClient).refreshAdminSession();
     verify(keycloakClient, times(2)).postForEntity(any(), any(), any(), any());
     verify(outboundHttpMetrics).recordRetry("keycloak", "email-verification-finish");
+  }
+
+  @Test
+  public void finishEmailVerification_Should_ReportPersistentBearerChallengeAsServiceFailure() {
+    var headers = new HttpHeaders();
+    headers.set(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
+    var unauthorized =
+        org.springframework.web.client.HttpClientErrorException.create(
+            HttpStatus.UNAUTHORIZED, "Unauthorized", headers, new byte[0], StandardCharsets.UTF_8);
+    when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
+    when(keycloakClient.postForEntity(any(), any(), any(), any())).thenThrow(unauthorized);
+
+    assertThrows(
+        ServiceUnavailableException.class,
+        () -> keycloakService.finishEmailVerification(USERNAME, "valid-code"));
+    verify(keycloakClient, times(2)).postForEntity(any(), any(), any(), any());
+    verify(keycloakClient).refreshAdminSession();
+  }
+
+  @Test
+  public void finishEmailVerification_Should_RetryBearerChallenge_When_CombinedInOneField() {
+    var headers = new HttpHeaders();
+    headers.add(HttpHeaders.WWW_AUTHENTICATE, "Basic realm=\"otp, code\", Bearer");
+
+    assertPersistentBearerChallengeIsRetriedOnce(headers);
+  }
+
+  @Test
+  public void finishEmailVerification_Should_RetryBearerChallenge_When_InRepeatedField() {
+    var headers = new HttpHeaders();
+    headers.add(HttpHeaders.WWW_AUTHENTICATE, "Basic realm=\"otp\"");
+    headers.add(HttpHeaders.WWW_AUTHENTICATE, "Bearer realm=\"oriso\"");
+
+    assertPersistentBearerChallengeIsRetriedOnce(headers);
+  }
+
+  private void assertPersistentBearerChallengeIsRetriedOnce(HttpHeaders headers) {
+    var unauthorized =
+        org.springframework.web.client.HttpClientErrorException.create(
+            HttpStatus.UNAUTHORIZED, "Unauthorized", headers, new byte[0], StandardCharsets.UTF_8);
+    when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
+    when(keycloakClient.postForEntity(any(), any(), any(), any())).thenThrow(unauthorized);
+
+    assertThrows(
+        ServiceUnavailableException.class,
+        () -> keycloakService.finishEmailVerification(USERNAME, "valid-code"));
+    verify(keycloakClient, times(2)).postForEntity(any(), any(), any(), any());
+    verify(keycloakClient).refreshAdminSession();
+  }
+
+  @Test
+  public void finishEmailVerification_Should_NotRetry_When_BearerOnlyInsideQuotedValue() {
+    var headers = new HttpHeaders();
+    headers.add(HttpHeaders.WWW_AUTHENTICATE, "Basic realm=\"otp, Bearer\"");
+    var invalidCode =
+        org.springframework.web.client.HttpClientErrorException.create(
+            HttpStatus.UNAUTHORIZED, "Unauthorized", headers, new byte[0], StandardCharsets.UTF_8);
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    when(keycloakClient.postForEntity(any(), any(), any(), any())).thenThrow(invalidCode);
+    var expected = new IdentityEmailVerification(false, false, true, null);
+    when(keycloakMapper.identityEmailVerificationOf(invalidCode)).thenReturn(expected);
+
+    var result = keycloakService.finishEmailVerification(USERNAME, "invalid-code");
+
+    assertThat(result, is(expected));
+    verify(keycloakClient, times(1)).postForEntity(any(), any(), any(), any());
+    verify(keycloakClient, never()).refreshAdminSession();
   }
 
   @Test

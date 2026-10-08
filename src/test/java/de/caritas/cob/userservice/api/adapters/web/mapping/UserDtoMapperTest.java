@@ -116,6 +116,30 @@ class UserDtoMapperTest {
   }
 
   @Test
+  void mapOf_Should_carryTheAvatarChoice() {
+    when(authenticatedUser.getUserId()).thenReturn("user-1");
+    var patch = new PatchUserDTO().avatarKind(PatchUserDTO.AvatarKindEnum.ICON).avatarId("magpie");
+
+    var map = mapper.mapOf(patch, authenticatedUser);
+
+    assertThat(map)
+        .hasValueSatisfying(
+            values ->
+                assertThat(values)
+                    .containsEntry("avatarKind", "ICON")
+                    .containsEntry("avatarId", "magpie"));
+  }
+
+  @Test
+  void mapOf_Should_acceptAClearedAvatarAsTheOnlyChange() {
+    when(authenticatedUser.getUserId()).thenReturn("user-1");
+
+    var map = mapper.mapOf(new PatchUserDTO().avatarId(""), authenticatedUser);
+
+    assertThat(map).hasValueSatisfying(values -> assertThat(values).containsEntry("avatarId", ""));
+  }
+
+  @Test
   void userDataOf_Should_markIsActive_When_otpIsSetupWithAppType() {
     var userData = new UserDataResponseDTO();
     userData.setUserRoles(Set.of(UserRole.USER.getValue()));
@@ -212,6 +236,19 @@ class UserDtoMapperTest {
     var result = mapper.mapOf(dto, authenticatedUser);
 
     assertThat(result).isEmpty();
+  }
+
+  @Test
+  void mapOf_Should_acceptThePatchWhen_onlyTheTourSwitchIsSent() {
+    // #1526: the Profile -> Help switch sends this field alone.
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    var dto = new PatchUserDTO();
+    dto.setWalkThroughEnabled(true);
+
+    var result = mapper.mapOf(dto, authenticatedUser);
+
+    assertThat(result).isPresent();
+    assertThat(result.get()).containsEntry("walkThroughEnabled", true);
   }
 
   @Test

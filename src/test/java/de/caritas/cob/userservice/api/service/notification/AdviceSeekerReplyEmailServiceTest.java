@@ -166,12 +166,11 @@ class AdviceSeekerReplyEmailServiceTest {
                 "#112233",
                 null,
                 null));
-    when(emailBrand.readablePrimary("#112233")).thenReturn("#112233");
     when(emailBrand.valuesForResolvedBrand(
             eq("https://tenant.example.net"), any(EmailBranding.class)))
         .thenAnswer(
-            ignored -> {
-              var values = neutralBrand();
+            invocation -> {
+              var values = colouredBrand(invocation.getArgument(1));
               values.put("platformName", "Community Hub");
               values.put("offeringName", "Community Hub");
               return values;
@@ -469,7 +468,7 @@ class AdviceSeekerReplyEmailServiceTest {
     when(routes.resolve(7L)).thenReturn(Optional.of(route));
     when(emailBrand.valuesForResolvedBrand(
             eq("https://tenant.example.net"), any(EmailBranding.class)))
-        .thenReturn(neutralBrand());
+        .thenAnswer(invocation -> colouredBrand(invocation.getArgument(1)));
     when(branding.resolveNotification(7L, "https://tenant.example.net"))
         .thenReturn(
             new EmailBranding(
@@ -478,7 +477,6 @@ class AdviceSeekerReplyEmailServiceTest {
                 "#112233",
                 null,
                 null));
-    when(emailBrand.readablePrimary("#112233")).thenReturn("#112233");
     var renderer = org.mockito.Mockito.mock(OrisoEmailRenderer.class);
     var rendered = new OrisoEmailRenderer.RenderedEmail("New message", "<p>Body</p>", "Body");
     var tested =
@@ -741,6 +739,14 @@ class AdviceSeekerReplyEmailServiceTest {
     return user;
   }
 
+  /** What the real brand values do: the resolved brand colour reaches the template values. */
+  private static Map<String, String> colouredBrand(EmailBranding resolved) {
+    var values = neutralBrand();
+    values.put("primaryColor", resolved.accentColor());
+    values.put("accentColor", resolved.accentColor());
+    return values;
+  }
+
   private static Map<String, String> neutralBrand() {
     return new LinkedHashMap<>(
         Map.ofEntries(
@@ -758,5 +764,28 @@ class AdviceSeekerReplyEmailServiceTest {
             Map.entry("unsubscribeUrl", "https://tenant.example.net/profile/einstellungen/email"),
             Map.entry("privacyUrl", "https://tenant.example.net/datenschutz"),
             Map.entry("imprintUrl", "https://tenant.example.net/impressum")));
+  }
+
+  @Test
+  void freshlyRevokedConversationPolicySuppressesQueuedReplyWithoutSilencingTheOtherChannel() {
+    when(routes.resolve(7L))
+        .thenReturn(
+            Optional.of(
+                new TenantSystemEmailRouteService.Route(
+                    TenantSystemEmailRouteService.Mode.PLATFORM, null)));
+    var user = asker(true, "asker@example.net");
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(user)));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+    when(tenants.getRestrictedTenantDataFresh(7L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(7L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailAgencyCounsellingEnabled(false)
+                        .featureAskerBrowserAgencyCounsellingEnabled(true)));
+    service.deliverPending(1L);
+    verify(writer).finish(1L, Status.REJECTED);
+    verify(delivery, org.mockito.Mockito.never()).sendReply(anyLong(), any(), any(), any(), any());
   }
 }

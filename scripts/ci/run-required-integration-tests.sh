@@ -46,6 +46,7 @@ run_maven() {
 # would have removed the test from required CI entirely instead of moving it.
 mariadb_owned_tests=(
   DatabaseChangelogDriftIT
+  ConsultantTopicUniqueKeyMariaDbIT
   ConsultantPictureDatabaseIT
   AdminStatisticsRepositoryMariaDbIT
   ProvisioningCompensationMariaDbIT
@@ -56,6 +57,7 @@ mariadb_owned_tests=(
   DeleteUserAccountSchedulerMariaDbReplicaIT
   DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT
   SupportRoomMigrationConvergenceIT
+  SessionOwnershipMariaDbIT
   AccountInviteRevokeAcceptRaceMariaDbIT
 )
 required_test_pattern="**/*IT"

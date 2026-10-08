@@ -37,13 +37,16 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
+import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.model.ConsultantTopic;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -70,6 +73,7 @@ import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup;
 import de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
@@ -80,6 +84,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.Cookie;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -119,7 +124,7 @@ import org.springframework.web.client.RestTemplate;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {"feature.topics.enabled=true", "multitenancy.enabled=false"})
 @Transactional
-class UserAdminControllerE2EIT {
+class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
     org.mockito.Mockito.when(
@@ -185,6 +190,7 @@ class UserAdminControllerE2EIT {
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
+        IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
@@ -258,7 +264,7 @@ class UserAdminControllerE2EIT {
         .thenReturn(Map.of("platformName", "Test product"));
     when(renderer.render(Mockito.eq("konto-einrichten"), Mockito.any(), Mockito.any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("Setup", "<p>Setup</p>", "Setup"));
-    when(setupMail.sendRendered(Mockito.anyString(), Mockito.any()))
+    when(setupMail.sendRendered(Mockito.anyString(), Mockito.any(), Mockito.any()))
         .thenAnswer(
             invocation -> new InviteMailSendReceipt(invocation.getArgument(0), Instant.now()));
   }
@@ -1205,6 +1211,141 @@ class UserAdminControllerE2EIT {
     List<String> ids =
         JsonPath.read(mvcResult.getResponse().getContentAsString(), "$._embedded[*]._embedded.id");
     assertThat(ids).as("order %s", order).containsExactlyElementsOf(expectedIds);
+  }
+
+  // #1263 B3: Träger (tenantId) and Beratungsstelle (agencyId) filters on the admin searches.
+  private static final String FILTER_PROBE = "b3filterprobe";
+  private static final Long FILTER_TENANT_A = 5151L;
+  private static final Long FILTER_TENANT_B = 5252L;
+  private static final Long FILTER_AGENCY_X = 61001L;
+  private static final Long FILTER_AGENCY_Y = 61002L;
+  private static final String TENANT_ADMINS_SEARCH = "/useradmin/tenantadmins/search";
+  private static final String AGENCY_ADMINS_SEARCH = "/useradmin/agencyadmins/search";
+
+  @Autowired private AdminAgencyRepository adminAgencyRepository;
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdmins_Should_returnOnlyThatTenant_When_platformAdminFiltersByTenantId()
+      throws Exception {
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    givenFilterAdmin("b3-tenant-a1", AdminType.TENANT, FILTER_TENANT_A);
+    givenFilterAdmin("b3-tenant-a2", AdminType.TENANT, FILTER_TENANT_A);
+    givenFilterAdmin("b3-tenant-a3", AdminType.TENANT, FILTER_TENANT_A);
+    givenFilterAdmin("b3-tenant-b1", AdminType.TENANT, FILTER_TENANT_B);
+
+    assertFilteredSearch(
+        TENANT_ADMINS_SEARCH,
+        "&tenantId=" + FILTER_TENANT_A,
+        "b3-tenant-a1",
+        "b3-tenant-a2",
+        "b3-tenant-a3");
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_filterByTenantIdAndAgencyId_When_platformAdmin() throws Exception {
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    givenFilterAdmin("b3-agency-a1", AdminType.AGENCY, FILTER_TENANT_A, FILTER_AGENCY_X);
+    givenFilterAdmin(
+        "b3-agency-a2", AdminType.AGENCY, FILTER_TENANT_A, FILTER_AGENCY_X, FILTER_AGENCY_Y);
+    givenFilterAdmin("b3-agency-a3", AdminType.AGENCY, FILTER_TENANT_A, FILTER_AGENCY_Y);
+    givenFilterAdmin("b3-agency-b1", AdminType.AGENCY, FILTER_TENANT_B, FILTER_AGENCY_X);
+
+    assertFilteredSearch(
+        AGENCY_ADMINS_SEARCH,
+        "&tenantId=" + FILTER_TENANT_A,
+        "b3-agency-a1",
+        "b3-agency-a2",
+        "b3-agency-a3");
+    assertFilteredSearch(
+        AGENCY_ADMINS_SEARCH,
+        "&agencyId=" + FILTER_AGENCY_X,
+        "b3-agency-a1",
+        "b3-agency-a2",
+        "b3-agency-b1");
+    assertFilteredSearch(
+        AGENCY_ADMINS_SEARCH,
+        "&agencyId=" + FILTER_AGENCY_X + "," + FILTER_AGENCY_Y,
+        "b3-agency-a1",
+        "b3-agency-a2",
+        "b3-agency-a3",
+        "b3-agency-b1");
+    assertFilteredSearch(
+        AGENCY_ADMINS_SEARCH,
+        "&tenantId=" + FILTER_TENANT_A + "&agencyId=" + FILTER_AGENCY_Y,
+        "b3-agency-a2",
+        "b3-agency-a3");
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN, AuthorityValue.RESTRICTED_AGENCY_ADMIN})
+  void searchAgencyAdmins_Should_notWidenScope_When_bstAdminFiltersByForeignAgency()
+      throws Exception {
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn("b3-agency-a1");
+    givenFilterAdmin("b3-agency-a1", AdminType.AGENCY, FILTER_TENANT_A, FILTER_AGENCY_X);
+    givenFilterAdmin("b3-agency-a3", AdminType.AGENCY, FILTER_TENANT_A, FILTER_AGENCY_Y);
+
+    // Single-tenant here; the tenant-bound cases live in UserAdminIdScopeIT (multi-tenant).
+    assertFilteredSearch(AGENCY_ADMINS_SEARCH, "&agencyId=" + FILTER_AGENCY_Y);
+    assertFilteredSearch(
+        AGENCY_ADMINS_SEARCH,
+        "&agencyId=" + FILTER_AGENCY_X + "," + FILTER_AGENCY_Y,
+        "b3-agency-a1");
+  }
+
+  private void givenFilterAdmin(String id, AdminType type, Long tenantId, Long... agencyIds) {
+    var admin =
+        adminRepository.saveAndFlush(
+            Admin.builder()
+                .id(id)
+                .type(type)
+                .tenantId(tenantId)
+                .username(id)
+                .firstName("First")
+                .lastName("Last")
+                .email(FILTER_PROBE + "-" + id + "@example.com")
+                .build());
+    for (Long agencyId : agencyIds) {
+      adminAgencyRepository.save(AdminAgency.builder().admin(admin).agencyId(agencyId).build());
+    }
+  }
+
+  /**
+   * Walks every page (two per page) of the probe search with the given filter and asserts that
+   * exactly the expected ids come back, each once, and that {@code total} is the filtered count.
+   */
+  private void assertFilteredSearch(String path, String filter, String... expectedIds)
+      throws Exception {
+    var ids = new ArrayList<String>();
+    var perPage = 2;
+    var pages = Math.max(1, (expectedIds.length + perPage - 1) / perPage);
+    for (var page = 1; page <= pages; page++) {
+      MvcResult mvcResult =
+          this.mockMvc
+              .perform(
+                  get(
+                      path
+                          + "?query="
+                          + FILTER_PROBE
+                          + "&page="
+                          + page
+                          + "&perPage="
+                          + perPage
+                          + "&field=FIRSTNAME&order=ASC"
+                          + filter))
+              .andExpect(status().isOk())
+              .andReturn();
+      var body = mvcResult.getResponse().getContentAsString();
+      assertThat((Integer) JsonPath.read(body, "$.total"))
+          .as("total for %s page %d", filter, page)
+          .isEqualTo(expectedIds.length);
+      if (expectedIds.length > 0) {
+        ids.addAll(JsonPath.<List<String>>read(body, "$._embedded[*]._embedded.id"));
+      }
+    }
+    assertThat(ids).as("ids for %s", filter).containsExactly(expectedIds);
   }
 
   private void assertAllElementsAreOfAdminType(JSONArray embedded, AdminType adminType) {

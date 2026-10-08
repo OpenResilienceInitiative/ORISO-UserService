@@ -58,6 +58,7 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.OtpType;
@@ -72,9 +73,11 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.BasicConsultingTypeResponseDTO;
@@ -85,6 +88,7 @@ import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.Cookie;
 import java.net.URI;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -152,7 +156,7 @@ import org.springframework.web.util.UriTemplateHandler;
       "identity.otp-allowed-for-consultants=true"
     })
 @Transactional
-class UserControllerE2EIT {
+class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
     org.mockito.Mockito.when(
@@ -187,6 +191,8 @@ class UserControllerE2EIT {
   @Autowired private ChatAgencyRepository chatAgencyRepository;
 
   @Autowired private UserAgencyRepository userAgencyRepository;
+
+  @Autowired private UserChatRepository userChatRepository;
 
   @MockitoBean private ConsultingTypeControllerApi consultingTypeControllerApi;
 
@@ -279,14 +285,15 @@ class UserControllerE2EIT {
     consultantAgencies = new ArrayList<>();
     patchUserDTO = null;
     userDTO = null;
-    if (nonNull(chat) && chatRepository.existsById(chat.getId())) {
-      chatRepository.deleteById(chat.getId());
-    }
-    chat = null;
     if (nonNull(chatAgency) && chatAgencyRepository.existsById(chatAgency.getId())) {
       chatAgencyRepository.deleteById(chatAgency.getId());
     }
     chatAgency = null;
+    if (nonNull(chat) && chatRepository.existsById(chat.getId())) {
+      userChatRepository.deleteAll(userChatRepository.findByChat(chat));
+      chatRepository.deleteById(chat.getId());
+    }
+    chat = null;
     if (nonNull(userAgency) && userAgencyRepository.existsById(userAgency.getId())) {
       userAgencyRepository.deleteById(userAgency.getId());
     }
@@ -301,7 +308,8 @@ class UserControllerE2EIT {
   @BeforeEach
   public void setUp() throws MatrixCreateUserException {
     dpaOwner =
-        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, 1L);
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
+            ownerFactory, 1L);
     MatrixCreateUserResponseDTO matrixCreateUserResponse = new MatrixCreateUserResponseDTO();
     matrixCreateUserResponse.setUserId("@test-user:matrix.example.org");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
@@ -734,6 +742,37 @@ class UserControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void sessionListShouldReturnTheAskersStoredAnimalAndClearIt() throws Exception {
+    givenABearerToken();
+    givenAValidConsultantWithId("34c3x5b1-0677-4fd2-a7ea-56a71aefd099");
+    givenConsultingTypeServiceResponse();
+    givenAValidTopicServiceResponse();
+    var session = sessionRepository.findById(1215L).orElseThrow();
+    var asker = session.getUser();
+    asker.setAvatarId("fox");
+    userRepository.save(asker);
+    mockMvc
+        .perform(
+            get("/users/sessions/consultants?status=2&count=15&filter=all&offset=0")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("sessions[0].user.avatarId", is("fox")));
+    asker.setAvatarId(null);
+    userRepository.save(asker);
+    mockMvc
+        .perform(
+            get("/users/sessions/consultants?status=2&count=15&filter=all&offset=0")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("sessions[0].user.avatarId", is(nullValue())));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
   void getSessionsForAuthenticatedConsultantShouldRespondWithBadRequestIfOffsetNegative()
       throws Exception {
     givenABearerToken();
@@ -967,6 +1006,73 @@ class UserControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void getUserDataShouldReturnWalkThroughOffForACounsellorWithTheNewDefault() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    var seeded = consultant.getWalkThroughEnabled();
+    consultant.setWalkThroughEnabled(new Consultant().getWalkThroughEnabled());
+    consultantRepository.save(consultant);
+
+    try {
+      expectWalkThroughEnabled(false);
+    } finally {
+      restoreWalkThroughEnabled(seeded);
+    }
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchUserDataShouldSwitchTheCounsellorsToursOnAndOff() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    var seeded = consultant.getWalkThroughEnabled();
+
+    try {
+      patchWalkThroughEnabled(false);
+      expectWalkThroughEnabled(false);
+
+      patchWalkThroughEnabled(true);
+      expectWalkThroughEnabled(true);
+    } finally {
+      restoreWalkThroughEnabled(seeded);
+    }
+  }
+
+  private void restoreWalkThroughEnabled(Boolean value) {
+    var stored = consultantRepository.findById(consultant.getId()).orElseThrow();
+    stored.setWalkThroughEnabled(value);
+    consultantRepository.save(stored);
+  }
+
+  private void expectWalkThroughEnabled(boolean expected) throws Exception {
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("isWalkThroughEnabled", is(expected)));
+  }
+
+  private void patchWalkThroughEnabled(boolean value) throws Exception {
+    mockMvc
+        .perform(
+            patch("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"walkThroughEnabled\": " + value + "}")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isNoContent());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
   void getUserDataShouldReturnLiveChatViaSidebarFalseByDefaultForConsultant() throws Exception {
     givenABearerToken();
     givenAValidConsultant();
@@ -1016,6 +1122,108 @@ class UserControllerE2EIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("liveChatViaSidebar", is(nullValue())));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void patchUserDataShouldStoreAndClearTheAdviceSeekersAnimal() throws Exception {
+    givenABearerToken();
+    givenAValidUser();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
+
+    patchUserData("{\"avatarId\": \"magpie\"}");
+    expectAvatar("avatarId", is("magpie"));
+
+    patchUserData("{\"avatarId\": \"\"}");
+    expectAvatar("avatarId", is(nullValue()));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchUserDataShouldStoreAndClearTheConsultantsMotif() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+
+    patchUserData("{\"avatarKind\": \"ICON\", \"avatarId\": \"magpie\"}");
+    expectAvatar("avatarKind", is("ICON"));
+    expectAvatar("avatarId", is("magpie"));
+
+    patchUserData("{\"avatarKind\": \"INITIALS\", \"avatarId\": \"\"}");
+    expectAvatar("avatarKind", is("INITIALS"));
+    expectAvatar("avatarId", is(nullValue()));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchUserDataShouldDistinguishStandardFromExplicitInitialsAndKeepOtherAccountsUnchanged()
+      throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    var other =
+        StreamSupport.stream(consultantRepository.findAll().spliterator(), false)
+            .filter(candidate -> !candidate.getId().equals(consultant.getId()))
+            .findFirst()
+            .orElseThrow();
+    other.setAvatarKind(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON);
+    other.setAvatarId("owl");
+    consultantRepository.save(other);
+    patchUserData(
+        "{\"avatarKind\":\"ICON\",\"avatarId\":\"magpie\",\"id\":\"" + other.getId() + "\"}");
+    expectAvatar("avatarId", is("magpie"));
+    assertEquals("owl", consultantRepository.findById(other.getId()).orElseThrow().getAvatarId());
+    patchUserData("{\"walkThroughEnabled\":true}");
+    expectAvatar("avatarId", is("magpie"));
+    patchUserData("{\"avatarId\":\"\"}");
+    expectAvatar("avatarKind", is(nullValue()));
+    expectAvatar("avatarId", is(nullValue()));
+    patchUserData("{\"avatarKind\":\"INITIALS\",\"avatarId\":\"\"}");
+    expectAvatar("avatarKind", is("INITIALS"));
+    patchUserData("{\"avatarId\":\"\"}");
+    expectAvatar("avatarKind", is(nullValue()));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void patchUserDataShouldRejectAnAvatarThatIsNotABundledId() throws Exception {
+    givenAValidUser();
+
+    mockMvc
+        .perform(
+            patch("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"avatarId\": \"https://example.com/me.png\"}")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest());
+  }
+
+  private void patchUserData(String body) throws Exception {
+    mockMvc
+        .perform(
+            patch("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isNoContent());
+  }
+
+  private void expectAvatar(String field, org.hamcrest.Matcher<?> matcher) throws Exception {
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath(field, matcher));
   }
 
   private void expectLiveChatViaSidebar(boolean expected) throws Exception {
@@ -1689,6 +1897,18 @@ class UserControllerE2EIT {
     assertNotNull(savedUser);
     assertEquals("de", savedUser.getLanguageCode().toString());
 
+    Object[] inactivity =
+        (Object[])
+            entityManager
+                .createNativeQuery(
+                    "SELECT tenant_id,assigned_months,revision,status FROM account_inactivity WHERE identity_id=:identity")
+                .setParameter("identity", savedUser.getUserId())
+                .getSingleResult();
+    assertEquals(1L, ((Number) inactivity[0]).longValue());
+    assertEquals(24, ((Number) inactivity[1]).intValue());
+    assertEquals(0L, ((Number) inactivity[2]).longValue());
+    assertEquals("ACTIVE", inactivity[3]);
+
     var session = sessionRepository.findByUserUserId(savedUser.getUserId()).get(0);
     assertFalse(session.getIsConsultantDirectlySet());
   }
@@ -1719,6 +1939,181 @@ class UserControllerE2EIT {
 
     var session = sessionRepository.findByUserUserId(savedUser.getUserId()).get(0);
     assertTrue(session.getIsConsultantDirectlySet());
+  }
+
+  @Test
+  void registerUserThroughAGroupInviteShouldAssignTheGroupAndOpenNoEnquiry() throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
+    userDTO.setGroupChatId(chat.getId());
+    userDTO.setGroupChatInviteToken(GROUP_INVITE_TOKEN);
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isCreated());
+
+    var savedUser = registeredUser();
+    assertThat(sessionRepository.findByUserUserId(savedUser.getUserId())).isEmpty();
+    assertThat(userChatRepository.findByUser(savedUser))
+        .extracting(userChat -> userChat.getChat().getId())
+        .containsExactly(chat.getId());
+  }
+
+  @Test
+  void registerUserThroughAGroupInviteOfAnotherAgencyShouldBeRejectedWithoutAnAccount()
+      throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    givenASelfHelpGroupOfAgency(userDTO.getAgencyId() == 1L ? 2L : 1L);
+    userDTO.setGroupChatId(chat.getId());
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isBadRequest());
+
+    assertThat(userRepository.findAll())
+        .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
+  }
+
+  @Test
+  void registerUserThroughAnInternalGroupShouldBeRejectedWithoutAnAccount() throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    givenAGroupChatOfAgency(userDTO.getAgencyId(), ConversationType.INTERNAL_GROUP);
+    userDTO.setGroupChatId(chat.getId());
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isBadRequest());
+
+    assertThat(userRepository.findAll())
+        .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
+  }
+
+  @Test
+  void registerUserThroughAGroupInviteAndAConsultantLinkShouldBeRejectedWithoutAnAccount()
+      throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO(consultantRepository.findAll().iterator().next().getId());
+    givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
+    userDTO.setGroupChatId(chat.getId());
+    userDTO.setGroupChatInviteToken(GROUP_INVITE_TOKEN);
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isBadRequest());
+
+    assertThat(userRepository.findAll())
+        .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
+  void aClientWhoOnlyJoinedAGroupShouldStillLoadTheirAccountData() throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
+    userDTO.setGroupChatId(chat.getId());
+    userDTO.setGroupChatInviteToken(GROUP_INVITE_TOKEN);
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isCreated());
+    givenABearerToken();
+    givenTheAuthenticatedClient(registeredUser());
+    givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
+
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("userId", is(user.getUserId())))
+        .andExpect(jsonPath("sessions").doesNotExist());
+  }
+
+  @Test
+  void registerUserThroughAGroupInviteWithoutTheInviteTokenShouldBeRejectedWithoutAnAccount()
+      throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
+    userDTO.setGroupChatId(chat.getId());
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isForbidden());
+
+    assertThat(userRepository.findAll())
+        .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
+  }
+
+  @Test
+  void registerUserThroughAGroupInviteWithAWrongInviteTokenShouldBeRejectedWithoutAnAccount()
+      throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
+    userDTO.setGroupChatId(chat.getId());
+    userDTO.setGroupChatInviteToken("guessed-" + GROUP_INVITE_TOKEN);
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isForbidden());
+
+    assertThat(userRepository.findAll())
+        .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
   }
 
   @Test
@@ -1884,6 +2279,47 @@ class UserControllerE2EIT {
     userDTO.setAgencyId(aPositiveLong());
     userDTO.setEmail(givenAValidEmail());
     userDTO.setReferer("validRef");
+    userDTO.setGroupChatId(null);
+    userDTO.setGroupChatInviteToken(null);
+    // EasyRandom would otherwise ask for a temporary account at random.
+    userDTO.setTemporary(false);
+  }
+
+  private static final String GROUP_INVITE_TOKEN = "q2Vx8mK4TzJ1bR7nW0cY5sLh9dFg3aPe";
+
+  private User registeredUser() {
+    return StreamSupport.stream(userRepository.findAll().spliterator(), false)
+        .filter(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  private void givenASelfHelpGroupOfAgency(Long agencyId) {
+    givenAGroupChatOfAgency(agencyId, ConversationType.SELF_HELP);
+  }
+
+  private void givenAGroupChatOfAgency(Long agencyId, ConversationType conversationType) {
+    var start = LocalDateTime.now().plusDays(1);
+    chat =
+        chatRepository.save(
+            Chat.builder()
+                .topic("Gesprächskreis")
+                .consultingTypeId(1)
+                .initialStartDate(start)
+                .startDate(start)
+                .duration(60)
+                .repeatCount(1)
+                .timezone("Europe/Berlin")
+                .chatModality(Chat.ChatModality.TEXT)
+                .conversationType(conversationType)
+                .inviteToken(GROUP_INVITE_TOKEN)
+                .maxParticipants(10)
+                .chatOwner(consultantRepository.findAll().iterator().next())
+                .sourceLanguage("de")
+                .createDate(LocalDateTime.now())
+                .updateDate(LocalDateTime.now())
+                .build());
+    chatAgency = chatAgencyRepository.save(new ChatAgency(chat, agencyId));
   }
 
   private void givenAUserDTOWithDemographics() {
@@ -2126,6 +2562,16 @@ class UserControllerE2EIT {
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anAuthority"));
   }
 
+  private void givenTheAuthenticatedClient(User client) {
+    user = client;
+    when(authenticatedUser.getUserId()).thenReturn(client.getUserId());
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    when(authenticatedUser.getUsername()).thenReturn(client.getUsername());
+    when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
+    when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anotherAuthority"));
+  }
+
   private void givenAValidUser() {
     user = userRepository.findAll().iterator().next();
     when(authenticatedUser.getUserId()).thenReturn(user.getUserId());
@@ -2278,6 +2724,9 @@ class UserControllerE2EIT {
     // Pinned: a random true is rejected with 400 for fixtures without a profile email, and which
     // value the shared EasyRandom draws shifts whenever PatchUserDTO gains a field.
     patchUserDTO.setMagicLinkLoginEnabled(false);
+    // A random string is no avatar id (400), and the shared fixtures keep their avatar (#1240).
+    patchUserDTO.setAvatarKind(null);
+    patchUserDTO.setAvatarId(null);
 
     var dailyEnquiries = new EmailToggle();
     dailyEnquiries.setName(EmailType.DAILY_ENQUIRY);

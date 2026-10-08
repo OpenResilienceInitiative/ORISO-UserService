@@ -48,16 +48,8 @@ class AssignChatFacadeTest {
 
   @org.junit.jupiter.api.BeforeEach
   void wireRealGroupPolicy() {
-    var policy = de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy();
-    var realAgencies =
-        (de.caritas.cob.userservice.api.service.agency.AgencyService)
-            org.springframework.test.util.ReflectionTestUtils.getField(policy, "agencyService");
     var groupPolicy =
-        new de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy(
-            policy,
-            org.mockito.Mockito.mock(
-                de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
-            realAgencies);
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy();
     assignChatFacade =
         new AssignChatFacade(chatService, userService, userChats, groupPolicy, appointmentEvents);
   }
@@ -94,13 +86,14 @@ class AssignChatFacadeTest {
 
   @Test
   void assignChat_Should_AddUserToChat() {
-    when(chatService.getChatByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(ACTIVE_CHAT));
+    var legacyChat = legacyGroup().repetitive(true).matrixRoomId(MATRIX_ROOM_ID).build();
+    when(chatService.getChatByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(legacyChat));
     when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(USER));
 
     assignChatFacade.assignChat(MATRIX_ROOM_ID, authenticatedUser);
 
     verify(chatService)
-        .saveUserChatRelation(UserChat.builder().user(USER).chat(ACTIVE_CHAT).build());
+        .saveUserChatRelation(UserChat.builder().user(USER).chat(legacyChat).build());
   }
 
   @Test
@@ -147,11 +140,14 @@ class AssignChatFacadeTest {
   }
 
   private static Chat.ChatBuilder legacyGroup() {
+    var owner = new de.caritas.cob.userservice.api.model.Consultant();
+    owner.setTenantId(41L);
     return Chat.builder()
         .id(ACTIVE_CHAT.getId())
         .topic("group")
         .initialStartDate(ACTIVE_CHAT.getStartDate())
         .startDate(ACTIVE_CHAT.getStartDate())
+        .chatOwner(owner)
         .inviteToken("link-token");
   }
 

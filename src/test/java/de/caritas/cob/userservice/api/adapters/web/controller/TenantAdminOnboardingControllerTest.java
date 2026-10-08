@@ -104,6 +104,46 @@ class TenantAdminOnboardingControllerTest {
   }
 
   @Test
+  void emailSetup_dispatchesByRoleWithoutRecipientInput() {
+    assertEquals(HttpStatus.NO_CONTENT, controller.startEmailTwoFactor("tok").getStatusCode());
+    verify(onboardingService).startEmailTwoFactor("tok");
+    probeAnswersCounsellor();
+    assertEquals(HttpStatus.NO_CONTENT, controller.startEmailTwoFactor("tok").getStatusCode());
+    verify(counsellorOnboardingService).startEmailTwoFactor("tok");
+  }
+
+  @Test
+  void emailActivation_dispatchesSelectedMethodAndKeepsAppDefault() {
+    var request = new TenantAdminOnboardingController.TwoFactorActivationRequestDTO();
+    request.otp = "123456";
+    request.method = de.caritas.cob.userservice.api.identity.IdentityOtpType.EMAIL;
+    controller.activateTwoFactor("tok", request);
+    verify(onboardingService).activateEmailTwoFactor("tok", "123456");
+    probeAnswersCounsellor();
+    controller.activateTwoFactor("tok", request);
+    verify(counsellorOnboardingService).activateEmailTwoFactor("tok", "123456");
+    request.method = null;
+    controller.activateTwoFactor("tok", request);
+    verify(counsellorOnboardingService).activateTwoFactor("tok", "123456");
+  }
+
+  @Test
+  void pendingRegistration_withoutAppSecret_stillAdvertisesEmail() {
+    var response =
+        TenantAdminOnboardingController.TenantAdminRegistrationResponseDTO.from(
+            new CounsellorRegistrationResult("consultant", null, null, true));
+    assertNotNull(response.twoFactor);
+    assertEquals(
+        java.util.List.of(
+            de.caritas.cob.userservice.api.identity.IdentityOtpType.EMAIL,
+            de.caritas.cob.userservice.api.identity.IdentityOtpType.APP),
+        response.twoFactor.methods);
+    assertEquals(
+        de.caritas.cob.userservice.api.identity.IdentityOtpType.EMAIL,
+        response.twoFactor.defaultMethod);
+  }
+
+  @Test
   void resolveOnboardingInvite_plainState_mapsInviteFieldsWithoutPhase() {
     when(onboardingService.resolveOnboardingInvite("tok"))
         .thenReturn(new OnboardingInviteState(invite(), false, OPERATOR_DPA_JSON, null));
@@ -252,7 +292,7 @@ class TenantAdminOnboardingControllerTest {
   }
 
   @Test
-  void resolveOnboardingInvite_resumableWithoutStoredSecret_omitsTwoFactorMaterial() {
+  void resolveOnboardingInvite_resumableWithoutStoredSecret_advertisesEmail() {
     AccountInvite resumable = invite();
     resumable.setStatus(AccountInviteStatus.ACCEPTED);
     when(onboardingService.resolveOnboardingInvite("tok"))
@@ -262,7 +302,11 @@ class TenantAdminOnboardingControllerTest {
 
     assertNotNull(body);
     assertEquals("PENDING_2FA_ACTIVATION", body.phase);
-    assertNull(body.twoFactor);
+    assertNotNull(body.twoFactor);
+    assertNull(body.twoFactor.secret);
+    assertEquals(
+        de.caritas.cob.userservice.api.identity.IdentityOtpType.EMAIL,
+        body.twoFactor.defaultMethod);
   }
 
   @Test

@@ -1,8 +1,10 @@
 package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -25,6 +27,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TopicPermissionPolicy;
 import de.caritas.cob.userservice.api.service.accountinvite.WizardAccept;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -39,9 +42,13 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Public counsellor onboarding behind an invite link (#997, Admin-panel wizard). Clone of the
@@ -73,6 +80,7 @@ public class CounsellorOnboardingService {
   private final @NonNull IdentityProfileLookup identityProfileLookup;
   private final @NonNull AgencyService agencyService;
   private final @NonNull TopicService topicService;
+  private final @NonNull ApplicationSettingsService applicationSettingsService;
   private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull AgencyCreationClient agencyCreationClient;
   private final @NonNull AgencyAdminInviteProvisioningService agencyAdminInviteProvisioningService;
@@ -115,7 +123,12 @@ public class CounsellorOnboardingService {
     }
     CoverageResolution coverage = resolveTopicCoverage(invite);
     return new CounsellorOnboardingState(
-        invite, false, coverage.topics(), coverage.availableTopics(), coverage.agencyExists());
+        invite,
+        false,
+        coverage.topics(),
+        coverage.availableTopics(),
+        coverage.agencyExists(),
+        !coverage.agencyExists() && oneTopicPerAgencyEnabled());
   }
 
   /** The database-only part of {@link #resolveOnboardingInvite}: locked load and classification. */
@@ -174,10 +187,18 @@ public class CounsellorOnboardingService {
     if (expired != null) {
       throw expired;
     }
+    // Check before identity creation or reservation consumption. Legacy centres keep their topics.
+    CoverageResolution coverage = resolveTopicCoverage(invite);
+    if (!coverage.agencyExists()
+        && command.topicIds() != null
+        && command.topicIds().stream().distinct().count() > 1
+        && oneTopicPerAgencyEnabled()) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.ONE_TOPIC_PER_AGENCY, HttpStatus.CONFLICT);
+    }
     // Agency admins run this wizard too; only a counselling invitee gets a consultant and a topic.
     boolean agencyAdmin = invite.getTargetRole() == AccountInviteTargetRole.AGENCY_ADMIN;
     boolean counsels = !agencyAdmin || alsoCounsellor(invite, command);
-    CoverageResolution coverage = resolveTopicCoverage(invite);
     if (counsels) {
       command = withAtLeastOneTopic(command, coverage);
       validateTopicSelection(command.topicIds(), coverage);
@@ -241,6 +262,22 @@ public class CounsellorOnboardingService {
     return new CounsellorRegistrationResult(consultantId, null, null, false);
   }
 
+  /** Sends the existing SPI challenge to the recipient of a live, accepted invitation. */
+  public void startEmailTwoFactor(String rawToken) {
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    OnboardingEmailSecondFactor.start(invite, identityProfileLookup, identitySecondFactor);
+  }
+
+  public void activateEmailTwoFactor(String rawToken, String oneTimePassword) {
+    if (isBlank(oneTimePassword)) {
+      throw new BadRequestException("otp is required");
+    }
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    OnboardingEmailSecondFactor.verify(
+        invite, oneTimePassword, identityProfileLookup, identitySecondFactor);
+    consumeTwoFactorGate(rawToken);
+  }
+
   /**
    * Confirms the pending TOTP setup with a first one-time password. Same contract as the
    * tenant-admin endpoint: an invalid or rejected code answers 400 (the wizard maps 400/422 to its
@@ -270,6 +307,7 @@ public class CounsellorOnboardingService {
             .findById(invite.getAcceptedByUserId())
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
+    OnboardingEmailSecondFactor.requireInactive(profile, identitySecondFactor);
     boolean valid =
         identitySecondFactor.setUpOtpCredential(
             profile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
@@ -277,7 +315,7 @@ public class CounsellorOnboardingService {
       throw new BadRequestException("Invalid one-time password");
     }
 
-    consumeTwoFactorGate(invite);
+    consumeTwoFactorGate(rawToken);
   }
 
   /**
@@ -333,12 +371,13 @@ public class CounsellorOnboardingService {
 
   /**
    * Terminal consumption of the link once Keycloak accepted the one-time password. The pending
-   * secret is cleared FIRST so the gate transition — which re-reads the invite by its acceptor —
-   * wins over the merge of the detached row loaded before the Keycloak round trip.
+   * token, expiry and pending gate are checked again under the row lock after the remote call.
+   * Clearing the pending secret before marking the gate active preserves the existing transition.
    */
-  private void consumeTwoFactorGate(AccountInvite invite) {
+  private void consumeTwoFactorGate(String rawToken) {
     inTransaction(
         () -> {
+          AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
           invite.setTotpPendingSecret(null);
           invite.setUpdateDate(LocalDateTime.now());
           accountInviteRepository.save(invite);
@@ -439,9 +478,30 @@ public class CounsellorOnboardingService {
     }
   }
 
-  /**
-   * The tenant's active topics and whether the lookup itself failed (as opposed to being empty).
-   */
+  /** Reads the current platform policy outside the short invite transactions. */
+  private boolean oneTopicPerAgencyEnabled() {
+    try {
+      var settings = applicationSettingsService.fetchApplicationSettings();
+      if (settings == null) {
+        throw new IllegalStateException("Missing platform settings");
+      }
+      var oneTopicPerAgency = settings.getOneTopicPerAgencyEnabled();
+      if (oneTopicPerAgency == null || oneTopicPerAgency.getValue() == null) {
+        throw new IllegalStateException("Missing one-topic-per-agency setting");
+      }
+      return Boolean.TRUE.equals(oneTopicPerAgency.getValue());
+    } catch (RestClientResponseException failure) {
+      log.warn(
+          "Application settings lookup failed with upstream status {}",
+          failure.getStatusCode().value());
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.SETTINGS_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE);
+    } catch (RestClientException | ResponseStatusException | IllegalStateException failure) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.SETTINGS_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+  }
+
   private record TopicLookup(Map<Long, TopicDTO> topicsById, boolean failed) {}
 
   private static TenantData snapshotTenantContext() {
@@ -746,12 +806,22 @@ public class CounsellorOnboardingService {
       /** The tenant's active topics the invitee may add on top of the coverage. */
       List<TopicOption> availableTopics,
       /** False when the invite's agency ID is still a reservation (new Beratungsstelle). */
-      boolean agencyExists) {
+      boolean agencyExists,
+      boolean oneTopicPerAgencyEnabled) {
+
+    public CounsellorOnboardingState(
+        AccountInvite invite,
+        boolean pendingTwoFactorResume,
+        List<TopicOption> topics,
+        List<TopicOption> availableTopics,
+        boolean agencyExists) {
+      this(invite, pendingTwoFactorResume, topics, availableTopics, agencyExists, false);
+    }
 
     /** Resume/legacy shape: no selectable extras, agency assumed to exist. */
     public CounsellorOnboardingState(
         AccountInvite invite, boolean pendingTwoFactorResume, List<TopicOption> topics) {
-      this(invite, pendingTwoFactorResume, topics, List.of(), true);
+      this(invite, pendingTwoFactorResume, topics, List.of(), true, false);
     }
   }
 

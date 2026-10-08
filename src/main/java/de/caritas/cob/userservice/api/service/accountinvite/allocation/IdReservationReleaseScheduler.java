@@ -50,7 +50,8 @@ public class IdReservationReleaseScheduler {
       }
       var technicalUser = identityClientConfig.getTechnicalUser();
       var login =
-          identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
+          identityAuthentication.loginService(
+              technicalUser.getClientId(), technicalUser.getClientSecret());
       // Ambient (not explicit) because the allocation clients are shared with the admin-triggered
       // invite flow, which must keep sending the admin's own token. Scoped to the releases only.
       for (Long taskId : pendingTaskIds) {

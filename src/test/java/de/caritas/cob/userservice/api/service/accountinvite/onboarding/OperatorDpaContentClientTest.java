@@ -55,11 +55,11 @@ class OperatorDpaContentClientTest {
   @BeforeEach
   void setUp() {
     TechnicalUserConfig technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
+    technicalUser.setClientId("technical");
+    technicalUser.setClientSecret("secret");
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
     IdentityLogin identityLogin = new IdentityLogin("token", 0, 0, null);
-    when(identityAuthentication.login(anyString(), anyString())).thenReturn(identityLogin);
+    when(identityAuthentication.loginService(anyString(), anyString())).thenReturn(identityLogin);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(anyString()))
         .thenReturn(new HttpHeaders());
     when(controllerFactory.createControllerApi()).thenReturn(tenantControllerApi);
@@ -253,7 +253,7 @@ class OperatorDpaContentClientTest {
    */
   @Test
   void lookupPublishedDpaReportsUpstreamErrorWhenTheTechnicalUserLoginFails() {
-    when(identityAuthentication.login(anyString(), anyString()))
+    when(identityAuthentication.loginService(anyString(), anyString()))
         .thenThrow(new IllegalStateException("technical user login failed"));
 
     var lookup = clientFor(OPERATOR_TENANT_ID).lookupPublishedDpa();
@@ -264,7 +264,7 @@ class OperatorDpaContentClientTest {
 
   @Test
   void fetchPublishedDpaDoesNotThrowWhenTheTechnicalUserLoginFails() {
-    when(identityAuthentication.login(anyString(), anyString()))
+    when(identityAuthentication.loginService(anyString(), anyString()))
         .thenThrow(new IllegalStateException("technical user login failed"));
 
     assertNull(clientFor(OPERATOR_TENANT_ID).fetchPublishedDpa());
@@ -354,7 +354,7 @@ class OperatorDpaContentClientTest {
 
     clientFor(OPERATOR_TENANT_ID).fetchPublishedDpaContent();
 
-    verify(identityAuthentication).login("technical", "secret");
+    verify(identityAuthentication).loginService("technical", "secret");
     verify(securityHeaderSupplier).getKeycloakAndCsrfHttpHeaders("token");
   }
 }

@@ -1439,9 +1439,21 @@ components:
         primaryColor:
           type: string
           example: '#FFFFFF'
+        accent:
+          type: string
+          example: '#FFB3C7'
+          description: >-
+            The light accent of the tenant seed set. Read from TenantService (ORISO-UserService#1252),
+            not used for mail yet; may be null.
         secondaryColor:
           type: string
           example: '#FFFFFF'
+        signal:
+          type: string
+          example: '#D93025'
+          description: >-
+            Optional signal/attention colour of the tenant seed set. Read from TenantService
+            (ORISO-UserService#1252), not used for mail yet; may be null.
     Content:
       type: object
       required:
@@ -1496,6 +1508,27 @@ components:
     Settings:
       type: object
       properties:
+        featureAskerEmailEnabled:
+          type: boolean
+          default: true
+        featureAskerEmailAgencyCounsellingEnabled:
+          type: boolean
+          default: true
+        featureAskerEmailLiveChatEnabled:
+          type: boolean
+          default: false
+        featureAskerEmailSelfHelpEnabled:
+          type: boolean
+          default: true
+        featureAskerBrowserAgencyCounsellingEnabled:
+          type: boolean
+          default: true
+        featureAskerBrowserLiveChatEnabled:
+          type: boolean
+          default: true
+        featureAskerBrowserSelfHelpEnabled:
+          type: boolean
+          default: true
         featureStatisticsEnabled:
           type: boolean
           example: 'false'
@@ -1721,9 +1754,33 @@ components:
           type: integer
           format: int64
           minimum: 0
+    AccountInactivitySettings:
+      type: object
+      description: Platform creation defaults only. Existing people retain their assigned months.
+      required: [askerMonths, consultantMonths, otherMonths, revision]
+      properties:
+        askerMonths:
+          type: integer
+          format: int32
+          minimum: 1
+        consultantMonths:
+          type: integer
+          format: int32
+          minimum: 1
+        otherMonths:
+          type: integer
+          format: int32
+          minimum: 1
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+
     TenantAdminControls:
       type: object
       properties:
+        accountInactivitySettings:
+          $ref: '#/components/schemas/AccountInactivitySettings'
         chatRecoverySettings:
           $ref: '#/components/schemas/ChatRecoverySettings'
         permissionsPageEnabled:

@@ -51,10 +51,10 @@ class TenantSystemEmailClientTest {
     ReflectionTestUtils.setField(
         client, "tenantServiceApiUrl", "http://tenantservice.internal:8081");
     var account = new TechnicalUserConfig();
-    account.setUsername("technical");
-    account.setPassword("test-secret");
+    account.setClientId("technical");
+    account.setClientSecret("test-secret");
     when(identityConfig.getTechnicalUser()).thenReturn(account);
-    when(authentication.login("technical", "test-secret"))
+    when(authentication.loginService("technical", "test-secret"))
         .thenReturn(new IdentityLogin("technical-token", 60, 60, "refresh"));
     var headers = new HttpHeaders();
     headers.setBearerAuth("technical-token");
@@ -142,6 +142,26 @@ class TenantSystemEmailClientTest {
                     new OrisoEmailRenderer.RenderedEmail("Subject", "<p>Body</p>", "Body")))
         .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
         .hasMessageContaining("OWN tenant SMTP");
+    server.verify();
+  }
+
+  @Test
+  void a422FromTheWireIsAConfigurationErrorToo() {
+    server
+        .expect(
+            once(),
+            requestTo(
+                "http://tenantservice.internal:8081/tenant/40/internal/system-email-deliveries"))
+        .andRespond(withStatus(HttpStatus.valueOf(422)));
+
+    assertThatThrownBy(
+            () ->
+                client.deliver(
+                    40L,
+                    "SUPERVISOR_ADDED",
+                    "recipient@example.org",
+                    new OrisoEmailRenderer.RenderedEmail("Subject", "<p>Body</p>", "Body")))
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
     server.verify();
   }
 

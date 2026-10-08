@@ -566,6 +566,37 @@ class ApplicationSettingsServiceTest {
       assertThat(controllerApi.settingsCallCount.get()).isEqualTo(1);
     }
 
+    @Test
+    void fetchApplicationSettings_readsPolicyChangeDespiteWarmCache() {
+      controllerApi.settingsResult =
+          new ApplicationSettingsDTO()
+              .oneTopicPerAgencyEnabled(
+                  new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                          .FeatureToggleDTO()
+                      .value(false));
+      cachedApplicationSettingsService.getApplicationSettings();
+      controllerApi.settingsResult =
+          new ApplicationSettingsDTO()
+              .oneTopicPerAgencyEnabled(
+                  new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                          .FeatureToggleDTO()
+                      .value(true));
+
+      assertThat(
+              cachedApplicationSettingsService
+                  .fetchApplicationSettings()
+                  .getOneTopicPerAgencyEnabled()
+                  .getValue())
+          .isTrue();
+      assertThat(
+              cachedApplicationSettingsService
+                  .getApplicationSettings()
+                  .getOneTopicPerAgencyEnabled()
+                  .getValue())
+          .isFalse();
+      assertThat(controllerApi.settingsCallCount.get()).isEqualTo(2);
+    }
+
     // Header wiring runs on the cache-miss path that populates the shared settings entry.
     @Test
     void getApplicationSettings_calledTwice_wiresHeadersOnlyOnFirstCall() {
@@ -598,8 +629,8 @@ class ApplicationSettingsServiceTest {
 
   private static IdentityClientConfig createTechnicalIdentityClientConfig() {
     TechnicalUserConfig technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical-user");
-    technicalUser.setPassword("technical-password");
+    technicalUser.setClientId("technical-user");
+    technicalUser.setClientSecret("technical-password");
     return createIdentityClientConfig(technicalUser);
   }
 
@@ -623,13 +654,18 @@ class ApplicationSettingsServiceTest {
     }
 
     @Override
-    public IdentityLogin login(String username, String password) {
+    public IdentityLogin loginService(String username, String password) {
       loginCount.incrementAndGet();
       lastUsername = username;
       if (failure != null) {
         throw failure;
       }
       return new IdentityLogin(accessToken, 300, 300, "refresh");
+    }
+
+    @Override
+    public IdentityLogin login(String username, String password) {
+      throw new AssertionError("Technical call must never use a human password grant");
     }
 
     @Override

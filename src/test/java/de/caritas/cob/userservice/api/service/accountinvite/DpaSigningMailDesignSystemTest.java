@@ -74,6 +74,13 @@ class DpaSigningMailDesignSystemTest {
 
   @BeforeEach
   void setUp() {
+    when(tenantService.getPlatformTenantDataFresh())
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(0L)
+                .theming(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Theming()
+                        .primaryColor("#1c4f8f")));
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("legal@example.org", Instant.now()));
     when(tenantTemplateSupplier.getTenantBaseUrl(any(RestrictedTenantDTO.class)))
@@ -97,7 +104,11 @@ class DpaSigningMailDesignSystemTest {
                 "smtp-user", "smtp-pass"),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(
-                brandingResolver, senderOrganisations));
+                brandingResolver, senderOrganisations),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .platformRoutes(),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .unusedRelay());
     dispatch = new DefaultDpaSigningEmailDispatchService(renderer, mailDispatch, CLOCK);
     forward = new DpaForwardEmailService(tenantService, dispatch, APP_ORIGIN);
   }

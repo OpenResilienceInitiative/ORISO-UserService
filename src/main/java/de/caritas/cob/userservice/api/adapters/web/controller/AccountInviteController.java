@@ -855,6 +855,13 @@ public class AccountInviteController {
      */
     public Boolean editable;
 
+    /**
+     * Whether this is the built-in default for its kind and {@link #language} (platform-owned,
+     * always active, changeable only by the platform admin). The Admin preselects the default that
+     * matches the user's language.
+     */
+    public Boolean systemDefault;
+
     public String kind;
     public String name;
     public String language;
@@ -869,6 +876,7 @@ public class AccountInviteController {
       dto.id = template.getId();
       dto.tenantId = template.getTenantId();
       dto.editable = editable;
+      dto.systemDefault = Boolean.TRUE.equals(template.getSystemDefault());
       dto.kind = template.getKind() == null ? null : template.getKind().name();
       dto.name = template.getName();
       dto.language = template.getLanguage();
