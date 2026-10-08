@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.port.out;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.neovisionaries.i18n.LanguageCode;
@@ -64,12 +65,9 @@ class SessionRepositoryIT {
     givenValidSession();
     session = underTest.save(session);
     Long id = session.getId();
-    try (var staleWriter = entityManagerFactory.createEntityManager();
-        var preferenceWriter = entityManagerFactory.createEntityManager()) {
+    try (var staleWriter = entityManagerFactory.createEntityManager()) {
       var stale = staleWriter.find(Session.class, id);
-      preferenceWriter.getTransaction().begin();
-      preferenceWriter.find(Session.class, id).setAlwaysAskBeforeAdditionalAccess(true);
-      preferenceWriter.getTransaction().commit();
+      underTest.updateAdditionalAccessPreference(id, true);
       staleWriter.getTransaction().begin();
       stale.setPostcode("54321");
       staleWriter.getTransaction().commit();
@@ -83,13 +81,60 @@ class SessionRepositoryIT {
       unrelatedWriter.getTransaction().begin();
       unrelatedWriter.find(Session.class, id).setPostcode("12345");
       unrelatedWriter.getTransaction().commit();
-      stalePreferenceWriter.getTransaction().begin();
-      stale.setAlwaysAskBeforeAdditionalAccess(false);
-      stalePreferenceWriter.getTransaction().commit();
+      // Preference writes intentionally use the dedicated production boundary, not stale entities.
+      assertTrue(stale.isAlwaysAskBeforeAdditionalAccess());
+      underTest.updateAdditionalAccessPreference(id, false);
     }
     var finalState = underTest.findById(id).orElseThrow();
     assertFalse(finalState.isAlwaysAskBeforeAdditionalAccess());
     assertEquals("12345", finalState.getPostcode());
+    session = finalState;
+  }
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void detachedStaleSessionSaveCannotRevertAnIndependentPreferenceWrite() {
+    givenAUser();
+    givenValidSession();
+    session = underTest.save(session);
+    Long id = session.getId();
+    Session stale;
+    try (var detachedReader = entityManagerFactory.createEntityManager()) {
+      stale = detachedReader.find(Session.class, id);
+    }
+    var ownershipVersion = stale.getRowVersion();
+    underTest.updateAdditionalAccessPreference(id, true);
+    assertEquals(ownershipVersion, underTest.findById(id).orElseThrow().getRowVersion());
+    stale.setPostcode("54321");
+    underTest.save(stale);
+    var finalState = underTest.findById(id).orElseThrow();
+    session = finalState;
+    assertTrue(finalState.isAlwaysAskBeforeAdditionalAccess());
+    assertEquals("54321", finalState.getPostcode());
+    assertEquals(ownershipVersion + 1, finalState.getRowVersion());
+  }
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void staleWholeSessionSaveStillRejectsAConcurrentStatusWrite() {
+    givenAUser();
+    givenValidSession();
+    session = underTest.save(session);
+    Long id = session.getId();
+    Session stale;
+    try (var reader = entityManagerFactory.createEntityManager()) {
+      stale = reader.find(Session.class, id);
+    }
+    var current = underTest.findById(id).orElseThrow();
+    current.setStatus(SessionStatus.DONE);
+    session = underTest.save(current);
+    stale.setPostcode("54321");
+    assertThrows(
+        org.springframework.orm.ObjectOptimisticLockingFailureException.class,
+        () -> underTest.save(stale));
+    var finalState = underTest.findById(id).orElseThrow();
+    assertEquals(SessionStatus.DONE, finalState.getStatus());
+    assertEquals(session.getPostcode(), finalState.getPostcode());
     session = finalState;
   }
 
@@ -102,15 +147,11 @@ class SessionRepositoryIT {
     Long id = saved.getId();
     entityManager.clear();
     assertFalse(underTest.findById(id).orElseThrow().isAlwaysAskBeforeAdditionalAccess());
-    var reloaded = underTest.findById(id).orElseThrow();
-    reloaded.setAlwaysAskBeforeAdditionalAccess(true);
-    underTest.save(reloaded);
+    underTest.updateAdditionalAccessPreference(id, true);
     entityManager.flush();
     entityManager.clear();
     assertTrue(underTest.findById(id).orElseThrow().isAlwaysAskBeforeAdditionalAccess());
-    var enabled = underTest.findById(id).orElseThrow();
-    enabled.setAlwaysAskBeforeAdditionalAccess(false);
-    underTest.save(enabled);
+    underTest.updateAdditionalAccessPreference(id, false);
     entityManager.flush();
     entityManager.clear();
     assertFalse(underTest.findById(id).orElseThrow().isAlwaysAskBeforeAdditionalAccess());
