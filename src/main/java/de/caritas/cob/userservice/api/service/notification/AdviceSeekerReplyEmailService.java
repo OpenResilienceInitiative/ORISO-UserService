@@ -249,6 +249,11 @@ public class AdviceSeekerReplyEmailService {
       if (tenant == null || !Objects.equals(tenant.getId(), claim.getTenantId())) {
         throw new IllegalStateException("Reply email tenant is unavailable");
       }
+      if (!consultantMail
+          && !AskerNotificationChannelPolicy.emailAllowed(session, tenant.getSettings())) {
+        writer.finish(deliveryId, Status.REJECTED);
+        return;
+      }
       if (multitenancyEnabled && !singleDomainMultitenancy && isBlank(tenant.getSubdomain())) {
         throw new IllegalStateException("Reply email tenant subdomain is missing");
       }

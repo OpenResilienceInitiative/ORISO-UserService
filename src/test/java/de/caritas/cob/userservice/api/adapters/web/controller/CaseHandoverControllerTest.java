@@ -50,6 +50,44 @@ class CaseHandoverControllerTest {
   }
 
   @Test
+  void consentPreference_bothPrefixesReadAndSaveValidatedChoice() throws Exception {
+    when(caseHandoverService.getConsentPreference(123L))
+        .thenReturn(new CaseHandoverService.ConsentPreference(123L, false));
+    when(caseHandoverService.updateConsentPreference(123L, true))
+        .thenReturn(new CaseHandoverService.ConsentPreference(123L, true));
+    for (String prefix : List.of("", "/service")) {
+      String url = prefix + "/users/sessions/123/case-handover/consent-preference";
+      mockMvc
+          .perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(url))
+          .andExpect(status().isOk())
+          .andExpect(
+              org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                      "$.sessionId")
+                  .value(123))
+          .andExpect(
+              org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                      "$.alwaysAskBeforeAdditionalAccess")
+                  .value(false));
+      mockMvc
+          .perform(
+              org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(url)
+                  .contentType("application/json")
+                  .content("{\"alwaysAskBeforeAdditionalAccess\":true}"))
+          .andExpect(status().isOk())
+          .andExpect(
+              org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                      "$.alwaysAskBeforeAdditionalAccess")
+                  .value(true));
+      mockMvc
+          .perform(
+              org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(url)
+                  .contentType("application/json")
+                  .content("{}"))
+          .andExpect(status().isBadRequest());
+    }
+  }
+
+  @Test
   void listReasons_happyPath_returnsReasonList() {
     // Business reason: clients must load allowed handover reasons from a stable endpoint.
     var reasons = List.of(CaseHandoverReason.builder().code("R1").label("Reason").build());
