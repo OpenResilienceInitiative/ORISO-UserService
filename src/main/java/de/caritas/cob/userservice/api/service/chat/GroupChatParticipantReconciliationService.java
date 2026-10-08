@@ -31,6 +31,7 @@ public class GroupChatParticipantReconciliationService {
   private final GroupChatMembershipService membershipService;
   private final AgencySilentMembershipService consultantMembership;
   private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
+  private final GroupChatMatrixCleanupService matrixCleanup;
 
   /**
    * Reconciles co-moderators only when the client explicitly supplies {@code consultantIds}. A null
@@ -42,6 +43,7 @@ public class GroupChatParticipantReconciliationService {
       return;
     }
 
+    matrixCleanup.lockGroup(series);
     var participants = participantRepository.findBySeriesIdForUpdate(series.getId());
     var ownerId = series.getChatOwner().getId();
     var desiredIds = new LinkedHashSet<>(consultantIds);
@@ -88,50 +90,69 @@ public class GroupChatParticipantReconciliationService {
                     new ConflictException(
                         "Chat Series has no owner participation and cannot be updated"));
 
-    // Existing database rows do not prove Matrix membership: retry the join too.
-    // Complete joins before removing anyone, so a failed replacement keeps existing access.
-    for (var consultant : selectedConsultants.values()) {
-      var consultantId = consultant.getId();
-      var matrixUserId = consultant.getMatrixUserId();
-      if (matrixUserId == null || matrixUserId.isBlank()) {
-        matrixUserId = consultantMembership.ensureMatrixAccount(consultant);
-      }
-      if (matrixUserId == null
-          || matrixUserId.isBlank()
-          || !membershipService.addMemberToRoom(series, matrixUserId)) {
-        throw new InternalServerErrorException(
-            "Consultant " + consultantId + " could not join the Matrix room");
-      }
-    }
-
-    for (var consultantId : desiredIds) {
-      var existing = participantsByConsultantId.get(consultantId);
-      if (existing != null) {
-        if (existing.getRole() == ParticipantRole.PARTICIPANT) {
-          existing.setRole(ParticipantRole.CO_MODERATOR);
-          participantRepository.save(existing);
+    var cleanupOwner =
+        new GroupChatMatrixCleanupService.GroupOwner(
+            series.getId(), ownerId, series.getChatOwner().getTenantId());
+    var cleanupTasks = new java.util.ArrayList<Long>();
+    try {
+      // Existing database rows do not prove Matrix membership: retry the join too.
+      // Complete joins before removals; journal only confirmed new remote access.
+      for (var consultant : selectedConsultants.values()) {
+        var consultantId = consultant.getId();
+        var matrixUserId = consultant.getMatrixUserId();
+        if (matrixUserId == null || matrixUserId.isBlank())
+          matrixUserId = consultantMembership.ensureMatrixAccount(consultant);
+        if (matrixUserId == null || matrixUserId.isBlank())
+          throw new InternalServerErrorException("Consultant has no Matrix identity");
+        if (!participantsByConsultantId.containsKey(consultantId)) {
+          var remote = membershipService.isMemberInRoom(series, matrixUserId);
+          if (remote.isEmpty())
+            throw new InternalServerErrorException("New colleague's Matrix membership is unknown");
+          if (!remote.get())
+            cleanupTasks.add(
+                matrixCleanup.recordJoin(
+                    cleanupOwner, consultantId, series.getMatrixRoomId(), matrixUserId));
         }
-        continue;
+        if (!membershipService.addMemberToRoom(series, matrixUserId)) {
+          throw new InternalServerErrorException(
+              "Consultant " + consultantId + " could not join the Matrix room");
+        }
       }
-      participantRepository.save(
-          GroupChatParticipant.builder()
-              .chatId(sessionId)
-              .seriesId(series.getId())
-              .consultantId(consultantId)
-              .role(ParticipantRole.CO_MODERATOR)
-              .build());
-    }
-    for (var existing : participants) {
-      if (existing.getRole() == ParticipantRole.CO_MODERATOR
-          && !desiredIds.contains(existing.getConsultantId())) {
-        consultantRepository
-            .findByIdAndDeleteDateIsNull(existing.getConsultantId())
-            .ifPresent(
-                consultant ->
-                    membershipService.removeLeavingMemberFromRoom(
-                        series, consultant.getMatrixUserId()));
-        participantRepository.delete(existing);
+
+      for (var consultantId : desiredIds) {
+        var existing = participantsByConsultantId.get(consultantId);
+        if (existing != null) {
+          if (existing.getRole() == ParticipantRole.PARTICIPANT) {
+            existing.setRole(ParticipantRole.CO_MODERATOR);
+            participantRepository.save(existing);
+          }
+          continue;
+        }
+        participantRepository.save(
+            GroupChatParticipant.builder()
+                .chatId(sessionId)
+                .seriesId(series.getId())
+                .consultantId(consultantId)
+                .role(ParticipantRole.CO_MODERATOR)
+                .build());
       }
+      for (var existing : participants) {
+        if (existing.getRole() == ParticipantRole.CO_MODERATOR
+            && !desiredIds.contains(existing.getConsultantId())) {
+          var leaving = consultantRepository.findById(existing.getConsultantId());
+          if (leaving.isEmpty()
+              || !membershipService.removeLeavingMemberFromRoomAndConfirm(
+                  series, leaving.get().getMatrixUserId())) {
+            throw new InternalServerErrorException(
+                "Matrix removal is unconfirmed; participant tracking retained");
+          }
+          participantRepository.delete(existing);
+        }
+      }
+      cleanupTasks.forEach(matrixCleanup::clear);
+    } catch (RuntimeException failure) {
+      cleanupTasks.forEach(matrixCleanup::compensate);
+      throw failure;
     }
   }
 }

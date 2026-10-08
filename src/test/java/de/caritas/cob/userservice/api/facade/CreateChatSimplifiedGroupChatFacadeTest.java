@@ -67,6 +67,9 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   @Mock private UserRepository userRepository;
   @Mock private AgencySilentMembershipService consultantMembership;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService matrixCleanup;
+
   @SuppressWarnings("unused")
   @Spy
   private ChatConverter chatConverter;
@@ -94,7 +97,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
             groupChatParticipantRepository,
             userRepository,
             consultantMembership,
-            groupPolicy);
+            groupPolicy,
+            matrixCleanup);
     consultant = mock(Consultant.class);
     when(consultant.getId()).thenReturn("creator-consultant-id");
     when(consultant.getMatrixUserId()).thenReturn("@creator:matrix.org");
@@ -114,7 +118,6 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(userRepository.findByUserIdAndDeleteDateIsNull(any())).thenReturn(Optional.of(systemUser));
 
     when(agencyService.getAgency(any())).thenReturn(AGENCY_DTO_KREUZBUND);
-    when(consultantRepository.findByIdAndDeleteDateIsNull(any())).thenReturn(Optional.empty());
   }
 
   @org.junit.jupiter.params.ParameterizedTest
@@ -143,6 +146,84 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     return dto;
   }
 
+  @Test
+  void creationBatchesDistinctActiveSelectionBeforeMatrixChanges() throws Exception {
+    var first = new Consultant();
+    first.setId("first");
+    first.setTenantId(41L);
+    first.setMatrixUserId("@first:matrix");
+    var second = new Consultant();
+    second.setId("second");
+    second.setTenantId(41L);
+    second.setMatrixUserId("@second:matrix");
+    when(consultantRepository.findByIdInAndDeleteDateIsNull(List.of("first", "second")))
+        .thenReturn(List.of(second, first));
+    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!room:matrix"));
+    when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("token");
+    doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
+    createChatFacade.createChatV2(
+        chatDtoWithConsultantIds(List.of("first", "second", "first", "creator-consultant-id")),
+        consultant);
+    verify(consultantRepository).findByIdInAndDeleteDateIsNull(List.of("first", "second"));
+    verify(consultantRepository, never()).findByIdAndDeleteDateIsNull(any());
+    verify(consultantMembership).joinConsultantIntoRoom(first, "!room:matrix", "token");
+    verify(consultantMembership).joinConsultantIntoRoom(second, "!room:matrix", "token");
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"", "   "})
+  void creationRejectsBlankSelectionWithoutAnyLookupOrSideEffect(String id) {
+    assertThrows(
+        BadRequestException.class,
+        () -> createChatFacade.createChatV2(chatDtoWithConsultantIds(List.of(id)), consultant));
+    org.mockito.Mockito.verifyNoInteractions(
+        consultantRepository,
+        matrixSynapseService,
+        consultantMembership,
+        sessionService,
+        chatService,
+        userRepository,
+        groupChatParticipantRepository);
+  }
+
+  @Test
+  void creationCompensatesCreatedRoomBeforeDeletingDatabaseHandle() throws Exception {
+    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!created:matrix"));
+    when(matrixCleanup.recordRoom(any(), any())).thenReturn(101L);
+    when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn(null);
+    doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> createChatFacade.createChatV2(chatDtoWithConsultantIds(List.of()), consultant));
+    var order = org.mockito.Mockito.inOrder(matrixCleanup, sessionService, chatService);
+    order
+        .verify(matrixCleanup)
+        .recordRoom(
+            org.mockito.ArgumentMatchers.argThat(
+                o -> o.ownerId().equals(consultant.getId()) && o.tenantId().equals(41L)),
+            org.mockito.ArgumentMatchers.eq("!created:matrix"));
+    order.verify(matrixCleanup).compensate(101L);
+    order.verify(sessionService).deleteSession(any());
+    order.verify(chatService).deleteChat(any());
+  }
+
+  @Test
+  void journalFailureImmediatelyPurgesNewRoomAndPreventsParticipantJoins() throws Exception {
+    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!created:matrix"));
+    when(matrixCleanup.recordRoom(any(), any()))
+        .thenThrow(new IllegalStateException("journal unavailable"));
+    when(matrixCleanup.purgeUnjournaledRoom("!created:matrix")).thenReturn(true);
+    doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> createChatFacade.createChatV2(chatDtoWithConsultantIds(List.of()), consultant));
+    verify(matrixCleanup).purgeUnjournaledRoom("!created:matrix");
+    verify(consultantMembership, never()).joinConsultantIntoRoom(any(), any(), any());
+  }
+
   private ResponseEntity<MatrixCreateRoomResponseDTO> matrixRoomResponse(String roomId) {
     MatrixCreateRoomResponseDTO body = new MatrixCreateRoomResponseDTO();
     body.setRoomId(roomId);
@@ -159,8 +240,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
         .thenReturn(matrixRoomResponse("!room-id:matrix.org"));
     when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("token-123");
-    when(consultantRepository.findByIdAndDeleteDateIsNull("participant-1"))
-        .thenReturn(Optional.empty());
+    when(consultantRepository.findByIdInAndDeleteDateIsNull(List.of("participant-1")))
+        .thenReturn(List.of());
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
 
     createChatFacade.createChatV1(chatDto, consultant);
@@ -174,8 +255,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
         .thenReturn(matrixRoomResponse("!room-id:matrix.org"));
     when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("token-123");
-    when(consultantRepository.findByIdAndDeleteDateIsNull("participant-1"))
-        .thenReturn(Optional.empty());
+    when(consultantRepository.findByIdInAndDeleteDateIsNull(List.of("participant-1")))
+        .thenReturn(List.of());
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
 
     createChatFacade.createChatV2(chatDto, consultant);
@@ -198,8 +279,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(participant.getId()).thenReturn("participant-1");
     when(participant.getTenantId()).thenReturn(41L);
     when(participant.getMatrixUserId()).thenReturn("@participant:matrix.org");
-    when(consultantRepository.findByIdAndDeleteDateIsNull("participant-1"))
-        .thenReturn(Optional.of(participant));
+    when(consultantRepository.findByIdInAndDeleteDateIsNull(List.of("participant-1")))
+        .thenReturn(List.of(participant));
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
 
     CreateChatResponseDTO result = createChatFacade.createChatV1(chatDto, consultant);
@@ -281,8 +362,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(participant.getId()).thenReturn("dummy-participant");
     when(participant.getTenantId()).thenReturn(41L);
     when(participant.getMatrixUserId()).thenReturn("@dummy:matrix.org");
-    when(consultantRepository.findByIdAndDeleteDateIsNull("dummy-participant"))
-        .thenReturn(Optional.of(participant));
+    when(consultantRepository.findByIdInAndDeleteDateIsNull(List.of("dummy-participant")))
+        .thenReturn(List.of(participant));
     // No series fields at all (the mock would answer 0 for repeatCount) -> internal team chat.
     when(chatDto.getRepeatCount()).thenReturn((Integer) null);
     when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
@@ -403,11 +484,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     selected.setId(participantId);
     selected.setTenantId(tenantId);
     if (deleted) selected.setDeleteDate(LocalDateTime.now());
-    when(consultantRepository.findByIdAndDeleteDateIsNull(participantId))
-        .thenReturn("missing".equals(participantId) ? Optional.empty() : Optional.of(selected));
-    when(consultantRepository.findByIdAndDeleteDateIsNull(participantId))
-        .thenReturn(
-            deleted || "missing".equals(participantId) ? Optional.empty() : Optional.of(selected));
+    when(consultantRepository.findByIdInAndDeleteDateIsNull(List.of(participantId)))
+        .thenReturn(deleted || "missing".equals(participantId) ? List.of() : List.of(selected));
     when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
         .thenReturn(matrixRoomResponse("!room:matrix.org"));
     when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("creator-token");
@@ -435,8 +513,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
         .thenReturn(matrixRoomResponse("!room:matrix.org"));
     when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("creator-token");
-    when(consultantRepository.findByIdAndDeleteDateIsNull("unknown-participant"))
-        .thenReturn(Optional.empty());
+    when(consultantRepository.findByIdInAndDeleteDateIsNull(List.of("unknown-participant")))
+        .thenReturn(List.of());
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
 
     assertThrows(
@@ -461,8 +539,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(consultantMembership.joinConsultantIntoRoom(
             org.mockito.ArgumentMatchers.eq(participant), any(), any()))
         .thenReturn(false);
-    when(consultantRepository.findByIdAndDeleteDateIsNull("participant-1"))
-        .thenReturn(Optional.of(participant));
+    when(consultantRepository.findByIdInAndDeleteDateIsNull(List.of("participant-1")))
+        .thenReturn(List.of(participant));
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
 
     assertThrows(
@@ -492,10 +570,9 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(p2.getId()).thenReturn("participant-2");
     when(p2.getTenantId()).thenReturn(41L);
     when(p2.getMatrixUserId()).thenReturn("@p2:matrix.org");
-    when(consultantRepository.findByIdAndDeleteDateIsNull("participant-1"))
-        .thenReturn(Optional.of(p1));
-    when(consultantRepository.findByIdAndDeleteDateIsNull("participant-2"))
-        .thenReturn(Optional.of(p2));
+    when(consultantRepository.findByIdInAndDeleteDateIsNull(
+            List.of("participant-1", "participant-2")))
+        .thenReturn(List.of(p1, p2));
 
     // p1 invite fails, p2 invite succeeds
     when(consultantMembership.joinConsultantIntoRoom(

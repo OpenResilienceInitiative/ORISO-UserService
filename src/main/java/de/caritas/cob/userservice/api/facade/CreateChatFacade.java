@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService;
 import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
@@ -51,6 +52,7 @@ public class CreateChatFacade {
   private final @NonNull de.caritas.cob.userservice.api.port.out.UserRepository userRepository;
   private final @NonNull AgencySilentMembershipService consultantMembership;
   private final @NonNull GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
+  private final @NonNull GroupChatMatrixCleanupService matrixCleanup;
 
   /**
    * Creates a group chat in MariaDB and Matrix.
@@ -59,6 +61,7 @@ public class CreateChatFacade {
    * @param consultant {@link Consultant}
    * @return the generated chat link URL (String)
    */
+  @org.springframework.transaction.annotation.Transactional
   public CreateChatResponseDTO createChatV1(ChatDTO chatDTO, Consultant consultant) {
     return createMatrixGroupChat(chatDTO, consultant);
   }
@@ -70,6 +73,7 @@ public class CreateChatFacade {
    * @param consultant {@link Consultant}
    * @return the generated chat link URL (String)
    */
+  @org.springframework.transaction.annotation.Transactional
   public CreateChatResponseDTO createChatV2(ChatDTO chatDTO, Consultant consultant) {
     return createMatrixGroupChat(chatDTO, consultant);
   }
@@ -93,20 +97,28 @@ public class CreateChatFacade {
     List<String> participantIds =
         chatDTO.getConsultantIds() == null ? List.of() : chatDTO.getConsultantIds();
     Long agencyId = resolveAgencyId(chatDTO, consultant);
-    List<Consultant> participants =
+    var selectedIds =
         participantIds.stream()
             .distinct()
             .filter(id -> !Objects.equals(id, consultant.getId()))
+            .toList();
+    if (selectedIds.stream().anyMatch(id -> id == null || id.isBlank())) {
+      throw new BadRequestException("Invalid selected consultant");
+    }
+    var activeById =
+        selectedIds.isEmpty()
+            ? java.util.Map.<String, Consultant>of()
+            : consultantRepository.findByIdInAndDeleteDateIsNull(selectedIds).stream()
+                .collect(
+                    java.util.stream.Collectors.toMap(
+                        Consultant::getId, java.util.function.Function.identity()));
+    List<Consultant> participants =
+        selectedIds.stream()
             .map(
                 id -> {
-                  if (id == null || id.isBlank()) {
-                    throw new BadRequestException("Invalid selected consultant");
-                  }
-                  Consultant participant =
-                      consultantRepository
-                          .findByIdAndDeleteDateIsNull(id)
-                          .orElseThrow(
-                              () -> new BadRequestException("Selected consultant is not active"));
+                  var participant = activeById.get(id);
+                  if (participant == null)
+                    throw new BadRequestException("Selected consultant is not active");
                   if (consultant.getTenantId() == null
                       || !Objects.equals(consultant.getTenantId(), participant.getTenantId())) {
                     throw new BadRequestException("Selected consultant belongs to another tenant");
@@ -115,6 +127,7 @@ public class CreateChatFacade {
                 })
             .toList();
     groupCounsellingDpaPolicy.requireCreation(chatDTO, agencyId, consultant);
+    matrixCleanup.lockOwner(consultant);
 
     // Create a session for the group (needed for backend logic)
     Session session = new Session();
@@ -170,6 +183,7 @@ public class CreateChatFacade {
     log.info("Created chat {} for group chat", chatId);
 
     String matrixRoomId = null;
+    Long cleanupTaskId = null;
 
     try {
       // Create Matrix room with PROPER ALIAS
@@ -185,6 +199,11 @@ public class CreateChatFacade {
           matrixSynapseService.createRoomAsMatrixUser(roomName, roomAlias, ownerMatrixUserId);
 
       matrixRoomId = matrixResponse.getBody().getRoomId();
+      cleanupTaskId =
+          matrixCleanup.recordRoom(
+              new GroupChatMatrixCleanupService.GroupOwner(
+                  chatId, consultant.getId(), consultant.getTenantId()),
+              matrixRoomId);
       log.info("Created Matrix room: {} for group chat session: {}", matrixRoomId, sessionId);
 
       // Persist the Matrix room ID on both domain records.
@@ -237,12 +256,28 @@ public class CreateChatFacade {
           matrixRoomId,
           joinedParticipants);
 
+      matrixCleanup.clear(cleanupTaskId);
       return new CreateChatResponseDTO()
           .matrixRoomId(matrixRoomId)
           .createdAt(session.getCreateDate().toString());
 
     } catch (Exception e) {
       log.error("Failed to create group chat: {}", e.getMessage(), e);
+      if (cleanupTaskId != null) {
+        matrixCleanup.compensate(cleanupTaskId);
+      } else if (matrixRoomId != null) {
+        // A failed journal write cannot authorize leaving an untracked created room behind.
+        try {
+          if (!matrixCleanup.purgeUnjournaledRoom(matrixRoomId)) {
+            log.error(
+                "New group room {} needs manual cleanup: journal and purge failed", matrixRoomId);
+          }
+        } catch (RuntimeException cleanupFailure) {
+          e.addSuppressed(cleanupFailure);
+          log.error(
+              "New group room {} needs manual cleanup: journal and purge failed", matrixRoomId);
+        }
+      }
       // Rollback: delete session and chat
       if (session.getId() != null) {
         try {

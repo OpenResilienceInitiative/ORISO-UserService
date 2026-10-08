@@ -65,6 +65,36 @@ class GroupChatMembershipServiceTest {
     logger.addAppender(logAppender);
   }
 
+  @Test
+  void removalConfirmationRequiresActualRemoteAbsence() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID)), Optional.of(List.of()));
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.leaveRoom(MATRIX_ROOM_ID, "token")).thenReturn(true);
+    assertTrue(
+        groupChatMembershipService.removeMemberFromRoomAndConfirm(
+            MATRIX_ROOM_ID, LEAVER_MATRIX_ID));
+    verify(matrixSynapseService).leaveRoom(MATRIX_ROOM_ID, "token");
+  }
+
+  @Test
+  void failedOrUnknownRemovalCannotBeReportedAsConfirmed() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID)), Optional.empty());
+    assertFalse(
+        groupChatMembershipService.removeMemberFromRoomAndConfirm(
+            MATRIX_ROOM_ID, LEAVER_MATRIX_ID));
+  }
+
+  @Test
+  void alreadyAbsentMemberNeedsNoTokenOrRemoteWrite() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID)).thenReturn(Optional.of(List.of()));
+    assertTrue(
+        groupChatMembershipService.removeMemberFromRoomAndConfirm(
+            MATRIX_ROOM_ID, LEAVER_MATRIX_ID));
+    verify(matrixSynapseService, never()).loginAsUserAccessToken(anyString());
+  }
+
   @AfterEach
   void tearDownLogging() {
     logger.detachAppender(logAppender);

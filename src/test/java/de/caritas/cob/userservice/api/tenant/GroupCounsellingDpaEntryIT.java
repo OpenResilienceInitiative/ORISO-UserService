@@ -38,6 +38,7 @@ class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
   private final List<String> invitedMemberBodies = new ArrayList<>();
   private String members = "{\"members\":[]}";
   private int memberStatus = 200;
+  private boolean leaveSucceeds = true;
 
   @Test
   void assignedNewcomerUsesServingOwnerBeforeMatrixAdmission() throws Exception {
@@ -194,7 +195,8 @@ class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
   @Test
   void removingAModeratorRemainsPossibleWhileTheOwnerServiceIsUnavailable() throws Exception {
     Chat chat = storedChat(ConversationType.SELF_HELP);
-    addModerator(chat);
+    Consultant moderator = addModerator(chat);
+    members = "{\"members\":[\"" + moderator.getMatrixUserId() + "\"]}";
     ownerStatus = 503;
 
     var response = update(chat, "[]");
@@ -204,6 +206,23 @@ class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
     assertEquals(1, matrixWrites.get());
     assertEquals(1, participants.findBySeriesId(chat.getId()).size());
     assertEquals("Changed synthetic group", chats.findById(chat.getId()).orElseThrow().getTopic());
+  }
+
+  @Test
+  void failedMatrixRemovalRetainsModeratorTrackingAndRollsBackTheUpdate() throws Exception {
+    Chat chat = storedChat(ConversationType.SELF_HELP);
+    Consultant moderator = addModerator(chat);
+    members = "{\"members\":[\"" + moderator.getMatrixUserId() + "\"]}";
+    leaveSucceeds = false;
+    ownerStatus = 503;
+
+    var response = update(chat, "[]");
+
+    assertEquals(500, response.statusCode(), response.body());
+    assertEquals(0, ownerReads.get());
+    assertEquals(1, matrixWrites.get());
+    assertEquals(2, participants.findBySeriesId(chat.getId()).size());
+    assertEquals("Synthetic AVV group", chats.findById(chat.getId()).orElseThrow().getTopic());
   }
 
   @Test
@@ -394,6 +413,11 @@ class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
       membershipWritePaths.add(request.getMethod() + " " + path);
       if (path.endsWith("/invite")) {
         invitedMemberBodies.add(((MockClientHttpRequest) request).getBodyAsString());
+      }
+      if (path.endsWith("/leave")) {
+        if (!leaveSucceeds)
+          return withStatus(HttpStatus.INTERNAL_SERVER_ERROR).createResponse(request);
+        members = "{\"members\":[]}";
       }
       return withSuccess(
               "{\"room_id\":\"!synthetic-stored:synthetic.oriso.test\"}",

@@ -56,7 +56,8 @@ class CreateChatMatrixMembershipTest {
             participants,
             users,
             membership,
-            mock(de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy.class));
+            mock(de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy.class),
+            mock(de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService.class));
     var owner = new Consultant();
     owner.setId("owner");
     owner.setTenantId(40L);
@@ -81,7 +82,8 @@ class CreateChatMatrixMembershipTest {
     when(agencies.getAgency(12L)).thenReturn(AGENCY_DTO_KREUZBUND);
     when(converter.convertToEntity(any(), any(), any())).thenReturn(chat);
     when(users.findByUserIdAndDeleteDateIsNull(any())).thenReturn(Optional.of(new User()));
-    when(consultants.findByIdAndDeleteDateIsNull("colleague")).thenReturn(Optional.of(colleague));
+    when(consultants.findByIdInAndDeleteDateIsNull(List.of("colleague")))
+        .thenReturn(List.of(colleague));
     var room = new MatrixCreateRoomResponseDTO();
     room.setRoomId("!group:matrix.org");
     when(matrix.createRoomAsMatrixUser(any(), any(), any())).thenReturn(ResponseEntity.ok(room));

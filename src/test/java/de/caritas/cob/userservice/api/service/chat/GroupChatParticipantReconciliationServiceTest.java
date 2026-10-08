@@ -34,6 +34,8 @@ class GroupChatParticipantReconciliationServiceTest {
   @Mock private GroupChatMembershipService membershipService;
   @Mock private AgencySilentMembershipService consultantMembership;
 
+  @Mock private GroupChatMatrixCleanupService matrixCleanup;
+
   private GroupChatParticipantReconciliationService service;
   private Chat series;
   private GroupChatParticipant owner;
@@ -48,12 +50,132 @@ class GroupChatParticipantReconciliationServiceTest {
             consultantRepository,
             membershipService,
             consultantMembership,
-            groupPolicy);
+            groupPolicy,
+            matrixCleanup);
+    Mockito.lenient()
+        .when(membershipService.removeLeavingMemberFromRoomAndConfirm(Mockito.any(), Mockito.any()))
+        .thenReturn(true);
+    Mockito.lenient()
+        .when(membershipService.isMemberInRoom(Mockito.any(Chat.class), Mockito.anyString()))
+        .thenReturn(Optional.of(false));
     var ownerConsultant = consultant("owner", "@owner:matrix");
     series = Mockito.mock(Chat.class);
     Mockito.lenient().when(series.getId()).thenReturn(42L);
     Mockito.lenient().when(series.getChatOwner()).thenReturn(ownerConsultant);
     owner = participant(7L, "owner", ParticipantRole.OWNER);
+  }
+
+  @Test
+  void laterJoinFailureCompensatesOnlyNewRemoteAccessAndRetainsOldMembers() {
+    var old = participant(7L, "returning", ParticipantRole.CO_MODERATOR);
+    var returning = consultant("returning", "@returning:matrix");
+    var first = consultant("first", "@first:matrix");
+    var second = consultant("second", "@second:matrix");
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, old));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("returning"))
+        .thenReturn(Optional.of(returning));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("first")).thenReturn(Optional.of(first));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("second"))
+        .thenReturn(Optional.of(second));
+    when(membershipService.addMemberToRoom(series, "@returning:matrix")).thenReturn(true);
+    when(membershipService.addMemberToRoom(series, "@first:matrix")).thenReturn(true);
+    when(matrixCleanup.recordJoin(
+            Mockito.any(), Mockito.eq("first"), Mockito.any(), Mockito.eq("@first:matrix")))
+        .thenReturn(1L);
+    when(matrixCleanup.recordJoin(
+            Mockito.any(), Mockito.eq("second"), Mockito.any(), Mockito.eq("@second:matrix")))
+        .thenReturn(2L);
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.reconcile(series, List.of("returning", "first", "second")));
+    verify(matrixCleanup).compensate(1L);
+    verify(matrixCleanup).compensate(2L);
+    verify(matrixCleanup, never())
+        .recordJoin(
+            Mockito.any(), Mockito.eq("returning"), Mockito.any(), Mockito.eq("@returning:matrix"));
+    verify(participantRepository, never()).save(Mockito.any());
+    verify(participantRepository, never()).delete(Mockito.any());
+    var order = Mockito.inOrder(matrixCleanup, membershipService);
+    order
+        .verify(matrixCleanup)
+        .recordJoin(Mockito.any(), Mockito.eq("first"), Mockito.any(), Mockito.eq("@first:matrix"));
+    order.verify(membershipService).addMemberToRoom(series, "@first:matrix");
+  }
+
+  @Test
+  void preExistingRemoteMemberIsNeverCompensatedAfterLaterFailure() {
+    var first = consultant("first", "@first:matrix");
+    var second = consultant("second", "@second:matrix");
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("first")).thenReturn(Optional.of(first));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("second"))
+        .thenReturn(Optional.of(second));
+    when(membershipService.isMemberInRoom(series, "@first:matrix")).thenReturn(Optional.of(true));
+    when(membershipService.addMemberToRoom(series, "@first:matrix")).thenReturn(true);
+    when(matrixCleanup.recordJoin(
+            Mockito.any(), Mockito.eq("second"), Mockito.any(), Mockito.eq("@second:matrix")))
+        .thenReturn(2L);
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.reconcile(series, List.of("first", "second")));
+    verify(matrixCleanup, never())
+        .recordJoin(Mockito.any(), Mockito.eq("first"), Mockito.any(), Mockito.eq("@first:matrix"));
+    verify(matrixCleanup).compensate(2L);
+  }
+
+  @Test
+  void unknownRemoteStateOrFailedJournalNeverAuthorizesANewJoin() {
+    var first = consultant("first", "@first:matrix");
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("first")).thenReturn(Optional.of(first));
+    when(membershipService.isMemberInRoom(series, "@first:matrix")).thenReturn(Optional.empty());
+    assertThrows(
+        InternalServerErrorException.class, () -> service.reconcile(series, List.of("first")));
+    verify(membershipService, never()).addMemberToRoom(Mockito.any(), Mockito.any());
+    verify(matrixCleanup, never())
+        .recordJoin(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
+    when(membershipService.isMemberInRoom(series, "@first:matrix")).thenReturn(Optional.of(false));
+    when(matrixCleanup.recordJoin(
+            Mockito.any(), Mockito.eq("first"), Mockito.any(), Mockito.eq("@first:matrix")))
+        .thenThrow(new IllegalStateException("journal unavailable"));
+    assertThrows(IllegalStateException.class, () -> service.reconcile(series, List.of("first")));
+    verify(membershipService, never()).addMemberToRoom(Mockito.any(), Mockito.any());
+  }
+
+  @Test
+  void softDeletedIdentityIsStillRemovedBeforeTrackingIsDeleted() {
+    var removed = participant(7L, "removed", ParticipantRole.CO_MODERATOR);
+    var identity = consultant("removed", "@removed:matrix");
+    identity.setDeleteDate(java.time.LocalDateTime.now());
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
+    when(consultantRepository.findById("removed")).thenReturn(Optional.of(identity));
+    service.reconcile(series, List.of());
+    var order = Mockito.inOrder(membershipService, participantRepository);
+    order
+        .verify(membershipService)
+        .removeLeavingMemberFromRoomAndConfirm(series, "@removed:matrix");
+    order.verify(participantRepository).delete(removed);
+    verify(consultantRepository, never()).findByIdAndDeleteDateIsNull("removed");
+  }
+
+  @Test
+  void failedMatrixRemovalKeepsParticipantTracking() {
+    when(membershipService.removeLeavingMemberFromRoomAndConfirm(Mockito.any(), Mockito.any()))
+        .thenReturn(false);
+    var removed = participant(7L, "removed", ParticipantRole.CO_MODERATOR);
+    var leaver = consultant("removed", "@removed:matrix");
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
+    Mockito.lenient()
+        .when(consultantRepository.findById("removed"))
+        .thenReturn(Optional.of(leaver));
+    Mockito.lenient()
+        .when(consultantRepository.findById("removed"))
+        .thenReturn(Optional.of(leaver));
+    Mockito.lenient()
+        .when(membershipService.isMemberInRoom(series, "@removed:matrix"))
+        .thenReturn(Optional.of(true));
+    assertThrows(InternalServerErrorException.class, () -> service.reconcile(series, List.of()));
+    verify(participantRepository, never()).delete(Mockito.any());
   }
 
   @Test
@@ -73,7 +195,8 @@ class GroupChatParticipantReconciliationServiceTest {
             consultantRepository,
             membershipService,
             consultantMembership,
-            admission);
+            admission,
+            matrixCleanup);
 
     org.junit.jupiter.api.Assertions.assertSame(
         refusal,
@@ -103,7 +226,8 @@ class GroupChatParticipantReconciliationServiceTest {
             consultantRepository,
             membershipService,
             consultantMembership,
-            admission);
+            admission,
+            matrixCleanup);
 
     guarded.reconcile(series, List.of("returning", "newcomer"));
 
@@ -179,12 +303,11 @@ class GroupChatParticipantReconciliationServiceTest {
     var removed = participant(7L, "removed", ParticipantRole.CO_MODERATOR);
     var removedConsultant = consultant("removed", "@removed:matrix");
     when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
-    when(consultantRepository.findByIdAndDeleteDateIsNull("removed"))
-        .thenReturn(Optional.of(removedConsultant));
+    when(consultantRepository.findById("removed")).thenReturn(Optional.of(removedConsultant));
 
     service.reconcile(series, List.of());
 
-    verify(membershipService).removeLeavingMemberFromRoom(series, "@removed:matrix");
+    verify(membershipService).removeLeavingMemberFromRoomAndConfirm(series, "@removed:matrix");
     verify(participantRepository).delete(removed);
     verify(participantRepository, never()).delete(owner);
   }
@@ -255,7 +378,7 @@ class GroupChatParticipantReconciliationServiceTest {
     when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
     var removedConsultant = consultant("removed", "@removed:matrix");
     Mockito.lenient()
-        .when(consultantRepository.findByIdAndDeleteDateIsNull("removed"))
+        .when(consultantRepository.findById("removed"))
         .thenReturn(Optional.of(removedConsultant));
     when(consultantRepository.findByIdAndDeleteDateIsNull("valid")).thenReturn(Optional.of(valid));
     Mockito.lenient()
@@ -292,7 +415,7 @@ class GroupChatParticipantReconciliationServiceTest {
     when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
     var removedConsultant = consultant("removed", "@removed:matrix");
     Mockito.lenient()
-        .when(consultantRepository.findByIdAndDeleteDateIsNull("removed"))
+        .when(consultantRepository.findById("removed"))
         .thenReturn(Optional.of(removedConsultant));
     when(consultantRepository.findByIdAndDeleteDateIsNull("newcomer"))
         .thenReturn(Optional.of(newcomer));
@@ -300,7 +423,8 @@ class GroupChatParticipantReconciliationServiceTest {
     assertThrows(
         InternalServerErrorException.class, () -> service.reconcile(series, List.of("newcomer")));
 
-    verify(membershipService, never()).removeLeavingMemberFromRoom(Mockito.any(), Mockito.any());
+    verify(membershipService, never())
+        .removeLeavingMemberFromRoomAndConfirm(Mockito.any(), Mockito.any());
     verify(participantRepository, never()).delete(Mockito.any());
   }
 
