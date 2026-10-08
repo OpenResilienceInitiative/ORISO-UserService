@@ -98,6 +98,10 @@ class AgencyAdminOnboardingWizardIT
 
   @MockitoBean private TenantService tenantService;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService
+      applicationSettingsService;
+
   @Autowired private MockMvc mockMvc;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private AdminRepository adminRepository;
@@ -125,6 +129,14 @@ class AgencyAdminOnboardingWizardIT
 
   @BeforeEach
   void upstreams() {
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(
+            new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                    .ApplicationSettingsDTO()
+                .oneTopicPerAgencyEnabled(
+                    new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                            .FeatureToggleDTO()
+                        .value(true)));
     when(agencyFacts.find(anyLong()))
         .thenAnswer(
             invocation ->
@@ -199,6 +211,7 @@ class AgencyAdminOnboardingWizardIT
         .perform(get("/users/account-invites/{token}/onboarding", token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.agencyExists").value(false))
+        .andExpect(jsonPath("$.oneTopicPerAgencyEnabled").value(true))
         .andExpect(jsonPath("$.agencyIdAllocationMode").value(expectedOrigin))
         .andExpect(jsonPath("$.onboardingPurpose").value("INVITE"));
 
