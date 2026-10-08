@@ -1,0 +1,198 @@
+openapi: 3.0.1
+info:
+  title: Internal consultant pictures
+  version: 1.0.0
+  description: >-
+    UserService-owned internal photos. Both /useradmin and /service/useradmin prefixes are supported.
+    Advice seekers retrieve these bytes only through the separate published route, and only while
+    the owner keeps the picture published (issue #1049). Read access requires a colleague or admin authority;
+    changes require CONSULTANT_UPDATE. The caller and active target must belong to the same tenant,
+    except a verified platform admin. Restricted agency admins must share an agency with the target.
+    No query-string authentication, public visibility, branding storage, or Matrix media is used.
+    This contract is separate from generated JSON controllers so servlet multipart parsing and
+    generated RequestBody byte-array conversion cannot persist or allocate unbounded upload bytes
+    before the target authorization and bounded intake checks.
+servers:
+  - url: /
+  - url: /service
+paths:
+  /useradmin/consultants/{consultantId}/picture:
+    parameters:
+      - in: path
+        name: consultantId
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getConsultantPicture
+      security: [{Bearer: []}]
+      summary: Retrieve the internal picture for an eligible colleague or admin
+      responses:
+        '200':
+          description: Exact clean image bytes; Cache-Control private, no-store; X-Content-Type-Options nosniff.
+          content:
+            image/png: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+        '401': {description: Authentication required}
+        '403': {description: Caller is not eligible; no response body}
+        '404': {description: Consultant or picture absent; no response body}
+    put:
+      operationId: putConsultantPicture
+      security: [{Bearer: []}]
+      summary: Upload or atomically replace an internal picture
+      description: >-
+        Raw body, never multipart. JPEG or PNG, 1..5242880 bytes, each dimension at most 4096,
+        at most 12000000 decoded pixels. Actual decoded content must match Content-Type.
+        Only an explicit clean scan of these exact bytes permits storage. Failed replacement
+        retains the previous clean image. Scanner disabled, busy, unavailable or malformed
+        result refuses the upload. Deletion racing a scan cannot recreate the image.
+      requestBody:
+        required: true
+        content:
+          image/png: {schema: {type: string, format: binary, maxLength: 5242880}}
+          image/jpeg: {schema: {type: string, format: binary, maxLength: 5242880}}
+      responses:
+        '204': {description: Stored successfully}
+        '400': {description: PICTURE_INVALID_IMAGE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '401': {description: Authentication required}
+        '403': {description: Caller is not eligible; no response body}
+        '404': {description: Active consultant absent; no response body}
+        '413': {description: PICTURE_TOO_LARGE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '415': {description: PICTURE_UNSUPPORTED_TYPE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '422': {description: PICTURE_REJECTED, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '503': {description: PICTURE_SCAN_UNAVAILABLE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+    delete:
+      operationId: deleteConsultantPicture
+      security: [{Bearer: []}]
+      summary: Remove the internal picture immediately
+      responses:
+        '204': {description: Removed or already absent}
+        '401': {description: Authentication required}
+        '403': {description: Caller is not eligible; no response body}
+        '404': {description: Active consultant absent; no response body}
+  /useradmin/consultants/{consultantId}/picture/visibility:
+    parameters:
+      - in: path
+        name: consultantId
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getConsultantPictureVisibility
+      security: [{Bearer: []}]
+      summary: Read the publish decision without transferring image bytes
+      responses:
+        '200':
+          description: Current publish decision; Cache-Control private, no-store.
+          content:
+            application/json: {schema: {$ref: '#/components/schemas/PictureVisibility'}}
+        '401': {description: Authentication required}
+        '403': {description: Caller is not eligible; no response body}
+        '404': {description: Consultant or picture absent; no response body}
+    put:
+      operationId: putConsultantPictureVisibility
+      security: [{Bearer: []}]
+      summary: Publish the picture to advice seekers, or withdraw it again
+      description: >-
+        Requires CONSULTANT_UPDATE. Withdrawal is immediate: the published route re-reads the flag
+        on every request and never caches. Uploading a replacement image resets the picture to
+        internal only, so a new image has to be published deliberately.
+      requestBody:
+        required: true
+        content:
+          application/json: {schema: {$ref: '#/components/schemas/PictureVisibility'}}
+      responses:
+        '204': {description: Stored successfully}
+        '400': {description: Malformed body}
+        '401': {description: Authentication required}
+        '403': {description: Caller is not eligible; no response body}
+        '404': {description: Active consultant or picture absent; no response body}
+  /users/consultants/{consultantId}/picture:
+    parameters:
+      - in: path
+        name: consultantId
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getPublishedConsultantPicture
+      security: [{Bearer: []}]
+      summary: Advice-seeker read of a published picture
+      description: >-
+        Authentication is still required and the caller must belong to the target's tenant. Every
+        refusal answers 404, so an internal-only picture is indistinguishable from no picture.
+      responses:
+        '200':
+          description: Exact clean image bytes; Cache-Control private, no-store; X-Content-Type-Options nosniff.
+          content:
+            image/png: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+        '401': {description: Authentication required}
+        '404': {description: No published picture for this consultant; no response body}
+  /users/account-invites/{token}/onboarding/picture:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: {type: string}
+    put:
+      operationId: putOnboardingConsultantPicture
+      # Deliberately unauthenticated: the raw invite token in the path is the credential.
+      security: []
+      summary: Picture step of the public counsellor onboarding wizard
+      description: >-
+        The invitee has no session yet, so the raw invite token is the credential — the same
+        arrangement the register and two-factor steps of this flow use. The token is resolved to the
+        consultant it created, and only while the link is still resumable at the two-factor step.
+        Raw body, never multipart; identical intake, bounded concurrency and fail-closed scan as the
+        administrative route.
+      requestBody:
+        required: true
+        content:
+          image/png: {schema: {type: string, format: binary, maxLength: 5242880}}
+          image/jpeg: {schema: {type: string, format: binary, maxLength: 5242880}}
+      responses:
+        '204': {description: Stored successfully}
+        '400': {description: 'PICTURE_INVALID_IMAGE, or the invite has not registered yet'}
+        '404': {description: Unknown invite token}
+        '409': {description: The invite link is terminally consumed}
+        '410': {description: The invite link expired}
+        '413': {description: PICTURE_TOO_LARGE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '415': {description: PICTURE_UNSUPPORTED_TYPE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '422': {description: PICTURE_REJECTED, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '503': {description: PICTURE_SCAN_UNAVAILABLE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+  /users/account-invites/{token}/onboarding/picture/visibility:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: {type: string}
+    put:
+      operationId: putOnboardingConsultantPictureVisibility
+      security: []
+      summary: The same publish switch, during onboarding
+      requestBody:
+        required: true
+        content:
+          application/json: {schema: {$ref: '#/components/schemas/PictureVisibility'}}
+      responses:
+        '204': {description: Stored successfully}
+        '400': {description: 'Malformed body, or the invite has not registered yet'}
+        '404': {description: 'Unknown invite token, or no picture stored'}
+        '409': {description: The invite link is terminally consumed}
+        '410': {description: The invite link expired}
+components:
+  securitySchemes:
+    Bearer: {type: http, scheme: bearer, bearerFormat: JWT}
+  schemas:
+    PictureVisibility:
+      type: object
+      required: [internalOnly]
+      properties:
+        internalOnly:
+          type: boolean
+          description: True keeps the picture internal to colleagues and admins; false publishes it.
+    PictureError:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          enum: [PICTURE_INVALID_IMAGE, PICTURE_TOO_LARGE, PICTURE_UNSUPPORTED_TYPE, PICTURE_REJECTED, PICTURE_SCAN_UNAVAILABLE]

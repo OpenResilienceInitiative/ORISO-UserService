@@ -1,0 +1,30 @@
+# Public, disposable test fixtures. Never use this configuration for a real homeserver.
+server_name: matrix-browser-uia.test
+pid_file: /data/homeserver.pid
+listeners:
+  - port: 8008
+    tls: false
+    type: http
+    bind_addresses: ['0.0.0.0']
+    resources:
+      - names: [client]
+        compress: false
+database:
+  name: sqlite3
+  args:
+    database: /data/homeserver.db
+media_store_path: /data/media_store
+signing_key_path: /data/test.signing.key
+registration_shared_secret: public-disposable-uia-registration-fixture
+macaroon_secret_key: public-disposable-uia-macaroon-fixture
+form_secret: public-disposable-uia-form-fixture
+report_stats: false
+trusted_key_servers: []
+suppress_key_server_warning: true
+enable_registration: false
+# Multiple synthetic clients share the runner's IP; keep password UIA intact while allowing
+# this bounded integration suite's login burst (Synapse's default address burst is only 5).
+rc_login:
+  address:
+    per_second: 1
+    burst_count: 20

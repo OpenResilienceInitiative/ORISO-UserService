@@ -2,6 +2,11 @@ package de.caritas.cob.userservice.api.service.accountinvite.mail;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
+import jakarta.mail.Address;
+import jakarta.mail.AuthenticationFailedException;
+import jakarta.mail.SendFailedException;
+import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMultipart;
 import java.util.Properties;
 import org.junit.jupiter.api.Test;
@@ -74,6 +79,54 @@ class JakartaInviteMailTransportTest {
 
     assertThat(multipart.getBodyPart(0).getContentType()).containsIgnoringCase("utf-8");
     assertThat(multipart.getBodyPart(1).getContentType()).containsIgnoringCase("utf-8");
+  }
+
+  @Test
+  void allRecipientsConfirmedUnsent_Should_returnTrue_WhenSmtpExplicitlyRejectsRecipient()
+      throws Exception {
+    Address recipient = new InternetAddress("owner@example.org");
+    SendFailedException rejection =
+        new SendFailedException("550 rejected", null, null, new Address[] {recipient}, null);
+
+    assertThat(
+            JakartaInviteMailTransport.allRecipientsConfirmedUnsent(
+                new Address[] {recipient}, rejection))
+        .isTrue();
+  }
+
+  @Test
+  void allRecipientsConfirmedUnsent_Should_returnFalse_WhenAnyRecipientMayHaveBeenSent()
+      throws Exception {
+    Address recipient = new InternetAddress("owner@example.org");
+    SendFailedException ambiguousFailure =
+        new SendFailedException("connection lost", null, new Address[] {recipient}, null, null);
+
+    assertThat(
+            JakartaInviteMailTransport.allRecipientsConfirmedUnsent(
+                new Address[] {recipient}, ambiguousFailure))
+        .isFalse();
+  }
+
+  @Test
+  void allRecipientsConfirmedUnsent_Should_returnFalse_WhenFailureHasNoRecipientEvidence()
+      throws Exception {
+    Address recipient = new InternetAddress("owner@example.org");
+    SendFailedException ambiguousFailure = new SendFailedException("connection lost");
+
+    assertThat(
+            JakartaInviteMailTransport.allRecipientsConfirmedUnsent(
+                new Address[] {recipient}, ambiguousFailure))
+        .isFalse();
+  }
+
+  @Test
+  void deliveryDisposition_Should_confirmAuthenticationFailureWasNotSent() throws Exception {
+    Address recipient = new InternetAddress("owner@example.org");
+
+    assertThat(
+            JakartaInviteMailTransport.deliveryDisposition(
+                new Address[] {recipient}, new AuthenticationFailedException("535 rejected")))
+        .isEqualTo(SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT);
   }
 
   private static InviteSmtpSettings insecureSettings() {

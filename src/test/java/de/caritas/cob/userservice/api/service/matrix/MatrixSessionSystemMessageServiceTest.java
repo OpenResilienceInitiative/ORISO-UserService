@@ -38,10 +38,10 @@ class MatrixSessionSystemMessageServiceTest {
 
   private static final Long SESSION_ID = 42L;
   private static final Long AGENCY_ID = 7L;
-  private static final String MATRIX_ROOM_ID = "!room:matrix.oriso.org";
-  private static final String USER_MATRIX_ID = "@asker:matrix.oriso.org";
+  private static final String MATRIX_ROOM_ID = "!room:matrix.example.org";
+  private static final String USER_MATRIX_ID = "@asker:matrix.example.org";
   private static final String CONSULTANT_ID = "consultant-1";
-  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.oriso.org";
+  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.org";
   private static final String ACCESS_TOKEN = "matrix-access-token";
 
   @InjectMocks private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
@@ -103,36 +103,38 @@ class MatrixSessionSystemMessageServiceTest {
   }
 
   @Test
-  void postUserLeftChatMessage_shouldUseAgencyPasswordLogin_withMatrixLocalpartExtracted() {
-    // Agency service accounts post as a localpart login when no human Matrix ID is on the session.
+  void postUserLeftChatMessage_shouldImpersonateAgencyWithFullMatrixId() {
+    // The agency's full Matrix identity is used when no human Matrix ID is on the session.
     var session = sessionWithoutHumanMatrixIds();
-    var credentials = agencyCredentials("@agency-bot:matrix.oriso.org", "agency-secret");
+    var credentials = agencyCredentials("@agency-bot:matrix.example.org");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(credentials));
-    when(matrixSynapseService.loginUser("agency-bot", "agency-secret")).thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.loginAsUserAccessToken("@agency-bot:matrix.example.org"))
+        .thenReturn(ACCESS_TOKEN);
     when(matrixSynapseService.sendMessage(anyString(), anyString(), eq(ACCESS_TOKEN)))
         .thenReturn(Map.of("event_id", "$evt"));
 
     matrixSessionSystemMessageService.postUserLeftChatMessage(session);
 
-    verify(matrixSynapseService).loginUser("agency-bot", "agency-secret");
+    verify(matrixSynapseService).loginAsUserAccessToken("@agency-bot:matrix.example.org");
     verify(matrixSynapseService).sendMessage(eq(MATRIX_ROOM_ID), anyString(), eq(ACCESS_TOKEN));
   }
 
   @Test
-  void postUserLeftChatMessage_shouldUseBareAgencyLocalpart_whenMatrixUserIdHasNoSigil() {
-    // Bare localpart agency IDs must be passed through without forcing a @ prefix.
+  void postUserLeftChatMessage_shouldUseIdentityOnlyAgencyResponse() {
+    // Password-free identity responses use the same full Matrix identity.
     var session = sessionWithoutHumanMatrixIds();
-    var credentials = agencyCredentials("agency-bot", "agency-secret");
+    var credentials = agencyCredentials("@agency-bot:matrix.example.org");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(credentials));
-    when(matrixSynapseService.loginUser("agency-bot", "agency-secret")).thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.loginAsUserAccessToken("@agency-bot:matrix.example.org"))
+        .thenReturn(ACCESS_TOKEN);
     when(matrixSynapseService.sendMessage(anyString(), anyString(), eq(ACCESS_TOKEN)))
         .thenReturn(Map.of("event_id", "$evt"));
 
     matrixSessionSystemMessageService.postUserLeftChatMessage(session);
 
-    verify(matrixSynapseService).loginUser("agency-bot", "agency-secret");
+    verify(matrixSynapseService).loginAsUserAccessToken("@agency-bot:matrix.example.org");
   }
 
   @Test
@@ -219,7 +221,7 @@ class MatrixSessionSystemMessageServiceTest {
   void postUserLeftChatMessage_shouldNotSendMessage_whenAgencyDtoMissingUserId() {
     // Incomplete agency credentials cannot authenticate — message must not be attempted.
     var session = sessionWithoutHumanMatrixIds();
-    var credentials = agencyCredentials(null, "agency-secret");
+    var credentials = agencyCredentials(null);
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(credentials));
 
@@ -231,10 +233,10 @@ class MatrixSessionSystemMessageServiceTest {
   }
 
   @Test
-  void postUserLeftChatMessage_shouldNotSendMessage_whenAgencyDtoMissingPassword() {
-    // Password-less agency credentials are filtered out before any Synapse login attempt.
+  void postUserLeftChatMessage_shouldNotSendMessage_whenAgencyDtoBlankUserId() {
+    // A blank agency identity is filtered out before any Synapse login attempt.
     var session = sessionWithoutHumanMatrixIds();
-    var credentials = agencyCredentials("@agency:matrix.oriso.org", "  ");
+    var credentials = agencyCredentials("  ");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(credentials));
 
@@ -416,10 +418,9 @@ class MatrixSessionSystemMessageServiceTest {
     return session;
   }
 
-  private AgencyMatrixCredentialsDTO agencyCredentials(String matrixUserId, String password) {
+  private AgencyMatrixCredentialsDTO agencyCredentials(String matrixUserId) {
     var dto = new AgencyMatrixCredentialsDTO();
     dto.setMatrixUserId(matrixUserId);
-    dto.setMatrixPassword(password);
     return dto;
   }
 }

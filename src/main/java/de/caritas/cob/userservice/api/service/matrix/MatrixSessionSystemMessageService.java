@@ -4,7 +4,6 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -209,18 +208,8 @@ public class MatrixSessionSystemMessageService {
 
     return agencyMatrixCredentialClient
         .fetchMatrixCredentials(session.getAgencyId())
-        .filter(dto -> isNotBlank(dto.getMatrixUserId()) && isNotBlank(dto.getMatrixPassword()))
-        .map(
-            dto ->
-                MatrixCredentials.forPasswordLogin(
-                    extractMatrixLocalpart(dto.getMatrixUserId()), dto.getMatrixPassword()));
-  }
-
-  private String extractMatrixLocalpart(String matrixUserId) {
-    if (matrixUserId.startsWith("@")) {
-      return MatrixIds.localpart(matrixUserId);
-    }
-    return matrixUserId;
+        .filter(dto -> isNotBlank(dto.getMatrixUserId()))
+        .map(dto -> MatrixCredentials.forMatrixUser(dto.getMatrixUserId()));
   }
 
   private String resolveDisplayUsername(Session session) {
@@ -258,32 +247,21 @@ public class MatrixSessionSystemMessageService {
 
   private static final class MatrixCredentials {
     private final String matrixUserId;
-    private final String password;
-    private final String username;
 
-    private MatrixCredentials(String matrixUserId, String username, String password) {
+    private MatrixCredentials(String matrixUserId) {
       this.matrixUserId = matrixUserId;
-      this.username = username;
-      this.password = password;
     }
 
     private static MatrixCredentials forMatrixUser(String matrixUserId) {
-      return new MatrixCredentials(matrixUserId, null, null);
-    }
-
-    private static MatrixCredentials forPasswordLogin(String username, String password) {
-      return new MatrixCredentials(null, username, password);
+      return new MatrixCredentials(matrixUserId);
     }
 
     private String accessToken(MatrixSynapseService matrixSynapseService) {
-      if (isNotBlank(matrixUserId)) {
-        return matrixSynapseService.loginAsUserAccessToken(matrixUserId);
-      }
-      return matrixSynapseService.loginUser(username, password);
+      return matrixSynapseService.loginAsUserAccessToken(matrixUserId);
     }
 
     private String principal() {
-      return isNotBlank(matrixUserId) ? matrixUserId : username;
+      return matrixUserId;
     }
   }
 }

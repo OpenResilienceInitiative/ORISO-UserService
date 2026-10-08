@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.session.SessionSupervisionMarkerService;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -31,6 +32,7 @@ public class ConsultantSessionListService {
   private final @NonNull ChatService chatService;
   private final @NonNull ConsultantSessionEnricher consultantSessionEnricher;
   private final @NonNull ConsultantChatEnricher consultantChatEnricher;
+  private final @NonNull SessionSupervisionMarkerService supervisionMarkerService;
 
   /**
    * @param consultant {@link Consultant}
@@ -43,9 +45,11 @@ public class ConsultantSessionListService {
     var matrixRoomIds = new HashSet<>(roomIds);
     var sessions =
         sessionService.getAllowedSessionsByConsultantAndRoomIds(consultant, matrixRoomIds, roles);
-    var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
+    var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds, consultant);
 
-    return mergeConsultantSessionsAndChats(consultant, sessions, chats);
+    var result = mergeConsultantSessionsAndChats(consultant, sessions, chats);
+    enrichWithSupervision(result, consultant);
+    return result;
   }
 
   /**
@@ -62,9 +66,11 @@ public class ConsultantSessionListService {
         sessions.stream()
             .map(sessionResponse -> sessionResponse.getSession().getMatrixRoomId())
             .collect(Collectors.toSet());
-    var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
+    var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds, consultant);
 
-    return mergeConsultantSessionsAndChats(consultant, sessions, chats);
+    var result = mergeConsultantSessionsAndChats(consultant, sessions, chats);
+    enrichWithSupervision(result, consultant);
+    return result;
   }
 
   /**
@@ -102,7 +108,7 @@ public class ConsultantSessionListService {
     var uniqueChatIds = new HashSet<>(chatIds);
     log.info("🔍 Unique chat IDs: {}", uniqueChatIds);
 
-    var chats = chatService.getChatSessionsForConsultantByIds(uniqueChatIds);
+    var chats = chatService.getChatSessionsForConsultantByIds(uniqueChatIds, consultant);
     log.info("🔍 Retrieved {} chats from ChatService", chats.size());
 
     var result = updateConsultantChatValues(chats, consultant);
@@ -222,6 +228,14 @@ public class ConsultantSessionListService {
     allSessions.addAll(chatsByMatrixRoomId.values());
 
     return allSessions;
+  }
+
+  /** Adds ADR-008 requester markers with constant batched work for the final response slice. */
+  public void enrichWithSupervision(
+      List<ConsultantSessionResponseDTO> sessions, Consultant consultant) {
+    if (isNotEmpty(sessions)) {
+      supervisionMarkerService.enrich(sessions, consultant);
+    }
   }
 
   private void sortSessionsByLastMessageDateDesc(List<ConsultantSessionResponseDTO> sessions) {

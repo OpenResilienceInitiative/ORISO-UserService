@@ -55,7 +55,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -66,7 +65,7 @@ import org.springframework.http.HttpStatus;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class CreateSessionFacadeTest {
 
-  @InjectMocks private CreateSessionFacade createSessionFacade;
+  private CreateSessionFacade createSessionFacade;
   @Mock private SessionService sessionService;
   @Mock private AgencyVerifier agencyVerifier;
   @Mock private SessionDataService sessionDataService;
@@ -89,6 +88,17 @@ class CreateSessionFacadeTest {
 
   @BeforeEach
   public void setup() {
+    createSessionFacade =
+        new CreateSessionFacade(
+            sessionService,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            agencyVerifier,
+            sessionDataService,
+            rollbackFacade,
+            userAccountProvider,
+            consultantAgencyRepository,
+            agencyPreAssignmentRoomService,
+            directSessionMatrixRoomService);
     logCaptor = LogbackCaptor.attach(LogService.class);
   }
 
@@ -247,6 +257,7 @@ class CreateSessionFacadeTest {
   public void
       createDirectUserSession_Should_returnCreatedWithNewSession_When_userConsultantRelationIsNew() {
     var agencyDTO = new EasyRandom().nextObject(AgencyDTO.class);
+    agencyDTO.setTenantId(41L);
     var session = new EasyRandom().nextObject(Session.class);
     when(agencyVerifier.getVerifiedAgency(anyLong(), anyInt())).thenReturn(agencyDTO);
     when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))
@@ -267,6 +278,7 @@ class CreateSessionFacadeTest {
   public void
       createDirectUserSession_Should_returnCreatedWithNewSession_When_userConsultantRelationIsWithOtherConsultingType() {
     var agencyDTO = new EasyRandom().nextObject(AgencyDTO.class);
+    agencyDTO.setTenantId(41L);
     var session = new EasyRandom().nextObject(Session.class);
     when(agencyVerifier.getVerifiedAgency(anyLong(), anyInt())).thenReturn(agencyDTO);
     when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))

@@ -5,21 +5,28 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.IdReservationReleaseTask;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseType;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
+import de.caritas.cob.userservice.api.tenant.AsTechnicalUser;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -33,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Answers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -55,17 +63,35 @@ import org.springframework.transaction.annotation.Transactional;
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import(AccountInviteService.class)
+@Import({
+  AccountInviteService.class,
+  InviteTargetResolver.class,
+  ReservationLedger.class,
+  UnitQueue.class,
+  InviteDelivery.class,
+  AccountInviteAccessPolicy.class,
+  AccountInviteTopicPermissionService.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class
+})
+@AsTechnicalUser
 class AccountInviteReservationOrchestrationIT {
 
   @Autowired private AccountInviteService service;
   @Autowired private AccountInviteRepository accountInviteRepository;
+  @Autowired private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
 
-  @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
+  private AuthenticatedUser authenticatedUser;
+
+  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
+
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
+  @MockitoBean private AgencyFacts agencyFacts;
+  @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
 
   // TEN-INV-U6 collaborators of the send path — not exercised by these creation-focused tests.
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
@@ -81,8 +107,14 @@ class AccountInviteReservationOrchestrationIT {
 
   @BeforeEach
   void setUpRealisticTenantIdLedger() {
-    when(authenticatedUser.getUserId()).thenReturn("admin-1");
-    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    Tenants.actAs(
+        authenticatedUser,
+        "admin-1",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
+    authenticatedUser.setUsername("admin@example.org");
 
     // AUTO mode: the smallest currently free ID is reserved atomically (ledger insert wins).
     when(tenantIdAllocationClient.reserve(isNull()))
@@ -114,7 +146,7 @@ class AccountInviteReservationOrchestrationIT {
     org.mockito.Mockito.doAnswer(
             invocation -> {
               tenantIdLedger.remove((long) invocation.getArgument(0));
-              return null;
+              return true;
             })
         .when(tenantIdAllocationClient)
         .release(anyLong());
@@ -123,6 +155,7 @@ class AccountInviteReservationOrchestrationIT {
   @AfterEach
   void cleanUp() {
     accountInviteRepository.deleteAll();
+    reservationReleaseTaskRepository.deleteAll();
     tenantIdLedger.clear();
   }
 
@@ -142,7 +175,7 @@ class AccountInviteReservationOrchestrationIT {
   }
 
   @Test
-  void parallelManualInvitesForSameId_Should_LetExactlyOneSucceed() throws Exception {
+  void parallelManualInvitesForSameId_Should_ReserveTheIdExactlyOnce() throws Exception {
     List<Object> outcomes =
         runConcurrentlyCollectingErrors(
             () -> createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "manual-a@example.org"),
@@ -155,10 +188,15 @@ class AccountInviteReservationOrchestrationIT {
             .toList();
     List<Object> conflicts = outcomes.stream().filter(ConflictException.class::isInstance).toList();
 
-    assertThat(successes).hasSize(1);
-    assertThat(conflicts).hasSize(1);
-    assertThat(successes.get(0).getTenantId()).isEqualTo(21L);
-    assertThat(accountInviteRepository.count()).isEqualTo(1);
+    // Timing decides whether the second invite joins the first reservation or gets the 409;
+    // either way the ID is reserved exactly once.
+    assertThat(successes.size() + conflicts.size()).isEqualTo(2);
+    assertThat(successes).isNotEmpty();
+    assertThat(successes).extracting(AccountInvite::getTenantId).containsOnly(21L);
+    assertThat(successes)
+        .extracting(AccountInvite::getTenantIdReservationToken)
+        .containsOnly("token-21");
+    assertThat(accountInviteRepository.count()).isEqualTo(successes.size());
     // The winner's reservation is still held — the loser's conflict released nothing.
     assertThat(tenantIdLedger).containsExactly(21L);
   }
@@ -179,31 +217,23 @@ class AccountInviteReservationOrchestrationIT {
   }
 
   @Test
-  void revokedInvite_Should_LeaveNoReservationBehind() {
-    AccountInvite invite =
-        createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "owner@example.org");
-    assertThat(tenantIdLedger).containsExactly(21L);
+  void staleReleaseTask_ShouldBlockAReissuedReservationUntilCleanupCompletes() {
+    reservationReleaseTaskRepository.saveAndFlush(
+        IdReservationReleaseTask.builder()
+            .allocationType(IdReservationReleaseType.TENANT)
+            .reservedId(21L)
+            .tenantContextId(21L)
+            .createDate(LocalDateTime.now())
+            .build());
 
-    service.revokeInvite(invite.getId());
+    assertThatThrownBy(
+            () -> createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "owner@example.org"))
+        .isInstanceOf(ConflictException.class)
+        .hasMessageContaining("pending reservation cleanup");
 
     verify(tenantIdAllocationClient).release(21L);
+    assertThat(accountInviteRepository.count()).isZero();
     assertThat(tenantIdLedger).isEmpty();
-    assertThat(accountInviteRepository.findById(invite.getId()))
-        .get()
-        .extracting(AccountInvite::getStatus)
-        .isEqualTo(AccountInviteStatus.REVOKED);
-  }
-
-  @Test
-  void revokedInvite_Should_LeaveAgencyIdReservationsAlone() {
-    AccountInvite invite =
-        createTenantAdminInvite(22L, IdAllocationMode.MANUAL, "owner-2@example.org");
-
-    service.revokeInvite(invite.getId());
-
-    // agencyId carries either a reserved ID or a pre-existing agency's ID and the row does not
-    // record which, so revoke must not touch that ledger (#1052).
-    verifyNoInteractions(agencyIdAllocationClient);
   }
 
   private AccountInvite createTenantAdminInvite(

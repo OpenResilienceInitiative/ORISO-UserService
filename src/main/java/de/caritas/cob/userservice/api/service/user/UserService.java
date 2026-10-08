@@ -27,6 +27,8 @@ public class UserService {
   private final @NonNull UserMobileTokenRepository userMobileTokenRepository;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
   private final AuditingHandler auditingHandler;
+  private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
 
   /**
    * Deletes an user.
@@ -46,6 +48,7 @@ public class UserService {
    * @param languageFormal flag for language formal
    * @return The created {@link User}
    */
+  @org.springframework.transaction.annotation.Transactional
   public User createUser(String userId, String username, String email, boolean languageFormal) {
     return createUser(userId, null, username, email, languageFormal);
   }
@@ -60,11 +63,13 @@ public class UserService {
    * @param languageFormal flag for language formal
    * @return The created {@link User}
    */
+  @org.springframework.transaction.annotation.Transactional
   public User createUser(
       String userId, Long oldId, String username, String email, boolean languageFormal) {
     return createUser(userId, oldId, username, email, languageFormal, null);
   }
 
+  @org.springframework.transaction.annotation.Transactional
   public User createUser(
       String userId,
       Long oldId,
@@ -72,13 +77,37 @@ public class UserService {
       String email,
       boolean languageFormal,
       String preferredLanguage) {
+    return createUser(userId, oldId, username, email, languageFormal, preferredLanguage, null);
+  }
+
+  @org.springframework.transaction.annotation.Transactional
+  public User createUser(
+      String userId,
+      Long oldId,
+      String username,
+      String email,
+      boolean languageFormal,
+      String preferredLanguage,
+      de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService
+              .RecoveryPolicySnapshot
+          snapshot) {
+    var existing = userRepository.findById(userId);
+    if (existing.isPresent()) return existing.get();
     var user = new User(userId, oldId, username, email, languageFormal);
+    if (snapshot != null) {
+      user.setChatRecoveryMode(snapshot.mode());
+      user.setChatRecoveryPolicyRevision(snapshot.revision());
+    }
     user.setTenantId(TenantContext.getCurrentTenant());
     auditingHandler.markCreated(user);
     if (nonNull(preferredLanguage)) {
       user.setLanguageCode(LanguageCode.valueOf(preferredLanguage));
     }
 
+    inactivityEnrollment.enroll(
+        userId,
+        user.getTenantId(),
+        de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.ASKER);
     return userRepository.save(user);
   }
 

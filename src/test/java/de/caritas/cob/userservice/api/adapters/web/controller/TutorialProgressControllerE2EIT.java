@@ -110,6 +110,29 @@ class TutorialProgressControllerE2EIT {
   }
 
   @Test
+  void tutorialProgress_savesTheMailCounsellingTour() throws Exception {
+    // #1526: the mail tour ships in the frontend; its progress write used to get 400.
+    org.mockito.Mockito.when(authenticatedUser.getUserId()).thenReturn("tutorial-user-1");
+    var payload =
+        Map.of(
+            "surface", "frontend",
+            "tourId", "consultant-mail-counselling",
+            "tourVersion", 1,
+            "status", "completed");
+
+    mockMvc
+        .perform(
+            put("/users/tutorials/progress")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .with(jwt().authorities(() -> AuthorityValue.CONSULTANT_DEFAULT))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.tourId", is("consultant-mail-counselling")));
+  }
+
+  @Test
   void tutorialProgress_rejectsATourThatIsNotEnabledOnThatSurface() throws Exception {
     // Hardening (gate run e2e-20260720-1507, probe S6): a consultant must not be
     // able to invent admin-surface tours that then appear in the tenant admin's

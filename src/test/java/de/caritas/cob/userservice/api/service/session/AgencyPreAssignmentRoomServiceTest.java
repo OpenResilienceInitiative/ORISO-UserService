@@ -47,13 +47,11 @@ class AgencyPreAssignmentRoomServiceTest {
 
   private static final Long AGENCY_ID = 4711L;
   private static final Long SESSION_ID = 99L;
-  private static final String USER_MATRIX_ID = "@asker:oriso.org";
-  private static final String AGENCY_MATRIX_ID = "@agency-svc:oriso.org";
-  private static final String AGENCY_MATRIX_LOCALPART = "agency-svc";
-  private static final String AGENCY_MATRIX_PASSWORD = "s3cret";
+  private static final String USER_MATRIX_ID = "@asker:example.org";
+  private static final String AGENCY_MATRIX_ID = "@agency-svc:example.org";
   private static final String AGENCY_TOKEN = "agency-access-token";
   private static final String USER_TOKEN = "user-access-token";
-  private static final String NEW_ROOM_ID = "!newRoom:oriso.org";
+  private static final String NEW_ROOM_ID = "!newRoom:example.org";
 
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
   @Mock private SessionRoomGateway sessionRoomGateway;
@@ -80,17 +78,34 @@ class AgencyPreAssignmentRoomServiceTest {
   private AgencyMatrixCredentialsDTO validCredentials() {
     var creds = new AgencyMatrixCredentialsDTO();
     creds.setMatrixUserId(AGENCY_MATRIX_ID);
-    creds.setMatrixPassword(AGENCY_MATRIX_PASSWORD);
     return creds;
   }
 
   private void stubHappyPathUntilRoomCreation() throws MatrixCreateRoomException {
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(sessionRoomGateway.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
-        .thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
         .thenReturn(NEW_ROOM_ID);
+  }
+
+  @Test
+  void ensureHoldingRoomSupportsIdentityOnlyAgencyResponse() throws Exception {
+    var identity = new AgencyMatrixCredentialsDTO();
+    identity.setMatrixUserId(AGENCY_MATRIX_ID);
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(identity));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenReturn(NEW_ROOM_ID);
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
+    verify(sessionService).saveSession(session);
+    verify(sessionRoomGateway, never()).loginUser(anyString(), anyString());
   }
 
   @Test
@@ -103,8 +118,8 @@ class AgencyPreAssignmentRoomServiceTest {
 
     underTest.ensureHoldingRoom(session, user);
 
-    // agency service account authenticated with the local part of its matrix id
-    verify(sessionRoomGateway).loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD);
+    // Agency identity is impersonated without a reusable password.
+    verify(sessionRoomGateway).loginAsUser(AGENCY_MATRIX_ID);
 
     // room created with the agency token
     ArgumentCaptor<String> nameCaptor = ArgumentCaptor.forClass(String.class);
@@ -129,12 +144,12 @@ class AgencyPreAssignmentRoomServiceTest {
   @Test
   @DisplayName("ensureHoldingRoom is a no-op when the session already has a Matrix room")
   void ensureHoldingRoom_noOp_whenRoomAlreadyPresent() {
-    session.setMatrixRoomId("!existing:oriso.org");
+    session.setMatrixRoomId("!existing:example.org");
 
     underTest.ensureHoldingRoom(session, user);
 
     verifyNoInteractions(matrixCredentialClient, sessionRoomGateway, sessionService);
-    assertEquals("!existing:oriso.org", session.getMatrixRoomId());
+    assertEquals("!existing:example.org", session.getMatrixRoomId());
   }
 
   @Test
@@ -174,8 +189,7 @@ class AgencyPreAssignmentRoomServiceTest {
   @DisplayName("ensureHoldingRoom aborts before login when agency credentials are incomplete")
   void ensureHoldingRoom_aborts_whenCredentialsIncomplete() {
     var creds = new AgencyMatrixCredentialsDTO();
-    creds.setMatrixUserId(AGENCY_MATRIX_ID);
-    creds.setMatrixPassword("  ");
+    creds.setMatrixUserId("  ");
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).thenReturn(Optional.of(creds));
 
     underTest.ensureHoldingRoom(session, user);
@@ -189,8 +203,7 @@ class AgencyPreAssignmentRoomServiceTest {
   void ensureHoldingRoom_doesNotPersist_whenAgencyLoginFails() {
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(sessionRoomGateway.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
-        .thenReturn("  ");
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn("  ");
 
     underTest.ensureHoldingRoom(session, user);
 
@@ -203,8 +216,7 @@ class AgencyPreAssignmentRoomServiceTest {
   void ensureHoldingRoom_doesNotPersist_whenCreateRoomReturnsEmptyBody() throws Exception {
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(sessionRoomGateway.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
-        .thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
         .thenReturn("  ");
 
@@ -220,8 +232,7 @@ class AgencyPreAssignmentRoomServiceTest {
   void ensureHoldingRoom_swallowsCreateRoomException() throws Exception {
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(sessionRoomGateway.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
-        .thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
         .thenThrow(new MatrixCreateRoomException("boom"));
 

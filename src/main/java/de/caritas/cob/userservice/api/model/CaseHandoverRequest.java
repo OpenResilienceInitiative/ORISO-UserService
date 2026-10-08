@@ -19,8 +19,6 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
 import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
-import org.hibernate.annotations.ParamDef;
 
 /** Audit and policy record for a counsellor requesting access to an already existing case. */
 @Entity
@@ -31,20 +29,22 @@ import org.hibernate.annotations.ParamDef;
 @Setter
 @Builder
 @ToString
-@FilterDef(
-    name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
-@Filter(
-    name = "tenantFilter",
-    condition = "(tenant_id = :tenantId OR (:tenantId = 1 AND tenant_id IS NULL))")
+@Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION_WITH_LEGACY_ROWS_OF_TENANT_ONE)
 public class CaseHandoverRequest implements TenantAware {
 
   public enum Status {
     PENDING,
     PENDING_CLIENT_CONSENT,
+    GRANTED_PENDING_CLIENT_OPTOUT,
     GRANTED,
     DENIED,
-    CLIENT_CONSENT_DECLINED
+    CLIENT_CONSENT_DECLINED,
+    EXPIRED
+  }
+
+  public enum AccessType {
+    CO_ACCESS,
+    TAKEOVER
   }
 
   @Id
@@ -80,6 +80,10 @@ public class CaseHandoverRequest implements TenantAware {
   @Column(name = "client_consent_required", nullable = false)
   private Boolean clientConsentRequired;
 
+  @Enumerated(EnumType.STRING)
+  @Column(name = "client_consent_mode", nullable = false, length = 20)
+  private CaseHandoverConsentMode clientConsent;
+
   @Column(name = "policy_authority", nullable = false, length = 255)
   private String policyAuthority;
 
@@ -91,6 +95,20 @@ public class CaseHandoverRequest implements TenantAware {
 
   @Column(name = "resolved_at")
   private LocalDateTime resolvedAt;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "access_type", length = 20)
+  private AccessType accessType;
+
+  @Column(name = "max_access_duration_minutes")
+  private Integer maxAccessDurationMinutes;
+
+  @Column(name = "expires_at")
+  private LocalDateTime expiresAt;
+
+  /** True only when this handover, rather than department provisioning, added Matrix membership. */
+  @Column(name = "matrix_membership_added")
+  private Boolean matrixMembershipAdded;
 
   @Column(name = "tenant_id")
   private Long tenantId;

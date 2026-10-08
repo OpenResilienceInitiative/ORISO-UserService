@@ -15,6 +15,21 @@ class MatrixOnlyRuntimeConfigurationContractTest {
   private static final Path LOCAL_RUN_EXAMPLE = Path.of("run-local-remote-db.sh.example");
 
   @Test
+  void runtimeLaunchersMustUseTheTechnicalClientSecret() throws IOException {
+    for (var launcher :
+        new Path[] {
+          LOCAL_RUN_EXAMPLE,
+          Path.of("scripts/load/run-authenticated-write-replicas.sh"),
+          Path.of("scripts/load/run-seeded-public-read-replicas.sh")
+        }) {
+      assertThat(Files.readString(launcher))
+          .as(launcher.toString())
+          .contains("IDENTITY_TECHNICAL_CLIENT_ID", "KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET")
+          .doesNotContain("IDENTITY_TECHNICAL_USER_USERNAME", "IDENTITY_TECHNICAL_USER_PASSWORD");
+    }
+  }
+
+  @Test
   void releaseWorkflowMustPublishImmutableMultiPlatformImagesWithEvidence() throws IOException {
     final var buildAction =
         Files.readString(Path.of(".github/actions/docker-build-push/action.yml"));

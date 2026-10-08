@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.verify;
 
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -11,8 +13,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.ReservationLedger;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.RegisterCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
 import java.time.LocalDateTime;
@@ -54,7 +56,7 @@ class OnboardingInviteExpiryCommitIT {
 
   @Autowired private PlatformTransactionManager transactionManager;
 
-  @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
+  @MockitoBean private ReservationLedger reservationLedger;
 
   @Test
   void tenantAdminResolve_expiredInvite_commitsTheExpiredTransitionDespiteTheLinkDeathAnswer() {
@@ -68,7 +70,13 @@ class OnboardingInviteExpiryCommitIT {
 
     assertThat(committedStatusOf(inviteId)).isEqualTo(AccountInviteStatus.EXPIRED);
     // #1052: the reservation dies with the invite, once the EXPIRED write is durable.
-    verify(tenantIdAllocationClient).release(79L);
+    verify(reservationLedger)
+        .releaseUnneeded(
+            argThat(
+                invite ->
+                    invite.getId().equals(inviteId)
+                        && invite.getStatus() == AccountInviteStatus.EXPIRED),
+            any());
   }
 
   @Test
@@ -85,7 +93,13 @@ class OnboardingInviteExpiryCommitIT {
         .isEqualTo(AccountInviteLinkException.Reason.EXPIRED);
 
     assertThat(committedStatusOf(inviteId)).isEqualTo(AccountInviteStatus.EXPIRED);
-    verify(tenantIdAllocationClient).release(79L);
+    verify(reservationLedger)
+        .releaseUnneeded(
+            argThat(
+                invite ->
+                    invite.getId().equals(inviteId)
+                        && invite.getStatus() == AccountInviteStatus.EXPIRED),
+            any());
   }
 
   @Test
@@ -134,7 +148,7 @@ class OnboardingInviteExpiryCommitIT {
                 .targetRole(targetRole)
                 .tenantId(79L)
                 .tenantIdReservationToken("3f2c6d1e-8b1a-4b8e-9f47-1234567890ab")
-                .recipientEmail("lisa.simpson@oriso.org")
+                .recipientEmail("lisa.simpson@example.org")
                 .firstName("Lisa")
                 .lastName("Simpson")
                 .agencyId(275L)
@@ -158,7 +172,7 @@ class OnboardingInviteExpiryCommitIT {
         true,
         "Lisa Simpson",
         "Head of centre",
-        "lisa.simpson@oriso.org",
+        "lisa.simpson@example.org",
         "Beratungsstelle Springfield",
         "Valid-Test-Password-2026!",
         79L,
@@ -175,6 +189,8 @@ class OnboardingInviteExpiryCommitIT {
         null,
         "Lisa",
         "Lisa S. (Nord)",
-        List.of(2L));
+        List.of(2L),
+        null,
+        null);
   }
 }

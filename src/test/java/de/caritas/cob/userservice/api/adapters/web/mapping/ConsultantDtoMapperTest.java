@@ -9,12 +9,14 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AccountLoginStatusService;
 import de.caritas.cob.userservice.api.config.ConsultantActivityInterceptor;
 import de.caritas.cob.userservice.api.config.CustomWebMvcConfigurer;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.ArrayList;
@@ -40,6 +42,7 @@ import tools.jackson.databind.JsonNode;
 class ConsultantDtoMapperTest {
 
   @Mock private IdentityManaging identityManager;
+  @Mock private AccountLoginStatusService accountLoginStatusService;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
   @Mock private TopicService topicService;
 
@@ -57,9 +60,28 @@ class ConsultantDtoMapperTest {
   }
 
   @Test
+  void consultantDtoOf_Should_ExposeDisabledLogin_WithoutChangingLifecycle() {
+    var mapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(mapper, "identityManager", identityManager);
+    ReflectionTestUtils.setField(mapper, "accountLoginStatusService", accountLoginStatusService);
+    when(accountLoginStatusService.activeOf("consultant-id")).thenReturn(false);
+    var source = consultantMap();
+    source.put("status", "CREATED");
+    source.put("isAbsent", true);
+
+    var dto = mapper.consultantDtoOf(source);
+
+    assertThat(dto.getActive()).isFalse();
+    assertThat(dto.getStatus()).isEqualTo("CREATED");
+    assertThat(dto.getAbsent()).isTrue();
+  }
+
+  @Test
   void consultantDtoOf_Should_MapMasterTableFields() {
     // given
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(
+        consultantDtoMapper, "accountLoginStatusService", accountLoginStatusService);
     ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
     when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
         .thenReturn(false);
@@ -79,6 +101,8 @@ class ConsultantDtoMapperTest {
   @Test
   void consultantDtoOf_Should_KeepInternalDisplayNameNull_When_AbsentFromMap() {
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(
+        consultantDtoMapper, "accountLoginStatusService", accountLoginStatusService);
     ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
     when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
         .thenReturn(false);
@@ -98,6 +122,8 @@ class ConsultantDtoMapperTest {
   void consultantDtoOf_Should_MapOtherIdentityFields_WhenPresentInMap() {
     // given
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(
+        consultantDtoMapper, "accountLoginStatusService", accountLoginStatusService);
     ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
     when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
         .thenReturn(false);
@@ -120,6 +146,8 @@ class ConsultantDtoMapperTest {
   void consultantDtoOf_Should_DefaultOtherIdentityFields_WhenAbsentFromMap() {
     // given
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(
+        consultantDtoMapper, "accountLoginStatusService", accountLoginStatusService);
     ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
     when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
         .thenReturn(false);
@@ -162,6 +190,8 @@ class ConsultantDtoMapperTest {
 
   private ConsultantDtoMapper givenAMapper() {
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(
+        consultantDtoMapper, "accountLoginStatusService", accountLoginStatusService);
     ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
     ReflectionTestUtils.setField(
         consultantDtoMapper, "consultantTopicRepository", consultantTopicRepository);
@@ -465,7 +495,8 @@ class ConsultantDtoMapperTest {
   void pageLinkOf_Should_BuildSelfLink() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
 
-    var link = consultantDtoMapper.pageLinkOf("query", 1, 20, "LAST_NAME", "ASC");
+    var link =
+        consultantDtoMapper.pageLinkOf("query", 1, 20, "LAST_NAME", "ASC", SearchFilter.NONE);
 
     assertThat(link.getMethod()).isEqualTo(MethodEnum.GET);
     assertThat(link.getHref()).contains("query");
@@ -480,6 +511,35 @@ class ConsultantDtoMapperTest {
     resultMap.put("isFirstPage", isFirstPage);
     resultMap.put("isLastPage", isLastPage);
     return resultMap;
+  }
+
+  @Test
+  void consultantSearchResultOf_Should_PreserveBothRowsWhenIdentityProviderIsUnavailable() {
+    var lookup =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup.class);
+    when(lookup.findEnabledById("consultant-id"))
+        .thenThrow(new jakarta.ws.rs.ServiceUnavailableException());
+    var mapper = givenAMapper();
+    ReflectionTestUtils.setField(
+        mapper, "accountLoginStatusService", new AccountLoginStatusService(lookup));
+    when(consultantTopicRepository.findTopicIdsByConsultantIdIn(any())).thenReturn(List.of());
+    var second = new HashMap<>(consultantMap());
+    second.put("id", "second-consultant");
+    var source = givenAResultMap(true, true);
+    source.put("consultants", List.of(consultantMap(), second));
+    source.put("totalElements", 2);
+
+    var result = mapper.consultantSearchResultOf(source, "*", 1, 10, "LASTNAME", "ASC");
+
+    assertThat(result.getTotal()).isEqualTo(2);
+    assertThat(result.getEmbedded())
+        .extracting(row -> row.getEmbedded().getId())
+        .containsExactly("consultant-id", "second-consultant");
+    assertThat(result.getEmbedded())
+        .allSatisfy(row -> assertThat(row.getEmbedded().getActive()).isNull());
+    org.mockito.Mockito.verify(lookup).findEnabledById("consultant-id");
+    org.mockito.Mockito.verifyNoMoreInteractions(lookup);
   }
 
   @Test
@@ -531,5 +591,31 @@ class ConsultantDtoMapperTest {
 
     assertThat(result.getLinks().getPrevious()).isNotNull();
     assertThat(result.getLinks().getNext()).isNotNull();
+  }
+
+  @Test
+  void consultantSearchResultOf_Should_KeepFilters_In_PageLinks() {
+    ConsultantDtoMapper consultantDtoMapper = givenAMapper();
+    when(identityManager.hasRole(anyString(), any(UserRole.class))).thenReturn(false);
+    when(consultantTopicRepository.findTopicIdsByConsultantIdIn(any())).thenReturn(List.of());
+
+    var result =
+        consultantDtoMapper.consultantSearchResultOf(
+            givenAResultMap(false, false),
+            "query",
+            2,
+            20,
+            "LAST_NAME",
+            "ASC",
+            new SearchFilter(4L, List.of(3L, 5L)));
+
+    for (var link :
+        List.of(
+            result.getLinks().getSelf(),
+            result.getLinks().getPrevious(),
+            result.getLinks().getNext())) {
+      assertThat(link.getHref()).contains("tenantId=4").contains("agencyId=3").contains("5");
+      assertThat(link.getTemplated()).isFalse();
+    }
   }
 }

@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResp
 import de.caritas.cob.userservice.api.conversation.model.ConversationListType;
 import de.caritas.cob.userservice.api.conversation.model.PageableListRequest;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.session.SessionSupervisionMarkerService;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionEnricher;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import lombok.NonNull;
@@ -21,8 +22,9 @@ public class ArchivedTeamSessionConversationListProvider extends DefaultConversa
   public ArchivedTeamSessionConversationListProvider(
       @NonNull UserAccountService userAccountProvider,
       @NonNull ConsultantSessionEnricher consultantSessionEnricher,
+      @NonNull SessionSupervisionMarkerService supervisionMarkerService,
       @NonNull SessionService sessionService) {
-    super(consultantSessionEnricher);
+    super(consultantSessionEnricher, supervisionMarkerService);
     this.sessionService = sessionService;
     this.userAccountProvider = userAccountProvider;
   }

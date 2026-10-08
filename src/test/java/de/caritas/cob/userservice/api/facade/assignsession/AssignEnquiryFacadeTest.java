@@ -50,7 +50,6 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -59,7 +58,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class AssignEnquiryFacadeTest {
   public static final long CURRENT_TENANT_ID = 1L;
 
-  @InjectMocks AssignEnquiryFacade assignEnquiryFacade;
+  AssignEnquiryFacade assignEnquiryFacade;
   @Mock SessionService sessionService;
 
   @Mock
@@ -80,10 +79,8 @@ class AssignEnquiryFacadeTest {
   @Mock de.caritas.cob.userservice.api.facade.SessionSupervisorFacade sessionSupervisorFacade;
   @Mock de.caritas.cob.userservice.api.facade.TeamDiscussionFacade teamDiscussionFacade;
 
-  /* ADR-018 §9: the anonymous consent guard. Mocked here — this test covers the
-  Matrix room mechanics of assignment, and the guard has its own tests. */
-  @Mock AnonymousEnquiryConsentGuard anonymousEnquiryConsentGuard;
   @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
+  @Mock AnonymousEnquiryDepartmentResolver anonymousEnquiryDepartmentResolver;
 
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
   private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
@@ -92,6 +89,26 @@ class AssignEnquiryFacadeTest {
 
   @BeforeEach
   public void setup() throws MatrixCreateRoomException {
+    assignEnquiryFacade =
+        new AssignEnquiryFacade(
+            sessionService,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            sessionRoomGateway,
+            sessionToConsultantVerifier,
+            statisticsService,
+            emailNotificationFacade,
+            httpServletRequest,
+            consultantRepository,
+            userRepository,
+            userHelper,
+            usernameTranscoder,
+            consultantDisplayNameResolver,
+            agencyMatrixCredentialClient,
+            eventNotificationService,
+            anonymousEnquiryDepartmentResolver,
+            sessionSupervisorFacade,
+            teamDiscussionFacade);
+    CONSULTANT_WITH_AGENCY.setTenantId(41L);
     // ADR-002 §2: the display name comes from the resolver, never from the real name.
     lenient()
         .when(consultantDisplayNameResolver.resolveMatrixDisplayName(any(Consultant.class)))
@@ -133,6 +150,7 @@ class AssignEnquiryFacadeTest {
     USER_WITH_MATRIX_ID.setMatrixUserId(null);
     USER_WITH_MATRIX_ID.setUsername(USERNAME);
     CONSULTANT_WITH_AGENCY.setMatrixUserId(null);
+    CONSULTANT_WITH_AGENCY.setTenantId(null);
     ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(null);
 
     TenantContext.clear();
@@ -233,6 +251,138 @@ class AssignEnquiryFacadeTest {
     verify(eventNotificationService)
         .createInquiryAcceptedNotification(
             ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+  }
+
+  // ---------------------------------------------------------------------------
+  // assignAnonymousEnquiry — department binding (ADR-022 decision 1, ADR-003)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void assignAnonymousEnquiry_Should_bindTheAcceptingConsultantsDepartment_inTheSameSave() {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    when(anonymousEnquiryDepartmentResolver.resolveAgencyId(session, CONSULTANT_WITH_AGENCY))
+        .thenReturn(Optional.of(BOUND_AGENCY_ID));
+    var agencyIdAtAssignmentSave = new java.util.concurrent.atomic.AtomicReference<Long>();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              Session saved = invocation.getArgument(0);
+              if (invocation.getArgument(2) == SessionStatus.IN_PROGRESS) {
+                agencyIdAtAssignmentSave.set(saved.getAgencyId());
+              }
+              return null;
+            })
+        .when(sessionService)
+        .updateConsultantAndStatusForSession(any(), any(), any());
+
+    assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY);
+
+    assertThat(session.getAgencyId()).isEqualTo(BOUND_AGENCY_ID);
+    assertThat(agencyIdAtAssignmentSave.get()).isEqualTo(BOUND_AGENCY_ID);
+  }
+
+  @Test
+  void assignAnonymousEnquiry_Should_exposeTheBoundAgency_inTheAnonymousConversationDto() {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    when(anonymousEnquiryDepartmentResolver.resolveAgencyId(session, CONSULTANT_WITH_AGENCY))
+        .thenReturn(Optional.of(BOUND_AGENCY_ID));
+
+    assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY);
+
+    // GET /conversations/anonymous/{id} is built from exactly these two mappers.
+    var sessionMap =
+        new de.caritas.cob.userservice.api.UserServiceMapper(usernameTranscoder)
+            .mapOf(Optional.of(session))
+            .orElseThrow();
+    var dto =
+        new de.caritas.cob.userservice.api.adapters.web.mapping.ConversationDtoMapper()
+            .anonymousEnquiryOf(sessionMap, 0, 0);
+    assertThat(dto.getAgencyId()).isEqualTo(BOUND_AGENCY_ID);
+    assertThat(dto.getMainTopicId()).isEqualTo(TOPIC_ID);
+  }
+
+  @Test
+  void assignAnonymousEnquiry_Should_stillSucceedWithoutAgency_When_noDepartmentResolves() {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    when(anonymousEnquiryDepartmentResolver.resolveAgencyId(session, CONSULTANT_WITH_AGENCY))
+        .thenReturn(Optional.empty());
+
+    assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY);
+
+    assertThat(session.getAgencyId()).isNull();
+    verify(sessionService)
+        .updateConsultantAndStatusForSession(
+            session, CONSULTANT_WITH_AGENCY, SessionStatus.IN_PROGRESS);
+    verify(eventNotificationService)
+        .createInquiryAcceptedNotification(session, CONSULTANT_WITH_AGENCY);
+  }
+
+  @Test
+  void assignAnonymousEnquiry_Should_leaveTheEnquiryInTheQueue_When_theDepartmentLookupIsDown() {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    when(anonymousEnquiryDepartmentResolver.resolveAgencyId(session, CONSULTANT_WITH_AGENCY))
+        .thenThrow(
+            new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.BAD_GATEWAY, "AgencyService unavailable"));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY))
+        .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+
+    // Nothing is saved: the enquiry stays NEW and the counsellor can accept it again.
+    verify(sessionService, never()).updateConsultantAndStatusForSession(any(), any(), any());
+    verify(eventNotificationService, never()).createInquiryAcceptedNotification(any(), any());
+  }
+
+  @Test
+  void assignAnonymousEnquiry_Should_neverChangeAnAgencyTheSessionAlreadyHas() {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    session.setAgencyId(7L);
+
+    assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY);
+
+    assertThat(session.getAgencyId()).isEqualTo(7L);
+    verify(anonymousEnquiryDepartmentResolver, never()).resolveAgencyId(any(), any());
+  }
+
+  @Test
+  void assignAnonymousEnquiry_Should_unbindTheDepartmentAgain_When_theAssignmentIsRolledBack()
+      throws Exception {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    when(anonymousEnquiryDepartmentResolver.resolveAgencyId(session, CONSULTANT_WITH_AGENCY))
+        .thenReturn(Optional.of(BOUND_AGENCY_ID));
+    when(sessionRoomGateway.createRoomAsUser(anyString(), anyString(), anyString()))
+        .thenReturn(null);
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY));
+
+    assertThat(session.getAgencyId()).isNull();
+    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_notResolveADepartment() {
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(anonymousEnquiryDepartmentResolver, never()).resolveAgencyId(any(), any());
+  }
+
+  private static final long BOUND_AGENCY_ID = 11L;
+  private static final long TOPIC_ID = 20L;
+
+  private static Session unboundTopicBasedAnonymousEnquiry() {
+    return Session.builder()
+        .id(4711L)
+        .user(USER_WITH_MATRIX_ID)
+        .consultingTypeId(1)
+        .registrationType(RegistrationType.ANONYMOUS)
+        .postcode("00000")
+        .tenantId(CURRENT_TENANT_ID)
+        .mainTopicId(TOPIC_ID)
+        .status(NEW)
+        .teamSession(false)
+        .build();
   }
 
   // ---------------------------------------------------------------------------
@@ -422,10 +572,9 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    AgencyMatrixCredentialsDTO creds =
-        agencyCredentials("@agency:matrix.example.com", "agencyPass");
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
-    when(sessionRoomGateway.loginUser(anyString(), anyString())).thenReturn("agency-token");
+    when(sessionRoomGateway.loginAsUser("@agency:matrix.example.com")).thenReturn("agency-token");
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
@@ -452,7 +601,7 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com", "");
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
@@ -465,10 +614,9 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    AgencyMatrixCredentialsDTO creds =
-        agencyCredentials("@agency:matrix.example.com", "agencyPass");
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
-    when(sessionRoomGateway.loginUser(anyString(), anyString())).thenReturn("");
+    when(sessionRoomGateway.loginAsUser("@agency:matrix.example.com")).thenReturn("");
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
@@ -481,10 +629,9 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    AgencyMatrixCredentialsDTO creds =
-        agencyCredentials("@agency:matrix.example.com", "agencyPass");
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
-    when(sessionRoomGateway.loginUser(anyString(), anyString())).thenReturn("agency-token");
+    when(sessionRoomGateway.loginAsUser("@agency:matrix.example.com")).thenReturn("agency-token");
     when(sessionRoomGateway.loginAsUser(CONSULTANT_MATRIX_ID)).thenReturn(MATRIX_TOKEN);
     when(sessionRoomGateway.joinRoom(eq("!existing-room:matrix.example.com"), any()))
         .thenReturn(false);
@@ -519,10 +666,9 @@ class AssignEnquiryFacadeTest {
     return consultant;
   }
 
-  private AgencyMatrixCredentialsDTO agencyCredentials(String userId, String password) {
+  private AgencyMatrixCredentialsDTO agencyCredentials(String userId) {
     AgencyMatrixCredentialsDTO dto = new AgencyMatrixCredentialsDTO();
     dto.setMatrixUserId(userId);
-    dto.setMatrixPassword(password);
     return dto;
   }
 }

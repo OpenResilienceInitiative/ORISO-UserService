@@ -30,7 +30,7 @@ runs:
       } | tee -a "$GITHUB_STEP_SUMMARY"
 
   - name: Upload required integration reports
-    if: ${{ always() }}
+    if: ${{ hashFiles('target/surefire-reports/*.xml') != '' }}
     uses: actions/upload-artifact@v4
     with:
       name: required-integration-reports-${{ inputs.java_version }}
