@@ -1317,6 +1317,7 @@ public class CaseHandoverService {
     if (user != null) {
       SessionUserDTO userDto = new SessionUserDTO();
       userDto.setId(user.getUserId());
+      userDto.setAvatarId(user.getAvatarId());
       userDto.setUsername(decodeUsername(user.getUsername()));
       userDto.setDeleted(user.getDeleteDate() != null);
       dto.user(userDto);
@@ -1331,7 +1332,10 @@ public class CaseHandoverService {
               .lastName(consultant.getLastName())
               .username(decodeUsername(consultant.getUsername()))
               // Handover candidates are shown to colleagues (internal surface, #996).
-              .displayName(decodeUsername(consultant.getInternalDisplayNameOrFallback())));
+              .displayName(decodeUsername(consultant.getInternalDisplayNameOrFallback()))
+              .avatarKind(
+                  consultant.getAvatarKind() == null ? null : consultant.getAvatarKind().name())
+              .avatarId(consultant.getAvatarId()));
     }
 
     return dto;
