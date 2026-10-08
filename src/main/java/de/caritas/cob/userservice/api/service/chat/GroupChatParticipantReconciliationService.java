@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -28,7 +29,9 @@ public class GroupChatParticipantReconciliationService {
   private final GroupChatParticipantRepository participantRepository;
   private final ConsultantRepository consultantRepository;
   private final GroupChatMembershipService membershipService;
+  private final AgencySilentMembershipService consultantMembership;
   private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
+  private final GroupChatMatrixCleanupService matrixCleanup;
 
   /**
    * Reconciles co-moderators only when the client explicitly supplies {@code consultantIds}. A null
@@ -40,6 +43,7 @@ public class GroupChatParticipantReconciliationService {
       return;
     }
 
+    matrixCleanup.lockGroup(series);
     var participants = participantRepository.findBySeriesIdForUpdate(series.getId());
     var ownerId = series.getChatOwner().getId();
     var desiredIds = new LinkedHashSet<>(consultantIds);
@@ -54,34 +58,28 @@ public class GroupChatParticipantReconciliationService {
                     Function.identity(),
                     (left, right) -> left));
 
-    // Validate every target before policy reads or any removals. Prior participation never
-    // grants co-moderator permissions and cannot exempt another newly selected actor.
-    var additions = new LinkedHashMap<String, Consultant>();
-    for (var id : desiredIds) {
-      if (participantsByConsultantId.containsKey(id)) continue;
-      var target =
+    // Validate the whole selection before changing any external room membership.
+    var selectedConsultants = new LinkedHashMap<String, Consultant>();
+    for (var consultantId : desiredIds) {
+      var consultant =
           consultantRepository
-              .findByIdAndDeleteDateIsNull(id)
-              .orElseThrow(() -> new BadRequestException("Consultant " + id + " does not exist"));
-      if (!Objects.equals(series.getChatOwner().getTenantId(), target.getTenantId()))
+              .findByIdAndDeleteDateIsNull(consultantId)
+              .orElseThrow(
+                  () -> new BadRequestException("Consultant " + consultantId + " does not exist"));
+      if (!Objects.equals(series.getChatOwner().getTenantId(), consultant.getTenantId())) {
         throw new BadRequestException("Consultant does not belong to the chat owner's tenant");
-      additions.put(id, target);
-    }
-    groupCounsellingDpaPolicy.requireAuthorizedEnrolments(
-        series, additions.values().stream().map(Consultant::getMatrixUserId).toList());
-
-    for (var existing : participants) {
-      if (existing.getRole() == ParticipantRole.CO_MODERATOR
-          && !desiredIds.contains(existing.getConsultantId())) {
-        consultantRepository
-            .findByIdAndDeleteDateIsNull(existing.getConsultantId())
-            .ifPresent(
-                consultant ->
-                    membershipService.removeLeavingMemberFromRoom(
-                        series, consultant.getMatrixUserId()));
-        participantRepository.delete(existing);
       }
+      selectedConsultants.put(consultantId, consultant);
     }
+
+    // Check every newly selected actor before provisioning, joins or removals.
+    // Existing participation cannot exempt another colleague from the admission policy.
+    groupCounsellingDpaPolicy.requireAuthorizedEnrolments(
+        series,
+        selectedConsultants.entrySet().stream()
+            .filter(entry -> !participantsByConsultantId.containsKey(entry.getKey()))
+            .map(entry -> entry.getValue().getMatrixUserId())
+            .toList());
 
     var sessionId =
         participants.stream()
@@ -92,29 +90,69 @@ public class GroupChatParticipantReconciliationService {
                     new ConflictException(
                         "Chat Series has no owner participation and cannot be updated"));
 
-    for (var consultantId : desiredIds) {
-      var existing = participantsByConsultantId.get(consultantId);
-      if (existing != null) {
-        if (existing.getRole() == ParticipantRole.PARTICIPANT) {
-          existing.setRole(ParticipantRole.CO_MODERATOR);
-          participantRepository.save(existing);
+    var cleanupOwner =
+        new GroupChatMatrixCleanupService.GroupOwner(
+            series.getId(), ownerId, series.getChatOwner().getTenantId());
+    var cleanupTasks = new java.util.ArrayList<Long>();
+    try {
+      // Existing database rows do not prove Matrix membership: retry the join too.
+      // Complete joins before removals; journal only confirmed new remote access.
+      for (var consultant : selectedConsultants.values()) {
+        var consultantId = consultant.getId();
+        var matrixUserId = consultant.getMatrixUserId();
+        if (matrixUserId == null || matrixUserId.isBlank())
+          matrixUserId = consultantMembership.ensureMatrixAccount(consultant);
+        if (matrixUserId == null || matrixUserId.isBlank())
+          throw new InternalServerErrorException("Consultant has no Matrix identity");
+        if (!participantsByConsultantId.containsKey(consultantId)) {
+          var remote = membershipService.isMemberInRoom(series, matrixUserId);
+          if (remote.isEmpty())
+            throw new InternalServerErrorException("New colleague's Matrix membership is unknown");
+          if (!remote.get())
+            cleanupTasks.add(
+                matrixCleanup.recordJoin(
+                    cleanupOwner, consultantId, series.getMatrixRoomId(), matrixUserId));
         }
-        continue;
+        if (!membershipService.addMemberToRoom(series, matrixUserId)) {
+          throw new InternalServerErrorException(
+              "Consultant " + consultantId + " could not join the Matrix room");
+        }
       }
 
-      var consultant = additions.get(consultantId);
-      if (!membershipService.addMemberToRoom(series, consultant.getMatrixUserId())) {
-        throw new InternalServerErrorException(
-            "Consultant " + consultantId + " could not join the Matrix room");
+      for (var consultantId : desiredIds) {
+        var existing = participantsByConsultantId.get(consultantId);
+        if (existing != null) {
+          if (existing.getRole() == ParticipantRole.PARTICIPANT) {
+            existing.setRole(ParticipantRole.CO_MODERATOR);
+            participantRepository.save(existing);
+          }
+          continue;
+        }
+        participantRepository.save(
+            GroupChatParticipant.builder()
+                .chatId(sessionId)
+                .seriesId(series.getId())
+                .consultantId(consultantId)
+                .role(ParticipantRole.CO_MODERATOR)
+                .build());
       }
-
-      participantRepository.save(
-          GroupChatParticipant.builder()
-              .chatId(sessionId)
-              .seriesId(series.getId())
-              .consultantId(consultantId)
-              .role(ParticipantRole.CO_MODERATOR)
-              .build());
+      for (var existing : participants) {
+        if (existing.getRole() == ParticipantRole.CO_MODERATOR
+            && !desiredIds.contains(existing.getConsultantId())) {
+          var leaving = consultantRepository.findById(existing.getConsultantId());
+          if (leaving.isEmpty()
+              || !membershipService.removeLeavingMemberFromRoomAndConfirm(
+                  series, leaving.get().getMatrixUserId())) {
+            throw new InternalServerErrorException(
+                "Matrix removal is unconfirmed; participant tracking retained");
+          }
+          participantRepository.delete(existing);
+        }
+      }
+      cleanupTasks.forEach(matrixCleanup::clear);
+    } catch (RuntimeException failure) {
+      cleanupTasks.forEach(matrixCleanup::compensate);
+      throw failure;
     }
   }
 }

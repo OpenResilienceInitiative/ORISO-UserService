@@ -47,6 +47,7 @@ class ReplicaSafetyInventoryContractTest {
           "group-chat-deactivation-scheduler",
           "group-chat-admission-retry",
           "group-chat-admission-matrix-repair",
+          "group-chat-matrix-cleanup",
           "anonymous-deactivation-scheduler",
           "group-chat-reminder-scheduler",
           "group-appointment-mail-scheduler",

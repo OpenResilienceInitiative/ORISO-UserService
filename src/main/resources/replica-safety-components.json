@@ -794,6 +794,22 @@
       "status": "bounded"
     },
     {
+      "id": "group-chat-matrix-cleanup",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/chat/GroupChatMatrixCleanupScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-group-chat",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryRepairs"
+      ],
+      "decision": "Leases each batch through ScheduledTaskClaimService. Durable cleanup intents survive a failed group operation; retries lock owner, series and task, then current room and participant guards protect legitimate access. Confirmed absence or purge clears the intent; failed cleanup remains retryable. The supported one-replica ceiling is unchanged.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "matrix-feed-signal-coalescer",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/FeedSignalCoalescer.java",
       "kind": "local-state",

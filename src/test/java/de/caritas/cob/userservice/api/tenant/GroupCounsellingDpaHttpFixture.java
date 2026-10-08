@@ -200,6 +200,8 @@ abstract class GroupCounsellingDpaHttpFixture {
         chats.save(
             Chat.builder()
                 .topic("Synthetic AVV group")
+                .createDate(java.time.LocalDateTime.now())
+                .updateDate(java.time.LocalDateTime.now())
                 .consultingTypeId(1)
                 .chatOwner(consultant)
                 .initialStartDate(start)
