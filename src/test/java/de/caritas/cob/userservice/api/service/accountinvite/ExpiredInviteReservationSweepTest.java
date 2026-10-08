@@ -1,11 +1,13 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import de.caritas.cob.userservice.api.config.auth.TaskIdentity;
 import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -70,9 +72,9 @@ class ExpiredInviteReservationSweepTest {
     technicalUser.setClientSecret("secret");
     when(taskClaimService.tryClaimLease(ExpiredInviteReservationSweep.TASK_NAME, claimDuration))
         .thenReturn(Optional.of(lease));
-    when(identityClientConfig.getTaskIdentity(org.mockito.ArgumentMatchers.any()))
+    when(identityClientConfig.getTaskIdentity(TaskIdentity.INVITE_RESERVATIONS))
         .thenReturn(technicalUser);
-    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.any()))
+    when(identityAuthentication.loginTask(same(technicalUser)))
         .thenReturn(new IdentityLogin("token", 60, 60, "refresh"));
     when(accountInviteService.expireElapsedInvites())
         .thenAnswer(
@@ -85,6 +87,8 @@ class ExpiredInviteReservationSweepTest {
 
     sweep.expireElapsedInvites();
 
+    verify(identityClientConfig).getTaskIdentity(TaskIdentity.INVITE_RESERVATIONS);
+    verify(identityAuthentication).loginTask(same(technicalUser));
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     verify(accountSetupService).expireElapsedLinks();
     verify(taskClaimService).release(lease);

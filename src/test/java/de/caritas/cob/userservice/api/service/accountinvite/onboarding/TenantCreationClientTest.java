@@ -2,7 +2,9 @@ package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
@@ -10,6 +12,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentity;
 import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -49,13 +52,15 @@ class TenantCreationClientTest {
   private final TenantCreationClient client =
       new TenantCreationClient(headers, identity, config, factory);
 
+  private TaskIdentityCredentials technical;
+
   @BeforeEach
   void setUp() {
-    var technical = new TaskIdentityCredentials();
+    technical = new TaskIdentityCredentials();
     technical.setClientId("synthetic-service");
     technical.setClientSecret("synthetic-password");
-    when(config.getTaskIdentity(org.mockito.ArgumentMatchers.any())).thenReturn(technical);
-    when(identity.loginTask(org.mockito.ArgumentMatchers.any()))
+    when(config.getTaskIdentity(TaskIdentity.CONFIG_WIZARD)).thenReturn(technical);
+    when(identity.loginTask(same(technical)))
         .thenReturn(new IdentityLogin("synthetic-token", 60, 120, "synthetic-refresh"));
     ReflectionTestUtils.setField(headers, "csrfHeaderProperty", "X-CSRF-TOKEN");
     ReflectionTestUtils.setField(headers, "csrfCookieProperty", "CSRF-TOKEN");
@@ -80,6 +85,8 @@ class TenantCreationClientTest {
                 .tenantIdReservationToken("synthetic-reservation"));
 
     assertThat(created.getId()).isEqualTo(88L);
+    verify(config).getTaskIdentity(TaskIdentity.CONFIG_WIZARD);
+    verify(identity).loginTask(same(technical));
     server.verify();
     var body = JsonMapper.builder().build().readTree(sentBody.get());
     assertThat(body.path("id").asLong()).isEqualTo(88L);

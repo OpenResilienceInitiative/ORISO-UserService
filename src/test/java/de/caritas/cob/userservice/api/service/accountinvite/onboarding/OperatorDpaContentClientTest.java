@@ -2,14 +2,15 @@ package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.config.auth.TaskIdentity;
 import de.caritas.cob.userservice.api.config.auth.TaskIdentityCredentials;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -59,12 +60,10 @@ class OperatorDpaContentClientTest {
     technicalUser = new TaskIdentityCredentials();
     technicalUser.setClientId("technical");
     technicalUser.setClientSecret("secret");
-    when(identityClientConfig.getTaskIdentity(
-            de.caritas.cob.userservice.api.config.auth.TaskIdentity.CONFIG_WIZARD))
+    when(identityClientConfig.getTaskIdentity(TaskIdentity.CONFIG_WIZARD))
         .thenReturn(technicalUser);
     IdentityLogin identityLogin = new IdentityLogin("token", 0, 0, null);
-    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.same(technicalUser)))
-        .thenReturn(identityLogin);
+    when(identityAuthentication.loginTask(same(technicalUser))).thenReturn(identityLogin);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(anyString()))
         .thenReturn(new HttpHeaders());
     when(controllerFactory.createControllerApi()).thenReturn(tenantControllerApi);
@@ -258,7 +257,7 @@ class OperatorDpaContentClientTest {
    */
   @Test
   void lookupPublishedDpaReportsUpstreamErrorWhenTheTechnicalUserLoginFails() {
-    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.same(technicalUser)))
+    when(identityAuthentication.loginTask(same(technicalUser)))
         .thenThrow(new IllegalStateException("technical user login failed"));
 
     var lookup = clientFor(OPERATOR_TENANT_ID).lookupPublishedDpa();
@@ -269,7 +268,7 @@ class OperatorDpaContentClientTest {
 
   @Test
   void fetchPublishedDpaDoesNotThrowWhenTheTechnicalUserLoginFails() {
-    when(identityAuthentication.loginTask(org.mockito.ArgumentMatchers.same(technicalUser)))
+    when(identityAuthentication.loginTask(same(technicalUser)))
         .thenThrow(new IllegalStateException("technical user login failed"));
 
     assertNull(clientFor(OPERATOR_TENANT_ID).fetchPublishedDpa());
@@ -354,12 +353,14 @@ class OperatorDpaContentClientTest {
   }
 
   @Test
-  void fetchPublishedDpaContentAuthenticatesAsTheConfiguredTechnicalUser() {
-    when(tenantControllerApi.getDataProcessingAgreementVersions(anyLong())).thenReturn(List.of());
+  void fetchPublishedDpaContentAuthenticatesWithTheConfigWizardCredentials() {
+    when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
+        .thenReturn(List.of(new DpaVersionDTO().content(DPA_JSON)));
 
-    clientFor(OPERATOR_TENANT_ID).fetchPublishedDpaContent();
+    assertEquals(DPA_JSON, clientFor(OPERATOR_TENANT_ID).fetchPublishedDpaContent());
 
-    verify(identityAuthentication).loginTask(org.mockito.ArgumentMatchers.any());
+    verify(identityClientConfig).getTaskIdentity(TaskIdentity.CONFIG_WIZARD);
+    verify(identityAuthentication).loginTask(same(technicalUser));
     verify(securityHeaderSupplier).getKeycloakAndCsrfHttpHeaders("token");
   }
 }
