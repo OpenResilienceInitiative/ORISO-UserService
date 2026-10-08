@@ -227,6 +227,8 @@ public class SecurityConfig {
                 // This cluster-internal endpoint authenticates with its own dedicated shared
                 // secret because the MatrixRTC gateway is not a Keycloak user. The controller
                 // rejects a missing or invalid secret in constant time.
+                .requestMatchers(HttpMethod.POST, "/internal/matrix/group-join-policy")
+                .permitAll()
                 .requestMatchers(
                     HttpMethod.POST,
                     "/internal/matrixrtc/call-policy",

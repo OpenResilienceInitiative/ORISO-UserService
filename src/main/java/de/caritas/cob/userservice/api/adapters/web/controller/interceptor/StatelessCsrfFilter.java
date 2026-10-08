@@ -98,6 +98,8 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
       // authenticates this one exact endpoint with its dedicated policy token, so it cannot
       // provide the browser CSRF cookie/header pair. Keep the exemption exact: sibling internal
       // endpoints must still pass the normal CSRF check.
+      if ("POST".equals(request.getMethod())
+          && "/internal/matrix/group-join-policy".equals(request.getRequestURI())) return true;
       if ("/internal/matrixrtc/call-policy".equals(request.getRequestURI())
           || "/internal/matrixrtc/media-access".equals(request.getRequestURI())) {
         return true;

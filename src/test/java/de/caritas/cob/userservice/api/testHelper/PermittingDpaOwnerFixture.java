@@ -14,11 +14,14 @@ import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
 import de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy;
 import de.caritas.cob.userservice.api.service.dpa.TenantDpaGateReadClient;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixPolicySettings;
+import de.caritas.cob.userservice.api.service.matrixgroup.MatrixGroupParticipationHistory;
 import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
 import org.springframework.http.MediaType;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -33,6 +36,21 @@ import org.springframework.web.client.RestTemplate;
  */
 public final class PermittingDpaOwnerFixture {
   private PermittingDpaOwnerFixture() {}
+
+  /** Real deployed-legacy group policy; the dormant history adapter performs no HTTP reads. */
+  public static GroupCounsellingDpaPolicy groupPolicy() {
+    var ownerPolicy = policy();
+    var agencies = (AgencyService) ReflectionTestUtils.getField(ownerPolicy, "agencyService");
+    return new GroupCounsellingDpaPolicy(
+        ownerPolicy,
+        mock(de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
+        agencies,
+        new MatrixGroupParticipationHistory(
+            new GroupMatrixPolicySettings(false, "", ""),
+            new RestTemplate(),
+            new com.fasterxml.jackson.databind.ObjectMapper(),
+            null));
+  }
 
   public static NewCounsellingDpaPolicy policy() {
     var transport = new RestTemplate();
