@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -19,6 +21,7 @@ import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandov
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogsResult;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverReason;
+import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverRecipient;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -28,6 +31,7 @@ import jakarta.validation.constraints.NotNull;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +39,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -74,6 +79,63 @@ class CaseHandoverControllerTest {
     mockMvc
         .perform(post("/users/sessions/13/case-handover/extend"))
         .andExpect(status().isConflict());
+  }
+
+  @Test
+  void listEligibleRecipients_returnsTheConsultantsTheOfferWouldAccept() throws Exception {
+    when(caseHandoverService.listEligibleRecipients(123L))
+        .thenReturn(
+            List.of(
+                CaseHandoverRecipient.builder()
+                    .consultantId("c-1")
+                    .displayName("Jonas Lehmann")
+                    .build()));
+
+    mockMvc
+        .perform(get("/users/sessions/123/case-handover/recipients"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].consultantId").value("c-1"))
+        .andExpect(jsonPath("$[0].displayName").value("Jonas Lehmann"));
+
+    verify(caseHandoverService).listEligibleRecipients(123L);
+  }
+
+  @Test
+  void consentPreference_bothPrefixesReadAndSaveValidatedChoice() throws Exception {
+    when(caseHandoverService.getConsentPreference(123L))
+        .thenReturn(new CaseHandoverService.ConsentPreference(123L, false));
+    when(caseHandoverService.updateConsentPreference(123L, true))
+        .thenReturn(new CaseHandoverService.ConsentPreference(123L, true));
+    for (String prefix : List.of("", "/service")) {
+      String url = prefix + "/users/sessions/123/case-handover/consent-preference";
+      mockMvc
+          .perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(url))
+          .andExpect(status().isOk())
+          .andExpect(
+              org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                      "$.sessionId")
+                  .value(123))
+          .andExpect(
+              org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                      "$.alwaysAskBeforeAdditionalAccess")
+                  .value(false));
+      mockMvc
+          .perform(
+              org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(url)
+                  .contentType("application/json")
+                  .content("{\"alwaysAskBeforeAdditionalAccess\":true}"))
+          .andExpect(status().isOk())
+          .andExpect(
+              org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                      "$.alwaysAskBeforeAdditionalAccess")
+                  .value(true));
+      mockMvc
+          .perform(
+              org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(url)
+                  .contentType("application/json")
+                  .content("{}"))
+          .andExpect(status().isBadRequest());
+    }
   }
 
   @Test
@@ -156,8 +218,15 @@ class CaseHandoverControllerTest {
     var request = new CaseHandoverController.CaseHandoverRequestDTO();
     request.setReasonCode("COUNSELLOR_ON_HOLIDAY");
     request.setExplanation("handover please");
+    request.setExpectedOwnershipRevision(3L);
+    request.setOperationId(UUID.fromString("3f43450b-aab8-4f95-a379-a2f64d31f691"));
     var status = CaseHandoverStatus.builder().sessionId(11L).status("PENDING").build();
-    when(caseHandoverService.requestAccess(11L, "COUNSELLOR_ON_HOLIDAY", "handover please"))
+    when(caseHandoverService.requestAccess(
+            11L,
+            "COUNSELLOR_ON_HOLIDAY",
+            "handover please",
+            3L,
+            UUID.fromString("3f43450b-aab8-4f95-a379-a2f64d31f691")))
         .thenReturn(status);
 
     var response = controller.requestAccess(11L, request);
@@ -182,6 +251,96 @@ class CaseHandoverControllerTest {
         CaseHandoverController.CaseHandoverRequestDTO.class.getDeclaredField("explanation");
 
     assertTrue(field.isAnnotationPresent(NotBlank.class));
+  }
+
+  @Test
+  void createOffer_requiresPeriodAndOperationAndReturnsRecipientPending() throws Exception {
+    var operationId = UUID.fromString("3f43450b-aab8-4f95-a379-a2f64d31f691");
+    when(caseHandoverService.createOffer(
+            11L, "recipient", "COUNSELLOR_ON_HOLIDAY", null, 3L, operationId))
+        .thenReturn(CaseHandoverStatus.builder().status("PENDING_RECIPIENT_ACCEPTANCE").build());
+
+    mockMvc
+        .perform(
+            post("/users/sessions/11/case-handover/offers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "targetConsultantId": "recipient",
+                      "reasonCode": "COUNSELLOR_ON_HOLIDAY",
+                      "expectedOwnershipRevision": 3,
+                      "operationId": "3f43450b-aab8-4f95-a379-a2f64d31f691"
+                    }
+                    """))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.status").value("PENDING_RECIPIENT_ACCEPTANCE"));
+  }
+
+  @Test
+  void requestAccess_legacyPayloadWithoutEitherGuardStillDelegates() throws Exception {
+    when(caseHandoverService.requestAccess(11L, "PLANNED_ABSENCE", "handover please", null, null))
+        .thenReturn(CaseHandoverStatus.builder().status("GRANTED").build());
+    mockMvc
+        .perform(
+            post("/users/sessions/11/case-handover")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"reasonCode\":\"PLANNED_ABSENCE\",\"explanation\":\"handover please\"}"))
+        .andExpect(status().isCreated());
+  }
+
+  @Test
+  void requestAccess_rejectsMissingOwnershipRevisionInsteadOfDefaultingToZero() throws Exception {
+    mockMvc
+        .perform(
+            post("/users/sessions/11/case-handover")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "reasonCode": "COUNSELLOR_ON_HOLIDAY",
+                      "explanation": "handover please",
+                      "operationId": "3f43450b-aab8-4f95-a379-a2f64d31f691"
+                    }
+                    """))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void batch_cascadeRejectsElementWithoutOperationPreconditions() throws Exception {
+    mockMvc
+        .perform(
+            post("/users/case-handover/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "reasonCode": "COUNSELLOR_ON_HOLIDAY",
+                      "explanation": "handover please",
+                      "operations": [{"sessionId": 11}]
+                    }
+                    """))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void batch_rejectsNullOperationWithoutCallingService() throws Exception {
+    mockMvc
+        .perform(
+            post("/users/case-handover/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "reasonCode": "OTHER_EMERGENCY",
+                      "explanation": "Urgent cover",
+                      "operations": [null]
+                    }
+                    """))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(caseHandoverService);
   }
 
   @Test
@@ -224,25 +383,28 @@ class CaseHandoverControllerTest {
   }
 
   @Test
-  void requestBatchAccess_emptySessionIdsField_hasNotEmptyAnnotation() throws Exception {
+  void requestBatchAccess_emptyOperationsField_hasNotEmptyAnnotation() throws Exception {
     // Business reason: batch handover calls must reject empty targets to avoid no-op writes.
     Field field =
-        CaseHandoverController.CaseHandoverBatchRequestDTO.class.getDeclaredField("sessionIds");
+        CaseHandoverController.CaseHandoverBatchRequestDTO.class.getDeclaredField("operations");
 
     assertTrue(field.isAnnotationPresent(NotEmpty.class));
   }
 
   @Test
-  void requestBatchAccess_duplicateSessionIds_deduplicatesBeforeDelegation() {
-    // Business reason: duplicate session IDs should not produce duplicate handover requests.
+  void requestBatchAccess_operationsPreserveTheirIndependentIdentities() {
     var request = new CaseHandoverController.CaseHandoverBatchRequestDTO();
     request.setReasonCode("COUNSELLOR_ON_HOLIDAY");
     request.setExplanation("batch");
-    request.setSessionIds(List.of(100L, 100L, 200L));
+    var first = batchOperation(100L, 2L, "3f43450b-aab8-4f95-a379-a2f64d31f691");
+    var second = batchOperation(200L, 5L, "89829f34-1fd2-44d0-899e-84bb93f85530");
+    request.setOperations(List.of(first, second));
     var status = CaseHandoverStatus.builder().status("PENDING").build();
-    when(caseHandoverService.requestAccess(100L, "COUNSELLOR_ON_HOLIDAY", "batch"))
+    when(caseHandoverService.requestAccess(
+            100L, "COUNSELLOR_ON_HOLIDAY", "batch", 2L, first.getOperationId()))
         .thenReturn(status);
-    when(caseHandoverService.requestAccess(200L, "COUNSELLOR_ON_HOLIDAY", "batch"))
+    when(caseHandoverService.requestAccess(
+            200L, "COUNSELLOR_ON_HOLIDAY", "batch", 5L, second.getOperationId()))
         .thenReturn(status);
 
     var response = controller.requestBatchAccess(request);
@@ -250,8 +412,10 @@ class CaseHandoverControllerTest {
     assertEquals(HttpStatus.CREATED, response.getStatusCode());
     assertNotNull(response.getBody());
     assertEquals(2, response.getBody().size());
-    verify(caseHandoverService, times(1)).requestAccess(100L, "COUNSELLOR_ON_HOLIDAY", "batch");
-    verify(caseHandoverService, times(1)).requestAccess(200L, "COUNSELLOR_ON_HOLIDAY", "batch");
+    verify(caseHandoverService, times(1))
+        .requestAccess(100L, "COUNSELLOR_ON_HOLIDAY", "batch", 2L, first.getOperationId());
+    verify(caseHandoverService, times(1))
+        .requestAccess(200L, "COUNSELLOR_ON_HOLIDAY", "batch", 5L, second.getOperationId());
   }
 
   @Test
@@ -260,11 +424,15 @@ class CaseHandoverControllerTest {
     var request = new CaseHandoverController.CaseHandoverBatchRequestDTO();
     request.setReasonCode("COUNSELLOR_ON_HOLIDAY");
     request.setExplanation("batch");
-    request.setSessionIds(List.of(300L, 301L));
+    var first = batchOperation(300L, 2L, "3f43450b-aab8-4f95-a379-a2f64d31f691");
+    var second = batchOperation(301L, 3L, "89829f34-1fd2-44d0-899e-84bb93f85530");
+    request.setOperations(List.of(first, second));
     var status = CaseHandoverStatus.builder().status("PENDING").build();
-    when(caseHandoverService.requestAccess(300L, "COUNSELLOR_ON_HOLIDAY", "batch"))
+    when(caseHandoverService.requestAccess(
+            300L, "COUNSELLOR_ON_HOLIDAY", "batch", 2L, first.getOperationId()))
         .thenReturn(status);
-    when(caseHandoverService.requestAccess(301L, "COUNSELLOR_ON_HOLIDAY", "batch"))
+    when(caseHandoverService.requestAccess(
+            301L, "COUNSELLOR_ON_HOLIDAY", "batch", 3L, second.getOperationId()))
         .thenThrow(new RuntimeException("no agency access"));
 
     var response = controller.requestBatchAccess(request);
@@ -275,6 +443,16 @@ class CaseHandoverControllerTest {
     assertTrue(response.getBody().get(0).success);
     assertFalse(response.getBody().get(1).success);
     assertEquals("no agency access", response.getBody().get(1).error);
+    assertEquals(second.getOperationId(), response.getBody().get(1).operationId);
+  }
+
+  private CaseHandoverController.CaseHandoverBatchOperationDTO batchOperation(
+      Long sessionId, Long ownershipRevision, String operationId) {
+    var operation = new CaseHandoverController.CaseHandoverBatchOperationDTO();
+    operation.setSessionId(sessionId);
+    operation.setExpectedOwnershipRevision(ownershipRevision);
+    operation.setOperationId(UUID.fromString(operationId));
+    return operation;
   }
 
   @Test

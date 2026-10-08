@@ -4,11 +4,13 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -52,11 +54,21 @@ public class GroupChatParticipantReconciliationService {
                     Function.identity(),
                     (left, right) -> left));
 
-    if (desiredIds.stream().anyMatch(id -> !participantsByConsultantId.containsKey(id))) {
-      // Check additions before removals: a refused update must not leave some
-      // existing moderators removed from Matrix while the database rolls back.
-      groupCounsellingDpaPolicy.requireNewEnrolment(series);
+    // Validate every target before policy reads or any removals. Prior participation never
+    // grants co-moderator permissions and cannot exempt another newly selected actor.
+    var additions = new LinkedHashMap<String, Consultant>();
+    for (var id : desiredIds) {
+      if (participantsByConsultantId.containsKey(id)) continue;
+      var target =
+          consultantRepository
+              .findByIdAndDeleteDateIsNull(id)
+              .orElseThrow(() -> new BadRequestException("Consultant " + id + " does not exist"));
+      if (!Objects.equals(series.getChatOwner().getTenantId(), target.getTenantId()))
+        throw new BadRequestException("Consultant does not belong to the chat owner's tenant");
+      additions.put(id, target);
     }
+    groupCounsellingDpaPolicy.requireAuthorizedEnrolments(
+        series, additions.values().stream().map(Consultant::getMatrixUserId).toList());
 
     for (var existing : participants) {
       if (existing.getRole() == ParticipantRole.CO_MODERATOR
@@ -90,14 +102,7 @@ public class GroupChatParticipantReconciliationService {
         continue;
       }
 
-      var consultant =
-          consultantRepository
-              .findByIdAndDeleteDateIsNull(consultantId)
-              .orElseThrow(
-                  () -> new BadRequestException("Consultant " + consultantId + " does not exist"));
-      if (!Objects.equals(series.getChatOwner().getTenantId(), consultant.getTenantId())) {
-        throw new BadRequestException("Consultant does not belong to the chat owner's tenant");
-      }
+      var consultant = additions.get(consultantId);
       if (!membershipService.addMemberToRoom(series, consultant.getMatrixUserId())) {
         throw new InternalServerErrorException(
             "Consultant " + consultantId + " could not join the Matrix room");

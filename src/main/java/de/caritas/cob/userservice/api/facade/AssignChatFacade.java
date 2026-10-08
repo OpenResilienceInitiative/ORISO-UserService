@@ -69,7 +69,7 @@ public class AssignChatFacade {
     if (userChats.findByChatAndUser(chat, user).isPresent()) {
       throw new ConflictException("User is already assigned to chat");
     }
-    groupCounsellingDpaPolicy.requireNewEnrolment(chat);
+    groupCounsellingDpaPolicy.requireAuthorizedEnrolment(chat, user.getMatrixUserId());
     chatService.saveUserChatRelation(UserChat.builder().user(user).chat(chat).build());
     appointmentEvents.recordMemberJoined(chat, RecipientRole.PARTICIPANT, user.getUserId());
   }

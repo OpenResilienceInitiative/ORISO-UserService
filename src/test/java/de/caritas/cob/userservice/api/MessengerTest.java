@@ -263,7 +263,8 @@ class MessengerTest {
         .thenReturn(
             List.of(
                 new de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
-                    .ResolvedRoomMember("@c:matrix.example.org", "c-id", "c", "c", true)));
+                    .ResolvedRoomMember(
+                    "@c:matrix.example.org", "c-id", "c", "c", true, null, null)));
 
     assertThat(messenger.isInChat(session, consultant)).isTrue();
   }
@@ -280,7 +281,8 @@ class MessengerTest {
         .thenReturn(
             List.of(
                 new de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
-                    .ResolvedRoomMember("@other:matrix.example.org", "o-id", "o", "o", true)));
+                    .ResolvedRoomMember(
+                    "@other:matrix.example.org", "o-id", "o", "o", true, null, null)));
 
     assertThat(messenger.isInChat(session, consultant)).isFalse();
   }
@@ -418,7 +420,8 @@ class MessengerTest {
         .thenReturn(
             List.of(
                 new de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
-                    .ResolvedRoomMember("@c1:matrix.example.org", "c-1", "c1", "c1", true)));
+                    .ResolvedRoomMember(
+                    "@c1:matrix.example.org", "c-1", "c1", "c1", true, null, null)));
     assertThat(messenger.removeConsultantFromSession(1L, "c-1")).isTrue();
     verify(groupChatMembershipService)
         .removeMemberFromRoom("!room:matrix.example.org", "@c1:matrix.example.org");

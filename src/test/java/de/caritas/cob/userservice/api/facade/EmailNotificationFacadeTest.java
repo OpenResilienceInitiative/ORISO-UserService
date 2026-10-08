@@ -382,11 +382,19 @@ class EmailNotificationFacadeTest {
   KeycloakService keycloakService;
 
   private LogbackCaptor facadeLogCaptor;
+  private final de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenants =
+      mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class);
   private LogbackCaptor assignEnquiryLogCaptor;
 
   @BeforeEach
   void setup() throws SecurityException {
     USER.setTenantId(1L);
+    when(tenants.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(
+            call ->
+                new de.caritas.cob.userservice.tenantservice.generated.web.model
+                        .RestrictedTenantDTO()
+                    .id(call.getArgument(0)));
     emailNotificationFacade =
         new EmailNotificationFacade(
             mailService,
@@ -399,7 +407,8 @@ class EmailNotificationFacadeTest {
             assignEnquiryEmailSupplierProvider,
             tenantTemplateSupplier,
             notificationRequestFacts,
-            releaseToggleService);
+            releaseToggleService,
+            tenants);
     when(newEnquiryEmailSupplierProvider.getObject()).thenReturn(newEnquiryEmailSupplier);
     when(newDirectEnquiryEmailSupplierProvider.getObject())
         .thenReturn(newDirectEnquiryEmailSupplier);
@@ -419,6 +428,7 @@ class EmailNotificationFacadeTest {
 
   @org.junit.jupiter.api.AfterEach
   void tearDown() {
+    TenantContext.clear();
     facadeLogCaptor.detach();
     assignEnquiryLogCaptor.detach();
   }
@@ -699,6 +709,38 @@ class EmailNotificationFacadeTest {
     emailNotificationFacade.sendReassignConfirmationNotification(reassignmentNotification, null);
 
     verifyAsync(a -> mailService.sendEmailNotification(Mockito.any()));
+  }
+
+  @Test
+  void sendReassignConfirmationNotification_ShouldClearTenantContext_WhenConsultantOptsOut() {
+    var consultant = new EasyRandom().nextObject(Consultant.class);
+    consultant.setNotificationsSettings(
+        JsonSerializationUtils.serializeToJsonString(
+            new NotificationsSettingsDTO().reassignmentNotificationEnabled(false)));
+    when(consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
+    when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(true);
+    var reassignmentNotification = new EasyRandom().nextObject(ReassignmentNotificationDTO.class);
+
+    emailNotificationFacade.sendReassignConfirmationNotification(
+        reassignmentNotification, new TenantData(42L, "tenant"));
+
+    verifyNoInteractions(mailService);
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
+  void sendReassignConfirmationNotification_ShouldClearTenantContext_WhenConsultantLookupFails() {
+    var reassignmentNotification = new EasyRandom().nextObject(ReassignmentNotificationDTO.class);
+    when(consultantService.getConsultant(any())).thenReturn(Optional.empty());
+
+    assertThrows(
+        NotFoundException.class,
+        () ->
+            emailNotificationFacade.sendReassignConfirmationNotification(
+                reassignmentNotification, new TenantData(42L, "tenant")));
+
+    assertThat(TenantContext.getCurrentTenant()).isNull();
   }
 
   @Test

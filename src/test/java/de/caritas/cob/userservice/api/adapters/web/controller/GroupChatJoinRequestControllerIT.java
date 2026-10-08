@@ -36,7 +36,9 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.dpa.TenantDpaGateReadClient;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.DpaGateStatusDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.Cookie;
@@ -91,6 +93,7 @@ class GroupChatJoinRequestControllerIT {
   @MockitoBean private GroupChatMembershipService membershipService;
   @MockitoBean private AgencyService agencyService;
   @MockitoBean private TenantService tenantService;
+  @MockitoBean private TenantDpaGateReadClient dpaOwner;
 
   private Consultant owner;
   private Consultant coModerator;
@@ -102,6 +105,11 @@ class GroupChatJoinRequestControllerIT {
 
   @BeforeEach
   void setUp() {
+    // External owner/agency facts only; the AVV policy remains real in these existing routes.
+    when(dpaOwner.read(any()))
+        .thenReturn(new DpaGateStatusDTO().dpaPublished(true).dpaSigned(true));
+    when(agencyService.getAgencyWithoutCaching(CHAT_AGENCY_ID))
+        .thenReturn(new AgencyDTO().id(CHAT_AGENCY_ID).tenantId(OWN_TENANT_ID));
     var consultants =
         StreamSupport.stream(consultantRepository.findAll().spliterator(), false)
             .filter(consultant -> consultant.getDeleteDate() == null)

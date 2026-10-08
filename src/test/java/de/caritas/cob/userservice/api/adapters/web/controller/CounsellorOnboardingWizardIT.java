@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -119,6 +120,97 @@ class CounsellorOnboardingWizardIT {
 
   /** The accept re-checks the agency with the service token (ORISO-Admin#1026 P2-3). */
   @MockitoBean private AgencyFacts agencyFacts;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService
+      applicationSettingsService;
+
+  private static de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+          .ApplicationSettingsDTO
+      oneTopicSettings() {
+    return new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+            .ApplicationSettingsDTO()
+        .oneTopicPerAgencyEnabled(
+            new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                    .FeatureToggleDTO()
+                .value(true));
+  }
+
+  @Test
+  void newAgencyInvite_resolvesThePlatformTopicLimit() throws Exception {
+    String token = "one-topic-resolve-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(applicationSettingsService.fetchApplicationSettings()).thenReturn(oneTopicSettings());
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.oneTopicPerAgencyEnabled").value(true));
+  }
+
+  @Test
+  void newAgencyWithSeveralTopics_isRejectedBeforeProvisioningAndKeepsTheInviteUsable()
+      throws Exception {
+    String token = "one-topic-register-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(applicationSettingsService.fetchApplicationSettings()).thenReturn(oneTopicSettings());
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/register", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+        {"account":{"username":"codex_policy_user","password":"Valid-Test-Password-2026!"},
+         "topicIds":[2,7],"agency":{"name":"New centre"}}
+        """))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.reason").value("ONE_TOPIC_PER_AGENCY"));
+    String tokenHash = sha256(token);
+    assertThat(
+            accountInviteRepository.findAll().stream()
+                .filter(row -> row.getTokenHash().equals(tokenHash))
+                .findFirst()
+                .orElseThrow()
+                .getStatus())
+        .isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+  }
+
+  @Test
+  void newAgencySettingsOutage_isRetryableAndDoesNotConsumeTheInvite() throws Exception {
+    String token = "one-topic-outage-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("unavailable"));
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.reason").value("SETTINGS_UNAVAILABLE"));
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+  }
+
+  @Test
+  void existingLegacyCentre_keepsMultipleTopicAssignmentsWithoutReadingThePolicy()
+      throws Exception {
+    String token = "one-topic-legacy-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/register", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+        {"account":{"username":"codex_legacy_topics","password":"Valid-Test-Password-2026!"},"topicIds":[2,7]}
+        """))
+        .andExpect(status().isOk());
+    org.mockito.Mockito.verifyNoInteractions(applicationSettingsService);
+  }
 
   @BeforeEach
   void configureProvisioning() {

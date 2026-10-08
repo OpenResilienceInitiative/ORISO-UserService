@@ -742,6 +742,37 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void sessionListShouldReturnTheAskersStoredAnimalAndClearIt() throws Exception {
+    givenABearerToken();
+    givenAValidConsultantWithId("34c3x5b1-0677-4fd2-a7ea-56a71aefd099");
+    givenConsultingTypeServiceResponse();
+    givenAValidTopicServiceResponse();
+    var session = sessionRepository.findById(1215L).orElseThrow();
+    var asker = session.getUser();
+    asker.setAvatarId("fox");
+    userRepository.save(asker);
+    mockMvc
+        .perform(
+            get("/users/sessions/consultants?status=2&count=15&filter=all&offset=0")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("sessions[0].user.avatarId", is("fox")));
+    asker.setAvatarId(null);
+    userRepository.save(asker);
+    mockMvc
+        .perform(
+            get("/users/sessions/consultants?status=2&count=15&filter=all&offset=0")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("sessions[0].user.avatarId", is(nullValue())));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
   void getSessionsForAuthenticatedConsultantShouldRespondWithBadRequestIfOffsetNegative()
       throws Exception {
     givenABearerToken();
@@ -1123,6 +1154,37 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     patchUserData("{\"avatarKind\": \"INITIALS\", \"avatarId\": \"\"}");
     expectAvatar("avatarKind", is("INITIALS"));
     expectAvatar("avatarId", is(nullValue()));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchUserDataShouldDistinguishStandardFromExplicitInitialsAndKeepOtherAccountsUnchanged()
+      throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    var other =
+        StreamSupport.stream(consultantRepository.findAll().spliterator(), false)
+            .filter(candidate -> !candidate.getId().equals(consultant.getId()))
+            .findFirst()
+            .orElseThrow();
+    other.setAvatarKind(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON);
+    other.setAvatarId("owl");
+    consultantRepository.save(other);
+    patchUserData(
+        "{\"avatarKind\":\"ICON\",\"avatarId\":\"magpie\",\"id\":\"" + other.getId() + "\"}");
+    expectAvatar("avatarId", is("magpie"));
+    assertEquals("owl", consultantRepository.findById(other.getId()).orElseThrow().getAvatarId());
+    patchUserData("{\"walkThroughEnabled\":true}");
+    expectAvatar("avatarId", is("magpie"));
+    patchUserData("{\"avatarId\":\"\"}");
+    expectAvatar("avatarKind", is(nullValue()));
+    expectAvatar("avatarId", is(nullValue()));
+    patchUserData("{\"avatarKind\":\"INITIALS\",\"avatarId\":\"\"}");
+    expectAvatar("avatarKind", is("INITIALS"));
+    patchUserData("{\"avatarId\":\"\"}");
+    expectAvatar("avatarKind", is(nullValue()));
   }
 
   @Test

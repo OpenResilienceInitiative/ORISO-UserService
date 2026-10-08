@@ -353,7 +353,9 @@ class TenantIsolationWithoutTransactionIT {
                     consultant.getId(),
                     consultant.getUsername(),
                     "Synthetic",
-                    true)));
+                    true,
+                    null,
+                    null)));
   }
 
   private static void assertStatus(MvcResult result, int expected) {

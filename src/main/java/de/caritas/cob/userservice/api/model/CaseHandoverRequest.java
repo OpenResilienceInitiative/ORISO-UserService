@@ -12,6 +12,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.Objects;
+import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -19,6 +20,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
 import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /** Audit and policy record for a counsellor requesting access to an already existing case. */
 @Entity
@@ -34,6 +37,8 @@ public class CaseHandoverRequest implements TenantAware {
 
   public enum Status {
     PENDING,
+    PENDING_RECIPIENT_ACCEPTANCE,
+    RECIPIENT_DECLINED,
     PENDING_CLIENT_CONSENT,
     GRANTED_PENDING_CLIENT_OPTOUT,
     GRANTED,
@@ -45,6 +50,11 @@ public class CaseHandoverRequest implements TenantAware {
   public enum AccessType {
     CO_ACCESS,
     TAKEOVER
+  }
+
+  public enum Direction {
+    PULL,
+    PUSH
   }
 
   @Id
@@ -61,8 +71,24 @@ public class CaseHandoverRequest implements TenantAware {
   private Consultant requesterConsultant;
 
   @ManyToOne
+  @JoinColumn(name = "initiator_consultant_id")
+  private Consultant initiatorConsultant;
+
+  @ManyToOne
   @JoinColumn(name = "previous_consultant_id")
   private Consultant previousConsultant;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "direction", nullable = false, length = 8)
+  @Builder.Default
+  private Direction direction = Direction.PULL;
+
+  @Column(name = "expected_ownership_revision")
+  private Long expectedOwnershipRevision;
+
+  @JdbcTypeCode(SqlTypes.CHAR)
+  @Column(name = "operation_id", columnDefinition = "char(36)")
+  private UUID operationId;
 
   @Column(name = "reason_code", nullable = false, length = 100)
   private String reasonCode;
@@ -95,6 +121,9 @@ public class CaseHandoverRequest implements TenantAware {
 
   @Column(name = "resolved_at")
   private LocalDateTime resolvedAt;
+
+  @Column(name = "recipient_decision_at")
+  private LocalDateTime recipientDecisionAt;
 
   @Enumerated(EnumType.STRING)
   @Column(name = "access_type", length = 20)

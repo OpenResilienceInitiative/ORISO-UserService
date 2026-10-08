@@ -212,6 +212,8 @@ public class SecurityConfig {
                 // This cluster-internal endpoint authenticates with its own dedicated shared
                 // secret because the MatrixRTC gateway is not a Keycloak user. The controller
                 // rejects a missing or invalid secret in constant time.
+                .requestMatchers(HttpMethod.POST, "/internal/matrix/group-join-policy")
+                .permitAll()
                 .requestMatchers(
                     HttpMethod.POST,
                     "/internal/matrixrtc/call-policy",
@@ -390,6 +392,8 @@ public class SecurityConfig {
                     "/users/account",
                     "/users/mobiletoken",
                     "/users/sessions/{sessionId:[0-9]+}/data",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/consent-preference",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/consent-preference",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
@@ -407,6 +411,11 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.GET, "/users/sessions/room", "/service/users/sessions/room")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}")
+                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers(HttpMethod.GET, "/users/sessions/askers")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers(
@@ -433,6 +442,12 @@ public class SecurityConfig {
                     "/service/users/case-handover/candidates",
                     "/users/case-handover/batch",
                     "/service/users/case-handover/batch",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/offers",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/offers",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/recipients",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/recipients",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
                     "/users/chat-series/**",
                     "/service/users/chat-series/**",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
