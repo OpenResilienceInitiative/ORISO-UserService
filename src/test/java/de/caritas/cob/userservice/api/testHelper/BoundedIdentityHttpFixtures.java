@@ -269,185 +269,188 @@ public final class BoundedIdentityHttpFixtures {
         when(grants.verified(task))
             .thenReturn(new TaskIdentityGrant.VerifiedGrant(claims.getTokenValue(), claims));
       }
-    doAnswer(
-            invocation -> {
-              HttpEntity<String> request = invocation.getArgument(2);
-              Class<?> responseType = invocation.getArgument(3);
-              var proof =
-                  SignedJWT.parse(request.getHeaders().getFirst("X-ORISO-Origin-Authorization"));
-              var claims = proof.getJWTClaimsSet();
-              var operation = claims.getStringClaim("operation");
-              boolean provisioning =
-                  claims
-                      .getStringClaim("taskClient")
-                      .equals(identities.require(TaskIdentity.ACCOUNT_PROVISIONING).getClientId());
-              var task =
-                  provisioning
-                      ? TaskIdentity.ACCOUNT_PROVISIONING
-                      : TaskIdentity.ACCOUNT_MAINTENANCE;
-              var key =
-                  Base64.getDecoder()
-                      .decode(
-                          environment.getRequiredProperty(
-                              provisioning
-                                  ? "oriso.commands.provisioning-origin-key"
-                                  : "oriso.commands.maintenance-origin-key"));
-              assertThat(proof.verify(new MACVerifier(key))).isTrue();
-              assertThat(claims.getStringClaim("taskClient"))
-                  .isEqualTo(identities.require(task).getClientId());
-              assertThat(claims.getStringClaim("taskSubject"))
-                  .isEqualTo(identities.require(task).getServiceSubject());
-              assertThat(request.getHeaders().getFirst("Authorization"))
-                  .isEqualTo("Bearer synthetic-task-" + task.name());
-              String body = request.getBody() == null ? "{}" : request.getBody();
-              if (operation.equals("account.search")) {
-                var query =
-                    org.springframework.web.util.UriComponentsBuilder.fromUriString(
-                            invocation.getArgument(0, String.class))
-                        .build()
-                        .getQueryParams();
-                var exact = new TreeMap<String, String>();
-                query.forEach(
-                    (name, values) ->
-                        exact.put(
-                            name,
-                            java.net.URLDecoder.decode(values.getFirst(), StandardCharsets.UTF_8)));
-                body = mapper.writeValueAsString(exact);
-              }
-              var mac = Mac.getInstance("HmacSHA256");
-              mac.init(new SecretKeySpec(key, "HmacSHA256"));
-              assertThat(claims.getStringClaim("payloadDigest"))
-                  .isEqualTo(
-                      Base64.getUrlEncoder()
-                          .withoutPadding()
-                          .encodeToString(
-                              mac.doFinal(("payload\n" + body).getBytes(StandardCharsets.UTF_8))));
-              var payload = mapper.readValue(body, Map.class);
-              var capturedCommand =
-                  new Command(operation, claims.getStringClaim("target"), payload);
-              captured.add(capturedCommand);
-              observed.accept(capturedCommand);
-              Object response = null;
-              String target = claims.getStringClaim("target");
-              if (responseType == KeycloakTaskCommands.CreationResult.class) {
-                UUID attempt = UUID.fromString(claims.getStringClaim("target"));
-                String id = createdAccountId.apply(payload);
-                accounts.put(
+    org.mockito.stubbing.Answer<Object> answer =
+        invocation -> {
+          HttpEntity<String> request = invocation.getArgument(2);
+          Class<?> responseType = invocation.getArgument(3);
+          var proof =
+              SignedJWT.parse(request.getHeaders().getFirst("X-ORISO-Origin-Authorization"));
+          var claims = proof.getJWTClaimsSet();
+          var operation = claims.getStringClaim("operation");
+          boolean provisioning =
+              claims
+                  .getStringClaim("taskClient")
+                  .equals(identities.require(TaskIdentity.ACCOUNT_PROVISIONING).getClientId());
+          var task =
+              provisioning ? TaskIdentity.ACCOUNT_PROVISIONING : TaskIdentity.ACCOUNT_MAINTENANCE;
+          var key =
+              Base64.getDecoder()
+                  .decode(
+                      environment.getRequiredProperty(
+                          provisioning
+                              ? "oriso.commands.provisioning-origin-key"
+                              : "oriso.commands.maintenance-origin-key"));
+          assertThat(proof.verify(new MACVerifier(key))).isTrue();
+          assertThat(claims.getStringClaim("taskClient"))
+              .isEqualTo(identities.require(task).getClientId());
+          assertThat(claims.getStringClaim("taskSubject"))
+              .isEqualTo(identities.require(task).getServiceSubject());
+          assertThat(request.getHeaders().getFirst("Authorization"))
+              .isEqualTo("Bearer synthetic-task-" + task.name());
+          String body = request.getBody() == null ? "{}" : request.getBody();
+          if (operation.equals("account.search")) {
+            var query =
+                org.springframework.web.util.UriComponentsBuilder.fromUriString(
+                        invocation.getArgument(0).toString())
+                    .build()
+                    .getQueryParams();
+            var exact = new TreeMap<String, String>();
+            query.forEach(
+                (name, values) ->
+                    exact.put(
+                        name,
+                        java.net.URLDecoder.decode(values.getFirst(), StandardCharsets.UTF_8)));
+            body = mapper.writeValueAsString(exact);
+          }
+          var mac = Mac.getInstance("HmacSHA256");
+          mac.init(new SecretKeySpec(key, "HmacSHA256"));
+          assertThat(claims.getStringClaim("payloadDigest"))
+              .isEqualTo(
+                  Base64.getUrlEncoder()
+                      .withoutPadding()
+                      .encodeToString(
+                          mac.doFinal(("payload\n" + body).getBytes(StandardCharsets.UTF_8))));
+          var payload = mapper.readValue(body, Map.class);
+          var capturedCommand = new Command(operation, claims.getStringClaim("target"), payload);
+          captured.add(capturedCommand);
+          observed.accept(capturedCommand);
+          Object response = null;
+          String target = claims.getStringClaim("target");
+          if (responseType == KeycloakTaskCommands.CreationResult.class) {
+            UUID attempt = UUID.fromString(claims.getStringClaim("target"));
+            String id = createdAccountId.apply(payload);
+            accounts.put(
+                id,
+                new KeycloakTaskCommands.AccountProjection(
                     id,
-                    new KeycloakTaskCommands.AccountProjection(
-                        id,
-                        (String) payload.get("username"),
-                        payload.get("email") == null || payload.get("email").toString().isBlank()
-                            ? id
-                                + environment.getProperty(
-                                    "identity.email-dummy-suffix", "@beratungcaritas.de")
-                            : payload.get("email").toString(),
-                        (String) payload.get("firstName"),
-                        (String) payload.get("lastName"),
-                        payload.get("tenantId") == null
-                            ? null
-                            : Long.valueOf(payload.get("tenantId").toString()),
-                        (String) payload.get("preferredLanguage"),
-                        false,
-                        false,
-                        (List<String>) payload.get("roles"),
-                        Boolean.TRUE.equals(payload.get("passwordTemporary"))));
-                createdIds.accept(id);
-                response =
-                    new KeycloakTaskCommands.CreationResult(
-                        attempt, id, "fixture-owned-proof-" + attempt, "OPEN");
-              } else if (responseType == KeycloakTaskCommands.AccountProjection.class) {
-                response = accounts.get(target);
-                if (response == null)
-                  throw org.springframework.web.client.HttpClientErrorException.create(
-                      HttpStatus.NOT_FOUND,
-                      "Not found",
-                      HttpHeaders.EMPTY,
-                      new byte[0],
-                      StandardCharsets.UTF_8);
-              } else if (responseType == KeycloakTaskCommands.AccountProjection[].class) {
-                response =
-                    accounts.values().stream()
-                        .filter(
-                            account ->
-                                payload.containsKey("email")
-                                    ? Objects.equals(account.email(), payload.get("email"))
-                                    : Objects.equals(account.username(), payload.get("username")))
-                        .toArray(KeycloakTaskCommands.AccountProjection[]::new);
-              }
-              if (Set.of(
-                      "account.profile", "account.password", "account.roles", "account.deactivate")
-                  .contains(operation)) {
-                var prior = accounts.get(target);
-                if (prior == null)
-                  throw org.springframework.web.client.HttpClientErrorException.create(
-                      HttpStatus.NOT_FOUND,
-                      "Not found",
-                      HttpHeaders.EMPTY,
-                      new byte[0],
-                      StandardCharsets.UTF_8);
-                accounts.put(
-                    target,
-                    new KeycloakTaskCommands.AccountProjection(
-                        prior.id(),
-                        prior.username(),
-                        payload.containsKey("email")
-                            ? (String) payload.get("email")
-                            : prior.email(),
-                        payload.containsKey("firstName")
-                            ? (String) payload.get("firstName")
-                            : prior.firstName(),
-                        payload.containsKey("lastName")
-                            ? (String) payload.get("lastName")
-                            : prior.lastName(),
-                        prior.tenantId(),
-                        payload.containsKey("preferredLanguage")
-                            ? (String) payload.get("preferredLanguage")
-                            : prior.preferredLanguage(),
-                        operation.equals("account.deactivate") ? false : prior.enabled(),
-                        payload.containsKey("email") ? false : prior.emailVerified(),
-                        payload.containsKey("roles")
-                            ? (List<String>) payload.get("roles")
-                            : prior.roles(),
-                        payload.containsKey("passwordTemporary")
-                            ? Boolean.TRUE.equals(payload.get("passwordTemporary"))
-                            : prior.passwordChangeRequired()));
-              }
-              if (operation.equals("account.commit") && committed.add(target)) {
-                String accountId = (String) payload.get("accountId");
-                var prior = accounts.get(accountId);
-                if (prior == null)
-                  throw org.springframework.web.client.HttpClientErrorException.create(
-                      HttpStatus.NOT_FOUND,
-                      "Not found",
-                      HttpHeaders.EMPTY,
-                      new byte[0],
-                      StandardCharsets.UTF_8);
-                accounts.put(
-                    accountId,
-                    new KeycloakTaskCommands.AccountProjection(
-                        prior.id(),
-                        prior.username(),
-                        prior.email(),
-                        prior.firstName(),
-                        prior.lastName(),
-                        prior.tenantId(),
-                        prior.preferredLanguage(),
-                        true,
-                        prior.emailVerified(),
-                        prior.roles(),
-                        prior.passwordChangeRequired()));
-              }
-              if (operation.equals("account.delete")) accounts.remove(target);
-              if (operation.equals("account.compensate"))
-                accounts.remove((String) payload.get("accountId"));
-              return responseType == Void.class
-                  ? ResponseEntity.noContent().build()
-                  : ResponseEntity.ok(response);
-            })
+                    (String) payload.get("username"),
+                    payload.get("email") == null || payload.get("email").toString().isBlank()
+                        ? id
+                            + environment.getProperty(
+                                "identity.email-dummy-suffix", "@beratungcaritas.de")
+                        : payload.get("email").toString(),
+                    (String) payload.get("firstName"),
+                    (String) payload.get("lastName"),
+                    payload.get("tenantId") == null
+                        ? null
+                        : Long.valueOf(payload.get("tenantId").toString()),
+                    (String) payload.get("preferredLanguage"),
+                    false,
+                    false,
+                    (List<String>) payload.get("roles"),
+                    Boolean.TRUE.equals(payload.get("passwordTemporary"))));
+            createdIds.accept(id);
+            response =
+                new KeycloakTaskCommands.CreationResult(
+                    attempt, id, "fixture-owned-proof-" + attempt, "OPEN");
+          } else if (responseType == KeycloakTaskCommands.AccountProjection.class) {
+            response = accounts.get(target);
+            if (response == null)
+              throw org.springframework.web.client.HttpClientErrorException.create(
+                  HttpStatus.NOT_FOUND,
+                  "Not found",
+                  HttpHeaders.EMPTY,
+                  new byte[0],
+                  StandardCharsets.UTF_8);
+          } else if (responseType == KeycloakTaskCommands.AccountProjection[].class) {
+            response =
+                accounts.values().stream()
+                    .filter(
+                        account ->
+                            payload.containsKey("email")
+                                ? Objects.equals(account.email(), payload.get("email"))
+                                : Objects.equals(account.username(), payload.get("username")))
+                    .toArray(KeycloakTaskCommands.AccountProjection[]::new);
+          }
+          if (Set.of("account.profile", "account.password", "account.roles", "account.deactivate")
+              .contains(operation)) {
+            var prior = accounts.get(target);
+            if (prior == null)
+              throw org.springframework.web.client.HttpClientErrorException.create(
+                  HttpStatus.NOT_FOUND,
+                  "Not found",
+                  HttpHeaders.EMPTY,
+                  new byte[0],
+                  StandardCharsets.UTF_8);
+            accounts.put(
+                target,
+                new KeycloakTaskCommands.AccountProjection(
+                    prior.id(),
+                    prior.username(),
+                    payload.containsKey("email") ? (String) payload.get("email") : prior.email(),
+                    payload.containsKey("firstName")
+                        ? (String) payload.get("firstName")
+                        : prior.firstName(),
+                    payload.containsKey("lastName")
+                        ? (String) payload.get("lastName")
+                        : prior.lastName(),
+                    prior.tenantId(),
+                    payload.containsKey("preferredLanguage")
+                        ? (String) payload.get("preferredLanguage")
+                        : prior.preferredLanguage(),
+                    operation.equals("account.deactivate") ? false : prior.enabled(),
+                    payload.containsKey("email") ? false : prior.emailVerified(),
+                    payload.containsKey("roles")
+                        ? (List<String>) payload.get("roles")
+                        : prior.roles(),
+                    payload.containsKey("passwordTemporary")
+                        ? Boolean.TRUE.equals(payload.get("passwordTemporary"))
+                        : prior.passwordChangeRequired()));
+          }
+          if (operation.equals("account.commit") && committed.add(target)) {
+            String accountId = (String) payload.get("accountId");
+            var prior = accounts.get(accountId);
+            if (prior == null)
+              throw org.springframework.web.client.HttpClientErrorException.create(
+                  HttpStatus.NOT_FOUND,
+                  "Not found",
+                  HttpHeaders.EMPTY,
+                  new byte[0],
+                  StandardCharsets.UTF_8);
+            accounts.put(
+                accountId,
+                new KeycloakTaskCommands.AccountProjection(
+                    prior.id(),
+                    prior.username(),
+                    prior.email(),
+                    prior.firstName(),
+                    prior.lastName(),
+                    prior.tenantId(),
+                    prior.preferredLanguage(),
+                    true,
+                    prior.emailVerified(),
+                    prior.roles(),
+                    prior.passwordChangeRequired()));
+          }
+          if (operation.equals("account.delete")) accounts.remove(target);
+          if (operation.equals("account.compensate"))
+            accounts.remove((String) payload.get("accountId"));
+          return responseType == Void.class
+              ? ResponseEntity.noContent().build()
+              : ResponseEntity.ok(response);
+        };
+    doAnswer(answer)
         .when(http)
         .exchange(
             contains("/oriso-commands/v1/"),
+            any(HttpMethod.class),
+            any(HttpEntity.class),
+            any(Class.class));
+    doAnswer(answer)
+        .when(http)
+        .exchange(
+            argThat(
+                (java.net.URI uri) -> uri != null && uri.getPath().contains("/oriso-commands/v1/")),
             any(HttpMethod.class),
             any(HttpEntity.class),
             any(Class.class));

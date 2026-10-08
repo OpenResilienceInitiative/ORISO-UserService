@@ -104,9 +104,7 @@ public class DeleteUserAccountService {
     return performConsultantDeletion(consultant, false);
   }
 
-  /**
-   * Creation owner has already compensated its receipt; this path performs local/partner cleanup.
-   */
+  /** Only local state is removed here; the original receipt owns all remote compensation. */
   public List<DeletionWorkflowError> performConsultantCreationRollback(Consultant consultant) {
     return performConsultantDeletion(consultant, true);
   }
@@ -116,12 +114,18 @@ public class DeleteUserAccountService {
     var deletionWorkflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
 
     var actions = this.actionsRegistry.buildContainerForType(ConsultantDeletionWorkflowDTO.class);
-    if (!creationRollback) actions.addActionToExecute(DeleteKeycloakConsultantAction.class);
+    if (!creationRollback) {
+      actions
+          .addActionToExecute(DeleteKeycloakConsultantAction.class)
+          .addActionToExecute(DeleteMatrixConsultantAction.class);
+    }
+    actions.addActionToExecute(DeleteDatabaseConsultantAgencyAction.class);
+    if (!creationRollback) {
+      actions
+          .addActionToExecute(DeleteChatAction.class)
+          .addActionToExecute(DeleteAppointmentServiceConsultantAction.class);
+    }
     actions
-        .addActionToExecute(DeleteMatrixConsultantAction.class)
-        .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
-        .addActionToExecute(DeleteChatAction.class)
-        .addActionToExecute(DeleteAppointmentServiceConsultantAction.class)
         .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
         .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
         .addActionToExecute(DeleteConsultantEventNotificationsAction.class)

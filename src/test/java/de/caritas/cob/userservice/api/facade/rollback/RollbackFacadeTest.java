@@ -46,6 +46,16 @@ public class RollbackFacadeTest {
   }
 
   @Test
+  void unfinishedCreationDoesNotEnrollInOrdinaryDeletionScheduler() {
+    var consultant = new Consultant();
+    consultant.setId(USER_ID);
+    rollbackFacade.rollbackConsultantAccount(consultant);
+    org.assertj.core.api.Assertions.assertThat(consultant.getDeleteDate()).isNull();
+    verify(identityProvisioning).compensateForLocalRollback(USER_ID);
+    verify(deleteUserAccountService).performConsultantCreationRollback(consultant);
+  }
+
+  @Test
   public void rollBackUserAccount_Should_DeleteSessionAndMonitoring_When_SessionIsGiven() {
     EasyRandom easyRandom = new EasyRandom();
     Session session = easyRandom.nextObject(Session.class);

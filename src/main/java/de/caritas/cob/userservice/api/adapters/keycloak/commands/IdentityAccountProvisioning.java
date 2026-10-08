@@ -256,6 +256,8 @@ public class IdentityAccountProvisioning {
   /** Persist compensation intent before local rollback; an external failure remains retryable. */
   public void compensateForLocalRollback(String accountId) {
     var row = journal.ownedAttempt(accountId);
+    if (CreationStatus.in(row, CreationStatus.COMMITTED, CreationStatus.COMPENSATED))
+      throw new AccessDeniedException("Terminal creation cannot authorize local rollback");
     var receipt = receipt(row);
     var origin = IdentityCreationOrigin.pendingFinalization(row);
     finishSafely(() -> compensate(receipt, origin));

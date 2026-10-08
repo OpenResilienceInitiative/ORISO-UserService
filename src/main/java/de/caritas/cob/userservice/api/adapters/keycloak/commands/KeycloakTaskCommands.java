@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.keycloak.commands;
 
 import de.caritas.cob.userservice.api.config.auth.TaskIdentity;
 import de.caritas.cob.userservice.api.config.auth.TaskIdentityConfiguration;
+import java.net.URI;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -240,25 +241,7 @@ public class KeycloakTaskCommands implements IdentityProvisioningCommands {
 
   public List<AccountProjection> provisioningSearch(
       String field, String exactValue, IdentityCommandAuthorization authorization) {
-    if (!List.of("email", "username").contains(field))
-      throw new IllegalArgumentException("Only exact account lookups are supported");
-    String path =
-        UriComponentsBuilder.fromPath("/accounts/search")
-            .queryParam(field, exactValue)
-            .build()
-            .encode()
-            .toUriString();
-    var found =
-        execute(
-            TaskIdentity.ACCOUNT_PROVISIONING,
-            "account.search",
-            exactValue,
-            path,
-            HttpMethod.GET,
-            Map.of(field, exactValue),
-            authorization,
-            AccountProjection[].class);
-    return found == null ? List.of() : List.of(found);
+    return exactSearch(TaskIdentity.ACCOUNT_PROVISIONING, field, exactValue, authorization);
   }
 
   public void roles(
@@ -312,17 +295,25 @@ public class KeycloakTaskCommands implements IdentityProvisioningCommands {
 
   public List<AccountProjection> search(
       String field, String exactValue, IdentityCommandAuthorization authorization) {
+    return exactSearch(TaskIdentity.ACCOUNT_MAINTENANCE, field, exactValue, authorization);
+  }
+
+  private List<AccountProjection> exactSearch(
+      TaskIdentity task,
+      String field,
+      String exactValue,
+      IdentityCommandAuthorization authorization) {
     if (!List.of("email", "username").contains(field))
       throw new IllegalArgumentException("Only exact account lookups are supported");
     String path =
         UriComponentsBuilder.fromPath("/accounts/search")
-            .queryParam(field, exactValue)
-            .build()
+            .queryParam(field, "{exactValue}")
             .encode()
+            .buildAndExpand(exactValue)
             .toUriString();
     var found =
         execute(
-            TaskIdentity.ACCOUNT_MAINTENANCE,
+            task,
             "account.search",
             exactValue,
             path,
@@ -402,13 +393,12 @@ public class KeycloakTaskCommands implements IdentityProvisioningCommands {
     headers.set(
         "X-ORISO-Origin-Authorization",
         proof.issue(identities.require(task), authorization, command));
-    return http.exchange(
-            base + path,
-            method,
-            new HttpEntity<>(
-                method == HttpMethod.GET ? null : proof.canonicalJson(command), headers),
-            response)
-        .getBody();
+    var request =
+        new HttpEntity<>(method == HttpMethod.GET ? null : proof.canonicalJson(command), headers);
+    if (method == HttpMethod.GET && "account.search".equals(operation)) {
+      return http.exchange(URI.create(base + path), method, request, response).getBody();
+    }
+    return http.exchange(base + path, method, request, response).getBody();
   }
 
   private static String segment(String id) {

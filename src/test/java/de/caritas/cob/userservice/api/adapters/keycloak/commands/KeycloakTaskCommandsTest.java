@@ -178,6 +178,107 @@ class KeycloakTaskCommandsTest {
     verifyNoInteractions(grants);
   }
 
+  @Test
+  void exactSearchKeepsEachFixedActorKeyAndEncodedTarget() throws Exception {
+    for (var task : List.of(TaskIdentity.ACCOUNT_PROVISIONING, TaskIdentity.ACCOUNT_MAINTENANCE)) {
+      var config = configuration();
+      config
+          .getTasks()
+          .put(
+              "account-provisioning",
+              new TaskIdentityCredentials(
+                  "backend-account-provisioning", "unused-create-secret", "create-subject"));
+      var grants = mock(TaskIdentityGrant.class);
+      when(grants.token(task)).thenReturn("fixed-task-token");
+      var http = new RestTemplate();
+      var server = MockRestServiceServer.bindTo(http).build();
+      var adapter =
+          new KeycloakTaskCommands(
+              http, config, grants, proof(), "https://identity.example", "oriso");
+      String exact = "first+tag@example.org";
+      var authorization =
+          new IdentityCommandAuthorization(
+              "REGISTRATION", "account.search", exact, "42", List.of("user"));
+      server
+          .expect(
+              requestTo(
+                  "https://identity.example/realms/oriso/oriso-commands/v1/accounts/search?email=first%2Btag%40example.org"))
+          .andExpect(method(HttpMethod.GET))
+          .andExpect(header("Authorization", "Bearer fixed-task-token"))
+          .andExpect(
+              request -> {
+                try {
+                  var signed =
+                      JWSObject.parse(
+                          request.getHeaders().getFirst("X-ORISO-Origin-Authorization"));
+                  byte[] key =
+                      task == TaskIdentity.ACCOUNT_PROVISIONING ? CREATE_KEY : MAINTAIN_KEY;
+                  assertThat(signed.verify(new MACVerifier(key))).isTrue();
+                  assertThat(signed.getPayload().toJSONObject())
+                      .containsEntry("target", exact)
+                      .containsEntry(
+                          "taskClient",
+                          task == TaskIdentity.ACCOUNT_PROVISIONING
+                              ? "backend-account-provisioning"
+                              : "backend-account-maintenance")
+                      .containsEntry(
+                          "taskSubject",
+                          task == TaskIdentity.ACCOUNT_PROVISIONING
+                              ? "create-subject"
+                              : "maintenance-subject");
+                  var mac = Mac.getInstance("HmacSHA256");
+                  mac.init(new SecretKeySpec(key, "HmacSHA256"));
+                  String digest =
+                      Base64.getUrlEncoder()
+                          .withoutPadding()
+                          .encodeToString(
+                              mac.doFinal(
+                                  ("payload\n{\"email\":\"first+tag@example.org\"}")
+                                      .getBytes(StandardCharsets.UTF_8)));
+                  assertThat(signed.getPayload().toJSONObject())
+                      .containsEntry("payloadDigest", digest);
+                  assertThat(((MockClientHttpRequest) request).getBodyAsString()).isEmpty();
+                } catch (Exception failure) {
+                  throw new AssertionError(failure);
+                }
+              })
+          .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+      assertThat(
+              task == TaskIdentity.ACCOUNT_PROVISIONING
+                  ? adapter.provisioningSearch("email", exact, authorization)
+                  : adapter.search("email", exact, authorization))
+          .isEmpty();
+      server.verify();
+      verify(grants).token(task);
+      verifyNoMoreInteractions(grants);
+    }
+  }
+
+  @Test
+  void unsupportedSearchAndMismatchedOriginNeverAcquireAnyTaskToken() {
+    var grants = mock(TaskIdentityGrant.class);
+    var adapter =
+        new KeycloakTaskCommands(
+            new RestTemplate(),
+            configuration(),
+            grants,
+            proof(),
+            "https://identity.example",
+            "oriso");
+    var origin =
+        new IdentityCommandAuthorization(
+            "SELF_SERVICE", "account.read", "own-account", null, List.of());
+    assertThatThrownBy(() -> adapter.provisioningSearch("contains", "own-account", origin))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> adapter.search("contains", "own-account", origin))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> adapter.provisioningSearch("username", "own-account", origin))
+        .isInstanceOf(AccessDeniedException.class);
+    assertThatThrownBy(() -> adapter.search("username", "foreign-account", origin))
+        .isInstanceOf(AccessDeniedException.class);
+    verifyNoInteractions(grants);
+  }
+
   private static TaskIdentityConfiguration configuration() {
     var config = new TaskIdentityConfiguration();
     config

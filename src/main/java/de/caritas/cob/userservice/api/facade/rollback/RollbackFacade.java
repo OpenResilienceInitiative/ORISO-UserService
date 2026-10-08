@@ -8,7 +8,6 @@ import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
-import java.time.LocalDateTime;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -38,7 +37,6 @@ public class RollbackFacade {
         consultant.getId(),
         consultant.getUsername());
     identityProvisioning.compensateForLocalRollback(consultant.getId());
-    consultant.setDeleteDate(LocalDateTime.now());
     List<DeletionWorkflowError> deletionWorkflowErrors =
         deleteUserAccountService.performConsultantCreationRollback(consultant);
     if (nonNull(deletionWorkflowErrors) && !deletionWorkflowErrors.isEmpty()) {

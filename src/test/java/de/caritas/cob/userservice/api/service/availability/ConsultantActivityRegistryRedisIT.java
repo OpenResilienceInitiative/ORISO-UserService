@@ -14,7 +14,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-/** Local Docker contract test against the ORISO Redis container on localhost:6379. */
+/** Local Docker contract test; Redis overrides isolate concurrent fixture runtimes. */
 @EnabledIfEnvironmentVariable(named = "ORISO_LOCAL_REDIS_IT", matches = "true")
 class ConsultantActivityRegistryRedisIT {
 
@@ -24,7 +24,9 @@ class ConsultantActivityRegistryRedisIT {
 
   @BeforeEach
   void setUp() {
-    connectionFactory = new LettuceConnectionFactory("localhost", 6379);
+    String host = System.getenv().getOrDefault("SPRING_DATA_REDIS_HOST", "localhost");
+    int port = Integer.parseInt(System.getenv().getOrDefault("SPRING_DATA_REDIS_PORT", "6379"));
+    connectionFactory = new LettuceConnectionFactory(host, port);
     connectionFactory.afterPropertiesSet();
     redisTemplate = new StringRedisTemplate(connectionFactory);
     redisTemplate.afterPropertiesSet();

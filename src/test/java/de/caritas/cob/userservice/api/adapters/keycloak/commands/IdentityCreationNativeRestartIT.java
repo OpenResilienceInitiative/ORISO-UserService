@@ -91,6 +91,53 @@ class IdentityCreationNativeRestartIT {
   }
 
   @Test
+  void exactPlusMailboxAvailabilityUsesActualFixedTaskActorsAndRejectsForeignTenant() {
+    var base = command();
+    var account =
+        new KeycloakTaskCommands.AccountCreation(
+            base.username(),
+            base.username() + "+tag@example.invalid",
+            base.firstName(),
+            base.lastName(),
+            null,
+            base.tenantId(),
+            base.password(),
+            base.passwordTemporary(),
+            base.roles(),
+            base.registrationKind());
+    var id = UUID.randomUUID();
+    var creation = IdentityCreationJournalRestartTest.origin();
+    var receipt = commands.create(id, account, creation.command("account.create", id));
+    try {
+      var available =
+          commands.provisioningSearch(
+              "email",
+              account.email(),
+              IdentityCommandAuthorization.registrationAvailability(account.email(), 42L));
+      assertThat(available)
+          .extracting(KeycloakTaskCommands.AccountProjection::id)
+          .containsExactly(receipt.accountId());
+      var maintenanceRead =
+          new IdentityCommandAuthorization(
+              "LIFECYCLE", "account.search", account.email(), "42", List.of());
+      assertThat(commands.search("email", account.email(), maintenanceRead))
+          .extracting(KeycloakTaskCommands.AccountProjection::id)
+          .containsExactly(receipt.accountId());
+      assertThatThrownBy(
+              () ->
+                  commands.provisioningSearch(
+                      "email",
+                      account.email(),
+                      IdentityCommandAuthorization.registrationAvailability(account.email(), 99L)))
+          .isInstanceOf(HttpClientErrorException.Forbidden.class);
+      assertThatThrownBy(() -> commands.search("contains", account.email(), maintenanceRead))
+          .isInstanceOf(IllegalArgumentException.class);
+    } finally {
+      commands.compensate(receipt, creation.command("account.compensate", id));
+    }
+  }
+
+  @Test
   void actualNativeExistingImportReadUsesEmptyProofRolesAndOnlyAddsConsultantRoles()
       throws Exception {
     var command = command();
