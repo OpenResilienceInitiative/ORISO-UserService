@@ -175,7 +175,7 @@ class SessionSupervisionMarkerServiceTest {
     var usernameAnonymous = entry(18L);
     usernameAnonymous.getSession().setRegistrationType("REGISTERED");
     usernameAnonymous.getSession().setPostcode("12345");
-    usernameAnonymous.setUser(new SessionUserDTO("u-18", "Anonymous-18", null, false, null));
+    usernameAnonymous.setUser(new SessionUserDTO("u-18", "Anonymous-18", null, false, null, null));
 
     service.enrich(List.of(postcodeAnonymous, usernameAnonymous), consultant("me"));
 

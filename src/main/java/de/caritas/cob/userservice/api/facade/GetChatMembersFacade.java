@@ -83,6 +83,8 @@ public class GetChatMembersFacade {
                             .status(null)
                             .username(transcoder.decodeUsername(member.username()))
                             .displayName(member.displayName())
+                            .avatarKind(member.avatarKind())
+                            .avatarId(member.avatarId())
                             .utcOffset(null))
                 .collect(Collectors.toList()));
   }
