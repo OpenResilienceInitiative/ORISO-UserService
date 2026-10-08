@@ -4,11 +4,9 @@ import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /** Dispatches only an explicit, target-bound account lifecycle command. */
-@Slf4j
 @Component
 @RequiredArgsConstructor
 public class DeactivateAuthorizedIdentityActionCommand
@@ -19,8 +17,11 @@ public class DeactivateAuthorizedIdentityActionCommand
   public void execute(IdentityDeactivationTarget target) {
     try {
       identityDeactivator.deactivateUser(target.user().getUserId(), target.origin());
-    } catch (Exception failure) {
-      log.error("Unable to deactivate the authorized lifecycle account", failure);
+    } catch (org.springframework.web.client.RestClientException failure) {
+      throw new org.springframework.web.server.ResponseStatusException(
+          org.springframework.http.HttpStatus.BAD_GATEWAY,
+          "Identity deactivation dependency failed",
+          failure);
     }
   }
 }

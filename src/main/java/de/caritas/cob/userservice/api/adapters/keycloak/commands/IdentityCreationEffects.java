@@ -18,6 +18,7 @@ public class IdentityCreationEffects {
   private final IdentityCreationEffectWriter writer;
   private final JdbcTemplate jdbc;
   private final MatrixSynapseService matrix;
+  private final de.caritas.cob.userservice.api.service.appointment.AppointmentService appointments;
 
   @Transactional(propagation = Propagation.MANDATORY)
   public Scope capture(KeycloakTaskCommands.CreationResult receipt) {
@@ -53,6 +54,28 @@ public class IdentityCreationEffects {
     public OwnedMatrixEffect privateRoom() {
       if (!"ASKER".equals(registrationKind)) throw denied();
       return observer("PRIVATE_ROOM");
+    }
+
+    public de.caritas.cob.userservice.api.port.out.OwnedAppointmentEffect appointmentConsultant() {
+      if (!Set.of("CONSULTANT", "CONSULTANT_AGENCY_ADMIN").contains(registrationKind))
+        throw denied();
+      var effect = observer("APPOINTMENT_CONSULTANT");
+      return new de.caritas.cob.userservice.api.port.out.OwnedAppointmentEffect() {
+        public void started(String id, Long actualTenant) {
+          requireOwner(id, actualTenant);
+          try {
+            UUID.fromString(id);
+          } catch (IllegalArgumentException invalid) {
+            throw denied();
+          }
+          effect.started(id);
+        }
+
+        public void created(String id) {
+          requireOwner(id, tenantId);
+          effect.created(id);
+        }
+      };
     }
 
     private OwnedMatrixEffect observer(String kind) {
@@ -99,7 +122,7 @@ public class IdentityCreationEffects {
       if (Set.of("NO_EFFECT", "CLEANED").contains(state)) continue;
       if (!"ACKNOWLEDGED".equals(state))
         throw new IllegalStateException(
-            "Unacknowledged Matrix outcome requires ownership reconciliation");
+            "Unacknowledged downstream outcome requires ownership reconciliation");
       String target = (String) effect.get("target_id");
       if (target == null || target.isBlank()) throw denied();
       boolean cleaned;
@@ -110,8 +133,15 @@ public class IdentityCreationEffects {
       else if ("MATRIX_USER".equals(effect.get("effect_kind"))
           && "REACTIVATED_FROM_DEACTIVATED".equals(effect.get("provenance")))
         cleaned = matrix.restoreDeactivatedUser(target);
-      else throw denied();
-      if (!cleaned) throw new IllegalStateException("Owned Matrix cleanup remains retryable");
+      else if ("APPOINTMENT_CONSULTANT".equals(effect.get("effect_kind"))
+          && "CREATED".equals(effect.get("provenance"))) {
+        if (!Set.of("CONSULTANT", "CONSULTANT_AGENCY_ADMIN").contains(row.getRegistrationKind())
+            || !target.equals(row.getAccountId())
+            || !target.equals(effect.get("requested_target"))) throw denied();
+        appointments.deleteOwnedCreationConsultant(target, row.getTenantId());
+        cleaned = true;
+      } else throw denied();
+      if (!cleaned) throw new IllegalStateException("Owned downstream cleanup remains retryable");
       jdbc.update(
           "UPDATE identity_creation_effect SET state='CLEANED' WHERE id=? AND state='ACKNOWLEDGED'",
           effect.get("id"));

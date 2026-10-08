@@ -267,6 +267,54 @@ class DeactivateAnonymousUserSchedulerIT extends AccountInactivityPolicyHttpFixt
     assertEquals(SessionStatus.DONE, sessionFromDb.get().getStatus());
   }
 
+  @Test
+  void failedIdentityDeactivationPreservesEligibleSessionAndRetriesWithoutReportingSuccess() {
+    prepareCurrentSessionForDeactivation();
+    String id = currentSession.getUser().getUserId();
+    org.mockito.Mockito.doThrow(
+            new org.springframework.web.client.ResourceAccessException(
+                "disposable provider unavailable"))
+        .when(keycloakRestTemplate)
+        .exchange(
+            org.mockito.ArgumentMatchers.endsWith("/deactivation"),
+            org.mockito.ArgumentMatchers.eq(org.springframework.http.HttpMethod.POST),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            org.mockito.ArgumentMatchers.eq(Void.class));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            deactivateAnonymousUserScheduler::performDeactivationWorkflow)
+        .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+        .satisfies(
+            failure ->
+                assertEquals(
+                    org.springframework.http.HttpStatus.BAD_GATEWAY,
+                    ((org.springframework.web.server.ResponseStatusException) failure)
+                        .getStatusCode()));
+    assertEquals(
+        SessionStatus.IN_PROGRESS,
+        sessionRepository.findById(currentSession.getId()).orElseThrow().getStatus());
+    assertTrue(identityProvider.projections().get(id).enabled());
+    assertSessionAndUserArePresent(currentSession.getId());
+    deleteSchedulerClaim();
+    var persistedNative = identityProvider.projections().get(id);
+    identityProvider =
+        BoundedIdentityHttpFixtures.givenProvider(
+            keycloakRestTemplate,
+            taskGrants,
+            taskIdentities,
+            environment,
+            objectMapper,
+            unused -> {});
+    identityProvider.seed(persistedNative);
+    deactivateAnonymousUserScheduler.performDeactivationWorkflow();
+    assertEquals(
+        SessionStatus.DONE,
+        sessionRepository.findById(currentSession.getId()).orElseThrow().getStatus());
+    org.assertj.core.api.Assertions.assertThat(identityProvider.commands())
+        .anyMatch(
+            command ->
+                command.operation().equals("account.deactivate") && command.target().equals(id));
+  }
+
   private void prepareCurrentSessionForDeactivation() {
     currentSession.setStatus(SessionStatus.IN_PROGRESS);
     var timeToDeactivation = LocalDateTime.now().minusMinutes(deactivatePeriodInMinutes);

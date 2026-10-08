@@ -39,8 +39,11 @@ public class IdentityCreationEffectWriter {
             "SELECT * FROM identity_creation_effect WHERE id=? FOR UPDATE", id.toString());
     if (rows.size() != 1 || !"STARTED".equals(rows.get(0).get("state"))) throw denied();
     var row = rows.get(0);
-    if ("MATRIX_USER".equals(row.get("effect_kind")) && !target.equals(row.get("requested_target")))
-      throw denied();
+    if (("MATRIX_USER".equals(row.get("effect_kind"))
+            || "APPOINTMENT_CONSULTANT".equals(row.get("effect_kind")))
+        && !target.equals(row.get("requested_target"))) throw denied();
+    if ("APPOINTMENT_CONSULTANT".equals(row.get("effect_kind"))
+        && (!target.equals(row.get("account_id")) || !"CREATED".equals(provenance))) throw denied();
     if (!SetHolder.PROVENANCE.contains(provenance)) throw denied();
     jdbc.update(
         "UPDATE identity_creation_effect SET state='ACKNOWLEDGED',provenance=?,target_id=? WHERE id=? AND state='STARTED'",
@@ -63,6 +66,6 @@ public class IdentityCreationEffectWriter {
   }
 
   private static AccessDeniedException denied() {
-    return new AccessDeniedException("Unproven Matrix effect acknowledgment");
+    return new AccessDeniedException("Unproven downstream effect acknowledgment");
   }
 }

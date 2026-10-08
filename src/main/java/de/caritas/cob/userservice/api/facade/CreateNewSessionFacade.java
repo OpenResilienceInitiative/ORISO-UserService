@@ -121,18 +121,12 @@ public class CreateNewSessionFacade {
           effects) {
     if (isNotBlank(userRegistrationDTO.getConsultantId())) {
       NewRegistrationResponseDto newRegistrationResponseDto =
-          effects == null
-              ? createSessionFacade.createDirectUserSession(
-                  userRegistrationDTO.getConsultantId(),
-                  convertToUserDTO(userRegistrationDTO),
-                  user,
-                  extendedConsultingTypeResponseDTO)
-              : createSessionFacade.createDirectUserSession(
-                  userRegistrationDTO.getConsultantId(),
-                  convertToUserDTO(userRegistrationDTO),
-                  user,
-                  extendedConsultingTypeResponseDTO,
-                  effects);
+          createSessionFacade.createDirectUserSession(
+              userRegistrationDTO.getConsultantId(),
+              convertToUserDTO(userRegistrationDTO),
+              user,
+              extendedConsultingTypeResponseDTO,
+              effects);
       statisticsService.fireEvent(
           new AssignSessionStatisticsEvent(
               userRegistrationDTO.getConsultantId(),
@@ -141,41 +135,18 @@ public class CreateNewSessionFacade {
       return newRegistrationResponseDto;
     }
 
-    Long sessionId = null;
-
     var groupChat = extendedConsultingTypeResponseDTO.getGroupChat();
     if (nonNull(groupChat) && isTrue(groupChat.getIsGroupChat())) {
       createUserChatRelationFacade.initializeUserChatAgencyRelation(
           convertToUserDTO(userRegistrationDTO), user);
-      // Also create a session for group chat users
-      sessionId =
-          effects == null
-              ? createSessionFacade.createUserSession(
-                  convertToUserDTO(userRegistrationDTO),
-                  user,
-                  extendedConsultingTypeResponseDTO,
-                  validationConstraints)
-              : createSessionFacade.createUserSession(
-                  convertToUserDTO(userRegistrationDTO),
-                  user,
-                  extendedConsultingTypeResponseDTO,
-                  validationConstraints,
-                  effects);
-    } else {
-      sessionId =
-          effects == null
-              ? createSessionFacade.createUserSession(
-                  convertToUserDTO(userRegistrationDTO),
-                  user,
-                  extendedConsultingTypeResponseDTO,
-                  validationConstraints)
-              : createSessionFacade.createUserSession(
-                  convertToUserDTO(userRegistrationDTO),
-                  user,
-                  extendedConsultingTypeResponseDTO,
-                  validationConstraints,
-                  effects);
     }
+    Long sessionId =
+        createSessionFacade.createUserSession(
+            convertToUserDTO(userRegistrationDTO),
+            user,
+            extendedConsultingTypeResponseDTO,
+            validationConstraints,
+            effects);
 
     return new NewRegistrationResponseDto().sessionId(sessionId).status(HttpStatus.CREATED);
   }

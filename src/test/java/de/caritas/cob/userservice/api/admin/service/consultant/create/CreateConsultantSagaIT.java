@@ -145,6 +145,151 @@ public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
 
   @MockitoBean private AppointmentService appointmentService;
 
+  @Autowired private de.caritas.cob.userservice.api.service.ConsultantImportService actualImporter;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.service.ConsultingTypeService actualConsultingTypeService;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.ConfiguredConsultantImport
+      configuredImport;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.ConsultantRepository importedConsultants;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.IdentityCreationAttemptRepository
+      creationAttempts;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory
+      importAgencyFactory;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.config.apiclient.ConsultingTypeServiceApiControllerFactory
+      importTypeFactory;
+
+  @Test
+  void laterInvalidImportRowRollsBackEarlierLocalCreationAndPersistsOwnedCompensation()
+      throws Exception {
+    var directory = java.nio.file.Files.createTempDirectory("atomic-import-failure");
+    var file = directory.resolve("configured.csv");
+    String username = "import" + java.util.UUID.randomUUID().toString().substring(0, 8);
+    java.nio.file.Files.writeString(
+        file,
+        ",424242,"
+            + username
+            + ",Given,Family,synthetic@example.org,nein,,8;standard,1\n,424243,ab,Given,Family,next@example.org,nein,,8;standard,1\n");
+    Object priorFilename = ReflectionTestUtils.getField(configuredImport, "filename");
+    Object priorMultitenancy = ReflectionTestUtils.getField(configuredImport, "multitenancy");
+    Object priorImportMultitenancy =
+        ReflectionTestUtils.getField(actualImporter, "multiTenancyEnabled");
+    Object priorProtocol = ReflectionTestUtils.getField(actualImporter, "protocolFilename");
+    Object priorTypeManager = ReflectionTestUtils.getField(actualImporter, "consultingTypeManager");
+    try {
+      // This class' legacy shared manager fabricates random policies; use the real production
+      // mapper against this test's exact external CTS API response, with no authorization mock.
+      ReflectionTestUtils.setField(
+          actualImporter,
+          "consultingTypeManager",
+          new de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager(
+              actualConsultingTypeService));
+      ReflectionTestUtils.setField(configuredImport, "filename", file.toString());
+      ReflectionTestUtils.setField(configuredImport, "multitenancy", true);
+      ReflectionTestUtils.setField(actualImporter, "multiTenancyEnabled", true);
+      ReflectionTestUtils.setField(
+          actualImporter, "protocolFilename", directory.resolve("protocol").toString());
+      var importer =
+          Jwt.withTokenValue("verified-configured-importer")
+              .header("alg", "RS256")
+              .subject(
+                  identityEnvironment.getRequiredProperty(
+                      "identity.consultant-import.service-subject"))
+              .claim(
+                  "azp",
+                  identityEnvironment.getRequiredProperty("identity.consultant-import.client-id"))
+              .claim("realm_access", Map.of("roles", List.of("consultant-import")))
+              .audience(List.of("userservice"))
+              .issuedAt(Instant.now())
+              .expiresAt(Instant.now().plusSeconds(300))
+              .build();
+      SecurityContextHolder.getContext()
+          .setAuthentication(new JwtAuthenticationToken(importer, List.of()));
+      de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(1L);
+      var agencyApi =
+          org.mockito.Mockito.mock(
+              de.caritas.cob.userservice.agencyserivce.generated.web.AgencyControllerApi.class);
+      when(agencyApi.getApiClient())
+          .thenReturn(new de.caritas.cob.userservice.agencyserivce.generated.ApiClient());
+      var agency =
+          new de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyResponseDTO();
+      agency.setId(8L);
+      agency.setTenantId(1L);
+      agency.setConsultingType(1);
+      agency.setTeamAgency(false);
+      agency.setTopicIds(List.of());
+      when(agencyApi.getAgenciesByIds(List.of(8L))).thenReturn(List.of(agency));
+      when(importAgencyFactory.createControllerApi()).thenReturn(agencyApi);
+      var typeApi =
+          org.mockito.Mockito.mock(
+              de.caritas.cob.userservice.consultingtypeservice.generated.web
+                  .ConsultingTypeControllerApi.class);
+      when(typeApi.getApiClient())
+          .thenReturn(new de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient());
+      var policy =
+          new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+              .ExtendedConsultingTypeResponseDTO();
+      var roles =
+          new de.caritas.cob.userservice.consultingtypeservice.generated.web.model.RolesDTO();
+      roles.setConsultant(
+          new de.caritas.cob.userservice.api.manager.consultingtype.roles.Consultant(
+              new java.util.LinkedHashMap<>(Map.of("standard", List.of("consultant")))));
+      policy.setId(1);
+      policy.setRoles(roles);
+      policy.setLanguageFormal(true);
+      policy.setSlug("fixture");
+      policy.setConsultantBoundedToConsultingType(false);
+      when(typeApi.getExtendedConsultingTypeById(1)).thenReturn(policy);
+      when(importTypeFactory.createControllerApi()).thenReturn(typeApi);
+      var failure = assertThrows(BadRequestException.class, actualImporter::startImport);
+      org.assertj.core.api.Assertions.assertThat(failure.getCause())
+          .hasMessage("Configured consultant import username length is invalid");
+      var created =
+          nativeAccounts.commands().stream()
+              .filter(
+                  command ->
+                      command.operation().equals("account.create")
+                          && username.equals(command.body().get("username")))
+              .findFirst()
+              .orElseThrow();
+      var attempt = creationAttempts.findById(created.target()).orElseThrow();
+      org.assertj.core.api.Assertions.assertThat(
+              importedConsultants.findById(attempt.getAccountId()))
+          .isEmpty();
+      org.assertj.core.api.Assertions.assertThat(attempt.getStatus())
+          .isEqualTo("COMPENSATION_REQUESTED");
+      org.assertj.core.api.Assertions.assertThat(nativeAccounts.commands())
+          .noneMatch(
+              command ->
+                  command.operation().equals("account.commit")
+                      && command.target().equals(created.target()));
+      org.assertj.core.api.Assertions.assertThat(
+              nativeAccounts.projections().get(attempt.getAccountId()).enabled())
+          .isFalse();
+    } finally {
+      ReflectionTestUtils.setField(configuredImport, "filename", priorFilename);
+      ReflectionTestUtils.setField(configuredImport, "multitenancy", priorMultitenancy);
+      ReflectionTestUtils.setField(actualImporter, "multiTenancyEnabled", priorImportMultitenancy);
+      ReflectionTestUtils.setField(actualImporter, "protocolFilename", priorProtocol);
+      ReflectionTestUtils.setField(actualImporter, "consultingTypeManager", priorTypeManager);
+      de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+      try (var paths = java.nio.file.Files.walk(directory)) {
+        for (var path : paths.sorted(java.util.Comparator.reverseOrder()).toList())
+          java.nio.file.Files.delete(path);
+      }
+    }
+  }
+
   private final EasyRandom easyRandom = new EasyRandom();
 
   @BeforeEach
@@ -187,7 +332,9 @@ public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
   @Test
   public void createNewConsultant_Should_callRollback_When_AppointmentServiceThrowsException() {
     ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", true);
-    doThrow(BadRequestException.class).when(appointmentService).createConsultant(any());
+    doThrow(BadRequestException.class)
+        .when(appointmentService)
+        .createOwnedConsultant(any(), any(), any());
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setTenantId(TENANT_ID);
     createConsultantDTO.setUsername(

@@ -166,6 +166,47 @@ class IdentityCreationEffectsRestartTest {
     }
   }
 
+  @Test
+  void acknowledgedAppointmentMustBeCleanedAfterLocalRollbackAndFileReopen() throws Exception {
+    var source = source();
+    var id = UUID.randomUUID();
+    String account = "56e25ff5-0d7c-4b46-a645-c3431055bdc2";
+    try (var context = open(source, true, 0)) {
+      var journal = context.getBean(IdentityCreationJournalWriter.class);
+      var origin = IdentityCreationJournalRestartTest.origin();
+      var execution = journal.begin(id, origin, "owned");
+      var receipt =
+          new KeycloakTaskCommands.CreationResult(
+              id, account, "original-receipt", "OPEN", execution.claim());
+      journal.created(receipt, origin, execution);
+      tx(context)
+          .executeWithoutResult(
+              status -> {
+                journal.acquireLocalSaga(receipt);
+                var writer = context.getBean(IdentityCreationEffectWriter.class);
+                var effectId = UUID.randomUUID();
+                writer.started(effectId, receipt, 42L, "APPOINTMENT_CONSULTANT", account);
+                writer.acknowledge(effectId, "CREATED", account);
+                status.setRollbackOnly();
+              });
+    }
+    try (var context = open(source, false, 61)) {
+      var journal = context.getBean(IdentityCreationJournalWriter.class);
+      var row = journal.reconciliationRequired().getFirst();
+      journal.recovered(
+          row,
+          new KeycloakTaskCommands.RecoveryResult(
+              id, account, "original-receipt", "RECOVERY_CLAIMED"));
+      context.getBean(IdentityCreationEffects.class).clean(id);
+      verify(
+              context.getBean(
+                  de.caritas.cob.userservice.api.service.appointment.AppointmentService.class))
+          .deleteOwnedCreationConsultant(account, 42L);
+      assertThat(journal.attempt(id).getStatus()).isEqualTo("LOCAL_CLEANUP_REQUESTED");
+      verifyNoInteractions(context.getBean(MatrixSynapseService.class));
+    }
+  }
+
   private void captureByAbruptDeath(DataSource source, UUID id) throws Exception {
     try (var context = open(source, true, 0)) {
       create(context.getBean(IdentityCreationJournalWriter.class), id, true);

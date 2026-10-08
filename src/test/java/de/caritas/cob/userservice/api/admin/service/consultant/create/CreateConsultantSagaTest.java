@@ -87,6 +87,11 @@ class CreateConsultantSagaTest {
     org.mockito.Mockito.lenient()
         .when(identityProvisioning.ownedMatrixEffects(org.mockito.ArgumentMatchers.any()))
         .thenReturn(scope);
+    org.mockito.Mockito.lenient()
+        .when(identityProvisioning.ownedAppointmentEffect(any()))
+        .thenReturn(
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.OwnedAppointmentEffect.class));
   }
 
   @org.junit.jupiter.api.BeforeEach
@@ -209,7 +214,7 @@ class CreateConsultantSagaTest {
             org.mockito.ArgumentMatchers.argThat(
                 command -> command.roles().contains(CONSULTANT.getValue())),
             any());
-    verify(appointmentService, never()).createConsultant(any());
+    verify(appointmentService, never()).createOwnedConsultant(any(), any(), any());
   }
 
   @Test
@@ -404,7 +409,7 @@ class CreateConsultantSagaTest {
 
     createConsultantSaga.createNewConsultant(validCreateConsultantDto());
 
-    verify(appointmentService).createConsultant(any());
+    verify(appointmentService).createOwnedConsultant(any(), any(), any());
   }
 
   @Test
@@ -415,7 +420,7 @@ class CreateConsultantSagaTest {
     when(authenticatedUser.getRoles()).thenReturn(Set.of("admin"));
     doThrow(new RuntimeException("appointment down"))
         .when(appointmentService)
-        .createConsultant(any());
+        .createOwnedConsultant(any(), any(), any());
 
     var ex =
         assertThrows(

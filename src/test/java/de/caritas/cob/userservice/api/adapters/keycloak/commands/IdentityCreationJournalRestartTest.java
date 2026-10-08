@@ -491,6 +491,16 @@ class IdentityCreationJournalRestartTest {
   static AnnotationConfigApplicationContext open(
       DataSource source, boolean migrate, java.time.Clock clock, boolean localDomain)
       throws Exception {
+    return open(source, migrate, clock, localDomain, "");
+  }
+
+  static AnnotationConfigApplicationContext open(
+      DataSource source,
+      boolean migrate,
+      java.time.Clock clock,
+      boolean localDomain,
+      String appointmentUrl)
+      throws Exception {
     if (migrate)
       for (String changelog :
           List.of(
@@ -509,7 +519,13 @@ class IdentityCreationJournalRestartTest {
         .addFirst(
             new org.springframework.core.env.MapPropertySource(
                 "isolated-domain-ddl",
-                Map.of("fixture.domain.ddl", localDomain ? "update" : "none")));
+                Map.of(
+                    "fixture.domain.ddl",
+                    localDomain ? "update" : "none",
+                    "feature.appointment.enabled",
+                    "true",
+                    "fixture.appointment.url",
+                    appointmentUrl)));
     context.registerBean(DataSource.class, () -> source);
     context.registerBean(java.time.Clock.class, () -> clock);
     context.register(JournalConfiguration.class);
@@ -570,6 +586,16 @@ class IdentityCreationJournalRestartTest {
     }
 
     @Bean
+    de.caritas.cob.userservice.api.service.appointment.AppointmentService appointments(
+        org.springframework.core.env.Environment environment) {
+      var url = environment.getProperty("fixture.appointment.url", "");
+      return url.isBlank()
+          ? org.mockito.Mockito.mock(
+              de.caritas.cob.userservice.api.service.appointment.AppointmentService.class)
+          : OwnedAppointmentHttpFixture.create(url);
+    }
+
+    @Bean
     IdentityCreationEffectWriter effectsWriter(org.springframework.jdbc.core.JdbcTemplate jdbc) {
       return new IdentityCreationEffectWriter(jdbc);
     }
@@ -579,8 +605,9 @@ class IdentityCreationJournalRestartTest {
         IdentityCreationJournalWriter journal,
         IdentityCreationEffectWriter writer,
         org.springframework.jdbc.core.JdbcTemplate jdbc,
-        de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrix) {
-      return new IdentityCreationEffects(journal, writer, jdbc, matrix);
+        de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrix,
+        de.caritas.cob.userservice.api.service.appointment.AppointmentService appointments) {
+      return new IdentityCreationEffects(journal, writer, jdbc, matrix, appointments);
     }
 
     @Bean

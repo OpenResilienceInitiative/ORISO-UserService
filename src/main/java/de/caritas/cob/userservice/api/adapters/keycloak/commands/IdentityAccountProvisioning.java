@@ -21,6 +21,20 @@ public class IdentityAccountProvisioning {
     return effects.capture(receipt);
   }
 
+  /** Reuses the same fenced receipt, even after the consultant has been saved in the local saga. */
+  public de.caritas.cob.userservice.api.port.out.OwnedAppointmentEffect ownedAppointmentEffect(
+      String accountId) {
+    var row = journal.ownedAttempt(accountId);
+    var receipt =
+        new KeycloakTaskCommands.CreationResult(
+            UUID.fromString(row.getId()),
+            row.getAccountId(),
+            row.getCreationProof(),
+            "OPEN",
+            UUID.fromString(row.getExecutionClaim()));
+    return effects.capture(receipt).appointmentConsultant();
+  }
+
   /** Controlled rollback uses the same durable effect ownership as process-restart recovery. */
   public void compensateMatrixEffects(String accountId) {
     var row = journal.ownedAttempt(accountId);

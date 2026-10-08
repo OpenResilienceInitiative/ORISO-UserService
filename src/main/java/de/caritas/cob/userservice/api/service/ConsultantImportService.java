@@ -95,11 +95,7 @@ public class ConsultantImportService {
         // Check if username is valid
         if (importRecord.getConsultantId() == null
             && !userHelper.isUsernameValid(importRecord.getUsername())) {
-          writeToImportLog(
-              String.format(
-                  "Username length is invalid. Skipping import for %s",
-                  importRecord.getUsername()));
-          continue;
+          throw new ImportException("Configured consultant import username length is invalid");
         }
 
         String[] agencyRoleSetArray = importRecord.getAgenciesAndRoleSets().split(DELIMITER);
@@ -285,13 +281,22 @@ public class ConsultantImportService {
       } catch (ImportException wontImportException) {
         compensateCreation(createdAccountId, wontImportException);
         writeToImportLog(wontImportException.getMessage());
-        break;
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
+            "Configured consultant import contains an invalid row", wontImportException);
       } catch (Exception fileNotFoundException) {
         compensateCreation(createdAccountId, fileNotFoundException);
         log.warn(
             "Configured consultant import failed ({})",
             fileNotFoundException.getClass().getSimpleName());
-        break;
+        if (fileNotFoundException instanceof org.springframework.web.client.RestClientException)
+          throw new org.springframework.web.server.ResponseStatusException(
+              org.springframework.http.HttpStatus.BAD_GATEWAY,
+              "Consultant import dependency failed",
+              fileNotFoundException);
+        if (fileNotFoundException instanceof RuntimeException failure) throw failure;
+        throw new de.caritas.cob.userservice.api.exception.httpresponses
+            .InternalServerErrorException(
+            "Configured consultant import failed", fileNotFoundException);
       }
     }
   }

@@ -78,14 +78,19 @@ class CreateNewSessionFacadeTest {
     when(consultingTypeManager.getConsultingTypeSettings(anyString())).thenReturn(extended);
     var directResponse = new NewRegistrationResponseDto().sessionId(99L).status(HttpStatus.CREATED);
     when(createSessionFacade.createDirectUserSession(
-            eq(CONSULTANT_ID), any(UserDTO.class), eq(user), eq(extended)))
+            eq(CONSULTANT_ID),
+            any(UserDTO.class),
+            eq(user),
+            eq(extended),
+            org.mockito.ArgumentMatchers.isNull()))
         .thenReturn(directResponse);
 
     var result = createNewSessionFacade.initializeNewSession(userDto(CONSULTANT_ID), user);
 
     assertThat(result.getSessionId()).isEqualTo(99L);
     verify(statisticsService).fireEvent(any(AssignSessionStatisticsEvent.class));
-    verify(createSessionFacade, never()).createUserSession(any(), any(), any(), anyList());
+    verify(createSessionFacade, never())
+        .createUserSession(any(), any(), any(), anyList(), org.mockito.ArgumentMatchers.isNull());
     verifyNoInteractions(createUserChatRelationFacade);
   }
 
@@ -95,7 +100,11 @@ class CreateNewSessionFacadeTest {
     var extended = consultingTypeWithGroupChat(true);
     when(consultingTypeManager.getConsultingTypeSettings(anyString())).thenReturn(extended);
     when(createSessionFacade.createUserSession(
-            any(UserDTO.class), eq(user), eq(extended), anyList()))
+            any(UserDTO.class),
+            eq(user),
+            eq(extended),
+            anyList(),
+            org.mockito.ArgumentMatchers.isNull()))
         .thenReturn(77L);
 
     var result = createNewSessionFacade.initializeNewSession(userDto(null), user);
@@ -105,9 +114,16 @@ class CreateNewSessionFacadeTest {
     verify(createUserChatRelationFacade)
         .initializeUserChatAgencyRelation(any(UserDTO.class), eq(user));
     verify(createSessionFacade)
-        .createUserSession(any(UserDTO.class), eq(user), eq(extended), anyList());
+        .createUserSession(
+            any(UserDTO.class),
+            eq(user),
+            eq(extended),
+            anyList(),
+            org.mockito.ArgumentMatchers.isNull());
     verify(statisticsService, never()).fireEvent(any());
-    verify(createSessionFacade, never()).createDirectUserSession(anyString(), any(), any(), any());
+    verify(createSessionFacade, never())
+        .createDirectUserSession(
+            anyString(), any(), any(), any(), org.mockito.ArgumentMatchers.isNull());
   }
 
   @Test
@@ -115,7 +131,11 @@ class CreateNewSessionFacadeTest {
     var extended = consultingTypeWithoutGroupChat();
     when(consultingTypeManager.getConsultingTypeSettings(anyString())).thenReturn(extended);
     when(createSessionFacade.createUserSession(
-            any(UserDTO.class), eq(user), eq(extended), anyList()))
+            any(UserDTO.class),
+            eq(user),
+            eq(extended),
+            anyList(),
+            org.mockito.ArgumentMatchers.isNull()))
         .thenReturn(42L);
 
     var result = createNewSessionFacade.initializeNewSession(userDto(null), user);
@@ -131,7 +151,11 @@ class CreateNewSessionFacadeTest {
     var extended = consultingTypeWithGroupChat(false);
     when(consultingTypeManager.getConsultingTypeSettings(anyString())).thenReturn(extended);
     when(createSessionFacade.createUserSession(
-            any(UserDTO.class), eq(user), eq(extended), anyList()))
+            any(UserDTO.class),
+            eq(user),
+            eq(extended),
+            anyList(),
+            org.mockito.ArgumentMatchers.isNull()))
         .thenReturn(43L);
 
     var result = createNewSessionFacade.initializeNewSession(userDto(null), user);
@@ -167,7 +191,11 @@ class CreateNewSessionFacadeTest {
   void initializeNewSession_Should_notLookUpConsultingType_When_extendedDtoOverloadIsUsed() {
     var extended = consultingTypeWithoutGroupChat();
     when(createSessionFacade.createUserSession(
-            any(UserDTO.class), eq(user), eq(extended), anyList()))
+            any(UserDTO.class),
+            eq(user),
+            eq(extended),
+            anyList(),
+            org.mockito.ArgumentMatchers.isNull()))
         .thenReturn(51L);
 
     var result = createNewSessionFacade.initializeNewSession(userDto(null), user, extended);
@@ -183,7 +211,11 @@ class CreateNewSessionFacadeTest {
     when(consultingTypeManager.getConsultingTypeSettings(anyString())).thenReturn(extended);
     var constraintCaptor = ArgumentCaptor.forClass(List.class);
     when(createSessionFacade.createUserSession(
-            any(UserDTO.class), eq(user), eq(extended), constraintCaptor.capture()))
+            any(UserDTO.class),
+            eq(user),
+            eq(extended),
+            constraintCaptor.capture(),
+            org.mockito.ArgumentMatchers.isNull()))
         .thenReturn(1L);
 
     createNewSessionFacade.initializeNewSession(userDto(null), user);
@@ -198,7 +230,11 @@ class CreateNewSessionFacadeTest {
     when(consultingTypeManager.getConsultingTypeSettings(anyString())).thenReturn(extended);
     var constraintCaptor = ArgumentCaptor.forClass(List.class);
     when(createSessionFacade.createUserSession(
-            any(UserDTO.class), eq(user), eq(extended), constraintCaptor.capture()))
+            any(UserDTO.class),
+            eq(user),
+            eq(extended),
+            constraintCaptor.capture(),
+            org.mockito.ArgumentMatchers.isNull()))
         .thenReturn(2L);
     List<NewSessionValidationConstraint> noConstraints = Lists.newArrayList();
 
@@ -214,7 +250,11 @@ class CreateNewSessionFacadeTest {
     when(consultingTypeManager.getConsultingTypeSettings(anyString())).thenReturn(extended);
     var userDtoCaptor = ArgumentCaptor.forClass(UserDTO.class);
     when(createSessionFacade.createUserSession(
-            userDtoCaptor.capture(), eq(user), eq(extended), anyList()))
+            userDtoCaptor.capture(),
+            eq(user),
+            eq(extended),
+            anyList(),
+            org.mockito.ArgumentMatchers.isNull()))
         .thenReturn(5L);
 
     var registration = new NewRegistrationDto();

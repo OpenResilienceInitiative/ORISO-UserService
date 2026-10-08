@@ -120,12 +120,14 @@ class ConsultantImportServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void startImport_Should_SkipRecord_When_UsernameIsInvalid() throws IOException {
+  void startImport_Should_RejectInvalidRow_When_UsernameIsInvalid() throws IOException {
     writeCsv(",1,ab,First,Last,valid@example.com,nein,,10;roleA\r\n");
     when(userHelper.isUsernameValid("ab")).thenReturn(false);
     when(userHelper.isValidEmail(anyString())).thenReturn(true);
 
-    consultantImportService.startImport();
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
+        () -> consultantImportService.startImport());
 
     verify(agencyService, never()).getPublicImportAgency(any(), any());
   }
@@ -135,31 +137,34 @@ class ConsultantImportServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void startImport_Should_BreakOnImportException_When_AgencyRoleSetHasNoDelimiter()
-      throws IOException {
+  void startImport_Should_RejectInvalidRow_When_AgencyRoleSetHasNoDelimiter() throws IOException {
     writeCsv(",1,validuser,First,Last,valid@example.com,nein,,10\r\n");
     when(userHelper.isUsernameValid("validuser")).thenReturn(true);
     when(userHelper.isValidEmail(anyString())).thenReturn(true);
 
-    consultantImportService.startImport();
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
+        () -> consultantImportService.startImport());
 
     verify(agencyService, never()).getPublicImportAgency(any(), any());
   }
 
   @Test
-  void startImport_Should_BreakOnImportException_When_AgencyIsNull() throws IOException {
+  void startImport_Should_RejectInvalidRow_When_AgencyIsNull() throws IOException {
     writeCsv(",1,validuser,First,Last,valid@example.com,nein,,10;roleA\r\n");
     when(userHelper.isUsernameValid("validuser")).thenReturn(true);
     when(userHelper.isValidEmail(anyString())).thenReturn(true);
     when(agencyService.getPublicImportAgency(eq(10L), any())).thenReturn(null);
 
-    consultantImportService.startImport();
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
+        () -> consultantImportService.startImport());
 
     verify(consultingTypeManager, never()).getConsultingTypeSettings(any());
   }
 
   @Test
-  void startImport_Should_BreakOnImportException_When_RoleSetIsInvalidForConsultingType()
+  void startImport_Should_RejectInvalidRow_When_RoleSetIsInvalidForConsultingType()
       throws IOException {
     writeCsv(",1,validuser,First,Last,valid@example.com,nein,,10;unknownRole\r\n");
     when(userHelper.isUsernameValid("validuser")).thenReturn(true);
@@ -169,7 +174,9 @@ class ConsultantImportServiceTest {
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(typeWithRoles(Map.of("validRole", List.of("consultant"))));
 
-    consultantImportService.startImport();
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
+        () -> consultantImportService.startImport());
 
     verify(createConsultantSaga, never()).createImportedConsultant(any(), any());
   }
@@ -196,7 +203,7 @@ class ConsultantImportServiceTest {
   }
 
   @Test
-  void startImport_Should_SkipRecord_When_UsernameAlreadyTakenInKeycloak() throws IOException {
+  void startImport_Should_ReportConflict_When_UsernameAlreadyTakenInKeycloak() throws IOException {
     writeCsv(",1,newuser,First,Last,valid@example.com,nein,,10;roleA\r\n");
     when(userHelper.isUsernameValid("newuser")).thenReturn(true);
     when(userHelper.isValidEmail(anyString())).thenReturn(true);
@@ -207,9 +214,13 @@ class ConsultantImportServiceTest {
     when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
         .thenReturn(Optional.empty());
     when(createConsultantSaga.createImportedConsultant(any(), any()))
-        .thenThrow(new IllegalStateException("atomic username conflict"));
+        .thenThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+                "atomic username conflict"));
 
-    consultantImportService.startImport();
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () -> consultantImportService.startImport());
 
     verify(createConsultantSaga).createImportedConsultant(any(), any());
     verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
@@ -266,12 +277,14 @@ class ConsultantImportServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void startImport_Should_BreakOnImportException_When_EmailIsInvalid() throws IOException {
+  void startImport_Should_RejectInvalidRow_When_EmailIsInvalid() throws IOException {
     writeCsv(",1,validuser,First,Last,not-an-email,nein,,10;roleA\r\n");
     when(userHelper.isUsernameValid("validuser")).thenReturn(true);
     when(userHelper.isValidEmail("not-an-email")).thenReturn(false);
 
-    consultantImportService.startImport();
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
+        () -> consultantImportService.startImport());
 
     verify(agencyService, never()).getPublicImportAgency(any(), any());
   }
@@ -300,6 +313,41 @@ class ConsultantImportServiceTest {
     consultantImportService.startImport();
 
     verify(createConsultantSaga).createImportedConsultant(any(), any());
+  }
+
+  @Test
+  void relationFailureRetainsMappedStatusAndOwnedCleanupErrorAndStopsFollowingRows()
+      throws IOException {
+    writeCsv(
+        ",1,brandnewuser,First,Last,valid@example.com,nein,,10;roleA\r\n,1,followinguser,First,Last,next@example.com,nein,,10;roleA\r\n");
+    when(userHelper.isUsernameValid(anyString())).thenReturn(true);
+    when(userHelper.isValidEmail(anyString())).thenReturn(true);
+    when(agencyService.getPublicImportAgency(eq(10L), any()))
+        .thenReturn(agencyWithConsultingType(1));
+    when(consultingTypeManager.getConsultingTypeSettings(1))
+        .thenReturn(typeWithRoles(Map.of("roleA", List.of("consultant"))));
+    when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
+        .thenReturn(Optional.empty());
+    var created = new Consultant();
+    created.setId("new-owned-account");
+    when(createConsultantSaga.createImportedConsultant(any(), any())).thenReturn(created);
+    when(consultantService.getConsultant("new-owned-account")).thenReturn(Optional.of(created));
+    var original =
+        new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "relation conflict");
+    var cleanupFailure = new IllegalStateException("cleanup retry pending");
+    org.mockito.Mockito.doThrow(original)
+        .when(consultantAgencyRelationCreatorService)
+        .createOwnedCreationRelations(eq("new-owned-account"), any(), any(), any());
+    org.mockito.Mockito.doThrow(cleanupFailure)
+        .when(rollbackFacade)
+        .rollbackConsultantAccount(created);
+    org.assertj.core.api.Assertions.assertThatThrownBy(consultantImportService::startImport)
+        .isSameAs(original)
+        .hasSuppressedException(cleanupFailure);
+    verify(createConsultantSaga, org.mockito.Mockito.times(1))
+        .createImportedConsultant(any(), any());
+    verify(localCompletion, never()).importedConsultant(any());
   }
 
   // ---------------------------------------------------------------------------

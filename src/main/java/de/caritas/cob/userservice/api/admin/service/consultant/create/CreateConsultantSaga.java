@@ -191,7 +191,10 @@ public class CreateConsultantSaga {
   private void createConsultantInAppointmentServiceOrRollback(
       Consultant newConsultant, ConsultantAdminResponseDTO consultantAdminResponseDTO) {
     try {
-      this.appointmentService.createConsultant(consultantAdminResponseDTO);
+      this.appointmentService.createOwnedConsultant(
+          consultantAdminResponseDTO,
+          newConsultant.getTenantId(),
+          identityProvisioning.ownedAppointmentEffect(newConsultant.getId()));
     } catch (Exception e) {
       log.error(
           "User with id {}, who has roles {}, has created a consultant with id {} but the appointment service returned an error: {}",

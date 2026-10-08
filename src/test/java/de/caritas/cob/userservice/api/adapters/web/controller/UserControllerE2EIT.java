@@ -180,6 +180,63 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
+  @Autowired
+  private de.caritas.cob.userservice.api.adapters.keycloak.commands.ConfiguredConsultantImport
+      configuredImport;
+
+  @Autowired private de.caritas.cob.userservice.api.service.ConsultantImportService actualImporter;
+  @Autowired private org.springframework.core.env.Environment importerEnvironment;
+
+  @Test
+  void actualConfiguredImporterRejectsInvalidUsernameWith400BeforeCreatingAnyAccount()
+      throws Exception {
+    var directory = java.nio.file.Files.createTempDirectory("invalid-import-row");
+    var file = directory.resolve("consultants.csv");
+    java.nio.file.Files.writeString(
+        file, ",1,ab,First,Last,synthetic@example.com,nein,,10;roleA\r\n");
+    Object priorFile = ReflectionTestUtils.getField(configuredImport, "filename");
+    Object priorProtocol = ReflectionTestUtils.getField(actualImporter, "protocolFilename");
+    try {
+      ReflectionTestUtils.setField(configuredImport, "filename", file.toString());
+      ReflectionTestUtils.setField(
+          actualImporter, "protocolFilename", directory.resolve("protocol").toString());
+      var jwt =
+          Jwt.withTokenValue("synthetic-importer-token")
+              .header("alg", "RS256")
+              .subject(
+                  importerEnvironment.getRequiredProperty(
+                      "identity.consultant-import.service-subject"))
+              .claim(
+                  "azp",
+                  importerEnvironment.getRequiredProperty("identity.consultant-import.client-id"))
+              .audience(List.of("userservice"))
+              .claim("realm_access", Map.of("roles", List.of("consultant-import")))
+              .issuedAt(Instant.now())
+              .expiresAt(Instant.now().plusSeconds(60))
+              .build();
+      int before = identityProvider.commands().size();
+      mockMvc
+          .perform(
+              post("/users/consultants/import")
+                  .with(
+                      org.springframework.security.test.web.servlet.request
+                          .SecurityMockMvcRequestPostProcessors.authentication(
+                          new org.springframework.security.oauth2.server.resource.authentication
+                              .JwtAuthenticationToken(jwt, List.of())))
+                  .cookie(CSRF_COOKIE)
+                  .header(CSRF_HEADER, CSRF_VALUE))
+          .andExpect(status().isBadRequest());
+      assertThat(identityProvider.commands()).hasSize(before);
+    } finally {
+      ReflectionTestUtils.setField(configuredImport, "filename", priorFile);
+      ReflectionTestUtils.setField(actualImporter, "protocolFilename", priorProtocol);
+      try (var paths = java.nio.file.Files.walk(directory)) {
+        for (var path : paths.sorted(java.util.Comparator.reverseOrder()).toList())
+          java.nio.file.Files.delete(path);
+      }
+    }
+  }
+
   @Autowired private MockMvc mockMvc;
 
   @Autowired

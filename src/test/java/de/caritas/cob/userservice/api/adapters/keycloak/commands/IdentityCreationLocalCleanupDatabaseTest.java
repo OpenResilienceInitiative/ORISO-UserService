@@ -71,6 +71,7 @@ class IdentityCreationLocalCleanupDatabaseTest {
   // These partner/memory surfaces are not local DB cleanup authority. Native identity IO is proved
   // separately.
   @MockitoBean MatrixSynapseService matrix;
+  @MockitoBean de.caritas.cob.userservice.api.service.appointment.AppointmentService appointments;
   @MockitoBean AnonymousUsernameRegistry ephemeralUsernameRegistry;
 
   @BeforeEach
@@ -277,6 +278,72 @@ class IdentityCreationLocalCleanupDatabaseTest {
                     own.getUserId(), registered.getId(), new IllegalStateException("login")))
         .isInstanceOf(AccessDeniedException.class);
     assertThat(own.getDeleteDate()).isNull();
+  }
+
+  @Test
+  void acknowledgedAppointmentCleanupMustFinishBeforeTerminalIntentEvenWhenLocalRowIsAbsent() {
+    var row = row("CONSULTANT", "INVITATION");
+    String effect = UUID.randomUUID().toString();
+    jdbc.update(
+        "INSERT INTO identity_creation_effect(id,attempt_id,account_id,tenant_id,execution_claim,effect_kind,state,requested_target,target_id,provenance) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        effect,
+        row.getId(),
+        row.getAccountId(),
+        42L,
+        row.getExecutionClaim(),
+        "APPOINTMENT_CONSULTANT",
+        "ACKNOWLEDGED",
+        row.getAccountId(),
+        row.getAccountId(),
+        "CREATED");
+    assertThat(consultants.findById(row.getAccountId())).isEmpty();
+    doThrow(new org.springframework.web.client.ResourceAccessException("cleanup unavailable"))
+        .doNothing()
+        .when(appointments)
+        .deleteOwnedCreationConsultant(row.getAccountId(), 42L);
+    assertThatThrownBy(() -> cleanup.clean(UUID.fromString(row.getId())))
+        .isInstanceOf(org.springframework.web.client.ResourceAccessException.class);
+    assertThat(attempts.findById(row.getId()).orElseThrow().getStatus())
+        .isEqualTo("LOCAL_CLEANUP_REQUESTED");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT state FROM identity_creation_effect WHERE id=?", String.class, effect))
+        .isEqualTo("ACKNOWLEDGED");
+    cleanup.clean(UUID.fromString(row.getId()));
+    assertThat(attempts.findById(row.getId()).orElseThrow().getStatus())
+        .isEqualTo("COMPENSATION_REQUESTED");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT state FROM identity_creation_effect WHERE id=?", String.class, effect))
+        .isEqualTo("CLEANED");
+    verify(appointments, times(2)).deleteOwnedCreationConsultant(row.getAccountId(), 42L);
+  }
+
+  @Test
+  void committedOrForeignAppointmentEffectNeverAcquiresCleanupAuthority() {
+    var committed = row("CONSULTANT", "INVITATION");
+    committed.setStatus("COMMITTED");
+    attempts.saveAndFlush(committed);
+    assertThatThrownBy(() -> cleanup.clean(UUID.fromString(committed.getId())))
+        .isInstanceOf(AccessDeniedException.class);
+    var own = row("CONSULTANT", "INVITATION");
+    jdbc.update(
+        "INSERT INTO identity_creation_effect(id,attempt_id,account_id,tenant_id,execution_claim,effect_kind,state,requested_target,target_id,provenance) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        UUID.randomUUID().toString(),
+        own.getId(),
+        own.getAccountId(),
+        42L,
+        own.getExecutionClaim(),
+        "APPOINTMENT_CONSULTANT",
+        "ACKNOWLEDGED",
+        own.getAccountId(),
+        UUID.randomUUID().toString(),
+        "CREATED");
+    assertThatThrownBy(() -> cleanup.clean(UUID.fromString(own.getId())))
+        .isInstanceOf(AccessDeniedException.class);
+    assertThat(attempts.findById(own.getId()).orElseThrow().getStatus())
+        .isEqualTo("LOCAL_CLEANUP_REQUESTED");
+    verifyNoInteractions(appointments);
   }
 
   private IdentityCreationAttempt row(String kind, String origin) {
