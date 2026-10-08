@@ -385,6 +385,9 @@ public class EventNotificationService {
    */
   private Map<String, Object> baseParams(Session session) {
     Map<String, Object> params = new LinkedHashMap<>();
+    if (session != null)
+      params.put(
+          "conversationType", AskerNotificationChannelPolicy.conversationType(session).name());
     if (session != null && session.getId() != null) {
       params.put("sessionId", session.getId());
     }

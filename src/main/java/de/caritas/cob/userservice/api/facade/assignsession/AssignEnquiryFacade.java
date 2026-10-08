@@ -362,7 +362,7 @@ public class AssignEnquiryFacade {
     }
 
     emailNotificationFacade.sendInquiryAcceptedNotification(
-        session.getUser(), consultant, TenantContext.getCurrentTenantData());
+        session.getUser(), consultant, TenantContext.getCurrentTenantData(), session);
   }
 
   private void rollbackSessionUpdate(

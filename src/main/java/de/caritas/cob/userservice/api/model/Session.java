@@ -34,6 +34,7 @@ import lombok.NonNull;
 import lombok.Setter;
 import lombok.ToString;
 import lombok.ToString.Exclude;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.Fetch;
 import org.hibernate.annotations.FetchMode;
 import org.hibernate.annotations.Filter;
@@ -42,6 +43,7 @@ import org.hibernate.type.SqlTypes;
 import org.springframework.lang.Nullable;
 
 @Entity
+@DynamicUpdate
 @Builder
 @Table(name = "session")
 @AllArgsConstructor
@@ -227,6 +229,14 @@ public class Session implements TenantAware {
   @Builder.Default
   @Column(name = "is_supervision_opted_out", columnDefinition = "bit default false")
   private Boolean supervisionOptedOut = false;
+
+  /** Future additional access requires an individual approval when enabled; never grants access. */
+  @Builder.Default
+  @Column(
+      name = "always_ask_before_additional_access",
+      nullable = false,
+      columnDefinition = "bit default false")
+  private boolean alwaysAskBeforeAdditionalAccess = false;
 
   /**
    * ADR-022 decision 2 — the Gate 2 consent pointer: the id of the legal-text version (owned by

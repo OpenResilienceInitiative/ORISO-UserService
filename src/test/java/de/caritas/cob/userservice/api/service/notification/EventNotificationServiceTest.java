@@ -141,7 +141,8 @@ class EventNotificationServiceTest {
             "requesterName",
             "reasonCode",
             "reasonLabel",
-            "caseHandoverRequestId");
+            "caseHandoverRequestId",
+            "conversationType");
   }
 
   @Test
@@ -331,6 +332,7 @@ class EventNotificationServiceTest {
             "senderDisplayName",
             "contentClass",
             "recipientRole",
+            "conversationType",
             "clientConsent",
             "threadRootId",
             "mentioned",
