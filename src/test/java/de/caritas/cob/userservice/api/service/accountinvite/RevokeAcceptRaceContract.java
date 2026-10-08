@@ -42,8 +42,10 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdA
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.AgencyCreationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import java.time.LocalDateTime;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -191,6 +193,7 @@ abstract class RevokeAcceptRaceContract {
   @MockitoBean private IdentitySecondFactor identitySecondFactor;
   @MockitoBean private IdentityProfileLookup identityProfileLookup;
   @MockitoBean private TopicService topicService;
+  @MockitoBean private ApplicationSettingsService applicationSettingsService;
   @MockitoBean private UsernameTranscoder usernameTranscoder;
   @MockitoBean private AgencyCreationClient agencyCreationClient;
 
@@ -212,6 +215,8 @@ abstract class RevokeAcceptRaceContract {
 
   @BeforeEach
   void setUp() {
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(new ApplicationSettingsDTO());
     caller.revokeDecided = new CountDownLatch(1);
     caller.afterWriterRead = null;
     Tenants.actAs(

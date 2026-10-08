@@ -436,6 +436,7 @@ class CaseHandoverRequiredConsentMailIT {
     session.setStatus(Session.SessionStatus.NEW);
     sessions.save(session);
     var mail = queueRequiredConsent();
+    session = sessions.findById(session.getId()).orElseThrow();
     session.setStatus(Session.SessionStatus.REJECTED);
     sessions.save(session);
     when(actor.retrieveValidatedUser()).thenReturn(seeker);
@@ -454,6 +455,7 @@ class CaseHandoverRequiredConsentMailIT {
     session.setStatus(Session.SessionStatus.NEW);
     sessions.save(session);
     var mail = queueRequiredConsent();
+    session = sessions.findById(session.getId()).orElseThrow();
     session.setStatus(Session.SessionStatus.REJECTED);
     sessions.save(session);
     delayedSender().send(mail);

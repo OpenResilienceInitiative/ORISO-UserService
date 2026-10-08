@@ -8,6 +8,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -52,16 +53,16 @@ public class OrisoEmailRenderer {
    * design system places the logo, and this is the markup that token expands to when a logo URL is
    * configured. When {@code logoUrl} is blank the token expands to nothing at all: an {@code <img
    * src="">} renders as a broken-image icon next to the platform name, so the text wordmark has to
-   * carry the header alone. The platform name always stands in the next cell, so the logo is
-   * decorative ({@code alt=""}): a logo that fails to load must not repeat the name beside itself.
-   * The dialect has no conditional syntax — this constant is one of the conditionals the mails
-   * need, and it stays in the renderer so the markup remains e-mail-client table markup reviewed
-   * together with the templates.
+   * carry the header alone. Known logos wider than 3:1 hide the adjacent name on phones, so their
+   * image carries the platform name as alternative text. Other logos stay decorative beside the
+   * visible name. The dialect has no conditional syntax — this constant is one of the conditionals
+   * the mails need, and it stays in the renderer so the markup remains e-mail-client table markup
+   * reviewed together with the templates.
    */
   private static final String LOGO_CELL =
-      "<td width=\"36\" valign=\"middle\" style=\"width:36px;padding-right:12px;\">"
-          + "<img src=\"{{logoUrl}}\" width=\"36\" height=\"36\" alt=\"\""
-          + " style=\"display:block;width:36px;height:36px;border:0;border-radius:8px;\"></td>";
+      "<td class=\"logo-cell{{logoCellClass}}\" valign=\"middle\" style=\"padding-right:12px;\">"
+          + "<img src=\"{{logoUrl}}\" {{logoWidthAttribute}}height=\"48\" alt=\"{{logoAlt}}\""
+          + " style=\"display:block;width:{{logoWidthStyle}};height:48px;max-width:none;border:0;\"></td>";
 
   /**
    * The call-to-action button plus the visible copy-paste fallback line, for templates whose action
@@ -438,12 +439,47 @@ public class OrisoEmailRenderer {
    */
   private String withConditionalBlocks(String template, Map<String, String> values, boolean html) {
     boolean hasAction = isNotBlank(values.get("actionUrl"));
+    double ratio = logoRatio(values);
+    boolean wide = isNotBlank(values.get("logoUrl")) && ratio > 3;
+    String width =
+        ratio > 0 ? BigDecimal.valueOf(48 * ratio).stripTrailingZeros().toPlainString() : null;
+    String logo =
+        isNotBlank(values.get("logoUrl"))
+            ? LOGO_CELL
+                .replace("{{logoCellClass}}", wide ? " logo-cell-wide" : "")
+                .replace("{{logoWidthAttribute}}", width == null ? "" : "width=\"" + width + "\" ")
+                .replace("{{logoWidthStyle}}", width == null ? "auto" : width + "px")
+                .replace("{{logoAlt}}", wide ? "{{platformName}}" : "")
+            : "";
     return template
-        .replace("{{logoCell}}", isNotBlank(values.get("logoUrl")) ? LOGO_CELL : "")
+        .replace("{{logoCell}}", logo)
+        .replace("{{logoHeaderClass}}", wide ? "logo-header-wide" : "")
+        .replace("{{logoWordmarkClass}}", wide ? "logo-wordmark-wide" : "")
         .replace("{{ctaBlock}}", hasAction ? (html ? CTA_BLOCK_HTML : CTA_BLOCK_TEXT) : "")
         .replace(
             "{{assuranceBlock}}",
             hasAction ? (html ? ASSURANCE_BLOCK_HTML : ASSURANCE_BLOCK_TEXT) : "");
+  }
+
+  private static double logoRatio(Map<String, String> values) {
+    if (values.get("logoWidth") == null || values.get("logoHeight") == null) {
+      return 0;
+    }
+    try {
+      double width = Double.parseDouble(values.get("logoWidth"));
+      double height = Double.parseDouble(values.getOrDefault("logoHeight", "0"));
+      double ratio = width / height;
+      return width > 0
+              && height > 0
+              && Double.isFinite(width)
+              && Double.isFinite(height)
+              && Double.isFinite(48 * ratio)
+              && ratio > 0
+          ? ratio
+          : 0;
+    } catch (NumberFormatException exception) {
+      return 0;
+    }
   }
 
   private static String withoutBlankContactRows(

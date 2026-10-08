@@ -58,6 +58,7 @@ mariadb_owned_tests=(
   DeleteUserAccountSchedulerMariaDbReplicaIT
   DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT
   SupportRoomMigrationConvergenceIT
+  SessionOwnershipMariaDbIT
   AccountInviteRevokeAcceptRaceMariaDbIT
 )
 required_test_pattern="**/*IT"

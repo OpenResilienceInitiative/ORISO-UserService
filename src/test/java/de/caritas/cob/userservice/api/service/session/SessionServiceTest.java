@@ -207,6 +207,7 @@ class SessionServiceTest {
   private de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionPendingReadAccess
       rejectionReadAccess;
 
+  @Mock private SessionOwnershipService sessionOwnershipService;
   @Mock private AgencyService agencyService;
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
@@ -217,6 +218,24 @@ class SessionServiceTest {
   @BeforeEach
   public void setUp() {
     CONSULTANT_AGENCY_SET.add(CONSULTANT_AGENCY_1);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = Session.RegistrationType.class,
+      names = {"ANONYMOUS", "REGISTERED"})
+  void assignmentPreservesConversationTypeFallback(Session.RegistrationType registration) {
+    Session target = new Session();
+    target.setRegistrationType(registration);
+    sessionService.updateConsultantAndStatusForSession(
+        target, null, Session.SessionStatus.IN_PROGRESS);
+    org.assertj.core.api.Assertions.assertThat(target.getConversationType())
+        .isEqualTo(
+            registration == Session.RegistrationType.ANONYMOUS
+                ? de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT
+                : de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    verify(sessionOwnershipService)
+        .updateOwnerAndStatus(target, null, Session.SessionStatus.IN_PROGRESS);
   }
 
   @Test
@@ -277,10 +296,9 @@ class SessionServiceTest {
 
   @Test
   void updateConsultantAndStatusForSession_Should_SaveSession() {
-    when(sessionRepository.findByIdForUpdate(SESSION.getId())).thenReturn(Optional.of(SESSION));
 
     sessionService.updateConsultantAndStatusForSession(SESSION, CONSULTANT, SessionStatus.NEW);
-    verify(sessionRepository, times(1)).save(SESSION);
+    verify(sessionOwnershipService).updateOwnerAndStatus(SESSION, CONSULTANT, SessionStatus.NEW);
   }
 
   @Test
@@ -818,6 +836,21 @@ class SessionServiceTest {
     assertThrows(
         ForbiddenException.class,
         () -> sessionService.fetchSessionForConsultant(sessionId, CONSULTANT_WITH_AGENCY));
+  }
+
+  @Test
+  void fetchSessionForConsultant_DoesNotExposeNonTeamMetadataToUnassignedOfferRecipient() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setConsultant(CONSULTANT_WITH_AGENCY_2);
+    session.setUser(USER_WITH_MATRIX_ID);
+    session.setTeamSession(false);
+    session.setAgencyId(
+        CONSULTANT_WITH_AGENCY.getConsultantAgencies().iterator().next().getAgencyId());
+    when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY));
   }
 
   @Test

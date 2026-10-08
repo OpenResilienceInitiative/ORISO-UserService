@@ -84,6 +84,7 @@ public class SessionService {
   private final @NonNull de.caritas.cob.userservice.api.service.enquiry
           .EnquiryRejectionPendingReadAccess
       rejectionReadAccess;
+  private final @NonNull SessionOwnershipService sessionOwnershipService;
 
   @Value("${feature.topics.enabled}")
   private boolean topicsFeatureEnabled;
@@ -150,20 +151,20 @@ public class SessionService {
    * @param consultant the consultant
    * @param status the status of the session
    */
-  @Transactional
-  public void updateConsultantAndStatusForSession(
+  public SessionOwnershipService.OwnershipChange updateConsultantAndStatusForSession(
       Session session, Consultant consultant, SessionStatus status) {
-    var current =
-        sessionRepository
-            .findByIdForUpdate(session.getId())
-            .orElseThrow(() -> new NotFoundException("Session unavailable"));
-    if (current.getStatus() == SessionStatus.REJECTED) {
-      throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
-          "Rejected enquiry cannot be reopened");
-    }
-    session.setConsultant(consultant);
-    session.setStatus(status);
-    saveSession(session);
+    stampConversationTypeIfAbsent(session);
+    return sessionOwnershipService.updateOwnerAndStatus(session, consultant, status);
+  }
+
+  public boolean compensateConsultantAssignment(
+      Long sessionId,
+      SessionOwnershipService.OwnershipChange assignment,
+      Consultant previousConsultant,
+      SessionStatus previousStatus,
+      boolean clearDepartment) {
+    return sessionOwnershipService.compensateOwnerChange(
+        sessionId, assignment, previousConsultant, previousStatus, nowInUtc(), clearDepartment);
   }
 
   /**
@@ -324,6 +325,11 @@ public class SessionService {
   }
 
   public Session saveSession(Session session) {
+    stampConversationTypeIfAbsent(session);
+    return sessionRepository.save(session);
+  }
+
+  private void stampConversationTypeIfAbsent(Session session) {
     if (session.getConversationType() == null) {
       /* ADR-006 addendum 2026-09-04: `teamSession` is NOT a modality. It also marks a
        * "Team-Beratungsstelle" 1:1 case (every counsellor of the agency may see it), so deriving
@@ -335,7 +341,6 @@ public class SessionService {
               ? ConversationType.LIVE_CHAT
               : ConversationType.AGENCY_COUNSELLING);
     }
-    return sessionRepository.save(session);
   }
 
   /**

@@ -92,6 +92,9 @@ components:
         useConsultingTypesForAgencies:
           allOf:
             - $ref: '#/components/schemas/FeatureToggleDTO'
+        oneTopicPerAgencyEnabled:
+          allOf:
+            - $ref: '#/components/schemas/FeatureToggleDTO'
         enableWalkthrough:
           allOf:
             - $ref: '#/components/schemas/FeatureToggleDTO'

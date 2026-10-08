@@ -122,7 +122,7 @@ class CaseHandoverMailComposerTest {
   }
 
   @Test
-  void publicSmtpMimeFooterSelectsTheExistingConsentPreferenceForEachRequestKind()
+  void publicSmtpMimeRequiredConsentKeepsProtectedActionAndOptionalConfirmationUnsubscribe()
       throws Exception {
     prepareBrand();
     for (var accessType :
@@ -143,12 +143,7 @@ class CaseHandoverMailComposerTest {
               accessType);
       var rendered = composer.compose(mail, "https://tenant.example.test");
       var expected =
-          "https://tenant.example.test/profile/einstellungen/email?mail="
-              + (accessType
-                      == de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType
-                          .CO_ACCESS
-                  ? "einsicht-angefragt"
-                  : "uebergabe-angefragt");
+          "https://tenant.example.test/sessions/user/view/session/77?caseHandoverRequestId=12";
       var captured = new java.util.ArrayList<jakarta.mail.Message>();
       try (var transport = org.mockito.Mockito.mockStatic(jakarta.mail.Transport.class)) {
         transport
@@ -179,13 +174,12 @@ class CaseHandoverMailComposerTest {
       }
       assertThat(captured).hasSize(1);
       var mime = (jakarta.mail.Multipart) captured.getFirst().getContent();
-      for (int part = 0; part < 2; part++) {
-        var body = mime.getBodyPart(part).getContent().toString();
-        if (accessType
-            == de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.CO_ACCESS)
-          assertThat(body).contains(expected).doesNotContain("&mail=");
-        else assertThat(body).doesNotContain("/profile/einstellungen", "unsubscribe", "&mail=");
-      }
+      assertThat(mime.getBodyPart(0).getContent().toString())
+          .contains(expected)
+          .doesNotContain("/profile/einstellungen", "&mail=");
+      assertThat(mime.getBodyPart(1).getContent().toString())
+          .contains(expected)
+          .doesNotContain("/profile/einstellungen", "&mail=");
     }
     var confirmed =
         composer.compose(

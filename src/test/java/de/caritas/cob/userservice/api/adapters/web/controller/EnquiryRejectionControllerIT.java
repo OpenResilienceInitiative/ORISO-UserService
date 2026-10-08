@@ -170,6 +170,50 @@ class EnquiryRejectionControllerIT {
     TenantContext.clear();
   }
 
+  @Autowired
+  private de.caritas.cob.userservice.api.service.session.SessionOwnershipService ownership;
+
+  @Test
+  void canonicalOwnershipWriterCannotAssignCommittedRejectedEnquiry() throws Exception {
+    mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
+        .andExpect(status().isNoContent());
+    var rejected = sessions.findById(sessionId).orElseThrow();
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                ownership.updateOwnerAndStatus(
+                    rejected,
+                    consultants.findById(actorId).orElseThrow(),
+                    Session.SessionStatus.IN_PROGRESS))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    var current = sessions.findById(sessionId).orElseThrow();
+    assertThat(current.getStatus()).isEqualTo(Session.SessionStatus.REJECTED);
+    assertThat(current.getConsultant()).isNull();
+    assertThat(current.getOwnershipRevision()).isEqualTo(rejected.getOwnershipRevision());
+    assertThat(feed()).hasSize(1);
+  }
+
+  @Test
+  void canonicalCompensationTokenFromBeforeRejectionCannotReopenCommittedDecision()
+      throws Exception {
+    var before = sessions.findById(sessionId).orElseThrow();
+    var previous = ownership.updateOwnerAndStatus(before, null, Session.SessionStatus.NEW);
+    mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
+        .andExpect(status().isNoContent());
+
+    assertThat(
+            ownership.compensateOwnerChange(
+                sessionId, previous, null, Session.SessionStatus.NEW, before.getUpdateDate(), true))
+        .isFalse();
+    var current = sessions.findById(sessionId).orElseThrow();
+    assertThat(current.getStatus()).isEqualTo(Session.SessionStatus.REJECTED);
+    assertThat(current.getAgencyId()).isEqualTo(70L);
+    assertThat(current.getConsultant()).isNull();
+    assertThat(rejections.findById(sessionId).orElseThrow().getState())
+        .isEqualTo(EnquiryRejection.State.CONFIRMED);
+    assertThat(feed()).hasSize(1);
+  }
+
   @Test
   void agencyCounsellorCanRejectSubmittedUnassignedEnquiry() throws Exception {
     mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
