@@ -14,7 +14,10 @@ import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.facade.userdata.AgencyAdminDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
@@ -64,6 +67,7 @@ class UserAccountControllerDelegate {
   private final @NonNull AskerDataProvider askerDataProvider;
   private final @NonNull VideoChatConfig videoChatConfig;
   private final @NonNull KeycloakUserDataProvider keycloakUserDataProvider;
+  private final @NonNull AgencyAdminDataProvider agencyAdminDataProvider;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
   ResponseEntity<Void> updateAbsence(AbsenceDTO absence) {
@@ -105,7 +109,12 @@ class UserAccountControllerDelegate {
       enrichConsultantDisplayName(partialUserData);
       enrichConsultantAvailability(partialUserData);
     } else if (isTenantAdmin() || isAgencyAdmin()) {
-      partialUserData = keycloakUserDataProvider.retrieveAuthenticatedUserData();
+      // A Beratungsstellen-Admin needs their assigned agencies so the Admin UI can land them on
+      // their own agency. The tenant-admin branch stays Keycloak-only.
+      partialUserData =
+          isTenantAdmin()
+              ? keycloakUserDataProvider.retrieveAuthenticatedUserData()
+              : agencyAdminDataProvider.retrieveData();
       // Only ask a platform admin to set 2FA up when the OTP role policy would actually
       // let them finish. Encouraging it unconditionally deadlocks the admin UI: the
       // client gates on isToEncourage && !isActive, but isActive can never become true
@@ -167,15 +176,14 @@ class UserAccountControllerDelegate {
     try {
       return identityManager.getOtpCredential(
           usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
-    } catch (Exception ex) {
+    } catch (RuntimeException ex) {
       log.warn(
-          "Could not retrieve OTP credential for authenticated user {}; preserving OTP availability without credential state",
+          "Could not retrieve OTP credential for authenticated user {}",
           authenticatedUser.getUserId(),
           ex);
-      // A failed Keycloak lookup must not look like role-policy denial. An empty
-      // DTO keeps 2FA enabled in the response while safely reporting no active
-      // credential, so users can still open setup/reset controls.
-      return IdentityOtpCredential.empty();
+      // A failed identity lookup says nothing about whether the user already has a credential.
+      // Returning an empty credential would incorrectly start a new 2FA setup.
+      throw new ServiceUnavailableException("OTP credential lookup unavailable");
     }
   }
 
@@ -244,12 +252,20 @@ class UserAccountControllerDelegate {
 
     var updateAdminConsultantDTO =
         consultantDtoMapper.updateAdminConsultantOf(updateConsultantDTO, consultant);
-    consultantUpdateService.updateConsultant(consultantId, updateAdminConsultantDTO);
+    // Self-service: a requested public slug waits for admin approval instead of going live.
+    consultantUpdateService.updateConsultant(consultantId, updateAdminConsultantDTO, false);
 
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
   ResponseEntity<Void> updatePassword(PasswordDTO passwordDTO) {
+    // Re-submitting the current password changes nothing, yet it would clear the account-setup
+    // requirement and leave the account on the password its administrator still knows.
+    if (passwordDTO.getNewPassword() != null
+        && passwordDTO.getNewPassword().equals(passwordDTO.getOldPassword())) {
+      throw new ConflictException("The new password must differ from the current one");
+    }
+
     var username = authenticatedUser.getUsername();
     var encodedUsername = usernameTranscoder.encodeUsername(username);
     if (!identityManager.validatePasswordIgnoring2fa(
@@ -263,8 +279,25 @@ class UserAccountControllerDelegate {
       var message = String.format("Could not update password of user %s", userId);
       throw new InternalServerErrorException(message);
     }
+    clearPasswordChangeRequirement(userId);
 
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  /**
+   * Opens the account-setup gate once the counsellor's password is their own. Only reached after a
+   * successful change, so a failed attempt leaves the requirement standing. Accounts without a
+   * consultant row have nothing to clear, which is not an error.
+   */
+  private void clearPasswordChangeRequirement(String userId) {
+    consultantService
+        .getConsultant(userId)
+        .filter(consultant -> Boolean.TRUE.equals(consultant.getPasswordChangeRequired()))
+        .ifPresent(
+            consultant -> {
+              consultant.setPasswordChangeRequired(false);
+              consultantService.saveConsultant(consultant);
+            });
   }
 
   ResponseEntity<Void> updateKey(MasterKeyDTO masterKey) {

@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import jakarta.ws.rs.BadRequestException;
 import java.util.Collections;
+import java.util.Map;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -75,6 +76,44 @@ public class KeycloakAuthClient {
     }
   }
 
+  /** Confidential backend authentication, with no human password or refresh-session fallback. */
+  public KeycloakLoginResponseDTO loginService(String clientId, String clientSecret) {
+    if (clientId == null
+        || clientId.isBlank()
+        || clientSecret == null
+        || clientSecret.isBlank()
+        || clientId.equals(keycloakClientId)) {
+      throw new IllegalStateException("Backend identity client is not configured");
+    }
+    MultiValueMap<String, String> form = new SensitiveKeycloakFormData();
+    form.add("grant_type", "client_credentials");
+    form.add("client_id", clientId);
+    form.add("client_secret", clientSecret);
+    var headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+    try {
+      Map<?, ?> response =
+          restTemplate
+              .postForEntity(
+                  identityClientConfig.getOpenIdConnectUrl("/token"),
+                  new HttpEntity<>(form, headers),
+                  Map.class)
+              .getBody();
+      if (response == null
+          || !(response.get("access_token") instanceof String token)
+          || token.isBlank()
+          || !(response.get("expires_in") instanceof Number expires)
+          || expires.intValue() <= 0) {
+        throw new IllegalStateException();
+      }
+      // Client-credential responses deliberately omit human refresh-session fields.
+      return new KeycloakLoginResponseDTO(token, expires.intValue(), 0, null, "Bearer", null, null);
+    } catch (RuntimeException failure) {
+      // A provider exception can contain the client secret or token. Deliberately discard it.
+      throw new IllegalStateException("Backend identity authentication unavailable");
+    }
+  }
+
   /**
    * Verifies password AND active second factor by performing a full direct-grant login including
    * the {@code otp} form field (the vendored otp-config SPI validates it, ADR-013). Any obtained
@@ -130,6 +169,11 @@ public class KeycloakAuthClient {
    * @return true if logout was successful
    */
   public boolean logoutUser(final String refreshToken) {
+    return logoutUser(refreshToken, authenticatedUser.getAccessToken());
+  }
+
+  /** Explicit caller-owned token for technical sessions outside request scope. */
+  public boolean logoutUser(final String refreshToken, final String accessToken) {
     MultiValueMap<String, String> map = new SensitiveKeycloakFormData();
     map.add(BODY_KEY_CLIENT_ID, keycloakClientId);
     map.add(BODY_KEY_GRANT_TYPE, KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN);
@@ -137,7 +181,7 @@ public class KeycloakAuthClient {
 
     var httpHeaders = new HttpHeaders();
     httpHeaders.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-    httpHeaders.add("Authorization", "Bearer " + authenticatedUser.getAccessToken());
+    httpHeaders.add("Authorization", "Bearer " + accessToken);
     HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(map, httpHeaders);
 
     var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGOUT);
@@ -145,7 +189,7 @@ public class KeycloakAuthClient {
       var response = restTemplate.postForEntity(url, request, Void.class);
       return wasLogoutSuccessful(response);
     } catch (Exception ex) {
-      log.error("Keycloak error: Could not log out user", ex);
+      log.error("Keycloak error: Could not log out user ({})", ex.getClass().getSimpleName());
 
       return false;
     }
@@ -193,7 +237,7 @@ public class KeycloakAuthClient {
     return true;
   }
 
-  private static final class SensitiveKeycloakFormData extends LinkedMultiValueMap<String, String> {
+  static final class SensitiveKeycloakFormData extends LinkedMultiValueMap<String, String> {
 
     private static final String REDACTED = "[REDACTED]";
 
@@ -205,6 +249,12 @@ public class KeycloakAuthClient {
       }
       if (sanitized.containsKey(BODY_KEY_PASSWORD)) {
         sanitized.put(BODY_KEY_PASSWORD, Collections.singletonList(REDACTED));
+      }
+      if (sanitized.containsKey("client_secret")) {
+        sanitized.put("client_secret", Collections.singletonList(REDACTED));
+      }
+      if (sanitized.containsKey("subject_token")) {
+        sanitized.put("subject_token", Collections.singletonList(REDACTED));
       }
       return sanitized.toString();
     }

@@ -197,11 +197,16 @@ public class CaseHandoverController {
     @NotBlank private String reasonCode;
     @NotBlank private String explanation;
 
-    @NotNull
     @Min(0)
     private Long expectedOwnershipRevision;
 
-    @NotNull private UUID operationId;
+    private UUID operationId;
+
+    @jakarta.validation.constraints.AssertTrue(
+        message = "Ownership revision and operation identity must be supplied together")
+    public boolean isOperationGuardComplete() {
+      return (expectedOwnershipRevision == null) == (operationId == null);
+    }
 
     public String getReasonCode() {
       return reasonCode;

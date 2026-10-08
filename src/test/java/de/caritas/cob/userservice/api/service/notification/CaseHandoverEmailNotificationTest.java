@@ -1,19 +1,23 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
-import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
-import de.caritas.cob.userservice.api.tenant.TenantData;
-import java.util.UUID;
+import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType;
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest.Status;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
+import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.TransactionDefinition;
@@ -22,100 +26,150 @@ import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
 class CaseHandoverEmailNotificationTest {
-  private final EmailNotificationFacade facade = mock(EmailNotificationFacade.class);
+  private final CaseHandoverMailSender sender = mock(CaseHandoverMailSender.class);
+  private final ReleaseToggleService toggles = mock(ReleaseToggleService.class);
+  private final IdentityClientConfig identity = mock(IdentityClientConfig.class);
   private final CaseHandoverEmailNotification notification =
-      new CaseHandoverEmailNotification(facade);
+      new CaseHandoverEmailNotification(sender, toggles, identity);
   private final TransactionTemplate transaction =
       new TransactionTemplate(new TestTransactionManager());
-  private final TenantData tenant = new TenantData(40L, "springfield");
-  private static final String ROOM = "!owned-room:example.test";
 
   @Test
-  void dispatchesConsentOnlyAfterCommitWithAnIndependentTenantSnapshot() {
+  void consentUsesTheCommittedRequestAndImmutableRecipientTenantSnapshot() {
+    CaseHandoverRequest request = request(Status.PENDING_CLIENT_CONSENT, AccessType.TAKEOVER);
     transaction.executeWithoutResult(
         status -> {
-          notification.takeoverConsentRequested(12L, ROOM, tenant);
-          tenant.setTenantId(99L);
-          tenant.setSubdomain("changed-after-scheduling");
-          verifyNoInteractions(facade);
+          notification.consentRequested(request);
+          request.getSession().getUser().setEmail("later@example.test");
+          request.setTenantId(99L);
+          verifyNoInteractions(sender);
         });
-    verify(facade).sendReassignRequestNotification(ROOM, new TenantData(40L, "springfield"));
+    var sent = ArgumentCaptor.forClass(CaseHandoverEmailNotification.Mail.class);
+    verify(sender).send(sent.capture());
+    assertThat(sent.getValue().outcome())
+        .isEqualTo(CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED);
+    assertThat(sent.getValue().tenantId()).isEqualTo(40L);
+    assertThat(sent.getValue().recipient()).isEqualTo("asker@example.test");
+    assertThat(sent.getValue().language()).isEqualTo(LanguageCode.en);
   }
 
   @Test
-  void rollbackDispatchesNeitherOutcome() {
+  void rolledBackTakeoverSendsNothing() {
+    CaseHandoverRequest request = request(Status.PENDING_CLIENT_CONSENT, AccessType.TAKEOVER);
     transaction.executeWithoutResult(
         status -> {
-          notification.takeoverConsentRequested(12L, ROOM, tenant);
-          notification.ownershipGranted(
-              12L, ROOM, UUID.randomUUID(), "Previous consultant", tenant);
+          notification.consentRequested(request);
           status.setRollbackOnly();
         });
-    verifyNoInteractions(facade);
+    verifyNoInteractions(sender);
   }
 
   @Test
-  void confirmationUsesOnlyTheCommittedNewConsultantAndSafeExistingContract() {
-    UUID recipient = UUID.randomUUID();
+  void repeatedSchedulingOfOneOutcomeSendsOnceButOtherRequestsAreIndependent() {
+    CaseHandoverRequest first = request(Status.GRANTED, AccessType.TAKEOVER);
+    CaseHandoverRequest second = request(Status.GRANTED, AccessType.TAKEOVER);
+    second.setId(13L);
     transaction.executeWithoutResult(
         status -> {
-          notification.ownershipGranted(12L, ROOM, recipient, "Previous consultant", tenant);
-          verifyNoInteractions(facade);
+          notification.ownershipGranted(first);
+          notification.ownershipGranted(first);
+          notification.ownershipGranted(second);
         });
-    var dto = ArgumentCaptor.forClass(ReassignmentNotificationDTO.class);
-    var capturedTenant = ArgumentCaptor.forClass(TenantData.class);
-    verify(facade).sendReassignConfirmationNotification(dto.capture(), capturedTenant.capture());
-    assertThat(dto.getValue().getToConsultantId()).isEqualTo(recipient);
-    assertThat(dto.getValue().getFromConsultantName()).isEqualTo("Previous consultant");
-    assertThat(dto.getValue().getMatrixRoomId()).isEqualTo(ROOM);
-    assertThat(capturedTenant.getValue()).isEqualTo(new TenantData(40L, "springfield"));
+    verify(sender, times(2)).send(org.mockito.ArgumentMatchers.any());
   }
 
   @Test
-  void repeatedSchedulingWithinOneTransitionDoesNotDuplicateMail() {
+  void coAccessAndNonPendingConsentNeverSendTakeoverMail() {
     transaction.executeWithoutResult(
         status -> {
-          notification.takeoverConsentRequested(12L, ROOM, tenant);
-          notification.takeoverConsentRequested(12L, ROOM, tenant);
+          notification.consentRequested(
+              request(Status.PENDING_CLIENT_CONSENT, AccessType.CO_ACCESS));
+          notification.ownershipGranted(request(Status.GRANTED, AccessType.CO_ACCESS));
+          notification.consentRequested(request(Status.GRANTED, AccessType.TAKEOVER));
         });
-    verify(facade, times(1)).sendReassignRequestNotification(ROOM, tenant);
+    verifyNoInteractions(sender);
   }
 
   @Test
-  void aDifferentPersistedRequestIsNotSilentlyDeduplicated() {
+  void grantedMailTargetsTheIncomingConsultantOnly() {
+    CaseHandoverRequest request = request(Status.GRANTED, AccessType.TAKEOVER);
+    transaction.executeWithoutResult(status -> notification.ownershipGranted(request));
+    var sent = ArgumentCaptor.forClass(CaseHandoverEmailNotification.Mail.class);
+    verify(sender).send(sent.capture());
+    assertThat(sent.getValue().outcome()).isEqualTo(CaseHandoverEmailNotification.Outcome.GRANTED);
+    assertThat(sent.getValue().recipient()).isEqualTo("incoming@example.test");
+    assertThat(sent.getValue().dialect()).isEqualTo(Dialect.INFORMAL);
+  }
+
+  @Test
+  void mismatchedTenantCannotQueueMail() {
+    CaseHandoverRequest request = request(Status.GRANTED, AccessType.TAKEOVER);
+    request.setTenantId(41L);
     transaction.executeWithoutResult(
-        status -> {
-          notification.takeoverConsentRequested(12L, ROOM, tenant);
-          notification.takeoverConsentRequested(13L, ROOM, tenant);
-        });
-    verify(facade, times(2)).sendReassignRequestNotification(ROOM, tenant);
+        status ->
+            assertThatThrownBy(() -> notification.ownershipGranted(request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("matching tenant"));
+    verifyNoInteractions(sender);
   }
 
   @Test
-  void missingTransactionCannotSendUncommittedMail() {
-    assertThatThrownBy(() -> notification.takeoverConsentRequested(12L, ROOM, tenant))
-        .isInstanceOf(IllegalStateException.class);
-    verifyNoInteractions(facade);
-  }
-
-  @Test
-  void deliveryFailureDoesNotTurnCommittedOwnershipIntoAnErrorResponse() {
-    doThrow(new IllegalStateException("provider detail must not be logged"))
-        .when(facade)
-        .sendReassignConfirmationNotification(any(), any());
-    assertThatCode(
+  void noTransactionCannotSendMailForAnUncommittedRequest() {
+    assertThatThrownBy(
             () ->
-                transaction.executeWithoutResult(
-                    status ->
-                        notification.ownershipGranted(
-                            12L, ROOM, UUID.randomUUID(), "Previous consultant", tenant)))
-        .doesNotThrowAnyException();
-    verify(facade).sendReassignConfirmationNotification(any(), any());
+                notification.consentRequested(
+                    request(Status.PENDING_CLIENT_CONSENT, AccessType.TAKEOVER)))
+        .isInstanceOf(IllegalStateException.class);
+    verifyNoInteractions(sender);
   }
 
-  /**
-   * Uses Spring's actual synchronization lifecycle without persistence or external side effects.
-   */
+  @Test
+  void dispatchFailureCannotTurnACommittedTakeoverIntoAnErrorResponse() {
+    doThrow(new IllegalStateException("provider response contains case details"))
+        .when(sender)
+        .send(org.mockito.ArgumentMatchers.any());
+    transaction.executeWithoutResult(
+        status -> notification.ownershipGranted(request(Status.GRANTED, AccessType.TAKEOVER)));
+    verify(sender).send(org.mockito.ArgumentMatchers.any());
+  }
+
+  private CaseHandoverRequest request(Status status, AccessType type) {
+    User asker =
+        User.builder()
+            .userId("asker-id")
+            .username("asker")
+            .email("asker@example.test")
+            .languageCode(LanguageCode.en)
+            .build();
+    Consultant incoming =
+        Consultant.builder()
+            .id("incoming-id")
+            .username("incoming")
+            .firstName("Incoming")
+            .lastName("Counsellor")
+            .email("incoming@example.test")
+            .languageCode(LanguageCode.de)
+            .build();
+    Session session =
+        Session.builder()
+            .id(77L)
+            .tenantId(40L)
+            .matrixRoomId("!room:example.test")
+            .user(asker)
+            .registrationType(Session.RegistrationType.REGISTERED)
+            .postcode("12345")
+            .status(Session.SessionStatus.IN_PROGRESS)
+            .build();
+    return CaseHandoverRequest.builder()
+        .id(12L)
+        .tenantId(40L)
+        .session(session)
+        .requesterConsultant(incoming)
+        .status(status)
+        .accessType(type)
+        .build();
+  }
+
   private static final class TestTransactionManager extends AbstractPlatformTransactionManager {
     @Override
     protected Object doGetTransaction() {

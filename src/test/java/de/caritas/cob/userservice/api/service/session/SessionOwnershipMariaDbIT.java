@@ -68,6 +68,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
 @Import({
   SessionOwnershipService.class,
+  de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class,
   EventNotificationService.class,
   EventNotificationDeduplicationWriter.class
 })
@@ -91,6 +92,10 @@ class SessionOwnershipMariaDbIT {
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private EventNotificationService eventNotificationService;
   @MockitoBean private IdentityTombstoneService identityTombstoneService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService
+      matrixFeedUpdateSignalService;
 
   private TransactionTemplate transactions;
   private Long sessionId;
@@ -301,6 +306,10 @@ class SessionOwnershipMariaDbIT {
                             .reasonLabel("Counsellor asked for advice")
                             .explanation("Concurrency proof")
                             .status(CaseHandoverRequest.Status.PENDING_CLIENT_CONSENT)
+                            .clientConsent(
+                                de.caritas.cob.userservice.api.model.CaseHandoverConsentMode.OPT_IN)
+                            .accessType(CaseHandoverRequest.AccessType.CO_ACCESS)
+                            .maxAccessDurationMinutes(180)
                             .clientConsentRequired(true)
                             .policyAuthority("test")
                             .auditOutcome("PENDING_CLIENT_CONSENT")
@@ -343,18 +352,12 @@ class SessionOwnershipMariaDbIT {
     MatrixSessionSystemMessageService matrixMessages =
         mock(MatrixSessionSystemMessageService.class);
     CaseHandoverService handovers =
-        new CaseHandoverService(
+        handoverService(
             observedRequests,
-            mock(SessionSupervisorFacade.class),
-            caseHandoverReasonPolicyRepository,
             serializedSessions,
-            ownershipService,
-            consultantAgencyRepository,
             accounts,
             mock(EventNotificationService.class),
-            mock(MatrixSynapseService.class),
             matrixMessages,
-            mock(CaseHandoverEmailNotification.class),
             mock(ConsultantService.class),
             mock(AuthenticatedUser.class));
 
@@ -415,10 +418,13 @@ class SessionOwnershipMariaDbIT {
                             .expectedOwnershipRevision(0L)
                             .operationId(
                                 java.util.UUID.fromString("38a811c2-1ac1-48b1-b44e-b84a3dd3fa6c"))
-                            .reasonCode("OTHER_EMERGENCY")
+                            .reasonCode("UNPLANNED_ABSENCE")
                             .reasonLabel("Other emergency")
                             .explanation("")
                             .status(CaseHandoverRequest.Status.PENDING_RECIPIENT_ACCEPTANCE)
+                            .clientConsent(
+                                de.caritas.cob.userservice.api.model.CaseHandoverConsentMode.NONE)
+                            .accessType(CaseHandoverRequest.AccessType.TAKEOVER)
                             .clientConsentRequired(false)
                             .policyAuthority("test")
                             .auditOutcome("PENDING_RECIPIENT_ACCEPTANCE")
@@ -458,18 +464,12 @@ class SessionOwnershipMariaDbIT {
     AuthenticatedUser caller = mock(AuthenticatedUser.class);
     when(caller.getUserId()).thenReturn(OWNER_B_ID);
     CaseHandoverService handovers =
-        new CaseHandoverService(
+        handoverService(
             observedRequests,
-            mock(SessionSupervisorFacade.class),
-            caseHandoverReasonPolicyRepository,
             serializedSessions,
-            ownershipService,
-            consultantAgencyRepository,
             accounts,
             mock(EventNotificationService.class),
-            mock(MatrixSynapseService.class),
             matrixMessages,
-            mock(CaseHandoverEmailNotification.class),
             mock(ConsultantService.class),
             caller);
 
@@ -521,18 +521,12 @@ class SessionOwnershipMariaDbIT {
     AuthenticatedUser actor = mock(AuthenticatedUser.class);
     when(actor.getUserId()).thenReturn(OWNER_A_ID);
     CaseHandoverService handovers =
-        new CaseHandoverService(
+        handoverService(
             caseHandoverRequestRepository,
-            mock(SessionSupervisorFacade.class),
-            caseHandoverReasonPolicyRepository,
             sessionRepository,
-            ownershipService,
-            consultantAgencyRepository,
             accounts,
             eventNotificationService,
-            mock(MatrixSynapseService.class),
             mock(MatrixSessionSystemMessageService.class),
-            mock(CaseHandoverEmailNotification.class),
             consultants,
             actor);
     var committedOperation = java.util.UUID.fromString("de949f0d-d1d5-48bb-8694-cbd786863623");
@@ -540,14 +534,14 @@ class SessionOwnershipMariaDbIT {
     transactions.execute(
         ignored ->
             handovers.createOffer(
-                sessionId, OWNER_B_ID, "OTHER_EMERGENCY", null, 0L, committedOperation));
+                sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation));
 
     assertThat(offerNotifications()).hasSize(1);
 
     transactions.execute(
         ignored ->
             handovers.createOffer(
-                sessionId, OWNER_B_ID, "OTHER_EMERGENCY", null, 0L, committedOperation));
+                sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation));
     assertThat(offerNotifications()).hasSize(1);
 
     assertThatThrownBy(
@@ -557,7 +551,7 @@ class SessionOwnershipMariaDbIT {
                       handovers.createOffer(
                           sessionId,
                           OWNER_B_ID,
-                          "OTHER_EMERGENCY",
+                          "UNPLANNED_ABSENCE",
                           null,
                           0L,
                           java.util.UUID.fromString("0d91227b-9390-4643-984e-cd3b7c035657"));
@@ -623,5 +617,61 @@ class SessionOwnershipMariaDbIT {
       Thread.currentThread().interrupt();
       throw new IllegalStateException(exception);
     }
+  }
+
+  private CaseHandoverService handoverService(
+      CaseHandoverRequestRepository requests,
+      SessionRepository sessions,
+      UserAccountService accounts,
+      EventNotificationService events,
+      MatrixSessionSystemMessageService messages,
+      ConsultantService consultants,
+      AuthenticatedUser caller) {
+    var cache = mock(de.caritas.cob.userservice.api.service.CaseHandoverPolicyCacheService.class);
+    var policy =
+        new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                .CaseHandoverReasonPolicy()
+            .code(
+                de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .CaseHandoverReasonPolicy.CodeEnum.COUNSELLOR_IS_ILL)
+            .enabled(
+                new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                        .BooleanPermissionPolicy(null)
+                    .value(true))
+            .accessAllowed(
+                new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                        .BooleanPermissionPolicy(null)
+                    .value(true))
+            .clientConsent(
+                new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                        .ConsentPermissionPolicy(null)
+                    .value(
+                        de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                            .CaseHandoverConsentValue.NONE));
+    when(cache.getEffective(7L))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .CaseHandoverPolicies()
+                .reasons(java.util.Map.of("COUNSELLOR_IS_ILL", policy)));
+    return new CaseHandoverService(
+        requests,
+        mock(SessionSupervisorFacade.class),
+        caseHandoverReasonPolicyRepository,
+        cache,
+        sessions,
+        ownershipService,
+        consultantAgencyRepository,
+        accounts,
+        events,
+        mock(CaseHandoverEmailNotification.class),
+        mock(MatrixSynapseService.class),
+        mock(de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService.class),
+        messages,
+        consultants,
+        caller,
+        new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver(),
+        mock(de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.class),
+        java.time.Clock.systemUTC(),
+        transactionManager);
   }
 }

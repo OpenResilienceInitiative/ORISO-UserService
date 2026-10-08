@@ -34,6 +34,52 @@ class SessionOwnershipServiceTest {
   @Mock private EntityManager entityManager;
   @InjectMocks private SessionOwnershipService ownershipService;
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = de.caritas.cob.userservice.api.model.ConversationType.class,
+      names = {"LIVE_CHAT", "AGENCY_COUNSELLING"})
+  void lockedAssignmentCarriesTheExistingConversationTypeFallback(
+      de.caritas.cob.userservice.api.model.ConversationType type) {
+    var current = session(33L, null, 0L);
+    var expected = session(33L, null, 0L);
+    expected.setConversationType(type);
+    when(sessionRepository.findByIdForUpdate(33L)).thenReturn(Optional.of(current));
+    ownershipService.updateOwnerAndStatus(expected, consultant("a"), IN_PROGRESS);
+    assertThat(current.getConversationType()).isEqualTo(type);
+  }
+
+  @Test
+  void assignmentPreservesTheValidatedAnonymousEnquiryDepartment() {
+    var owner = consultant("a");
+    var current = session(31L, null, 0L);
+    var expected = session(31L, null, 0L);
+    expected.setAgencyId(10L);
+    when(sessionRepository.findByIdForUpdate(31L)).thenReturn(Optional.of(current));
+    ownershipService.updateOwnerAndStatus(expected, owner, IN_PROGRESS);
+    assertThat(current.getAgencyId()).isEqualTo(10L);
+    assertThat(current.getConsultant()).isSameAs(owner);
+  }
+
+  @Test
+  void guardedAssignmentCompensationClearsOnlyItsNewlyBoundDepartment() {
+    var owner = consultant("a");
+    var current = session(32L, owner, 1L);
+    current.setAgencyId(10L);
+    when(sessionRepository.findByIdForUpdate(32L)).thenReturn(Optional.of(current));
+    boolean restored =
+        ownershipService.compensateOwnerChange(
+            32L,
+            new SessionOwnershipService.OwnershipChange(32L, "a", 1L),
+            null,
+            NEW,
+            UPDATED_AT,
+            true);
+    assertThat(restored).isTrue();
+    assertThat(current.getAgencyId()).isNull();
+    assertThat(current.getConsultant()).isNull();
+    assertThat(current.getOwnershipRevision()).isEqualTo(2L);
+  }
+
   @Test
   void ownerChangesIncrementRevisionButSameOwnerIsANoOp() {
     var ownerA = consultant("a");

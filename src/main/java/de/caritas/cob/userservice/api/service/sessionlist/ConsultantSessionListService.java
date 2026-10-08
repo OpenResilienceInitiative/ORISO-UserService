@@ -45,7 +45,7 @@ public class ConsultantSessionListService {
     var matrixRoomIds = new HashSet<>(roomIds);
     var sessions =
         sessionService.getAllowedSessionsByConsultantAndRoomIds(consultant, matrixRoomIds, roles);
-    var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
+    var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds, consultant);
 
     var result = mergeConsultantSessionsAndChats(consultant, sessions, chats);
     enrichWithSupervision(result, consultant);
@@ -66,7 +66,7 @@ public class ConsultantSessionListService {
         sessions.stream()
             .map(sessionResponse -> sessionResponse.getSession().getMatrixRoomId())
             .collect(Collectors.toSet());
-    var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
+    var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds, consultant);
 
     var result = mergeConsultantSessionsAndChats(consultant, sessions, chats);
     enrichWithSupervision(result, consultant);
@@ -108,7 +108,7 @@ public class ConsultantSessionListService {
     var uniqueChatIds = new HashSet<>(chatIds);
     log.info("🔍 Unique chat IDs: {}", uniqueChatIds);
 
-    var chats = chatService.getChatSessionsForConsultantByIds(uniqueChatIds);
+    var chats = chatService.getChatSessionsForConsultantByIds(uniqueChatIds, consultant);
     log.info("🔍 Retrieved {} chats from ChatService", chats.size());
 
     var result = updateConsultantChatValues(chats, consultant);

@@ -20,6 +20,8 @@ public class MatrixRtcCallPolicyService {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull MatrixRtcCorrelationIdHasher correlationIdHasher;
 
+  private final @NonNull org.springframework.jdbc.core.JdbcTemplate jdbc;
+
   public CallMediaPolicy resolve(String sourceRoomId, String matrixUserId) {
     if (sourceRoomId == null
         || sourceRoomId.isBlank()
@@ -28,21 +30,8 @@ public class MatrixRtcCallPolicyService {
       return CallMediaPolicy.denied();
     }
 
-    // The call-policy endpoint is whitelisted from HttpTenantFilter, so this thread has no
-    // tenant context. Without technical context TenantAspect enables the Hibernate
-    // tenantFilter with tenantId=null, the room-to-session lookup matches nothing, and every
-    // call is denied regardless of tenant settings.
-    var callerTenant = TenantContext.getCurrentTenant();
-    try {
-      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      return resolveCrossTenant(sourceRoomId, matrixUserId);
-    } finally {
-      if (callerTenant == null) {
-        TenantContext.clear();
-      } else {
-        TenantContext.setCurrentTenant(callerTenant);
-      }
-    }
+    // Public callback without a tenant; the room lookup is deliberately cross-tenant.
+    return TenantContext.supplyAcrossTenants(() -> resolveCrossTenant(sourceRoomId, matrixUserId));
   }
 
   private CallMediaPolicy resolveCrossTenant(String sourceRoomId, String matrixUserId) {
@@ -52,6 +41,47 @@ public class MatrixRtcCallPolicyService {
     // still be correlated across log lines without exposing either identifier or letting a log
     // consumer confirm a candidate pair by hashing it themselves.
     var correlationId = correlationIdHasher.correlationId(sourceRoomId, matrixUserId);
+
+    // Only persisted Matrix bindings identify the realm subject. Never infer it from a localpart.
+    var identities =
+        jdbc.queryForList(
+            "SELECT user_id FROM user WHERE matrix_user_id=? UNION SELECT consultant_id FROM consultant WHERE matrix_user_id=?",
+            String.class,
+            matrixUserId,
+            matrixUserId);
+    if (identities.isEmpty()) {
+      log.info(
+          "Call policy denied [{}]: reason={}",
+          correlationId,
+          CallPolicyDenialReason.MATRIX_IDENTITY_NOT_FOUND);
+      return CallMediaPolicy.denied();
+    }
+    if (identities.size() != 1) {
+      log.info(
+          "Call policy denied [{}]: reason={}",
+          correlationId,
+          CallPolicyDenialReason.MATRIX_IDENTITY_AMBIGUOUS);
+      return CallMediaPolicy.denied();
+    }
+    var states =
+        jdbc.queryForList(
+            "SELECT status FROM account_inactivity WHERE identity_id=?",
+            String.class,
+            identities.getFirst());
+    if (states.size() != 1) {
+      log.info(
+          "Call policy denied [{}]: reason={}",
+          correlationId,
+          CallPolicyDenialReason.INACTIVITY_STATE_UNAVAILABLE);
+      return CallMediaPolicy.denied();
+    }
+    if (!"ACTIVE".equals(states.getFirst())) {
+      log.info(
+          "Call policy denied [{}]: reason={}",
+          correlationId,
+          CallPolicyDenialReason.ACCOUNT_NOT_ACTIVE);
+      return CallMediaPolicy.denied();
+    }
 
     var currentMembers = matrixSynapseService.getRoomMembers(sourceRoomId);
     if (currentMembers.isEmpty()) {

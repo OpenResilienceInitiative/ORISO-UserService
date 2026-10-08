@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionRoomCleanupService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.TeamDiscussionOrphanCleanupService;
@@ -26,6 +27,7 @@ class TeamDiscussionOrphanCleanupSchedulerTest {
   @InjectMocks private TeamDiscussionOrphanCleanupScheduler scheduler;
 
   @Mock private TeamDiscussionOrphanCleanupService teamDiscussionOrphanCleanupService;
+  @Mock private TeamDiscussionRoomCleanupService roomCleanupService;
   @Mock private TenantContextProvider tenantContextProvider;
   @Mock private ScheduledTaskClaimService taskClaimService;
 
@@ -42,9 +44,11 @@ class TeamDiscussionOrphanCleanupSchedulerTest {
 
     scheduler.purgeOrphanedDiscussions();
 
-    var order = inOrder(tenantContextProvider, teamDiscussionOrphanCleanupService);
+    var order =
+        inOrder(tenantContextProvider, teamDiscussionOrphanCleanupService, roomCleanupService);
     order.verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     order.verify(teamDiscussionOrphanCleanupService).purgeOrphanedDiscussions();
+    order.verify(roomCleanupService).retryPendingCleanup();
   }
 
   /** The technical context must not leak into the next task on the pooled scheduler thread. */
@@ -85,6 +89,7 @@ class TeamDiscussionOrphanCleanupSchedulerTest {
 
     scheduler.purgeOrphanedDiscussions();
 
-    verifyNoInteractions(tenantContextProvider, teamDiscussionOrphanCleanupService);
+    verifyNoInteractions(
+        tenantContextProvider, teamDiscussionOrphanCleanupService, roomCleanupService);
   }
 }

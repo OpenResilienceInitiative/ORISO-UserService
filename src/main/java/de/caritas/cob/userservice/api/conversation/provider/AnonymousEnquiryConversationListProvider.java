@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.conversation.provider;
 
 import static de.caritas.cob.userservice.api.conversation.model.ConversationListType.ANONYMOUS_ENQUIRY;
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANONYMOUS;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
@@ -15,7 +16,6 @@ import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionEnricher;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -45,7 +45,12 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
   private final @NonNull ConsultantSessionEnricher consultantSessionEnricher;
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
 
-  @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
+  /**
+   * How long a queue entry stays visible without a sign of life from the waiting guest — the same
+   * window the asker's own "people ahead" count uses, so both sides of the queue agree on who is
+   * still there (ORISO-Frontend#1404).
+   */
+  @Value("${live.chat.queue.activePeriodMinutes:5}")
   private long liveChatQueueActivePeriodMinutes;
 
   /** {@inheritDoc} */
@@ -100,17 +105,13 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
       return Page.empty(pageable);
     }
 
-    var minUpdateDate = LocalDateTime.now().minusMinutes(liveChatQueueActivePeriodMinutes);
+    /* UTC, because that is what sessions store (CustomLocalDateTime.nowInUtc). A server in a
+    non-UTC zone would otherwise shift the cutoff by its offset — harmless at six hours, fatal at
+    five minutes. */
+    var minUpdateDate = nowInUtc().minusMinutes(liveChatQueueActivePeriodMinutes);
 
-    // The queue is deliberately cross-agency AND cross-tenant: a consultant who is live for a topic
-    // must see anonymous enquiries for that topic regardless of the asker's tenant. The
-    // consultant's
-    // own topics were resolved in the caller's tenant context; only the visibility query itself
-    // must
-    // bypass the tenant filter. Running it in technical context makes TenantAspect disable the
-    // Hibernate tenantFilter; the caller's tenant is restored afterwards so no other query in this
-    // request leaks. Registered (non-anonymous) session queries stay strictly tenant-isolated.
-    return runCrossTenant(
+    // The topic queue is deliberately cross-tenant; only this query leaves the caller's tenant.
+    return TenantContext.supplyAcrossTenants(
         () ->
             this.sessionRepository.findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly(
                 new HashSet<>(consultantTopicIds),
@@ -118,20 +119,6 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
                 minUpdateDate,
                 ANONYMOUS,
                 pageable));
-  }
-
-  private Page<Session> runCrossTenant(java.util.function.Supplier<Page<Session>> query) {
-    var callerTenant = TenantContext.getCurrentTenant();
-    try {
-      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      return query.get();
-    } finally {
-      if (callerTenant == null) {
-        TenantContext.clear();
-      } else {
-        TenantContext.setCurrentTenant(callerTenant);
-      }
-    }
   }
 
   /** {@inheritDoc} */

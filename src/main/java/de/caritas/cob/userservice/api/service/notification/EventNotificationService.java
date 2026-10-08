@@ -4,6 +4,7 @@ import static java.util.Objects.nonNull;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.EventNotification;
 import de.caritas.cob.userservice.api.model.Session;
@@ -11,6 +12,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -20,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
@@ -55,6 +58,8 @@ public class EventNotificationService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
+  private final @NonNull MatrixFeedUpdateSignalService feedUpdateSignalService;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
   private volatile LongSupplier monotonicNanos = System::nanoTime;
@@ -146,26 +151,32 @@ public class EventNotificationService {
         session.getTenantId());
   }
 
+  /**
+   * ADR-002 §2 / ORISO-UserService#1201: the recipient of this entry is the <b>advice seeker</b>,
+   * so it carries no counsellor name — neither the previous one nor the current one.
+   *
+   * <p>It took two names before. Naming both is a wider disclosure than the rename itself: it
+   * publishes a rename <em>history</em>, and when no pseudonym was stored those two names were the
+   * counsellor's real name, old and new. The advice seeker's actual question is only "why is this
+   * person suddenly called something else", which the neutral sentence answers; the current name is
+   * already visible in the room, so repeating it here adds nothing and costs the guarantee.
+   *
+   * <p>The names are absent from the signature, not merely unused, so a caller cannot pass one.
+   */
   @Transactional
-  public void createCounselorRenamedNotification(
-      Session session, String recipientUserId, String oldDisplayName, String newDisplayName) {
+  public void createCounselorRenamedNotification(Session session, String recipientUserId) {
     if (session == null || recipientUserId == null || recipientUserId.isBlank()) {
       return;
     }
-    String previous = safeValue(oldDisplayName, "your counselor");
-    String updated = safeValue(newDisplayName, "your counselor");
-    String changedAt = LocalDateTime.now(ZoneOffset.UTC).toString();
     Map<String, Object> params = baseParams(session);
-    params.put("oldName", previous);
-    params.put("newName", updated);
+    params.put("changedAt", LocalDateTime.now(ZoneOffset.UTC).toString());
     createEvent(
         recipientUserId,
         "counselor.renamed",
         CATEGORY_SYSTEM,
         "Counselor name updated",
         String.format(
-            "Your counselor display name changed from \"%s\" to \"%s\" at %s UTC.",
-            previous, updated, changedAt),
+            "The name shown for your counselor in chat #%s has changed.", session.getId()),
         serializeParams(params),
         buildSessionActionPath(session),
         session.getId(),
@@ -424,6 +435,17 @@ public class EventNotificationService {
       String reasonCode,
       String reasonLabel,
       Long caseHandoverRequestId) {
+    return buildCaseHandoverParams(
+        session, requesterName, reasonCode, reasonLabel, caseHandoverRequestId, null);
+  }
+
+  public String buildCaseHandoverParams(
+      Session session,
+      String requesterName,
+      String reasonCode,
+      String reasonLabel,
+      Long caseHandoverRequestId,
+      String clientConsent) {
     Map<String, Object> params = baseParams(session);
     putIfPresent(params, "requesterName", requesterName);
     putIfPresent(params, "reasonCode", reasonCode);
@@ -431,6 +453,7 @@ public class EventNotificationService {
     if (caseHandoverRequestId != null) {
       params.put("caseHandoverRequestId", caseHandoverRequestId);
     }
+    putIfPresent(params, "clientConsent", clientConsent);
     return serializeParams(params);
   }
 
@@ -460,33 +483,34 @@ public class EventNotificationService {
   @Transactional
   public void createMessageNotificationFromRoom(
       String roomId, String senderUserId, String messagePreview) {
-    createMessageNotificationFromRoom(roomId, senderUserId, messagePreview, false, null, null);
+    createMessageNotificationFromRoom(roomId, senderUserId, messagePreview, false, null);
   }
 
   @Transactional
   public void createMessageNotificationFromRoom(
       String roomId, String senderUserId, PrivacyEnvelope envelope) {
-    createMessageNotificationFromRoom(roomId, senderUserId, null, false, null, envelope);
+    createMessageNotificationFromRoom(roomId, senderUserId, null, false, envelope);
   }
 
   @Transactional
   public void createMessageNotificationFromRoom(
-      String roomId,
-      String senderUserId,
-      String messagePreview,
-      boolean supervisorMessage,
-      String senderDisplayName) {
+      String roomId, String senderUserId, String messagePreview, boolean supervisorMessage) {
     createMessageNotificationFromRoom(
-        roomId, senderUserId, messagePreview, supervisorMessage, senderDisplayName, null);
+        roomId, senderUserId, messagePreview, supervisorMessage, null);
   }
 
+  /**
+   * ADR-002 §2 / ORISO-UserService#1201: there is deliberately no {@code senderDisplayName}
+   * parameter. This notification is addressed to the other party, and the sender's name is not the
+   * sender's to choose: {@code senderUserId} comes from the authenticated principal, so the server
+   * can always look the sender up and apply the publication rule itself.
+   */
   @Transactional
   public void createMessageNotificationFromRoom(
       String roomId,
       String senderUserId,
       String messagePreview,
       boolean supervisorMessage,
-      String senderDisplayName,
       PrivacyEnvelope envelope) {
     if (roomId == null || roomId.isBlank()) {
       return;
@@ -501,7 +525,7 @@ public class EventNotificationService {
     }
 
     Session session = sessionOpt.get();
-    String senderLabel = resolveSenderName(senderUserId, senderDisplayName);
+    String senderLabel = resolveSenderName(senderUserId);
     String text = buildMessageNotificationText(senderLabel, envelope);
     String contentClass = envelope != null ? envelope.getContentClass() : null;
     String matrixEventId = envelope != null ? envelope.getMessageId() : null;
@@ -544,14 +568,14 @@ public class EventNotificationService {
   public void createThreadReplyNotificationFromRoom(
       String roomId, String senderUserId, String threadRootId, PrivacyEnvelope envelope) {
     createThreadReplyNotificationFromRoom(
-        roomId, senderUserId, null, threadRootId, false, null, null, envelope);
+        roomId, senderUserId, null, threadRootId, false, null, envelope);
   }
 
   @Transactional
   public void createThreadReplyNotificationFromRoom(
       String roomId, String senderUserId, String messagePreview, String threadRootId) {
     createThreadReplyNotificationFromRoom(
-        roomId, senderUserId, messagePreview, threadRootId, false, null, null, null);
+        roomId, senderUserId, messagePreview, threadRootId, false, null, null);
   }
 
   @Transactional
@@ -561,7 +585,6 @@ public class EventNotificationService {
       String messagePreview,
       String threadRootId,
       boolean supervisorMessage,
-      String senderDisplayName,
       String threadParentPreview) {
     createThreadReplyNotificationFromRoom(
         roomId,
@@ -569,11 +592,11 @@ public class EventNotificationService {
         messagePreview,
         threadRootId,
         supervisorMessage,
-        senderDisplayName,
         threadParentPreview,
         null);
   }
 
+  /** No {@code senderDisplayName} parameter, for the reason given on the message variant. */
   @Transactional
   public void createThreadReplyNotificationFromRoom(
       String roomId,
@@ -581,7 +604,6 @@ public class EventNotificationService {
       String messagePreview,
       String threadRootId,
       boolean supervisorMessage,
-      String senderDisplayName,
       String threadParentPreview,
       PrivacyEnvelope envelope) {
     if (roomId == null || roomId.isBlank()) {
@@ -597,7 +619,7 @@ public class EventNotificationService {
     }
 
     Session session = sessionOpt.get();
-    String senderLabel = resolveSenderName(senderUserId, senderDisplayName);
+    String senderLabel = resolveSenderName(senderUserId);
     String text = buildThreadReplyNotificationText(senderLabel, envelope);
     String contentClass = envelope != null ? envelope.getContentClass() : null;
     String matrixEventId = envelope != null ? envelope.getMessageId() : null;
@@ -641,8 +663,22 @@ public class EventNotificationService {
 
   @Transactional(readOnly = true)
   public NotificationFeedResponse getFeed(String recipientUserId, int page, int perPage) {
+    return getFeed(recipientUserId, page, perPage, Set.of());
+  }
+
+  /**
+   * Feed page plus the unread total. With {@code excludeEventTypes} the total leaves those event
+   * types out (#1377 display filter, slice 7): the client hides some kinds and the rail badge must
+   * be exact rather than "server total minus what happens to be loaded". The rows of the page are
+   * never filtered — the client applies its own filter to them — and the response echoes the
+   * excluded types so a client can tell an exact total from one an older server ignored.
+   */
+  @Transactional(readOnly = true)
+  public NotificationFeedResponse getFeed(
+      String recipientUserId, int page, int perPage, Set<String> excludeEventTypes) {
     int safePage = Math.max(0, page);
     int safePerPage = Math.max(1, Math.min(perPage, 100));
+    Set<String> excluded = normaliseEventTypes(excludeEventTypes);
 
     var pageable = PageRequest.of(safePage, safePerPage);
     List<NotificationItem> items =
@@ -652,14 +688,51 @@ public class EventNotificationService {
             .map(this::toItem)
             .collect(Collectors.toList());
 
-    long unreadCount =
-        eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(recipientUserId);
     return NotificationFeedResponse.builder()
         .items(items)
-        .unreadCount(unreadCount)
+        .unreadCount(countUnread(recipientUserId, excluded))
+        .excludedEventTypes(List.copyOf(excluded))
         .page(safePage)
         .perPage(safePerPage)
         .build();
+  }
+
+  /** Unread total, optionally without the given event types (#1377 slice 7). */
+  @Transactional(readOnly = true)
+  public long countUnread(String recipientUserId, Set<String> excludeEventTypes) {
+    Set<String> excluded = normaliseEventTypes(excludeEventTypes);
+    if (excluded.isEmpty()) {
+      return eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(recipientUserId);
+    }
+    return eventNotificationRepository.countByRecipientUserIdAndReadDateIsNullAndEventTypeNotIn(
+        recipientUserId, excluded);
+  }
+
+  /**
+   * Marks every unread row of the given event types read, loaded or not (#1377 slice 7: the
+   * client's "hidden ⇒ read" rule no longer stops at the pages it has loaded).
+   *
+   * @return number of rows marked read
+   */
+  @Transactional
+  public int markAsReadByEventTypes(String recipientUserId, Set<String> eventTypes) {
+    Set<String> types = normaliseEventTypes(eventTypes);
+    if (types.isEmpty()) {
+      return 0;
+    }
+    return eventNotificationRepository.markReadByEventTypes(
+        recipientUserId, types, LocalDateTime.now());
+  }
+
+  /** Trimmed, non-blank, de-duplicated; {@code null} reads as empty. */
+  private static Set<String> normaliseEventTypes(Set<String> eventTypes) {
+    if (eventTypes == null || eventTypes.isEmpty()) {
+      return Set.of();
+    }
+    return eventTypes.stream()
+        .filter(type -> type != null && !type.isBlank())
+        .map(String::trim)
+        .collect(Collectors.toCollection(java.util.TreeSet::new));
   }
 
   @Transactional
@@ -816,6 +889,9 @@ public class EventNotificationService {
             sourceSessionId,
             tenantId,
             null));
+    // P2 feed-update signal (ADR-020): nudge the recipient's clients to refresh the Activity
+    // Timeline now instead of on the next 15 s poll. Best-effort and content-free.
+    signalFeedUpdatedSafely(recipientUserId);
   }
 
   /** Persists an event at most once for a producer-owned key and recipient. */
@@ -853,10 +929,25 @@ public class EventNotificationService {
               sourceSessionId,
               tenantId,
               deduplicationKey));
+      // Only nudge on a genuine first persist — a duplicate-key race (below) already delivered.
+      signalFeedUpdatedSafely(recipientUserId);
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
           "Notification {} already persisted for recipient {}", deduplicationKey, recipientUserId);
+    }
+  }
+
+  /**
+   * Fires the P2 feed-update signal without ever letting it break the flow that created the
+   * notification — the same best-effort contract commit {@code 8b75eddd} gave the retired
+   * LiveService hook.
+   */
+  private void signalFeedUpdatedSafely(String recipientUserId) {
+    try {
+      feedUpdateSignalService.signalFeedUpdated(recipientUserId);
+    } catch (Exception ex) {
+      log.warn("Feed-update signal failed: {}", ex.getClass().getSimpleName());
     }
   }
 
@@ -908,16 +999,18 @@ public class EventNotificationService {
         .build();
   }
 
+  /**
+   * The name a notification may use for whoever sent the message.
+   *
+   * <p>ADR-002 §2 / ORISO-UserService#1201: this used to accept a {@code senderDisplayName} from
+   * the caller and return it unchanged whenever it was non-blank and did not look encoded. The only
+   * caller that ever supplied one was the REST controller, straight out of the request body — so a
+   * client decided what a <em>third party</em> would be told the sender is called, and the app in
+   * fact sent {@code displayName || userName || firstName + " " + lastName} there. The override is
+   * gone: the sender's id comes from the authenticated principal, so the server looks the sender up
+   * and applies the rule itself. An unidentifiable sender is "Someone", not whatever was posted.
+   */
   private String resolveSenderName(String senderUserId) {
-    return resolveSenderName(senderUserId, null);
-  }
-
-  private String resolveSenderName(String senderUserId, String senderDisplayName) {
-    if (senderDisplayName != null
-        && !senderDisplayName.isBlank()
-        && !looksEncoded(senderDisplayName)) {
-      return senderDisplayName;
-    }
     if (senderUserId == null || senderUserId.isBlank()) {
       return "Someone";
     }
@@ -940,26 +1033,24 @@ public class EventNotificationService {
         .orElse("Someone");
   }
 
+  /**
+   * The counsellor name that may appear in a notification.
+   *
+   * <p>ADR-002 §2 / #1201: every caller of this feeds an <b>advice seeker</b> — the {@code
+   * inquiry.accepted} entry, the message notification and the thread-reply notification — so the
+   * real name is not an option here. It used to be: the ladder read {@code displayName ?? fullName
+   * ?? username}, and the middle rung meant that for every counsellor with no stored pseudonym the
+   * "fallback" was silently their real name.
+   *
+   * <p>The decision itself belongs to {@link ConsultantDisplayNameResolver}, the single place that
+   * knows which name may be published, so it is delegated rather than restated.
+   */
   private String resolveConsultantName(Consultant consultant) {
     if (consultant == null) {
       return "Counselor";
     }
-    if (consultant.getDisplayName() != null
-        && !consultant.getDisplayName().isBlank()
-        && !looksEncoded(consultant.getDisplayName())) {
-      return consultant.getDisplayName();
-    }
-    if (consultant.getFullName() != null
-        && !consultant.getFullName().isBlank()
-        && !looksEncoded(consultant.getFullName())) {
-      return consultant.getFullName();
-    }
-    if (consultant.getUsername() != null
-        && !consultant.getUsername().isBlank()
-        && !looksEncoded(consultant.getUsername())) {
-      return consultant.getUsername();
-    }
-    return "Counselor";
+    return safeValue(
+        consultantDisplayNameResolver.resolveMatrixDisplayName(consultant), "Counselor");
   }
 
   private String buildMessageNotificationText(String senderLabel, PrivacyEnvelope envelope) {
@@ -1135,6 +1226,29 @@ public class EventNotificationService {
     private final long unreadCount;
     private final int page;
     private final int perPage;
+
+    /**
+     * Event types left out of {@link #unreadCount} (#1377 slice 7). Empty when the total covers
+     * everything; a client that asked for exclusions and gets an empty list back is talking to a
+     * server that does not support them.
+     */
+    private final List<String> excludedEventTypes;
+  }
+
+  /** #1377 slice 7: the unread total without hidden kinds. */
+  @Getter
+  @Builder
+  public static class UnreadCountResponse {
+    private final long unreadCount;
+    private final List<String> excludedEventTypes;
+  }
+
+  /** #1377 slice 7: how many rows a bulk read touched. */
+  @Getter
+  @Builder
+  public static class MarkReadResponse {
+    private final int updated;
+    private final List<String> eventTypes;
   }
 
   @Getter

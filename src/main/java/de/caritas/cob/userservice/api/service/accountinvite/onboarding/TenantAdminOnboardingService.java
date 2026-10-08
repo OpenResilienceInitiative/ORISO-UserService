@@ -15,22 +15,32 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService;
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService.DpaForwardEmailCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.OnboardingDpaAcceptanceDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
+import jakarta.validation.constraints.Email;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
@@ -54,6 +64,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class TenantAdminOnboardingService {
 
   private static final int MIN_PASSWORD_LENGTH = 8;
+
+  /* TenantService's tenant.legal_name / contact_email / contact_phone column limits. */
+  private static final int LEGAL_NAME_MAX_LENGTH = 255;
+  private static final int CONTACT_EMAIL_MAX_LENGTH = 255;
+  private static final int CONTACT_PHONE_MAX_LENGTH = 64;
 
   /**
    * Provisional consultant allowance stamped on every tenant this flow creates. It is NOT a
@@ -84,6 +99,7 @@ public class TenantAdminOnboardingService {
   private final @NonNull PublicDpaForwardClient publicDpaForwardClient;
   private final @NonNull DpaForwardEmailService dpaForwardEmailService;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull ApplicationEventPublisher eventPublisher;
 
   /**
    * Drives the short database-only transactions of the read paths explicitly: the invite row is
@@ -117,10 +133,19 @@ public class TenantAdminOnboardingService {
     resolved.rethrowLinkDeath();
 
     if (resolved.pendingTwoFactorResume()) {
-      return new OnboardingInviteState(resolved.invite(), true, null);
+      return new OnboardingInviteState(resolved.invite(), true, null, null);
     }
-    return new OnboardingInviteState(
-        resolved.invite(), false, operatorDpaContentClient.fetchPublishedDpaContent());
+    if (resolved.invite().getPurpose() == AccountInvitePurpose.EXISTING_ACCOUNT_SETUP) {
+      // This link changes credentials on an existing account. It has no new tenant or DPA record
+      // to create, and resolving it must not depend on the operator DPA text service.
+      return new OnboardingInviteState(resolved.invite(), false, null, null, true);
+    }
+    if (resolved.joinsExistingTenant()) {
+      // The Träger already has its own DPA; the invitee confirms nothing on its behalf.
+      return new OnboardingInviteState(resolved.invite(), false, null, null, true);
+    }
+    var lookup = operatorDpaContentClient.lookupPublishedDpa();
+    return new OnboardingInviteState(resolved.invite(), false, lookup.content(), lookup.reason());
   }
 
   /** The database-only part of {@link #resolveOnboardingInvite}: locked load and classification. */
@@ -130,11 +155,23 @@ public class TenantAdminOnboardingService {
           AccountInvite invite = findTenantAdminInvite(rawToken);
           LocalDateTime now = LocalDateTime.now();
 
+          if (invite.getPurpose() == AccountInvitePurpose.EXISTING_ACCOUNT_SETUP
+              && invite.getProvisioningStatus() == AccountInviteProvisioningStatus.IN_PROGRESS) {
+            return ResolvedOnboardingInvite.dead(
+                new AccountInviteLinkException(
+                    "SETUP_OUTCOME_INDETERMINATE".equals(invite.getProvisioningFailureReason())
+                        ? AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED
+                        : AccountInviteLinkException.Reason.SETUP_IN_PROGRESS));
+          }
+
           if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
             AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
-            return expired == null
-                ? ResolvedOnboardingInvite.open(invite)
-                : ResolvedOnboardingInvite.dead(expired);
+            if (expired != null) {
+              return ResolvedOnboardingInvite.dead(expired);
+            }
+            return joinsExistingTenant(invite)
+                ? ResolvedOnboardingInvite.openJoiningExistingTenant(invite)
+                : ResolvedOnboardingInvite.open(invite);
           }
           if (isResumableAtTwoFactorStep(invite, now)) {
             return ResolvedOnboardingInvite.pendingTwoFactorResume(invite);
@@ -171,6 +208,9 @@ public class TenantAdminOnboardingService {
       String rawToken, RegisterTenantAdminCommand command) {
     validateRegistration(command);
     AccountInvite invite = findTenantAdminInvite(rawToken);
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("This link is for existing-account setup");
+    }
     LocalDateTime now = LocalDateTime.now();
 
     if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
@@ -180,6 +220,12 @@ public class TenantAdminOnboardingService {
     if (expired != null) {
       // noRollbackFor (see above) keeps the EXPIRED transition this just persisted.
       throw expired;
+    }
+    if (joinsExistingTenant(invite)) {
+      return joinExistingTenant(invite, command, now);
+    }
+    if (isBlank(command.organisationName())) {
+      throw new BadRequestException("organisation.name is required");
     }
     if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
       // Legacy invite created while TenantService lacked the TEN-INV-U1 allocation endpoints —
@@ -200,7 +246,9 @@ public class TenantAdminOnboardingService {
     // genuinely happened — never on the client's say-so. The backend legal gate stays in force
     // until the forwarded signature lands.
     boolean dpaForwarded = invite.getDpaForwardedAt() != null;
-    if (!command.dpaAccepted() && !dpaForwarded) {
+    // A verified confirmation (stamped by the DPA_SIGNED_NOTICE chain) counts as well (#1065).
+    boolean dpaConfirmed = invite.getDpaSignedAt() != null;
+    if (!command.dpaAccepted() && !dpaForwarded && !dpaConfirmed) {
       throw new BadRequestException(
           "The data processing agreement must be accepted or forwarded to an authorised signer");
     }
@@ -231,14 +279,14 @@ public class TenantAdminOnboardingService {
       throw linkDeathException(current);
     }
 
-    var admin = createAdminService.createNewTenantAdmin(buildAdminDto(invite, command));
+    var admin = createAdminService.createNewTenantAdminFromInvite(buildAdminDto(invite, command));
     try {
       IdentityOtpCredential otpInfo =
           identitySecondFactor.getOtpCredential(
               usernameTranscoder.encodeUsername(admin.getUsername()));
       if (otpInfo == null || isBlank(otpInfo.secret())) {
-        throw new InternalServerErrorException(
-            "Keycloak issued no TOTP setup material for the onboarding account");
+        // App setup data is optional: the accepted account can still verify the email factor.
+        otpInfo = IdentityOtpCredential.empty();
       }
 
       AccountInvite claimedInvite =
@@ -247,7 +295,8 @@ public class TenantAdminOnboardingService {
               .orElseThrow(() -> new NotFoundException("Account invite not found"));
       claimedInvite.setAcceptedByUserId(admin.getId());
       claimedInvite.setTotpPendingSecret(otpInfo.secret());
-      if (command.dpaAccepted()) {
+      // An earlier external confirmation keeps its own timestamp (#1065).
+      if (command.dpaAccepted() && claimedInvite.getDpaSignedAt() == null) {
         // The own acceptance IS the signature (recorded below as the tenant's U9 admin
         // signature), so stamp it on the invite: the Admin invite progress board proves its
         // final "Vertrag unterschrieben" phase from dpa_signed_at (ORISO-Admin#896, epic #725).
@@ -279,6 +328,9 @@ public class TenantAdminOnboardingService {
       }
       Long tenantId =
           created != null && created.getId() != null ? created.getId() : invite.getTenantId();
+      // The Admin's Träger tab dates "Träger angelegt" from this, for co-founders too.
+      accountInviteRepository.stampTraegerCreated(invite.getTenantId(), now);
+      publishTenantCreated(tenantId);
       return new TenantAdminRegistrationResult(tenantId, otpInfo.secret(), otpInfo.secretQrCode());
     } catch (RuntimeException exception) {
       // Every database change rolls back with the exception; the Keycloak account is external
@@ -286,6 +338,76 @@ public class TenantAdminOnboardingService {
       identityAccountRemover.rollbackUser(admin.getId());
       throw exception;
     }
+  }
+
+  /**
+   * No Träger, reservation or DPA here, but the same single-use claim, Keycloak compensation and
+   * TOTP resume contract as the new-Träger path.
+   */
+  private TenantAdminRegistrationResult joinExistingTenant(
+      AccountInvite invite, RegisterTenantAdminCommand command, LocalDateTime now) {
+    if (invite.getTenantId() == null) {
+      throw new InternalServerErrorException("Invite into an existing tenant carries no tenant");
+    }
+    int claimed = accountInviteRepository.claimForAcceptance(invite.getId(), null, now);
+    if (claimed == 0) {
+      AccountInvite current =
+          accountInviteRepository
+              .findById(invite.getId())
+              .orElseThrow(() -> new NotFoundException("Account invite not found"));
+      throw linkDeathException(current);
+    }
+
+    // The invited person chose this credential. Joining an existing tenant must not turn it into
+    // a temporary direct-create password or send an existing-account setup link.
+    var admin = createAdminService.createNewTenantAdminFromInvite(buildAdminDto(invite, command));
+    try {
+      IdentityOtpCredential otpInfo =
+          identitySecondFactor.getOtpCredential(
+              usernameTranscoder.encodeUsername(admin.getUsername()));
+      if (otpInfo == null || isBlank(otpInfo.secret())) {
+        // App setup data is optional: the accepted account can still verify the email factor.
+        otpInfo = IdentityOtpCredential.empty();
+      }
+      AccountInvite claimedInvite =
+          accountInviteRepository
+              .findById(invite.getId())
+              .orElseThrow(() -> new NotFoundException("Account invite not found"));
+      claimedInvite.setAcceptedByUserId(admin.getId());
+      claimedInvite.setTotpPendingSecret(otpInfo.secret());
+      claimedInvite.setUpdateDate(now);
+      accountInviteRepository.save(claimedInvite);
+      log.info(
+          "Tenant-admin onboarding of invite {} joined the existing tenant {}",
+          invite.getId(),
+          invite.getTenantId());
+      publishTenantCreated(invite.getTenantId());
+      return new TenantAdminRegistrationResult(
+          invite.getTenantId(), otpInfo.secret(), otpInfo.secretQrCode());
+    } catch (RuntimeException exception) {
+      identityAccountRemover.rollbackUser(admin.getId());
+      throw exception;
+    }
+  }
+
+  /** Also a further admin of a new Träger: whoever registers first creates it. */
+  private boolean joinsExistingTenant(AccountInvite invite) {
+    if (invite.getTenantIdAllocationMode() == IdAllocationMode.EXISTING) {
+      return true;
+    }
+    return invite.getTenantId() != null
+        && invite.getId() != null
+        && accountInviteRepository.existsByTargetRoleAndTenantIdAndStatusAndIdNot(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            invite.getTenantId(),
+            AccountInviteStatus.ACCEPTED,
+            invite.getId());
+  }
+
+  /** The Träger exists and has an admin: release the invites waiting for it. */
+  private void publishTenantCreated(Long tenantId) {
+    eventPublisher.publishEvent(
+        new InviteUnitCreatedEvent(InviteUnitType.TENANT, tenantId, tenantId));
   }
 
   /**
@@ -416,6 +538,11 @@ public class TenantAdminOnboardingService {
             // the link-death exception leaves the flow.
             return ReservedDpaForward.dead(expired);
           }
+          if (joinsExistingTenant(invite)) {
+            throw new BadRequestException(
+                "This invitation joins an existing tenant; its data processing agreement is not"
+                    + " part of the onboarding");
+          }
           if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
             throw new InternalServerErrorException(
                 "Invite holds no authoritative tenant-ID reservation — re-issue the invite after"
@@ -524,6 +651,22 @@ public class TenantAdminOnboardingService {
     }
   }
 
+  /** Sends the existing SPI challenge to the recipient of a live, accepted invitation. */
+  public void startEmailTwoFactor(String rawToken) {
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    OnboardingEmailSecondFactor.start(invite, identityProfileLookup, identitySecondFactor);
+  }
+
+  public void activateEmailTwoFactor(String rawToken, String oneTimePassword) {
+    if (isBlank(oneTimePassword)) {
+      throw new BadRequestException("otp is required");
+    }
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    OnboardingEmailSecondFactor.verify(
+        invite, oneTimePassword, identityProfileLookup, identitySecondFactor);
+    consumeTwoFactorGate(rawToken);
+  }
+
   /**
    * Confirms the pending TOTP setup with a first one-time password. An invalid or rejected code
    * answers 400 (the Admin panel maps 400/422 to its invalid-code state); once the gate is
@@ -539,11 +682,16 @@ public class TenantAdminOnboardingService {
     }
     AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
 
+    if (isBlank(invite.getTotpPendingSecret())) {
+      throw new BadRequestException("No pending TOTP setup exists for this invite");
+    }
+
     var profile =
         identityProfileLookup
             .findById(invite.getAcceptedByUserId())
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
+    OnboardingEmailSecondFactor.requireInactive(profile, identitySecondFactor);
     boolean valid =
         identitySecondFactor.setUpOtpCredential(
             profile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
@@ -551,7 +699,7 @@ public class TenantAdminOnboardingService {
       throw new BadRequestException("Invalid one-time password");
     }
 
-    consumeTwoFactorGate(invite);
+    consumeTwoFactorGate(rawToken);
   }
 
   /**
@@ -574,7 +722,7 @@ public class TenantAdminOnboardingService {
             // Gate already satisfied or resume window expired — terminally consumed.
             throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
           }
-          if (isBlank(invite.getTotpPendingSecret()) || isBlank(invite.getAcceptedByUserId())) {
+          if (isBlank(invite.getAcceptedByUserId())) {
             throw new BadRequestException("No pending TOTP setup exists for this invite");
           }
           return invite;
@@ -583,12 +731,13 @@ public class TenantAdminOnboardingService {
 
   /**
    * Terminal consumption of the link once Keycloak accepted the one-time password. The pending
-   * secret is cleared FIRST so the gate transition — which re-reads the invite by its acceptor —
-   * wins over the merge of the detached row loaded before the Keycloak round trip.
+   * token, expiry and pending gate are checked again under the row lock after the remote call.
+   * Clearing the pending secret before marking the gate active preserves the existing transition.
    */
-  private void consumeTwoFactorGate(AccountInvite invite) {
+  private void consumeTwoFactorGate(String rawToken) {
     inTransaction(
         () -> {
+          AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
           invite.setTotpPendingSecret(null);
           invite.setUpdateDate(LocalDateTime.now());
           accountInviteRepository.save(invite);
@@ -641,6 +790,7 @@ public class TenantAdminOnboardingService {
     boolean withinExpiryWindow =
         invite.getExpiresAt() == null || !invite.getExpiresAt().isBefore(now);
     return invite.getStatus() == AccountInviteStatus.ACCEPTED
+        && invite.getPurpose() == AccountInvitePurpose.INVITE
         && twoFactorStillPending
         && withinExpiryWindow;
   }
@@ -660,15 +810,44 @@ public class TenantAdminOnboardingService {
     if (command == null) {
       throw new BadRequestException("Request body is required");
     }
-    if (isBlank(command.organisationName())) {
-      throw new BadRequestException("organisation.name is required");
-    }
+    // organisation.name is checked in registerTenantAdmin: an EXISTING-Träger invite has none.
     if (isBlank(command.password()) || command.password().length() < MIN_PASSWORD_LENGTH) {
       throw new BadRequestException(
           "account.password must be at least " + MIN_PASSWORD_LENGTH + " characters long");
     }
     // dpaAccepted is validated against the invite's forward state in registerTenantAdmin: a
     // missing acceptance is only acceptable when the DPA was forwarded to an authorised signer.
+    validateSenderBlock(command);
+  }
+
+  /**
+   * The Träger's optional sender block, checked against TenantService's limits before anything is
+   * created: a value TenantService refuses would otherwise fail the registration half-way, after
+   * the admin account already exists.
+   */
+  private static void validateSenderBlock(RegisterTenantAdminCommand command) {
+    requireAtMost(command.legalName(), LEGAL_NAME_MAX_LENGTH, "organisation.legalName");
+    requireAtMost(command.contactEmail(), CONTACT_EMAIL_MAX_LENGTH, "organisation.contactEmail");
+    requireAtMost(command.contactPhone(), CONTACT_PHONE_MAX_LENGTH, "organisation.contactPhone");
+    if (!isBlank(command.contactEmail())
+        && !EMAIL_VALIDATOR
+            .validateValue(ContactEmail.class, "value", command.contactEmail().trim())
+            .isEmpty()) {
+      throw new BadRequestException("organisation.contactEmail is not a valid e-mail address");
+    }
+  }
+
+  /* The same @Email check TenantService applies to contactEmail — commons-validator would also
+  reject domains outside its TLD list, which TenantService accepts. */
+  private static final Validator EMAIL_VALIDATOR =
+      Validation.buildDefaultValidatorFactory().getValidator();
+
+  private record ContactEmail(@Email String value) {}
+
+  private static void requireAtMost(String value, int maxLength, String field) {
+    if (!isBlank(value) && value.trim().length() > maxLength) {
+      throw new BadRequestException(field + " must be at most " + maxLength + " characters long");
+    }
   }
 
   private CreateAdminDTO buildAdminDto(AccountInvite invite, RegisterTenantAdminCommand command) {
@@ -701,6 +880,9 @@ public class TenantAdminOnboardingService {
         .name(command.organisationName().trim())
         .subdomain(trimToNull(command.subdomain()))
         .address(trimToNull(command.address()))
+        .legalName(trimToNull(command.legalName()))
+        .contactEmail(trimToNull(command.contactEmail()))
+        .contactPhone(trimToNull(command.contactPhone()))
         .adminEmails(List.of(invite.getRecipientEmail()))
         .tenantIdReservationToken(invite.getTenantIdReservationToken())
         // Licensing.allowedNumberOfUsers is required by the TenantService creation contract and
@@ -743,13 +925,38 @@ public class TenantAdminOnboardingService {
   /**
    * Resolved onboarding state: the invite, whether the flow re-enters at the 2FA step (#569 resume
    * contract) instead of the registration step, and the operator's published DPA/AVV text (stored
-   * language -&gt; HTML JSON map) the DPA step renders read-only; {@code null} when nothing is
-   * published or the lookup is unavailable.
+   * language -&gt; HTML JSON map) the DPA step renders read-only.
+   *
+   * <p>{@code dpaContent} is {@code null} when no contract could be shown; {@code
+   * dpaUnavailableReason} then tells the invitee's client which of the two very different causes it
+   * was — nothing published yet, or the upstream read failed. Both are {@code null} on the resume
+   * path, which re-enters at the 2FA step and shows no contract at all.
    */
   public record OnboardingInviteState(
-      AccountInvite invite, boolean pendingTwoFactorResume, String dpaContent) {}
+      AccountInvite invite,
+      boolean pendingTwoFactorResume,
+      String dpaContent,
+      /** Why {@code dpaContent} is absent; null when present or when there is no DPA step. */
+      DpaUnavailableReason dpaUnavailableReason,
+      /** The invitee joins an existing Träger: no organisation or DPA step. */
+      boolean joinsExistingTenant) {
 
-  /** Input for the reservation-consuming registration; mirrors the Admin panel request shape. */
+    public OnboardingInviteState(
+        AccountInvite invite,
+        boolean pendingTwoFactorResume,
+        String dpaContent,
+        DpaUnavailableReason dpaUnavailableReason) {
+      this(invite, pendingTwoFactorResume, dpaContent, dpaUnavailableReason, false);
+    }
+  }
+
+  /**
+   * Input for the reservation-consuming registration; mirrors the Admin panel request shape.
+   *
+   * @param legalName optional full legal name of the Träger — the mail footer's sender name
+   * @param contactEmail optional contact e-mail for the mail footer
+   * @param contactPhone optional contact phone for the mail footer
+   */
   public record RegisterTenantAdminCommand(
       String organisationName,
       String subdomain,
@@ -761,7 +968,41 @@ public class TenantAdminOnboardingService {
       String dpaSignerOrganisation,
       String password,
       Long reservedTenantId,
-      String tenantIdReservationToken) {}
+      String tenantIdReservationToken,
+      String legalName,
+      String contactEmail,
+      String contactPhone) {
+
+    /** A registration without the optional sender block. */
+    public RegisterTenantAdminCommand(
+        String organisationName,
+        String subdomain,
+        String address,
+        boolean dpaAccepted,
+        String dpaSignerName,
+        String dpaSignerPosition,
+        String dpaSignerEmail,
+        String dpaSignerOrganisation,
+        String password,
+        Long reservedTenantId,
+        String tenantIdReservationToken) {
+      this(
+          organisationName,
+          subdomain,
+          address,
+          dpaAccepted,
+          dpaSignerName,
+          dpaSignerPosition,
+          dpaSignerEmail,
+          dpaSignerOrganisation,
+          password,
+          reservedTenantId,
+          tenantIdReservationToken,
+          null,
+          null,
+          null);
+    }
+  }
 
   /** The created (inactive) tenant plus the TOTP setup material for the 2FA step. */
   public record TenantAdminRegistrationResult(

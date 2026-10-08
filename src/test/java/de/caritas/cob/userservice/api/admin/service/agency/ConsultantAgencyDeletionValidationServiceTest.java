@@ -127,4 +127,16 @@ public class ConsultantAgencyDeletionValidationServiceTest {
     assertNotNull(consultantAgency.getDeleteDate());
     org.mockito.Mockito.verify(this.consultantAgencyRepository).save(consultantAgency);
   }
+
+  @Test
+  void validateAndMarkForDeletion_Should_stampTheGivenDeleteDate() {
+    ConsultantAgency consultantAgency = new EasyRandom().nextObject(ConsultantAgency.class);
+    consultantAgency.setDeleteDate(null);
+    var deletedAt = java.time.LocalDateTime.of(2026, 9, 25, 10, 0);
+
+    this.agencyDeletionValidationService.validateAndMarkForDeletion(consultantAgency, deletedAt);
+
+    assertThat(consultantAgency.getDeleteDate(), is(deletedAt));
+    org.mockito.Mockito.verify(consultantAgencyRepository).save(consultantAgency);
+  }
 }

@@ -1,0 +1,14 @@
+Scenario: issued UIA password cannot authorize a different account's reset
+The original UUID implementation already separates account passwords. This is a guard
+against an insecure global stable-password implementation, not another baseline defect.
+
+RED sensitivity check: isolated baseline only, replace UUID generation with one synthetic
+constant password shared by all accounts. No shared-workspace production edits.
+Command: JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./mvnw -B -q '-Dtest=MatrixBrowserDeviceConcurrencyTest#interactiveAuthenticationCredentialsCannotAuthenticateAnotherAccount' test
+Result: exit 1; 1 test, 1 failure, 0 errors, 0 skipped
+Both accounts authenticate with their own issued passwords. Submitting Alice's issued
+password for Bob's UIA incorrectly returns HTTP 200; the test requires HTTP 403.
+
+GREEN changed workspace: same fixture suite, 4 tests, 0 failures, 0 errors, 0 skipped;
+exit 0; 0.887 seconds. Cross-account submission is rejected HTTP 403.
+Isolated constant mutation restored to exact original 05ec3eb14 source after this probe.

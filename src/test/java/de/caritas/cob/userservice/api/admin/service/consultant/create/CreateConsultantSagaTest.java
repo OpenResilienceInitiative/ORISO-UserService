@@ -7,7 +7,9 @@ import static de.caritas.cob.userservice.api.exception.httpresponses.customheade
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -28,8 +30,11 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
+import de.caritas.cob.userservice.api.helper.MatrixRealNameGuard;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -57,12 +62,17 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class CreateConsultantSagaTest {
+  @Mock
+  private de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
+
   @org.mockito.Mock private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
 
   @org.junit.jupiter.api.BeforeEach
@@ -110,6 +120,12 @@ class CreateConsultantSagaTest {
   @Mock private RollbackFacade rollbackFacade;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private AppointmentService appointmentService;
+
+  // The resolver is the single place that decides which name may reach Matrix (ADR-002 §2), so the
+  // saga tests exercise the real rule instead of a mock that would answer null.
+  @Spy
+  private ConsultantDisplayNameResolver consultantDisplayNameResolver =
+      new ConsultantDisplayNameResolver();
 
   @BeforeEach
   void setUp() {
@@ -164,6 +180,102 @@ class CreateConsultantSagaTest {
   }
 
   @Test
+  void createNewConsultant_Should_persistTheSecondFactorRequirement() throws Exception {
+    // The admin API is the "an administrator picks the password and hands it over"
+    // path, so the counsellor owes a second factor before the account is usable.
+    stubHappyPath();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(captured.getValue().getTwoFactorRequired(), is(true));
+  }
+
+  @Test
+  void createNewConsultant_Should_startWithProductToursSwitchedOff() throws Exception {
+    // #1526: tours are opt-in; the counsellor switches them on under Profile -> Help.
+    stubHappyPath();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(captured.getValue().getWalkThroughEnabled(), is(false));
+  }
+
+  @Test
+  void createNewConsultant_Should_persistThePasswordChangeRequirement() throws Exception {
+    // The administrator chose this password and passed it on, so it is a shared
+    // secret until the counsellor replaces it.
+    stubHappyPath();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(captured.getValue().getPasswordChangeRequired(), is(true));
+    verify(identityPasswordUpdater).updateTemporaryPassword(KEYCLOAK_USER_ID, VALID_PASSWORD);
+  }
+
+  @Test
+  void createNewConsultant_Should_persistTheAvatarChoice() throws Exception {
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setAvatarKind(CreateConsultantDTO.AvatarKindEnum.ICON);
+    dto.setAvatarId("motif-24");
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(
+        captured.getValue().getAvatarKind(),
+        is(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON));
+    assertThat(captured.getValue().getAvatarId(), is("motif-24"));
+  }
+
+  @Test
+  void createNewConsultant_Should_notPersistAHalfAvatarChoice() throws Exception {
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setAvatarKind(CreateConsultantDTO.AvatarKindEnum.ICON);
+    dto.setAvatarId(null);
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(
+        captured.getValue().getAvatarKind(),
+        is(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.INITIALS));
+    assertThat(captured.getValue().getAvatarId(), nullValue());
+  }
+
+  @Test
+  void createNewConsultant_Should_dropAMotifIdThatBelongsToNoIcon() throws Exception {
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setAvatarKind(CreateConsultantDTO.AvatarKindEnum.INITIALS);
+    dto.setAvatarId("motif-24");
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(
+        captured.getValue().getAvatarKind(),
+        is(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.INITIALS));
+    assertThat(captured.getValue().getAvatarId(), nullValue());
+  }
+
+  @Test
   void createNewConsultant_Should_AssignAllRequestedAgenciesBeforeReturning() throws Exception {
     stubHappyPath();
     CreateConsultantDTO dto = validCreateConsultantDto();
@@ -193,6 +305,28 @@ class CreateConsultantSagaTest {
     assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
 
     verify(identityClient, never()).createUser(any(), anyString(), anyString());
+  }
+
+  @Test
+  void createNewConsultant_Should_StoreTopicsPerSelectedCentre() throws Exception {
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTopicIds(List.of(7L, 8L));
+    dto.setAgencyIds(List.of(5L, 9L));
+    when(consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+            any(), any(), any()))
+        .thenReturn(java.util.Map.of(5L, java.util.Set.of(7L, 8L), 9L, java.util.Set.of(7L)));
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(
+        captured.getValue().getConsultantTopics().stream()
+            .map(ct -> ct.getAgencyId() + ":" + ct.getTopicId())
+            .collect(java.util.stream.Collectors.toSet()),
+        is(java.util.Set.of("5:7", "5:8", "9:7")));
   }
 
   @Test
@@ -270,7 +404,7 @@ class CreateConsultantSagaTest {
     stubKeycloakUserCreation();
     doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
         .when(identityPasswordUpdater)
-        .updatePassword(anyString(), anyString());
+        .updateTemporaryPassword(anyString(), anyString());
 
     assertThrows(
         CustomValidationHttpStatusException.class,
@@ -309,14 +443,41 @@ class CreateConsultantSagaTest {
   }
 
   @Test
-  void
-      createNewConsultant_Should_continueWithoutMatrixIdentity_When_plainCredentialsAreUnavailable()
-          throws Exception {
+  void createNewConsultant_Should_persistTheConsultant_When_matrixProvisioningFails()
+      throws Exception {
+    // The tolerance this asserts is deliberate: the integration suite and the E2E suite run
+    // without a Synapse, and making a chat outage fatal turned 10 of them red. What the previous
+    // version of this test did NOT do was exercise it - and for a sharper reason than the review
+    // supposed. The saga reads PlainCredentialsHolder BEFORE createKeycloakUser populates it, so
+    // with the holder unset the Matrix branch is skipped entirely and the mock is never touched:
+    // the test asserted the tolerance without the saga ever attempting to provision. Seeding the
+    // holder the way UserAdminController does is what makes the failure branch reachable at all.
     stubHappyPath();
+    PlainCredentialsHolder.set(VALID_USERNAME, null);
+    when(matrixSynapseService.createUserId(any(), any(), any()))
+        .thenThrow(new MatrixCreateUserException("Synapse is unreachable"));
 
     var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
 
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    verify(matrixSynapseService).createUserId(any(), any(), any());
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));
+    verify(rollbackFacade, never()).rollbackConsultantAccount(any(Consultant.class));
+  }
+
+  @Test
+  void createNewConsultant_Should_persistTheConsultant_When_matrixAnswersWithoutAUserId()
+      throws Exception {
+    stubHappyPath();
+    PlainCredentialsHolder.set(VALID_USERNAME, null);
+    when(matrixSynapseService.createUserId(any(), any(), any())).thenReturn(null);
+
+    var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    verify(matrixSynapseService).createUserId(any(), any(), any());
     ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
     verify(consultantService).saveConsultant(consultantCaptor.capture());
     assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));
@@ -350,6 +511,36 @@ class CreateConsultantSagaTest {
         "LOGIN_PASSWORD", consultant.getChatRecoveryMode());
     org.junit.jupiter.api.Assertions.assertEquals(3L, consultant.getChatRecoveryPolicyRevision());
     verify(identityPasswordUpdater).updatePassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
+  }
+
+  @Test
+  void createNewConsultant_Should_notRequireASecondFactor_When_importingConsultants()
+      throws Exception {
+    // Imported counsellors already exist elsewhere; the import is a move, not a new
+    // account, so it must not gate a whole migrated tenant at the next login.
+    ImportRecord importRecord = validImportRecord();
+    stubHappyPath();
+    when(userHelper.getRandomPassword()).thenReturn("GeneratedPass1!");
+
+    Consultant consultant =
+        createConsultantSaga.createNewConsultant(
+            importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
+
+    assertThat(consultant.getTwoFactorRequired(), is(false));
+  }
+
+  @Test
+  void createNewConsultant_Should_notRequireAPasswordChange_When_importingConsultants()
+      throws Exception {
+    ImportRecord importRecord = validImportRecord();
+    stubHappyPath();
+    when(userHelper.getRandomPassword()).thenReturn("GeneratedPass1!");
+
+    Consultant consultant =
+        createConsultantSaga.createNewConsultant(
+            importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
+
+    assertThat(consultant.getPasswordChangeRequired(), is(false));
   }
 
   @Test
@@ -514,7 +705,7 @@ class CreateConsultantSagaTest {
     stubKeycloakUserCreation();
     doThrow(new RuntimeException("keycloak down"))
         .when(identityPasswordUpdater)
-        .updatePassword(anyString(), anyString());
+        .updateTemporaryPassword(anyString(), anyString());
 
     var ex =
         assertThrows(
@@ -525,6 +716,69 @@ class CreateConsultantSagaTest {
         ex.getCustomHttpHeaders().get("X-Reason").get(0),
         is("DISTRIBUTED_TRANSACTION_FAILED_ON_STEP_UPDATE_USER_PASSWORD_IN_KEYCLOAK"));
     verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1200: the Matrix displayname is never the counsellor's real name.
+  // The advice seeker shares the room and reads every member's displayname from /joined_members.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createNewConsultant_Should_provisionMatrixWithThePublicDisplayName() throws Exception {
+    stubHappyPath();
+    givenMatrixProvisioningIsReachable();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setDisplayName("Frau M.");
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    MatrixRealNameGuard.assertNoRealNameReachedMatrix(matrixSynapseService, "First", "Last");
+    assertThat(capturedMatrixDisplayName(), is("Frau M."));
+  }
+
+  @Test
+  void createNewConsultant_Should_provisionMatrixWithTheUsername_When_noDisplayNameIsSet()
+      throws Exception {
+    stubHappyPath();
+    givenMatrixProvisioningIsReachable();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    MatrixRealNameGuard.assertNoRealNameReachedMatrix(matrixSynapseService, "First", "Last");
+    // The Matrix ID already carries the username, so this adds no new information.
+    assertThat(capturedMatrixDisplayName(), is(VALID_USERNAME));
+    assertThat(capturedMatrixDisplayName(), is(not("First Last")));
+  }
+
+  @Test
+  void createNewConsultant_Should_stillSucceed_When_matrixProvisioningFails() throws Exception {
+    stubHappyPath();
+    PlainCredentialsHolder.set(VALID_USERNAME, null);
+    when(userHelper.getRandomPassword()).thenReturn("MatrixPass1!");
+    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
+        .thenThrow(new RuntimeException("synapse down"));
+
+    var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getMatrixUserId(), is(nullValue()));
+    verify(rollbackFacade, never()).rollbackConsultantAccount(any(Consultant.class));
+  }
+
+  private void givenMatrixProvisioningIsReachable() throws Exception {
+    PlainCredentialsHolder.set(VALID_USERNAME, null);
+    when(userHelper.getRandomPassword()).thenReturn("MatrixPass1!");
+    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
+        .thenReturn("@" + VALID_USERNAME + ":matrix.example.org");
+  }
+
+  private String capturedMatrixDisplayName() throws Exception {
+    ArgumentCaptor<String> displayNameCaptor = ArgumentCaptor.forClass(String.class);
+    verify(matrixSynapseService)
+        .createUserId(anyString(), anyString(), displayNameCaptor.capture());
+    return displayNameCaptor.getValue();
   }
 
   private void stubHappyPath() throws Exception {

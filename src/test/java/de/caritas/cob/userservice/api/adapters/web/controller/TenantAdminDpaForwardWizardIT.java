@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
@@ -13,6 +14,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.PublicDpaForwardClient;
+import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO;
 import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +30,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -39,6 +43,10 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+// The forward endpoint only accepts sign links on the configured App origin. Pin it explicitly:
+// the fallback is this environment's own app.base.url, never a production host (#1170).
+@TestPropertySource(properties = "dpa.sign.frontend.base-url=https://app.example.org")
+@WithTenant(1L)
 class TenantAdminDpaForwardWizardIT {
 
   private static final Long RESERVED_TENANT_ID = 83L;
@@ -51,6 +59,11 @@ class TenantAdminDpaForwardWizardIT {
   private static final String CSRF = "it-csrf-token";
 
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF);
+
+  /** The public route resolves to the main tenant, as on the single-domain deployment. */
+  @MockitoBean private TenantResolverService tenantResolverService;
+
+  @MockitoBean private TenantService tenantService;
 
   @Autowired private MockMvc mockMvc;
 
@@ -69,7 +82,7 @@ class TenantAdminDpaForwardWizardIT {
           .thenReturn(
               new DpaSignInviteDTO()
                   .token("RAWSIGNTOKEN")
-                  .signLink("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN")
+                  .signLink("https://app.example.org/dpa-sign/RAWSIGNTOKEN")
                   .expiresAt("2026-08-29T14:31:07"));
 
       // no Authorization header at all: the invite token in the path is the only credential
@@ -79,7 +92,7 @@ class TenantAdminDpaForwardWizardIT {
                   .header("X-CSRF-Token", CSRF)
                   .cookie(CSRF_COOKIE))
           .andExpect(status().isOk())
-          .andExpect(jsonPath("$.signUrl").value("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN"))
+          .andExpect(jsonPath("$.signUrl").value("https://app.example.org/dpa-sign/RAWSIGNTOKEN"))
           .andExpect(jsonPath("$.expiresAt").value("2026-08-29T14:31:07"))
           .andExpect(jsonPath("$.mailSent").value(false));
     }
@@ -102,7 +115,7 @@ class TenantAdminDpaForwardWizardIT {
             .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
             .tenantId(RESERVED_TENANT_ID)
             .tenantIdReservationToken(reservationToken)
-            .recipientEmail("tenant.admin@oriso.org")
+            .recipientEmail("tenant.admin@example.org")
             .firstName("Erika")
             .lastName("Beispiel")
             .tokenHash(sha256(rawToken))

@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.auth.Authority;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
@@ -57,6 +58,7 @@ import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -64,6 +66,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
@@ -73,6 +76,7 @@ import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.*;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
+import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
@@ -83,10 +87,12 @@ import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.RequestedContactSheetService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.*;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.hibernate.service.spi.ServiceException;
@@ -114,6 +120,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc(addFilters = false)
 @Import({
   UserChatControllerDelegate.class,
+  GroupChatFeatureGate.class,
   UserSessionControllerDelegate.class,
   UserAccountControllerDelegate.class,
   UserTwoFactorAuthControllerDelegate.class,
@@ -183,7 +190,7 @@ class UserControllerIT {
           .offline(false)
           .consultingType(CONSULTING_TYPE_ID_SUCHT);
   private final SessionConsultantForUserDTO SESSION_CONSULTANT_DTO =
-      new SessionConsultantForUserDTO(null, NAME, IS_ABSENT, ABSENCE_MESSAGE, null);
+      new SessionConsultantForUserDTO(null, NAME, IS_ABSENT, ABSENCE_MESSAGE, null, null, null);
   private final UserSessionResponseDTO USER_SESSION_RESPONSE_DTO =
       new UserSessionResponseDTO()
           .session(SESSION_DTO)
@@ -281,10 +288,17 @@ class UserControllerIT {
   @MockitoBean private UserAccountService userAccountService;
   @MockitoBean private PasswordResetService passwordResetService;
   @MockitoBean private AccountInviteService accountInviteService;
-  @MockitoBean private GroupChatFeatureGate groupChatFeatureGate;
+  @MockitoBean private TenantService tenantService;
+  @MockitoBean private EffectiveAgencySettingsLookup effectiveAgencySettingsLookup;
   @MockitoBean private ChatOccurrenceCommandService chatOccurrenceCommandService;
   @MockitoBean private ChatOccurrenceQueryService chatOccurrenceQueryService;
   @MockitoBean private GroupChatRoleService groupChatRoleService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService
+      groupChatPermissionService;
+
+  @MockitoBean private GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   @MockitoBean private SessionService sessionService;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
@@ -305,12 +319,14 @@ class UserControllerIT {
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
+        IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityLocaleLookup.class,
+        IdentityPasswordChangeRequirement.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,
@@ -401,9 +417,18 @@ class UserControllerIT {
 
   @MockitoBean
   @SuppressWarnings("unused")
+  private AgencyAdminDataProvider agencyAdminDataProvider;
+
+  @MockitoBean
+  @SuppressWarnings("unused")
   private VideoChatConfig videoChatConfig;
 
   @MockitoBean private AdminUserFacade adminUserFacade;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.adapters.web.controller
+          .IdentitySuggestionControllerDelegate
+      identitySuggestionControllerDelegate;
 
   @MockitoBean
   @SuppressWarnings("unused")
@@ -414,6 +439,8 @@ class UserControllerIT {
   @MockitoBean
   @SuppressWarnings("unused")
   private EventNotificationService eventNotificationService;
+
+  @MockitoBean private RequestedContactSheetService requestedContactSheetService;
 
   @BeforeEach
   void setUp() {
@@ -1286,10 +1313,10 @@ class UserControllerIT {
   }
 
   @Test
-  void getUserData_ForAgencySuperAdmin_Should_ReturnUserDataFromKeycloak() throws Exception {
+  void getUserData_ForAgencySuperAdmin_Should_ReturnUserDataWithAssignedAgencies()
+      throws Exception {
     when(authenticatedUser.isAgencySuperAdmin()).thenReturn(true);
-    when(keycloakUserDataProvider.retrieveAuthenticatedUserData())
-        .thenReturn(new UserDataResponseDTO());
+    when(agencyAdminDataProvider.retrieveData()).thenReturn(new UserDataResponseDTO());
 
     mvc.perform(
             get(PATH_USER_DATA)
@@ -1299,10 +1326,10 @@ class UserControllerIT {
   }
 
   @Test
-  void getUserData_ForRestrictedAgencyAdmin_Should_ReturnUserDataFromKeycloak() throws Exception {
+  void getUserData_ForRestrictedAgencyAdmin_Should_ReturnUserDataWithAssignedAgencies()
+      throws Exception {
     when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(true);
-    when(keycloakUserDataProvider.retrieveAuthenticatedUserData())
-        .thenReturn(new UserDataResponseDTO());
+    when(agencyAdminDataProvider.retrieveData()).thenReturn(new UserDataResponseDTO());
 
     mvc.perform(
             get(PATH_USER_DATA)
@@ -1586,6 +1613,7 @@ class UserControllerIT {
         .thenReturn(AUTHORITIES_ASSIGN_SESSION_AND_ENQUIRY);
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT.getId());
     when(consultantService.getConsultant(anyString())).thenReturn(Optional.of(CONSULTANT));
+    when(sessionService.isConsultantPermittedToSession(CONSULTANT, SESSION)).thenReturn(true);
     doThrow(new ConflictException(""))
         .when(assignSessionFacade)
         .assignSession(SESSION, TEAM_CONSULTANT, CONSULTANT);
@@ -1602,6 +1630,9 @@ class UserControllerIT {
       throws Exception {
 
     when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(SESSION));
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT.getId());
+    when(consultantService.getConsultant(anyString())).thenReturn(Optional.of(CONSULTANT));
+    when(sessionService.isConsultantPermittedToSession(CONSULTANT, SESSION)).thenReturn(true);
     when(userAccountService.retrieveValidatedConsultantById(anyString()))
         .thenThrow(new InternalServerErrorException(""));
 
@@ -1773,7 +1804,8 @@ class UserControllerIT {
       throws Exception {
 
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
-    when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(tenantTeamConsultant());
+    givenTenantGroupChatV2Enabled();
     when(createChatFacade.createChatV2(Mockito.any(), Mockito.any()))
         .thenThrow(new InternalServerErrorException(""));
 
@@ -1789,7 +1821,8 @@ class UserControllerIT {
   void createChatV2_Should_ReturnCreated_When_ChatWasCreated() throws Exception {
 
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
-    when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(tenantTeamConsultant());
+    givenTenantGroupChatV2Enabled();
     when(createChatFacade.createChatV2(Mockito.any(), Mockito.any()))
         .thenReturn(CREATE_CHAT_RESPONSE_DTO);
 
@@ -1799,6 +1832,86 @@ class UserControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.CREATED.value()));
+  }
+
+  /**
+   * US#1171: the Traeger allows group chats, but Beratungsstelle 1 has switched conversation
+   * circles off. The AgencyService serves that effective value; the create endpoint must refuse
+   * even though the app would already hide the button.
+   */
+  @Test
+  void createChatV2_Should_ReturnForbidden_When_BeratungsstelleHasCirclesOff() throws Exception {
+
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(tenantTeamConsultant());
+    givenTenantGroupChatV2Enabled();
+    when(effectiveAgencySettingsLookup.findEffectiveSettings(1L))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings()
+                    .featureGroupChatV2Enabled(true)
+                    .featureInternalGroupChatEnabled(true)
+                    .featureSelfHelpGroupsEnabled(false)));
+
+    mvc.perform(
+            post(PATH_POST_CHAT_NEW_V2)
+                .content(
+                    VALID_CREATE_CIRCLE_BODY_WITH_AGENCY_PLACEHOLDER.replace("${AGENCY_ID}", "1"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().is(HttpStatus.FORBIDDEN.value()));
+
+    verify(createChatFacade, never()).createChatV2(Mockito.any(), Mockito.any());
+  }
+
+  @Test
+  void createChatV2_Should_ReturnCreated_When_BeratungsstelleAllowsCircles() throws Exception {
+
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(tenantTeamConsultant());
+    givenTenantGroupChatV2Enabled();
+    when(effectiveAgencySettingsLookup.findEffectiveSettings(1L))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings()
+                    .featureGroupChatV2Enabled(true)
+                    .featureInternalGroupChatEnabled(true)
+                    .featureSelfHelpGroupsEnabled(true)));
+    when(createChatFacade.createChatV2(Mockito.any(), Mockito.any()))
+        .thenReturn(CREATE_CHAT_RESPONSE_DTO);
+
+    mvc.perform(
+            post(PATH_POST_CHAT_NEW_V2)
+                .content(
+                    VALID_CREATE_CIRCLE_BODY_WITH_AGENCY_PLACEHOLDER.replace("${AGENCY_ID}", "1"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().is(HttpStatus.CREATED.value()));
+  }
+
+  private Consultant tenantTeamConsultant() {
+    return Consultant.builder()
+        .id(CONSULTANT_ID)
+        .matrixUserId(MATRIX_USER_ID)
+        .username("consultant")
+        .firstName("first name")
+        .lastName("last name")
+        .email("consultant@cob.de")
+        .absent(false)
+        .teamConsultant(true)
+        .tenantId(7L)
+        .build();
+  }
+
+  private void givenTenantGroupChatV2Enabled() {
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(7L)
+                .name("Tenant")
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureGroupChatV2Enabled(true)));
   }
 
   /** Method: startChat */
@@ -2242,7 +2355,7 @@ class UserControllerIT {
         .andExpect(status().isOk());
 
     var captor = ArgumentCaptor.forClass(UpdateAdminConsultantDTO.class);
-    verify(consultantUpdateService).updateConsultant(any(), captor.capture());
+    verify(consultantUpdateService).updateConsultant(any(), captor.capture(), eq(false));
 
     var updateAdminConsultantDTO = captor.getValue();
     assertEquals(updateConsultantDTO.getEmail().toLowerCase(), updateAdminConsultantDTO.getEmail());

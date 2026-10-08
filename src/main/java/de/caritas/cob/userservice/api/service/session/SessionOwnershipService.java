@@ -48,6 +48,11 @@ public class SessionOwnershipService {
     }
     Session current = lock(expectedSession.getId());
     requireCurrentOwnership(current, expectedOwnerId, expectedRevision, expectedRowVersion);
+    // The accepting counsellor’s validated department is bound before this locked update.
+    current.setAgencyId(expectedSession.getAgencyId());
+    if (current.getConversationType() == null) {
+      current.setConversationType(expectedSession.getConversationType());
+    }
     apply(current, newOwner, newStatus, updateDate);
     synchronizeExpectedSession(expectedSession, current);
     return token(current);
@@ -60,10 +65,25 @@ public class SessionOwnershipService {
       @Nullable Consultant restoredOwner,
       SessionStatus restoredStatus,
       @Nullable LocalDateTime updateDate) {
+    return compensateOwnerChange(
+        sessionId, assignment, restoredOwner, restoredStatus, updateDate, false);
+  }
+
+  @Transactional
+  public boolean compensateOwnerChange(
+      Long sessionId,
+      OwnershipChange assignment,
+      @Nullable Consultant restoredOwner,
+      SessionStatus restoredStatus,
+      @Nullable LocalDateTime updateDate,
+      boolean clearDepartment) {
     Session current = lock(sessionId);
     if (!Objects.equals(ownerId(current.getConsultant()), assignment.ownerId())
         || current.getOwnershipRevision() != assignment.revision()) {
       return false;
+    }
+    if (clearDepartment) {
+      current.setAgencyId(null);
     }
     apply(current, restoredOwner, restoredStatus, updateDate);
     return true;
@@ -119,6 +139,8 @@ public class SessionOwnershipService {
 
   private static void synchronizeExpectedSession(Session expected, Session current) {
     expected.setConsultant(current.getConsultant());
+    expected.setAgencyId(current.getAgencyId());
+    expected.setConversationType(current.getConversationType());
     expected.setOwnershipRevision(current.getOwnershipRevision());
     expected.setStatus(current.getStatus());
     expected.setUpdateDate(current.getUpdateDate());

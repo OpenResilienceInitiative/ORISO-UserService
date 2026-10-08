@@ -91,7 +91,7 @@ class AppointmentServiceTest {
     appointmentService = spy(createAppointmentService());
     nonSpiedAppointmentService = createAppointmentService();
 
-    when(identityAuthentication.login(any(), any())).thenReturn(identityLogin);
+    when(identityAuthentication.loginService(any(), any())).thenReturn(identityLogin);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(any())).thenReturn(httpHeaders);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(httpHeaders);
     when(consultantDTO.getId()).thenReturn("testId");

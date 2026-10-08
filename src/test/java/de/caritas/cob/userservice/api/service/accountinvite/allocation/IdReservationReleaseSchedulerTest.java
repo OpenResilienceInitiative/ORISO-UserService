@@ -68,14 +68,20 @@ class IdReservationReleaseSchedulerTest {
   @Test
   void retryPendingReleases_ShouldAuthenticateAndContinueAfterOneTaskFails() {
     TechnicalUserConfig technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
+    technicalUser.setClientId("technical");
+    technicalUser.setClientSecret("secret");
     when(taskClaimService.tryClaimLease(IdReservationReleaseScheduler.TASK_NAME, claimDuration))
         .thenReturn(Optional.of(lease));
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.login("technical", "secret"))
+    when(identityAuthentication.loginService("technical", "secret"))
         .thenReturn(new IdentityLogin("token", 60, 60, "refresh"));
-    when(processor.pendingTaskIds()).thenReturn(List.of(1L, 2L));
+    when(processor.pendingTaskIds())
+        .thenAnswer(
+            invocation -> {
+              // Reading the local retry queue needs no service-to-service bearer.
+              assertThat(TechnicalAccessTokenContext.get()).isEmpty();
+              return List.of(1L, 2L);
+            });
     doThrow(new IllegalStateException("database unavailable")).when(processor).process(1L);
     when(processor.process(2L))
         .thenAnswer(
@@ -92,5 +98,18 @@ class IdReservationReleaseSchedulerTest {
     verify(taskClaimService).release(lease);
     assertThat(TechnicalAccessTokenContext.get()).isEmpty();
     assertThat(TenantContext.contextIsSet()).isFalse();
+  }
+
+  @Test
+  void retryPendingReleases_ShouldNotOpenATechnicalSession_WhenNothingIsPending() {
+    when(taskClaimService.tryClaimLease(IdReservationReleaseScheduler.TASK_NAME, claimDuration))
+        .thenReturn(Optional.of(lease));
+    when(processor.pendingTaskIds()).thenReturn(List.of());
+
+    scheduler.retryPendingReleases();
+
+    verifyNoInteractions(identityClientConfig, identityAuthentication);
+    verify(taskClaimService).release(lease);
+    assertThat(TechnicalAccessTokenContext.get()).isEmpty();
   }
 }

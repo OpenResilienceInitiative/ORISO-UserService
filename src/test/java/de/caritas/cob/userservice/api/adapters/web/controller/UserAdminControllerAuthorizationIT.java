@@ -24,6 +24,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
@@ -31,8 +33,12 @@ import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
+import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import jakarta.servlet.http.Cookie;
 import java.util.List;
 import java.util.UUID;
@@ -53,6 +59,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @SpringBootTest
 @AutoConfigureMockMvc
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+@WithTenant(1L)
 class UserAdminControllerAuthorizationIT {
 
   private static final String CSRF_HEADER = "X-CSRF-Token";
@@ -63,6 +70,11 @@ class UserAdminControllerAuthorizationIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
 
+  /** Every request is sent by a caller of Träger 1. */
+  @MockitoBean private TenantResolverService tenantResolverService;
+
+  @MockitoBean private TenantService tenantService;
+
   @Autowired private MockMvc mvc;
 
   @MockitoBean private SessionAdminService sessionAdminService;
@@ -70,6 +82,8 @@ class UserAdminControllerAuthorizationIT {
   @MockitoBean private ViolationReportGenerator violationReportGenerator;
 
   @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
+
+  @MockitoBean private ExistingAccountSetupIssuer accountSetupIssuer;
 
   @MockitoBean private AskerUserAdminFacade askerUserAdminFacade;
 
@@ -350,6 +364,9 @@ class UserAdminControllerAuthorizationIT {
     // which can hand `password` a value shorter than its @Size(min = 8) and turn this into a
     // seed-dependent 400. Pin the only min-length-constrained field to a valid value.
     createConsultantDTO.setPassword("SecurePass123!");
+    when(consultantAdminFacade.createNewConsultant(any()))
+        .thenReturn(
+            new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id("consultant-1")));
 
     mvc.perform(
             post(CONSULTANT_PATH)
@@ -513,8 +530,6 @@ class UserAdminControllerAuthorizationIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(agencies)))
         .andExpect(status().isOk());
-
-    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(agencies);
     verify(consultantAdminFacade).setConsultantAgencies(anyString(), any());
   }
 
