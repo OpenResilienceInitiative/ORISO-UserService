@@ -131,7 +131,7 @@ class CounsellorOnboardingWizardIT {
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
         .thenReturn(
             new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id(CONSULTANT_ID)));
-    when(keycloakService.login(anyString(), anyString()))
+    when(keycloakService.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
     when(keycloakService.getOtpCredential(anyString()))
         .thenReturn(
@@ -157,8 +157,8 @@ class CounsellorOnboardingWizardIT {
         .thenThrow(new IllegalStateException("agency service unreachable"));
   }
 
-  private void seedInvite(String rawToken) throws Exception {
-    accountInviteRepository.save(
+  private AccountInvite seedInvite(String rawToken) throws Exception {
+    return accountInviteRepository.save(
         AccountInvite.builder()
             .targetRole(AccountInviteTargetRole.COUNSELLOR)
             .tenantId(79L)
@@ -264,6 +264,72 @@ class CounsellorOnboardingWizardIT {
         .perform(get("/users/account-invites/{token}/onboarding", token))
         .andExpect(status().isGone())
         .andExpect(jsonPath("$.reason").value("CONSUMED"));
+  }
+
+  @Test
+  void emailSetup_publicTokenFlow_requiresVerifiedCodeBeforeConsumption() throws Exception {
+    String token = "email-wizard-" + java.util.UUID.randomUUID();
+    AccountInvite invite = seedInvite(token);
+    invite.setStatus(AccountInviteStatus.ACCEPTED);
+    invite.setAcceptedByUserId(CONSULTANT_ID);
+    invite.setProvisionedUserId(CONSULTANT_ID);
+    accountInviteRepository.save(invite);
+    when(keycloakService.initiateEmailVerification(
+            "codex_wizard_counsellor", "lisa.simpson@example.org"))
+        .thenReturn(
+            de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart.success());
+    when(keycloakService.finishEmailVerification("codex_wizard_counsellor", "000000"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                false, false, true, null));
+    when(keycloakService.finishEmailVerification("codex_wizard_counsellor", "123456"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                true, false, true, "lisa.simpson@example.org"));
+
+    mockMvc
+        .perform(
+            post("/service/users/account-invites/{token}/onboarding/two-factor/email", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE))
+        .andExpect(status().isNoContent());
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/two-factor", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"otp\":\"000000\",\"method\":\"EMAIL\"}"))
+        .andExpect(status().isBadRequest());
+    assertThat(accountInviteRepository.findById(invite.getId()).orElseThrow().getTwoFactorStatus())
+        .isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+    mockMvc
+        .perform(
+            post("/service/users/account-invites/{token}/onboarding/two-factor", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"otp\":\"123456\",\"method\":\"EMAIL\"}"))
+        .andExpect(status().isOk());
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isGone())
+        .andExpect(jsonPath("$.reason").value("CONSUMED"));
+  }
+
+  @Test
+  void emailSetup_unknownTokenIsRejectedBeforeMailAndCsrfStillApplies() throws Exception {
+    mockMvc
+        .perform(post("/users/account-invites/{token}/onboarding/two-factor/email", "unknown"))
+        .andExpect(status().isForbidden());
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/two-factor/email", "unknown")
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE))
+        .andExpect(status().isNotFound());
+    org.mockito.Mockito.verify(keycloakService, org.mockito.Mockito.never())
+        .initiateEmailVerification(anyString(), anyString());
   }
 
   @Test

@@ -241,6 +241,22 @@ public class CounsellorOnboardingService {
     return new CounsellorRegistrationResult(consultantId, null, null, false);
   }
 
+  /** Sends the existing SPI challenge to the recipient of a live, accepted invitation. */
+  public void startEmailTwoFactor(String rawToken) {
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    OnboardingEmailSecondFactor.start(invite, identityProfileLookup, identitySecondFactor);
+  }
+
+  public void activateEmailTwoFactor(String rawToken, String oneTimePassword) {
+    if (isBlank(oneTimePassword)) {
+      throw new BadRequestException("otp is required");
+    }
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    OnboardingEmailSecondFactor.verify(
+        invite, oneTimePassword, identityProfileLookup, identitySecondFactor);
+    consumeTwoFactorGate(rawToken);
+  }
+
   /**
    * Confirms the pending TOTP setup with a first one-time password. Same contract as the
    * tenant-admin endpoint: an invalid or rejected code answers 400 (the wizard maps 400/422 to its
@@ -270,6 +286,7 @@ public class CounsellorOnboardingService {
             .findById(invite.getAcceptedByUserId())
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
+    OnboardingEmailSecondFactor.requireInactive(profile, identitySecondFactor);
     boolean valid =
         identitySecondFactor.setUpOtpCredential(
             profile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
@@ -277,7 +294,7 @@ public class CounsellorOnboardingService {
       throw new BadRequestException("Invalid one-time password");
     }
 
-    consumeTwoFactorGate(invite);
+    consumeTwoFactorGate(rawToken);
   }
 
   /**
@@ -333,12 +350,13 @@ public class CounsellorOnboardingService {
 
   /**
    * Terminal consumption of the link once Keycloak accepted the one-time password. The pending
-   * secret is cleared FIRST so the gate transition — which re-reads the invite by its acceptor —
-   * wins over the merge of the detached row loaded before the Keycloak round trip.
+   * token, expiry and pending gate are checked again under the row lock after the remote call.
+   * Clearing the pending secret before marking the gate active preserves the existing transition.
    */
-  private void consumeTwoFactorGate(AccountInvite invite) {
+  private void consumeTwoFactorGate(String rawToken) {
     inTransaction(
         () -> {
+          AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
           invite.setTotpPendingSecret(null);
           invite.setUpdateDate(LocalDateTime.now());
           accountInviteRepository.save(invite);

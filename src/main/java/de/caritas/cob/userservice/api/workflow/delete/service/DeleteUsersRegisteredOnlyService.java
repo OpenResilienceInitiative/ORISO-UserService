@@ -22,6 +22,8 @@ public class DeleteUsersRegisteredOnlyService {
   private final @NonNull DeleteUserAccountService deleteUserAccountService;
   private final @NonNull WorkflowErrorMailService workflowErrorMailService;
 
+  private final @NonNull org.springframework.jdbc.core.JdbcTemplate jdbc;
+
   @Value("${user.registeredonly.deleteWorkflow.check.days}")
   private int userRegisteredOnlyDeleteWorkflowCheckDays;
 
@@ -45,6 +47,15 @@ public class DeleteUsersRegisteredOnlyService {
         userRepository
             .findAllByDeleteDateNullAndNoRunningSessionsAndCreateDateOlderThan(dateTimeToCheck)
             .stream()
+            // An enrolled identity belongs exclusively to the immutable inactivity lifecycle.
+            // Do not bypass its activity, mixed-role or retry rules when old flags are re-enabled.
+            .filter(
+                user ->
+                    jdbc.queryForList(
+                            "SELECT identity_id FROM account_inactivity WHERE identity_id=?",
+                            String.class,
+                            user.getUserId())
+                        .isEmpty())
             .map(deleteUserAccountService::performUserDeletion)
             .flatMap(Collection::stream)
             .collect(Collectors.toList());

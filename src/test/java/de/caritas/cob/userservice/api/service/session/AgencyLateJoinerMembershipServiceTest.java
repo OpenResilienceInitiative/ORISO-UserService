@@ -39,7 +39,6 @@ class AgencyLateJoinerMembershipServiceTest {
 
   private static final Long AGENCY_ID = 4711L;
   private static final String AGENCY_MATRIX_USER_ID = "@agency4711:example.org";
-  private static final String AGENCY_MATRIX_PASSWORD = "agency-secret";
   private static final String AGENCY_TOKEN = "agency-access-token";
   private static final String CONSULTANT_MATRIX_USER_ID = "@late:example.org";
 
@@ -106,11 +105,9 @@ class AgencyLateJoinerMembershipServiceTest {
   private void agencyServiceAccountAvailable() {
     var credentials = new AgencyMatrixCredentialsDTO();
     credentials.setMatrixUserId(AGENCY_MATRIX_USER_ID);
-    credentials.setMatrixPassword(AGENCY_MATRIX_PASSWORD);
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(credentials));
-    when(sessionRoomGateway.loginUser("agency4711", AGENCY_MATRIX_PASSWORD))
-        .thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_USER_ID)).thenReturn(AGENCY_TOKEN);
   }
 
   /** The service consults both open-enquiry queues, so every fixture has to answer for both. */

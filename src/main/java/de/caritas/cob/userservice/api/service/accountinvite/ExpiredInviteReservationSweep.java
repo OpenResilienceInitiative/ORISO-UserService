@@ -53,7 +53,8 @@ public class ExpiredInviteReservationSweep {
       }
       var technicalUser = identityClientConfig.getTechnicalUser();
       var login =
-          identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
+          identityAuthentication.loginService(
+              technicalUser.getClientId(), technicalUser.getClientSecret());
       int expired =
           TechnicalAccessTokenContext.offerDuring(
               login.accessToken(), accountInviteService::expireElapsedInvites);

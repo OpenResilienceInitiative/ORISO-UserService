@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.mapping;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.admin.service.admin.AccountLoginStatusService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
@@ -22,11 +23,51 @@ import org.springframework.web.client.HttpClientErrorException;
 class AdminDtoMapperTest {
 
   @Mock private TenantService tenantService;
+  @Mock private AccountLoginStatusService accountLoginStatusService;
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void adminSearchResultOf_Should_StopStatusReadsAfterOneOutage_AndKeepBothRows() {
+    var lookup =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup.class);
+    var mapper = new AdminDtoMapper(tenantService, new AccountLoginStatusService(lookup));
+    when(lookup.findEnabledById("admin-id"))
+        .thenThrow(new jakarta.ws.rs.ProcessingException("timeout"));
+    var source = resultMap();
+    var first = (Map<String, Object>) ((List<?>) source.get("admins")).get(0);
+    var second = new HashMap<>(first);
+    second.put("id", "second-admin");
+    source.put("admins", List.of(first, second));
+    source.put("totalElements", 2);
+
+    var result = mapper.adminSearchResultOf(source, "*", 1, 10, "FIRSTNAME", "ASC");
+
+    assertThat(result.getEmbedded()).hasSize(2);
+    assertThat(result.getTotal()).isEqualTo(2);
+    assertThat(result.getEmbedded())
+        .allSatisfy(row -> assertThat(row.getEmbedded().getActive()).isNull());
+    org.mockito.Mockito.verify(lookup).findEnabledById("admin-id");
+    org.mockito.Mockito.verifyNoMoreInteractions(lookup);
+  }
+
+  @Test
+  void adminSearchResultOf_Should_ExposeDisabledLogin_ForTheScopedRow() {
+    var status = org.mockito.Mockito.mock(AccountLoginStatusService.class);
+    var mapper = new AdminDtoMapper(tenantService, status);
+    when(status.activeByIds(List.of("admin-id"))).thenReturn(Map.of("admin-id", false));
+
+    var result = mapper.adminSearchResultOf(resultMap(), "*", 1, 10, "FIRSTNAME", "ASC");
+
+    assertThat(result.getEmbedded().get(0).getEmbedded().getActive()).isFalse();
+    org.mockito.Mockito.verify(status).activeByIds(List.of("admin-id"));
+    org.mockito.Mockito.verifyNoMoreInteractions(status);
+  }
 
   @Test
   void adminSearchResultOf_Should_NotFail_WhenTenantServiceReturnsNotFound() {
     // given
-    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService);
+    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService, accountLoginStatusService);
     ReflectionTestUtils.setField(adminDtoMapper, "multiTenancyEnabled", true);
     when(tenantService.getRestrictedTenantData(2L))
         .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
@@ -49,7 +90,7 @@ class AdminDtoMapperTest {
   @Test
   @SuppressWarnings("unchecked")
   void adminSearchResultOf_Should_FallBackToUsernameForPublicName_When_NamesAreBlank() {
-    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService);
+    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService, accountLoginStatusService);
     ReflectionTestUtils.setField(adminDtoMapper, "multiTenancyEnabled", false);
     var resultMap = resultMap();
     var adminMap = (Map<String, Object>) ((List<?>) resultMap.get("admins")).get(0);
@@ -64,7 +105,7 @@ class AdminDtoMapperTest {
   @Test
   void adminSearchResultOf_Should_MapSupportAdminRoleInOrg() {
     // given
-    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService);
+    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService, accountLoginStatusService);
     ReflectionTestUtils.setField(adminDtoMapper, "multiTenancyEnabled", false);
     var resultMap = resultMap();
     ((Map<String, Object>) ((List<?>) resultMap.get("admins")).get(0))
@@ -79,7 +120,7 @@ class AdminDtoMapperTest {
 
   @Test
   void adminSearchResultOf_Should_KeepFilters_In_PageLinks() {
-    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService);
+    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService, accountLoginStatusService);
     var resultMap = resultMap();
     resultMap.put("isFirstPage", false);
     resultMap.put("isLastPage", false);

@@ -22,6 +22,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.UUID;
+import org.springframework.beans.factory.ObjectProvider;
 
 /**
  * Synthetic accounts placed in a Träger: every tenant-filtered row carries the tenant it is seeded
@@ -38,6 +39,10 @@ public class TenantFixtures {
   private final AdminRepository adminRepository;
   private final AdminAgencyRepository adminAgencyRepository;
 
+  private final ObjectProvider<
+          de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService>
+      lifecycleProvider;
+
   private final Deque<Runnable> removals = new ArrayDeque<>();
 
   public TenantFixtures(
@@ -46,13 +51,17 @@ public class TenantFixtures {
       UserRepository userRepository,
       SessionRepository sessionRepository,
       AdminRepository adminRepository,
-      AdminAgencyRepository adminAgencyRepository) {
+      AdminAgencyRepository adminAgencyRepository,
+      ObjectProvider<
+              de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService>
+          lifecycleProvider) {
     this.consultantRepository = consultantRepository;
     this.consultantAgencyRepository = consultantAgencyRepository;
     this.userRepository = userRepository;
     this.sessionRepository = sessionRepository;
     this.adminRepository = adminRepository;
     this.adminAgencyRepository = adminAgencyRepository;
+    this.lifecycleProvider = lifecycleProvider;
   }
 
   /** A counsellor of this Träger, member of the given agencies. */
@@ -80,6 +89,7 @@ public class TenantFixtures {
           consultant.setLanguageCode(LanguageCode.de);
           consultant.setMatrixUserId("@synthetic-" + id.substring(0, 8) + ":synthetic.oriso.test");
           var saved = consultantRepository.save(consultant);
+          activeIdentity(id, tenantId);
           // Also the relations the code under test added, else the counsellor cannot go.
           removeLater(
               () -> {
@@ -118,6 +128,7 @@ public class TenantFixtures {
                       .email(id.substring(0, 8) + "@synthetic.oriso.test")
                       .type(type)
                       .build());
+          activeIdentity(id, tenantId);
           removeLater(
               () -> {
                 adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(id));
@@ -148,6 +159,7 @@ public class TenantFixtures {
           user.setLanguageCode(LanguageCode.de);
           user.setEncourage2fa(true);
           var saved = userRepository.save(user);
+          activeIdentity(id, tenantId);
           removeLater(() -> userRepository.deleteById(id));
           return saved;
         });
@@ -189,6 +201,17 @@ public class TenantFixtures {
             removals.pop().run();
           }
         });
+  }
+
+  /** Fixture-created people have the same active lifecycle record as provisioned people. */
+  private void activeIdentity(String id, long tenantId) {
+    var lifecycle = lifecycleProvider.getIfAvailable();
+    if (lifecycle == null) {
+      return;
+    }
+    var createdAt = java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+    lifecycle.assignAtCreation(id, tenantId, 24, 0, createdAt);
+    removeLater(() -> lifecycle.discardUncompletedCreation(id, 24, 0, createdAt));
   }
 
   private void removeLater(Runnable removal) {

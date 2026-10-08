@@ -3,6 +3,9 @@ info:
   title: will be replaced
   description: This information will be replaced by the SpringFox config information
   version: 0.0.1
+externalDocs:
+  description: Account inactivity lifecycle and platform administration API.
+  url: ./account-inactivity.yaml
 paths:
   /users/identity-suggestions:
     post:
@@ -2687,6 +2690,13 @@ components:
         consultantId:
           type: string
           description: UUID
+        temporary:
+          type: boolean
+          description: >-
+            "Join without an account" from a self-help group invite link. The browser holds the
+            only login, so the account is deleted once no login can still be alive
+            (`user.temporary.deleteWorkflow.maxAge`, default 24 hours). Default false.
+          example: false
         mainTopicId:
           type: integer
           example: 15
@@ -2703,6 +2713,21 @@ components:
           example: 'DIVERSE'
         preferredLanguage:
           $ref: "#/components/schemas/LanguageCode"
+        groupChatId:
+          type: integer
+          format: int64
+          description: >-
+            Self-help group the person joins through its invite link. When set, the
+            registration assigns that group and opens no counselling enquiry. It must be a
+            self-help group of `agencyId`, it needs `groupChatInviteToken`, and it cannot be
+            combined with `consultantId`.
+          example: 19
+        groupChatInviteToken:
+          type: string
+          description: >-
+            The secret part of that group's invite link. Required with `groupChatId`; a missing
+            or wrong token answers 403 before any account is created, the same check as joining
+            by invite link.
 
 
     SessionDataDTO:
@@ -3524,7 +3549,10 @@ components:
           type: string
           maxLength: 64
           example: "motif-24"
-          description: Id of the chosen counsellor motif; only set together with avatarKind = ICON.
+          description: >-
+            Consultants: id of the chosen counsellor motif, only set together with avatarKind =
+            ICON. Advice seekers (#1240): id of the chosen animal; absent when the default derived
+            from the user id applies.
         firstName:
           type: string
           example: Max
@@ -3680,6 +3708,20 @@ components:
           example: true
         emailNotifications:
           $ref: "#/components/schemas/EmailNotificationsDTO"
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS]
+          description: >-
+            Consultants only (#1240): ICON shows the motif in avatarId, INITIALS drops the motif
+            and brings back the default avatar. Omitted with a non-empty avatarId means ICON.
+        avatarId:
+          type: string
+          pattern: '^([a-z0-9-]{1,40})?$'
+          example: magpie
+          description: >-
+            The chosen avatar (#1240): the counsellor motif id for consultants, the animal id for
+            advice seekers, both the lower-case file stem such as "magpie". An empty string clears
+            the choice; omitted leaves it unchanged.
 
     UpdateConsultantDTO:
       type: object

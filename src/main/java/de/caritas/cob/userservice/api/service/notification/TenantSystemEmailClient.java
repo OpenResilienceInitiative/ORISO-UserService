@@ -177,10 +177,11 @@ public class TenantSystemEmailClient {
 
   private HttpHeaders technicalHeaders() {
     var account = identityConfig.getTechnicalUser();
-    if (account == null || account.getUsername() == null || account.getPassword() == null) {
+    if (account == null || account.getClientId() == null || account.getClientSecret() == null) {
       throw new IllegalStateException("Identity technical account is not configured");
     }
-    String token = authentication.login(account.getUsername(), account.getPassword()).accessToken();
+    String token =
+        authentication.loginService(account.getClientId(), account.getClientSecret()).accessToken();
     return headerSupplier.getKeycloakAndCsrfHttpHeaders(token);
   }
 

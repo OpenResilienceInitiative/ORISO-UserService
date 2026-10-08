@@ -90,12 +90,12 @@ public final class PermittingDpaOwnerFixture {
     ReflectionTestUtils.setField(headers, "csrfCookieProperty", "CSRF-TOKEN");
     var identity = mock(IdentityAuthentication.class);
     lenient()
-        .when(identity.login(anyString(), anyString()))
+        .when(identity.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("synthetic-service-token", 60, 60, "synthetic-refresh"));
     var config = mock(IdentityClientConfig.class);
     var serviceUser = new TechnicalUserConfig();
-    serviceUser.setUsername("synthetic-service");
-    serviceUser.setPassword("synthetic-fixture");
+    serviceUser.setClientId("synthetic-service");
+    serviceUser.setClientSecret("synthetic-fixture");
     lenient().when(config.getTechnicalUser()).thenReturn(serviceUser);
     var caches = new ConcurrentMapCacheManager("agencyCache", "tenantCache");
     var agencies =

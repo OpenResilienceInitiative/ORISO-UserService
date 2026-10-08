@@ -85,7 +85,10 @@ public class UserDataResponseDTO {
   /** Counsellor avatar choice (#1046): ICON, INITIALS or PICTURE; null when nothing was chosen. */
   private String avatarKind;
 
-  /** Id of the chosen counsellor motif; only set together with avatarKind = ICON. */
+  /**
+   * Consultants: id of the chosen counsellor motif, only set together with avatarKind = ICON.
+   * Advice seekers (#1240): id of the chosen animal; null when the default applies.
+   */
   private String avatarId;
 
   @JsonIgnore private Boolean encourage2fa;

@@ -55,9 +55,6 @@ public class TenantEmailBrandValues {
     // <img src=""> next to the wordmark is a broken-image icon in every mail client.
     values.put("logoUrl", branding.logoUrl() == null ? "" : branding.logoUrl());
 
-    // The button fill is contrast-guarded (its label is white in the template).
-    values.put("primaryColor", orisoEmailBrand.readablePrimary(branding.accentColor()));
-
     if (branding.imprintUrl() != null) {
       values.put("imprintUrl", branding.imprintUrl());
     }

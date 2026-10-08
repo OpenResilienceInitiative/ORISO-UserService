@@ -76,7 +76,8 @@ import org.springframework.test.web.servlet.MockMvc;
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @WithTenant(1L)
-class QueuedInviteReleaseOnOnboardingIT {
+class QueuedInviteReleaseOnOnboardingIT
+    extends de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture {
 
   private static final long TENANT = 79L;
   private static final long NEW_AGENCY = 1276L;
@@ -127,7 +128,7 @@ class QueuedInviteReleaseOnOnboardingIT {
     when(agencyService.getAgencyWithoutCaching(NEW_AGENCY)).thenReturn(null);
     when(topicService.getAllActiveTopicsMap())
         .thenReturn(java.util.Map.of(TOPIC, new TopicDTO().id(TOPIC).name("Sucht")));
-    when(keycloakService.login(anyString(), anyString()))
+    when(keycloakService.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
     when(keycloakService.createUser(any(UserDTO.class), anyString(), anyString()))
         .thenReturn(new CreatedIdentity(ADMIN_ID));

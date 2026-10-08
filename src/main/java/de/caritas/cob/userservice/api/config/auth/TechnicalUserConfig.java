@@ -12,7 +12,7 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "identity.technical-user")
 public class TechnicalUserConfig {
 
-  @NotBlank private String username;
+  @NotBlank private String clientId;
 
-  @NotBlank private String password;
+  @lombok.ToString.Exclude @NotBlank private String clientSecret;
 }

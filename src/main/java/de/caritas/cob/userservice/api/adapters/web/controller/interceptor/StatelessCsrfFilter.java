@@ -100,7 +100,8 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
       // endpoints must still pass the normal CSRF check.
       if ("POST".equals(request.getMethod())
           && "/internal/matrix/group-join-policy".equals(request.getRequestURI())) return true;
-      if ("/internal/matrixrtc/call-policy".equals(request.getRequestURI())) {
+      if ("/internal/matrixrtc/call-policy".equals(request.getRequestURI())
+          || "/internal/matrixrtc/media-access".equals(request.getRequestURI())) {
         return true;
       }
       // Magic link endpoints are public login bootstrap endpoints and must work without a CSRF
