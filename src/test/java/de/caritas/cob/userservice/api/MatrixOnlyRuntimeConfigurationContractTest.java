@@ -55,19 +55,51 @@ class MatrixOnlyRuntimeConfigurationContractTest {
     final var buildAction =
         Files.readString(Path.of(".github/actions/docker-build-push/action.yml"));
     final var mainWorkflow = Files.readString(Path.of(".github/workflows/ci-main.yml"));
+    final var scanScript = Files.readString(Path.of("scripts/ci/scan-image-archive.sh"));
+    final var publishScript = Files.readString(Path.of("scripts/ci/publish-image-archive.sh"));
+    final var archiveEnvironment = "IMAGE_ARCHIVE: ${{ runner.temp }}/${{ inputs.image_name }}.tar";
 
     assertThat(buildAction)
         .contains("linux/amd64,linux/arm64")
         .contains("provenance: mode=max")
         .contains("sbom: true")
-        .contains("value: ${{ steps.build.outputs.digest }}");
+        .contains("push: false")
+        .contains("outputs: type=oci,dest=${{ runner.temp }}/${{ inputs.image_name }}.tar")
+        .contains("EXPECTED_DIGEST: ${{ steps.build.outputs.digest }}")
+        .contains("value: ${{ steps.publish.outputs.digest }}")
+        .containsOnlyOnce("uses: docker/build-push-action@")
+        .doesNotContain("tags: ${{ steps.meta.outputs.tags }}", "continue-on-error:")
+        .containsSubsequence(
+            "uses: docker/build-push-action@",
+            archiveEnvironment,
+            "run: bash scripts/ci/scan-image-archive.sh",
+            "uses: docker/login-action@",
+            archiveEnvironment,
+            "run: bash scripts/ci/publish-image-archive.sh");
+    var scanStep =
+        buildAction.substring(
+            buildAction.indexOf("  - name: Reject fixable high or critical vulnerabilities"),
+            buildAction.indexOf("  - name: Login to GitHub Container Registry"));
+    assertThat(scanStep).doesNotContain("if:");
+    assertThat(scanScript)
+        .contains("set -euo pipefail", "for platform in", "--override-os linux --override-arch")
+        .containsSubsequence("oci-archive:$archive", "trivy image --input")
+        .contains("--exit-code 1", "--ignore-unfixed", "--vuln-type os,library")
+        .contains("--severity CRITICAL,HIGH");
+    assertThat(publishScript)
+        .contains("set -euo pipefail", "skopeo copy --all --preserve-digests")
+        .contains("\"oci-archive:$archive\"", "--digestfile \"$digest_file\"")
+        .containsSubsequence(
+            "if [[ \"$(cat \"$digest_file\")\" != \"$expected_digest\" ]]",
+            "exit 1",
+            "printf 'digest=%s\\n' \"$expected_digest\" >> \"$GITHUB_OUTPUT\"");
     assertThat(mainWorkflow)
         .contains("id-token: write")
         .contains("attestations: write")
-        .contains("aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25")
-        .contains("actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6")
-        .contains(
-            "image-ref: ${{ env.REGISTRY }}/${{ env.ORG }}/oriso-userservice@${{ steps.image.outputs.digest }}")
+        .containsSubsequence(
+            "uses: ./.github/actions/docker-build-push",
+            "uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6")
+        .doesNotContain("continue-on-error:", "if: ${{ always() }}")
         .contains("subject-digest: ${{ steps.image.outputs.digest }}");
   }
 

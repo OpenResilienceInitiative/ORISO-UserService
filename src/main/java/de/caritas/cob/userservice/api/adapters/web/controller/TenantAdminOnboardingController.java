@@ -356,6 +356,10 @@ public class TenantAdminOnboardingController {
     public Long tenantId;
 
     public Long agencyId;
+
+    /** Persisted invitation origin: AUTO/MANUAL reserve a new agency, EXISTING joins one. */
+    public String agencyIdAllocationMode;
+
     public Long departmentId;
 
     /** Counsellor invites only (#997): the invite's coverage — preselected in the wizard. */
@@ -475,6 +479,10 @@ public class TenantAdminOnboardingController {
       dto.lastName = invite.getLastName();
       dto.tenantId = invite.getTenantId();
       dto.agencyId = invite.getAgencyId();
+      dto.agencyIdAllocationMode =
+          invite.getAgencyIdAllocationMode() == null
+              ? null
+              : invite.getAgencyIdAllocationMode().name();
       dto.departmentId = invite.getDepartmentId();
       dto.topics = state.topics().stream().map(TopicOptionDTO::from).toList();
       dto.availableTopics = state.availableTopics().stream().map(TopicOptionDTO::from).toList();

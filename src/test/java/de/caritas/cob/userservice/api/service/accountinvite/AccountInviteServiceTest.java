@@ -54,6 +54,9 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -2706,6 +2709,42 @@ class AccountInviteServiceTest {
 
     assertThat(result.invite().getTenantIdReservationToken()).isEqualTo("res-token-21");
     assertThat(result.invite().getTenantId()).isEqualTo(21L);
+  }
+
+  @ParameterizedTest
+  @EnumSource(IdAllocationMode.class)
+  @NullSource
+  void resendInvite_Should_PreserveTheAgencyOriginOnTheReplacementInvite(IdAllocationMode origin) {
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(11L)
+            .tenantId(21L)
+            .agencyId(7L)
+            .agencyIdAllocationMode(origin)
+            .recipientEmail("agency-admin@example.org")
+            .targetRole(AccountInviteTargetRole.AGENCY_ADMIN)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(21L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("Again")
+            .body("Use {{inviteLink}}")
+            .active(true)
+            .build();
+    when(accountInviteRepository.findById(11L)).thenReturn(Optional.of(oldInvite));
+    when(templateRepository.findById(21L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    givenSuccessfulDispatch();
+
+    var replacement = service.resendInvite(new SendInviteCommand(11L, 21L)).invite();
+
+    assertThat(replacement).isNotSameAs(oldInvite);
+    assertThat(oldInvite.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
+    assertThat(replacement.getAgencyIdAllocationMode()).isEqualTo(origin);
+    assertThat(replacement.getPurpose()).isEqualTo(AccountInvitePurpose.INVITE);
   }
 
   @Test

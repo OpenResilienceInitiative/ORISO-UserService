@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -23,6 +24,7 @@ import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
@@ -47,6 +49,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
@@ -263,7 +267,85 @@ class AgencyAdminOnboardingWizardIT
         .andExpect(jsonPath("$.alsoCounsellor").value(false))
         .andExpect(jsonPath("$.agencyId").value(AGENCY))
         .andExpect(jsonPath("$.agencyExists").value(true))
+        .andExpect(jsonPath("$.agencyIdAllocationMode").value("EXISTING"))
         .andExpect(jsonPath("$.topics[0].id").value(TOPIC));
+  }
+
+  @ParameterizedTest
+  @CsvSource({"AUTO, AUTO", "MANUAL, MANUAL"})
+  void resolve_Should_KeepTheFoundingOrigin_When_RegistrationCreatesTheAgencyAndResumesAtTwoFactor(
+      IdAllocationMode mode, String expectedOrigin) throws Exception {
+    String token = seedAgencyAdminInvite(NEW_AGENCY, false, mode);
+
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.agencyExists").value(false))
+        .andExpect(jsonPath("$.agencyIdAllocationMode").value(expectedOrigin))
+        .andExpect(jsonPath("$.onboardingPurpose").value("INVITE"));
+
+    register(token, "admin_new_agency", false, "Beratungsstelle Nord").andExpect(status().isOk());
+
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.phase").value("PENDING_2FA_ACTIVATION"))
+        .andExpect(jsonPath("$.agencyExists").value(true))
+        .andExpect(jsonPath("$.agencyIdAllocationMode").value(expectedOrigin))
+        .andExpect(jsonPath("$.onboardingPurpose").value("INVITE"));
+  }
+
+  @Test
+  void resolve_Should_KeepTheExistingAgencyOrigin_When_RegistrationResumesAtTwoFactor()
+      throws Exception {
+    String token = seedAgencyAdminInvite(AGENCY, false);
+    register(token, "admin_only", false, null).andExpect(status().isOk());
+
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.phase").value("PENDING_2FA_ACTIVATION"))
+        .andExpect(jsonPath("$.agencyExists").value(true))
+        .andExpect(jsonPath("$.agencyIdAllocationMode").value("EXISTING"))
+        .andExpect(jsonPath("$.onboardingPurpose").value("INVITE"));
+  }
+
+  @Test
+  void resolve_Should_LeaveLegacyOriginUnknown_BeforeRegistrationAndDuringTwoFactorResume()
+      throws Exception {
+    String token = seedAgencyAdminInvite(AGENCY, false, null);
+
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.agencyIdAllocationMode").value(nullValue()));
+
+    register(token, "admin_only", false, null).andExpect(status().isOk());
+
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.phase").value("PENDING_2FA_ACTIVATION"))
+        .andExpect(jsonPath("$.agencyIdAllocationMode").value(nullValue()))
+        .andExpect(jsonPath("$.onboardingPurpose").value("INVITE"));
+  }
+
+  @Test
+  void resolve_Should_KeepExistingAccountSetupPurpose_EvenWhenTheStoredOriginReservedAnAgency()
+      throws Exception {
+    String token = seedAgencyAdminInvite(AGENCY, false, IdAllocationMode.MANUAL);
+    AccountInvite setup = accountInviteRepository.findAll().get(0);
+    setup.setPurpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+    setup.setProvisionedUserId(ADMIN_ONLY_ID);
+    accountInviteRepository.save(setup);
+
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.targetRole").value("AGENCY_ADMIN"))
+        .andExpect(jsonPath("$.agencyIdAllocationMode").value("MANUAL"))
+        .andExpect(jsonPath("$.onboardingPurpose").value("EXISTING_ACCOUNT_SETUP"))
+        .andExpect(jsonPath("$.phase").value(nullValue()));
   }
 
   @Test
@@ -572,6 +654,14 @@ class AgencyAdminOnboardingWizardIT
   }
 
   private String seedAgencyAdminInvite(long agencyId, boolean alsoCounsellor) {
+    return seedAgencyAdminInvite(
+        agencyId,
+        alsoCounsellor,
+        agencyId == AGENCY ? IdAllocationMode.EXISTING : IdAllocationMode.MANUAL);
+  }
+
+  private String seedAgencyAdminInvite(
+      long agencyId, boolean alsoCounsellor, IdAllocationMode allocationMode) {
     String token = "agency-admin-wizard-" + UUID.randomUUID();
     var seeded =
         accountInviteRepository.save(
@@ -580,8 +670,7 @@ class AgencyAdminOnboardingWizardIT
                 .tenantId(TENANT)
                 .agencyId(agencyId)
                 .agencyReservationToken(agencyId == AGENCY ? null : "owner-proof")
-                .agencyIdAllocationMode(
-                    agencyId == AGENCY ? IdAllocationMode.EXISTING : IdAllocationMode.MANUAL)
+                .agencyIdAllocationMode(allocationMode)
                 .departmentId(agencyId == AGENCY ? TOPIC : null)
                 .alsoCounsellor(alsoCounsellor)
                 .recipientEmail("agency-admin-" + UUID.randomUUID() + "@example.org")

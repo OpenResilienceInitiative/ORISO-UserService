@@ -2841,7 +2841,7 @@ components:
           description: >-
             The counsellor's chosen avatar (#1046/#1047), so the advice seeker sees the same
             avatar in the chat that the counsellor picked. Absent when no choice was made and the
-            initials fallback is rendered.
+            derived animal default is rendered.
         avatarId:
           type: string
           maxLength: 64
@@ -3367,6 +3367,12 @@ components:
           enum: [OWNER, CO_MODERATOR, PARTICIPANT]
         displayName:
           type: string
+        avatarKind:
+          type: string
+          description: Stored counsellor avatar kind; absent for advice seekers or when unset.
+        avatarId:
+          type: string
+          description: Stored animal or motif id. Absent kind and id select the derived default; INITIALS has no motif id.
 
     SessionUserDTO:
       type: object
@@ -3387,6 +3393,9 @@ components:
           description: LinkedHashMap<String, Object>
           additionalProperties:
             type: object
+        avatarId:
+          type: string
+          description: Stored animal or motif id. Absent kind and id select the derived default; INITIALS has no motif id.
 
     SessionConsultantForConsultantDTO:
       type: object
@@ -3406,6 +3415,12 @@ components:
         displayName:
           type: string
           example: Berater XYZ
+        avatarKind:
+          type: string
+          description: Stored counsellor avatar kind; absent for advice seekers or when unset.
+        avatarId:
+          type: string
+          description: Stored animal or motif id. Absent kind and id select the derived default; INITIALS has no motif id.
 
     UserSessionListResponseDTO:
       type: object
@@ -3452,7 +3467,7 @@ components:
           description: >-
             The counsellor's chosen avatar (#1046/#1047), so the advice seeker sees the same
             avatar in the chat that the counsellor picked. Absent when no choice was made and the
-            initials fallback is rendered.
+            derived animal default is rendered.
         avatarId:
           type: string
           maxLength: 64
@@ -3544,7 +3559,7 @@ components:
           enum: [ICON, INITIALS, PICTURE]
           description: >-
             Counsellor avatar choice (#1046); absent when the counsellor made no choice and the
-            initials fallback is rendered.
+            derived animal default is rendered.
         avatarId:
           type: string
           maxLength: 64
@@ -3713,7 +3728,7 @@ components:
           enum: [ICON, INITIALS]
           description: >-
             Consultants only (#1240): ICON shows the motif in avatarId, INITIALS drops the motif
-            and brings back the default avatar. Omitted with a non-empty avatarId means ICON.
+            and shows initials. Omitted with a non-empty avatarId means ICON; omitted with an empty avatarId clears both fields and restores the default avatar.
         avatarId:
           type: string
           pattern: '^([a-z0-9-]{1,40})?$'
@@ -4037,6 +4052,12 @@ components:
           type: string
         userId:
           type: string
+        avatarKind:
+          type: string
+          description: Stored counsellor avatar kind; absent for advice seekers or when unset.
+        avatarId:
+          type: string
+          description: Stored animal or motif id. Absent kind and id select the derived default; INITIALS has no motif id.
 
     UpdateChatResponseDTO:
       type: object
