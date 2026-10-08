@@ -39,7 +39,29 @@ public class CaseHandoverEmailNotification {
       long tenantId,
       String recipient,
       LanguageCode language,
-      Dialect dialect) {}
+      Dialect dialect,
+      String recipientUserId) {
+    public Mail(
+        Long requestId,
+        Long sessionId,
+        String matrixRoomId,
+        Outcome outcome,
+        long tenantId,
+        String recipient,
+        LanguageCode language,
+        Dialect dialect) {
+      this(
+          requestId,
+          sessionId,
+          matrixRoomId,
+          outcome,
+          tenantId,
+          recipient,
+          language,
+          dialect,
+          null);
+    }
+  }
 
   private record DeliveryKey(Long requestId, Outcome outcome) {}
 
@@ -48,9 +70,9 @@ public class CaseHandoverEmailNotification {
   private final @NonNull IdentityClientConfig identityClientConfig;
 
   public void consentRequested(CaseHandoverRequest request) {
-    if (!isTakeover(request) || request.getStatus() != Status.PENDING_CLIENT_CONSENT) return;
+    if (!CaseHandoverRequiredConsentMailEligibility.requiresPersonalConsent(request)) return;
     User recipient = request.getSession().getUser();
-    if (!eligible(recipient)) return;
+    if (!hasUsableEmail(recipient)) return;
     schedule(
         snapshot(
             request,
@@ -80,16 +102,21 @@ public class CaseHandoverEmailNotification {
   }
 
   private boolean eligible(NotificationsAware recipient) {
-    if (recipient == null) return false;
-    String email =
-        recipient instanceof User user ? user.getEmail() : ((Consultant) recipient).getEmail();
-    String dummySuffix = identityClientConfig.getEmailDummySuffix();
-    if (email == null || email.isBlank() || (dummySuffix != null && email.endsWith(dummySuffix)))
-      return false;
+    if (!hasUsableEmail(recipient)) return false;
     if (!releaseToggles.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)) return true;
     return recipient.isNotificationsEnabled()
         && deserializeNotificationSettingsDTOOrDefaultIfNull(recipient)
             .getReassignmentNotificationEnabled();
+  }
+
+  private boolean hasUsableEmail(NotificationsAware recipient) {
+    if (recipient == null) return false;
+    String email =
+        recipient instanceof User user ? user.getEmail() : ((Consultant) recipient).getEmail();
+    String dummySuffix = identityClientConfig.getEmailDummySuffix();
+    return email != null
+        && !email.isBlank()
+        && (dummySuffix == null || !email.endsWith(dummySuffix));
   }
 
   private Mail snapshot(
@@ -117,7 +144,8 @@ public class CaseHandoverEmailNotification {
         tenantId,
         email,
         language,
-        dialect);
+        dialect,
+        outcome == Outcome.CONSENT_REQUESTED ? request.getSession().getUser().getUserId() : null);
   }
 
   private void schedule(Mail mail) {
