@@ -98,6 +98,13 @@ class CreateEnquiryMessageFacadeErstantwortTest {
     session.setIsConsultantDirectlySet(false);
 
     when(sessionService.getSession(42L)).thenReturn(Optional.of(session));
+    when(sessionService.finalizeEnquiry(session, "de", ROOM_ID))
+        .thenAnswer(
+            invocation -> {
+              session.setStatus(SessionStatus.NEW);
+              session.setEnquiryMessageDate(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+              return session;
+            });
     when(matrixSynapseService.loginAsUserAccessToken(anyString())).thenReturn("token");
     when(matrixSynapseService.getRoomEvent(anyString(), anyString(), anyString()))
         .thenReturn(

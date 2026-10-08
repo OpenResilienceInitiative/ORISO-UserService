@@ -49,8 +49,7 @@ public class MatrixCaseReplyActorAuthorizer {
         || Objects.equals(actor.getId(), session.getUser().getUserId())) {
       return false;
     }
-    boolean assigned = session.isAdvisedBy(actor);
-    if (!assigned && !isPermittedTeamWriter(session, actor)) {
+    if (!isCurrentAssignedOrTeamWriter(session, actor)) {
       return false;
     }
     if (!requireCurrentRoomMembership) {
@@ -59,6 +58,12 @@ public class MatrixCaseReplyActorAuthorizer {
       return true;
     }
     return hasCurrentRoomMembers(session, senderMatrixUserId, session.getUser().getMatrixUserId());
+  }
+
+  // Tenant/current-identity validation remains the caller's responsibility. This shared pure
+  // decision also serves the controller's documented tenant-one legacy ownership boundary.
+  boolean isCurrentAssignedOrTeamWriter(Session session, Consultant actor) {
+    return session.isAdvisedBy(actor) || isPermittedTeamWriter(session, actor);
   }
 
   /** Unknown membership is retriable; a known mismatch is denied before SMTP. */

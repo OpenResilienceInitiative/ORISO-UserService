@@ -202,6 +202,11 @@ class SessionServiceTest {
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionSupervisionMarkerService supervisionMarkerService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionPendingReadAccess
+      rejectionReadAccess;
+
   @Mock private SessionOwnershipService sessionOwnershipService;
   @Mock private AgencyService agencyService;
   @Mock private ConsultantService consultantService;

@@ -5,6 +5,8 @@ import de.caritas.cob.userservice.api.model.NotificationRoomLevel;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService;
+import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
+import de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
 import jakarta.validation.Valid;
@@ -37,7 +39,9 @@ public class EventNotificationController {
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull TeamDiscussionNotificationService teamDiscussionNotificationService;
   private final @NonNull FeedbackMessageEmailService feedbackMessageEmailService;
+  private final @NonNull InternalChatEmailService internalChatEmailService;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull MessageEventCurrentAccessService messageEventCurrentAccessService;
   private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
   /** Upper bound of the {@code excludeEventTypes}/{@code eventTypes} lists (#1377 slice 7). */
@@ -160,6 +164,10 @@ public class EventNotificationController {
       return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
     }
 
+    // A claimed room/event is not proof that this principal may write to the current case.
+    messageEventCurrentAccessService.assertPrimaryRoomWriter(
+        request.getRoomId(), authenticatedUser);
+
     if (Boolean.TRUE.equals(request.getFeedbackMailIntent())) {
       if (request.getMatrixEventId() == null
           || request.getMatrixEventId().isBlank()
@@ -181,6 +189,13 @@ public class EventNotificationController {
           request.getSenderDisplayName(),
           request.getMentionedUserIds());
       return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+    }
+
+    if (!Boolean.TRUE.equals(request.getFeedbackMailIntent())
+        && request.getMatrixEventId() != null
+        && !request.getMatrixEventId().isBlank()) {
+      internalChatEmailService.onMessageIntent(
+          request.getRoomId(), request.getMatrixEventId(), authenticatedUser);
     }
 
     // #942: the Matrix event id (when the client sends it) keys deduplication,

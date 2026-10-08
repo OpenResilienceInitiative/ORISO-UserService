@@ -338,6 +338,19 @@ class MatrixRtcCallPolicyServiceTest {
     }
   }
 
+  @Test
+  void rejectedConversationCannotObtainRtcWritePolicyDespiteRetainedMembershipAndActiveIdentity() {
+    var rejected = new Session();
+    rejected.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    rejected.setTenantId(TENANT_ID);
+    rejected.setStatus(Session.SessionStatus.REJECTED);
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(rejected));
+    org.mockito.Mockito.lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(tenant(enabledSettings()));
+    assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
+  }
+
   private MatrixRtcCorrelationIdHasher correlationIdHasher() {
     var hasher = new MatrixRtcCorrelationIdHasher();
     ReflectionTestUtils.setField(hasher, "secret", "test-hmac-secret");

@@ -49,6 +49,53 @@ class SessionOwnershipServiceTest {
   }
 
   @Test
+  void refreshedRejectedSessionCannotAcquireAnOwner() {
+    var current = session(34L, null, 0L);
+    var expected = session(34L, null, 0L);
+    when(sessionRepository.findByIdForUpdate(34L)).thenReturn(Optional.of(current));
+    doAnswer(
+            ignored -> {
+              current.setStatus(
+                  de.caritas.cob.userservice.api.model.Session.SessionStatus.REJECTED);
+              return null;
+            })
+        .when(entityManager)
+        .refresh(current, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+
+    assertThatThrownBy(
+            () ->
+                ownershipService.updateOwnerAndStatus(
+                    expected, mock(Consultant.class), IN_PROGRESS))
+        .isInstanceOf(ConflictException.class);
+    assertThat(current.getStatus())
+        .isEqualTo(de.caritas.cob.userservice.api.model.Session.SessionStatus.REJECTED);
+    assertThat(current.getConsultant()).isNull();
+    verify(sessionRepository, never()).save(current);
+  }
+
+  @Test
+  void matchingOldCompensationCannotReopenRejectedSession() {
+    var current = session(35L, null, 0L);
+    current.setStatus(de.caritas.cob.userservice.api.model.Session.SessionStatus.REJECTED);
+    current.setAgencyId(70L);
+    when(sessionRepository.findByIdForUpdate(35L)).thenReturn(Optional.of(current));
+
+    assertThat(
+            ownershipService.compensateOwnerChange(
+                35L,
+                new SessionOwnershipService.OwnershipChange(35L, null, 0L),
+                null,
+                NEW,
+                UPDATED_AT,
+                true))
+        .isFalse();
+    assertThat(current.getStatus())
+        .isEqualTo(de.caritas.cob.userservice.api.model.Session.SessionStatus.REJECTED);
+    assertThat(current.getAgencyId()).isEqualTo(70L);
+    verify(sessionRepository, never()).save(current);
+  }
+
+  @Test
   void assignmentPreservesTheValidatedAnonymousEnquiryDepartment() {
     var owner = consultant("a");
     var current = session(31L, null, 0L);

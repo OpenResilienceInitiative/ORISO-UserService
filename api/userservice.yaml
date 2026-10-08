@@ -291,6 +291,36 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/rejection:
+    post:
+      tags:
+        - user-controller
+      summary: 'Reject a submitted ordinary agency enquiry [Authorization: Role: consultant]'
+      operationId: rejectEnquiry
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        204:
+          description: NO CONTENT - rejected and protocol closure verified
+        401:
+          description: UNAUTHORIZED - no valid authentication
+        403:
+          description: FORBIDDEN - current agency authority required
+        404:
+          description: NOT FOUND - no accessible session
+        409:
+          description: CONFLICT - enquiry changed, already accepted, or other rejection actor
+        503:
+          description: SERVICE UNAVAILABLE - rejection saved, protocol closure remains pending
+        500:
+          description: INTERNAL SERVER ERROR - unexpected failure
+      security:
+        - Bearer: [ ]
   /users/sessions/new/{sessionId}:
     put:
       tags:
@@ -2946,7 +2976,7 @@ components:
         status:
           type: integer
           example: 0
-          description: "0 = INITIAL, 1 = NEW, 2 = IN PROGRESS, 3 = DONE"
+          description: "0 = INITIAL, 1 = NEW, 2 = IN PROGRESS, 3 = DONE, 4 = IN ARCHIVE, 5 = REJECTED"
         conversationType:
           allOf:
             - $ref: '#/components/schemas/ConversationType'
@@ -4360,6 +4390,13 @@ components:
           # switchable, not opt-in. A counsellor who never opens the settings
           # screen still gets their work queue.
           default: true
+        internalChatNotificationEnabled:
+          type: boolean
+          description: >-
+            Counsellor: a new ordinary internal-group message. Independent of
+            advice-seeker messages and protected professional feedback. Omitted
+            legacy values mean enabled; an omitted PATCH preserves the saved choice.
+          example: true
         feedbackNotificationEnabled:
           type: boolean
           description: >-

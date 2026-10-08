@@ -81,6 +81,9 @@ public class SessionService {
   private final @Nullable ConsultantSessionTopicEnrichmentService sessionTopicEnrichmentService;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
   private final @NonNull SessionSupervisionMarkerService supervisionMarkerService;
+  private final @NonNull de.caritas.cob.userservice.api.service.enquiry
+          .EnquiryRejectionPendingReadAccess
+      rejectionReadAccess;
   private final @NonNull SessionOwnershipService sessionOwnershipService;
 
   @Value("${feature.topics.enabled}")
@@ -297,6 +300,30 @@ public class SessionService {
    * @param session the session
    * @return the {@link Session}
    */
+  /** Finalizes only the still-current enquiry after encrypted Matrix event readback. */
+  @Transactional
+  public Session finalizeEnquiry(Session expected, String language, String matrixRoomId) {
+    var current =
+        sessionRepository
+            .findByIdForUpdate(expected.getId())
+            .orElseThrow(() -> new NotFoundException("Session unavailable"));
+    if (current.getStatus() == SessionStatus.REJECTED
+        || current.getEnquiryMessageDate() != null
+        || !java.util.Objects.equals(current.getTenantId(), expected.getTenantId())
+        || !java.util.Objects.equals(current.getAgencyId(), expected.getAgencyId())
+        || !java.util.Objects.equals(current.getUser().getUserId(), expected.getUser().getUserId())
+        || !java.util.Objects.equals(current.getMatrixRoomId(), expected.getMatrixRoomId())) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+          "Enquiry is no longer available for finalization");
+    }
+    current.setMatrixRoomId(matrixRoomId);
+    current.setStatus(
+        current.getConsultant() == null ? SessionStatus.NEW : SessionStatus.IN_PROGRESS);
+    current.setEnquiryMessageDate(nowInUtc());
+    if (language != null) current.setLanguageCode(LanguageCode.getByCode(language));
+    return saveSession(current);
+  }
+
   public Session saveSession(Session session) {
     stampConversationTypeIfAbsent(session);
     return sessionRepository.save(session);
@@ -801,6 +828,10 @@ public class SessionService {
   }
 
   private void checkConsultantAssignment(Consultant consultant, Session session) {
+    if (session.getStatus() == SessionStatus.REJECTED) {
+      if (rejectionReadAccess.canRead(session, consultant)) return;
+      throw new ForbiddenException("No current access to rejected enquiry");
+    }
     if (session.isAdvisedBy(consultant)
         || isSupervisor(consultant, session)
         || isAllowedToAdvise(consultant, session)

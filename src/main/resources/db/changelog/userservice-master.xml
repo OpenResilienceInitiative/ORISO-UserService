@@ -195,6 +195,7 @@
   <include file="db/changelog/changeset/0105_service_notice_draft/0105_changeSet.xml" />
   <include file="db/changelog/changeset/0106_existing_account_setup/0106_changeSet.xml" />
 
+  <include file="db/changelog/changeset/0091_matrix_call_binding/0091_changeSet.xml"/>
   <include file="db/changelog/changeset/0094_session_ownership_revision/0094_changeSet.xml" />
   <include file="db/changelog/changeset/0095_case_handover_period_operations/0095_changeSet.xml" />
 
@@ -236,5 +237,6 @@
   <include file="db/changelog/changeset/20261006_dpa_notice_role/changeSet.xml"/>
   <include file="db/changelog/changeset/20260923_user_temporary_account/changeSet.xml"/>
   <include file="db/changelog/changeset/20261007_user_avatar_1240/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261008_enquiry_rejection/changeSet.xml"/>
   <include file="db/changelog/changeset/20261007_standing_access_preference_1657/changeSet.xml"/>
 </databaseChangeLog>

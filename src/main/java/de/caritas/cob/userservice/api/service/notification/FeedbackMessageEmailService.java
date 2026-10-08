@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deserializeNotificationSettingsDTOOrDefaultIfNull;
+import static de.caritas.cob.userservice.api.service.notification.NotificationEmailDiagnostics.*;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
@@ -196,22 +197,29 @@ public class FeedbackMessageEmailService {
 
     TenantSystemEmailRouteService.Route route;
     OrisoEmailRenderer.RenderedEmail email;
+    Stage setupStage = Stage.TENANT_POLICY;
     try {
-      route =
-          routes
-              .resolve(claim.getTenantId())
-              .orElseThrow(() -> new IllegalStateException("Feedback email SMTP route is missing"));
+      var configuredRoute = routes.resolve(claim.getTenantId());
+      if (configuredRoute.isEmpty()) {
+        writer.finish(id, Status.REJECTED);
+        log.info("Feedback email delivery {} suppressed by tenant notification policy", id);
+        return;
+      }
+      route = configuredRoute.get();
+      setupStage = Stage.TENANT_SMTP;
       delivery.requireConfigured(route);
+      setupStage = Stage.TENANT_CONTEXT;
       var tenant = tenants.getRestrictedTenantDataFresh(claim.getTenantId());
       if (tenant == null || !Objects.equals(tenant.getId(), claim.getTenantId())) {
-        throw new IllegalStateException("Feedback email tenant is unavailable");
+        throw failure(Stage.TENANT_CONTEXT, Reason.TENANT_UNAVAILABLE);
       }
       if (multitenancyEnabled && !singleDomainMultitenancy && isBlank(tenant.getSubdomain())) {
-        throw new IllegalStateException("Feedback email tenant subdomain is missing");
+        throw failure(Stage.TENANT_CONTEXT, Reason.TENANT_SUBDOMAIN_MISSING);
       }
       String baseUrl =
           AdviceSeekerReplyEmailService.requireBaseUrl(
               multitenancyEnabled ? tenantTemplates.getTenantBaseUrl(tenant) : applicationBaseUrl);
+      setupStage = Stage.TEMPLATE;
       var tenantBrand = branding.resolveNotification(claim.getTenantId(), baseUrl);
       var values = emailBrand.valuesForResolvedBrand(baseUrl, tenantBrand);
       values.put("platformName", values.get("offeringName"));
@@ -231,7 +239,7 @@ public class FeedbackMessageEmailService {
       }
       email = renderer.render("rueckmeldung", tone, values);
     } catch (RuntimeException unavailable) {
-      retryPreflight(id, unavailable);
+      retryPreflight(id, setupStage, unavailable);
       return;
     }
 
@@ -364,20 +372,30 @@ public class FeedbackMessageEmailService {
   }
 
   private List<String> currentMembers(String roomId) {
-    return matrix
-        .getRoomMembers(roomId)
-        .orElseThrow(() -> new IllegalStateException("Feedback room membership is unavailable"));
+    return at(
+        Stage.MATRIX_MEMBERSHIP,
+        () ->
+            matrix
+                .getRoomMembers(roomId)
+                .orElseThrow(
+                    () -> failure(Stage.MATRIX_MEMBERSHIP, Reason.DEPENDENCY_UNAVAILABLE)));
   }
 
   private boolean verifiedMatrixEvent(ReplyEmailDelivery claim, Consultant actor) {
-    String token = matrix.loginAsUserAccessToken(actor.getMatrixUserId());
+    String token =
+        at(
+            Stage.MATRIX_AUTHENTICATION,
+            () -> matrix.loginAsUserAccessToken(actor.getMatrixUserId()));
     if (isBlank(token)) {
-      throw new IllegalStateException("Feedback Matrix token is unavailable");
+      throw failure(Stage.MATRIX_AUTHENTICATION, Reason.DEPENDENCY_UNAVAILABLE);
     }
     Map<String, Object> event =
-        matrix
-            .getRoomEvent(claim.getSourceRoomId(), claim.getSourceEventId(), token)
-            .orElseThrow(() -> new IllegalStateException("Feedback Matrix event is unavailable"));
+        at(
+            Stage.MATRIX_EVENT,
+            () ->
+                matrix
+                    .getRoomEvent(claim.getSourceRoomId(), claim.getSourceEventId(), token)
+                    .orElseThrow(() -> failure(Stage.MATRIX_EVENT, Reason.DEPENDENCY_UNAVAILABLE)));
     if (!Objects.equals(claim.getSourceEventId(), event.get("event_id"))
         || !Objects.equals(actor.getMatrixUserId(), event.get("sender"))
         || !Objects.equals("m.room.encrypted", event.get("type"))) {
@@ -396,9 +414,12 @@ public class FeedbackMessageEmailService {
   }
 
   private void retryPreflight(long id, RuntimeException unavailable) {
+    retryPreflight(id, Stage.ELIGIBILITY, unavailable);
+  }
+
+  private void retryPreflight(long id, Stage stage, RuntimeException unavailable) {
     writer.retryLater(id);
-    log.warn(
-        "Feedback email {} preflight unavailable ({})", id, unavailable.getClass().getSimpleName());
+    NotificationEmailDiagnostics.retry(log, "feedback", id, stage, unavailable);
   }
 
   private record FeedbackCase(Session session, List<SessionSupervisor> supervisors) {}

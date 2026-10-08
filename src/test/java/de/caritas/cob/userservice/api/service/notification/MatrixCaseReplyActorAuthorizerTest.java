@@ -104,6 +104,17 @@ class MatrixCaseReplyActorAuthorizerTest {
     verifyNoInteractions(handovers, matrix);
   }
 
+  @Test
+  void controllerLegacyCompatibilityDoesNotBroadenThePublicMailAuthorizer() {
+    var session = session();
+    session.setTenantId(null);
+    session.getConsultant().setTenantId(null);
+
+    assertThat(authorizer.isCurrentAssignedOrTeamWriter(session, session.getConsultant())).isTrue();
+    assertThat(authorizer.isCurrentWriter(session, "@owner:matrix.example", false)).isFalse();
+    verifyNoInteractions(consultants, agencies, handovers, supervisors, matrix);
+  }
+
   private static Session session() {
     return Session.builder()
         .id(42L)

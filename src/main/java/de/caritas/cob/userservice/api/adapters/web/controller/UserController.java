@@ -105,6 +105,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 @Api(tags = "user-controller")
 public class UserController implements UsersApi {
+  private final @NonNull de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionService
+      enquiryRejectionService;
+
+  @Override
+  public ResponseEntity<Void> rejectEnquiry(@PathVariable Long sessionId) {
+    return enquiryRejectionService.rejectEnquiry(sessionId)
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.status(503).build();
+  }
 
   private final @NotNull UserAccountService userAccountProvider;
   private final @NotNull UserRegistrationControllerDelegate userRegistrationControllerDelegate;

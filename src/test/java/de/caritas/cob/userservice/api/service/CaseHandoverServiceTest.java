@@ -160,7 +160,9 @@ class CaseHandoverServiceTest {
     when(authenticatedUser.getUserId()).thenReturn(requester.getId());
     when(userAccountService.retrieveValidatedUser()).thenReturn(asker);
     when(sessionRepository.findById(123L)).thenReturn(Optional.of(session));
-    when(sessionRepository.findByIdForUpdate(123L)).thenReturn(Optional.of(session));
+    org.mockito.Mockito.lenient()
+        .when(sessionRepository.findByIdForUpdate(org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(call -> sessionRepository.findById(call.getArgument(0)));
     when(sessionOwnershipService.updateOwner(
             any(Session.class), any(Consultant.class), any(SessionStatus.class), any()))
         .thenAnswer(

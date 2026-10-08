@@ -84,8 +84,14 @@ class MatrixEventListenerServiceTest {
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
   @Mock private ConsultantMessageStatService consultantMessageStatService;
   @Mock private AdviceSeekerReplyEmailService replyEmailService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
+      internalChatEmailService;
+
   @Mock private MatrixEmailSyncCursorStore emailSyncCursorStore;
   @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
+  @Mock private MatrixCallInviteNotificationService callInviteNotifications;
 
   private Logger logger;
   private ListAppender<ILoggingEvent> logAppender;
@@ -129,8 +135,10 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
+            callInviteNotifications,
             replyEmailService,
-            emailSyncCursorStore);
+            emailSyncCursorStore,
+            internalChatEmailService);
     service.setDiagnosticMetrics(diagnosticMetrics);
     return service;
   }
@@ -203,8 +211,10 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
+            callInviteNotifications,
             replyEmailService,
-            emailSyncCursorStore) {
+            emailSyncCursorStore,
+            internalChatEmailService) {
           @Override
           void sleep(long millis) {
             // deterministic: never actually sleep in the test
@@ -650,8 +660,10 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
+            callInviteNotifications,
             replyEmailService,
-            emailSyncCursorStore) {
+            emailSyncCursorStore,
+            internalChatEmailService) {
           @Override
           void sleep(long millis) {
             // no-op
@@ -684,8 +696,10 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
+            callInviteNotifications,
             replyEmailService,
-            emailSyncCursorStore) {
+            emailSyncCursorStore,
+            internalChatEmailService) {
           @Override
           void sleep(long millis) throws InterruptedException {
             throw new InterruptedException("shutdown");

@@ -47,6 +47,9 @@ public class SessionOwnershipService {
       entityManager.detach(expectedSession);
     }
     Session current = lock(expectedSession.getId());
+    if (current.getStatus() == SessionStatus.REJECTED) {
+      throw new ConflictException("Rejected enquiry cannot be reopened");
+    }
     requireCurrentOwnership(current, expectedOwnerId, expectedRevision, expectedRowVersion);
     // The accepting counsellor’s validated department is bound before this locked update.
     current.setAgencyId(expectedSession.getAgencyId());
@@ -78,7 +81,8 @@ public class SessionOwnershipService {
       @Nullable LocalDateTime updateDate,
       boolean clearDepartment) {
     Session current = lock(sessionId);
-    if (!Objects.equals(ownerId(current.getConsultant()), assignment.ownerId())
+    if (current.getStatus() == SessionStatus.REJECTED
+        || !Objects.equals(ownerId(current.getConsultant()), assignment.ownerId())
         || current.getOwnershipRevision() != assignment.revision()) {
       return false;
     }

@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.port.out.NotificationRoomLevelRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
+import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -50,6 +51,7 @@ public class TeamDiscussionNotificationService {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull AccountInactivityService accountLifecycle;
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
 
   /**
@@ -76,7 +78,7 @@ public class TeamDiscussionNotificationService {
       return;
     }
     Session session = sessionOpt.get();
-    if (session.getConsultant() != null) {
+    if (session.getConsultant() != null || session.getStatus() == Session.SessionStatus.REJECTED) {
       // Create/accept race guard: once the case is accepted, an OPEN row must not keep
       // notifying — the facade lazily archives it on next access.
       return;
@@ -113,6 +115,14 @@ public class TeamDiscussionNotificationService {
     recordSenderAsParticipant(discussion, senderUserId, eligible);
 
     for (String recipientId : recipients) {
+      // Suspension may retain the domain identity and agency membership. Legacy accounts
+      // without a lifecycle row keep their established eligibility.
+      if (accountLifecycle
+          .snapshot(recipientId)
+          .map(account -> account.status() != AccountInactivityService.Status.ACTIVE)
+          .orElse(false)) {
+        continue;
+      }
       if (dropForConversationLevel(recipientId, roomId, mentioned.contains(recipientId))) {
         continue;
       }
@@ -152,7 +162,8 @@ public class TeamDiscussionNotificationService {
     Set<String> ids = new HashSet<>();
     for (ConsultantAgency consultantAgency : consultantAgencies) {
       if (consultantAgency.getConsultant() != null
-          && consultantAgency.getConsultant().getId() != null) {
+          && consultantAgency.getConsultant().getId() != null
+          && consultantAgency.getConsultant().getDeleteDate() == null) {
         ids.add(consultantAgency.getConsultant().getId());
       }
     }

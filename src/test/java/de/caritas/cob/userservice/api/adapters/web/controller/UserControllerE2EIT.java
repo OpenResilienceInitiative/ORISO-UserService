@@ -1279,7 +1279,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     assertThat(savedUser.isNotificationsEnabled()).isTrue();
     assertThat(savedUser.getNotificationsSettings())
         .isEqualTo(
-            "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":true,\"reassignmentNotificationEnabled\":true,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
+            "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":true,\"reassignmentNotificationEnabled\":true,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"internalChatNotificationEnabled\":null,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
   }
 
   @Test
@@ -1314,7 +1314,38 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     assertThat(savedConsultant.isNotificationsEnabled()).isTrue();
     assertThat(savedConsultant.getNotificationsSettings())
         .isEqualTo(
-            "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":false,\"reassignmentNotificationEnabled\":false,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
+            "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":false,\"reassignmentNotificationEnabled\":false,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"internalChatNotificationEnabled\":null,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchAnotherEmailSettingPreservesConsultantInternalChatOptOut() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    patchUserData(
+        "{\"emailNotifications\":{\"emailNotificationsEnabled\":true,\"settings\":{\"internalChatNotificationEnabled\":false}}}");
+    patchUserData(
+        "{\"emailNotifications\":{\"emailNotificationsEnabled\":true,\"settings\":{\"initialEnquiryNotificationEnabled\":false}}}");
+    var saved = consultantRepository.findById(consultant.getId()).orElseThrow();
+    assertThat(
+            objectMapper
+                .readTree(saved.getNotificationsSettings())
+                .get("internalChatNotificationEnabled")
+                .asBoolean())
+        .isFalse();
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(
+            jsonPath("emailNotifications.settings.internalChatNotificationEnabled", is(false)))
+        .andExpect(
+            jsonPath("emailNotifications.settings.initialEnquiryNotificationEnabled", is(false)));
   }
 
   @Test
