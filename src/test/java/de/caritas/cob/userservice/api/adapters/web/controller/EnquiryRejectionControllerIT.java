@@ -333,7 +333,12 @@ class EnquiryRejectionControllerIT {
   private de.caritas.cob.userservice.api.facade.assignsession.SessionToConsultantVerifier
       assignmentVerifier;
 
-  @Autowired private de.caritas.cob.userservice.api.service.session.SessionService sessionService;
+  @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+  private de.caritas.cob.userservice.api.service.session.SessionService sessionService;
+
+  @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+  private de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionTransactions
+      rejectionTransactions;
 
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
@@ -772,6 +777,179 @@ class EnquiryRejectionControllerIT {
     assertThat(feed()).hasSize(1);
     org.mockito.Mockito.verify(matrixRooms, org.mockito.Mockito.times(1))
         .closeRoomForMessagesVerified(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void independentPublicAcceptWaitsForTheSameRejectionRowLockThenCannotReopenIt() throws Exception {
+    var locked = new java.util.concurrent.CountDownLatch(1);
+    var acceptEntered = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              var attempt = invocation.callRealMethod();
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isTrue();
+              locked.countDown();
+              assertThat(release.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+              return attempt;
+            })
+        .when(rejectionTransactions)
+        .begin(sessionId);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              acceptEntered.countDown();
+              return invocation.callRealMethod();
+            })
+        .when(sessionService)
+        .getSessionForUpdate(sessionId);
+    try {
+      var rejection =
+          executor.submit(
+              () -> {
+                TenantContext.setCurrentTenant(7L);
+                try {
+                  return mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
+                      .andReturn()
+                      .getResponse()
+                      .getStatus();
+                } finally {
+                  TenantContext.clear();
+                }
+              });
+      assertThat(locked.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      var acceptance =
+          executor.submit(
+              () -> {
+                TenantContext.setCurrentTenant(7L);
+                try {
+                  return mvc.perform(
+                          org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(
+                              "/users/sessions/new/{sessionId}", sessionId))
+                      .andReturn()
+                      .getResponse()
+                      .getStatus();
+                } finally {
+                  TenantContext.clear();
+                }
+              });
+      assertThat(acceptEntered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> acceptance.get(200, java.util.concurrent.TimeUnit.MILLISECONDS))
+          .isInstanceOf(java.util.concurrent.TimeoutException.class);
+      assertThat(feed()).isEmpty();
+      release.countDown();
+      assertThat(rejection.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(204);
+      assertThat(acceptance.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(409);
+      var current = sessions.findById(sessionId).orElseThrow();
+      assertThat(current.getStatus()).isEqualTo(Session.SessionStatus.REJECTED);
+      assertThat(current.getConsultant()).isNull();
+      assertThat(feed())
+          .singleElement()
+          .extracting(EventNotification::getEventType)
+          .isEqualTo("request.denied");
+      org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+          .inviteUserToRoom(anyString(), anyString(), anyString());
+      org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+          .joinRoom(anyString(), anyString());
+    } finally {
+      release.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void expiredFirstFinisherCannotOverwriteOrPrematurelyConfirmTheSecondClaimWinner(
+      boolean firstReturnsAfterWinner) throws Exception {
+    var firstEntered = new java.util.concurrent.CountDownLatch(1);
+    var secondEntered = new java.util.concurrent.CountDownLatch(1);
+    var releaseFirst = new java.util.concurrent.CountDownLatch(1);
+    var releaseSecond = new java.util.concurrent.CountDownLatch(1);
+    var sequence = new java.util.concurrent.atomic.AtomicInteger();
+    var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              if (sequence.incrementAndGet() == 1) {
+                firstEntered.countDown();
+                assertThat(releaseFirst.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                return !firstReturnsAfterWinner;
+              }
+              secondEntered.countDown();
+              assertThat(releaseSecond.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+              return true;
+            })
+        .when(matrixRooms)
+        .closeRoomForMessagesVerified(anyString(), anyString(), anyString());
+    java.util.concurrent.Callable<Integer> request =
+        () -> {
+          TenantContext.setCurrentTenant(7L);
+          try {
+            return mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
+                .andReturn()
+                .getResponse()
+                .getStatus();
+          } finally {
+            TenantContext.clear();
+          }
+        };
+    try {
+      var first = executor.submit(request);
+      assertThat(firstEntered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      var original = rejections.findById(sessionId).orElseThrow();
+      var originalToken = original.getClaimToken();
+      original.setClaimUntil(LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+      original.setNextAttemptAt(LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+      rejections.saveAndFlush(original);
+      var second = executor.submit(request);
+      assertThat(secondEntered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      var winner = rejections.findById(sessionId).orElseThrow();
+      assertThat(winner.getClaimToken()).isNotEqualTo(originalToken);
+      assertThat(winner.getAttemptCount()).isEqualTo(2);
+      assertThat(winner.getState()).isEqualTo(EnquiryRejection.State.PENDING);
+      assertThat(feed()).isEmpty();
+      org.mockito.Mockito.verifyNoInteractions(feedSignal);
+      if (firstReturnsAfterWinner) {
+        releaseSecond.countDown();
+        assertThat(second.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(204);
+        releaseFirst.countDown();
+        assertThat(first.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(204);
+      } else {
+        releaseFirst.countDown();
+        assertThat(first.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(503);
+        var stillPending = rejections.findById(sessionId).orElseThrow();
+        assertThat(stillPending.getState()).isEqualTo(EnquiryRejection.State.PENDING);
+        assertThat(stillPending.getClaimToken()).isEqualTo(winner.getClaimToken());
+        assertThat(stillPending.getFailureStage()).isNull();
+        assertThat(feed()).isEmpty();
+        org.mockito.Mockito.verifyNoInteractions(feedSignal);
+        releaseSecond.countDown();
+        assertThat(second.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(204);
+      }
+      var confirmed = rejections.findById(sessionId).orElseThrow();
+      assertThat(confirmed.getState()).isEqualTo(EnquiryRejection.State.CONFIRMED);
+      assertThat(confirmed.getActorId()).isEqualTo(original.getActorId());
+      assertThat(confirmed.getRejectedAt()).isEqualTo(original.getRejectedAt());
+      assertThat(confirmed.getGeneration()).isEqualTo(original.getGeneration());
+      assertThat(confirmed.getClaimToken()).isNull();
+      assertThat(confirmed.getFailureStage()).isNull();
+      assertThat(feed())
+          .singleElement()
+          .extracting(EventNotification::getEventType)
+          .isEqualTo("request.denied");
+      org.mockito.Mockito.verify(feedSignal, org.mockito.Mockito.times(1))
+          .signalFeedUpdated(seekerId);
+      org.mockito.Mockito.verify(matrixRooms, org.mockito.Mockito.times(2))
+          .closeRoomForMessagesVerified(anyString(), anyString(), anyString());
+    } finally {
+      releaseFirst.countDown();
+      releaseSecond.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+    }
   }
 
   @Test
