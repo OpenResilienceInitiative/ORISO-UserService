@@ -1,0 +1,26 @@
+{
+  "de": {
+    "title": "Anfrage angenommen",
+    "description": "Die Anfrage wurde angenommen. Sie können das Gespräch beginnen."
+  },
+  "en": {
+    "title": "Request accepted",
+    "description": "The request was accepted. You can start the conversation."
+  },
+  "fr": {
+    "title": "Demande acceptée",
+    "description": "La demande a été acceptée. Vous pouvez commencer l'entretien."
+  },
+  "tr": {
+    "title": "Talep kabul edildi",
+    "description": "Talep kabul edildi. Görüşmeye başlayabilirsiniz."
+  },
+  "ru": {
+    "title": "Запрос принят",
+    "description": "Запрос принят. Вы можете начать беседу."
+  },
+  "ti": {
+    "title": "ሕቶ ተቐባልነት ረኺቡ",
+    "description": "እቲ ሕቶ ተቐባልነት ረኺቡ። ነቲ ዝርርብ ክትጅምርዎ ትኽእሉ።"
+  }
+}

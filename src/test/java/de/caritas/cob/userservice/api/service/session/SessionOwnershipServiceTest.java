@@ -32,6 +32,11 @@ class SessionOwnershipServiceTest {
 
   @Mock private SessionRepository sessionRepository;
   @Mock private EntityManager entityManager;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore
+      acceptanceNotices;
+
   @InjectMocks private SessionOwnershipService ownershipService;
 
   @org.junit.jupiter.params.ParameterizedTest
@@ -96,6 +101,7 @@ class SessionOwnershipServiceTest {
 
     var unchanged = ownershipService.updateOwnerAndStatus(session, ownerB, IN_PROGRESS);
 
+    verify(acceptanceNotices, never()).prepare(org.mockito.ArgumentMatchers.any());
     assertThat(unchanged.revision()).isEqualTo(5L);
     assertThat(session.getOwnershipRevision()).isEqualTo(5L);
   }
@@ -188,6 +194,7 @@ class SessionOwnershipServiceTest {
         .isFalse();
     assertThat(current.getConsultant()).isSameAs(ownerA);
     assertThat(current.getOwnershipRevision()).isEqualTo(4L);
+    verify(acceptanceNotices, never()).cancelPreparation(20L, assignment.revision());
   }
 
   @Test

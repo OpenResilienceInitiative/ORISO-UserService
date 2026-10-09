@@ -71,6 +71,11 @@ public class AssignEnquiryFacade {
   private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
 
   private final @NonNull TeamDiscussionFacade teamDiscussionFacade;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore
+      acceptanceNotices;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix
+          .InquiryAcceptanceNoticeDelivery
+      acceptanceDelivery;
 
   /**
    * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
@@ -92,7 +97,13 @@ public class AssignEnquiryFacade {
       boolean skipConsultantAssignmentAndSessionInProgressCheck) {
     var requestURI = httpServletRequest.getRequestURI();
     var requestReferer = httpServletRequest.getHeader(HttpHeaders.REFERER);
+    boolean initialAcceptance = session.getStatus() == INITIAL || session.getStatus() == NEW;
     assignEnquiry(session, consultant, skipConsultantAssignmentAndSessionInProgressCheck);
+    if (initialAcceptance) {
+      acceptanceNotices
+          .recordSuccessfulInitialAcceptance(session)
+          .ifPresent(this::dispatchAcceptanceAfterCommit);
+    }
     // The case is now committed to this counsellor (assignEnquiry rolls back and rethrows on any
     // failure), so it is safe to layer standing supervision on top. This call never throws.
     sessionSupervisorFacade.attachStandingSupervisorIfAssigned(session.getId(), consultant);
@@ -106,6 +117,22 @@ public class AssignEnquiryFacade {
     event.setRequestReferer(requestReferer);
     event.setRequestUserId(consultant.getId());
     statisticsService.fireEvent(event);
+  }
+
+  private void dispatchAcceptanceAfterCommit(Long sessionId) {
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      acceptanceDelivery.dispatchSafely(sessionId);
+      return;
+    }
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                acceptanceDelivery.dispatchSafely(sessionId);
+              }
+            });
   }
 
   /**

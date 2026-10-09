@@ -68,6 +68,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
 @Import({
   SessionOwnershipService.class,
+  de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore.class,
   de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class,
   EventNotificationService.class,
   EventNotificationDeduplicationWriter.class

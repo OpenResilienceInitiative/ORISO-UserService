@@ -395,7 +395,11 @@ class AgencyPasswordFreeSynapseIT {
                 de.caritas.cob.userservice.api.facade.assignsession
                     .AnonymousEnquiryDepartmentResolver.class),
             mock(de.caritas.cob.userservice.api.facade.SessionSupervisorFacade.class),
-            mock(TeamDiscussionFacade.class));
+            mock(TeamDiscussionFacade.class),
+            mock(de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore.class),
+            mock(
+                de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeDelivery
+                    .class));
     facade.assignRegisteredEnquiry(session, consultant);
     assertThat(session.getMatrixRoomId()).isEqualTo(originalRoom);
     var token = matrix.loginAsUserAccessToken(consultant.getMatrixUserId());

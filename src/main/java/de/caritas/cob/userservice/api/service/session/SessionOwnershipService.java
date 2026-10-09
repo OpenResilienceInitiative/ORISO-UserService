@@ -27,6 +27,8 @@ public class SessionOwnershipService {
 
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull EntityManager entityManager;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore
+      acceptanceNotices;
 
   @Transactional
   public OwnershipChange updateOwnerAndStatus(
@@ -86,6 +88,7 @@ public class SessionOwnershipService {
       current.setAgencyId(null);
     }
     apply(current, restoredOwner, restoredStatus, updateDate);
+    acceptanceNotices.cancelPreparation(sessionId, assignment.revision());
     return true;
   }
 
@@ -127,6 +130,11 @@ public class SessionOwnershipService {
       @Nullable Consultant newOwner,
       SessionStatus newStatus,
       @Nullable LocalDateTime updateDate) {
+    boolean initialAcceptance =
+        newOwner != null
+            && (current.getStatus() == SessionStatus.INITIAL
+                || current.getStatus() == SessionStatus.NEW)
+            && newStatus == SessionStatus.IN_PROGRESS;
     if (!Objects.equals(ownerId(current.getConsultant()), ownerId(newOwner))) {
       current.setConsultant(newOwner);
       current.setOwnershipRevision(Math.incrementExact(current.getOwnershipRevision()));
@@ -134,6 +142,7 @@ public class SessionOwnershipService {
     current.setStatus(newStatus);
     current.setUpdateDate(updateDate);
     sessionRepository.save(current);
+    if (initialAcceptance) acceptanceNotices.prepare(current);
     entityManager.flush();
   }
 
