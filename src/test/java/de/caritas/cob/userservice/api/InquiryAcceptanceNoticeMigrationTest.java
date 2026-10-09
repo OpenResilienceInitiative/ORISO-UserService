@@ -17,7 +17,7 @@ class InquiryAcceptanceNoticeMigrationTest {
         DriverManager.getConnection(
             "jdbc:h2:mem:acceptance-" + UUID.randomUUID() + ";MODE=MariaDB", "sa", "")) {
       try (var sql = c.createStatement()) {
-        sql.execute("CREATE TABLE session(id BIGINT PRIMARY KEY)");
+        sql.execute("CREATE TABLE session(id BIGINT UNSIGNED PRIMARY KEY)");
         sql.execute("INSERT INTO session(id) VALUES(1),(2)");
       }
       var db =
