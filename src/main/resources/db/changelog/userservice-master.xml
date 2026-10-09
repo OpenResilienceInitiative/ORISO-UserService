@@ -237,4 +237,5 @@
   <include file="db/changelog/changeset/20260923_user_temporary_account/changeSet.xml"/>
   <include file="db/changelog/changeset/20261007_user_avatar_1240/changeSet.xml"/>
   <include file="db/changelog/changeset/20261007_standing_access_preference_1657/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261009_inquiry_acceptance_notice/changeSet.xml" />
 </databaseChangeLog>

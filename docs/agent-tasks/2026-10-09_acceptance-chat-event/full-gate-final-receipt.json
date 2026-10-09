@@ -1,0 +1,17 @@
+[
+  {
+    "phase": "full-test-final",
+    "exitCode": 0,
+    "seconds": 118.1
+  },
+  {
+    "phase": "package-final",
+    "exitCode": 0,
+    "seconds": 45.1
+  },
+  {
+    "phase": "spotless-final",
+    "exitCode": 0,
+    "seconds": 2.5
+  }
+]

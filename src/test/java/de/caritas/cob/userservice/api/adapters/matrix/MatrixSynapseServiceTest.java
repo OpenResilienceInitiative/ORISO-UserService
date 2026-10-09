@@ -1137,6 +1137,25 @@ class MatrixSynapseServiceTest {
   }
 
   @Test
+  void durableNoticeSendPreservesProvidedTransactionId() {
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("event_id", "$event123")));
+    var result =
+        matrixSynapseService()
+            .sendMessage(MATRIX_ROOM_ID, "acceptance", ACCESS_TOKEN, "inquiry-accepted-231");
+    assertThat(result).containsEntry("event_id", "$event123");
+    verify(restTemplate)
+        .exchange(
+            org.mockito.ArgumentMatchers.argThat(
+                uri -> uri.toString().endsWith("/send/m.room.message/inquiry-accepted-231")),
+            eq(HttpMethod.PUT),
+            any(HttpEntity.class),
+            eq(Map.class));
+  }
+
+  @Test
   void sendMessage_exception_returnsErrorMap() {
     // Send failures must return a structured error instead of propagating exceptions.
     matrixConfig.setApiUrl(MATRIX_BASE_URL);

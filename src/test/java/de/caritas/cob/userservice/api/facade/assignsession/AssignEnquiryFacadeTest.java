@@ -84,6 +84,12 @@ class AssignEnquiryFacadeTest {
   @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
   @Mock AnonymousEnquiryDepartmentResolver anonymousEnquiryDepartmentResolver;
 
+  @Mock
+  de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore acceptanceNotices;
+
+  @Mock
+  de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeDelivery acceptanceDelivery;
+
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
   private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
   private static final String MATRIX_ROOM_ID = "!createdRoom:matrix.example.com";
@@ -114,7 +120,9 @@ class AssignEnquiryFacadeTest {
             eventNotificationService,
             anonymousEnquiryDepartmentResolver,
             sessionSupervisorFacade,
-            teamDiscussionFacade);
+            teamDiscussionFacade,
+            acceptanceNotices,
+            acceptanceDelivery);
     CONSULTANT_WITH_AGENCY.setTenantId(41L);
     // ADR-002 §2: the display name comes from the resolver, never from the real name.
     lenient()
@@ -685,5 +693,90 @@ class AssignEnquiryFacadeTest {
     AgencyMatrixCredentialsDTO dto = new AgencyMatrixCredentialsDTO();
     dto.setMatrixUserId(userId);
     return dto;
+  }
+
+  @Test
+  void initialAcceptanceQueuesRealChatEventOnlyAfterRoomProvisioning() {
+    SESSION_WITHOUT_CONSULTANT.setStatus(NEW);
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+    var ordered =
+        org.mockito.Mockito.inOrder(sessionService, sessionRoomGateway, acceptanceNotices);
+    ordered
+        .verify(sessionService)
+        .updateConsultantAndStatusForSession(any(), any(), eq(SessionStatus.IN_PROGRESS));
+    ordered.verify(sessionRoomGateway, times(2)).joinRoom(anyString(), anyString());
+    ordered.verify(acceptanceNotices).recordSuccessfulInitialAcceptance(SESSION_WITHOUT_CONSULTANT);
+  }
+
+  @Test
+  void failedMatrixProvisioningNeverActivatesOrDispatchesInitialAcceptance() throws Exception {
+    SESSION_WITHOUT_CONSULTANT.setStatus(NEW);
+    when(sessionRoomGateway.createRoomAsUser(anyString(), anyString(), anyString()))
+        .thenReturn(null);
+    assertThrows(
+        InternalServerErrorException.class,
+        () ->
+            assignEnquiryFacade.assignRegisteredEnquiry(
+                SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY));
+    org.mockito.Mockito.verifyNoInteractions(acceptanceNotices, acceptanceDelivery);
+  }
+
+  @Test
+  void subsequentAssignmentIsNotAnotherInitialAcceptance() {
+    var old = SESSION_WITHOUT_CONSULTANT.getStatus();
+    try {
+      SESSION_WITHOUT_CONSULTANT.setStatus(SessionStatus.IN_PROGRESS);
+      assignEnquiryFacade.assignRegisteredEnquiry(
+          SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY, true);
+      org.mockito.Mockito.verifyNoInteractions(acceptanceNotices, acceptanceDelivery);
+    } finally {
+      SESSION_WITHOUT_CONSULTANT.setStatus(old);
+    }
+  }
+
+  @Test
+  void transactionRollbackNeverDispatchesPreparedInitialAcceptance() {
+    SESSION_WITHOUT_CONSULTANT.setStatus(NEW);
+    when(acceptanceNotices.recordSuccessfulInitialAcceptance(SESSION_WITHOUT_CONSULTANT))
+        .thenReturn(Optional.of(1L));
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      assignEnquiryFacade.assignRegisteredEnquiry(
+          SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery);
+      var callbacks =
+          org.springframework.transaction.support.TransactionSynchronizationManager
+              .getSynchronizations();
+      assertThat(callbacks).hasSize(1);
+      callbacks.forEach(
+          cb ->
+              cb.afterCompletion(
+                  org.springframework.transaction.support.TransactionSynchronization
+                      .STATUS_ROLLED_BACK));
+      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery);
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
+  }
+
+  @Test
+  void committedInitialAcceptanceDispatchesAfterCommitOnce() {
+    SESSION_WITHOUT_CONSULTANT.setStatus(NEW);
+    when(acceptanceNotices.recordSuccessfulInitialAcceptance(SESSION_WITHOUT_CONSULTANT))
+        .thenReturn(Optional.of(1L));
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      assignEnquiryFacade.assignRegisteredEnquiry(
+          SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery);
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .getSynchronizations()
+          .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+      verify(acceptanceDelivery, times(1)).dispatchSafely(1L);
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
   }
 }

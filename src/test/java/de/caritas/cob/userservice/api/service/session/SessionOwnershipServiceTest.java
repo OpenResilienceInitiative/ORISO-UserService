@@ -32,6 +32,11 @@ class SessionOwnershipServiceTest {
 
   @Mock private SessionRepository sessionRepository;
   @Mock private EntityManager entityManager;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore
+      acceptanceNotices;
+
   @InjectMocks private SessionOwnershipService ownershipService;
 
   @org.junit.jupiter.params.ParameterizedTest
