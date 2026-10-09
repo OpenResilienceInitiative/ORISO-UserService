@@ -123,3 +123,39 @@ failed before the correction. The updated H2 migration test passes; Spotless
 check and diff whitespace check pass. The isolated MariaDB container and its
 anonymous volume were removed after verification. The separate authenticated
 two-replica load step and published-head CI rerun remain required owner gates.
+
+## PR1383 Java inventory and review follow-up — 9 October 2026
+
+At published head `8c74db52b`, MariaDB passed, but the Java inventory contract
+rejected the new catalog id because its independent closed required-component
+set had not been extended. The first CI correction missed this second invariant.
+The set now includes the actual `inquiry-acceptance-notice-retry` scheduler. Exact
+set equality, unique ids, required fields and actionable signals remain enforced.
+
+Focused review dispositions:
+
+- Unsupported conversation types now call the actual `prepare` producer before
+  asserting that no fact was saved; the preparation guard is exercised directly.
+- The old PREPARING regression now calls actual `dispatch(231L)` rather than an
+  empty scheduler query; it exercises the non-PENDING delivery guard and retains
+  the later compensation assertion.
+- Existing ownership tests explicitly forbid preparation for repeat IN_PROGRESS
+  assignment and preparation cancellation for stale compensation.
+- A real JPA concurrency regression synchronizes two workers after both read
+  PENDING and before either claims the same notice. The externally proxied
+  REQUIRES_NEW row-lock claim admits one worker; the test observes exactly one
+  Matrix send call and the committed SENT/event id. Matrix transport is mocked;
+  this does not claim an actual distributed server or recipient browser proof.
+
+A scheduler-wide lease is a performance/scalability suggestion, not a missing
+duplicate-send guard: the committed notice-row claim already excludes a second
+sender. Both workers can mint a token before one loses the claim; adding a lease
+may reduce that redundant work, but is not needed to preserve the observed
+correctness boundary. No production delivery behavior was expanded.
+
+Final focused verification: 45 tests pass across inventory, store, delivery,
+ownership and real transaction classes, including the new concurrency test.
+All 114 Python CI contracts and Spotless pass. The full final unit suite passes: 6,365 tests, zero failures/errors/skips; its
+final Spotless check also passes. Commands and review dispositions are recorded
+in `review-follow-up-receipt.json`. Published-head CI and Dev
+acceptance remain separate required gates.

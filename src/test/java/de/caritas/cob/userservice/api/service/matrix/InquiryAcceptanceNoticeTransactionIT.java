@@ -182,6 +182,55 @@ class InquiryAcceptanceNoticeTransactionIT {
   }
 
   @Test
+  void twoConcurrentDeliveriesCommitOnlyOneClaimAndSend() throws Exception {
+    ownership.updateOwnerAndStatus(expected(), consultant, Session.SessionStatus.IN_PROGRESS);
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            tx -> {
+              var notice = notices.findById(sessionId).orElseThrow();
+              notice.setDeliveryState(DeliveryState.PENDING);
+              notice.setMatrixRoomId("!r:test");
+              notice.setSenderMatrixId("@c:test");
+              notices.save(notice);
+            });
+    var matrix =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.class);
+    var bothReadyToClaim = new CyclicBarrier(2);
+    org.mockito.Mockito.when(matrix.loginAsUserAccessToken("@c:test"))
+        .thenAnswer(
+            invocation -> {
+              // Both workers have read PENDING before either enters the database claim.
+              bothReadyToClaim.await(15, TimeUnit.SECONDS);
+              return "test-token";
+            });
+    org.mockito.Mockito.when(
+            matrix.sendMessage(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(java.util.Map.of("event_id", "$one-acceptance"));
+    var firstDelivery = new InquiryAcceptanceNoticeDelivery(notices, store, matrix);
+    var secondDelivery = new InquiryAcceptanceNoticeDelivery(notices, store, matrix);
+    try (var pool = Executors.newFixedThreadPool(2)) {
+      var first = pool.submit(() -> firstDelivery.dispatch(sessionId));
+      var second = pool.submit(() -> secondDelivery.dispatch(sessionId));
+      first.get(20, TimeUnit.SECONDS);
+      second.get(20, TimeUnit.SECONDS);
+    }
+    org.mockito.Mockito.verify(matrix, org.mockito.Mockito.times(1))
+        .sendMessage(
+            org.mockito.ArgumentMatchers.eq("!r:test"),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq("test-token"),
+            org.mockito.ArgumentMatchers.eq("inquiry-accepted-" + sessionId));
+    var notice = notices.findById(sessionId).orElseThrow();
+    assertThat(notice.getDeliveryState()).isEqualTo(DeliveryState.SENT);
+    assertThat(notice.getMatrixEventId()).isEqualTo("$one-acceptance");
+  }
+
+  @Test
   void valid101stNoticeIsNotStarvedBehindOneHundredTokenFailures() {
     var matrix =
         org.mockito.Mockito.mock(

@@ -108,6 +108,7 @@ class InquiryAcceptanceNoticeStoreTest {
   void unsupportedModalitiesCreateNoFact(ConversationType type) {
     var session = accepted();
     session.setConversationType(type);
+    store.prepare(session);
     assertThat(store.recordSuccessfulInitialAcceptance(session)).isEmpty();
     verify(notices, never()).save(any());
   }

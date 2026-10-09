@@ -159,12 +159,10 @@ class InquiryAcceptanceNoticeDeliveryTest {
     when(matrix.loginAsUserAccessToken("@c:test")).thenReturn("test-token");
     when(matrix.sendMessage(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(Map.of("event_id", "$false-acceptance"));
-    var scheduler = new InquiryAcceptanceNoticeScheduler(actualDelivery);
-
-    scheduler.retryPending();
+    actualDelivery.dispatch(231L);
     assertThat(n.getDeliveryState()).isEqualTo(DeliveryState.PREPARING);
     verify(matrix, never()).sendMessage(anyString(), anyString(), anyString(), anyString());
-    // The original operation can still fail after the scheduler has run.
+    // The original operation can still fail after a delivery attempt.
     actualStore.cancelPreparation(231L, 1);
     verify(notices).delete(n);
   }
