@@ -81,6 +81,23 @@ public class CreateAdminService {
     return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT, false);
   }
 
+  /**
+   * Founding admin of a new Träger: the reserved tenant does not exist yet, so its inactivity
+   * policy cannot be read. The caller completes it with {@link #enrollReservedTenantAdmin} once
+   * TenantService created the tenant.
+   */
+  public Admin createNewTenantAdminForReservedTenant(CreateAdminDTO createAdminDTO) {
+    return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT, false, false);
+  }
+
+  /** Runs in the caller's transaction, so a failure rolls back with the rest of the onboarding. */
+  public void enrollReservedTenantAdmin(Admin admin) {
+    inactivityEnrollment.enroll(
+        admin.getId(),
+        admin.getTenantId(),
+        de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.OTHER);
+  }
+
   List<UserRole> getDefaultRoles(Admin.AdminType adminType) {
     if (Admin.AdminType.AGENCY.equals(adminType)) {
       return Lists.newArrayList(UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
@@ -121,10 +138,23 @@ public class CreateAdminService {
 
   private Admin createNewAdmin(
       final CreateAdminDTO createAdminDTO, Admin.AdminType adminType, boolean temporaryPassword) {
+    return createNewAdmin(createAdminDTO, adminType, temporaryPassword, true);
+  }
+
+  private Admin createNewAdmin(
+      final CreateAdminDTO createAdminDTO,
+      Admin.AdminType adminType,
+      boolean temporaryPassword,
+      boolean tenantExists) {
     var inactivityPolicy =
-        inactivityEnrollment.capture(
-            createAdminDTO.getTenantId() == null ? null : createAdminDTO.getTenantId().longValue(),
-            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.OTHER);
+        tenantExists
+            ? inactivityEnrollment.capture(
+                createAdminDTO.getTenantId() == null
+                    ? null
+                    : createAdminDTO.getTenantId().longValue(),
+                de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
+                    .OTHER)
+            : null;
     final String keycloakUserId = createUser(createAdminDTO);
     final String password =
         StringUtils.isNotBlank(createAdminDTO.getPassword())
@@ -140,7 +170,9 @@ public class CreateAdminService {
       getDefaultRoles(adminType).forEach(role -> identityClient.updateRole(keycloakUserId, role));
       var admin = buildAdmin(createAdminDTO, adminType, keycloakUserId);
       saved = adminRepository.saveAndFlush(admin);
-      inactivityEnrollment.enroll(keycloakUserId, admin.getTenantId(), inactivityPolicy);
+      if (inactivityPolicy != null) {
+        inactivityEnrollment.enroll(keycloakUserId, admin.getTenantId(), inactivityPolicy);
+      }
     } catch (CustomValidationHttpStatusException e) {
       rollbackProvisioning(saved, keycloakUserId, inactivityPolicy);
       throw e;
@@ -179,7 +211,10 @@ public class CreateAdminService {
         });
     compensate(
         "inactivity lifecycle",
-        () -> inactivityEnrollment.discardUncompletedCreation(keycloakUserId, policy));
+        () -> {
+          if (policy != null)
+            inactivityEnrollment.discardUncompletedCreation(keycloakUserId, policy);
+        });
     compensate("identity account", () -> identityAccountRemover.rollbackUser(keycloakUserId));
   }
 

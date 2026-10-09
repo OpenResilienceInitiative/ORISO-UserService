@@ -279,7 +279,8 @@ public class TenantAdminOnboardingService {
       throw linkDeathException(current);
     }
 
-    var admin = createAdminService.createNewTenantAdminFromInvite(buildAdminDto(invite, command));
+    var admin =
+        createAdminService.createNewTenantAdminForReservedTenant(buildAdminDto(invite, command));
     try {
       IdentityOtpCredential otpInfo =
           identitySecondFactor.getOtpCredential(
@@ -328,6 +329,8 @@ public class TenantAdminOnboardingService {
       }
       Long tenantId =
           created != null && created.getId() != null ? created.getId() : invite.getTenantId();
+      // Only now does the tenant exist whose inactivity policy the founding admin is enrolled in.
+      createAdminService.enrollReservedTenantAdmin(admin);
       // The Admin's Träger tab dates "Träger angelegt" from this, for co-founders too.
       accountInviteRepository.stampTraegerCreated(invite.getTenantId(), now);
       publishTenantCreated(tenantId);
