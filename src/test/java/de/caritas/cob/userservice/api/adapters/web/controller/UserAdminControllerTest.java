@@ -52,7 +52,9 @@ import java.lang.reflect.Method;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -104,18 +106,18 @@ class UserAdminControllerTest {
   @Test
   void createTenantAdmin_emailIsLowercased_beforeDelegation() {
     // Business reason: admin account e-mails must be normalized to avoid duplicate identities by
-    // case.
+    // case, independently of the host JVM locale.
     var dto = new CreateAdminDTO();
-    dto.setEmail("UPPER@EXAMPLE.ORG");
+    dto.setEmail("IDENTITY@EXAMPLE.ORG");
     when(adminUserFacade.createNewTenantAdmin(any()))
         .thenReturn(new AdminResponseDTO().embedded(new AdminDTO().id("admin-11")));
 
-    var response = controller.createTenantAdmin(dto);
+    var response = withTurkishDefaultLocale(() -> controller.createTenantAdmin(dto));
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     var captor = ArgumentCaptor.forClass(CreateAdminDTO.class);
     verify(adminUserFacade).createNewTenantAdmin(captor.capture());
-    assertEquals("upper@example.org", captor.getValue().getEmail());
+    assertEquals("identity@example.org", captor.getValue().getEmail());
   }
 
   @Test
@@ -144,32 +146,32 @@ class UserAdminControllerTest {
   void updateAgencyAdmin_emailIsLowercased_beforeDelegation() {
     // Business reason: updates must keep canonical e-mail format for stable identity lookups.
     var dto = new UpdateAgencyAdminDTO();
-    dto.setEmail("AGENCY@EXAMPLE.ORG");
+    dto.setEmail("IDENTITY@EXAMPLE.ORG");
     when(adminUserFacade.updateAgencyAdmin(eq("admin-1"), any()))
         .thenReturn(new AdminResponseDTO());
 
-    var response = controller.updateAgencyAdmin("admin-1", dto);
+    var response = withTurkishDefaultLocale(() -> controller.updateAgencyAdmin("admin-1", dto));
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     var captor = ArgumentCaptor.forClass(UpdateAgencyAdminDTO.class);
     verify(adminUserFacade).updateAgencyAdmin(eq("admin-1"), captor.capture());
-    assertEquals("agency@example.org", captor.getValue().getEmail());
+    assertEquals("identity@example.org", captor.getValue().getEmail());
   }
 
   @Test
   void updateTenantAdmin_emailIsLowercased_beforeDelegation() {
     // Business reason: tenant-admin updates should preserve consistent e-mail matching semantics.
     var dto = new UpdateTenantAdminDTO();
-    dto.setEmail("TENANT@EXAMPLE.ORG");
+    dto.setEmail("IDENTITY@EXAMPLE.ORG");
     when(adminUserFacade.updateTenantAdmin(eq("admin-2"), any()))
         .thenReturn(new AdminResponseDTO());
 
-    var response = controller.updateTenantAdmin("admin-2", dto);
+    var response = withTurkishDefaultLocale(() -> controller.updateTenantAdmin("admin-2", dto));
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     var captor = ArgumentCaptor.forClass(UpdateTenantAdminDTO.class);
     verify(adminUserFacade).updateTenantAdmin(eq("admin-2"), captor.capture());
-    assertEquals("tenant@example.org", captor.getValue().getEmail());
+    assertEquals("identity@example.org", captor.getValue().getEmail());
   }
 
   @Test
@@ -227,18 +229,18 @@ class UserAdminControllerTest {
   @Test
   void createConsultant_emailIsLowercased_beforeDelegation() {
     var dto = new CreateConsultantDTO();
-    dto.setEmail("UPPER@EXAMPLE.ORG");
+    dto.setEmail("IDENTITY@EXAMPLE.ORG");
     dto.setUsername("user");
     when(consultantAdminFacade.createNewConsultant(any()))
         .thenReturn(
             new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id("consultant-1")));
 
-    var response = controller.createConsultant(dto);
+    var response = withTurkishDefaultLocale(() -> controller.createConsultant(dto));
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     var captor = ArgumentCaptor.forClass(CreateConsultantDTO.class);
     verify(consultantAdminFacade).createNewConsultant(captor.capture());
-    assertEquals("upper@example.org", captor.getValue().getEmail());
+    assertEquals("identity@example.org", captor.getValue().getEmail());
     verify(accountSetupIssuer)
         .issueAfterCreation(AccountInviteTargetRole.COUNSELLOR, "consultant-1", dto.getPassword());
   }
@@ -340,16 +342,16 @@ class UserAdminControllerTest {
   @Test
   void updateConsultant_emailIsLowercased_beforeDelegation() {
     var dto = new UpdateAdminConsultantDTO();
-    dto.setEmail("CASE@EXAMPLE.ORG");
+    dto.setEmail("IDENTITY@EXAMPLE.ORG");
     when(consultantAdminFacade.updateConsultant(eq("c-1"), any()))
         .thenReturn(new ConsultantAdminResponseDTO());
 
-    var response = controller.updateConsultant("c-1", dto);
+    var response = withTurkishDefaultLocale(() -> controller.updateConsultant("c-1", dto));
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     var captor = ArgumentCaptor.forClass(UpdateAdminConsultantDTO.class);
     verify(consultantAdminFacade).updateConsultant(eq("c-1"), captor.capture());
-    assertEquals("case@example.org", captor.getValue().getEmail());
+    assertEquals("identity@example.org", captor.getValue().getEmail());
   }
 
   @Test
@@ -455,14 +457,17 @@ class UserAdminControllerTest {
   @Test
   void createAgencyAdmin_Should_delegate() {
     var dto = new CreateAdminDTO();
-    dto.setEmail("a@x.org");
+    dto.setEmail("IDENTITY@EXAMPLE.ORG");
     var expected = new AdminResponseDTO().embedded(new AdminDTO().id("admin-13"));
     when(adminUserFacade.createNewAgencyAdmin(dto)).thenReturn(expected);
 
-    var response = controller.createAgencyAdmin(dto);
+    var response = withTurkishDefaultLocale(() -> controller.createAgencyAdmin(dto));
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(expected, response.getBody());
+    var captor = ArgumentCaptor.forClass(CreateAdminDTO.class);
+    verify(adminUserFacade).createNewAgencyAdmin(captor.capture());
+    assertEquals("identity@example.org", captor.getValue().getEmail());
   }
 
   @Test
@@ -628,5 +633,15 @@ class UserAdminControllerTest {
     assertEquals(
         "jakarta.validation.Valid",
         askerPause.getParameters()[1].getAnnotations()[0].annotationType().getName());
+  }
+
+  private <T> T withTurkishDefaultLocale(Supplier<T> action) {
+    Locale originalLocale = Locale.getDefault();
+    try {
+      Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+      return action.get();
+    } finally {
+      Locale.setDefault(originalLocale);
+    }
   }
 }
