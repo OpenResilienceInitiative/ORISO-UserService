@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailServi
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService.DpaForwardEmailCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
+import de.caritas.cob.userservice.api.service.accountinvite.ReservationLedger;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
@@ -89,6 +90,7 @@ public class TenantAdminOnboardingService {
 
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull AccountInviteService accountInviteService;
+  private final @NonNull ReservationLedger reservationLedger;
   private final @NonNull CreateAdminService createAdminService;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentitySecondFactor identitySecondFactor;
@@ -782,6 +784,7 @@ public class TenantAdminOnboardingService {
       invite.setActiveRecipientKey(null);
       invite.setUpdateDate(now);
       accountInviteRepository.save(invite);
+      reservationLedger.releaseUnneeded(invite, now);
       return new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
     return null;
