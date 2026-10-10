@@ -582,6 +582,59 @@ public class CaseHandoverService {
                 .build());
   }
 
+  /**
+   * #200: the colleague holding an advice co-access extends it once while it is still open, so an
+   * OPT_IN consent cannot be stretched indefinitely; more time needs a new request and its consent.
+   * The advice seeker is not asked again; a consent step for OPT_IN would wrap {@link
+   * #applyCoAccessExtension}.
+   */
+  @Transactional
+  public CaseHandoverStatus extendCoAccess(Long sessionId) {
+    Consultant requester = retrieveCurrentConsultant();
+    Session session = getSession(sessionId);
+    verifyEligibleForSession(session, requester);
+
+    // Locked read: an expiry sweep that already holds this grant finishes first and wins.
+    CaseHandoverRequest grant =
+        List.of(Status.GRANTED, Status.GRANTED_PENDING_CLIENT_OPTOUT).stream()
+            .flatMap(
+                status ->
+                    caseHandoverRequestRepository
+                        .findBySessionIdAndStatusAndAccessType(
+                            sessionId, status, AccessType.CO_ACCESS)
+                        .stream())
+            .filter(request -> requester.getId().equals(request.getRequesterConsultant().getId()))
+            .filter(this::isExtendable)
+            .findFirst()
+            .orElseThrow(() -> new ConflictException("No active co-access to extend"));
+    return toStatus(applyCoAccessExtension(grant));
+  }
+
+  /**
+   * Adds the granted duration to the current end, so an early click does not waste the single
+   * extension; the total stays within two durations. Audited on the same row, like expiry: once the
+   * access expires, the log no longer shows that it was extended.
+   */
+  private CaseHandoverRequest applyCoAccessExtension(CaseHandoverRequest grant) {
+    grant.setExpiresAt(
+        grant
+            .getExpiresAt()
+            .plusMinutes(
+                validateMaxAccessDuration(ADVICE_NEEDED, grant.getMaxAccessDurationMinutes())));
+    // Its own column: the grant's outcome and time stay, and the expiry sweep, which overwrites the
+    // outcome, cannot erase that the access was extended.
+    grant.setExtendedAt(LocalDateTime.now(clock));
+    return caseHandoverRequestRepository.save(grant);
+  }
+
+  private boolean isExtendable(CaseHandoverRequest request) {
+    return hasGrantedAccess(request.getStatus())
+        && effectiveAccessType(request) == AccessType.CO_ACCESS
+        && request.getExpiresAt() != null
+        && request.getExpiresAt().isAfter(LocalDateTime.now(clock))
+        && request.getExtendedAt() == null;
+  }
+
   @Transactional(readOnly = true)
   public CaseHandoverStatus getRequestStatus(Long sessionId, Long requestId) {
     Session session = getSession(sessionId);
@@ -2022,6 +2075,7 @@ public class CaseHandoverService {
         .resolvedAt(request.getResolvedAt())
         .accessType(accessType.name())
         .expiresAt(request.getExpiresAt())
+        .canExtend(isExtendable(request))
         .build();
   }
 
@@ -2823,5 +2877,6 @@ public class CaseHandoverService {
     private LocalDateTime resolvedAt;
     private String accessType;
     private LocalDateTime expiresAt;
+    private boolean canExtend;
   }
 }
