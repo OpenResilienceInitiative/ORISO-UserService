@@ -1118,6 +1118,31 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void createOffer_rejectsASecondOfferWhileOneIsStillOpen() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    session.setConsultant(requester);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    when(caseHandoverRequestRepository.findBySessionIdAndStatusOrderByCreatedAtDesc(
+            123L, CaseHandoverRequest.Status.PENDING_RECIPIENT_ACCEPTANCE))
+        .thenReturn(
+            List.of(
+                pushRequest(recipient, UUID.fromString("0d2b6a0e-61a4-4c3e-9f5e-1c7b8a9d0e11"))));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () ->
+            caseHandoverService.createOffer(
+                123L,
+                "recipient",
+                "UNPLANNED_ABSENCE",
+                null,
+                0L,
+                UUID.fromString("7f0c2c1e-3b8a-4f6d-9a2e-5d4c3b2a1f00")));
+
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
   void createOffer_rejectsEligibleRecipientFromAnotherTenant() {
     Consultant recipient = eligibleConsultant("recipient", "Recipient");
     recipient.setTenantId(8L);
@@ -1381,7 +1406,7 @@ class CaseHandoverServiceTest {
     CaseHandoverRequest request = pendingConsentRequest();
     request.setStatus(pending);
     when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
-    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
     CaseHandoverStatus status = caseHandoverService.getRequestStatus(123L, 88L);
     assertEquals(pending.name(), status.getStatus());
@@ -1400,7 +1425,7 @@ class CaseHandoverServiceTest {
     when(authenticatedUser.isConsultant()).thenReturn(true);
     when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
-    when(caseHandoverRequestRepository.findByIdAndSessionId(501L, 123L))
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
         .thenReturn(Optional.of(request));
 
     CaseHandoverStatus result = caseHandoverService.getRequestStatus(123L, 501L);
@@ -1418,7 +1443,7 @@ class CaseHandoverServiceTest {
     request.setTenantId(8L);
     when(authenticatedUser.isConsultant()).thenReturn(true);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
-    when(caseHandoverRequestRepository.findByIdAndSessionId(501L, 123L))
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
         .thenReturn(Optional.of(request));
 
     assertThrows(
@@ -1434,7 +1459,7 @@ class CaseHandoverServiceTest {
         pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
     when(authenticatedUser.isConsultant()).thenReturn(true);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
-    when(caseHandoverRequestRepository.findByIdAndSessionId(501L, 123L))
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
         .thenReturn(Optional.of(request));
 
     assertThrows(
@@ -1485,7 +1510,7 @@ class CaseHandoverServiceTest {
     when(authenticatedUser.isConsultant()).thenReturn(true);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(requester);
     when(authenticatedUser.getUserId()).thenReturn(requester.getId());
-    when(caseHandoverRequestRepository.findByIdAndSessionId(501L, 123L))
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
         .thenReturn(Optional.of(request));
 
     assertFalse(caseHandoverService.getRequestStatus(123L, 501L).isCanViewContent());
@@ -3365,6 +3390,24 @@ class CaseHandoverServiceTest {
     assertEquals(1, recipients.size());
     assertEquals("same-topic", recipients.get(0).getConsultantId());
     assertEquals("Jonas Lehmann", recipients.get(0).getDisplayName());
+  }
+
+  @Test
+  void listEligibleRecipients_namesColleaguesWithoutDisplayNameByFullNameThenUsername() {
+    givenOwnerAsksForRecipients();
+    Consultant fullNameOnly = departmentColleague("full-name-only", null, 5L);
+    fullNameOnly.setFirstName("Patty");
+    fullNameOnly.setLastName("Bouvier");
+    Consultant usernameOnly = departmentColleague("username-only", null, 5L);
+    usernameOnly.setFirstName("");
+    usernameOnly.setLastName("");
+    usernameOnly.setUsername("colleague.without.name");
+    givenAgencyRoster(requester, fullNameOnly, usernameOnly);
+
+    List<CaseHandoverRecipient> recipients = caseHandoverService.listEligibleRecipients(123L);
+
+    assertEquals("Patty Bouvier", recipients.get(0).getDisplayName());
+    assertEquals("colleague.without.name", recipients.get(1).getDisplayName());
   }
 
   @Test

@@ -587,7 +587,7 @@ public class CaseHandoverService {
     Session session = getSession(sessionId);
     CaseHandoverRequest request =
         caseHandoverRequestRepository
-            .findByIdAndSessionId(requestId, sessionId)
+            .findWithoutLockByIdAndSessionId(requestId, sessionId)
             .orElseThrow(() -> new NotFoundException("Case handover request not found"));
 
     if (authenticatedUser.isConsultant()) {
@@ -899,9 +899,36 @@ public class CaseHandoverService {
             candidate ->
                 CaseHandoverRecipient.builder()
                     .consultantId(candidate.getId())
-                    .displayName(decodeUsername(candidate.getInternalDisplayNameOrFallback()))
+                    .displayName(colleagueName(candidate))
                     .build())
         .collect(Collectors.toList());
+  }
+
+  /** An offer still waiting for the recipient or the advice seeker blocks a second one. */
+  private boolean hasOpenOffer(Long sessionId) {
+    return List.of(Status.PENDING_RECIPIENT_ACCEPTANCE, Status.PENDING_CLIENT_CONSENT).stream()
+        .flatMap(
+            status ->
+                caseHandoverRequestRepository
+                    .findBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, status)
+                    .stream())
+        .anyMatch(request -> request.getDirection() == Direction.PUSH);
+  }
+
+  /**
+   * Internal name rule (#996), then the legacy full-name fallback, then the username — the picker
+   * otherwise shows a bare consultant id for colleagues who never set a display name.
+   */
+  private String colleagueName(Consultant consultant) {
+    String name = consultant.getInternalDisplayNameOrFallback();
+    if (isBlank(name)) {
+      name =
+          (Objects.toString(consultant.getFirstName(), "")
+                  + " "
+                  + Objects.toString(consultant.getLastName(), ""))
+              .trim();
+    }
+    return decodeUsername(isBlank(name) ? consultant.getUsername() : name);
   }
 
   private Set<String> grantedPreviousOwnerIds(Long sessionId) {
@@ -953,6 +980,9 @@ public class CaseHandoverService {
       throw new ForbiddenException("Only the current owner may offer a case handover");
     }
     verifyOwnershipRevision(session, expectedOwnershipRevision);
+    if (hasOpenOffer(sessionId)) {
+      throw new ConflictException("This session already has an open case handover offer");
+    }
     Consultant recipient =
         consultantService
             .getConsultant(targetConsultantId)
