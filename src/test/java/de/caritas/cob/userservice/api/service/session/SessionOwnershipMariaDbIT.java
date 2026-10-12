@@ -532,19 +532,7 @@ class SessionOwnershipMariaDbIT {
             actor);
     var committedOperation = java.util.UUID.fromString("de949f0d-d1d5-48bb-8694-cbd786863623");
 
-    transactions.execute(
-        ignored ->
-            handovers.createOffer(
-                sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation));
-
-    assertThat(offerNotifications()).hasSize(1);
-
-    transactions.execute(
-        ignored ->
-            handovers.createOffer(
-                sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation));
-    assertThat(offerNotifications()).hasSize(1);
-
+    // The rolled-back offer runs first: once an offer is open, a second one is refused.
     assertThatThrownBy(
             () ->
                 transactions.executeWithoutResult(
@@ -559,6 +547,19 @@ class SessionOwnershipMariaDbIT {
                       throw new IllegalStateException("force rollback");
                     }))
         .isInstanceOf(IllegalStateException.class);
+    assertThat(offerNotifications()).isEmpty();
+
+    transactions.execute(
+        ignored ->
+            handovers.createOffer(
+                sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation));
+
+    assertThat(offerNotifications()).hasSize(1);
+
+    transactions.execute(
+        ignored ->
+            handovers.createOffer(
+                sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation));
     assertThat(offerNotifications()).hasSize(1);
   }
 
