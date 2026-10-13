@@ -8,6 +8,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /** Existing bearer sessions cannot bypass an explicit pause on the selected identity. */
+@lombok.extern.slf4j.Slf4j
 public class ManagedAccountPauseAccessFilter extends OncePerRequestFilter {
   private final ManagedAccountStatusService accounts;
 
@@ -26,6 +27,8 @@ public class ManagedAccountPauseAccessFilter extends OncePerRequestFilter {
           return;
         }
       } catch (RuntimeException unavailable) {
+        log.warn(
+            "Managed account admission unavailable: {}", unavailable.getClass().getSimpleName());
         response.sendError(HttpServletResponse.SC_BAD_GATEWAY, "Account admission unavailable");
         return;
       }

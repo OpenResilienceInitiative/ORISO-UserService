@@ -110,7 +110,7 @@ public class HttpTenantFilter extends OncePerRequestFilter {
     if (tenant == null)
       throw new org.springframework.web.client.RestClientException("Missing tenant metadata");
     TenantContext.setCurrentSubdomain(tenant.getSubdomain());
-    String path = request.getRequestURI();
+    String path = applicationPath(request);
     boolean management = path.startsWith("/useradmin/") || path.startsWith("/service/useradmin/");
     // Existing backend authorisation still governs the management route; the pause adds no rights.
     boolean bootstrap =
@@ -135,13 +135,19 @@ public class HttpTenantFilter extends OncePerRequestFilter {
     return management || bootstrap || !Boolean.FALSE.equals(tenant.getActive());
   }
 
+  private static String applicationPath(HttpServletRequest request) {
+    String context = request.getContextPath();
+    String uri = request.getRequestURI();
+    return context == null || context.isEmpty() ? uri : uri.substring(context.length());
+  }
+
   class DefaultRequiresTenantFilterMatcher implements RequestMatcher {
     @Override
     public boolean matches(HttpServletRequest request) {
       if (HttpMethod.OPTIONS.matches(request.getMethod())) {
         return false;
       }
-      String requestUri = request.getRequestURI().toLowerCase();
+      String requestUri = applicationPath(request).toLowerCase(java.util.Locale.ROOT);
       return TENANCY_FILTER_WHITELIST.stream()
           .noneMatch(route -> route.matcher(requestUri).matches());
     }

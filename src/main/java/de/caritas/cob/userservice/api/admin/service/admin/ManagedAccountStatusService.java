@@ -246,12 +246,8 @@ public class ManagedAccountStatusService {
   }
 
   public boolean isManuallyPaused(String id) {
-    return TenantContext.supplyAcrossTenants(() -> admins.findById(id))
-            .map(Admin::isManagedPaused)
-            .orElse(false)
-        || TenantContext.supplyAcrossTenants(() -> consultants.findById(id))
-            .map(Consultant::isManagedPaused)
-            .orElse(false);
+    return TenantContext.supplyAcrossTenants(() -> admins.existsByIdAndManagedPausedTrue(id))
+        || TenantContext.supplyAcrossTenants(() -> consultants.existsByIdAndManagedPausedTrue(id));
   }
 
   private Boolean tenantActive(Long tenantId) {

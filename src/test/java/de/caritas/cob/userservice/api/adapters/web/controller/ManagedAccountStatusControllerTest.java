@@ -299,6 +299,143 @@ class ManagedAccountStatusControllerTest {
 
     mvc.perform(get("/service/useradmin/accounts/target/status").principal(principal))
         .andExpect(status().isOk());
+    for (String alias : List.of("/useradmin", "/service/useradmin")) {
+      mvc.perform(
+              get("/service" + alias + "/accounts/target/status")
+                  .contextPath("/service")
+                  .principal(principal))
+          .andExpect(status().isOk());
+    }
+    for (String alias : List.of("/users", "/service/users")) {
+      mvc.perform(
+              get("/service" + alias + "/data").contextPath("/service").principal(adminPrincipal))
+          .andExpect(status().isNotFound());
+      mvc.perform(get("/service" + alias + "/data").contextPath("/service").principal(principal))
+          .andExpect(status().isForbidden());
+      mvc.perform(
+              post("/service" + alias + "/password-reset/request")
+                  .contextPath("/service")
+                  .principal(principal))
+          .andExpect(status().isNotFound());
+      mvc.perform(
+              get("/service" + alias + "/sessions")
+                  .contextPath("/service")
+                  .principal(adminPrincipal))
+          .andExpect(status().isForbidden());
+    }
+  }
+
+  @Test
+  void pauseAdmissionReadsFreshCanonicalFlagsWithoutReusingLoadedEntities() throws Exception {
+    org.junit.jupiter.api.Assertions.assertFalse(service.isManuallyPaused("target"));
+    jdbc.update("UPDATE admin SET managed_paused=true WHERE admin_id=?", "target");
+    org.junit.jupiter.api.Assertions.assertFalse(target.isManagedPaused());
+    org.junit.jupiter.api.Assertions.assertTrue(service.isManuallyPaused("target"));
+    jdbc.update("UPDATE admin SET managed_paused=false WHERE admin_id=?", "target");
+    org.junit.jupiter.api.Assertions.assertFalse(service.isManuallyPaused("target"));
+    var onlyConsultant = admissionConsultant("consultant-only");
+    var mixedConsultant = admissionConsultant("target");
+    consultants.saveAndFlush(onlyConsultant);
+    consultants.saveAndFlush(mixedConsultant);
+    jdbc.update(
+        "UPDATE consultant SET managed_paused=true WHERE consultant_id=?", "consultant-only");
+    org.junit.jupiter.api.Assertions.assertFalse(onlyConsultant.isManagedPaused());
+    org.junit.jupiter.api.Assertions.assertTrue(service.isManuallyPaused("consultant-only"));
+    jdbc.update("UPDATE consultant SET managed_paused=true WHERE consultant_id=?", "target");
+    org.junit.jupiter.api.Assertions.assertTrue(service.isManuallyPaused("target"));
+    jdbc.update("UPDATE consultant SET managed_paused=false WHERE consultant_id=?", "target");
+    jdbc.update("UPDATE admin SET managed_paused=true WHERE admin_id=?", "target");
+    org.junit.jupiter.api.Assertions.assertTrue(service.isManuallyPaused("target"));
+    org.junit.jupiter.api.Assertions.assertFalse(service.isManuallyPaused("no-such-identity"));
+    var jwt =
+        org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture")
+            .header("alg", "RS256")
+            .subject("consultant-only")
+            .build();
+    http.perform(
+            get("/service/useradmin/accounts/target/status")
+                .principal(
+                    new org.springframework.security.oauth2.server.resource.authentication
+                        .JwtAuthenticationToken(jwt)))
+        .andExpect(status().isForbidden());
+  }
+
+  private de.caritas.cob.userservice.api.model.Consultant admissionConsultant(String id) {
+    var consultant = new de.caritas.cob.userservice.api.model.Consultant();
+    consultant.setId(id);
+    consultant.setTenantId(1L);
+    consultant.setUsername(
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder().encodeUsername(id));
+    consultant.setFirstName("Test");
+    consultant.setLastName("Admission");
+    consultant.setEmail(id + "@example.invalid");
+    consultant.setLanguageCode(com.neovisionaries.i18n.LanguageCode.de);
+    consultant.setEncourage2fa(true);
+    consultant.setNotifyEnquiriesRepeating(true);
+    consultant.setNotifyNewChatMessageFromAdviceSeeker(true);
+    consultant.setWalkThroughEnabled(false);
+    consultant.setMagicLinkLoginEnabled(false);
+    consultant.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.CREATED);
+    return consultant;
+  }
+
+  @Test
+  void admissionFailureLogsOnlyExceptionClassAndReturnsGeneric502BeforeRouting() throws Exception {
+    var databaseFailure = new IllegalStateException("private database credential or identity");
+    var failedAdmins =
+        mock(
+            AdminRepository.class,
+            invocation -> {
+              throw databaseFailure;
+            });
+    var failedService =
+        new ManagedAccountStatusService(
+            actor,
+            mock(AdminScope.class),
+            failedAdmins,
+            consultants,
+            identities,
+            profiles,
+            factors,
+            lifecycle,
+            tenants);
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(
+                de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+                    .ManagedAccountPauseAccessFilter.class);
+    var events =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    events.start();
+    logger.addAppender(events);
+    try {
+      var mvc =
+          MockMvcBuilders.standaloneSetup(new ManagedAccountStatusController(service))
+              .addFilters(
+                  new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+                      .ManagedAccountPauseAccessFilter(failedService))
+              .build();
+      var jwt =
+          org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture")
+              .header("alg", "RS256")
+              .subject("private-subject")
+              .build();
+      mvc.perform(
+              get("/service/useradmin/accounts/target/status")
+                  .principal(
+                      new org.springframework.security.oauth2.server.resource.authentication
+                          .JwtAuthenticationToken(jwt)))
+          .andExpect(status().isBadGateway());
+      org.assertj.core.api.Assertions.assertThat(events.list).hasSize(1);
+      org.assertj.core.api.Assertions.assertThat(events.list.getFirst().getFormattedMessage())
+          .contains("IllegalStateException")
+          .doesNotContain("credential", "private-subject");
+      org.assertj.core.api.Assertions.assertThat(events.list.getFirst().getThrowableProxy())
+          .isNull();
+    } finally {
+      logger.detachAppender(events);
+      events.stop();
+    }
   }
 
   @Test
@@ -361,6 +498,7 @@ class ManagedAccountStatusControllerTest {
             .setControllerAdvice(new ApiResponseEntityExceptionHandler())
             .build();
     mvc.perform(post("/users/invitelinks/fixture-link/redeem")).andExpect(status().isForbidden());
+    verifyNoInteractions(provisioning);
     entityManager.flush();
     entityManager.clear();
     mvc.perform(get("/users/invitelinks/fixture-link/context"))

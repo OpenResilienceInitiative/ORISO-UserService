@@ -133,7 +133,9 @@ public class TenantService {
       if (tenant == null) throw new IllegalStateException("Tenant metadata unavailable");
     } catch (RuntimeException unavailable) {
       throw new org.springframework.web.server.ResponseStatusException(
-          org.springframework.http.HttpStatus.BAD_GATEWAY, "Tenant operational status unavailable");
+          org.springframework.http.HttpStatus.BAD_GATEWAY,
+          "Tenant operational status unavailable",
+          unavailable);
     }
     if (Boolean.FALSE.equals(tenant.getActive()))
       throw new org.springframework.web.server.ResponseStatusException(

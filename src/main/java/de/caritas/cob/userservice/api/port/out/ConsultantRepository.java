@@ -17,6 +17,8 @@ import org.springframework.data.repository.query.Param;
 public interface ConsultantRepository
     extends JpaRepository<Consultant, String>, JpaSpecificationExecutor<Consultant> {
 
+  boolean existsByIdAndManagedPausedTrue(String id);
+
   @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
   @Query("select c from Consultant c where c.id = :id")
   Optional<Consultant> findPictureOwnerForUpdate(@Param("id") String id);
