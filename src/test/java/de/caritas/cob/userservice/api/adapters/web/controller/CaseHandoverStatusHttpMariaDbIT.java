@@ -120,18 +120,21 @@ class CaseHandoverStatusHttpMariaDbIT {
 
   @AfterEach
   void removeFixture() {
-    if (sessionId != null)
-      transactions.executeWithoutResult(
-          ignored -> {
-            caseHandoverRequestRepository.deleteAllBySessionId(sessionId);
-            sessionRepository.deleteAllById(List.of(sessionId, secondSessionId));
-            consultantAgencyRepository.deleteAll(
-                consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(OWNER_B_ID));
-            consultantRepository.deleteAllById(List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID));
-            userRepository.deleteById(USER_ID);
-          });
-    for (String id : List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID))
-      jdbc.update("DELETE FROM account_inactivity WHERE identity_id=?", id);
+    try {
+      if (sessionId != null)
+        transactions.executeWithoutResult(
+            ignored -> {
+              caseHandoverRequestRepository.deleteAllBySessionId(sessionId);
+              sessionRepository.deleteAllById(List.of(sessionId, secondSessionId));
+              consultantAgencyRepository.deleteAll(
+                  consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(OWNER_B_ID));
+              consultantRepository.deleteAllById(List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID));
+              userRepository.deleteById(USER_ID);
+            });
+    } finally {
+      for (String id : List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID))
+        jdbc.update("DELETE FROM account_inactivity WHERE identity_id=?", id);
+    }
   }
 
   @Test
