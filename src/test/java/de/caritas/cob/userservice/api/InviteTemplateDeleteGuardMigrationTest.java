@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.net.URI;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -94,7 +95,11 @@ class InviteTemplateDeleteGuardMigrationTest {
   private static Connection database() throws Exception {
     String url = System.getenv("TEMPLATE_DELETE_IT_DB_URL");
     if (url != null) {
-      Connection connection = DriverManager.getConnection(url, "root", "template-delete-test");
+      String user = System.getenv("TEMPLATE_DELETE_IT_DB_USER");
+      String password = System.getenv("TEMPLATE_DELETE_IT_DB_PASSWORD");
+      // Validate before connecting, not just before resetting tables: this fixture is destructive.
+      String validatedUrl = validateExternalSettings(url, user, password);
+      Connection connection = DriverManager.getConnection(validatedUrl, user, password);
       execute(connection, "DROP TABLE IF EXISTS account_invite");
       execute(connection, "DROP TABLE IF EXISTS invite_email_template");
       execute(connection, "DROP TABLE IF EXISTS invite_email_delivery");
@@ -104,6 +109,38 @@ class InviteTemplateDeleteGuardMigrationTest {
     }
     return DriverManager.getConnection(
         "jdbc:h2:mem:template-delete-" + UUID.randomUUID() + ";MODE=MariaDB", "sa", "");
+  }
+
+  static String validateExternalSettings(String url, String user, String password) {
+    if (url == null || !url.startsWith("jdbc:")) {
+      throw unsafeExternalDatabase();
+    }
+    URI database;
+    try {
+      database = URI.create(url.substring("jdbc:".length()));
+    } catch (IllegalArgumentException invalidUri) {
+      throw unsafeExternalDatabase();
+    }
+    if (!"mariadb".equals(database.getScheme())
+        || !("localhost".equals(database.getHost()) || "127.0.0.1".equals(database.getHost()))
+        || !"/template_delete_test".equals(database.getRawPath())
+        || database.getRawUserInfo() != null
+        || database.getRawQuery() != null
+        || database.getRawFragment() != null
+        || (database.getPort() != -1 && (database.getPort() < 1 || database.getPort() > 65535))) {
+      throw unsafeExternalDatabase();
+    }
+    if (user == null || user.isBlank() || password == null || password.isBlank()) {
+      throw new IllegalArgumentException(
+          "Set TEMPLATE_DELETE_IT_DB_USER and TEMPLATE_DELETE_IT_DB_PASSWORD for the disposable database");
+    }
+    return url;
+  }
+
+  private static IllegalArgumentException unsafeExternalDatabase() {
+    // Do not include the untrusted URL: it might contain embedded credentials.
+    return new IllegalArgumentException(
+        "TEMPLATE_DELETE_IT_DB_URL must name MariaDB schema template_delete_test on localhost or 127.0.0.1 without credentials or URL options");
   }
 
   private static Liquibase liquibase(Connection connection) throws Exception {

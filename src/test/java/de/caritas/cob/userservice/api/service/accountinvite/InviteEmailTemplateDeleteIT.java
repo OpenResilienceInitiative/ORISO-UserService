@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.service.notification.AdminPanelUrl;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import javax.sql.DataSource;
 import liquibase.Contexts;
@@ -33,6 +34,7 @@ import liquibase.database.DatabaseFactory;
 import liquibase.database.jvm.JdbcConnection;
 import liquibase.resource.ClassLoaderResourceAccessor;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +44,8 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -49,6 +53,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 /** Database-backed deletion checks use the real tenant and template-kind policy. */
 @DataJpaTest(showSql = false)
 @TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
+// Preserve the pinned private H2 URL and its MariaDB mode; dynamic properties reject env redirects.
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Import({
   InviteEmailTemplateService.class,
@@ -57,6 +62,22 @@ import org.springframework.transaction.PlatformTransactionManager;
   InviteEmailTemplateDeleteIT.CallerConfig.class
 })
 class InviteEmailTemplateDeleteIT {
+
+  private static final String EMBEDDED_DATABASE_URL =
+      "jdbc:h2:mem:template-delete-scope-"
+          + UUID.randomUUID()
+          + ";DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;NON_KEYWORDS=USER,VALUE,DAY";
+
+  @DynamicPropertySource
+  static void usePrivateEmbeddedDatabase(DynamicPropertyRegistry registry) {
+    // Higher priority than generic datasource environment variables: never create/drop shared data.
+    registry.add("spring.datasource.url", () -> EMBEDDED_DATABASE_URL);
+    registry.add("spring.datasource.driver-class-name", () -> "org.h2.Driver");
+    registry.add("spring.datasource.username", () -> "sa");
+    registry.add("spring.datasource.password", () -> "");
+    registry.add(
+        "spring.jpa.properties.hibernate.dialect", () -> "org.hibernate.dialect.H2Dialect");
+  }
 
   enum Caller {
     PLATFORM,
@@ -78,6 +99,7 @@ class InviteEmailTemplateDeleteIT {
   @Autowired private InviteEmailDeliveryRepository deliveries;
   @Autowired private AuthenticatedUser caller;
   @Autowired private AccountInviteAccessPolicy policy;
+  @Autowired private DataSource dataSource;
   @MockitoBean private AgencyService agencyService;
 
   @BeforeAll
@@ -90,6 +112,27 @@ class InviteEmailTemplateDeleteIT {
                 DatabaseFactory.getInstance()
                     .findCorrectDatabaseImplementation(new JdbcConnection(connection)))) {
       migration.update(new Contexts(), new LabelExpression());
+    }
+  }
+
+  @Test
+  void databaseAlwaysUsesPrivateEmbeddedH2WithRequiredMariaDbCompatibility() throws Exception {
+    try (var connection = dataSource.getConnection()) {
+      assertThat(connection.getMetaData().getURL())
+          .startsWith("jdbc:h2:mem:template-delete-scope-");
+      try (var sql = connection.createStatement();
+          var settings =
+              sql.executeQuery(
+                  "SELECT SETTING_NAME, SETTING_VALUE FROM INFORMATION_SCHEMA.SETTINGS"
+                      + " WHERE SETTING_NAME IN ('MODE', 'NON_KEYWORDS')")) {
+        var values = new java.util.HashMap<String, String>();
+        while (settings.next()) {
+          values.put(settings.getString(1), settings.getString(2));
+        }
+        assertThat(values).containsEntry("MODE", "MariaDB");
+        assertThat(values.get("NON_KEYWORDS").split(","))
+            .containsExactlyInAnyOrder("USER", "VALUE", "DAY");
+      }
     }
   }
 

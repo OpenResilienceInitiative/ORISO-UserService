@@ -39,3 +39,19 @@ After normal queue release: queued_template_id is cleared; delivery history reta
 During deletion: clear only target-template references on non-WAITING_FOR_UNIT invitations.
 No invitation status, subject/body snapshot, recipient, or account is changed by deletion.
 ```
+
+## Local database fixtures
+
+The scope/deletion fixture always uses a fresh embedded H2 database, even when generic datasource
+environment variables are set. The migration fixture defaults to fresh H2 too. Its optional MariaDB
+connection is restricted to loopback and the dedicated disposable schema; URL credentials and
+options are refused before opening a connection. No external credential defaults are provided.
+
+**For developers — optional disposable MariaDB fixture settings:**
+
+```text
+TEMPLATE_DELETE_IT_DB_URL=jdbc:mariadb://127.0.0.1:<port>/template_delete_test
+TEMPLATE_DELETE_IT_DB_USER and TEMPLATE_DELETE_IT_DB_PASSWORD must both be set.
+Only localhost or 127.0.0.1 and the exact template_delete_test schema are accepted.
+The migration fixture resets tables in that schema; use a disposable database only.
+```
