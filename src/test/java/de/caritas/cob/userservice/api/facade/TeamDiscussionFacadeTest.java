@@ -73,7 +73,6 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class TeamDiscussionFacadeTest {
-
   private static final Long SESSION_ID = 42L;
   private static final Long AGENCY_ID = 7L;
   private static final String CONSULTANT_ID = "consultant-1";
@@ -236,6 +235,13 @@ class TeamDiscussionFacadeTest {
   @EnableWebMvc
   @Import({SecurityConfig.class, ApiResponseEntityExceptionHandler.class})
   static class TeamHttpSecurityFixture {
+    @org.springframework.context.annotation.Bean
+    de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService
+        accountOperationalStatus() {
+      return org.mockito.Mockito.mock(
+          de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService.class);
+    }
+
     @Bean
     de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
         accountInactivityService() {

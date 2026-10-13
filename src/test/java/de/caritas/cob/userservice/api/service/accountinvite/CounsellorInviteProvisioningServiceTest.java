@@ -81,7 +81,11 @@ class CounsellorInviteProvisioningServiceTest {
             createConsultantSaga,
             counsellorAgencyAdminGrantService,
             consultantAgencyRelationCreatorService,
-            new AcceptTimeAgencyCheck(agencyFacts, identityAuthentication, identityClientConfig),
+            new AcceptTimeAgencyCheck(
+                agencyFacts,
+                identityAuthentication,
+                identityClientConfig,
+                mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class)),
             consultantTopicRepository,
             identityPasswordUpdater);
     when(agencyFacts.find(275L))

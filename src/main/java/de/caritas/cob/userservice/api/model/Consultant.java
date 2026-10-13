@@ -50,6 +50,7 @@ import org.springframework.lang.Nullable;
 
 /** Represents a consultant */
 @Entity
+@org.hibernate.annotations.DynamicUpdate
 @Table(
     name = "consultant",
     indexes = {
@@ -74,6 +75,11 @@ import org.springframework.lang.Nullable;
 public class Consultant implements TenantAware, NotificationsAware {
 
   protected static final String EMAIL_ANALYZER = "emailAnalyzer";
+
+  /** Explicit management pause; independent identity and lifecycle restrictions stay intact. */
+  @org.hibernate.annotations.ColumnDefault("false")
+  @Column(name = "managed_paused", nullable = false)
+  private boolean managedPaused;
 
   @Id
   @Column(name = "consultant_id", updatable = false, nullable = false)

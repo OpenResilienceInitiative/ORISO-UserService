@@ -45,6 +45,10 @@ public class HttpTenantFilter extends OncePerRequestFilter {
               "/internal/matrixrtc/media-access",
               "(/service)?/users/askers/new",
               "(/service)?/users/magic-link/(request|consume)",
+              "(/service)?/users/password-reset/(request|confirm)",
+              // Token-owned routes enforce operational admission before creating ordinary work;
+              // read, existing-account setup and second-factor resume must remain possible.
+              "(/service)?/users/account-invites/[^/]+(/(accept|setup|onboarding(/(register|two-factor(/email)?|dpa-forward|dpa-mail-preview))?))?",
               "(/service)?/users/invitelinks/[^/]+/(context|redeem)",
               "(/service)?/users/identity-suggestions",
               // TenantService's callback; DpaSignedNoticeService takes the tenant from the path.
@@ -73,7 +77,15 @@ public class HttpTenantFilter extends OncePerRequestFilter {
           response.sendError(HttpServletResponse.SC_FORBIDDEN);
           return;
         }
-        resolveSubdomain(tenantId);
+        try {
+          if (!resolveSubdomain(tenantId, request)) {
+            response.sendError(HttpServletResponse.SC_FORBIDDEN, "Tenant operationally inactive");
+            return;
+          }
+        } catch (org.springframework.web.client.RestClientException unavailable) {
+          response.sendError(HttpServletResponse.SC_BAD_GATEWAY, "Tenant status unavailable");
+          return;
+        }
         log.debug("Setting current tenant context to: " + tenantId);
         TenantContext.setCurrentTenant(tenantId);
         filterChain.doFilter(request, response);
@@ -86,15 +98,41 @@ public class HttpTenantFilter extends OncePerRequestFilter {
     }
   }
 
-  private void resolveSubdomain(Long resolvedTenant) {
+  private boolean resolveSubdomain(Long resolvedTenant, HttpServletRequest request) {
     if (TenantContext.TECHNICAL_TENANT_ID.equals(resolvedTenant)) {
       // Global/super-admin context has no concrete tenant entity (id 0).
       // Skip tenant-service lookup to avoid /tenant/public/id/0 404.
       TenantContext.setCurrentSubdomain("");
-      return;
+      return true;
     }
-    var currentSubdomain = tenantService.getRestrictedTenantData(resolvedTenant).getSubdomain();
-    TenantContext.setCurrentSubdomain(currentSubdomain);
+    // Admission must see a recent pause; the branding cache may outlive the operational update.
+    var tenant = tenantService.getRestrictedTenantDataFresh(resolvedTenant);
+    if (tenant == null)
+      throw new org.springframework.web.client.RestClientException("Missing tenant metadata");
+    TenantContext.setCurrentSubdomain(tenant.getSubdomain());
+    String path = request.getRequestURI();
+    boolean management = path.startsWith("/useradmin/") || path.startsWith("/service/useradmin/");
+    // Existing backend authorisation still governs the management route; the pause adds no rights.
+    boolean bootstrap =
+        org.springframework.http.HttpMethod.GET.matches(request.getMethod())
+            && (path.equals("/users/data") || path.equals("/service/users/data"))
+            && request.getUserPrincipal()
+                instanceof
+                org.springframework.security.oauth2.server.resource.authentication
+                            .JwtAuthenticationToken
+                        auth
+            && de.caritas.cob.userservice.api.config.auth.KeycloakRoles.of(
+                    auth.getToken().getClaims())
+                .stream()
+                .anyMatch(
+                    role ->
+                        java.util.Set.of(
+                                "tenant-admin",
+                                "single-tenant-admin",
+                                "restricted-agency-admin",
+                                "user-admin")
+                            .contains(role));
+    return management || bootstrap || !Boolean.FALSE.equals(tenant.getActive());
   }
 
   class DefaultRequiresTenantFilterMatcher implements RequestMatcher {
