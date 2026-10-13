@@ -100,6 +100,47 @@ class CounsellorInviteProvisioningServiceTest {
         .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
+  @Test
+  void pausedInviteTenantStopsCounsellorBeforeClaimWizardIdentityAndPersistence() {
+    var invite = activeCounsellorInvite();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    var authorityCheck =
+        new AcceptTimeAgencyCheck(
+            agencyFacts,
+            identityAuthentication,
+            identityClientConfig,
+            de.caritas.cob.userservice.api.testHelper.PausedTenantAuthorityFixture.paused(79L));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "acceptTimeAgencyCheck", authorityCheck);
+    var createUnit = mock(Runnable.class);
+    var refused =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            org.springframework.web.server.ResponseStatusException.class,
+            () ->
+                service.acceptInvite(
+                    "raw-token",
+                    new ProvisionCounsellorCommand(
+                        "new-counsellor", "fixture-password", true, null),
+                    WizardAccept.decidedFrom(invite, createUnit)));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        org.springframework.http.HttpStatus.FORBIDDEN, refused.getStatusCode());
+    org.mockito.Mockito.verifyNoInteractions(
+        accountInviteRepository,
+        createUnit,
+        consultantAdminFacade,
+        consultantRepository,
+        createConsultantSaga,
+        identityAuthentication,
+        identityPasswordUpdater,
+        consultantAgencyRelationCreatorService,
+        counsellorAgencyAdminGrantService,
+        consultantTopicRepository);
+    org.junit.jupiter.api.Assertions.assertEquals(
+        AccountInviteProvisioningStatus.PENDING, invite.getProvisioningStatus());
+    org.mockito.Mockito.verify(accountInviteService, org.mockito.Mockito.never())
+        .acceptInvite(any(), any());
+  }
+
   @ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(
       value = AccountInviteTargetRole.class,
