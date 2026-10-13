@@ -380,6 +380,37 @@ class ManagedAccountStatusControllerTest {
   }
 
   @Test
+  void unpausedConsultantInSameTenantCannotReadManagedAccountSecurityMetadata() throws Exception {
+    target.setTenantId(1L);
+    admins.saveAndFlush(target);
+    consultants.saveAndFlush(admissionConsultant("reader"));
+    // Establish a real existing, internally consistent target with a successful authorized read.
+    http.perform(get("/service/useradmin/accounts/target/status"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.accountId").value("target"));
+    clearInvocations(identities, profiles, factors);
+    actor.setUserId("reader");
+    actor.setTenantId(1L);
+    actor.setRoles(Set.of("consultant"));
+    actor.setGrantedAuthorities(Set.of());
+    org.junit.jupiter.api.Assertions.assertFalse(service.isManuallyPaused("reader"));
+    var jwt =
+        org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture-reader")
+            .header("alg", "RS256")
+            .subject("reader")
+            .claim("tenantId", 1L)
+            .claim("realm_access", Map.of("roles", List.of("consultant")))
+            .build();
+    http.perform(
+            get("/service/useradmin/accounts/target/status")
+                .principal(
+                    new org.springframework.security.oauth2.server.resource.authentication
+                        .JwtAuthenticationToken(jwt)))
+        .andExpect(status().isForbidden());
+    verifyNoInteractions(identities, profiles, factors);
+  }
+
+  @Test
   void admissionFailureLogsOnlyExceptionClassAndReturnsGeneric502BeforeRouting() throws Exception {
     var databaseFailure = new IllegalStateException("private database credential or identity");
     var failedAdmins =
