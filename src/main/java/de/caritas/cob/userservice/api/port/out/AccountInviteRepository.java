@@ -23,6 +23,16 @@ import org.springframework.data.repository.query.Param;
 
 public interface AccountInviteRepository extends JpaRepository<AccountInvite, Long> {
 
+  boolean existsByQueuedTemplateIdAndStatus(Long templateId, AccountInviteStatus status);
+
+  /** Released or closed invites keep their immutable delivery history, not queue payload. */
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.queuedTemplateId = NULL"
+          + " WHERE i.queuedTemplateId = :templateId AND i.status <> :waiting")
+  int clearReleasedTemplateReferences(
+      @Param("templateId") Long templateId, @Param("waiting") AccountInviteStatus waiting);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   Optional<AccountInvite> findByTokenHash(String tokenHash);
 
