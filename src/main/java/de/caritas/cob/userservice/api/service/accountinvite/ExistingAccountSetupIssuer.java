@@ -16,10 +16,12 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.RenderedEmail;
 import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailDelivery.Purpose;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -134,7 +136,11 @@ public class ExistingAccountSetupIssuer {
       values.put("inviteExpiresAt", invite.getExpiresAt().toLocalDate().toString());
       RenderedEmail rendered = renderer.render(TEMPLATE, identity.tone(), values);
       markReadyToSend(invite.getId(), invite.getTokenHash());
-      var receipt = mail.sendRendered(identity.email(), rendered);
+      var receipt =
+          mail.sendRendered(
+              identity.email(),
+              rendered,
+              InviteMailOrigin.of(identity.tenantId(), Purpose.ACCOUNT_INVITE));
       recordDelivery(
           invite.getId(),
           identity.email(),

@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -328,7 +329,7 @@ class TenantAdminUserServiceTest {
         .thenReturn(new HashMap<>());
 
     // when
-    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+    tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest);
 
     // then
     ArgumentCaptor<Map<Long, String>> tenantNameMapCaptor = ArgumentCaptor.forClass(Map.class);
@@ -365,7 +366,7 @@ class TenantAdminUserServiceTest {
             Mockito.any()))
         .thenReturn(new HashMap<>());
 
-    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+    tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest);
 
     Mockito.verify(tenantService, Mockito.never()).getRestrictedTenantData(0L);
     ArgumentCaptor<Map<Long, String>> tenantNameMapCaptor = ArgumentCaptor.forClass(Map.class);
@@ -408,7 +409,7 @@ class TenantAdminUserServiceTest {
             Mockito.any()))
         .thenReturn(new HashMap<>());
 
-    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+    tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest);
 
     Mockito.verify(retrieveAdminService)
         .findAllByInfixScopedToTenant("*", Admin.AdminType.TENANT, 9L, pageRequest);
@@ -426,7 +427,9 @@ class TenantAdminUserServiceTest {
     when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
     when(authenticatedUser.getTenantId()).thenReturn(null);
 
-    assertThatThrownBy(() -> tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest))
+    assertThatThrownBy(
+            () ->
+                tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest))
         .isInstanceOf(ForbiddenException.class);
     Mockito.verifyNoInteractions(retrieveAdminService);
   }
@@ -446,7 +449,7 @@ class TenantAdminUserServiceTest {
             Mockito.any()))
         .thenReturn(new HashMap<>());
 
-    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+    tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest);
 
     @SuppressWarnings("unchecked")
     ArgumentCaptor<Page<Admin.AdminBase>> mappedPage = ArgumentCaptor.forClass(Page.class);
@@ -482,12 +485,57 @@ class TenantAdminUserServiceTest {
             Mockito.any()))
         .thenReturn(new HashMap<>());
 
-    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+    tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest);
 
     Mockito.verify(retrieveAdminService).findAllByInfix("*", Admin.AdminType.TENANT, pageRequest);
     Mockito.verify(retrieveAdminService, Mockito.never())
         .findAllByInfixScopedToTenant(
             Mockito.anyString(), Mockito.any(), Mockito.anyLong(), Mockito.any(PageRequest.class));
+  }
+
+  @Test
+  void findTenantAdminsByInfix_Should_ReturnEmpty_WhenTenantAdminFiltersForeignTenant() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", new SearchFilter(10L, null), pageRequest);
+
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfixScopedToTenant(
+            Mockito.anyString(), Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class));
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
+  }
+
+  @Test
+  void findTenantAdminsByInfix_Should_ScopeToRequestedTenant_ForPlatformAdmin() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(retrieveAdminService.findAllByInfixScopedToTenant(
+            "*", Admin.AdminType.TENANT, 4L, pageRequest))
+        .thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", new SearchFilter(4L, null), pageRequest);
+
+    Mockito.verify(retrieveAdminService)
+        .findAllByInfixScopedToTenant("*", Admin.AdminType.TENANT, 4L, pageRequest);
   }
 
   // ---- #968: by-id sibling endpoints must reject foreign-tenant targets ----
@@ -518,6 +566,66 @@ class TenantAdminUserServiceTest {
     assertThatThrownBy(() -> tenantAdminUserService.updateTenantAdmin("foreign-admin", dto))
         .isInstanceOf(ForbiddenException.class);
     Mockito.verifyNoInteractions(updateAdminService);
+  }
+
+  @Test
+  void updateTenantAdmin_Should_RejectForeignTenantId_WhenCallerIsTenantScoped() {
+    // given a tenant admin of tenant 9 trying to move one of its own admins to tenant 7.
+    // The stored record belongs to the caller; only the requested tenant can stop this move.
+    UpdateTenantAdminDTO dto = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    dto.setTenantId(7);
+    when(retrieveAdminService.findAdmin("own-admin", Admin.AdminType.TENANT))
+        .thenReturn(tenantAdmin("own-admin", 9L));
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+
+    // when, then
+    assertThatThrownBy(() -> tenantAdminUserService.updateTenantAdmin("own-admin", dto))
+        .isInstanceOf(ForbiddenException.class)
+        .hasMessage(AdminScope.OUT_OF_SCOPE_MESSAGE);
+    Mockito.verifyNoInteractions(updateAdminService);
+  }
+
+  @Test
+  void updateTenantAdmin_Should_AllowOwnTenantId_WhenCallerIsTenantScoped() {
+    // given
+    UpdateTenantAdminDTO dto = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    dto.setTenantId(9);
+    Admin ownAdmin = tenantAdmin("own-admin", 9L);
+    when(retrieveAdminService.findAdmin("own-admin", Admin.AdminType.TENANT)).thenReturn(ownAdmin);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    when(updateAdminService.updateTenantAdmin("own-admin", dto)).thenReturn(ownAdmin);
+    when(tenantService.getRestrictedTenantData(9L))
+        .thenReturn(new RestrictedTenantDTO().subdomain("tenant-nine"));
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.updateTenantAdmin("own-admin", dto);
+
+    // then
+    Mockito.verify(updateAdminService).updateTenantAdmin("own-admin", dto);
+    assertThat(response.getEmbedded().getTenantId()).isEqualTo("9");
+  }
+
+  @Test
+  void updateTenantAdmin_Should_AllowForeignTenantId_WhenCallerIsPlatformAdmin() {
+    // given
+    UpdateTenantAdminDTO dto = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    dto.setTenantId(7);
+    Admin movedAdmin = tenantAdmin("moved-admin", 7L);
+    when(retrieveAdminService.findAdmin("moved-admin", Admin.AdminType.TENANT))
+        .thenReturn(tenantAdmin("moved-admin", 9L));
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(updateAdminService.updateTenantAdmin("moved-admin", dto)).thenReturn(movedAdmin);
+    when(tenantService.getRestrictedTenantData(7L))
+        .thenReturn(new RestrictedTenantDTO().subdomain("tenant-seven"));
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.updateTenantAdmin("moved-admin", dto);
+
+    // then
+    Mockito.verify(updateAdminService).updateTenantAdmin("moved-admin", dto);
+    assertThat(response.getEmbedded().getTenantId()).isEqualTo("7");
   }
 
   @Test

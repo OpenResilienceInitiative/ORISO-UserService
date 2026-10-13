@@ -113,8 +113,9 @@ public class GrantConsultantIdentityService {
           HttpStatusExceptionReason.CONSULTANT_IDENTITY_ALREADY_GRANTED, HttpStatus.CONFLICT);
     }
 
-    consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
-        dto.getTopicIds(), dto.getAgencyIds(), admin.getTenantId());
+    var topicIdsByAgencyId =
+        consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+            dto.getTopicIds(), dto.getAgencyIds(), admin.getTenantId());
 
     var snapshot = chatRecoveryEnrollmentPolicyService.forNewConsultant(admin.getTenantId());
     assignKeycloakRoles(adminId, dto);
@@ -122,6 +123,7 @@ public class GrantConsultantIdentityService {
     String matrixUserId = createMatrixAccount(admin);
 
     var consultant = buildConsultant(admin, encodedUsername, dto, matrixUserId);
+    consultant.assignInitialTopics(dto.getTopicIds(), topicIdsByAgencyId);
     consultant.setChatRecoveryMode(snapshot.mode());
     consultant.setChatRecoveryPolicyRevision(snapshot.revision());
     saveConsultantOrRollback(adminId, dto, consultant);
@@ -218,13 +220,12 @@ public class GrantConsultantIdentityService {
             .languages(Set.of())
             .tenantId(admin.getTenantId())
             .status(ConsultantStatus.CREATED)
-            .walkThroughEnabled(true)
+            .walkThroughEnabled(false)
             .languageCode(LanguageCode.de)
             .notificationsEnabled(true)
             .notificationsSettings(serializeToJsonString(allActiveNotifications()))
             .build();
 
-    consultant.replaceTopics(dto.getTopicIds());
     return consultant;
   }
 

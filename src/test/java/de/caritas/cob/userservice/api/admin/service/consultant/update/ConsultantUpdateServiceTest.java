@@ -352,8 +352,11 @@ public class ConsultantUpdateServiceTest {
     keepDisplayNameUnchanged(consultant, updateConsultant);
     doThrow(new BadRequestException("topic not covered"))
         .when(consultantTopicAgencyCompatibilityValidator)
-        .validateTopicUpdateAgainstAssignedAgencies(
-            eq(consultant.getId()), eq(List.of(99L)), eq(consultant.getTenantId()));
+        .resolveTopicUpdate(
+            eq(consultant.getId()),
+            eq(List.of(99L)),
+            eq(updateConsultant.getTopicsByAgency()),
+            eq(consultant.getTenantId()));
 
     assertThrows(
         BadRequestException.class,

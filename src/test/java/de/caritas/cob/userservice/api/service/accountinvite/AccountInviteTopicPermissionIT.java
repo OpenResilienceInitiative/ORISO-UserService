@@ -302,7 +302,7 @@ class AccountInviteTopicPermissionIT {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
         .thenReturn("https://admin.example.org/onboarding/token");
     when(inviteMailDispatchService.send(
-            anyString(), anyString(), anyString(), anyString(), any(), any()))
+            anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
         .thenThrow(
             new SmtpSendException(
                 SmtpSendException.Category.SMTP_TRANSPORT_FAILED,

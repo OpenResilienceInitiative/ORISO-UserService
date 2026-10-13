@@ -20,7 +20,6 @@ import de.caritas.cob.userservice.api.service.donotdisturb.DoNotDisturbService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
-import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -218,10 +217,6 @@ public class FeedbackMessageEmailService {
       values.put("platformName", values.get("offeringName"));
       if (tenantBrand.logoUrl() != null) {
         values.put("logoUrl", tenantBrand.logoUrl());
-      }
-      if (!EmailColors.PLATFORM_ACCENT_DARK.equals(tenantBrand.accentColor())) {
-        values.put("primaryColor", emailBrand.readablePrimary(tenantBrand.accentColor()));
-        values.put("accentColor", tenantBrand.accentColor());
       }
       values.put(
           "messageUrl",

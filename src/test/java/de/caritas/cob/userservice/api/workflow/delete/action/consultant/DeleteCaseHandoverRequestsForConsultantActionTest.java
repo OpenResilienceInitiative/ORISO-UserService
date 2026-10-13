@@ -70,20 +70,26 @@ class DeleteCaseHandoverRequestsForConsultantActionTest {
     verify(this.caseHandoverRequestRepository, times(1))
         .findByRequesterConsultantId("consultantId");
     verify(this.caseHandoverRequestRepository, times(1)).findByPreviousConsultantId("consultantId");
+    verify(this.caseHandoverRequestRepository, times(1))
+        .findByInitiatorConsultantId("consultantId");
   }
 
   @Test
-  void execute_Should_deleteCaseHandoverRequests_When_consultantIsRequesterOrPreviousConsultant() {
+  void execute_Should_deleteRequests_When_consultantIsRequesterPreviousOrInitiator() {
     Consultant consultant = new Consultant();
     consultant.setId("consultantId");
     CaseHandoverRequest requesterRequest = new EasyRandom().nextObject(CaseHandoverRequest.class);
     requesterRequest.setId(1L);
     CaseHandoverRequest previousRequest = new EasyRandom().nextObject(CaseHandoverRequest.class);
     previousRequest.setId(2L);
+    CaseHandoverRequest initiatorRequest = new EasyRandom().nextObject(CaseHandoverRequest.class);
+    initiatorRequest.setId(3L);
     when(this.caseHandoverRequestRepository.findByRequesterConsultantId("consultantId"))
         .thenReturn(singletonList(requesterRequest));
     when(this.caseHandoverRequestRepository.findByPreviousConsultantId("consultantId"))
         .thenReturn(singletonList(previousRequest));
+    when(this.caseHandoverRequestRepository.findByInitiatorConsultantId("consultantId"))
+        .thenReturn(singletonList(initiatorRequest));
     ConsultantDeletionWorkflowDTO workflowDTO =
         new ConsultantDeletionWorkflowDTO(consultant, emptyList());
 
@@ -92,7 +98,7 @@ class DeleteCaseHandoverRequestsForConsultantActionTest {
     assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
     ArgumentCaptor<List<CaseHandoverRequest>> captor = ArgumentCaptor.forClass(List.class);
     verify(this.caseHandoverRequestRepository, times(1)).deleteAll(captor.capture());
-    assertThat(captor.getValue(), hasSize(2));
+    assertThat(captor.getValue(), hasSize(3));
   }
 
   @Test

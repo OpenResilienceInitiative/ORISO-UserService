@@ -117,6 +117,7 @@ class AccountInviteControllerTest {
             logo,
             "#f8e71c",
             "#0f3b8f",
+            "#ffffff",
             image ? BrandedEmail.LogoRendering.IMAGE : BrandedEmail.LogoRendering.TEXT_WORDMARK);
     when(previewService.preview(any()))
         .thenReturn(
@@ -638,6 +639,35 @@ class AccountInviteControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(1, response.getBody().size());
+  }
+
+  @Test
+  void listTemplates_Should_tellWhichTemplateIsTheSystemDefault_And_itsLanguage() throws Exception {
+    var systemDefault =
+        InviteEmailTemplate.builder()
+            .id(1L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .language("de")
+            .systemDefault(true)
+            .build();
+    var own =
+        InviteEmailTemplate.builder()
+            .id(2L)
+            .tenantId(7L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .language("en")
+            .build();
+    when(templateService.listTemplates(InviteEmailTemplateKind.COUNSELLOR_INVITE))
+        .thenReturn(List.of(systemDefault, own));
+
+    MockMvcBuilders.standaloneSetup(controller)
+        .build()
+        .perform(get("/useradmin/invite-email-templates").param("kind", "COUNSELLOR_INVITE"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].systemDefault").value(true))
+        .andExpect(jsonPath("$[0].language").value("de"))
+        .andExpect(jsonPath("$[1].systemDefault").value(false))
+        .andExpect(jsonPath("$[1].language").value("en"));
   }
 
   @Test

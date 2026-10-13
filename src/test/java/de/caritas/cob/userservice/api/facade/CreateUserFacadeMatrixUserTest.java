@@ -56,6 +56,10 @@ import org.springframework.http.ResponseEntity;
 
 @ExtendWith(MockitoExtension.class)
 class CreateUserFacadeMatrixUserTest {
+  @org.mockito.Mock
+  private de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
+
   @org.mockito.Mock private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
 
   @org.junit.jupiter.api.BeforeEach
@@ -63,6 +67,7 @@ class CreateUserFacadeMatrixUserTest {
     createUserFacade =
         new CreateUserFacade(
             chatRecoveryEnrollmentPolicyService,
+            inactivityEnrollment,
             de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
             userVerifier,
             identityClient,
@@ -81,7 +86,8 @@ class CreateUserFacadeMatrixUserTest {
             provisioningCompensator,
             tenantService,
             agencyService,
-            applicationSettingsService);
+            applicationSettingsService,
+            groupInviteRegistration);
     org.mockito.Mockito.lenient()
         .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
@@ -120,6 +126,7 @@ class CreateUserFacadeMatrixUserTest {
   @Mock private SessionService sessionService;
   @Mock private ApplicationSettingsService applicationSettingsService;
   @Mock private WelcomeEmailService welcomeEmailService;
+  @Mock private GroupInviteRegistration groupInviteRegistration;
 
   @Spy
   private ProvisioningCompensator provisioningCompensator =

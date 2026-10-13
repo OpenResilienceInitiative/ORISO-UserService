@@ -212,9 +212,8 @@ class ConsultantAgencyLateJoinerMembershipIT {
   private void givenAgencyServiceAccount() {
     var credentials = new AgencyMatrixCredentialsDTO();
     credentials.setMatrixUserId("@agency:example.org");
-    credentials.setMatrixPassword("agency-password");
     when(matrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(credentials));
-    when(sessionRoomGateway.loginUser("agency", "agency-password")).thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.loginAsUser("@agency:example.org")).thenReturn(AGENCY_TOKEN);
   }
 
   private Consultant givenConsultantWithoutAgency() {

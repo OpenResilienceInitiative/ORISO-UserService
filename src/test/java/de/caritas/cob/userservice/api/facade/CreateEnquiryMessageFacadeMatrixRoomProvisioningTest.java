@@ -70,8 +70,6 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   private static final String USER_ID = "user-abc";
   private static final String USER_MATRIX_ID = "@asker:example.org";
   private static final String AGENCY_MATRIX_ID = "@agency-svc:example.org";
-  private static final String AGENCY_MATRIX_LOCALPART = "agency-svc";
-  private static final String AGENCY_MATRIX_PASSWORD = "s3cret";
   private static final String AGENCY_TOKEN = "agency-token";
   private static final String USER_TOKEN = "user-token";
   private static final String NEW_ROOM_ID = "!provisioned:example.org";
@@ -171,7 +169,6 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   private AgencyMatrixCredentialsDTO validCredentials() {
     var creds = new AgencyMatrixCredentialsDTO();
     creds.setMatrixUserId(AGENCY_MATRIX_ID);
-    creds.setMatrixPassword(AGENCY_MATRIX_PASSWORD);
     return creds;
   }
 
@@ -190,8 +187,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     // Room-provisioning collaborators (real AgencyPreAssignmentRoomService drives these).
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(matrixSynapseService.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
-        .thenReturn(AGENCY_TOKEN);
+    when(matrixSynapseService.loginAsUserAccessToken(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     var createBody = new MatrixCreateRoomResponseDTO();
     createBody.setRoomId(NEW_ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
@@ -259,8 +255,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
 
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(matrixSynapseService.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
-        .thenReturn(AGENCY_TOKEN);
+    when(matrixSynapseService.loginAsUserAccessToken(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     var createBody = new MatrixCreateRoomResponseDTO();
     createBody.setRoomId(NEW_ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))

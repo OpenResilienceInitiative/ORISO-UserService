@@ -5,8 +5,10 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -51,16 +53,16 @@ public class OrisoEmailRenderer {
    * design system places the logo, and this is the markup that token expands to when a logo URL is
    * configured. When {@code logoUrl} is blank the token expands to nothing at all: an {@code <img
    * src="">} renders as a broken-image icon next to the platform name, so the text wordmark has to
-   * carry the header alone. The platform name always stands in the next cell, so the logo is
-   * decorative ({@code alt=""}): a logo that fails to load must not repeat the name beside itself.
-   * The dialect has no conditional syntax — this constant is one of the conditionals the mails
-   * need, and it stays in the renderer so the markup remains e-mail-client table markup reviewed
-   * together with the templates.
+   * carry the header alone. Known logos wider than 3:1 hide the adjacent name on phones, so their
+   * image carries the platform name as alternative text. Other logos stay decorative beside the
+   * visible name. The dialect has no conditional syntax — this constant is one of the conditionals
+   * the mails need, and it stays in the renderer so the markup remains e-mail-client table markup
+   * reviewed together with the templates.
    */
   private static final String LOGO_CELL =
-      "<td width=\"36\" valign=\"middle\" style=\"width:36px;padding-right:12px;\">"
-          + "<img src=\"{{logoUrl}}\" width=\"36\" height=\"36\" alt=\"\""
-          + " style=\"display:block;width:36px;height:36px;border:0;border-radius:8px;\"></td>";
+      "<td class=\"logo-cell{{logoCellClass}}\" valign=\"middle\" style=\"padding-right:12px;\">"
+          + "<img src=\"{{logoUrl}}\" {{logoWidthAttribute}}height=\"48\" alt=\"{{logoAlt}}\""
+          + " style=\"display:block;width:{{logoWidthStyle}};height:48px;max-width:none;border:0;\"></td>";
 
   /**
    * The call-to-action button plus the visible copy-paste fallback line, for templates whose action
@@ -135,6 +137,28 @@ public class OrisoEmailRenderer {
 
   private static final Pattern CONTACT_ROW_TEXT =
       Pattern.compile("(?m)^[^\\n]*\\{\\{(" + OPTIONAL_CONTACT_KEYS + ")}}[^\\n]*(?:\\n|$)");
+
+  /**
+   * The button label in the generated templates is a hardcoded {@code #ffffff} on a cell filled
+   * with {@code {{primaryColor}}}. That only holds for a dark brand colour, so the label colour is
+   * rewritten to {@code {{primaryTextColor}}}: white or a dark tone of the brand hue, derived like
+   * the web app's {@code --m3-on-primary} (ADR-026 amendment 2026-10-02). The generated templates
+   * are never edited here (see the class comment), and the {@code {{ctaBlock}}} markup below must
+   * stay byte-identical to the generated fragment (EmailTemplateIntegrityTest); once the generator
+   * emits the placeholder itself, this rewrite finds nothing to do.
+   */
+  private static final Pattern BUTTON_LABEL_COLOUR =
+      Pattern.compile(
+          "(bgcolor=\"\\{\\{primaryColor}}\"[^>]*>\\s*<a [^>]*?)color:#ffffff",
+          Pattern.CASE_INSENSITIVE);
+
+  /**
+   * A text link coloured {@code {{primaryColor}}} sits on the white card, where the brand colour
+   * itself may be too light to read: it takes {@code {{primaryLinkColor}}}, the brand colour
+   * darkened to 4.5:1.
+   */
+  private static final Pattern BRAND_COLOURED_LINK =
+      Pattern.compile("(?<![-\\w])color:\\{\\{primaryColor}}");
 
   private final Map<String, String> templateCache = new ConcurrentHashMap<>();
 
@@ -234,13 +258,14 @@ public class OrisoEmailRenderer {
 
   private RenderedEmail renderResolved(
       String templateId, Tone tone, Map<String, String> values, Map<String, String> fragments) {
-    values = withOccasionOnUnsubscribeLink(templateId, values);
+    values = withDerivedBrandColours(withOccasionOnUnsubscribeLink(templateId, values));
     String html =
         substitute(
             withoutBlankSenderLines(
                 withoutBlankContactRows(
                     templateId,
-                    withConditionalBlocks(read(templateId, tone, "html"), values, true),
+                    withBrandColourRoles(
+                        withConditionalBlocks(read(templateId, tone, "html"), values, true)),
                     values,
                     true),
                 values,
@@ -284,6 +309,31 @@ public class OrisoEmailRenderer {
     Map<String, String> decorated = new LinkedHashMap<>(values);
     decorated.put("unsubscribeUrl", link + (link.contains("?") ? "&" : "?") + "mail=" + templateId);
     return decorated;
+  }
+
+  /**
+   * Supplies {@code primaryTextColor} and {@code primaryLinkColor} from {@code primaryColor} when
+   * the caller did not, and writes the normalised {@code primaryColor} back (callers that go
+   * through {@link OrisoEmailBrand} always do). A value map without a usable {@code primaryColor}
+   * is left alone, so a placeholder stays visible as a bug report instead of a guessed colour.
+   */
+  private static Map<String, String> withDerivedBrandColours(Map<String, String> values) {
+    String primary = EmailColors.normalize(values.get("primaryColor"));
+    if (primary == null) {
+      return values;
+    }
+    Map<String, String> derived = new LinkedHashMap<>(values);
+    // Write the normalised literal back so a caller's "f8e71c" is valid CSS in the template.
+    derived.put("primaryColor", primary);
+    derived.putIfAbsent("primaryTextColor", EmailColors.onPrimary(primary));
+    derived.putIfAbsent("primaryLinkColor", EmailColors.onLightBackground(primary));
+    return derived;
+  }
+
+  private static String withBrandColourRoles(String htmlTemplate) {
+    String labelled =
+        BUTTON_LABEL_COLOUR.matcher(htmlTemplate).replaceAll("$1color:{{primaryTextColor}}");
+    return BRAND_COLOURED_LINK.matcher(labelled).replaceAll("color:{{primaryLinkColor}}");
   }
 
   /** The subject line, from the generated catalogue rather than from the document. */
@@ -384,12 +434,47 @@ public class OrisoEmailRenderer {
    */
   private String withConditionalBlocks(String template, Map<String, String> values, boolean html) {
     boolean hasAction = isNotBlank(values.get("actionUrl"));
+    double ratio = logoRatio(values);
+    boolean wide = isNotBlank(values.get("logoUrl")) && ratio > 3;
+    String width =
+        ratio > 0 ? BigDecimal.valueOf(48 * ratio).stripTrailingZeros().toPlainString() : null;
+    String logo =
+        isNotBlank(values.get("logoUrl"))
+            ? LOGO_CELL
+                .replace("{{logoCellClass}}", wide ? " logo-cell-wide" : "")
+                .replace("{{logoWidthAttribute}}", width == null ? "" : "width=\"" + width + "\" ")
+                .replace("{{logoWidthStyle}}", width == null ? "auto" : width + "px")
+                .replace("{{logoAlt}}", wide ? "{{platformName}}" : "")
+            : "";
     return template
-        .replace("{{logoCell}}", isNotBlank(values.get("logoUrl")) ? LOGO_CELL : "")
+        .replace("{{logoCell}}", logo)
+        .replace("{{logoHeaderClass}}", wide ? "logo-header-wide" : "")
+        .replace("{{logoWordmarkClass}}", wide ? "logo-wordmark-wide" : "")
         .replace("{{ctaBlock}}", hasAction ? (html ? CTA_BLOCK_HTML : CTA_BLOCK_TEXT) : "")
         .replace(
             "{{assuranceBlock}}",
             hasAction ? (html ? ASSURANCE_BLOCK_HTML : ASSURANCE_BLOCK_TEXT) : "");
+  }
+
+  private static double logoRatio(Map<String, String> values) {
+    if (values.get("logoWidth") == null || values.get("logoHeight") == null) {
+      return 0;
+    }
+    try {
+      double width = Double.parseDouble(values.get("logoWidth"));
+      double height = Double.parseDouble(values.getOrDefault("logoHeight", "0"));
+      double ratio = width / height;
+      return width > 0
+              && height > 0
+              && Double.isFinite(width)
+              && Double.isFinite(height)
+              && Double.isFinite(48 * ratio)
+              && ratio > 0
+          ? ratio
+          : 0;
+    } catch (NumberFormatException exception) {
+      return 0;
+    }
   }
 
   private static String withoutBlankContactRows(

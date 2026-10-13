@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.OrisoSmtpTransport;
 import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
@@ -340,7 +341,7 @@ class FeedbackMessageEmailServiceTest {
     when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
     when(tenantTemplates.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.net");
     when(branding.resolveNotification(7L, "https://tenant.example.net"))
-        .thenReturn(EmailBranding.neutral());
+        .thenReturn(new EmailBranding("ORISO", null, EmailBrandingFixture.TEST_COLOUR, null, null));
     when(emailBrand.valuesForResolvedBrand(
             eq("https://tenant.example.net"), any(EmailBranding.class)))
         .thenReturn(
@@ -383,10 +384,9 @@ class FeedbackMessageEmailServiceTest {
                 "#112233",
                 null,
                 null));
-    when(emailBrand.readablePrimary("#112233")).thenReturn("#112233");
     when(emailBrand.valuesForResolvedBrand(
             eq("https://tenant.example.net"), any(EmailBranding.class)))
-        .thenAnswer(ignored -> neutralBrand());
+        .thenAnswer(invocation -> colouredBrand(invocation.getArgument(1)));
     var tested =
         new FeedbackMessageEmailService(
             sessions,
@@ -564,6 +564,14 @@ class FeedbackMessageEmailServiceTest {
 
   private void verifyNoSmtp() {
     verify(delivery, never()).sendReply(anyLong(), any(), anyString(), any(), any());
+  }
+
+  /** What the real brand values do: the resolved brand colour reaches the template values. */
+  private static Map<String, String> colouredBrand(EmailBranding resolved) {
+    var values = neutralBrand();
+    values.put("primaryColor", resolved.accentColor());
+    values.put("accentColor", resolved.accentColor());
+    return values;
   }
 
   private static Map<String, String> neutralBrand() {

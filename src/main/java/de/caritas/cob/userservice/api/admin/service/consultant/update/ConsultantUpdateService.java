@@ -29,7 +29,9 @@ import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -85,9 +87,13 @@ public class ConsultantUpdateService {
                     new BadRequestException(
                         String.format("Consultant with id %s does not exist", consultantId)));
 
-    consultantTopicAgencyCompatibilityValidator.validateTopicUpdateAgainstAssignedAgencies(
-        consultant.getId(), updateConsultantDTO.getTopicIds(), consultant.getTenantId());
-    rejectRemovingTheLastTopic(consultant, updateConsultantDTO.getTopicIds());
+    var topicIdsByAgencyId =
+        consultantTopicAgencyCompatibilityValidator.resolveTopicUpdate(
+            consultant.getId(),
+            updateConsultantDTO.getTopicIds(),
+            updateConsultantDTO.getTopicsByAgency(),
+            consultant.getTenantId());
+    rejectRemovingTheLastTopic(consultant, topicIdsByAgencyId);
 
     boolean identityDataChanged = identityDataChanged(consultant, updateConsultantDTO);
     boolean appointmentDataChanged =
@@ -119,6 +125,7 @@ public class ConsultantUpdateService {
     String previousPublishedName =
         consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
 
+    consultant.replaceTopicsPerAgency(topicIdsByAgencyId);
     var updatedConsultant = updateDatabaseConsultant(updateConsultantDTO, consultant, adminEdit);
     // updateDatabaseConsultant mutates this very entity, so it already carries the new values.
     scheduleMatrixDisplayNameUpdate(consultant, identityDataChanged, previousPublishedName);
@@ -224,7 +231,6 @@ public class ConsultantUpdateService {
     consultant.setAbsent(updateConsultantDTO.getAbsent());
     consultant.setAbsenceMessage(updateConsultantDTO.getAbsenceMessage());
     applyPersonalInfo(updateConsultantDTO, consultant);
-    consultant.replaceTopics(updateConsultantDTO.getTopicIds());
     applyTopicPermission(updateConsultantDTO, consultant);
     // Always update supervisor field if provided (even if false)
     if (updateConsultantDTO.getIsSupervisor() != null) {
@@ -253,9 +259,14 @@ public class ConsultantUpdateService {
     return this.consultantService.saveConsultant(consultant);
   }
 
-  /** Older accounts without any topic stay editable: an empty list is then no change. */
-  private static void rejectRemovingTheLastTopic(Consultant consultant, List<Long> topicIds) {
-    if (topicIds == null || topicIds.stream().anyMatch(Objects::nonNull)) {
+  /**
+   * Runs on the resolved update, so a request with only {@code topicsByAgency} is not read as the
+   * DTO's default empty {@code topicIds}. Older accounts without any topic stay editable.
+   */
+  private static void rejectRemovingTheLastTopic(
+      Consultant consultant, Map<Long, Set<Long>> topicIdsByAgencyId) {
+    if (topicIdsByAgencyId == null
+        || topicIdsByAgencyId.values().stream().anyMatch(topics -> !topics.isEmpty())) {
       return;
     }
     if (consultant.getConsultantTopics() != null && !consultant.getConsultantTopics().isEmpty()) {

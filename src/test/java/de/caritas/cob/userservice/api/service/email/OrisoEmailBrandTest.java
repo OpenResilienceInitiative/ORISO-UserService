@@ -2,12 +2,12 @@ package de.caritas.cob.userservice.api.service.email;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.within;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
+import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
@@ -28,9 +28,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 class OrisoEmailBrandTest {
 
+  private final TenantService tenantService = tenantServiceWithPlatformColour("#1c4f8f");
+
   private final EmailBrandingResolver brandingResolver =
       new EmailBrandingResolver(
-          mock(TenantService.class),
+          tenantService,
           mock(TenantTemplateSupplier.class),
           "Wayfinder",
           "",
@@ -38,6 +40,42 @@ class OrisoEmailBrandTest {
 
   private final OrisoEmailBrand brand =
       new OrisoEmailBrand(SenderOrganisationFixture.platformOwner(), brandingResolver);
+
+  private static TenantService tenantServiceWithPlatformColour(String primaryColor) {
+    TenantService tenantService = mock(TenantService.class);
+    Theming theming = new Theming();
+    theming.setPrimaryColor(primaryColor);
+    RestrictedTenantDTO platform = new RestrictedTenantDTO();
+    platform.setId(0L);
+    platform.setTheming(theming);
+    when(tenantService.getPlatformTenantDataFresh()).thenReturn(platform);
+    return tenantService;
+  }
+
+  @Test
+  void carriesKnownLogoDimensionsWithoutInventingUnknownMetadata() {
+    var resolved =
+        new de.caritas.cob.userservice.api.service.email.layout.EmailBranding(
+            "Brand",
+            "https://app.example.org/logo",
+            "#a5000a",
+            "https://app.example.org/impressum",
+            "https://app.example.org/datenschutz",
+            600,
+            100);
+    assertThat(brand.valuesForResolvedBrand("https://app.example.org", resolved))
+        .containsEntry("logoWidth", "600")
+        .containsEntry("logoHeight", "100");
+    var unknown =
+        new de.caritas.cob.userservice.api.service.email.layout.EmailBranding(
+            "Brand",
+            "https://app.example.org/logo",
+            "#a5000a",
+            "https://app.example.org/impressum",
+            "https://app.example.org/datenschutz");
+    assertThat(brand.valuesForResolvedBrand("https://app.example.org", unknown))
+        .doesNotContainKeys("logoWidth", "logoHeight");
+  }
 
   @BeforeEach
   void configurePlatformName() {
@@ -116,7 +154,7 @@ class OrisoEmailBrandTest {
             context -> {
               context
                   .getBeanFactory()
-                  .registerSingleton("tenantService", mock(TenantService.class));
+                  .registerSingleton("tenantService", tenantServiceWithPlatformColour("#1c4f8f"));
               context
                   .getBeanFactory()
                   .registerSingleton("tenantTemplateSupplier", mock(TenantTemplateSupplier.class));
@@ -135,33 +173,44 @@ class OrisoEmailBrandTest {
         .withBean(OrisoEmailBrand.class);
   }
 
+  /** ADR-026 amendment 2026-10-02: the tenant colour as configured, label and link derived. */
   @Test
-  void keepsATenantColourThatCarriesWhiteText() {
-    assertThat(brand.readablePrimary("#1c4f8f")).isEqualTo("#1c4f8f");
+  void brandColoursFollowTheWebAppTokenLogic_ForADarkPlatformColour() {
+    var values = brand.valuesForTenant("https://app.example.org", null);
+
+    assertThat(values)
+        .containsEntry("primaryColor", "#1c4f8f")
+        .containsEntry("accentColor", "#1c4f8f")
+        .containsEntry("primaryTextColor", "#ffffff")
+        .containsEntry("primaryLinkColor", "#1c4f8f");
   }
 
   @Test
-  void rejectsATenantColourThatWouldMakeTheButtonLabelUnreadable() {
-    // A light brand colour is a perfectly good print colour and a terrible
-    // button colour: the label is white.
-    assertThat(brand.readablePrimary("#ffd400")).isEqualTo("#a5000a");
-    assertThat(brand.readablePrimary("#9ad6ff")).isEqualTo("#a5000a");
-  }
+  void brandColoursFollowTheWebAppTokenLogic_ForALightPlatformColour() {
+    var lightBrand =
+        new OrisoEmailBrand(
+            SenderOrganisationFixture.platformOwner(),
+            new EmailBrandingResolver(
+                tenantServiceWithPlatformColour("#f8e71c"),
+                mock(TenantTemplateSupplier.class),
+                "Wayfinder",
+                "",
+                "https://app.example.org"));
 
-  @Test
-  void fallsBackWhenTheColourIsMissingOrMalformed() {
-    assertThat(brand.readablePrimary(null)).isEqualTo("#a5000a");
-    assertThat(brand.readablePrimary("")).isEqualTo("#a5000a");
-    assertThat(brand.readablePrimary("red")).isEqualTo("#a5000a");
-    assertThat(brand.readablePrimary("#abc")).isEqualTo("#a5000a");
-  }
+    var values = lightBrand.valuesForTenant("https://app.example.org", null);
 
-  @Test
-  void measuresContrastTheWayWcagDoes() {
-    assertThat(OrisoEmailBrand.contrastWithWhite("#000000")).isCloseTo(21d, within(0.05d));
-    assertThat(OrisoEmailBrand.contrastWithWhite("#ffffff")).isCloseTo(1d, within(0.01d));
-    // The value that used to be hardcoded as the default in three senders.
-    assertThat(OrisoEmailBrand.contrastWithWhite("#0f3b8f")).isGreaterThan(4.5d);
+    assertThat(values)
+        .as("stripe and button keep the colour as configured")
+        .containsEntry("primaryColor", "#f8e71c")
+        .containsEntry("accentColor", "#f8e71c")
+        .as("the label is a dark tone of the same hue")
+        .containsEntry("primaryTextColor", "#1f1c00");
+    assertThat(values.get("primaryLinkColor"))
+        .as("text links meet 4.5:1 contrast on white")
+        .satisfies(
+            color ->
+                assertThat(EmailColors.contrastRatio(color, "#ffffff"))
+                    .isGreaterThanOrEqualTo(4.5d));
   }
 
   @Test
@@ -253,7 +302,11 @@ class OrisoEmailBrandTest {
     TenantService tenants = mock(TenantService.class);
     TenantTemplateSupplier urls = mock(TenantTemplateSupplier.class);
     when(tenants.getPlatformTenantDataFresh())
-        .thenReturn(new RestrictedTenantDTO().id(0L).name("Platform Operator"));
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(0L)
+                .name("Platform Operator")
+                .theming(new Theming().primaryColor("#1c4f8f")));
     OrisoEmailBrand realBrand =
         new OrisoEmailBrand(
             SenderOrganisationFixture.platformOwner(),

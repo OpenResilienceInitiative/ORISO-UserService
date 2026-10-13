@@ -11,10 +11,12 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -42,7 +44,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.RegisterCounsellorCommand;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -73,6 +77,11 @@ class CounsellorOnboardingServiceTest {
   @Mock private IdentityProfileLookup identityProfileLookup;
   @Mock private AgencyService agencyService;
   @Mock private TopicService topicService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService
+      applicationSettingsService;
+
   @Mock private UsernameTranscoder usernameTranscoder;
   @Mock private AgencyCreationClient agencyCreationClient;
   @Mock private AgencyAdminInviteProvisioningService agencyAdminInviteProvisioningService;
@@ -89,6 +98,15 @@ class CounsellorOnboardingServiceTest {
 
   @BeforeEach
   void setUp() {
+    org.mockito.Mockito.lenient()
+        .when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(
+            new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                    .ApplicationSettingsDTO()
+                .oneTopicPerAgencyEnabled(
+                    new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                            .FeatureToggleDTO()
+                        .value(false)));
     service =
         new CounsellorOnboardingService(
             accountInviteRepository,
@@ -98,6 +116,7 @@ class CounsellorOnboardingServiceTest {
             identityProfileLookup,
             agencyService,
             topicService,
+            applicationSettingsService,
             usernameTranscoder,
             agencyCreationClient,
             agencyAdminInviteProvisioningService,
@@ -575,6 +594,82 @@ class CounsellorOnboardingServiceTest {
   }
 
   @Test
+  void resolveOnboardingInvite_missingOneTopicToggle_answersSettingsUnavailable() {
+    AccountInvite reserved = invite();
+    reserved.setDepartmentId(null);
+    inviteResolves(reserved);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(
+            new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                .ApplicationSettingsDTO());
+
+    var failure =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> service.resolveOnboardingInvite(RAW_TOKEN));
+
+    assertEquals(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, failure.getHttpStatus());
+    assertEquals("SETTINGS_UNAVAILABLE", failure.getCustomHttpHeaders().getFirst("X-Reason"));
+  }
+
+  @Test
+  void resolveOnboardingInvite_missingOneTopicValue_answersSettingsUnavailable() {
+    AccountInvite reserved = invite();
+    reserved.setDepartmentId(null);
+    inviteResolves(reserved);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(
+            new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                    .ApplicationSettingsDTO()
+                .oneTopicPerAgencyEnabled(
+                    new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                        .FeatureToggleDTO()));
+
+    var failure =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> service.resolveOnboardingInvite(RAW_TOKEN));
+
+    assertEquals(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, failure.getHttpStatus());
+    assertEquals("SETTINGS_UNAVAILABLE", failure.getCustomHttpHeaders().getFirst("X-Reason"));
+  }
+
+  @Test
+  void resolveOnboardingInvite_settingsHttpFailure_logsOnlyUpstreamStatus() {
+    AccountInvite reserved = invite();
+    reserved.setDepartmentId(null);
+    inviteResolves(reserved);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenThrow(
+            org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.UNAUTHORIZED,
+                "Unauthorized",
+                org.springframework.http.HttpHeaders.EMPTY,
+                "sensitive-upstream-body".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    try (var logs = LogbackCaptor.forClass(CounsellorOnboardingService.class)) {
+      assertThrows(
+          de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+              .class,
+          () -> service.resolveOnboardingInvite(RAW_TOKEN));
+
+      assertTrue(logs.contains(Level.WARN, "upstream status 401"));
+      assertTrue(
+          logs.events().stream()
+              .noneMatch(event -> event.getFormattedMessage().contains("sensitive-upstream-body")));
+    }
+  }
+
+  @Test
   void registerCounsellor_activeTenantTopicOutsideAgencyCoverage_isAccepted() {
     inviteResolves(invite());
     lenient()
@@ -692,6 +787,91 @@ class CounsellorOnboardingServiceTest {
   }
 
   // --- two-factor ---
+
+  @Test
+  void startEmailTwoFactor_pinsRecipientAndDoesNotCompleteGate() {
+    AccountInvite pending = pendingEmailInvite();
+    when(identitySecondFactor.initiateEmailVerification("enc.lena.b", "counsellor@example.org"))
+        .thenReturn(
+            de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart.success());
+    service.startEmailTwoFactor(RAW_TOKEN);
+    verify(identitySecondFactor).initiateEmailVerification("enc.lena.b", "counsellor@example.org");
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+  }
+
+  @Test
+  void activateEmailTwoFactor_correctCodeCompletesWithoutTotpSecret() {
+    AccountInvite pending = pendingEmailInvite();
+    when(identitySecondFactor.finishEmailVerification("enc.lena.b", "123456"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                true, false, true, "counsellor@example.org"));
+    service.activateEmailTwoFactor(RAW_TOKEN, "123456");
+    verify(accountInviteService).markTwoFactorActive(CONSULTANT_ID);
+    verify(identitySecondFactor, never()).setUpOtpCredential(anyString(), anyString(), anyString());
+    assertNull(pending.getTotpPendingSecret());
+  }
+
+  @Test
+  void activateEmailTwoFactor_wrongCodeKeepsGatePending() {
+    pendingEmailInvite();
+    when(identitySecondFactor.finishEmailVerification("enc.lena.b", "000000"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                false, false, true, null));
+    assertThrows(
+        BadRequestException.class, () -> service.activateEmailTwoFactor(RAW_TOKEN, "000000"));
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+  }
+
+  @Test
+  void emailTwoFactor_expiredTokenDoesNotReachIdentityProvider() {
+    AccountInvite expired = invite();
+    expired.setStatus(AccountInviteStatus.ACCEPTED);
+    expired.setAcceptedByUserId(CONSULTANT_ID);
+    expired.setExpiresAt(LocalDateTime.now().minusSeconds(1));
+    inviteResolves(expired);
+    assertThrows(AccountInviteLinkException.class, () -> service.startEmailTwoFactor(RAW_TOKEN));
+    verifyNoInteractions(identitySecondFactor, identityProfileLookup);
+  }
+
+  @Test
+  void emailVerification_expiryDuringProviderCallDoesNotConsumeGate() {
+    AccountInvite pending = pendingEmailInvite();
+    AccountInvite expired = invite();
+    expired.setStatus(AccountInviteStatus.ACCEPTED);
+    expired.setAcceptedByUserId(CONSULTANT_ID);
+    expired.setExpiresAt(LocalDateTime.now().minusSeconds(1));
+    when(accountInviteService.findInviteByToken(RAW_TOKEN)).thenReturn(pending, expired);
+    when(identitySecondFactor.finishEmailVerification("enc.lena.b", "123456"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                true, false, true, "counsellor@example.org"));
+    assertThrows(
+        AccountInviteLinkException.class,
+        () -> service.activateEmailTwoFactor(RAW_TOKEN, "123456"));
+    assertTrue(pending.getExpiresAt().isAfter(LocalDateTime.now()));
+    verify(accountInviteService, times(2)).findInviteByToken(RAW_TOKEN);
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+  }
+
+  @Test
+  void emailSetup_inviteBelongingToAnotherRoleIsRejected() {
+    AccountInvite other = invite();
+    other.setTargetRole(AccountInviteTargetRole.TENANT_ADMIN);
+    inviteResolves(other);
+    assertThrows(NotFoundException.class, () -> service.startEmailTwoFactor(RAW_TOKEN));
+    verifyNoInteractions(identitySecondFactor, identityProfileLookup);
+  }
+
+  private AccountInvite pendingEmailInvite() {
+    AccountInvite pending = invite();
+    pending.setStatus(AccountInviteStatus.ACCEPTED);
+    pending.setAcceptedByUserId(CONSULTANT_ID);
+    inviteResolves(pending);
+    profileResolves();
+    return pending;
+  }
 
   @Test
   void activateTwoFactor_happyPath_marksGateActiveAndClearsPendingSecret() {

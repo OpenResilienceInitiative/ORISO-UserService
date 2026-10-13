@@ -361,7 +361,7 @@ class EmailNotificationFacadeTest {
   private final de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver
       brandResolver =
           new de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver(
-              mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
+              tenantServiceWithPlatformColour(),
               mock(TenantTemplateSupplier.class),
               "Beispielplattform",
               "",
@@ -382,11 +382,19 @@ class EmailNotificationFacadeTest {
   KeycloakService keycloakService;
 
   private LogbackCaptor facadeLogCaptor;
+  private final de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenants =
+      mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class);
   private LogbackCaptor assignEnquiryLogCaptor;
 
   @BeforeEach
   void setup() throws SecurityException {
     USER.setTenantId(1L);
+    when(tenants.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(
+            call ->
+                new de.caritas.cob.userservice.tenantservice.generated.web.model
+                        .RestrictedTenantDTO()
+                    .id(call.getArgument(0)));
     emailNotificationFacade =
         new EmailNotificationFacade(
             mailService,
@@ -399,7 +407,8 @@ class EmailNotificationFacadeTest {
             assignEnquiryEmailSupplierProvider,
             tenantTemplateSupplier,
             notificationRequestFacts,
-            releaseToggleService);
+            releaseToggleService,
+            tenants);
     when(newEnquiryEmailSupplierProvider.getObject()).thenReturn(newEnquiryEmailSupplier);
     when(newDirectEnquiryEmailSupplierProvider.getObject())
         .thenReturn(newDirectEnquiryEmailSupplier);
@@ -419,6 +428,7 @@ class EmailNotificationFacadeTest {
 
   @org.junit.jupiter.api.AfterEach
   void tearDown() {
+    TenantContext.clear();
     facadeLogCaptor.detach();
     assignEnquiryLogCaptor.detach();
   }
@@ -699,6 +709,38 @@ class EmailNotificationFacadeTest {
     emailNotificationFacade.sendReassignConfirmationNotification(reassignmentNotification, null);
 
     verifyAsync(a -> mailService.sendEmailNotification(Mockito.any()));
+  }
+
+  @Test
+  void sendReassignConfirmationNotification_ShouldClearTenantContext_WhenConsultantOptsOut() {
+    var consultant = new EasyRandom().nextObject(Consultant.class);
+    consultant.setNotificationsSettings(
+        JsonSerializationUtils.serializeToJsonString(
+            new NotificationsSettingsDTO().reassignmentNotificationEnabled(false)));
+    when(consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
+    when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(true);
+    var reassignmentNotification = new EasyRandom().nextObject(ReassignmentNotificationDTO.class);
+
+    emailNotificationFacade.sendReassignConfirmationNotification(
+        reassignmentNotification, new TenantData(42L, "tenant"));
+
+    verifyNoInteractions(mailService);
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
+  void sendReassignConfirmationNotification_ShouldClearTenantContext_WhenConsultantLookupFails() {
+    var reassignmentNotification = new EasyRandom().nextObject(ReassignmentNotificationDTO.class);
+    when(consultantService.getConsultant(any())).thenReturn(Optional.empty());
+
+    assertThrows(
+        NotFoundException.class,
+        () ->
+            emailNotificationFacade.sendReassignConfirmationNotification(
+                reassignmentNotification, new TenantData(42L, "tenant")));
+
+    assertThat(TenantContext.getCurrentTenant()).isNull();
   }
 
   @Test
@@ -1030,6 +1072,21 @@ class EmailNotificationFacadeTest {
     org.assertj.core.api.Assertions.assertThat(TenantContext.getCurrentTenant()).isNull();
   }
 
+  /** The platform theming colour mail falls back to; production has no built-in brand colour. */
+  private static de.caritas.cob.userservice.api.admin.service.tenant.TenantService
+      tenantServiceWithPlatformColour() {
+    var tenantService =
+        mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class);
+    when(tenantService.getPlatformTenantDataFresh())
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(0L)
+                .theming(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Theming()
+                        .primaryColor("#1c4f8f")));
+    return tenantService;
+  }
+
   private void bindCanonicalPlatformName(String name) {
     try (var context = new AnnotationConfigApplicationContext()) {
       context
@@ -1049,7 +1106,7 @@ class EmailNotificationFacadeTest {
                       "false")));
       context.registerBean(
           de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class,
-          () -> mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class));
+          EmailNotificationFacadeTest::tenantServiceWithPlatformColour);
       context.registerBean(TenantTemplateSupplier.class, () -> tenantTemplateSupplier);
       context.register(
           de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver.class);

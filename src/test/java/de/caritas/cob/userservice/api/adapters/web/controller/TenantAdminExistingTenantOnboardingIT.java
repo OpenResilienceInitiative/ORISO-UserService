@@ -58,7 +58,8 @@ import org.springframework.test.web.servlet.MockMvc;
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @WithTenant(1L)
-class TenantAdminExistingTenantOnboardingIT {
+class TenantAdminExistingTenantOnboardingIT
+    extends de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture {
 
   private static final long EXISTING_TENANT = 42L;
   private static final String NEW_ADMIN_ID = "b7f0f1a0-1026-4c4a-9d1e-000000000042";

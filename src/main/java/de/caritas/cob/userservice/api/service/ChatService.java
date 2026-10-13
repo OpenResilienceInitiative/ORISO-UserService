@@ -125,7 +125,12 @@ public class ChatService {
                 .id(chat.getChatOwner().getId())
                 .firstName(chat.getChatOwner().getFirstName())
                 .lastName(chat.getChatOwner().getLastName())
-                .username(chat.getChatOwner().getUsername()));
+                .username(chat.getChatOwner().getUsername())
+                .avatarKind(
+                    chat.getChatOwner().getAvatarKind() == null
+                        ? null
+                        : chat.getChatOwner().getAvatarKind().name())
+                .avatarId(chat.getChatOwner().getAvatarId()));
   }
 
   /** Legacy Series tokens are minted in one locked batch before mapping any consultant response. */
@@ -324,15 +329,17 @@ public class ChatService {
     return groupChatParticipantRepository.findBySeriesId(chat.getId()).stream()
         .map(
             participant -> {
-              var displayName =
-                  consultantService
-                      .getConsultant(participant.getConsultantId())
-                      .map(this::resolveParticipantDisplayName)
-                      .orElse(participant.getConsultantId());
+              var consultant = consultantService.getConsultant(participant.getConsultantId());
               return new GroupChatParticipantDTO()
                   .consultantId(participant.getConsultantId())
                   .role(GroupChatParticipantDTO.RoleEnum.fromValue(participant.getRole().name()))
-                  .displayName(displayName);
+                  .displayName(
+                      consultant
+                          .map(this::resolveParticipantDisplayName)
+                          .orElse(participant.getConsultantId()))
+                  .avatarKind(
+                      consultant.map(Consultant::getAvatarKind).map(Enum::name).orElse(null))
+                  .avatarId(consultant.map(Consultant::getAvatarId).orElse(null));
             })
         .toList();
   }

@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.port.out.SearchSort;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -29,12 +30,14 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 
@@ -102,21 +105,16 @@ public class AccountManager implements AccountManaging {
       String infix,
       boolean shouldFilterByAgencies,
       Collection<Long> agenciesToFilterConsultants,
+      SearchFilter filter,
       int pageNumber,
       int pageSize,
       String fieldName,
       boolean isAscending) {
 
     var pageRequest = SearchSort.pageRequestOf(pageNumber, pageSize, fieldName, isAscending);
-    var effectiveTenantId = resolveEffectiveTenantId();
-    Page<ConsultantBase> consultantPage;
-    if (!shouldFilterByAgencies) {
-      consultantPage = consultantRepository.findAllByInfix(infix, effectiveTenantId, pageRequest);
-    } else {
-      consultantPage =
-          consultantRepository.findAllByInfixAndAgencyIds(
-              infix, agenciesToFilterConsultants, effectiveTenantId, pageRequest);
-    }
+    var consultantPage =
+        findScopedConsultantsByInfix(
+            infix, shouldFilterByAgencies, agenciesToFilterConsultants, filter, pageRequest);
 
     var consultantIds =
         consultantPage.stream().map(ConsultantBase::getId).collect(Collectors.toList());
@@ -135,9 +133,12 @@ public class AccountManager implements AccountManaging {
                     Consultant::getTenantId,
                     consultant -> {
                       try {
-                        return tenantService
-                            .getRestrictedTenantData(consultant.getTenantId())
-                            .getName();
+                        // toMap rejects null values; a nameless tenant must not fail the list.
+                        return Objects.requireNonNullElse(
+                            tenantService
+                                .getRestrictedTenantData(consultant.getTenantId())
+                                .getName(),
+                            "Unknown Tenant");
                       } catch (Exception e) {
                         log.warn(
                             "Tenant data not found for tenantId: {}, using default name",
@@ -261,6 +262,38 @@ public class AccountManager implements AccountManaging {
           e);
       return List.of();
     }
+  }
+
+  /**
+   * The caller's own scope (token/request tenant, restricted admin's agencies) always wins; the
+   * Träger/Beratungsstelle filter (#1263) only narrows it. A tenant-bound caller asking for another
+   * tenant gets an empty page, and requested agencies are intersected with a restricted caller's.
+   */
+  private Page<ConsultantBase> findScopedConsultantsByInfix(
+      String infix,
+      boolean shouldFilterByAgencies,
+      Collection<Long> agenciesToFilterConsultants,
+      SearchFilter filter,
+      PageRequest pageRequest) {
+    var callerTenantId = resolveEffectiveTenantId();
+    var isTenantBound =
+        callerTenantId != null && !TenantContext.TECHNICAL_TENANT_ID.equals(callerTenantId);
+    if (isTenantBound && filter.isTenantOutside(callerTenantId)) {
+      return Page.empty(pageRequest);
+    }
+    var tenantId = isTenantBound ? callerTenantId : filter.tenantId();
+
+    Collection<Long> agencyIds;
+    if (shouldFilterByAgencies) {
+      agencyIds = filter.narrowAgencies(agenciesToFilterConsultants);
+    } else if (filter.hasAgencyIds()) {
+      agencyIds = filter.agencyIds();
+    } else {
+      return consultantRepository.findAllByInfix(infix, tenantId, pageRequest);
+    }
+    return agencyIds.isEmpty()
+        ? Page.empty(pageRequest)
+        : consultantRepository.findAllByInfixAndAgencyIds(infix, agencyIds, tenantId, pageRequest);
   }
 
   private Long resolveEffectiveTenantId() {

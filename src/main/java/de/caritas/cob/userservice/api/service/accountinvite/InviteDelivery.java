@@ -1,13 +1,16 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.InviteSendResult;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailDelivery.Purpose;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -59,14 +62,24 @@ public class InviteDelivery {
   public Prepared prepare(AccountInvite invite, InviteEmailTemplate template, LocalDateTime now) {
     String rawToken = generateToken();
     String acceptUrl = inviteAcceptUrlBuilder.buildAcceptUrl(invite.getTargetRole(), rawToken);
-    return new Prepared(
-        invite,
-        template,
-        rawToken,
-        acceptUrl,
-        AccountInviteService.render(template.getSubject(), invite, acceptUrl),
-        AccountInviteService.renderBody(template.getBody(), invite, acceptUrl),
-        now);
+    String subject = AccountInviteService.render(template.getSubject(), invite, acceptUrl);
+    String body = AccountInviteService.renderBody(template.getBody(), invite, acceptUrl);
+    // Last guard on every send path, the queue release included: never an empty mail.
+    requireText(subject, body);
+    return new Prepared(invite, template, rawToken, acceptUrl, subject, body, now);
+  }
+
+  /**
+   * Refuses a mail without a subject or without body text. A 400 the admin sees beats an empty mail
+   * the invitee cannot act on; the built-in system default is always there to pick instead.
+   *
+   * @throws BadRequestException if the subject or the body is blank
+   */
+  static void requireText(String subject, String body) {
+    if (subject == null || subject.isBlank() || body == null || body.isBlank()) {
+      throw new BadRequestException(
+          "The invite e-mail template has no subject or no text; choose another template");
+    }
   }
 
   /**
@@ -137,7 +150,13 @@ public class InviteDelivery {
         prepared.body(),
         prepared.acceptUrl(),
         prepared.invite().getTenantId(),
-        prepared.template().getLanguage());
+        prepared.template().getLanguage(),
+        InviteMailOrigin.of(senderTenant(prepared.invite()), Purpose.ACCOUNT_INVITE));
+  }
+
+  // A reserved Träger id has no tenant row yet, so it cannot have its own mail server.
+  private static Long senderTenant(AccountInvite invite) {
+    return invite.getTenantIdReservationToken() == null ? invite.getTenantId() : null;
   }
 
   private static InviteEmailDelivery sentDelivery(

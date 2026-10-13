@@ -150,8 +150,8 @@ start_replica() {
     SPRING_DATA_REDIS_HOST=127.0.0.1 \
     SPRING_DATA_REDIS_PORT="${redis_port}" \
     IDENTITY_OPENID_CONNECT_URL="${identity_url}" \
-    IDENTITY_TECHNICAL_USER_USERNAME=load-test-technical-user \
-    IDENTITY_TECHNICAL_USER_PASSWORD=load-test-technical-user-password \
+    IDENTITY_TECHNICAL_CLIENT_ID=backend-technical \
+    KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET=load-test-technical-client-secret \
     MATRIX_REGISTRATION_SHARED_SECRET=load-test-registration-shared-secret \
     KEYCLOAK_AUTH_SERVER_URL="http://127.0.0.1:${jwk_stub_port}/auth" \
     MATRIX_EVENT_LISTENER_ENABLED=false \
@@ -192,6 +192,12 @@ wait_for_replica "${replica_one_port}" "${replica_one_pid}" "${run_dir}/replica-
 start_replica "${replica_two_port}" "${run_dir}/replica-two.log"
 replica_two_pid="${started_replica_pid}"
 wait_for_replica "${replica_two_port}" "${replica_two_pid}" "${run_dir}/replica-two.log"
+
+# Both replicas have finished Liquibase. Enroll the synthetic human subject in the
+# disposable database without bypassing the production lifecycle access check.
+docker exec -i "${mariadb_container}" \
+  mariadb --batch --user=root --password=root userservice \
+  <"${repo_root}/tests/load/authenticated_identity.sql"
 
 # Warm the JWT/JWK, security, controller, transaction and SQL paths on a separate scope. The
 # measured version-1 scope remains absent, so the main phase still exercises its first-write race.

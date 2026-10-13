@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -104,6 +105,11 @@ import org.springframework.test.web.servlet.MvcResult;
 @org.springframework.context.annotation.Import(TenantFixtures.class)
 class MultiTenantRegistrationIT {
 
+  private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy
+      inactivityPolicy =
+          new de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy(
+              24, 7, java.time.Instant.parse("2026-10-06T00:00:00Z"));
+
   private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
@@ -125,6 +131,7 @@ class MultiTenantRegistrationIT {
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
+        IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
@@ -153,6 +160,9 @@ class MultiTenantRegistrationIT {
   @MockitoBean TenantCreationClient tenantCreationClient;
   @MockitoBean OperatorDpaContentClient operatorDpaContentClient;
 
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService inactivityEnrollment;
+
   @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
   AuthenticatedUser caller;
 
@@ -173,12 +183,15 @@ class MultiTenantRegistrationIT {
   @BeforeEach
   void oneAgencyOfTenantTwo() throws Exception {
     dpaOwner =
-        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, TENANT);
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
+            ownerFactory, TENANT);
     when(agencyFacts.find(AGENCY))
         .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, TENANT, false, List.of())));
     // The platform domain resolves to the main tenant, as with single-domain multitenancy.
     when(tenantResolverService.resolve(any())).thenReturn(1L);
     when(((IdentityAuthentication) identityClient).login(anyString(), anyString()))
+        .thenReturn(new IdentityLogin("access", 300, 1800, "refresh"));
+    when(((IdentityAuthentication) identityClient).loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("access", 300, 1800, "refresh"));
     when(((IdentityDummyEmailUpdater) identityClient).updateDummyEmail(anyString(), any()))
         .thenAnswer(call -> call.getArgument(0) + "@dummy.synthetic.oriso.test");
@@ -192,6 +205,10 @@ class MultiTenantRegistrationIT {
         .thenReturn(ChatRecoveryPolicyFixtures.tenant().id(TENANT));
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().id(TENANT).subdomain("synthetic"));
+    when(inactivityEnrollment.capture(
+            TENANT,
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.ASKER))
+        .thenReturn(inactivityPolicy);
     var agency =
         new AgencyDTO()
             .id(AGENCY)
@@ -256,6 +273,12 @@ class MultiTenantRegistrationIT {
         .as(result.getResponse().getContentAsString())
         .isEqualTo(201);
     assertCreatedInTenant();
+    org.mockito.Mockito.verify(inactivityEnrollment)
+        .capture(
+            TENANT,
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.ASKER);
+    org.mockito.Mockito.verify(inactivityEnrollment)
+        .enroll(createdUserIds.getFirst(), TENANT, inactivityPolicy);
   }
 
   @Test

@@ -147,8 +147,8 @@ class KeycloakConfigTest {
     keycloakConfig.setAuthServerUrl("http://localhost:" + server.getAddress().getPort());
     keycloakConfig.setRealm("oriso");
     var customConfig = new KeycloakCustomConfig();
-    customConfig.setAdminUsername("admin");
-    customConfig.setAdminPassword("password");
+
+    customConfig.setAdminClientSecret("password");
     customConfig.setAdminClientId("admin-cli");
     keycloakConfig.setConfig(customConfig);
   }

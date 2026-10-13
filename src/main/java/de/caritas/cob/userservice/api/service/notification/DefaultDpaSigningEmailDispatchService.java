@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.RenderedEmail;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -9,9 +10,10 @@ import lombok.NonNull;
 import org.springframework.stereotype.Service;
 
 /**
- * Renders the DPA signing mail from the design system and sends it over the platform's global SMTP
- * settings, like every other mail of the tenant onboarding. It used to be rendered and sent by
- * ConsultingTypeService from hand-written HTML; that endpoint is no longer called.
+ * Renders the DPA signing mail from the design system and sends it like every other mail of the
+ * tenant onboarding: through the Träger's own mail server when it has one, else the platform's. It
+ * used to be rendered and sent by ConsultingTypeService from hand-written HTML; that endpoint is no
+ * longer called.
  */
 @Service
 public class DefaultDpaSigningEmailDispatchService implements DpaSigningEmailDispatchService {
@@ -37,7 +39,9 @@ public class DefaultDpaSigningEmailDispatchService implements DpaSigningEmailDis
       String signLink,
       LocalDateTime expiresAt) {
     inviteMailDispatchService.sendRendered(
-        recipientEmail, render(tenantId, tenantName, signLink, expiresAt));
+        recipientEmail,
+        render(tenantId, tenantName, signLink, expiresAt),
+        InviteMailOrigin.of(tenantId, TenantSystemEmailDelivery.Purpose.DPA_SIGNING_REQUEST));
   }
 
   @Override

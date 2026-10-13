@@ -131,6 +131,7 @@ class EventNotificationControllerTest {
             consultantRepository,
             identityTombstoneService,
             deduplicationWriter,
+            mock(de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService.class),
             new ConsultantDisplayNameResolver());
     var controller =
         new EventNotificationController(

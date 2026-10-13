@@ -838,7 +838,7 @@ public class AccountInviteService {
   }
 
   /** Resolves an invite by its raw link token without any state checks. */
-  @Transactional(readOnly = true)
+  @Transactional
   public AccountInvite findInviteByToken(String rawToken) {
     if (isBlank(rawToken)) {
       throw new BadRequestException("Invite token is required");
@@ -1007,7 +1007,10 @@ public class AccountInviteService {
             .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
     // Hiding another Träger's template from the list is not enough: the id travels in
     // the send request body, so sending with it has to be refused too (ORISO-Admin#1026).
-    accessPolicy.authorizeTemplateUse(template.getTenantId());
+    // The kind rule rides along: a BST admin may not send with a Träger invite text.
+    accessPolicy.authorizeTemplateUse(template.getTenantId(), template.getKind());
+    // Before anything is written: a template without text is refused, never mailed empty.
+    InviteDelivery.requireText(template.getSubject(), withoutActionLink(template.getBody()));
     return template;
   }
 
@@ -1093,12 +1096,19 @@ public class AccountInviteService {
     if (value == null) {
       return "";
     }
+    return render(withoutActionLink(value), invite, acceptUrl);
+  }
+
+  /** A template body as the layout sends it: the {@code {{inviteLink}}} token lifted out. */
+  public static String withoutActionLink(String value) {
+    if (value == null) {
+      return "";
+    }
     String withoutActionLink = ACTION_LINK_TOKEN_LINE.matcher(value).replaceAll("");
     withoutActionLink = ACTION_LINK_TOKEN_INLINE.matcher(withoutActionLink).replaceAll("");
     // Lifting a line out of "text\n\n{{inviteLink}}\n\ntext" would otherwise leave a
     // triple break — a visible hole exactly where the link used to be.
-    withoutActionLink = BLANK_LINE_RUN.matcher(withoutActionLink).replaceAll("\n\n");
-    return render(withoutActionLink, invite, acceptUrl);
+    return BLANK_LINE_RUN.matcher(withoutActionLink).replaceAll("\n\n");
   }
 
   /**

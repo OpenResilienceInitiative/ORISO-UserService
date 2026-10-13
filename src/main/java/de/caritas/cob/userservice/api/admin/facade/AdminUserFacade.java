@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.admin.service.admin.AgencyAdminUserService
 import de.caritas.cob.userservice.api.admin.service.admin.TenantAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.AdminFilterService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.port.out.SearchSort;
 import java.util.List;
 import java.util.Map;
@@ -119,22 +120,24 @@ public class AdminUserFacade {
 
   public Map<String, Object> findAgencyAdminsByInfix(
       final String infix,
+      final SearchFilter filter,
       final int pageNumber,
       final int pageSize,
       final String fieldName,
       final boolean isAscending) {
     var pageRequest = SearchSort.pageRequestOf(pageNumber, pageSize, fieldName, isAscending);
-    return this.agencyAdminUserService.findAgencyAdminsByInfix(infix, pageRequest);
+    return this.agencyAdminUserService.findAgencyAdminsByInfix(infix, filter, pageRequest);
   }
 
   public Map<String, Object> findTenantAdminsByInfix(
       final String infix,
+      final SearchFilter filter,
       final int pageNumber,
       final int pageSize,
       final String fieldName,
       final boolean isAscending) {
     var pageRequest = SearchSort.pageRequestOf(pageNumber, pageSize, fieldName, isAscending);
-    return this.tenantAdminUserService.findTenantAdminsByInfix(infix, pageRequest);
+    return this.tenantAdminUserService.findTenantAdminsByInfix(infix, filter, pageRequest);
   }
 
   public List<AdminResponseDTO> findTenantAdmins(Integer tenantId) {

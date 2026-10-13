@@ -38,6 +38,12 @@ public class AccountInviteAccessPolicy {
   private static final Set<AccountInviteTargetRole> USER_ADMIN_INVITABLE_ROLES =
       EnumSet.of(AccountInviteTargetRole.AGENCY_ADMIN, AccountInviteTargetRole.COUNSELLOR);
 
+  private static final Set<InviteEmailTemplateKind> TENANT_TEMPLATE_KINDS =
+      EnumSet.of(InviteEmailTemplateKind.COUNSELLOR_INVITE, InviteEmailTemplateKind.TENANT_INVITE);
+
+  private static final Set<InviteEmailTemplateKind> AGENCY_TEMPLATE_KINDS =
+      EnumSet.of(InviteEmailTemplateKind.COUNSELLOR_INVITE);
+
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull AdminScope adminScope;
 
@@ -155,54 +161,106 @@ public class AccountInviteAccessPolicy {
   }
 
   /**
-   * Whether the caller may see and send with a template owned by {@code templateTenantId}. Everyone
-   * may use a platform template ({@code null}); a Träger's own template is theirs alone.
+   * The template kinds the caller may create, change, list and use. A Beratungsstellen admin
+   * invites counsellors only; a Träger admin also invites Träger admins but never forwards the
+   * contract (DPA_FORWARD); the platform admin may use every kind.
    */
-  public boolean canUseTemplate(Long templateTenantId) {
+  public Set<InviteEmailTemplateKind> templateKindsInReach() {
+    return switch (adminScope.ownerReach()) {
+      case AdminScope.Platform platform -> EnumSet.allOf(InviteEmailTemplateKind.class);
+      case AdminScope.Tenant tenant -> EnumSet.copyOf(TENANT_TEMPLATE_KINDS);
+      case AdminScope.Agencies agencies -> EnumSet.copyOf(AGENCY_TEMPLATE_KINDS);
+    };
+  }
+
+  /** Whether {@code kind} is one of {@link #templateKindsInReach()}. */
+  public boolean mayUseTemplateKind(InviteEmailTemplateKind kind) {
+    return kind != null && templateKindsInReach().contains(kind);
+  }
+
+  /**
+   * Guards creating a template of {@code kind}, and changing a template <b>to</b> that kind.
+   *
+   * @throws ForbiddenException if the kind is out of the caller's reach
+   */
+  public void authorizeTemplateKind(InviteEmailTemplateKind kind) {
+    if (!mayUseTemplateKind(kind)) {
+      throw denyTemplate("write an invite e-mail template of kind " + kind);
+    }
+  }
+
+  /**
+   * Whether the caller may see and send with a template owned by {@code templateTenantId}. Everyone
+   * may use a platform template ({@code null}); a Träger's own template is theirs alone. The owner
+   * rule only; {@link #canUseTemplate(Long, InviteEmailTemplateKind)} adds the kind rule.
+   */
+  boolean canUseTemplate(Long templateTenantId) {
     var reach = adminScope.ownerReach();
     return reach instanceof AdminScope.Platform
         || templateTenantId == null
         || templateTenantId.equals(reach.tenantId());
   }
 
+  /** The owner rule and the kind rule together: may the caller see and send with this template? */
+  public boolean canUseTemplate(Long templateTenantId, InviteEmailTemplateKind kind) {
+    return canUseTemplate(templateTenantId) && mayUseTemplateKind(kind);
+  }
+
   /**
    * Guards reading, previewing and <b>sending with</b> a template. Hiding a foreign template from
    * the list is not enough: its id travels in the send request, so the id has to be refused too.
+   * The same holds for a kind out of reach, e.g. a Beratungsstellen admin who learns the id of a
+   * Träger invite.
    *
-   * @throws ForbiddenException if the template belongs to another Träger
+   * @throws ForbiddenException if the template belongs to another Träger or its kind is out of
+   *     reach
    */
-  public void authorizeTemplateUse(Long templateTenantId) {
+  public void authorizeTemplateUse(Long templateTenantId, InviteEmailTemplateKind kind) {
     if (!canUseTemplate(templateTenantId)) {
       throw denyTemplate("use invite e-mail template of tenant " + templateTenantId);
+    }
+    if (!mayUseTemplateKind(kind)) {
+      throw denyTemplate("use an invite e-mail template of kind " + kind);
     }
   }
 
   /**
    * Guards changing a stored template. A Träger may change its own; a <b>platform template</b>
-   * ({@code tenantId == null}) is the text every other Träger sends, so only the platform operator
-   * may change that one (ORISO-Admin#1026, and what dev #1052 already enforces in the Admin).
+   * ({@code tenantId == null}, including the built-in system defaults) is the text every other
+   * Träger sends, so only the platform operator may change that one (ORISO-Admin#1026, and what dev
+   * #1052 already enforces in the Admin). The stored kind has to be in reach as well.
    *
    * @throws ForbiddenException if the template is not the caller's to change
    */
-  public void authorizeTemplateUpdate(Long templateTenantId) {
-    if (canChangeTemplate(templateTenantId)) {
-      return;
+  public void authorizeTemplateUpdate(Long templateTenantId, InviteEmailTemplateKind kind) {
+    if (!canChangeTemplate(templateTenantId)) {
+      throw denyTemplate(
+          templateTenantId == null
+              ? "change the shared platform invite e-mail template"
+              : "change the invite e-mail template of tenant " + templateTenantId);
     }
-    throw denyTemplate(
-        templateTenantId == null
-            ? "change the shared platform invite e-mail template"
-            : "change the invite e-mail template of tenant " + templateTenantId);
+    if (!mayUseTemplateKind(kind)) {
+      throw denyTemplate("change an invite e-mail template of kind " + kind);
+    }
   }
 
   /**
-   * The same rule as {@link #authorizeTemplateUpdate(Long)} as a question, so the API can tell the
-   * Admin which templates are the caller's to change. The Admin greys the others out rather than
-   * hiding them (house rule "disable, don't hide").
+   * The owner part of {@link #authorizeTemplateUpdate(Long, InviteEmailTemplateKind)} as a
+   * question.
    */
-  public boolean canChangeTemplate(Long templateTenantId) {
+  boolean canChangeTemplate(Long templateTenantId) {
     var reach = adminScope.ownerReach();
     return reach instanceof AdminScope.Platform
         || (templateTenantId != null && templateTenantId.equals(reach.tenantId()));
+  }
+
+  /**
+   * The same rule as {@link #authorizeTemplateUpdate(Long, InviteEmailTemplateKind)} as a question,
+   * so the API can tell the Admin which templates are the caller's to change. The Admin greys the
+   * others out rather than hiding them (house rule "disable, don't hide").
+   */
+  public boolean canChangeTemplate(Long templateTenantId, InviteEmailTemplateKind kind) {
+    return canChangeTemplate(templateTenantId) && mayUseTemplateKind(kind);
   }
 
   private CreateAccountInviteCommand authorizeAgencyAdminCreate(

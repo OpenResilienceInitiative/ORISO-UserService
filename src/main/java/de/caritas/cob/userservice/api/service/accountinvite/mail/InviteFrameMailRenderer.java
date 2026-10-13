@@ -118,6 +118,7 @@ public class InviteFrameMailRenderer {
             image ? logoUrl : null,
             values.get("accentColor"),
             values.get("primaryColor"),
+            values.get("primaryTextColor"),
             image ? BrandedEmail.LogoRendering.IMAGE : BrandedEmail.LogoRendering.TEXT_WORDMARK));
   }
 

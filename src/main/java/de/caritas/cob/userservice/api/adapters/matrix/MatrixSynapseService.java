@@ -68,6 +68,8 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_ROOM_EVENT =
       "/_matrix/client/v3/rooms/{roomId}/event/{eventId}";
   private static final String ENDPOINT_ROOM_MESSAGES = "/_matrix/client/r0/rooms/{roomId}/messages";
+  private static final String ENDPOINT_SEND_TO_DEVICE =
+      "/_matrix/client/v3/sendToDevice/{eventType}/{txnId}";
   private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
 
   // The closed-vocabulary error code in a Synapse error body; never the body's free text.
@@ -911,6 +913,76 @@ public class MatrixSynapseService implements MatrixUserClient {
     }
   }
 
+  /**
+   * Reversibly blocks authenticated access, including existing Matrix sessions, without erasing
+   * account data or encryption keys. Confirm existence before PUT because Synapse's user endpoint
+   * otherwise creates an account. Completion requires a fresh read of the persisted lock state.
+   */
+  public boolean setAccountSuspended(String matrixUserId, boolean suspended) {
+    try {
+      String token = getAdminToken();
+      if (token == null) return false;
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              "/_synapse/admin/v2/users/{userId}",
+              java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setBearerAuth(token);
+      var read = new HttpEntity<Void>(headers);
+      var existing =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, read, java.util.Map.class);
+      if (existing.getBody() == null) return false;
+      if (!Boolean.valueOf(suspended).equals(existing.getBody().get("locked"))) {
+        var response =
+            restTemplate.exchange(
+                url,
+                org.springframework.http.HttpMethod.PUT,
+                new HttpEntity<>(java.util.Map.of("locked", suspended), headers),
+                java.util.Map.class);
+        if (response.getStatusCode().value() != 200) return false;
+      }
+      var confirmed =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, read, java.util.Map.class);
+      return confirmed.getBody() != null
+          && Boolean.valueOf(suspended).equals(confirmed.getBody().get("locked"));
+    } catch (Exception failure) {
+      log.warn(
+          "Matrix account lock could not be confirmed: type={}",
+          failure.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  /** Reads the reversible access lock without creating or modifying a Matrix identity. */
+  public java.util.Optional<Boolean> getAccountLocked(String matrixUserId) {
+    try {
+      String token = getAdminToken();
+      if (token == null) return java.util.Optional.empty();
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              "/_synapse/admin/v2/users/{userId}",
+              java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(token);
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<Void>(headers),
+              java.util.Map.class);
+      if (response.getBody() != null && response.getBody().get("locked") instanceof Boolean locked)
+        return java.util.Optional.of(locked);
+      return java.util.Optional.empty();
+    } catch (Exception failure) {
+      return java.util.Optional.empty();
+    }
+  }
+
   /** Outcome of a Synapse room purge, distinguishing "already gone" from a genuine failure. */
   public enum RoomPurgeOutcome {
     /** Synapse accepted the purge. */
@@ -1302,6 +1374,70 @@ public class MatrixSynapseService implements MatrixUserClient {
    * @param accessToken the access token
    * @return the send response with event_id
    */
+  /**
+   * Sends a content-free Matrix to-device message to every device of one user, as the technical
+   * admin identity.
+   *
+   * <p>To-device is deliberate: it needs no shared room, writes nothing to any room timeline, and
+   * reaches every logged-in device of the recipient. Nothing is persisted in Matrix, so no
+   * signalling room has to be provisioned and existing users need no migration.
+   *
+   * @param eventType the custom event type, e.g. {@code org.oriso.feed.updated}
+   * @param matrixUserId the fully qualified recipient, e.g. {@code @alice:matrix.example.com}
+   * @param content the event content; pass an empty map for a content-free signal
+   * @return {@code true} when Synapse accepted the message; {@code false} on any failure (this
+   *     method never throws — callers are best-effort)
+   */
+  public boolean sendToDeviceMessage(
+      String eventType, String matrixUserId, java.util.Map<String, Object> content) {
+    if (eventType == null
+        || eventType.isBlank()
+        || matrixUserId == null
+        || matrixUserId.isBlank()) {
+      return false;
+    }
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.debug("No Matrix admin token available; skipping to-device message {}", eventType);
+        return false;
+      }
+
+      var headers = getClientHttpHeaders(adminToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      // { "messages": { "@alice:server": { "*": <content> } } } — "*" = all devices.
+      var body =
+          java.util.Map.<String, Object>of(
+              "messages",
+              java.util.Map.of(
+                  matrixUserId,
+                  java.util.Map.of("*", content == null ? java.util.Map.of() : content)));
+
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_SEND_TO_DEVICE,
+              java.util.Map.of(
+                  "eventType", eventType, "txnId", java.util.UUID.randomUUID().toString()));
+
+      restTemplate.exchange(
+          url,
+          org.springframework.http.HttpMethod.PUT,
+          new HttpEntity<>(body, headers),
+          java.util.Map.class);
+      return true;
+    } catch (Exception ex) {
+      // Best effort by contract: signalling failures must never reach the caller.
+      log.warn(
+          "Matrix Error: Could not send to-device message {} to {}: {}",
+          eventType,
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(ex.getMessage()));
+      return false;
+    }
+  }
+
   public java.util.Map<String, Object> sendMessage(
       String roomId, String message, String accessToken) {
     try {

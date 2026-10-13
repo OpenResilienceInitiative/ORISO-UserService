@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.RenderedEmail;
 import java.time.Clock;
 import java.time.Instant;
@@ -52,7 +53,11 @@ class DefaultDpaSigningEmailDispatchServiceTest {
         SIGN_LINK,
         LocalDateTime.parse("2026-10-06T22:43:00"));
 
-    verify(inviteMailDispatchService).sendRendered("legal@example.org", MAIL);
+    verify(inviteMailDispatchService)
+        .sendRendered(
+            "legal@example.org",
+            MAIL,
+            InviteMailOrigin.of(84L, TenantSystemEmailDelivery.Purpose.DPA_SIGNING_REQUEST));
   }
 
   /** The onboarding wizard degrades to manual sharing on this exception; it must not be eaten. */
@@ -61,7 +66,11 @@ class DefaultDpaSigningEmailDispatchServiceTest {
     when(renderer.render(any(), any(), any(), any(), any())).thenReturn(MAIL);
     SmtpSendException failure =
         new SmtpSendException(SmtpSendException.Category.SMTP_CREDENTIALS_MISSING, "no creds");
-    when(inviteMailDispatchService.sendRendered("legal@example.org", MAIL)).thenThrow(failure);
+    when(inviteMailDispatchService.sendRendered(
+            "legal@example.org",
+            MAIL,
+            InviteMailOrigin.of(84L, TenantSystemEmailDelivery.Purpose.DPA_SIGNING_REQUEST)))
+        .thenThrow(failure);
 
     assertThatThrownBy(
             () ->

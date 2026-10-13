@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.everyItem;
@@ -24,6 +25,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jayway.jsonpath.JsonPath;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
@@ -655,6 +657,146 @@ class UserControllerConsultantE2EIT {
         "b1-sort-consultant-3",
         "b1-sort-consultant-2",
         "b1-sort-consultant-4");
+  }
+
+  // #1263 B3: Träger (tenantId) and Beratungsstelle (agencyId) filters on the consultant search.
+  private static final Long FILTER_TENANT_A = 5151L;
+  private static final Long FILTER_TENANT_B = 5252L;
+  private static final Long FILTER_AGENCY_X = 71001L;
+  private static final Long FILTER_AGENCY_Y = 71002L;
+  private static final Long FILTER_AGENCY_Z = 71003L;
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
+  void searchConsultantsShouldFilterByAgencyIdListingAConsultantOfTwoAgenciesOnceForEach()
+      throws Exception {
+    givenFilterConsultants();
+
+    assertFilteredConsultantSearch("agencyId", FILTER_AGENCY_X + "", "b3-c1", "b3-c2");
+    assertFilteredConsultantSearch("agencyId", FILTER_AGENCY_Y + "", "b3-c2", "b3-c3");
+    assertFilteredConsultantSearch(
+        "agencyId", FILTER_AGENCY_X + "," + FILTER_AGENCY_Y, "b3-c1", "b3-c2", "b3-c3");
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
+  void searchConsultantsShouldFilterByTenantIdForAPlatformWideCaller() throws Exception {
+    givenFilterConsultants();
+
+    assertFilteredConsultantSearch(
+        "tenantId", FILTER_TENANT_A + "", "b3-c1", "b3-c2", "b3-c4", "b3-c5");
+    assertFilteredConsultantSearch("tenantId", FILTER_TENANT_B + "", "b3-c3");
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
+  void searchConsultantsShouldNotWidenScopeWhenATraegerAdminFiltersByAForeignTenant()
+      throws Exception {
+    givenFilterConsultants();
+    givenCallerTokenOfTenant(FILTER_TENANT_A);
+
+    assertFilteredConsultantSearch("tenantId", FILTER_TENANT_B + "");
+    assertFilteredConsultantSearch("agencyId", FILTER_AGENCY_Y + "", "b3-c2");
+  }
+
+  /** The search reads the caller's tenant from the access token's tenantId claim. */
+  private void givenCallerTokenOfTenant(Long tenantId) {
+    var encoder = java.util.Base64.getUrlEncoder().withoutPadding();
+    var header = encoder.encodeToString("{\"alg\":\"none\"}".getBytes(StandardCharsets.UTF_8));
+    var payload =
+        encoder.encodeToString(
+            ("{\"tenantId\":" + tenantId + "}").getBytes(StandardCharsets.UTF_8));
+    when(authenticatedUser.getAccessToken()).thenReturn(header + "." + payload + ".");
+  }
+
+  /** c2 counsels in two agencies; c3 is the only one of tenant B. */
+  private void givenFilterConsultants() {
+    givenAnInfix();
+    // A fresh agency list per call: the search is called several times per test.
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            i ->
+                i.<List<Long>>getArgument(0).stream()
+                    .distinct()
+                    .map(
+                        agencyId -> {
+                          var agency = new AgencyDTO();
+                          agency.setId(agencyId);
+                          agency.setName("B3 agency " + agencyId);
+                          agency.setPostcode("12345");
+                          return agency;
+                        })
+                    .toList());
+    givenFilterConsultant("b3-c1", FILTER_TENANT_A, FILTER_AGENCY_X);
+    givenFilterConsultant("b3-c2", FILTER_TENANT_A, FILTER_AGENCY_X, FILTER_AGENCY_Y);
+    givenFilterConsultant("b3-c3", FILTER_TENANT_B, FILTER_AGENCY_Y);
+    givenFilterConsultant("b3-c4", FILTER_TENANT_A, FILTER_AGENCY_Z);
+    givenFilterConsultant("b3-c5", FILTER_TENANT_A, FILTER_AGENCY_Z);
+  }
+
+  private void givenFilterConsultant(String id, Long tenantId, Long... agencyIds) {
+    var dbConsultant = consultantRepository.findAll().iterator().next();
+    var newConsultant = new Consultant();
+    BeanUtils.copyProperties(dbConsultant, newConsultant);
+    newConsultant.setId(id);
+    newConsultant.setTenantId(tenantId);
+    newConsultant.setUsername(RandomStringUtils.randomAlphabetic(8));
+    newConsultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
+    newConsultant.setFirstName("B3First");
+    newConsultant.setLastName(aStringWithInfix(infix));
+    newConsultant.setEmail(aValidEmailWithoutInfix(infix));
+    newConsultant.setStatus(ConsultantStatus.CREATED);
+    newConsultant.setDeleteDate(null);
+    newConsultant.setConsultantAgencies(null);
+    var saved = consultantRepository.save(newConsultant);
+    consultantIdsToDelete.add(id);
+    for (Long agencyId : agencyIds) {
+      var consultantAgency =
+          ConsultantAgency.builder()
+              .consultant(saved)
+              .agencyId(agencyId)
+              .tenantId(tenantId)
+              .build();
+      consultantAgencyRepository.save(consultantAgency);
+      consultantAgencies.add(consultantAgency);
+    }
+  }
+
+  /**
+   * Walks every page (two per page) with the given filter and asserts that exactly the expected ids
+   * come back, each once, and that {@code total} is the filtered count.
+   */
+  private void assertFilteredConsultantSearch(String param, String value, String... expectedIds)
+      throws Exception {
+    var ids = new ArrayList<String>();
+    var perPage = 2;
+    var pages = Math.max(1, (expectedIds.length + perPage - 1) / perPage);
+    for (var page = 1; page <= pages; page++) {
+      var body =
+          mockMvc
+              .perform(
+                  get("/users/consultants/search")
+                      .cookie(CSRF_COOKIE)
+                      .header(CSRF_HEADER, CSRF_VALUE)
+                      .accept("application/hal+json")
+                      .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8))
+                      .param("page", String.valueOf(page))
+                      .param("perPage", String.valueOf(perPage))
+                      .param("field", "FIRSTNAME")
+                      .param("order", "ASC")
+                      .param(param, value))
+              .andExpect(status().isOk())
+              .andReturn()
+              .getResponse()
+              .getContentAsString();
+      assertThat((Integer) JsonPath.read(body, "$.total"))
+          .as("total for %s=%s page %d", param, value, page)
+          .isEqualTo(expectedIds.length);
+      if (expectedIds.length > 0) {
+        ids.addAll(JsonPath.<List<String>>read(body, "$._embedded[*]._embedded.id"));
+      }
+    }
+    assertThat(ids).as("ids for %s=%s", param, value).containsExactly(expectedIds);
   }
 
   private static LocalDateTime at(int year, int month) {

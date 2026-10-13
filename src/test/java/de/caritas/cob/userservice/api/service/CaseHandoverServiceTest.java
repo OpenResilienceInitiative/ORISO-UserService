@@ -7,13 +7,18 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
@@ -24,6 +29,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
@@ -40,10 +46,12 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepositor
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverRecipient;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
@@ -52,16 +60,19 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
@@ -88,6 +99,7 @@ class CaseHandoverServiceTest {
   @Mock private CaseHandoverReasonPolicyRepository caseHandoverReasonPolicyRepository;
   @Mock private CaseHandoverPolicyCacheService caseHandoverPolicyCacheService;
   @Mock private SessionRepository sessionRepository;
+  @Mock private SessionOwnershipService sessionOwnershipService;
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
   @Mock private UserAccountService userAccountService;
   @Mock private EventNotificationService eventNotificationService;
@@ -96,6 +108,8 @@ class CaseHandoverServiceTest {
   @Mock private CaseHandoverMatrixRepairService matrixRepairService;
   @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
   @Mock private SessionSupervisorFacade sessionSupervisorFacade;
+  @Mock private ConsultantService consultantService;
+  @Mock private AuthenticatedUser authenticatedUser;
   @Mock private ScheduledTaskClaimService scheduledTaskClaimService;
   @Mock private PlatformTransactionManager transactionManager;
   @Mock private TransactionStatus transactionStatus;
@@ -125,6 +139,7 @@ class CaseHandoverServiceTest {
     asker = new User();
     asker.setUserId("asker");
     asker.setUsername("asker");
+    asker.setTenantId(7L);
 
     session = new Session();
     session.setId(123L);
@@ -141,8 +156,22 @@ class CaseHandoverServiceTest {
     session.setUpdateDate(LocalDateTime.now());
 
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(requester);
+    when(consultantService.getConsultant("requester")).thenReturn(Optional.of(requester));
+    when(authenticatedUser.getUserId()).thenReturn(requester.getId());
     when(userAccountService.retrieveValidatedUser()).thenReturn(asker);
     when(sessionRepository.findById(123L)).thenReturn(Optional.of(session));
+    when(sessionRepository.findByIdForUpdate(123L)).thenReturn(Optional.of(session));
+    when(sessionOwnershipService.updateOwner(
+            any(Session.class), any(Consultant.class), any(SessionStatus.class), any()))
+        .thenAnswer(
+            invocation -> {
+              Session target = invocation.getArgument(0);
+              Consultant owner = invocation.getArgument(1);
+              target.setConsultant(owner);
+              target.setOwnershipRevision(target.getOwnershipRevision() + 1);
+              return new SessionOwnershipService.OwnershipChange(
+                  target.getId(), owner.getId(), target.getOwnershipRevision());
+            });
     when(caseHandoverReasonPolicyRepository.findByEnabledTrueOrderByDisplayOrderAscCodeAsc())
         .thenReturn(List.of());
     when(caseHandoverReasonPolicyRepository.findAllByOrderByDisplayOrderAscCodeAsc())
@@ -162,6 +191,190 @@ class CaseHandoverServiceTest {
         .thenReturn(true);
     when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
     when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = CaseHandoverConsentValue.class,
+      names = {"NONE", "OPT_OUT"})
+  void requestAccess_standingAskParksCoAccessWithoutMatrixGrant(CaseHandoverConsentValue baseline) {
+    session.setAlwaysAskBeforeAdditionalAccess(true);
+    session.setMatrixRoomId("!case:example.org");
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(tenantPolicies("Support", 180, baseline, Set.of()));
+    var status = caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "support");
+    assertEquals("PENDING_CLIENT_CONSENT", status.getStatus());
+    assertEquals(CaseHandoverConsentMode.OPT_IN, status.getClientConsent());
+    assertFalse(status.isCanViewContent());
+    assertEquals(previous, session.getConsultant());
+    verify(matrixSynapseService, never()).getRoomMembers(anyString());
+  }
+
+  @Test
+  void requestAccess_standingOffDoesNotWeakenBaselineOptIn() {
+    var status = caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "support");
+    assertEquals("PENDING_CLIENT_CONSENT", status.getStatus());
+    assertFalse(status.isCanViewContent());
+  }
+
+  @Test
+  void consentPreference_disablingDoesNotRewriteAnAlreadyPendingRequest() {
+    session.setAlwaysAskBeforeAdditionalAccess(true);
+    asker.setTenantId(7L);
+    TenantContext.setCurrentTenant(7L);
+    try {
+      var first = caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "cover");
+      ArgumentCaptor<CaseHandoverRequest> capture =
+          ArgumentCaptor.forClass(CaseHandoverRequest.class);
+      verify(caseHandoverRequestRepository).save(capture.capture());
+      var frozen = capture.getValue();
+      when(caseHandoverRequestRepository
+              .findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(123L, "requester"))
+          .thenReturn(List.of(frozen));
+      caseHandoverService.updateConsentPreference(123L, false);
+      assertFalse(caseHandoverService.getConsentPreference(123L).alwaysAskBeforeAdditionalAccess());
+      var stillPending = caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "cover");
+      assertEquals(first.getStatus(), stillPending.getStatus());
+      assertEquals(CaseHandoverConsentMode.OPT_IN, frozen.getClientConsent());
+      assertEquals(previous, session.getConsultant());
+      verify(caseHandoverRequestRepository).save(any());
+      frozen.setId(99L);
+      when(caseHandoverRequestRepository.findByIdAndSessionId(99L, 123L))
+          .thenReturn(Optional.of(frozen));
+      var approved = caseHandoverService.resolveClientConsent(123L, 99L, true);
+      assertEquals("GRANTED", approved.getStatus());
+      assertEquals(requester, session.getConsultant());
+      assertFalse(caseHandoverService.getConsentPreference(123L).alwaysAskBeforeAdditionalAccess());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "other-owner",
+        "wrong-tenant",
+        "technical-tenant",
+        "missing-tenant",
+        "user-tenant"
+      })
+  void consentPreference_rejectsReadAndSaveOutsideOwnerTenant(String scenario) {
+    asker.setTenantId(7L);
+    TenantContext.setCurrentTenant(7L);
+    switch (scenario) {
+      case "other-owner" -> {
+        User other = new User();
+        other.setUserId("other");
+        other.setTenantId(7L);
+        when(userAccountService.retrieveValidatedUser()).thenReturn(other);
+      }
+      case "wrong-tenant" -> TenantContext.setCurrentTenant(8L);
+      case "technical-tenant" -> TenantContext.setCurrentTenant(0L);
+      case "missing-tenant" -> TenantContext.clear();
+      case "user-tenant" -> asker.setTenantId(8L);
+      default -> throw new AssertionError(scenario);
+    }
+    try {
+      assertThrows(ForbiddenException.class, () -> caseHandoverService.getConsentPreference(123L));
+      assertThrows(
+          ForbiddenException.class, () -> caseHandoverService.updateConsentPreference(123L, true));
+      assertFalse(session.isAlwaysAskBeforeAdditionalAccess());
+      verify(sessionRepository, never()).save(any());
+      verify(sessionRepository, never()).updateAdditionalAccessPreference(anyLong(), anyBoolean());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = de.caritas.cob.userservice.api.model.ConversationType.class,
+      names = {"LIVE_CHAT", "INTERNAL_GROUP", "SELF_HELP"})
+  void consentPreference_rejectsOutOfScopeConversations(
+      de.caritas.cob.userservice.api.model.ConversationType type) {
+    asker.setTenantId(7L);
+    TenantContext.setCurrentTenant(7L);
+    session.setConversationType(type);
+    try {
+      assertThrows(ForbiddenException.class, () -> caseHandoverService.getConsentPreference(123L));
+      assertThrows(
+          ForbiddenException.class, () -> caseHandoverService.updateConsentPreference(123L, true));
+      verify(sessionRepository, never()).save(any());
+      verify(sessionRepository, never()).updateAdditionalAccessPreference(anyLong(), anyBoolean());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void consentPreference_rejectsLegacyLiveChatWithNullModality() {
+    asker.setTenantId(7L);
+    TenantContext.setCurrentTenant(7L);
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    try {
+      assertThrows(ForbiddenException.class, () -> caseHandoverService.getConsentPreference(123L));
+      assertThrows(
+          ForbiddenException.class, () -> caseHandoverService.updateConsentPreference(123L, true));
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void consentPreference_singleTenantInstallationStillUsesOwnerAndScopeChecks() {
+    ReflectionTestUtils.setField(caseHandoverService, "preferenceMultitenancyEnabled", false);
+    TenantContext.clear();
+    try {
+      assertTrue(
+          caseHandoverService
+              .updateConsentPreference(123L, true)
+              .alwaysAskBeforeAdditionalAccess());
+      assertTrue(caseHandoverService.getConsentPreference(123L).alwaysAskBeforeAdditionalAccess());
+      User other = new User();
+      other.setUserId("other");
+      when(userAccountService.retrieveValidatedUser()).thenReturn(other);
+      assertThrows(
+          ForbiddenException.class, () -> caseHandoverService.updateConsentPreference(123L, false));
+    } finally {
+      ReflectionTestUtils.setField(caseHandoverService, "preferenceMultitenancyEnabled", true);
+    }
+  }
+
+  @Test
+  void consentPreference_ownerSavesAndReadsItWithoutResolvingAnExistingRequest() {
+    asker.setTenantId(7L);
+    TenantContext.setCurrentTenant(7L);
+    when(sessionRepository.findByIdForUpdate(123L)).thenReturn(Optional.of(session));
+    try {
+      assertFalse(caseHandoverService.getConsentPreference(123L).alwaysAskBeforeAdditionalAccess());
+      var saved = caseHandoverService.updateConsentPreference(123L, true);
+      assertEquals(123L, saved.sessionId());
+      assertTrue(caseHandoverService.getConsentPreference(123L).alwaysAskBeforeAdditionalAccess());
+      assertEquals(previous, session.getConsultant());
+      assertFalse(Boolean.TRUE.equals(session.getSupervisionOptedOut()));
+      verify(sessionRepository).updateAdditionalAccessPreference(123L, true);
+      verify(sessionRepository, never()).save(any());
+      verify(caseHandoverRequestRepository, never()).save(any());
+      verify(matrixSynapseService, never()).getRoomMembers(anyString());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void requestAccess_standingAskPreventsTakeoverBeforeSpecificApproval() {
+    session.setAlwaysAskBeforeAdditionalAccess(true);
+    session.setMatrixRoomId("!case:example.org");
+
+    var status = caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "cover");
+
+    assertEquals("PENDING_CLIENT_CONSENT", status.getStatus());
+    assertEquals(CaseHandoverConsentMode.OPT_IN, status.getClientConsent());
+    assertFalse(status.isCanViewContent());
+    assertEquals(previous, session.getConsultant());
+    verify(sessionRepository, never()).save(any());
+    verify(matrixSynapseService, never()).getRoomMembers(anyString());
   }
 
   @Test
@@ -633,16 +846,799 @@ class CaseHandoverServiceTest {
     assertTrue(status.isCanViewContent());
     assertFalse(status.isClientConsentRequired());
     assertEquals(requester, session.getConsultant());
-    verify(sessionRepository).save(session);
+    verify(sessionOwnershipService)
+        .updateOwner(eq(session), eq(requester), eq(SessionStatus.IN_PROGRESS), any());
     verify(eventNotificationService, atLeastOnce())
         .createEvent(any(), any(), any(), any(), any(), any(), any(), any(), any());
   }
 
-  /**
-   * ADR-008 "Supervision (auto-assigned)": a takeover hands the case to a new owner, so the new
-   * owner's standing supervisor has to attach. Before this, only the enquiry-accept path did, and a
-   * case that changed hands silently ran unsupervised.
-   */
+  @Test
+  void requestAccess_identicalOperationReturnsStoredPullResultWithoutRepeatingEffects() {
+    UUID operationId = UUID.fromString("68fc1ae0-ed6d-4a28-909d-2592f6891b21");
+    CaseHandoverRequest stored = grantedRequest(requester);
+    stored.setOperationId(operationId);
+    stored.setExpectedOwnershipRevision(0L);
+    stored.setExplanation("Urgent cover");
+    when(caseHandoverRequestRepository.findByInitiatorConsultantIdAndOperationId(
+            "requester", operationId))
+        .thenReturn(Optional.of(stored));
+
+    CaseHandoverStatus result =
+        requestAccess(123L, "UNPLANNED_ABSENCE", "Urgent cover", 0L, operationId);
+
+    assertEquals("GRANTED", result.getStatus());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+  }
+
+  @Test
+  void requestAccess_sameOperationWithChangedPullPayloadConflicts() {
+    UUID operationId = UUID.fromString("68fc1ae0-ed6d-4a28-909d-2592f6891b21");
+    CaseHandoverRequest stored = grantedRequest(requester);
+    stored.setOperationId(operationId);
+    stored.setExpectedOwnershipRevision(0L);
+    stored.setExplanation("Original explanation");
+    when(caseHandoverRequestRepository.findByInitiatorConsultantIdAndOperationId(
+            "requester", operationId))
+        .thenReturn(Optional.of(stored));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () -> requestAccess(123L, "UNPLANNED_ABSENCE", "Changed explanation", 0L, operationId));
+  }
+
+  @Test
+  void requestAccess_rejectsFreshOperationFromStaleOwnershipPeriod() {
+    session.setOwnershipRevision(2L);
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () ->
+            requestAccess(
+                123L,
+                "UNPLANNED_ABSENCE",
+                "Urgent cover",
+                1L,
+                UUID.fromString("f0378720-261a-439b-9bb5-f27510191544")));
+
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void requestAccess_legacyPullRemainsAvailableAfterPreviousOwnership() {
+    when(caseHandoverRequestRepository.findByPreviousConsultantId("requester"))
+        .thenReturn(
+            List.of(
+                CaseHandoverRequest.builder()
+                    .session(session)
+                    .status(CaseHandoverRequest.Status.GRANTED)
+                    .build()));
+    CaseHandoverStatus status =
+        caseHandoverService.requestAccess(123L, "UNPLANNED_ABSENCE", "Urgent cover");
+    assertEquals("GRANTED", status.getStatus());
+    verify(sessionOwnershipService).updateOwner(eq(session), eq(requester), any(), any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void requestAccess_partialOperationGuardFailsBeforeAnySideEffect(boolean includeRevision) {
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            caseHandoverService.requestAccess(
+                123L,
+                "UNPLANNED_ABSENCE",
+                "Urgent cover",
+                includeRevision ? 0L : null,
+                includeRevision ? null : UUID.randomUUID()));
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+  }
+
+  @Test
+  void requestAccess_rejectsFreshRequesterFromAnotherPositiveTenantBeforeAnyEffects() {
+    requester.setTenantId(8L);
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () ->
+            requestAccess(
+                123L,
+                "UNPLANNED_ABSENCE",
+                "Urgent cover",
+                0L,
+                UUID.fromString("3ada2ad1-86a3-4480-aef2-e5231f25e1d7")));
+
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verify(sessionRepository, never()).save(any());
+    verifyNoInteractions(
+        sessionOwnershipService,
+        matrixSynapseService,
+        matrixSessionSystemMessageService,
+        eventNotificationService,
+        caseHandoverEmailNotification);
+  }
+
+  @Test
+  void requestAccess_rejectsFreshAbsentRequesterBeforeAnyEffects() {
+    requester.setAbsent(true);
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            requestAccess(
+                123L,
+                "UNPLANNED_ABSENCE",
+                "Urgent cover",
+                0L,
+                UUID.fromString("68762962-2cfc-4b13-91b4-bc31e66f9de0")));
+
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verify(sessionRepository, never()).save(any());
+    verifyNoInteractions(
+        sessionOwnershipService,
+        matrixSynapseService,
+        matrixSessionSystemMessageService,
+        eventNotificationService,
+        caseHandoverEmailNotification);
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "false,NONE,NONE", "false,OPT_OUT,OPT_OUT", "false,OPT_IN,OPT_IN",
+    "true,NONE,OPT_IN", "true,OPT_OUT,OPT_IN", "true,OPT_IN,OPT_IN"
+  })
+  void createOffer_freezesStandingPreferenceWithoutWeakeningReasonPolicy(
+      boolean alwaysAsk, CaseHandoverConsentValue baseline, CaseHandoverConsentMode expected) {
+    session.setConsultant(requester);
+    session.setAlwaysAskBeforeAdditionalAccess(alwaysAsk);
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    var policies = defaultTenantPolicies();
+    policies.getReasons().get("COUNSELLOR_IS_ILL").getClientConsent().setValue(baseline);
+    when(caseHandoverPolicyCacheService.getEffective(7L)).thenReturn(policies);
+
+    var result =
+        caseHandoverService.createOffer(
+            123L, "recipient", "UNPLANNED_ABSENCE", null, 0L, UUID.randomUUID());
+
+    assertEquals(expected, result.getClientConsent());
+    assertEquals(expected == CaseHandoverConsentMode.OPT_IN, result.isClientConsentRequired());
+    assertEquals("PENDING_RECIPIENT_ACCEPTANCE", result.getStatus());
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+    verify(caseHandoverEmailNotification, never()).ownershipGranted(any());
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "ANONYMOUS,LIVE_CHAT,NONE",
+    "ANONYMOUS,,NONE",
+    "REGISTERED,,OPT_IN"
+  })
+  void createOffer_standingPreferenceUsesExactCurrentConversationScope(
+      Session.RegistrationType registration, String modality, CaseHandoverConsentMode expected) {
+    session.setConsultant(requester);
+    session.setAlwaysAskBeforeAdditionalAccess(true);
+    session.setRegistrationType(registration);
+    session.setConversationType(
+        modality == null
+            ? null
+            : de.caritas.cob.userservice.api.model.ConversationType.valueOf(modality));
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    var result =
+        caseHandoverService.createOffer(
+            123L, "recipient", "UNPLANNED_ABSENCE", null, 0L, UUID.randomUUID());
+    assertEquals(expected, result.getClientConsent());
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = CaseHandoverConsentMode.class,
+      names = {"NONE", "OPT_IN"})
+  void resolveRecipientDecision_preservesFrozenConsentAfterPreferenceAndPolicyChange(
+      CaseHandoverConsentMode frozen) {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request = pushRequest(recipient, UUID.randomUUID());
+    request.setClientConsent(frozen);
+    request.setClientConsentRequired(frozen == CaseHandoverConsentMode.OPT_IN);
+    session.setConsultant(requester);
+    session.setAlwaysAskBeforeAdditionalAccess(frozen == CaseHandoverConsentMode.NONE);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
+        .thenReturn(Optional.of(request));
+    var policies = defaultTenantPolicies();
+    policies
+        .getReasons()
+        .get("COUNSELLOR_IS_ILL")
+        .getClientConsent()
+        .setValue(
+            frozen == CaseHandoverConsentMode.NONE
+                ? CaseHandoverConsentValue.OPT_IN
+                : CaseHandoverConsentValue.NONE);
+    when(caseHandoverPolicyCacheService.getEffective(7L)).thenReturn(policies);
+
+    var result = caseHandoverService.resolveRecipientDecision(123L, 501L, true);
+    assertEquals(frozen, result.getClientConsent());
+    assertEquals(
+        frozen == CaseHandoverConsentMode.OPT_IN ? "PENDING_CLIENT_CONSENT" : "GRANTED",
+        result.getStatus());
+    caseHandoverService.resolveRecipientDecision(123L, 501L, true);
+    if (frozen == CaseHandoverConsentMode.OPT_IN) {
+      verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+      verify(caseHandoverEmailNotification, times(1)).consentRequested(request);
+      verify(caseHandoverEmailNotification, never()).ownershipGranted(any());
+    } else {
+      verify(sessionOwnershipService, times(1))
+          .updateOwner(eq(session), eq(recipient), any(), any());
+      verify(caseHandoverEmailNotification, times(1)).ownershipGranted(request);
+    }
+  }
+
+  @Test
+  void createOffer_persistsRecipientPendingWithoutGrantClientOrMailEffects() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    UUID operationId = UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d");
+    session.setConsultant(requester);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    when(caseHandoverRequestRepository.save(any()))
+        .thenAnswer(
+            invocation -> {
+              CaseHandoverRequest saved = invocation.getArgument(0);
+              saved.setId(501L);
+              return saved;
+            });
+
+    CaseHandoverStatus result =
+        caseHandoverService.createOffer(
+            123L, "recipient", "UNPLANNED_ABSENCE", null, 0L, operationId);
+
+    assertEquals("PENDING_RECIPIENT_ACCEPTANCE", result.getStatus());
+    assertEquals("PUSH", result.getDirection());
+    assertEquals("requester", result.getInitiatorConsultantId());
+    assertEquals("recipient", result.getRecipientConsultantId());
+    assertEquals(operationId, result.getOperationId());
+    assertEquals(requester, session.getConsultant());
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+    verify(caseHandoverEmailNotification, never()).ownershipGranted(any(CaseHandoverRequest.class));
+    verify(caseHandoverEmailNotification, never()).consentRequested(any(CaseHandoverRequest.class));
+    verify(eventNotificationService)
+        .createEventOnce(
+            eq("case-handover-offer:501"),
+            eq("recipient"),
+            eq("case.handover.offer.received"),
+            any(),
+            any(),
+            any(),
+            any(),
+            eq("/sessions/consultant/sessionView/session/123?caseHandoverRequestId=501"),
+            eq(123L),
+            eq(7L));
+  }
+
+  @Test
+  void createOffer_rejectsEligibleRecipientFromAnotherTenant() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    recipient.setTenantId(8L);
+    session.setConsultant(requester);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            caseHandoverService.createOffer(
+                123L,
+                "recipient",
+                "UNPLANNED_ABSENCE",
+                null,
+                0L,
+                UUID.fromString("40273e18-97ec-4303-a6ec-98ba75091d3d")));
+
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void createOffer_rejectsReturningCaseToAPreviousOwner() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    session.setConsultant(requester);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    when(caseHandoverRequestRepository.findByPreviousConsultantId("recipient"))
+        .thenReturn(
+            List.of(
+                CaseHandoverRequest.builder()
+                    .session(session)
+                    .status(CaseHandoverRequest.Status.GRANTED)
+                    .build()));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () ->
+            caseHandoverService.createOffer(
+                123L,
+                "recipient",
+                "UNPLANNED_ABSENCE",
+                null,
+                0L,
+                UUID.fromString("82703c1d-536d-4f2e-9d49-ad18742a46a3")));
+
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void requestAccess_guardedPullPreservesAdviceCoAccessWithoutTransferringOwnership() {
+    CaseHandoverStatus result =
+        requestAccess(
+            123L,
+            "COUNSELLOR_ASKED_FOR_ADVICE",
+            "Need advice, not ownership.",
+            0L,
+            UUID.fromString("40cd6572-b4b3-4b2f-b869-ac944142f110"));
+
+    assertEquals("PENDING_CLIENT_CONSENT", result.getStatus());
+    assertEquals("CO_ACCESS", result.getAccessType());
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+    verify(caseHandoverEmailNotification).consentRequested(any(CaseHandoverRequest.class));
+  }
+
+  @Test
+  void createOffer_adviceReasonFailsClosedBeforeRecipientOffer() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    session.setConsultant(requester);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            caseHandoverService.createOffer(
+                123L,
+                "recipient",
+                "COUNSELLOR_ASKED_FOR_ADVICE",
+                null,
+                0L,
+                UUID.fromString("ab77f4f4-e88f-4eed-88ab-7f454b3d8fa6")));
+
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void createOffer_identicalReplaySucceedsAfterInitiatorIsNoLongerOwner() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    UUID operationId = UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d");
+    CaseHandoverRequest stored = pushRequest(recipient, operationId);
+    stored.setStatus(CaseHandoverRequest.Status.GRANTED);
+    session.setConsultant(recipient);
+    session.setOwnershipRevision(1L);
+    when(caseHandoverRequestRepository.findByInitiatorConsultantIdAndOperationId(
+            "requester", operationId))
+        .thenReturn(Optional.of(stored));
+
+    CaseHandoverStatus result =
+        caseHandoverService.createOffer(
+            123L, "recipient", "UNPLANNED_ABSENCE", null, 0L, operationId);
+
+    assertEquals("GRANTED", result.getStatus());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+  }
+
+  @Test
+  void createOffer_sameOperationWithChangedTargetConflicts() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    UUID operationId = UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d");
+    CaseHandoverRequest stored = pushRequest(recipient, operationId);
+    when(caseHandoverRequestRepository.findByInitiatorConsultantIdAndOperationId(
+            "requester", operationId))
+        .thenReturn(Optional.of(stored));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () ->
+            caseHandoverService.createOffer(
+                123L, "other", "UNPLANNED_ABSENCE", null, 0L, operationId));
+  }
+
+  @Test
+  void createOffer_rollbackDoesNotPublishRecipientEvent() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    session.setConsultant(requester);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    assignPersistedRequestId(501L);
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      caseHandoverService.createOffer(
+          123L,
+          "recipient",
+          "UNPLANNED_ABSENCE",
+          null,
+          0L,
+          UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+
+      verify(eventNotificationService, never())
+          .createEventOnce(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void createOffer_afterCommitPublishesRecipientEventExactlyOnce() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    session.setConsultant(requester);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    assignPersistedRequestId(501L);
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      caseHandoverService.createOffer(
+          123L,
+          "recipient",
+          "UNPLANNED_ABSENCE",
+          null,
+          0L,
+          UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+      var callbacks = TransactionSynchronizationManager.getSynchronizations();
+      assertEquals(1, callbacks.size());
+      callbacks.get(0).afterCommit();
+      callbacks.get(0).afterCompletion(0);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    verify(eventNotificationService, times(1))
+        .createEventOnce(
+            eq("case-handover-offer:501"),
+            any(),
+            eq("case.handover.offer.received"),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any());
+  }
+
+  @Test
+  void resolveRecipientDecision_declineIsTerminalAndHasNoGrantEffects() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    session.setConsultant(requester);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
+    when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
+        .thenReturn(Optional.of(request));
+
+    CaseHandoverStatus declined = caseHandoverService.resolveRecipientDecision(123L, 501L, false);
+    CaseHandoverStatus oppositeReplay =
+        caseHandoverService.resolveRecipientDecision(123L, 501L, true);
+
+    assertEquals("RECIPIENT_DECLINED", declined.getStatus());
+    assertEquals("RECIPIENT_DECLINED", oppositeReplay.getStatus());
+    assertEquals(requester, session.getConsultant());
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+    verify(caseHandoverEmailNotification, never()).ownershipGranted(any(CaseHandoverRequest.class));
+  }
+
+  @Test
+  void resolveRecipientDecision_acceptsThenAppliesCurrentNoConsentPolicyOnce() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    session.setConsultant(requester);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
+    when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
+        .thenReturn(Optional.of(request));
+
+    CaseHandoverStatus granted = caseHandoverService.resolveRecipientDecision(123L, 501L, true);
+    CaseHandoverStatus replay = caseHandoverService.resolveRecipientDecision(123L, 501L, true);
+
+    assertEquals("GRANTED", granted.getStatus());
+    assertEquals("GRANTED", replay.getStatus());
+    assertEquals(recipient, session.getConsultant());
+    verify(sessionOwnershipService, times(1))
+        .updateOwner(eq(session), eq(recipient), eq(SessionStatus.IN_PROGRESS), any());
+  }
+
+  @Test
+  void recipientAcceptancePreservesOptOutAndUsesTheCurrentMailProducerOnce() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request = pushRequest(recipient, UUID.randomUUID());
+    session.setConsultant(requester);
+    var policies = defaultTenantPolicies();
+    policies
+        .getReasons()
+        .get("COUNSELLOR_IS_ILL")
+        .getClientConsent()
+        .setValue(CaseHandoverConsentValue.OPT_OUT);
+    when(caseHandoverPolicyCacheService.getEffective(7L)).thenReturn(policies);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
+        .thenReturn(Optional.of(request));
+    when(caseHandoverRequestRepository.findByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
+    CaseHandoverStatus status = caseHandoverService.resolveRecipientDecision(123L, 501L, true);
+    assertEquals("GRANTED_PENDING_CLIENT_OPTOUT", status.getStatus());
+    assertEquals(recipient, session.getConsultant());
+    assertEquals(1L, session.getOwnershipRevision());
+    caseHandoverService.resolveRecipientDecision(123L, 501L, true);
+    caseHandoverService.resolveClientConsent(123L, 501L, true);
+    verify(caseHandoverEmailNotification, times(1)).ownershipGranted(request);
+    verify(caseHandoverEmailNotification, times(1)).consentRequested(request);
+    verify(sessionOwnershipService, times(1)).updateOwner(eq(session), eq(recipient), any(), any());
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = CaseHandoverRequest.Status.class,
+      names = {"PENDING_CLIENT_CONSENT", "GRANTED_PENDING_CLIENT_OPTOUT"})
+  void getRequestStatus_adviceSeekerCanReadBothCurrentConsentPromptsWithoutStaffDetails(
+      CaseHandoverRequest.Status pending) {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(pending);
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    CaseHandoverStatus status = caseHandoverService.getRequestStatus(123L, 88L);
+    assertEquals(pending.name(), status.getStatus());
+    assertNull(status.getReasonCode());
+    assertNull(status.getReasonLabel());
+    assertNull(status.getPolicyAuthority());
+  }
+
+  @Test
+  void getRequestStatus_allowsExactNonTeamRecipientWithoutGrantingContent() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    session.setTeamSession(false);
+    session.setConsultant(requester);
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
+
+    CaseHandoverStatus result = caseHandoverService.getRequestStatus(123L, 501L);
+
+    assertEquals("PENDING_RECIPIENT_ACCEPTANCE", result.getStatus());
+    assertEquals("recipient", result.getRecipientConsultantId());
+    assertFalse(result.isCanViewContent());
+  }
+
+  @Test
+  void getRequestStatus_hidesCrossTenantRequestFromOtherwiseMatchingRecipient() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    request.setTenantId(8L);
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.getRequestStatus(123L, 501L));
+  }
+
+  @Test
+  void getRequestStatus_hidesRequestWhenMatchingRecipientNowBelongsToAnotherTenant() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    recipient.setTenantId(8L);
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.getRequestStatus(123L, 501L));
+  }
+
+  @Test
+  void createOffer_replayIsHiddenWhenInitiatorNowBelongsToAnotherTenant() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    UUID operationId = UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d");
+    CaseHandoverRequest stored = pushRequest(recipient, operationId);
+    requester.setTenantId(8L);
+    when(caseHandoverRequestRepository.findByInitiatorConsultantIdAndOperationId(
+            "requester", operationId))
+        .thenReturn(Optional.of(stored));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () ->
+            caseHandoverService.createOffer(
+                123L, "recipient", "UNPLANNED_ABSENCE", null, 0L, operationId));
+  }
+
+  @Test
+  void resolveRecipientDecision_hidesOfferWhenRecipientNowBelongsToAnotherTenant() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    recipient.setTenantId(8L);
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.resolveRecipientDecision(123L, 501L, false));
+  }
+
+  @Test
+  void getRequestStatus_afterGrantUsesViewerIdentityForContentGate() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    request.setStatus(CaseHandoverRequest.Status.GRANTED);
+    session.setConsultant(recipient);
+    session.setOwnershipRevision(1L);
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(requester);
+    when(authenticatedUser.getUserId()).thenReturn(requester.getId());
+    when(caseHandoverRequestRepository.findByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertFalse(caseHandoverService.getRequestStatus(123L, 501L).isCanViewContent());
+
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
+    assertTrue(caseHandoverService.getRequestStatus(123L, 501L).isCanViewContent());
+  }
+
+  @Test
+  void requestAccess_sendsOneGrantedEmailIntent_WhenOwnershipIsGrantedImmediately()
+      throws Exception {
+    UUID requesterId = prepareDeliverableHandoverMail();
+    assignPersistedRequestId(81L);
+
+    requestAccess(123L, "UNPLANNED_ABSENCE", "Colleague is unavailable.");
+
+    verify(caseHandoverEmailNotification, times(1))
+        .ownershipGranted(any(CaseHandoverRequest.class));
+    verify(caseHandoverEmailNotification, never()).consentRequested(any(CaseHandoverRequest.class));
+  }
+
+  @Test
+  void requestAccess_sendsOneConsentEmailIntent_WhenClientConsentIsPending() {
+    session.setMatrixRoomId("!handover-room:matrix");
+    assignPersistedRequestId(82L);
+    givenIllnessRequiresClientConsent();
+
+    requestAccess(123L, "COUNSELLOR_IS_ILL", "Need temporary cover.");
+
+    verify(caseHandoverEmailNotification, times(1))
+        .consentRequested(any(CaseHandoverRequest.class));
+    verify(caseHandoverEmailNotification, never()).ownershipGranted(any(CaseHandoverRequest.class));
+  }
+
+  @Test
+  void resolveClientConsent_sendsOneGrantedEmailIntent_WhenClientApproves() throws Exception {
+    UUID requesterId = prepareDeliverableHandoverMail();
+    CaseHandoverRequest request = pendingTakeoverConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+    verify(caseHandoverEmailNotification, times(1))
+        .ownershipGranted(any(CaseHandoverRequest.class));
+    verify(caseHandoverEmailNotification, never()).consentRequested(any(CaseHandoverRequest.class));
+  }
+
+  @Test
+  void resolveClientConsent_notifiesRequesterOnce_WhenClientApprovesAndDecisionIsRepeated() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    caseHandoverService.resolveClientConsent(123L, 88L, true);
+    caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+    verify(eventNotificationService, times(1))
+        .createEvent(
+            eq("requester"),
+            eq("case.handover.granted"),
+            eq(EventNotificationService.CATEGORY_SYSTEM),
+            anyString(),
+            anyString(),
+            any(),
+            any(),
+            eq(123L),
+            eq(7L));
+  }
+
+  @Test
+  void requestAccess_sendsNoEmailIntent_WhenPolicyDeniesTheRequest() {
+    session.setMatrixRoomId("!handover-room:matrix");
+    var policies = defaultTenantPolicies();
+    policies.getReasons().get("COUNSELLOR_IS_ILL").getAccessAllowed().setValue(false);
+    when(caseHandoverPolicyCacheService.getEffective(7L)).thenReturn(policies);
+
+    requestAccess(123L, "UNPLANNED_ABSENCE", "Needs cover.");
+
+    verifyNoInteractions(caseHandoverEmailNotification);
+  }
+
+  @Test
+  void resolveClientConsent_sendsNoEmailIntent_WhenClientDeclines() {
+    session.setMatrixRoomId("!handover-room:matrix");
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    caseHandoverService.resolveClientConsent(123L, 88L, false);
+
+    verifyNoInteractions(caseHandoverEmailNotification);
+  }
+
+  @Test
+  void resolveClientConsent_serializesOnSessionBeforeReadingRequest() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    caseHandoverService.resolveClientConsent(123L, 88L, false);
+
+    var order = inOrder(sessionRepository, caseHandoverRequestRepository);
+    order.verify(sessionRepository).findByIdForUpdate(123L);
+    order.verify(caseHandoverRequestRepository).findByIdAndSessionId(88L, 123L);
+  }
+
+  @Test
+  void requestAccess_sendsNoNewEmailIntent_WhenAnOpenRequestAlreadyExists() {
+    session.setMatrixRoomId("!handover-room:matrix");
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(pendingConsentRequest()));
+
+    requestAccess(123L, "COUNSELLOR_IS_ILL", "Repeated request.");
+
+    verifyNoInteractions(caseHandoverEmailNotification);
+  }
+
+  @Test
+  void requestAccess_leavesBlankRoomDeliveryValidationToTheCurrentProducer() {
+    session.setMatrixRoomId("  ");
+    assignPersistedRequestId(83L);
+
+    CaseHandoverStatus status =
+        requestAccess(123L, "UNPLANNED_ABSENCE", "Colleague is unavailable.");
+
+    assertEquals("GRANTED", status.getStatus());
+    assertEquals(requester, session.getConsultant());
+    verify(caseHandoverEmailNotification).ownershipGranted(any(CaseHandoverRequest.class));
+  }
+
+  @Test
+  void requestAccess_failsClosedWhenSessionTenantIsMissing() {
+    session.setTenantId(null);
+    assertThrows(
+        ServiceUnavailableException.class,
+        () -> requestAccess(123L, "UNPLANNED_ABSENCE", "Colleague is unavailable."));
+    verifyNoInteractions(caseHandoverEmailNotification);
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void requestAccess_failsClosedWhenSessionTenantIsTechnical() {
+    session.setTenantId(0L);
+    assertThrows(
+        ServiceUnavailableException.class,
+        () -> requestAccess(123L, "UNPLANNED_ABSENCE", "Colleague is unavailable."));
+    verifyNoInteractions(caseHandoverEmailNotification);
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
   @Test
   void requestAccess_attachesTheNewOwnersStandingSupervisor_WhenGranted() {
     caseHandoverService.requestAccess(123L, "COUNSELLOR_LEFT", "Colleague is unavailable.");
@@ -658,9 +1654,9 @@ class CaseHandoverServiceTest {
                     .CaseHandoverPolicies()
                 .reasons(
                     Map.of(
-                        "OTHER_EMERGENCY",
+                        "COUNSELLOR_IS_ILL",
                         tenantPolicy(
-                            "OTHER_EMERGENCY",
+                            "COUNSELLOR_IS_ILL",
                             "Other emergency",
                             de.caritas.cob.userservice.tenantadminservice.generated.web.model
                                 .CaseHandoverConsentValue.NONE,
@@ -668,7 +1664,7 @@ class CaseHandoverServiceTest {
                             false,
                             null))));
 
-    caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Needs cover.");
+    requestAccess(123L, "UNPLANNED_ABSENCE", "Needs cover.");
 
     verify(sessionSupervisorFacade, never()).attachStandingSupervisorIfAssigned(any(), any());
   }
@@ -712,7 +1708,7 @@ class CaseHandoverServiceTest {
    */
   @Test
   void requestAccess_neverCopiesTheExplanationIntoAStoredNotification() {
-    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Client disclosed self-harm.");
+    requestAccess(123L, "COUNSELLOR_IS_ILL", "Client disclosed self-harm.");
 
     ArgumentCaptor<String> text = ArgumentCaptor.forClass(String.class);
     verify(eventNotificationService, atLeastOnce())
@@ -734,8 +1730,7 @@ class CaseHandoverServiceTest {
             eq(session), anyString(), isNull(), isNull(), isNull()))
         .thenReturn("{\"audience\":\"asker\"}");
 
-    caseHandoverService.requestAccess(
-        123L, "COUNSELLOR_IS_ILL", "Client disclosed sensitive information.");
+    requestAccess(123L, "COUNSELLOR_IS_ILL", "Client disclosed sensitive information.");
 
     verify(eventNotificationService)
         .createEvent(
@@ -763,6 +1758,7 @@ class CaseHandoverServiceTest {
   })
   void requestAccess_keepsPendingConsentReasonOutOfLocalizedAskerNotification(
       String language, String expectedTitle, String expectedDescription) {
+    givenIllnessRequiresClientConsent();
     session.setLanguageCode(LanguageCode.getByCode(language));
     when(caseHandoverRequestRepository.save(any(CaseHandoverRequest.class)))
         .thenAnswer(
@@ -775,8 +1771,7 @@ class CaseHandoverServiceTest {
             eq(session), anyString(), isNull(), isNull(), eq(88L), eq("OPT_IN")))
         .thenReturn("{\"audience\":\"asker\"}");
 
-    caseHandoverService.requestAccess(
-        123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Client disclosed sensitive information.");
+    requestAccess(123L, "COUNSELLOR_IS_ILL", "Client disclosed sensitive information.");
 
     verify(eventNotificationService)
         .createEvent(
@@ -812,11 +1807,15 @@ class CaseHandoverServiceTest {
             eq(session), anyString(), isNull(), isNull(), isNull()))
         .thenReturn("{\"audience\":\"asker\"}");
 
-    caseHandoverService.requestAccess(
-        123L, "COUNSELLOR_IS_ILL", "Client disclosed sensitive information.");
+    requestAccess(123L, "COUNSELLOR_IS_ILL", "Client disclosed sensitive information.");
 
     verify(matrixSessionSystemMessageService)
-        .postCaseHandoverGrantedMessage(eq(session), anyString(), description.capture());
+        .postCaseHandoverGrantedMessage(
+            eq(session),
+            anyString(),
+            description.capture(),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
     assertEquals(expectedDescription, description.getValue());
     verify(eventNotificationService)
         .createEvent(
@@ -834,21 +1833,42 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void requestAccess_persistsGrantedRequestConsentModeAndAccessType() {
+    when(caseHandoverRequestRepository.save(any(CaseHandoverRequest.class)))
+        .thenAnswer(
+            invocation -> {
+              CaseHandoverRequest saved = invocation.getArgument(0);
+              saved.setId(42L);
+              return saved;
+            });
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Internal reason.");
+    var metadata =
+        ArgumentCaptor.forClass(MatrixSessionSystemMessageService.GrantedAccessMetadata.class);
+    verify(matrixSessionSystemMessageService)
+        .postCaseHandoverGrantedMessage(eq(session), anyString(), anyString(), metadata.capture());
+    assertEquals(42L, metadata.getValue().requestId());
+    assertEquals(CaseHandoverConsentMode.NONE, metadata.getValue().clientConsent());
+    assertEquals(CaseHandoverRequest.AccessType.TAKEOVER, metadata.getValue().accessType());
+  }
+
+  @Test
   void requestAccess_fallsBackToGermanClientCopyWhenLanguageIsMissing() {
     session.setLanguageCode(null);
     when(eventNotificationService.buildCaseHandoverParams(
             eq(session), anyString(), isNull(), isNull(), isNull()))
         .thenReturn("{\"audience\":\"asker\"}");
 
-    caseHandoverService.requestAccess(
-        123L, "COUNSELLOR_IS_ILL", "Client disclosed sensitive information.");
+    requestAccess(123L, "COUNSELLOR_IS_ILL", "Client disclosed sensitive information.");
 
     verify(matrixSessionSystemMessageService)
         .postCaseHandoverGrantedMessage(
             eq(session),
             eq("Requesting Counsellor"),
             eq(
-                "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter."));
+                "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt"
+                    + " weiter."),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
     verify(eventNotificationService)
         .createEvent(
             eq("asker"),
@@ -868,19 +1888,25 @@ class CaseHandoverServiceTest {
   void requestAccess_neverDerivesClientDescriptionFromInternalReason(String reasonCode) {
     ArgumentCaptor<String> description = ArgumentCaptor.forClass(String.class);
 
-    caseHandoverService.requestAccess(123L, reasonCode, "Client disclosed sensitive information.");
+    requestAccess(123L, reasonCode, "Client disclosed sensitive information.");
 
     verify(matrixSessionSystemMessageService)
-        .postCaseHandoverGrantedMessage(eq(session), anyString(), description.capture());
+        .postCaseHandoverGrantedMessage(
+            eq(session),
+            anyString(),
+            description.capture(),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
     assertEquals(
-        "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.",
+        "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt"
+            + " weiter.",
         description.getValue());
   }
 
   /** The reason stays — it is a configured label, not free text — and moves into params. */
   @Test
   void requestAccess_carriesRequesterAndReasonAsParams() {
-    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Illness cover.");
+    requestAccess(123L, "COUNSELLOR_IS_ILL", "Illness cover.");
 
     verify(eventNotificationService, atLeastOnce())
         .buildCaseHandoverParams(any(), anyString(), eq("UNPLANNED_ABSENCE"), any(), any());
@@ -888,6 +1914,7 @@ class CaseHandoverServiceTest {
 
   @Test
   void requestAccess_invitesRequesterToExistingMatrixRoom_WhenGranted() throws Exception {
+    assignValidRequesterId();
     session.setMatrixRoomId("!room:matrix");
     requester.setMatrixUserId("@requester:matrix");
     previous.setMatrixUserId("@previous:matrix");
@@ -1099,6 +2126,7 @@ class CaseHandoverServiceTest {
   @Test
   void requestAccess_grantsAccess_WhenRequesterIsAlreadyAMemberAndTheInviteIsRejected()
       throws Exception {
+    assignValidRequesterId();
     session.setMatrixRoomId("!room:matrix");
     requester.setMatrixUserId("@requester:matrix");
     previous.setMatrixUserId("@previous:matrix");
@@ -1117,7 +2145,8 @@ class CaseHandoverServiceTest {
     assertEquals("GRANTED", status.getStatus());
     assertEquals(requester, session.getConsultant());
     verify(matrixSynapseService).joinRoom("!room:matrix", "requester-token");
-    verify(sessionRepository).save(session);
+    verify(sessionOwnershipService)
+        .updateOwner(eq(session), eq(requester), eq(SessionStatus.IN_PROGRESS), any());
   }
 
   @Test
@@ -1143,6 +2172,7 @@ class CaseHandoverServiceTest {
 
   @Test
   void requestAccess_postsCaseHandoverSystemMessage_WhenGranted() throws Exception {
+    assignValidRequesterId();
     session.setMatrixRoomId("!room:matrix");
     requester.setMatrixUserId("@requester:matrix");
     previous.setMatrixUserId("@previous:matrix");
@@ -1156,14 +2186,15 @@ class CaseHandoverServiceTest {
         .postCaseHandoverGrantedMessage(
             org.mockito.ArgumentMatchers.eq(session),
             org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.contains("deinen Fall übernommen"));
+            org.mockito.ArgumentMatchers.contains("deinen Fall übernommen"),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
   }
 
   @Test
   void requestAccess_keepsContentLocked_WhenPolicyRequiresClientConsent() {
-    CaseHandoverStatus status =
-        caseHandoverService.requestAccess(
-            123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Need a second opinion.");
+    givenIllnessRequiresClientConsent();
+    CaseHandoverStatus status = requestAccess(123L, "COUNSELLOR_IS_ILL", "Need temporary cover.");
 
     assertEquals("PENDING_CLIENT_CONSENT", status.getStatus());
     assertFalse(status.isCanViewContent());
@@ -1430,8 +2461,10 @@ class CaseHandoverServiceTest {
     assertNull(TenantContext.getCurrentTenant());
   }
 
-  @Test
-  void requestAccess_deniesAndKeepsContentLocked_WhenPolicyDoesNotAllowReason() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void requestAccess_deniesAndKeepsContentLocked_WhenPolicyDoesNotAllowReason(boolean alwaysAsk) {
+    session.setAlwaysAskBeforeAdditionalAccess(alwaysAsk);
     when(caseHandoverPolicyCacheService.getEffective(7L))
         .thenReturn(
             new de.caritas.cob.userservice.tenantadminservice.generated.web.model
@@ -1484,10 +2517,96 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void getStatus_keepsHistoricalGrantButLocksContent_WhenRequesterNoLongerOwnsSession() {
+    Consultant successor = consultant("successor", "Successor Counsellor");
+    session.setConsultant(successor);
+    LocalDateTime createdAt = LocalDateTime.of(2026, 9, 12, 10, 15);
+    LocalDateTime resolvedAt = LocalDateTime.of(2026, 9, 12, 10, 20);
+    CaseHandoverRequest historicalGrant = grantedRequest(requester);
+    historicalGrant.setCreatedAt(createdAt);
+    historicalGrant.setResolvedAt(resolvedAt);
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(historicalGrant));
+
+    CaseHandoverStatus status = caseHandoverService.getStatus(123L);
+
+    assertEquals(99L, status.getRequestId());
+    assertEquals("GRANTED", status.getStatus());
+    assertFalse(status.isCanViewContent());
+    assertEquals("ACCESS_GRANTED", status.getAuditOutcome());
+    assertEquals(createdAt, status.getCreatedAt());
+    assertEquals(resolvedAt, status.getResolvedAt());
+    assertEquals(successor, session.getConsultant());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void getStatus_keepsHistoricalGrantLocked_WhenSessionHasNoOwner() {
+    session.setConsultant(null);
+    CaseHandoverRequest historicalGrant = grantedRequest(requester);
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(historicalGrant));
+
+    CaseHandoverStatus status = caseHandoverService.getStatus(123L);
+
+    assertEquals(99L, status.getRequestId());
+    assertEquals("GRANTED", status.getStatus());
+    assertFalse(status.isCanViewContent());
+    assertNull(session.getConsultant());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void getStatus_keepsSyntheticGrantForCurrentOwnerWithoutHistoricalRequest() {
+    session.setConsultant(requester);
+
+    CaseHandoverStatus status = caseHandoverService.getStatus(123L);
+
+    assertNull(status.getRequestId());
+    assertEquals("GRANTED", status.getStatus());
+    assertTrue(status.isCanViewContent());
+    assertEquals("ACTIVE_OWNER", status.getAuditOutcome());
+    verify(caseHandoverRequestRepository, never())
+        .findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(any(), any());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void requestAccess_returnsExistingHistoricalGrantLocked_WhenRequesterNoLongerOwnsSession() {
+    Consultant successor = consultant("successor", "Successor Counsellor");
+    session.setConsultant(successor);
+    CaseHandoverRequest historicalGrant = grantedRequest(requester);
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(historicalGrant));
+
+    CaseHandoverStatus status = requestAccess(123L, "UNPLANNED_ABSENCE", "Needs cover again.");
+
+    assertEquals(99L, status.getRequestId());
+    assertEquals("GRANTED", status.getStatus());
+    assertFalse(status.isCanViewContent());
+    assertEquals("ACCESS_GRANTED", status.getAuditOutcome());
+    assertEquals(successor, session.getConsultant());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
   void searchCandidates_returnsMetadataOnlySameAgencyMatches() {
     when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
             List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
         .thenReturn(List.of(session));
+
+    session.getUser().setAvatarId("fox");
+    session
+        .getConsultant()
+        .setAvatarKind(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON);
+    session.getConsultant().setAvatarId("magpie");
 
     var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
 
@@ -1497,6 +2616,9 @@ class CaseHandoverServiceTest {
     assertEquals(123L, candidate.getSession().getId());
     assertEquals("asker", candidate.getUser().getUsername());
     assertNull(candidate.getUser().getSessionData());
+    assertEquals("fox", candidate.getUser().getAvatarId());
+    assertEquals("ICON", candidate.getConsultant().getAvatarKind());
+    assertEquals("magpie", candidate.getConsultant().getAvatarId());
     assertEquals("previous", candidate.getConsultant().getId());
   }
 
@@ -1546,7 +2668,7 @@ class CaseHandoverServiceTest {
   void requestAccess_persistsReasonExplanationAndAuditOutcome() {
     ArgumentCaptor<CaseHandoverRequest> captor = ArgumentCaptor.forClass(CaseHandoverRequest.class);
 
-    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Illness cover.");
+    requestAccess(123L, "COUNSELLOR_IS_ILL", "Illness cover.");
 
     verify(caseHandoverRequestRepository).save(captor.capture());
     CaseHandoverRequest saved = captor.getValue();
@@ -1570,7 +2692,144 @@ class CaseHandoverServiceTest {
     assertEquals(previous, session.getConsultant());
     assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
     assertEquals("ACCESS_GRANTED", request.getAuditOutcome());
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
     verify(sessionRepository, never()).save(session);
+  }
+
+  @Test
+  void resolveClientConsent_revalidatesLiveRecipientBeforeFinalGrant() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    requester.setAbsent(true);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    when(consultantService.getConsultant("requester")).thenReturn(Optional.of(requester));
+
+    assertThrows(
+        ForbiddenException.class, () -> caseHandoverService.resolveClientConsent(123L, 88L, true));
+
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void resolveClientConsent_rejectsRecipientWhoseLiveTenantChanged() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    requester.setTenantId(8L);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    when(consultantService.getConsultant("requester")).thenReturn(Optional.of(requester));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.resolveClientConsent(123L, 88L, true));
+
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void resolveClientConsent_rejectsRecipientWhoseLiveAgencyChanged() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    requester.getConsultantAgencies().iterator().next().setAgencyId(99L);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    when(consultantService.getConsultant("requester")).thenReturn(Optional.of(requester));
+
+    assertThrows(
+        ForbiddenException.class, () -> caseHandoverService.resolveClientConsent(123L, 88L, true));
+
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void resolveClientConsent_rejectsRecipientWhoseLiveTopicChanged() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    ReflectionTestUtils.setField(caseHandoverService, "topicsEnabled", true);
+    givenRequesterTopics(99L);
+    session.setMainTopicId(5L);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    when(consultantService.getConsultant("requester")).thenReturn(Optional.of(requester));
+
+    assertThrows(
+        ForbiddenException.class, () -> caseHandoverService.resolveClientConsent(123L, 88L, true));
+
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void resolveClientConsent_legacyPendingAdvicePreservesCurrentCoAccess() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setReasonCode("COUNSELLOR_ASKED_FOR_ADVICE");
+    request.setReasonLabel("Advice");
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    CaseHandoverStatus status = caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+    assertEquals("GRANTED", status.getStatus());
+    assertEquals("CO_ACCESS", status.getAccessType());
+    assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
+    assertEquals(previous, session.getConsultant());
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+  }
+
+  @Test
+  void resolveClientConsent_legacyPendingPullWithoutOwnershipPeriodRemainsDecidable() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setExpectedOwnershipRevision(null);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    CaseHandoverStatus status = caseHandoverService.resolveClientConsent(123L, 88L, true);
+    assertEquals("GRANTED", status.getStatus());
+    assertEquals("CO_ACCESS", status.getAccessType());
+
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+  }
+
+  @Test
+  void resolveClientConsent_keepsExistingGrantViewable_WhenRequesterStillOwnsSession() {
+    session.setConsultant(requester);
+    CaseHandoverRequest request = grantedRequest(requester);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(99L, 123L))
+        .thenReturn(Optional.of(request));
+
+    CaseHandoverStatus status = caseHandoverService.resolveClientConsent(123L, 99L, true);
+
+    assertEquals(99L, status.getRequestId());
+    assertEquals("GRANTED", status.getStatus());
+    assertTrue(status.isCanViewContent());
+    assertNull(status.getReasonCode());
+    assertNull(status.getReasonLabel());
+    assertNull(status.getPolicyAuthority());
+    assertEquals(requester, session.getConsultant());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void resolveClientConsent_keepsOldGrantButLocksContent_WhenRequesterNoLongerOwnsSession() {
+    Consultant successor = consultant("successor", "Successor Counsellor");
+    session.setConsultant(successor);
+    CaseHandoverRequest request = grantedRequest(requester);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(99L, 123L))
+        .thenReturn(Optional.of(request));
+
+    CaseHandoverStatus status = caseHandoverService.resolveClientConsent(123L, 99L, false);
+
+    assertEquals(99L, status.getRequestId());
+    assertEquals("GRANTED", status.getStatus());
+    assertFalse(status.isCanViewContent());
+    assertEquals("ACCESS_GRANTED", status.getAuditOutcome());
+    assertNull(status.getReasonCode());
+    assertNull(status.getReasonLabel());
+    assertNull(status.getPolicyAuthority());
+    assertEquals(successor, session.getConsultant());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verify(sessionRepository, never()).save(any());
   }
 
   /**
@@ -1721,7 +2980,9 @@ class CaseHandoverServiceTest {
         .postCaseHandoverGrantedMessage(
             org.mockito.ArgumentMatchers.eq(session),
             org.mockito.ArgumentMatchers.eq("Requesting Counsellor"),
-            description.capture());
+            description.capture(),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
     assertTrue(description.getValue().contains("zeitlich begrenzten Einblick"));
     assertTrue(description.getValue().contains("3 Stunden"));
     assertTrue(description.getValue().contains("bleibt für dich zuständig"));
@@ -1948,13 +3209,54 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void searchCandidates_usesTheTopicsOfTheSessionsCentreOnly() {
+    // #1264: topic 5 is stored for centre 10 only, so centre 20's topic-5 case is another
+    // department; a legacy row without a centre (topic 6) still counts for every centre.
+    givenTwoRequesterCentres();
+    requester.setConsultantTopics(
+        Set.of(requesterTopic(10L, 5L), requesterTopic(null, 6L), requesterTopic(20L, 7L)));
+    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
+            any(), eq(requester), eq(List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE))))
+        .thenReturn(
+            List.of(
+                candidateSession(221L, 10L, 5L, false),
+                candidateSession(222L, 20L, 5L, false),
+                candidateSession(223L, 20L, 6L, false),
+                candidateSession(224L, 20L, 7L, false),
+                candidateSession(225L, 10L, 7L, false)));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(
+        List.of(221L, 223L, 224L),
+        response.getSessions().stream().map(dto -> dto.getSession().getId()).toList());
+  }
+
+  private void givenTwoRequesterCentres() {
+    ConsultantAgency firstAgency = requester.getConsultantAgencies().iterator().next();
+    firstAgency.setId(1L);
+    ConsultantAgency secondAgency = new ConsultantAgency();
+    secondAgency.setId(2L);
+    secondAgency.setAgencyId(20L);
+    secondAgency.setConsultant(requester);
+    requester.setConsultantAgencies(Set.of(firstAgency, secondAgency));
+  }
+
+  private ConsultantTopic requesterTopic(Long agencyId, long topicId) {
+    ConsultantTopic topic = new ConsultantTopic();
+    topic.setConsultant(requester);
+    topic.setAgencyId(agencyId);
+    topic.setTopicId(topicId);
+    return topic;
+  }
+
+  @Test
   void requestAccess_forbidsASessionOutsideTheRequesterDepartment() {
     givenRequesterTopics(5L);
     session.setMainTopicId(99L);
 
     assertThrows(
-        ForbiddenException.class,
-        () -> caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Cover."));
+        ForbiddenException.class, () -> requestAccess(123L, "COUNSELLOR_IS_ILL", "Cover."));
   }
 
   @Test
@@ -1963,6 +3265,152 @@ class CaseHandoverServiceTest {
     session.setMainTopicId(99L);
 
     assertThrows(ForbiddenException.class, () -> caseHandoverService.getStatus(123L));
+  }
+
+  private UUID prepareDeliverableHandoverMail() throws Exception {
+    UUID requesterId = assignValidRequesterId();
+    when(consultantService.getConsultant(requesterId.toString()))
+        .thenReturn(Optional.of(requester));
+    session.setMatrixRoomId("!handover-room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
+        .thenReturn("requester-token");
+    when(matrixSynapseService.joinRoom("!handover-room:matrix", "requester-token"))
+        .thenReturn(true);
+    return requesterId;
+  }
+
+  private UUID assignValidRequesterId() {
+    UUID requesterId = UUID.randomUUID();
+    requester.setId(requesterId.toString());
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, requesterId.toString()))
+        .thenReturn(List.of());
+    return requesterId;
+  }
+
+  private void assignPersistedRequestId(Long requestId) {
+    when(caseHandoverRequestRepository.save(any(CaseHandoverRequest.class)))
+        .thenAnswer(
+            invocation -> {
+              CaseHandoverRequest saved = invocation.getArgument(0);
+              saved.setId(requestId);
+              return saved;
+            });
+  }
+
+  private CaseHandoverStatus requestAccess(Long sessionId, String reasonCode, String explanation) {
+    return caseHandoverService.requestAccess(
+        sessionId, reasonCode, explanation, session.getOwnershipRevision(), UUID.randomUUID());
+  }
+
+  private CaseHandoverStatus requestAccess(
+      Long sessionId,
+      String reasonCode,
+      String explanation,
+      Long expectedOwnershipRevision,
+      UUID operationId) {
+    return caseHandoverService.requestAccess(
+        sessionId, reasonCode, explanation, expectedOwnershipRevision, operationId);
+  }
+
+  // --- FE#1262: the picker may only offer colleagues the offer itself would accept ---
+
+  private Consultant departmentColleague(String id, String displayName, Long... topicIds) {
+    Consultant colleague = eligibleConsultant(id, displayName);
+    Set<ConsultantTopic> topics = new HashSet<>();
+    for (Long topicId : topicIds) {
+      ConsultantTopic topic = new ConsultantTopic();
+      topic.setConsultant(colleague);
+      topic.setTopicId(topicId);
+      topics.add(topic);
+    }
+    colleague.setConsultantTopics(topics);
+    return colleague;
+  }
+
+  private void givenAgencyRoster(Consultant... consultants) {
+    List<ConsultantAgency> rows = new ArrayList<>();
+    for (Consultant colleague : consultants) {
+      ConsultantAgency row = new ConsultantAgency();
+      row.setAgencyId(10L);
+      row.setConsultant(colleague);
+      rows.add(row);
+    }
+    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNullOrderByConsultantFirstNameAsc(
+            10L))
+        .thenReturn(rows);
+  }
+
+  private void givenOwnerAsksForRecipients() {
+    ReflectionTestUtils.setField(caseHandoverService, "topicsEnabled", true);
+    session.setConsultant(requester);
+    session.setMainTopicId(5L);
+  }
+
+  @Test
+  void listEligibleRecipients_keepsOnlyColleaguesWhoShareTheSessionTopic() {
+    givenOwnerAsksForRecipients();
+    givenAgencyRoster(
+        requester,
+        departmentColleague("same-topic", "Jonas Lehmann", 5L),
+        departmentColleague("other-topic", "Ayse Demir", 9L),
+        departmentColleague("no-topic", "Topicless Colleague"));
+
+    List<CaseHandoverRecipient> recipients = caseHandoverService.listEligibleRecipients(123L);
+
+    assertEquals(1, recipients.size());
+    assertEquals("same-topic", recipients.get(0).getConsultantId());
+    assertEquals("Jonas Lehmann", recipients.get(0).getDisplayName());
+  }
+
+  @Test
+  void listEligibleRecipients_matchesASecondarySessionTopicNotOnlyTheMainOne() {
+    givenOwnerAsksForRecipients();
+    SessionTopic secondary = new SessionTopic();
+    secondary.setTopicId(9L);
+    session.setSessionTopics(List.of(secondary));
+    givenAgencyRoster(requester, departmentColleague("secondary", "Ayse Demir", 9L));
+
+    List<CaseHandoverRecipient> recipients = caseHandoverService.listEligibleRecipients(123L);
+
+    assertEquals(1, recipients.size());
+    assertEquals("secondary", recipients.get(0).getConsultantId());
+  }
+
+  @Test
+  void listEligibleRecipients_leavesOutAbsentColleaguesAndForeignTenants() {
+    givenOwnerAsksForRecipients();
+    Consultant absent = departmentColleague("absent", "Absent Colleague", 5L);
+    absent.setAbsent(true);
+    Consultant foreign = departmentColleague("foreign", "Foreign Tenant", 5L);
+    foreign.setTenantId(8L);
+    givenAgencyRoster(requester, absent, foreign);
+
+    assertTrue(caseHandoverService.listEligibleRecipients(123L).isEmpty());
+  }
+
+  @Test
+  void listEligibleRecipients_leavesOutAPreviousOwnerBecauseReclaimIsRejected() {
+    givenOwnerAsksForRecipients();
+    Consultant returning = departmentColleague("returning", "Returning Colleague", 5L);
+    givenAgencyRoster(requester, returning);
+    CaseHandoverRequest granted = grantedRequest(requester);
+    granted.setPreviousConsultant(returning);
+    when(caseHandoverRequestRepository.findBySessionId(123L)).thenReturn(List.of(granted));
+
+    assertTrue(caseHandoverService.listEligibleRecipients(123L).isEmpty());
+  }
+
+  @Test
+  void listEligibleRecipients_rejectsEveryoneButTheActiveOwner() {
+    ReflectionTestUtils.setField(caseHandoverService, "topicsEnabled", true);
+    session.setConsultant(previous);
+
+    assertThrows(ForbiddenException.class, () -> caseHandoverService.listEligibleRecipients(123L));
   }
 
   // ---------------------------------------------------------------------------
@@ -1985,7 +3433,12 @@ class CaseHandoverServiceTest {
     ArgumentCaptor<String> advisorName = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<String> description = ArgumentCaptor.forClass(String.class);
     verify(matrixSessionSystemMessageService)
-        .postCaseHandoverGrantedMessage(eq(session), advisorName.capture(), description.capture());
+        .postCaseHandoverGrantedMessage(
+            eq(session),
+            advisorName.capture(),
+            description.capture(),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
 
     // The username is what the Matrix ID in the same room already exposes.
     assertEquals("beraterin1", advisorName.getValue());
@@ -2001,12 +3454,18 @@ class CaseHandoverServiceTest {
     caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Illness cover.");
 
     verify(matrixSessionSystemMessageService)
-        .postCaseHandoverGrantedMessage(eq(session), eq("Frau M."), anyString());
+        .postCaseHandoverGrantedMessage(
+            eq(session),
+            eq("Frau M."),
+            anyString(),
+            org.mockito.ArgumentMatchers.any(
+                MatrixSessionSystemMessageService.GrantedAccessMetadata.class));
   }
 
   private Consultant consultant(String id, String displayName) {
     Consultant consultant = new Consultant();
     consultant.setId(id);
+    consultant.setTenantId(7L);
     consultant.setUsername(id);
     consultant.setFirstName(id);
     consultant.setLastName("User");
@@ -2015,12 +3474,46 @@ class CaseHandoverServiceTest {
     return consultant;
   }
 
+  private Consultant eligibleConsultant(String id, String displayName) {
+    Consultant consultant = consultant(id, displayName);
+    ConsultantAgency agency = new ConsultantAgency();
+    agency.setAgencyId(10L);
+    agency.setConsultant(consultant);
+    consultant.setConsultantAgencies(Set.of(agency));
+    return consultant;
+  }
+
+  private CaseHandoverRequest pushRequest(Consultant recipient, UUID operationId) {
+    return CaseHandoverRequest.builder()
+        .id(501L)
+        .session(session)
+        .requesterConsultant(recipient)
+        .initiatorConsultant(requester)
+        .previousConsultant(requester)
+        .direction(CaseHandoverRequest.Direction.PUSH)
+        .expectedOwnershipRevision(0L)
+        .operationId(operationId)
+        .reasonCode("UNPLANNED_ABSENCE")
+        .reasonLabel("Other emergency")
+        .explanation("")
+        .status(CaseHandoverRequest.Status.PENDING_RECIPIENT_ACCEPTANCE)
+        .clientConsentRequired(false)
+        .policyAuthority("platform-admin-default-case-handover-policy")
+        .auditOutcome("PENDING_RECIPIENT_ACCEPTANCE")
+        .tenantId(7L)
+        .build();
+  }
+
   private CaseHandoverRequest pendingConsentRequest() {
     return CaseHandoverRequest.builder()
         .id(88L)
         .session(session)
         .requesterConsultant(requester)
+        .initiatorConsultant(requester)
         .previousConsultant(previous)
+        .direction(CaseHandoverRequest.Direction.PULL)
+        .expectedOwnershipRevision(0L)
+        .operationId(UUID.fromString("c4ce791f-54b5-4180-8c31-b4f13b20ec03"))
         .reasonCode("COUNSELLOR_ASKED_FOR_ADVICE")
         .reasonLabel("Advice needed")
         .explanation("Need a second opinion.")
@@ -2048,7 +3541,11 @@ class CaseHandoverServiceTest {
         .id(99L)
         .session(session)
         .requesterConsultant(consultant)
+        .initiatorConsultant(consultant)
         .previousConsultant(previous)
+        .direction(CaseHandoverRequest.Direction.PULL)
+        .expectedOwnershipRevision(0L)
+        .operationId(UUID.fromString("b975d19f-43b8-44eb-b845-3992e57ab06e"))
         .reasonCode("COUNSELLOR_IS_ILL")
         .reasonLabel("Unplanned absence")
         .explanation("Already handled.")
@@ -2593,5 +4090,15 @@ class CaseHandoverServiceTest {
         .displayOrder(displayOrder)
         .policyAuthority("platform-admin-default-case-handover-policy")
         .build();
+  }
+
+  private void givenIllnessRequiresClientConsent() {
+    var policies = defaultTenantPolicies();
+    policies
+        .getReasons()
+        .get("COUNSELLOR_IS_ILL")
+        .getClientConsent()
+        .setValue(CaseHandoverConsentValue.OPT_IN);
+    when(caseHandoverPolicyCacheService.getEffective(7L)).thenReturn(policies);
   }
 }

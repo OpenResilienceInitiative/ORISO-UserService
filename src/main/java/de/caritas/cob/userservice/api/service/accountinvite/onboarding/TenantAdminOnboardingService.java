@@ -285,8 +285,8 @@ public class TenantAdminOnboardingService {
           identitySecondFactor.getOtpCredential(
               usernameTranscoder.encodeUsername(admin.getUsername()));
       if (otpInfo == null || isBlank(otpInfo.secret())) {
-        throw new InternalServerErrorException(
-            "Keycloak issued no TOTP setup material for the onboarding account");
+        // App setup data is optional: the accepted account can still verify the email factor.
+        otpInfo = IdentityOtpCredential.empty();
       }
 
       AccountInvite claimedInvite =
@@ -366,8 +366,8 @@ public class TenantAdminOnboardingService {
           identitySecondFactor.getOtpCredential(
               usernameTranscoder.encodeUsername(admin.getUsername()));
       if (otpInfo == null || isBlank(otpInfo.secret())) {
-        throw new InternalServerErrorException(
-            "Keycloak issued no TOTP setup material for the onboarding account");
+        // App setup data is optional: the accepted account can still verify the email factor.
+        otpInfo = IdentityOtpCredential.empty();
       }
       AccountInvite claimedInvite =
           accountInviteRepository
@@ -651,6 +651,22 @@ public class TenantAdminOnboardingService {
     }
   }
 
+  /** Sends the existing SPI challenge to the recipient of a live, accepted invitation. */
+  public void startEmailTwoFactor(String rawToken) {
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    OnboardingEmailSecondFactor.start(invite, identityProfileLookup, identitySecondFactor);
+  }
+
+  public void activateEmailTwoFactor(String rawToken, String oneTimePassword) {
+    if (isBlank(oneTimePassword)) {
+      throw new BadRequestException("otp is required");
+    }
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    OnboardingEmailSecondFactor.verify(
+        invite, oneTimePassword, identityProfileLookup, identitySecondFactor);
+    consumeTwoFactorGate(rawToken);
+  }
+
   /**
    * Confirms the pending TOTP setup with a first one-time password. An invalid or rejected code
    * answers 400 (the Admin panel maps 400/422 to its invalid-code state); once the gate is
@@ -666,11 +682,16 @@ public class TenantAdminOnboardingService {
     }
     AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
 
+    if (isBlank(invite.getTotpPendingSecret())) {
+      throw new BadRequestException("No pending TOTP setup exists for this invite");
+    }
+
     var profile =
         identityProfileLookup
             .findById(invite.getAcceptedByUserId())
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
+    OnboardingEmailSecondFactor.requireInactive(profile, identitySecondFactor);
     boolean valid =
         identitySecondFactor.setUpOtpCredential(
             profile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
@@ -678,7 +699,7 @@ public class TenantAdminOnboardingService {
       throw new BadRequestException("Invalid one-time password");
     }
 
-    consumeTwoFactorGate(invite);
+    consumeTwoFactorGate(rawToken);
   }
 
   /**
@@ -701,7 +722,7 @@ public class TenantAdminOnboardingService {
             // Gate already satisfied or resume window expired — terminally consumed.
             throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
           }
-          if (isBlank(invite.getTotpPendingSecret()) || isBlank(invite.getAcceptedByUserId())) {
+          if (isBlank(invite.getAcceptedByUserId())) {
             throw new BadRequestException("No pending TOTP setup exists for this invite");
           }
           return invite;
@@ -710,12 +731,13 @@ public class TenantAdminOnboardingService {
 
   /**
    * Terminal consumption of the link once Keycloak accepted the one-time password. The pending
-   * secret is cleared FIRST so the gate transition — which re-reads the invite by its acceptor —
-   * wins over the merge of the detached row loaded before the Keycloak round trip.
+   * token, expiry and pending gate are checked again under the row lock after the remote call.
+   * Clearing the pending secret before marking the gate active preserves the existing transition.
    */
-  private void consumeTwoFactorGate(AccountInvite invite) {
+  private void consumeTwoFactorGate(String rawToken) {
     inTransaction(
         () -> {
+          AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
           invite.setTotpPendingSecret(null);
           invite.setUpdateDate(LocalDateTime.now());
           accountInviteRepository.save(invite);

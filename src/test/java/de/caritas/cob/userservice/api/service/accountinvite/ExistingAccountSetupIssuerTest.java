@@ -21,11 +21,13 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailDelivery;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -214,7 +216,10 @@ class ExistingAccountSetupIssuerTest {
     when(brandValues.values(resolved, 42L)).thenReturn(new HashMap<>());
     when(renderer.render(eq("konto-einrichten"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("Setup", "<p>Setup</p>", "Setup"));
-    when(mail.sendRendered(eq("admin@example.org"), any()))
+    when(mail.sendRendered(
+            eq("admin@example.org"),
+            any(),
+            eq(InviteMailOrigin.of(42L, TenantSystemEmailDelivery.Purpose.ACCOUNT_INVITE))))
         .thenReturn(new InviteMailSendReceipt("admin@example.org", Instant.now()));
   }
 

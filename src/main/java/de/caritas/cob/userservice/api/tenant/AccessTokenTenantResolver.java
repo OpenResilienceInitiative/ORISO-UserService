@@ -51,6 +51,9 @@ public class AccessTokenTenantResolver implements TenantResolver {
   private Optional<Long> getUserTenantIdAttribute(Map<String, Object> claimMap) {
     if (claimMap.containsKey(TENANT_ID)) {
       Object tenantIdClaim = claimMap.get(TENANT_ID);
+      if (tenantIdClaim == null) {
+        return Optional.empty();
+      }
       if (tenantIdClaim instanceof Long) {
         return Optional.of((Long) tenantIdClaim);
       }

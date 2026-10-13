@@ -27,19 +27,41 @@ public class TenantSystemEmailRouteService {
 
   public Optional<Route> resolve(Long tenantId) {
     if (tenantId == null || tenantId <= 0) return Optional.empty();
-    Map<String, Object> tenant = tenantClient.readTenant(tenantId);
-    Map<?, ?> settings = map(tenant.get("settings"));
-    if (settings == null) {
-      throw new ConfigurationException("Tenant system-mail settings are missing");
-    }
+    Map<?, ?> settings = readSettings(tenantId);
     if (!Boolean.TRUE.equals(settings.get("featureSystemNotificationEmailsEnabled"))) {
       return Optional.empty();
     }
+    return Optional.of(route(settings));
+  }
 
+  /**
+   * Transport for mails that are always sent (invites, DPA mails): the notification switch only
+   * mutes notifications, so it must not decide whether these mails go out or from where.
+   */
+  public Route resolveTransport(Long tenantId) {
+    if (tenantId == null || tenantId <= 0) return new Route(Mode.PLATFORM, null);
+    Map<?, ?> settings = map(tenantClient.readTenant(tenantId).get("settings"));
+    // TenantService never relays a Träger without an explicit mode (legacy rows keep null until
+    // classified), so these mails stay on the platform server as before.
+    if (settings == null || settings.get("smtpMode") == null) {
+      return new Route(Mode.PLATFORM, null);
+    }
+    return route(settings);
+  }
+
+  private Map<?, ?> readSettings(long tenantId) {
+    Map<?, ?> settings = map(tenantClient.readTenant(tenantId).get("settings"));
+    if (settings == null) {
+      throw new ConfigurationException("Tenant system-mail settings are missing");
+    }
+    return settings;
+  }
+
+  private static Route route(Map<?, ?> settings) {
     Map<?, ?> smtp = map(settings.get("smtp"));
     String color = smtp == null ? null : string(smtp.get("emailThemeColor"));
     if ("PLATFORM".equals(settings.get("smtpMode"))) {
-      return Optional.of(new Route(Mode.PLATFORM, color));
+      return new Route(Mode.PLATFORM, color);
     }
     if (!"OWN".equals(settings.get("smtpMode"))) {
       throw new ConfigurationException("Tenant smtpMode must be PLATFORM or OWN");
@@ -59,7 +81,7 @@ public class TenantSystemEmailRouteService {
         || !Boolean.TRUE.equals(smtp.get("passwordSet"))) {
       throw new ConfigurationException("OWN tenant SMTP configuration is incomplete");
     }
-    return Optional.of(new Route(Mode.OWN, color));
+    return new Route(Mode.OWN, color);
   }
 
   private static Map<?, ?> map(Object value) {

@@ -36,10 +36,10 @@ class QueuedInviteReleaseListenerTest {
   @Test
   void onUnitCreated_Should_ReleaseWithoutAnAmbientServiceToken() {
     var technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
+    technicalUser.setClientId("technical");
+    technicalUser.setClientSecret("secret");
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.login("technical", "secret"))
+    when(identityAuthentication.loginService("technical", "secret"))
         .thenReturn(new IdentityLogin("token", 60, 60, "refresh"));
     var ambientDuringRelease = new AtomicReference<Object>("not called");
     when(unitQueue.release(InviteUnitType.AGENCY, 7L, 3L))

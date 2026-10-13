@@ -163,6 +163,21 @@ public class User implements TenantAware, NotificationsAware {
   @Column(name = "notifications_settings", length = 4000)
   private String notificationsSettings;
 
+  /**
+   * Joined a self-help group "without an account" (FE#1499): the browser holds the only login, so
+   * the account is deleted once no login can still be alive ({@code
+   * user.temporary.deleteWorkflow}).
+   */
+  @Column(name = "temporary_account", nullable = false, columnDefinition = "bit default false")
+  private boolean temporaryAccount;
+
+  /**
+   * The animal the advice seeker chose in their profile (#1240), as its lower-case file stem. Null
+   * shows the default the app derives from the user id.
+   */
+  @Column(name = "avatar_id", length = 40)
+  private String avatarId;
+
   public User(
       @Size(max = 36) @NonNull String userId,
       Long oldId,

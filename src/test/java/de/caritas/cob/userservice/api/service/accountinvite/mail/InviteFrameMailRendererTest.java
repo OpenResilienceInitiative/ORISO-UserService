@@ -212,11 +212,11 @@ class InviteFrameMailRendererTest {
   }
 
   /**
-   * A tenant colour that would make the white button label unreadable must not reach the button.
-   * The guard lives in {@code OrisoEmailBrand}; this pins that the invite frame actually uses it.
+   * ADR-026 amendment 2026-10-02: a light tenant colour is used as configured for stripe and button
+   * (like the web app); the button label turns dark and text links are darkened.
    */
   @Test
-  void refusesATenantColourThatWouldMakeTheButtonLabelUnreadable() {
+  void keepsALightTenantColourAndDerivesTheButtonLabelFromIt() {
     BrandedEmail mail =
         render(
             new EmailBranding(
@@ -230,10 +230,36 @@ class InviteFrameMailRendererTest {
             ACCEPT_URL);
 
     assertThat(mail.html())
-        .as("the button keeps the readable platform primary")
-        .contains("bgcolor=\"#a5000a\" style=\"background-color:#a5000a;border-radius:999px;\"")
-        .as("the accent bar may keep the tenant colour — nothing is written on top of it")
-        .contains("bgcolor=\"#f8e71c\" style=\"height:4px");
+        .as("the button keeps the tenant colour")
+        .contains("bgcolor=\"#f8e71c\" style=\"background-color:#f8e71c;border-radius:999px;\"")
+        .as("the stripe keeps it too")
+        .contains("bgcolor=\"#f8e71c\" style=\"height:4px")
+        .as("the label is a dark tone of the same hue, not white")
+        .contains("font-weight:600;color:#1f1c00;text-decoration:none")
+        .doesNotContain("font-weight:600;color:#ffffff;text-decoration:none");
+    assertThat(mail.branding().accentColor()).isEqualTo("#f8e71c");
+    assertThat(mail.branding().primaryColor()).isEqualTo("#f8e71c");
+    assertThat(mail.branding().buttonLabelColor()).isEqualTo("#1f1c00");
+  }
+
+  @Test
+  void keepsTheWhiteLabelOnADarkTenantColour() {
+    BrandedEmail mail =
+        render(
+            new EmailBranding(
+                "Träger Blau",
+                null,
+                "#1c4f8f",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"),
+            "Einladung",
+            "Hallo",
+            ACCEPT_URL);
+
+    assertThat(mail.html())
+        .contains("bgcolor=\"#1c4f8f\" style=\"background-color:#1c4f8f;border-radius:999px;\"")
+        .contains("font-weight:600;color:#ffffff;text-decoration:none");
+    assertThat(mail.branding().buttonLabelColor()).isEqualTo("#ffffff");
   }
 
   /** A mail without an action carries neither a button pointing nowhere nor a fallback line. */

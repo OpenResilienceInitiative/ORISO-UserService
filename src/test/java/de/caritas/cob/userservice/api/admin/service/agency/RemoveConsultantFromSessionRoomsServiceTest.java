@@ -41,11 +41,11 @@ class RemoveConsultantFromSessionRoomsServiceTest {
   }
 
   private ResolvedRoomMember consultantMember(String accountId, String matrixUserId) {
-    return new ResolvedRoomMember(matrixUserId, accountId, accountId, accountId, true);
+    return new ResolvedRoomMember(matrixUserId, accountId, accountId, accountId, true, null, null);
   }
 
   private ResolvedRoomMember askerMember(String accountId, String matrixUserId) {
-    return new ResolvedRoomMember(matrixUserId, accountId, accountId, accountId, false);
+    return new ResolvedRoomMember(matrixUserId, accountId, accountId, accountId, false, null, null);
   }
 
   @Test

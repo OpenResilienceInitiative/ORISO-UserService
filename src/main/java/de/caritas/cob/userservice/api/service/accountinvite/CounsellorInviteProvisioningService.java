@@ -11,6 +11,8 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -36,6 +38,8 @@ public class CounsellorInviteProvisioningService {
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
   private final @NonNull AcceptTimeAgencyCheck acceptTimeAgencyCheck;
+  private final @NonNull ConsultantTopicRepository consultantTopicRepository;
+  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
@@ -102,6 +106,9 @@ public class CounsellorInviteProvisioningService {
         throw new IllegalStateException("Consultant provisioning returned no user id");
       }
       consultantId = consultant.getEmbedded().getId();
+      // The invitee chose this secret, unlike an administrator using the shared create path.
+      // Complete the identity-provider change before clearing our flag or accepting the invite.
+      identityPasswordUpdater.updatePassword(consultantId, command.password());
       alignRequirementsWithInvite(consultantId, invite);
       invite.setProvisionedUserId(consultantId);
       invite.setUpdateDate(LocalDateTime.now());
@@ -116,6 +123,9 @@ public class CounsellorInviteProvisioningService {
                   new CreateConsultantAgencyDTO()
                       .agencyId(invite.getAgencyId())
                       .roleSetKey(DEFAULT_ROLE_SET)));
+      // The invite is about exactly one centre, so the chosen topics belong to it (#1264).
+      consultantTopicRepository.assignUnscopedTopicsToAgency(
+          createdConsultantId, invite.getAgencyId());
 
       if (Boolean.TRUE.equals(command.grantAgencyAdmin())) {
         // The invitee brought this Beratungsstelle into existence, so they administrate it —

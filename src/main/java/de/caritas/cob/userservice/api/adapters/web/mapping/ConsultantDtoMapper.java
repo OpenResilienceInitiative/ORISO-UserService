@@ -17,10 +17,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.PaginationLinks;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AccountLoginStatusService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
@@ -39,6 +41,7 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class ConsultantDtoMapper implements DtoMapperUtils {
   @Autowired private IdentityManaging identityManager;
+  @Autowired private AccountLoginStatusService accountLoginStatusService;
   @Autowired private ConsultantTopicRepository consultantTopicRepository;
   @Autowired private TopicService topicService;
 
@@ -57,8 +60,10 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
         .publicSlug(updateConsultantDTO.getPublicSlug())
         .dataPrivacyConfirmation(updateConsultantDTO.getDataPrivacyConfirmation())
         .termsAndConditionsConfirmation(updateConsultantDTO.getTermsAndConditionsConfirmation())
-        // Self-service never manages topics; the generated default [] would remove them all.
-        .topicIds(null);
+        // Self-service never manages topics. The generated DTO defaults these lists to [], which
+        // the update would read as "remove every topic".
+        .topicIds(null)
+        .topicsByAgency(null);
   }
 
   public ConsultantResponseDTO consultantResponseDtoOf(
@@ -92,10 +97,22 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
   public ConsultantSearchResultDTO consultantSearchResultOf(
       Map<String, Object> resultMap,
       String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order) {
+    return consultantSearchResultOf(
+        resultMap, query, page, perPage, field, order, SearchFilter.NONE);
+  }
+
+  public ConsultantSearchResultDTO consultantSearchResultOf(
+      Map<String, Object> resultMap,
+      String query,
       int page,
       int perPage,
       String field,
-      String order) {
+      String order,
+      SearchFilter filter) {
     var consultants = new ArrayList<ConsultantAdminResponseDTO>();
 
     var consultantMaps = (List<Map<String, Object>>) resultMap.get("consultants");
@@ -103,7 +120,10 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
         consultantMaps.stream()
             .map(consultantMap -> (String) consultantMap.get("id"))
             .collect(Collectors.toList());
+    var activeById = accountLoginStatusService.activeByIds(consultantIds);
     var topicIdsByConsultantId = topicIdsByConsultantId(consultantIds);
+    var topicsByAgencyByConsultantId =
+        ConsultantTopicsByAgencyMapper.topicsByAgencyOf(consultantTopicRepository, consultantIds);
     var topicsById =
         topicIdsByConsultantId.isEmpty()
             ? Collections.<Long, TopicDTO>emptyMap()
@@ -111,9 +131,13 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
     consultantMaps.forEach(
         consultantMap -> {
           var response = new ConsultantAdminResponseDTO();
-          var consultantDto = consultantDtoOf(consultantMap);
+          var consultantDto =
+              consultantDtoOf(consultantMap, activeById.get((String) consultantMap.get("id")));
           consultantDto.setTopics(
               topicsOf(topicIdsByConsultantId.get(consultantDto.getId()), topicsById));
+          consultantDto.setTopicsByAgency(
+              topicsByAgencyByConsultantId.getOrDefault(
+                  consultantDto.getId(), Collections.emptyList()));
           response.setEmbedded(consultantDto);
           response.setLinks(consultantLinksOf(consultantMap));
           consultants.add(response);
@@ -123,12 +147,13 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
     result.setTotal((Integer) resultMap.get("totalElements"));
     result.setEmbedded(consultants);
 
-    var pagination = new PaginationLinks().self(pageLinkOf(query, page, perPage, field, order));
+    var pagination =
+        new PaginationLinks().self(pageLinkOf(query, page, perPage, field, order, filter));
     if (!(boolean) resultMap.get("isFirstPage")) {
-      pagination.previous(pageLinkOf(query, page - 1, perPage, field, order));
+      pagination.previous(pageLinkOf(query, page - 1, perPage, field, order, filter));
     }
     if (!(boolean) resultMap.get("isLastPage")) {
-      pagination.next(pageLinkOf(query, page + 1, perPage, field, order));
+      pagination.next(pageLinkOf(query, page + 1, perPage, field, order, filter));
     }
     result.setLinks(pagination);
 
@@ -163,8 +188,14 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
 
   @SuppressWarnings("unchecked")
   public ConsultantDTO consultantDtoOf(Map<String, Object> consultantMap) {
+    return consultantDtoOf(
+        consultantMap, accountLoginStatusService.activeOf((String) consultantMap.get("id")));
+  }
+
+  private ConsultantDTO consultantDtoOf(Map<String, Object> consultantMap, Boolean active) {
     var consultant = new ConsultantDTO();
     consultant.setId((String) consultantMap.get("id"));
+    consultant.setActive(active);
     consultant.setEmail((String) consultantMap.get("email"));
     consultant.setFirstname((String) consultantMap.get("firstName"));
     consultant.setLastname((String) consultantMap.get("lastName"));
@@ -274,10 +305,13 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
     return halLinkOf(httpEntity, method);
   }
 
-  public HalLink pageLinkOf(String query, int page, int perPage, String field, String order) {
+  public HalLink pageLinkOf(
+      String query, int page, int perPage, String field, String order, SearchFilter filter) {
     var httpEntity =
-        methodOn(UserController.class).searchConsultants(query, page, perPage, field, order);
+        methodOn(UserController.class)
+            .searchConsultants(
+                query, page, perPage, field, order, filter.tenantId(), filter.agencyIds());
 
-    return halLinkOf(httpEntity, MethodEnum.GET);
+    return expandedHalLinkOf(httpEntity, MethodEnum.GET);
   }
 }

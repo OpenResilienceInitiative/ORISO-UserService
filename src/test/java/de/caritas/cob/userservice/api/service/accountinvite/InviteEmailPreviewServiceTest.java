@@ -63,7 +63,11 @@ class InviteEmailPreviewServiceTest {
             de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsFixture.configured(
                 "smtp-user", "smtp-pass"),
             inviteMailTransport,
-            InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver));
+            InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .platformRoutes(),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .unusedRelay());
     previewService =
         new InviteEmailPreviewService(
             templateRepository,
@@ -124,7 +128,7 @@ class InviteEmailPreviewServiceTest {
   }
 
   @Test
-  void previewShouldReportTheContrastGuardedButtonColourActuallyRendered() {
+  void previewShouldReportTheButtonAndLabelColoursActuallyRendered() {
     var preview =
         previewService.preview(
             new PreviewCommand(
@@ -136,9 +140,14 @@ class InviteEmailPreviewServiceTest {
                 "de"));
     var branding = JsonMapper.builder().build().valueToTree(preview).path("branding");
     assertThat(branding.path("accentColor").asString()).isEqualTo("#f8e71c");
-    assertThat(branding.path("primaryColor").asString()).isNotBlank().isNotEqualTo("#f8e71c");
+    assertThat(branding.path("primaryColor").asString())
+        .as("a light colour is no longer replaced, the button keeps it")
+        .isEqualTo("#f8e71c");
+    assertThat(branding.path("buttonLabelColor").asString()).isEqualTo("#1f1c00");
     assertThat(preview.html())
-        .contains("bgcolor=\"" + branding.path("primaryColor").asString() + "\"");
+        .contains("bgcolor=\"" + branding.path("primaryColor").asString() + "\"")
+        .contains(
+            "color:" + branding.path("buttonLabelColor").asString() + ";text-decoration:none");
     verify(emailBrandingResolver).resolvePendingTenant(42L);
     org.mockito.Mockito.verifyNoMoreInteractions(emailBrandingResolver);
   }
@@ -153,7 +162,16 @@ class InviteEmailPreviewServiceTest {
             new PreviewCommand(
                 null, InviteEmailTemplateKind.TENANT_INVITE, subject, body, null, "de"));
 
-    dispatchService.send("to@example.org", subject, body, preview.sampleAcceptUrl(), null, "de");
+    dispatchService.send(
+        "to@example.org",
+        subject,
+        body,
+        preview.sampleAcceptUrl(),
+        null,
+        "de",
+        de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin.platform(
+            de.caritas.cob.userservice.api.service.notification.TenantSystemEmailDelivery.Purpose
+                .ACCOUNT_INVITE));
 
     ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<String> text = ArgumentCaptor.forClass(String.class);
@@ -242,7 +260,7 @@ class InviteEmailPreviewServiceTest {
     when(templateRepository.findById(6L)).thenReturn(Optional.of(foreign));
     org.mockito.Mockito.doThrow(new ForbiddenException("foreign template"))
         .when(accessPolicy)
-        .authorizeTemplateUse(2L);
+        .authorizeTemplateUse(2L, InviteEmailTemplateKind.COUNSELLOR_INVITE);
 
     assertThatThrownBy(() -> previewService.preview(new PreviewCommand(6L, null, null, null, null)))
         .isInstanceOf(ForbiddenException.class);

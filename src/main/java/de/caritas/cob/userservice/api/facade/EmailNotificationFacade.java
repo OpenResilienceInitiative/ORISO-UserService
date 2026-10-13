@@ -7,6 +7,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.NotificationsAware;
@@ -26,6 +27,7 @@ import de.caritas.cob.userservice.api.service.emailsupplier.ReassignmentConfirma
 import de.caritas.cob.userservice.api.service.emailsupplier.ReassignmentRequestEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.helper.MailService;
+import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -67,6 +69,7 @@ public class EmailNotificationFacade {
   private final @NonNull NotificationRequestFacts notificationRequestFacts;
 
   private final @NonNull ReleaseToggleService releaseToggleService;
+  private final @NonNull TenantService tenants;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
@@ -234,36 +237,46 @@ public class EmailNotificationFacade {
   public void sendReassignConfirmationNotification(
       ReassignmentNotificationDTO reassignmentNotification, TenantData tenantData) {
     TenantContext.setCurrentTenantData(tenantData);
-    Consultant existingConsultantById =
-        findExistingConsultantById(reassignmentNotification.getToConsultantId().toString());
-
-    if (!shouldSendReassignmentNotificationForConsultant(existingConsultantById)) {
-      log.info(
-          "Not sending email notification about reassignment because consultant has this disabled this toggle");
-      return;
-    }
-
-    var reassignmentConfirmationEmailSupplier =
-        ReassignmentConfirmationEmailSupplier.builder()
-            .receiverConsultant(existingConsultantById)
-            .senderConsultantName(reassignmentNotification.getFromConsultantName())
-            .tenantTemplateSupplier(tenantTemplateSupplier)
-            .applicationBaseUrl(applicationBaseUrl)
-            .multiTenancyEnabled(multiTenancyEnabled)
-            .build();
     try {
-      sendMailTasksToMailService(reassignmentConfirmationEmailSupplier);
-    } catch (Exception exception) {
-      log.error(
-          "EmailNotificationFacade error: Failed to send reqssign confiration notification",
-          exception);
+      Consultant existingConsultantById =
+          findExistingConsultantById(reassignmentNotification.getToConsultantId().toString());
+
+      if (!shouldSendReassignmentNotificationForConsultant(existingConsultantById)) {
+        log.info(
+            "Not sending email notification about reassignment because consultant has this disabled this toggle");
+        return;
+      }
+
+      var reassignmentConfirmationEmailSupplier =
+          ReassignmentConfirmationEmailSupplier.builder()
+              .receiverConsultant(existingConsultantById)
+              .senderConsultantName(reassignmentNotification.getFromConsultantName())
+              .tenantTemplateSupplier(tenantTemplateSupplier)
+              .applicationBaseUrl(applicationBaseUrl)
+              .multiTenancyEnabled(multiTenancyEnabled)
+              .build();
+      try {
+        sendMailTasksToMailService(reassignmentConfirmationEmailSupplier);
+      } catch (Exception exception) {
+        log.error(
+            "EmailNotificationFacade error: Failed to send reqssign confiration notification",
+            exception);
+      }
+    } finally {
+      TenantContext.clear();
     }
-    TenantContext.clear();
+  }
+
+  /** Legacy callers have agency-counselling context; real session producers use the overload. */
+  @Async
+  public void sendInquiryAcceptedNotification(
+      User user, Consultant consultant, TenantData tenantData) {
+    sendInquiryAcceptedNotification(user, consultant, tenantData, null);
   }
 
   @Async
   public void sendInquiryAcceptedNotification(
-      User user, Consultant consultant, TenantData tenantData) {
+      User user, Consultant consultant, TenantData tenantData, Session session) {
     TenantContext.setCurrentTenantData(tenantData);
     try {
       if (!hasUserValidEmailAddress(user) || !shouldSendInquiryAcceptedNotification(user)) {
@@ -287,6 +300,10 @@ public class EmailNotificationFacade {
             "Inquiry accepted notification recipient and request tenants differ");
       }
 
+      var tenant = tenants.getRestrictedTenantDataFresh(requestTenantId);
+      if (tenant == null || !requestTenantId.equals(tenant.getId()))
+        throw new IllegalStateException("Inquiry accepted tenant is unavailable");
+      if (!AskerNotificationChannelPolicy.emailAllowed(session, tenant.getSettings())) return;
       var templateAttributes = new ArrayList<TemplateDataDTO>();
       templateAttributes.add(
           new TemplateDataDTO().key("tenantId").value(requestTenantId.toString()));

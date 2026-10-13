@@ -173,7 +173,7 @@ class ExistingAccountSetupExpiryIT {
     when(renderer.render(eq("konto-einrichten"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("Setup", "<p>Setup</p>", "Setup"));
     var mail = mock(InviteMailDispatchService.class);
-    when(mail.sendRendered(eq(EMAIL), any()))
+    when(mail.sendRendered(eq(EMAIL), any(), any()))
         .thenReturn(new InviteMailSendReceipt(EMAIL, Instant.now()));
     var issuer =
         new ExistingAccountSetupIssuer(

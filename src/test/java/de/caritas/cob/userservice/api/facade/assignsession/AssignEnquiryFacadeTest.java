@@ -14,6 +14,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -41,6 +42,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -89,6 +91,11 @@ class AssignEnquiryFacadeTest {
 
   @BeforeEach
   public void setup() throws MatrixCreateRoomException {
+    lenient()
+        .when(
+            sessionService.updateConsultantAndStatusForSession(
+                any(Session.class), any(Consultant.class), any(SessionStatus.class)))
+        .thenReturn(new OwnershipChange(1L, "assigned", 1L));
     assignEnquiryFacade =
         new AssignEnquiryFacade(
             sessionService,
@@ -358,7 +365,9 @@ class AssignEnquiryFacadeTest {
         () -> assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY));
 
     assertThat(session.getAgencyId()).isNull();
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW), eq(true));
   }
 
   @Test
@@ -471,7 +480,9 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW), eq(false));
   }
 
   @Test
@@ -489,7 +500,9 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW), eq(false));
   }
 
   // ---------------------------------------------------------------------------
@@ -560,7 +573,9 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW), eq(false));
   }
 
   // ---------------------------------------------------------------------------
@@ -572,10 +587,9 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    AgencyMatrixCredentialsDTO creds =
-        agencyCredentials("@agency:matrix.example.com", "agencyPass");
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
-    when(sessionRoomGateway.loginUser(anyString(), anyString())).thenReturn("agency-token");
+    when(sessionRoomGateway.loginAsUser("@agency:matrix.example.com")).thenReturn("agency-token");
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
@@ -602,7 +616,7 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com", "");
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
@@ -615,10 +629,9 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    AgencyMatrixCredentialsDTO creds =
-        agencyCredentials("@agency:matrix.example.com", "agencyPass");
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
-    when(sessionRoomGateway.loginUser(anyString(), anyString())).thenReturn("");
+    when(sessionRoomGateway.loginAsUser("@agency:matrix.example.com")).thenReturn("");
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
@@ -631,10 +644,9 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    AgencyMatrixCredentialsDTO creds =
-        agencyCredentials("@agency:matrix.example.com", "agencyPass");
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
-    when(sessionRoomGateway.loginUser(anyString(), anyString())).thenReturn("agency-token");
+    when(sessionRoomGateway.loginAsUser("@agency:matrix.example.com")).thenReturn("agency-token");
     when(sessionRoomGateway.loginAsUser(CONSULTANT_MATRIX_ID)).thenReturn(MATRIX_TOKEN);
     when(sessionRoomGateway.joinRoom(eq("!existing-room:matrix.example.com"), any()))
         .thenReturn(false);
@@ -669,10 +681,9 @@ class AssignEnquiryFacadeTest {
     return consultant;
   }
 
-  private AgencyMatrixCredentialsDTO agencyCredentials(String userId, String password) {
+  private AgencyMatrixCredentialsDTO agencyCredentials(String userId) {
     AgencyMatrixCredentialsDTO dto = new AgencyMatrixCredentialsDTO();
     dto.setMatrixUserId(userId);
-    dto.setMatrixPassword(password);
     return dto;
   }
 }
