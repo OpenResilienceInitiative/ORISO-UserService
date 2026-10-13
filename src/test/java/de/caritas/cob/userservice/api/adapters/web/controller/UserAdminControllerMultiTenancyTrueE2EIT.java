@@ -161,6 +161,13 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
 
   @BeforeEach
   public void setUp() {
+    when(tenantService.getRestrictedTenantDataFresh(Mockito.anyLong()))
+        .thenAnswer(
+            call ->
+                new RestrictedTenantDTO()
+                    .id(call.getArgument(0))
+                    .active(true)
+                    .subdomain("synthetic"));
 
     CreatedIdentity keycloakResponse = new CreatedIdentity();
     createdIdentityId = UUID.randomUUID().toString();

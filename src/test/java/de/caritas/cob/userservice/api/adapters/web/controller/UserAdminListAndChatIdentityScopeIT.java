@@ -181,6 +181,8 @@ class UserAdminListAndChatIdentityScopeIT {
   void seedTwoAgenciesOfOneTenantAndOneOfAnother() {
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().subdomain("synthetic"));
+    when(tenantService.getRestrictedTenantDataFresh(anyLong()))
+        .thenReturn(new RestrictedTenantDTO().active(true).subdomain("synthetic"));
     when(((IdentityRoleLookup) identityClient).findAllByUserId(anyString()))
         .thenReturn(List.of("user-admin"));
     givenAgency(OWN_AGENCY, OWN_TENANT);
