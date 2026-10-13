@@ -14,6 +14,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -41,6 +42,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -50,7 +52,6 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -59,7 +60,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class AssignEnquiryFacadeTest {
   public static final long CURRENT_TENANT_ID = 1L;
 
-  @InjectMocks AssignEnquiryFacade assignEnquiryFacade;
+  AssignEnquiryFacade assignEnquiryFacade;
   @Mock SessionService sessionService;
 
   @Mock
@@ -83,6 +84,12 @@ class AssignEnquiryFacadeTest {
   @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
   @Mock AnonymousEnquiryDepartmentResolver anonymousEnquiryDepartmentResolver;
 
+  @Mock
+  de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore acceptanceNotices;
+
+  @Mock
+  de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeDelivery acceptanceDelivery;
+
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
   private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
   private static final String MATRIX_ROOM_ID = "!createdRoom:matrix.example.com";
@@ -90,6 +97,33 @@ class AssignEnquiryFacadeTest {
 
   @BeforeEach
   public void setup() throws MatrixCreateRoomException {
+    lenient()
+        .when(
+            sessionService.updateConsultantAndStatusForSession(
+                any(Session.class), any(Consultant.class), any(SessionStatus.class)))
+        .thenReturn(new OwnershipChange(1L, "assigned", 1L));
+    assignEnquiryFacade =
+        new AssignEnquiryFacade(
+            sessionService,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            sessionRoomGateway,
+            sessionToConsultantVerifier,
+            statisticsService,
+            emailNotificationFacade,
+            httpServletRequest,
+            consultantRepository,
+            userRepository,
+            userHelper,
+            usernameTranscoder,
+            consultantDisplayNameResolver,
+            agencyMatrixCredentialClient,
+            eventNotificationService,
+            anonymousEnquiryDepartmentResolver,
+            sessionSupervisorFacade,
+            teamDiscussionFacade,
+            acceptanceNotices,
+            acceptanceDelivery);
+    CONSULTANT_WITH_AGENCY.setTenantId(41L);
     // ADR-002 §2: the display name comes from the resolver, never from the real name.
     lenient()
         .when(consultantDisplayNameResolver.resolveMatrixDisplayName(any(Consultant.class)))
@@ -131,6 +165,7 @@ class AssignEnquiryFacadeTest {
     USER_WITH_MATRIX_ID.setMatrixUserId(null);
     USER_WITH_MATRIX_ID.setUsername(USERNAME);
     CONSULTANT_WITH_AGENCY.setMatrixUserId(null);
+    CONSULTANT_WITH_AGENCY.setTenantId(null);
     ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(null);
 
     TenantContext.clear();
@@ -338,7 +373,9 @@ class AssignEnquiryFacadeTest {
         () -> assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY));
 
     assertThat(session.getAgencyId()).isNull();
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW), eq(true));
   }
 
   @Test
@@ -451,7 +488,9 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW), eq(false));
   }
 
   @Test
@@ -469,7 +508,9 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW), eq(false));
   }
 
   // ---------------------------------------------------------------------------
@@ -540,7 +581,9 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW), eq(false));
   }
 
   // ---------------------------------------------------------------------------
@@ -552,10 +595,9 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    AgencyMatrixCredentialsDTO creds =
-        agencyCredentials("@agency:matrix.example.com", "agencyPass");
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
-    when(sessionRoomGateway.loginUser(anyString(), anyString())).thenReturn("agency-token");
+    when(sessionRoomGateway.loginAsUser("@agency:matrix.example.com")).thenReturn("agency-token");
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
@@ -582,7 +624,7 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com", "");
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
@@ -595,10 +637,9 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    AgencyMatrixCredentialsDTO creds =
-        agencyCredentials("@agency:matrix.example.com", "agencyPass");
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
-    when(sessionRoomGateway.loginUser(anyString(), anyString())).thenReturn("");
+    when(sessionRoomGateway.loginAsUser("@agency:matrix.example.com")).thenReturn("");
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
@@ -611,10 +652,9 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    AgencyMatrixCredentialsDTO creds =
-        agencyCredentials("@agency:matrix.example.com", "agencyPass");
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
-    when(sessionRoomGateway.loginUser(anyString(), anyString())).thenReturn("agency-token");
+    when(sessionRoomGateway.loginAsUser("@agency:matrix.example.com")).thenReturn("agency-token");
     when(sessionRoomGateway.loginAsUser(CONSULTANT_MATRIX_ID)).thenReturn(MATRIX_TOKEN);
     when(sessionRoomGateway.joinRoom(eq("!existing-room:matrix.example.com"), any()))
         .thenReturn(false);
@@ -649,10 +689,94 @@ class AssignEnquiryFacadeTest {
     return consultant;
   }
 
-  private AgencyMatrixCredentialsDTO agencyCredentials(String userId, String password) {
+  private AgencyMatrixCredentialsDTO agencyCredentials(String userId) {
     AgencyMatrixCredentialsDTO dto = new AgencyMatrixCredentialsDTO();
     dto.setMatrixUserId(userId);
-    dto.setMatrixPassword(password);
     return dto;
+  }
+
+  @Test
+  void initialAcceptanceQueuesRealChatEventOnlyAfterRoomProvisioning() {
+    SESSION_WITHOUT_CONSULTANT.setStatus(NEW);
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+    var ordered =
+        org.mockito.Mockito.inOrder(sessionService, sessionRoomGateway, acceptanceNotices);
+    ordered
+        .verify(sessionService)
+        .updateConsultantAndStatusForSession(any(), any(), eq(SessionStatus.IN_PROGRESS));
+    ordered.verify(sessionRoomGateway, times(2)).joinRoom(anyString(), anyString());
+    ordered.verify(acceptanceNotices).recordSuccessfulInitialAcceptance(SESSION_WITHOUT_CONSULTANT);
+  }
+
+  @Test
+  void failedMatrixProvisioningNeverActivatesOrDispatchesInitialAcceptance() throws Exception {
+    SESSION_WITHOUT_CONSULTANT.setStatus(NEW);
+    when(sessionRoomGateway.createRoomAsUser(anyString(), anyString(), anyString()))
+        .thenReturn(null);
+    assertThrows(
+        InternalServerErrorException.class,
+        () ->
+            assignEnquiryFacade.assignRegisteredEnquiry(
+                SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY));
+    org.mockito.Mockito.verifyNoInteractions(acceptanceNotices, acceptanceDelivery);
+  }
+
+  @Test
+  void subsequentAssignmentIsNotAnotherInitialAcceptance() {
+    var old = SESSION_WITHOUT_CONSULTANT.getStatus();
+    try {
+      SESSION_WITHOUT_CONSULTANT.setStatus(SessionStatus.IN_PROGRESS);
+      assignEnquiryFacade.assignRegisteredEnquiry(
+          SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY, true);
+      org.mockito.Mockito.verifyNoInteractions(acceptanceNotices, acceptanceDelivery);
+    } finally {
+      SESSION_WITHOUT_CONSULTANT.setStatus(old);
+    }
+  }
+
+  @Test
+  void transactionRollbackNeverDispatchesPreparedInitialAcceptance() {
+    SESSION_WITHOUT_CONSULTANT.setStatus(NEW);
+    when(acceptanceNotices.recordSuccessfulInitialAcceptance(SESSION_WITHOUT_CONSULTANT))
+        .thenReturn(Optional.of(1L));
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      assignEnquiryFacade.assignRegisteredEnquiry(
+          SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery);
+      var callbacks =
+          org.springframework.transaction.support.TransactionSynchronizationManager
+              .getSynchronizations();
+      assertThat(callbacks).hasSize(1);
+      callbacks.forEach(
+          cb ->
+              cb.afterCompletion(
+                  org.springframework.transaction.support.TransactionSynchronization
+                      .STATUS_ROLLED_BACK));
+      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery);
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
+  }
+
+  @Test
+  void committedInitialAcceptanceDispatchesAfterCommitOnce() {
+    SESSION_WITHOUT_CONSULTANT.setStatus(NEW);
+    when(acceptanceNotices.recordSuccessfulInitialAcceptance(SESSION_WITHOUT_CONSULTANT))
+        .thenReturn(Optional.of(1L));
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      assignEnquiryFacade.assignRegisteredEnquiry(
+          SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery);
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .getSynchronizations()
+          .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+      verify(acceptanceDelivery, times(1)).dispatchSafely(1L);
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
   }
 }

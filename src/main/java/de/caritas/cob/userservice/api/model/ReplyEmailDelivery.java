@@ -1,0 +1,91 @@
+package de.caritas.cob.userservice.api.model;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import java.time.LocalDateTime;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+/** Delivery evidence keyed by the recipient and Matrix event, without mail content or address. */
+@Entity
+@Table(name = "reply_email_delivery")
+@Getter
+@Setter
+@NoArgsConstructor
+public class ReplyEmailDelivery {
+  public enum RecipientKind {
+    ASKER,
+    CONSULTANT,
+    FEEDBACK_INTENT,
+    FEEDBACK
+  }
+
+  public enum Status {
+    PENDING,
+    SENDING,
+    SENT,
+    REJECTED,
+    RESOLVED,
+    UNCERTAIN
+  }
+
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
+
+  @Column(name = "recipient_user_id", nullable = false, length = 36)
+  private String recipientUserId;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "recipient_kind", nullable = false, length = 16)
+  private RecipientKind recipientKind = RecipientKind.ASKER;
+
+  /** Trusted Matrix sender at claim time, rechecked against the current case before dispatch. */
+  @Column(name = "source_matrix_user_id", length = 255)
+  private String sourceMatrixUserId;
+
+  @Column(name = "source_room_id", length = 255)
+  private String sourceRoomId;
+
+  /** Matrix event identity for a protected feedback intent; never message content. */
+  @Column(name = "source_event_id", length = 255)
+  private String sourceEventId;
+
+  @Column(name = "event_key", nullable = false, length = 64)
+  private String eventKey;
+
+  @Column(name = "correlation_id", nullable = false, length = 36)
+  private String correlationId;
+
+  @Column(name = "tenant_id", nullable = false)
+  private Long tenantId;
+
+  @Column(name = "session_id", nullable = false)
+  private Long sessionId;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "status", nullable = false, length = 16)
+  private Status status;
+
+  @Column(name = "created_at", nullable = false)
+  private LocalDateTime createdAt;
+
+  @Column(name = "next_attempt_at", nullable = false)
+  private LocalDateTime nextAttemptAt;
+
+  @Column(name = "attempted_at")
+  private LocalDateTime attemptedAt;
+
+  @Column(name = "attempt_count", nullable = false)
+  private int attemptCount;
+
+  @Column(name = "sent_at")
+  private LocalDateTime sentAt;
+}

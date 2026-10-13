@@ -47,7 +47,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.Spy;
@@ -57,10 +56,41 @@ import org.springframework.http.ResponseEntity;
 
 @ExtendWith(MockitoExtension.class)
 class CreateUserFacadeMatrixUserTest {
+  @org.mockito.Mock
+  private de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
+
   @org.mockito.Mock private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
 
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
+    createUserFacade =
+        new CreateUserFacade(
+            chatRecoveryEnrollmentPolicyService,
+            inactivityEnrollment,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            userVerifier,
+            identityClient,
+            identityAccountRemover,
+            identityPasswordUpdater,
+            identityDummyEmailUpdater,
+            userService,
+            consultingTypeManager,
+            agencyVerifier,
+            createNewSessionFacade,
+            statisticsService,
+            topicService,
+            welcomeEmailService,
+            matrixSynapseService,
+            sessionService,
+            provisioningCompensator,
+            tenantService,
+            agencyService,
+            applicationSettingsService,
+            groupInviteRegistration);
+    org.mockito.Mockito.lenient()
+        .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new ExtendedConsultingTypeResponseDTO());
     org.mockito.Mockito.lenient()
         .when(chatRecoveryEnrollmentPolicyService.forNewAsker(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
@@ -76,7 +106,7 @@ class CreateUserFacadeMatrixUserTest {
         .thenReturn(new RecoveryPolicySnapshot("RECOVERY_KEY", 0));
   }
 
-  @InjectMocks private CreateUserFacade createUserFacade;
+  private CreateUserFacade createUserFacade;
 
   @Mock private UserVerifier userVerifier;
   @Mock private IdentityClient identityClient;
@@ -96,6 +126,7 @@ class CreateUserFacadeMatrixUserTest {
   @Mock private SessionService sessionService;
   @Mock private ApplicationSettingsService applicationSettingsService;
   @Mock private WelcomeEmailService welcomeEmailService;
+  @Mock private GroupInviteRegistration groupInviteRegistration;
 
   @Spy
   private ProvisioningCompensator provisioningCompensator =

@@ -150,10 +150,12 @@ public class StatelessCsrfFilterTest {
     verify(this.filterChain, times(1)).doFilter(request, response);
   }
 
-  @Test
-  public void doFilterInternal_Should_executeFilterChain_ForExactInternalMatrixRtcPolicyEndpoint()
-      throws IOException, ServletException {
-    when(request.getRequestURI()).thenReturn("/internal/matrixrtc/call-policy");
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"/internal/matrixrtc/call-policy", "/internal/matrixrtc/media-access"})
+  public void doFilterInternal_Should_executeFilterChain_ForExactInternalMatrixRtcPolicyEndpoint(
+      String path) throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn(path);
     when(request.getMethod()).thenReturn("POST");
 
     this.csrfFilter.doFilterInternal(request, response, filterChain);

@@ -68,6 +68,13 @@ public class TenantService {
         .getRestrictedTenantDataByTenantId(TenantContext.TECHNICAL_TENANT_ID);
   }
 
+  /** Uncached platform branding lookup for short-lived email branding caches. */
+  public RestrictedTenantDTO getPlatformTenantDataFresh() {
+    return tenantServiceApiControllerFactory
+        .createControllerApi()
+        .getRestrictedTenantDataByTenantId(TenantContext.TECHNICAL_TENANT_ID);
+  }
+
   public List<RestrictedTenantDTO> getRestrictedTenantData(Set<Long> tenantIds) {
     var concreteTenantIds =
         tenantIds.stream()

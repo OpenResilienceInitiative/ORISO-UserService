@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.OrderEnum;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.consultant.querybuilder.ConsultantFilterSpecification;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -24,6 +25,7 @@ import org.springframework.stereotype.Service;
 public class ConsultantAdminFilterService {
 
   private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull AdminScope adminScope;
 
   /**
    * Searches for consultants by given {@link ConsultantFilter}, limits the result by perPage and
@@ -39,9 +41,23 @@ public class ConsultantAdminFilterService {
       final Integer perPage,
       final ConsultantFilter consultantFilter,
       final Sort sort) {
+    var specification =
+        adminScope.narrow(
+            buildSpecification(consultantFilter),
+            (root, query, cb, agencyIds) ->
+                ConsultantFilterSpecification.withActiveRelationToAnyOf(agencyIds)
+                    .toPredicate(root, query, cb));
+    return findConsultants(page, perPage, consultantFilter, sort, specification);
+  }
+
+  private ConsultantSearchResultDTO findConsultants(
+      final Integer page,
+      final Integer perPage,
+      final ConsultantFilter consultantFilter,
+      final Sort sort,
+      final Specification<Consultant> specification) {
     var pageRequest = PageRequest.of(Math.max(page - 1, 0), Math.max(perPage, 1), buildSort(sort));
-    var resultPage =
-        consultantRepository.findAll(buildSpecification(consultantFilter), pageRequest);
+    var resultPage = consultantRepository.findAll(specification, pageRequest);
 
     return ConsultantSearchResultBuilder.getInstance(
             resultPage.getContent(), resultPage.getTotalElements())

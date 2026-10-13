@@ -69,6 +69,10 @@ class CounsellorOnboardingPictureHttpTest {
 
   @Autowired WebApplicationContext context;
   @MockitoBean JwtDecoder jwtDecoder;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService inactivity;
+
   @MockitoBean ConsultantPictureStore store;
   @MockitoBean ClamAvPictureScanner scanner;
   @MockitoBean AuthenticatedUser caller;
@@ -84,6 +88,9 @@ class CounsellorOnboardingPictureHttpTest {
   @BeforeEach
   void setup() throws Exception {
     mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+    // Account-inactivity gate (UserService #1175): these callers are active.
+    when(inactivity.admit(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(true);
     png = PictureIntakeTest.png(2, 2);
     when(onboarding.consultantIdForOnboardingPicture(token)).thenReturn(consultantId);
   }

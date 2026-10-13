@@ -110,15 +110,8 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
     five minutes. */
     var minUpdateDate = nowInUtc().minusMinutes(liveChatQueueActivePeriodMinutes);
 
-    // The queue is deliberately cross-agency AND cross-tenant: a consultant who is live for a topic
-    // must see anonymous enquiries for that topic regardless of the asker's tenant. The
-    // consultant's
-    // own topics were resolved in the caller's tenant context; only the visibility query itself
-    // must
-    // bypass the tenant filter. Running it in technical context makes TenantAspect disable the
-    // Hibernate tenantFilter; the caller's tenant is restored afterwards so no other query in this
-    // request leaks. Registered (non-anonymous) session queries stay strictly tenant-isolated.
-    return runCrossTenant(
+    // The topic queue is deliberately cross-tenant; only this query leaves the caller's tenant.
+    return TenantContext.supplyAcrossTenants(
         () ->
             this.sessionRepository.findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly(
                 new HashSet<>(consultantTopicIds),
@@ -126,20 +119,6 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
                 minUpdateDate,
                 ANONYMOUS,
                 pageable));
-  }
-
-  private Page<Session> runCrossTenant(java.util.function.Supplier<Page<Session>> query) {
-    var callerTenant = TenantContext.getCurrentTenant();
-    try {
-      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      return query.get();
-    } finally {
-      if (callerTenant == null) {
-        TenantContext.clear();
-      } else {
-        TenantContext.setCurrentTenant(callerTenant);
-      }
-    }
   }
 
   /** {@inheritDoc} */

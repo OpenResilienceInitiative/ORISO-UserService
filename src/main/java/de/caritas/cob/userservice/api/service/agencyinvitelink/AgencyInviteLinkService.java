@@ -3,6 +3,8 @@ package de.caritas.cob.userservice.api.service.agencyinvitelink;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -54,6 +56,7 @@ public class AgencyInviteLinkService {
   private final @NonNull ConsultingTypeService consultingTypeService;
   private final @NonNull AgencyService agencyService;
   private final @NonNull CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
+  private final @NonNull AdminScope adminScope;
 
   /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
@@ -94,6 +97,10 @@ public class AgencyInviteLinkService {
 
     if (InviteLinkKind.COUNSELLOR.name().equals(cmd.getLinkKind())) {
       validateConsultantInTenant(cmd.getConsultantId(), callerTenantId);
+    }
+    adminScope.assertMay(Target.placedIn(callerTenantId, cmd.getAgencyId()));
+    if (InviteLinkKind.COUNSELLOR.name().equals(cmd.getLinkKind())) {
+      adminScope.assertMay(Target.counsellor(cmd.getConsultantId()));
     }
 
     LocalDateTime now = LocalDateTime.now();
@@ -144,9 +151,20 @@ public class AgencyInviteLinkService {
       return Page.empty(pageable);
     }
 
-    Page<AgencyInviteLink> result =
-        repository.findAllByTenantIdAndFilters(
-            callerTenantId, linkKind, topicId, chatType, status, pageable);
+    var reach = adminScope.current();
+    Page<AgencyInviteLink> result;
+    if (reach instanceof AdminScope.Agencies agencies) {
+      if (agencies.ids().isEmpty()) {
+        return Page.empty(pageable);
+      }
+      result =
+          repository.findAllByTenantIdAndAgencyIdsAndFilters(
+              callerTenantId, agencies.ids(), linkKind, topicId, chatType, status, pageable);
+    } else {
+      result =
+          repository.findAllByTenantIdAndFilters(
+              callerTenantId, linkKind, topicId, chatType, status, pageable);
+    }
 
     // Only auto-expire when no status filter was requested, to avoid returning EXPIRED
     // rows to a caller who explicitly asked for ACTIVE.
@@ -347,16 +365,10 @@ public class AgencyInviteLinkService {
     return link;
   }
 
+  /** The platform picks the Träger with the X-Tenant-Id header; everybody else has their own. */
   private Long resolveCallerTenantId() {
-    try {
-      Long tenantId = TenantContext.getCurrentTenant();
-      if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
-        return resolveTenantFromHeader();
-      }
-      return tenantId;
-    } catch (Exception ex) {
-      return null;
-    }
+    var reach = adminScope.current();
+    return reach instanceof AdminScope.Platform ? resolveTenantFromHeader() : reach.tenantId();
   }
 
   private Long resolveTenantFromHeader() {

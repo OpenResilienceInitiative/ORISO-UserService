@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="20260921-account-invite-unit-queue" author="oriso">
+    <sqlFile path="migrate.sql" relativeToChangelogFile="true"/>
+    <rollback>
+      <dropIndex tableName="account_invite" indexName="idx_account_invite_waiting_unit"/>
+      <dropColumn tableName="account_invite" columnName="waiting_for_unit"/>
+      <dropColumn tableName="account_invite" columnName="queued_template_id"/>
+      <dropColumn tableName="account_invite" columnName="queued_expiry_days"/>
+      <dropColumn tableName="account_invite" columnName="import_batch_id"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

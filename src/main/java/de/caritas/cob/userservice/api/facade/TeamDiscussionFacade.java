@@ -360,27 +360,16 @@ public class TeamDiscussionFacade {
                 () ->
                     new InternalServerErrorException(
                         "No Matrix service account for agency " + session.getAgencyId()));
-    if (credentials.getMatrixUserId() == null
-        || credentials.getMatrixUserId().isBlank()
-        || credentials.getMatrixPassword() == null
-        || credentials.getMatrixPassword().isBlank()) {
+    if (credentials.getMatrixUserId() == null || credentials.getMatrixUserId().isBlank()) {
       throw new InternalServerErrorException(
           "Matrix service account for agency " + session.getAgencyId() + " is incomplete");
     }
-    String token =
-        matrixSynapseService.loginUser(
-            extractLocalPart(credentials.getMatrixUserId()), credentials.getMatrixPassword());
+    String token = matrixSynapseService.loginAsUserAccessToken(credentials.getMatrixUserId());
     if (token == null || token.isBlank()) {
       throw new InternalServerErrorException(
           "Matrix service account login failed for agency " + session.getAgencyId());
     }
     return token;
-  }
-
-  private String extractLocalPart(String matrixUserId) {
-    String value = matrixUserId.startsWith("@") ? matrixUserId.substring(1) : matrixUserId;
-    int colon = value.indexOf(':');
-    return colon > 0 ? value.substring(0, colon) : value;
   }
 
   private TeamDiscussionView toView(TeamDiscussion discussion) {

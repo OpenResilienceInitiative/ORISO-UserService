@@ -32,6 +32,7 @@ import de.caritas.cob.userservice.api.testConfig.ApiControllerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.KeycloakTestConfig;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
@@ -62,7 +63,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
   ApiControllerTestConfig.class,
   ConsultingTypeManagerTestConfig.class
 })
-class DeleteUserAnonymousSchedulerIT {
+class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture {
 
   private static final String TASK_NAME = "anonymous-user-deletion";
 
@@ -77,6 +78,12 @@ class DeleteUserAnonymousSchedulerIT {
   @Autowired private ScheduledTaskClaimRepository claimRepository;
 
   @Autowired private UserService userService;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory
+      ownerFactory;
+
+  private de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures dpaOwner;
 
   @Value("${user.anonymous.deleteworkflow.periodMinutes}")
   private long deletionPeriodInMinutes;
@@ -95,6 +102,9 @@ class DeleteUserAnonymousSchedulerIT {
 
   @BeforeEach
   public void setup() throws MatrixCreateUserException {
+    dpaOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
+            ownerFactory, 1L);
     deleteSchedulerClaim();
     when(tenantService.getSingleTenancyTenantDataFresh())
         .thenReturn(ChatRecoveryPolicyFixtures.tenant());
@@ -126,6 +136,7 @@ class DeleteUserAnonymousSchedulerIT {
 
   @AfterEach
   public void cleanDatabase() {
+    dpaOwner.close();
     this.sessionRepository.deleteAll();
     deleteSchedulerClaim();
   }

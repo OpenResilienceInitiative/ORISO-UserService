@@ -95,7 +95,8 @@ public class TenantCaseHandoverPolicyReadClient {
     IdentityLogin login = null;
     try {
       var technical = identityClientConfig.getTechnicalUser();
-      login = identityAuthentication.login(technical.getUsername(), technical.getPassword());
+      login =
+          identityAuthentication.loginService(technical.getClientId(), technical.getClientSecret());
       if (login == null || login.accessToken() == null || login.accessToken().isBlank())
         throw new IllegalStateException("Service authentication unavailable");
       var api = tenantServiceFactory.createControllerApi();
@@ -108,17 +109,6 @@ public class TenantCaseHandoverPolicyReadClient {
     } catch (RuntimeException exception) {
       // Neither downstream response bodies nor identity credentials may enter fallback logs.
       throw new IllegalStateException(operationName + " failed: " + failureSummary(exception));
-    } finally {
-      if (login != null && login.refreshToken() != null && !login.refreshToken().isBlank()) {
-        try {
-          identityAuthentication.logout(login.refreshToken(), login.accessToken());
-        } catch (RuntimeException exception) {
-          // The read outcome remains authoritative; never expose identity provider replies.
-          log.warn(
-              "Technical-user logout failed after tenant policy read: {}",
-              failureSummary(exception));
-        }
-      }
     }
   }
 

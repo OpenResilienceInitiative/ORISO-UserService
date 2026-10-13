@@ -58,6 +58,7 @@ import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -65,6 +66,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
@@ -85,6 +87,7 @@ import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.RequestedContactSheetService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -290,6 +293,12 @@ class UserControllerIT {
   @MockitoBean private ChatOccurrenceCommandService chatOccurrenceCommandService;
   @MockitoBean private ChatOccurrenceQueryService chatOccurrenceQueryService;
   @MockitoBean private GroupChatRoleService groupChatRoleService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService
+      groupChatPermissionService;
+
+  @MockitoBean private GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   @MockitoBean private SessionService sessionService;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
@@ -310,12 +319,14 @@ class UserControllerIT {
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
+        IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityLocaleLookup.class,
+        IdentityPasswordChangeRequirement.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,
@@ -428,6 +439,8 @@ class UserControllerIT {
   @MockitoBean
   @SuppressWarnings("unused")
   private EventNotificationService eventNotificationService;
+
+  @MockitoBean private RequestedContactSheetService requestedContactSheetService;
 
   @BeforeEach
   void setUp() {
@@ -1600,6 +1613,7 @@ class UserControllerIT {
         .thenReturn(AUTHORITIES_ASSIGN_SESSION_AND_ENQUIRY);
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT.getId());
     when(consultantService.getConsultant(anyString())).thenReturn(Optional.of(CONSULTANT));
+    when(sessionService.isConsultantPermittedToSession(CONSULTANT, SESSION)).thenReturn(true);
     doThrow(new ConflictException(""))
         .when(assignSessionFacade)
         .assignSession(SESSION, TEAM_CONSULTANT, CONSULTANT);
@@ -1616,6 +1630,9 @@ class UserControllerIT {
       throws Exception {
 
     when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(SESSION));
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT.getId());
+    when(consultantService.getConsultant(anyString())).thenReturn(Optional.of(CONSULTANT));
+    when(sessionService.isConsultantPermittedToSession(CONSULTANT, SESSION)).thenReturn(true);
     when(userAccountService.retrieveValidatedConsultantById(anyString()))
         .thenThrow(new InternalServerErrorException(""));
 
@@ -2338,7 +2355,7 @@ class UserControllerIT {
         .andExpect(status().isOk());
 
     var captor = ArgumentCaptor.forClass(UpdateAdminConsultantDTO.class);
-    verify(consultantUpdateService).updateConsultant(any(), captor.capture());
+    verify(consultantUpdateService).updateConsultant(any(), captor.capture(), eq(false));
 
     var updateAdminConsultantDTO = captor.getValue();
     assertEquals(updateConsultantDTO.getEmail().toLowerCase(), updateAdminConsultantDTO.getEmail());

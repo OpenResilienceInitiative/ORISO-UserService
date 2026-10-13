@@ -104,6 +104,46 @@ class TenantAdminOnboardingControllerTest {
   }
 
   @Test
+  void emailSetup_dispatchesByRoleWithoutRecipientInput() {
+    assertEquals(HttpStatus.NO_CONTENT, controller.startEmailTwoFactor("tok").getStatusCode());
+    verify(onboardingService).startEmailTwoFactor("tok");
+    probeAnswersCounsellor();
+    assertEquals(HttpStatus.NO_CONTENT, controller.startEmailTwoFactor("tok").getStatusCode());
+    verify(counsellorOnboardingService).startEmailTwoFactor("tok");
+  }
+
+  @Test
+  void emailActivation_dispatchesSelectedMethodAndKeepsAppDefault() {
+    var request = new TenantAdminOnboardingController.TwoFactorActivationRequestDTO();
+    request.otp = "123456";
+    request.method = de.caritas.cob.userservice.api.identity.IdentityOtpType.EMAIL;
+    controller.activateTwoFactor("tok", request);
+    verify(onboardingService).activateEmailTwoFactor("tok", "123456");
+    probeAnswersCounsellor();
+    controller.activateTwoFactor("tok", request);
+    verify(counsellorOnboardingService).activateEmailTwoFactor("tok", "123456");
+    request.method = null;
+    controller.activateTwoFactor("tok", request);
+    verify(counsellorOnboardingService).activateTwoFactor("tok", "123456");
+  }
+
+  @Test
+  void pendingRegistration_withoutAppSecret_stillAdvertisesEmail() {
+    var response =
+        TenantAdminOnboardingController.TenantAdminRegistrationResponseDTO.from(
+            new CounsellorRegistrationResult("consultant", null, null, true));
+    assertNotNull(response.twoFactor);
+    assertEquals(
+        java.util.List.of(
+            de.caritas.cob.userservice.api.identity.IdentityOtpType.EMAIL,
+            de.caritas.cob.userservice.api.identity.IdentityOtpType.APP),
+        response.twoFactor.methods);
+    assertEquals(
+        de.caritas.cob.userservice.api.identity.IdentityOtpType.EMAIL,
+        response.twoFactor.defaultMethod);
+  }
+
+  @Test
   void resolveOnboardingInvite_plainState_mapsInviteFieldsWithoutPhase() {
     when(onboardingService.resolveOnboardingInvite("tok"))
         .thenReturn(new OnboardingInviteState(invite(), false, OPERATOR_DPA_JSON, null));
@@ -175,6 +215,51 @@ class TenantAdminOnboardingControllerTest {
     assertTrue(json.contains("\"dpaUnavailableReason\":\"UPSTREAM_ERROR\""), json);
   }
 
+  // --- Forward / confirmation resume (ORISO-Admin#1065) ---
+
+  @Test
+  void resolveOnboardingInvite_untouchedInvite_reportsNeitherForwardNorConfirmation() {
+    when(onboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(new OnboardingInviteState(invite(), false, OPERATOR_DPA_JSON, null));
+
+    var body = controller.resolveOnboardingInvite("tok").getBody();
+
+    assertNotNull(body);
+    assertNull(body.dpaForwardedAt);
+    assertNull(body.dpaSignedAt);
+  }
+
+  @Test
+  void resolveOnboardingInvite_forwardedInvite_reportsWhenItWasForwarded() {
+    AccountInvite forwarded = invite();
+    forwarded.setDpaForwardedAt(LocalDateTime.of(2026, 9, 24, 16, 5, 30));
+    when(onboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(new OnboardingInviteState(forwarded, false, OPERATOR_DPA_JSON, null));
+
+    var body = controller.resolveOnboardingInvite("tok").getBody();
+
+    assertNotNull(body);
+    assertEquals("2026-09-24T16:05:30", body.dpaForwardedAt);
+    assertNull(body.dpaSignedAt);
+  }
+
+  @Test
+  void resolveOnboardingInvite_confirmedInvite_reportsTheConfirmation() throws Exception {
+    AccountInvite confirmed = invite();
+    confirmed.setDpaForwardedAt(LocalDateTime.of(2026, 9, 24, 16, 5, 30));
+    confirmed.setDpaSignedAt(LocalDateTime.of(2026, 9, 25, 9, 12));
+    when(onboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(new OnboardingInviteState(confirmed, false, OPERATOR_DPA_JSON, null));
+
+    String json =
+        new ObjectMapper()
+            .findAndRegisterModules()
+            .writeValueAsString(controller.resolveOnboardingInvite("tok").getBody());
+
+    assertTrue(json.contains("\"dpaForwardedAt\":\"2026-09-24T16:05:30\""), json);
+    assertTrue(json.contains("\"dpaSignedAt\":\"2026-09-25T09:12:00\""), json);
+  }
+
   @Test
   void resolveOnboardingInvite_counsellorVariant_leavesTheDpaUnavailableReasonNull() {
     probeAnswersCounsellor();
@@ -207,7 +292,7 @@ class TenantAdminOnboardingControllerTest {
   }
 
   @Test
-  void resolveOnboardingInvite_resumableWithoutStoredSecret_omitsTwoFactorMaterial() {
+  void resolveOnboardingInvite_resumableWithoutStoredSecret_advertisesEmail() {
     AccountInvite resumable = invite();
     resumable.setStatus(AccountInviteStatus.ACCEPTED);
     when(onboardingService.resolveOnboardingInvite("tok"))
@@ -217,7 +302,11 @@ class TenantAdminOnboardingControllerTest {
 
     assertNotNull(body);
     assertEquals("PENDING_2FA_ACTIVATION", body.phase);
-    assertNull(body.twoFactor);
+    assertNotNull(body.twoFactor);
+    assertNull(body.twoFactor.secret);
+    assertEquals(
+        de.caritas.cob.userservice.api.identity.IdentityOtpType.EMAIL,
+        body.twoFactor.defaultMethod);
   }
 
   @Test
@@ -531,7 +620,7 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", true));
+                "https://app.example.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", true));
     var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
     request.recipientEmail = "legal@example.org";
 
@@ -539,7 +628,7 @@ class TenantAdminOnboardingControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertNotNull(response.getBody());
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
     assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
     assertTrue(response.getBody().mailSent);
   }
@@ -550,7 +639,7 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+                "https://app.example.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
     var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
     request.recipientEmail = "legal@example.org";
 
@@ -558,7 +647,7 @@ class TenantAdminOnboardingControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertNotNull(response.getBody());
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
     // the validity window must survive the degraded path - a mail failure may not cost it
     assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
     assertFalse(response.getBody().mailSent);
@@ -569,14 +658,14 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa(eq("raw-token"), eq(null)))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+                "https://app.example.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
 
     var response = controller.forwardDpa("raw-token", null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     // the body must be complete even without a request body - status alone cannot prove that
     assertNotNull(response.getBody());
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
     assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
     assertFalse(response.getBody().mailSent);
     verify(onboardingService).forwardDpa("raw-token", null);
@@ -592,7 +681,7 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa("raw-token", null))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+                "https://app.example.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
 
     controller.forwardDpa("raw-token", null);
 

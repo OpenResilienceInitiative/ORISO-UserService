@@ -12,17 +12,19 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationService;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.admin.AgencyAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.TenantAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.AdminFilterService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
+import de.caritas.cob.userservice.api.port.out.SearchSort;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort.Direction;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
@@ -37,6 +39,7 @@ public class AdminUserFacade {
   private final @NonNull AdminFilterService adminFilterService;
 
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AdminScope adminScope;
 
   public AdminResponseDTO createNewTenantAdmin(final CreateAdminDTO createTenantAdminDTO) {
     return this.tenantAdminUserService.createNewTenantAdmin(createTenantAdminDTO);
@@ -76,6 +79,11 @@ public class AdminUserFacade {
     return this.agencyAdminUserService.findAgenciesOfAdmin(userId);
   }
 
+  public List<Long> findAgencyIdsOfAdminInCallerScope(String adminId) {
+    adminScope.assertMay(Target.admin(adminId));
+    return this.agencyAdminUserService.findAgenciesOfAdmin(adminId);
+  }
+
   public void createNewAdminAgencyRelation(
       final String adminId, final CreateAdminAgencyRelationDTO createAdminAgencyRelationDTO) {
     this.adminAgencyRelationService.createAdminAgencyRelation(
@@ -112,24 +120,24 @@ public class AdminUserFacade {
 
   public Map<String, Object> findAgencyAdminsByInfix(
       final String infix,
+      final SearchFilter filter,
       final int pageNumber,
       final int pageSize,
       final String fieldName,
       final boolean isAscending) {
-    var direction = isAscending ? Direction.ASC : Direction.DESC;
-    var pageRequest = PageRequest.of(pageNumber, pageSize, direction, fieldName);
-    return this.agencyAdminUserService.findAgencyAdminsByInfix(infix, pageRequest);
+    var pageRequest = SearchSort.pageRequestOf(pageNumber, pageSize, fieldName, isAscending);
+    return this.agencyAdminUserService.findAgencyAdminsByInfix(infix, filter, pageRequest);
   }
 
   public Map<String, Object> findTenantAdminsByInfix(
       final String infix,
+      final SearchFilter filter,
       final int pageNumber,
       final int pageSize,
       final String fieldName,
       final boolean isAscending) {
-    var direction = isAscending ? Direction.ASC : Direction.DESC;
-    var pageRequest = PageRequest.of(pageNumber, pageSize, direction, fieldName);
-    return this.tenantAdminUserService.findTenantAdminsByInfix(infix, pageRequest);
+    var pageRequest = SearchSort.pageRequestOf(pageNumber, pageSize, fieldName, isAscending);
+    return this.tenantAdminUserService.findTenantAdminsByInfix(infix, filter, pageRequest);
   }
 
   public List<AdminResponseDTO> findTenantAdmins(Integer tenantId) {

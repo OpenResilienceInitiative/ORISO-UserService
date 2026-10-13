@@ -10,12 +10,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -30,18 +32,25 @@ import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
 import jakarta.ws.rs.NotFoundException;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class CreateAdminServiceTest {
+  @Mock
+  private de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
 
   @InjectMocks private CreateAdminService createAdminService;
 
@@ -56,8 +65,138 @@ class CreateAdminServiceTest {
   @Mock private AdminRepository adminRepository;
 
   @Mock private AuthenticatedUser authenticatedUser;
+  @Mock private AdminScope adminScope;
+  @Mock private ExistingAccountSetupIssuer accountSetupIssuer;
 
   private final EasyRandom easyRandom = new EasyRandom();
+
+  private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy
+      inactivityPolicy =
+          new de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy(
+              24, 7, java.time.Instant.parse("2026-10-06T00:00:00Z"));
+
+  @BeforeEach
+  void inactivityPolicy() {
+    org.mockito.Mockito.lenient()
+        .when(
+            inactivityEnrollment.capture(
+                org.mockito.ArgumentMatchers.nullable(Long.class),
+                any(
+                    de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
+                        .class)))
+        .thenReturn(inactivityPolicy);
+  }
+
+  @Test
+  void capturesAndPersistsTheAdminInactivityPolicy() {
+    givenKeycloakCreatesUser();
+    var admin = givenValidCreateAdminDTO(42);
+
+    createAdminService.createNewTenantAdmin(admin);
+
+    verify(inactivityEnrollment)
+        .capture(
+            42L,
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.OTHER);
+    verify(inactivityEnrollment).enroll("kc-user-id", 42L, inactivityPolicy);
+  }
+
+  @Test
+  void policyCaptureFailureStopsBeforeIdentityCreation() {
+    var admin = givenValidCreateAdminDTO(42);
+    var failure =
+        new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_GATEWAY);
+    when(inactivityEnrollment.capture(
+            42L,
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.OTHER))
+        .thenThrow(failure);
+
+    assertThat(
+            assertThrows(
+                RuntimeException.class, () -> createAdminService.createNewTenantAdmin(admin)))
+        .isSameAs(failure);
+    verifyNoInteractions(identityClient);
+  }
+
+  @Test
+  void enrollmentValidationFailureDeletesTheAdminRowAndIdentity() {
+    givenKeycloakCreatesUser();
+    var admin = givenValidCreateAdminDTO(42);
+    var failure =
+        new CustomValidationHttpStatusException(HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE);
+    doThrow(failure).when(inactivityEnrollment).enroll("kc-user-id", 42L, inactivityPolicy);
+
+    assertThat(
+            assertThrows(
+                RuntimeException.class, () -> createAdminService.createNewTenantAdmin(admin)))
+        .isSameAs(failure);
+    verify(adminRepository).deleteById("kc-user-id");
+    verify(inactivityEnrollment).discardUncompletedCreation("kc-user-id", inactivityPolicy);
+    verify(identityAccountRemover).rollbackUser("kc-user-id");
+  }
+
+  @Test
+  void compensationContinuesWhenDeletingTheAdminRowFails() {
+    givenKeycloakCreatesUser();
+    var admin = givenValidCreateAdminDTO(42);
+    doThrow(new IllegalStateException("policy write failed"))
+        .when(inactivityEnrollment)
+        .enroll("kc-user-id", 42L, inactivityPolicy);
+    doThrow(new IllegalStateException("database unavailable"))
+        .when(adminRepository)
+        .deleteById("kc-user-id");
+
+    assertThrows(
+        InternalServerErrorException.class, () -> createAdminService.createNewTenantAdmin(admin));
+
+    verify(inactivityEnrollment).discardUncompletedCreation("kc-user-id", inactivityPolicy);
+    verify(identityAccountRemover).rollbackUser("kc-user-id");
+  }
+
+  @Test
+  void directlyCreatedAdminsGetTemporaryPasswordsButInvitedAdminsDoNot() {
+    givenKeycloakCreatesUser();
+    var admin = easyRandom.nextObject(CreateAdminDTO.class);
+    admin.setUsername("valid_username");
+    admin.setEmail("valid@email.com");
+    admin.setPassword("initial-secret");
+
+    createAdminService.createNewTenantAdmin(admin);
+    verify(identityPasswordUpdater).updateTemporaryPassword("kc-user-id", "initial-secret");
+    verify(accountSetupIssuer)
+        .issueAfterCreation(AccountInviteTargetRole.TENANT_ADMIN, "kc-user-id", "initial-secret");
+
+    createAdminService.createNewTenantAdminFromInvite(admin);
+    verify(identityPasswordUpdater).updatePassword("kc-user-id", "initial-secret");
+
+    admin.setPassword("agency-secret");
+    createAdminService.createNewAgencyAdmin(admin);
+    verify(identityPasswordUpdater).updateTemporaryPassword("kc-user-id", "agency-secret");
+    verify(accountSetupIssuer)
+        .issueAfterCreation(AccountInviteTargetRole.AGENCY_ADMIN, "kc-user-id", "agency-secret");
+
+    admin.setTenantId(42);
+    createAdminService.createNewAgencyAdminInTenant(admin);
+    verify(identityPasswordUpdater).updatePassword("kc-user-id", "agency-secret");
+  }
+
+  @Test
+  void setupMailFailureAfterPersistedAdminDoesNotRollBackOnlyKeycloak() {
+    givenKeycloakCreatesUser();
+    var admin = givenValidCreateAdminDTO(42);
+    admin.setPassword("initial-secret");
+    doThrow(new IllegalStateException("setup delivery failed"))
+        .when(accountSetupIssuer)
+        .issueAfterCreation(AccountInviteTargetRole.TENANT_ADMIN, "kc-user-id", "initial-secret");
+
+    assertThat(
+            org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalStateException.class, () -> createAdminService.createNewTenantAdmin(admin)))
+        .hasMessage("setup delivery failed");
+
+    verify(adminRepository).saveAndFlush(any(Admin.class));
+    verify(identityAccountRemover, never()).rollbackUser(anyString());
+  }
 
   @Test
   void getDefaultRoles_Should_NotAssignLegacySingleTenantAdmin_ForSingleDomainTenantAdmin() {
@@ -127,28 +266,25 @@ class CreateAdminServiceTest {
     // given a tenant admin of tenant 9 trying to create an agency admin for tenant 7
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    doThrow(new ForbiddenException("out of reach"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.tenant(7L));
 
     CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(7);
 
     // when, then
-    ForbiddenException exception =
-        assertThrows(
-            ForbiddenException.class,
-            () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
+    assertThrows(
+        ForbiddenException.class, () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
 
-    assertThat(exception.getMessage())
-        .isEqualTo("Admin accounts can only be created for the tenant of the calling admin");
     verifyNoInteractions(identityClient);
     verifyNoInteractions(adminRepository);
   }
 
   @Test
-  void createNewAgencyAdmin_Should_KeepOwnTenantId_WhenCallerIsTenantScoped() {
+  void createNewAgencyAdmin_Should_CheckTheNamedTenantFirst_And_KeepIt_When_ScopeAllows() {
     // given
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(authenticatedUser.getTenantId()).thenReturn(9L);
     givenKeycloakCreatesUser();
 
     CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(9);
@@ -158,24 +294,10 @@ class CreateAdminServiceTest {
 
     // then
     assertThat(admin.getTenantId()).isEqualTo(9L);
+    var order = inOrder(adminScope, identityClient);
+    order.verify(adminScope).assertMay(AdminScope.Target.tenant(9L));
+    order.verify(identityClient).createUser(any(), anyString(), anyString());
     verify(identityAccountRemover, never()).rollbackUser(anyString());
-  }
-
-  @Test
-  void createNewAgencyAdmin_Should_AllowForeignTenantId_WhenCallerIsPlatformAdmin() {
-    // given
-    ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
-    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
-    givenKeycloakCreatesUser();
-
-    CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(7);
-
-    // when
-    Admin admin = createAdminService.createNewAgencyAdmin(createAdminDTO);
-
-    // then
-    assertThat(admin.getTenantId()).isEqualTo(7L);
   }
 
   private CreateAdminDTO givenValidCreateAdminDTO(Integer tenantId) {
@@ -190,7 +312,7 @@ class CreateAdminServiceTest {
     CreatedIdentity keycloakResponse = new CreatedIdentity();
     keycloakResponse.setUserId("kc-user-id");
     when(identityClient.createUser(any(), anyString(), anyString())).thenReturn(keycloakResponse);
-    when(adminRepository.save(any(Admin.class)))
+    when(adminRepository.saveAndFlush(any(Admin.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
   }
 }

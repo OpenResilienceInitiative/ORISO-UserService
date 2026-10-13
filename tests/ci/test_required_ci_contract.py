@@ -257,13 +257,15 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("name: required integration tests", integration)
         self.assertNotIn("continue-on-error:", integration)
         self.assertIn(
-            "needs: [validate, redis-contract, mariadb-contract, required-integration-tests]",
+            "needs: [validate, redis-contract, mariadb-contract, required-integration-tests,"
+            " tenant-filter-on-integration-tests]",
             aggregate,
         )
         self.assertIn("if: always()", aggregate)
         self.assertIn("name: required PreDev CI", aggregate)
         self.assertIn("needs.required-integration-tests.result", aggregate)
         self.assertIn("needs.mariadb-contract.result", aggregate)
+        self.assertIn("needs.tenant-filter-on-integration-tests.result", aggregate)
 
     def test_publish_waits_for_required_integration_tests(self):
         workflow = (ROOT / ".github/workflows/ci-main.yml").read_text()
@@ -324,6 +326,15 @@ class RequiredCiContractTest(unittest.TestCase):
             )
             self.assertNotIn("LIQUIBASE_IT_DB_URL", integration)
             self.assertNotIn("mariadb:", integration)
+
+    def test_tenant_filter_job_reads_only_and_runs_with_redis_like_the_other_it_jobs(self):
+        workflow = (ROOT / ".github/workflows/ci-pull-request.yml").read_text()
+        tenant_filter = job_block(workflow, "tenant-filter-on-integration-tests")
+
+        self.assertIn("permissions:\n      contents: read", tenant_filter)
+        self.assertIn("services:\n      redis:\n        image: redis:7-alpine", tenant_filter)
+        self.assertIn('--health-cmd "redis-cli ping"', tenant_filter)
+        self.assertIn("ORISO_LOCAL_REDIS_IT: true", tenant_filter)
 
     def test_full_integration_suite_is_required_without_quarantine(self):
         runner = (ROOT / "scripts/ci/run-required-integration-tests.sh").read_text()

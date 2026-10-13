@@ -108,7 +108,9 @@ public class UserDtoMapper {
         && isNull(patchUserDTO.getTermsAndConditionsConfirmation())
         && isNull(patchUserDTO.getAvailable())
         && isNull(patchUserDTO.getLiveChatViaSidebar())
-        && isNull(patchUserDTO.getEmailNotifications())) {
+        && isNull(patchUserDTO.getEmailNotifications())
+        && isNull(patchUserDTO.getAvatarKind())
+        && isNull(patchUserDTO.getAvatarId())) {
       return Optional.empty();
     }
 
@@ -150,6 +152,12 @@ public class UserDtoMapper {
     }
     if (nonNull(patchUserDTO.getEmailNotifications())) {
       map.put("emailNotifications", patchUserDTO.getEmailNotifications());
+    }
+    if (nonNull(patchUserDTO.getAvatarKind())) {
+      map.put("avatarKind", patchUserDTO.getAvatarKind().getValue());
+    }
+    if (nonNull(patchUserDTO.getAvatarId())) {
+      map.put("avatarId", patchUserDTO.getAvatarId());
     }
     return Optional.of(map);
   }

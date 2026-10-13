@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.facade.assignsession;
 
+import static de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static java.util.Objects.nonNull;
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
@@ -44,6 +46,8 @@ import org.springframework.stereotype.Service;
 public class AssignEnquiryFacade {
 
   private final @NonNull SessionService sessionService;
+  private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
+      dpaPolicy;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull SessionToConsultantVerifier sessionToConsultantVerifier;
   private final @NonNull StatisticsService statisticsService;
@@ -67,6 +71,11 @@ public class AssignEnquiryFacade {
   private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
 
   private final @NonNull TeamDiscussionFacade teamDiscussionFacade;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore
+      acceptanceNotices;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix
+          .InquiryAcceptanceNoticeDelivery
+      acceptanceDelivery;
 
   /**
    * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
@@ -88,7 +97,13 @@ public class AssignEnquiryFacade {
       boolean skipConsultantAssignmentAndSessionInProgressCheck) {
     var requestURI = httpServletRequest.getRequestURI();
     var requestReferer = httpServletRequest.getHeader(HttpHeaders.REFERER);
+    boolean initialAcceptance = session.getStatus() == INITIAL || session.getStatus() == NEW;
     assignEnquiry(session, consultant, skipConsultantAssignmentAndSessionInProgressCheck);
+    if (initialAcceptance) {
+      acceptanceNotices
+          .recordSuccessfulInitialAcceptance(session)
+          .ifPresent(this::dispatchAcceptanceAfterCommit);
+    }
     // The case is now committed to this counsellor (assignEnquiry rolls back and rethrows on any
     // failure), so it is safe to layer standing supervision on top. This call never throws.
     sessionSupervisorFacade.attachStandingSupervisorIfAssigned(session.getId(), consultant);
@@ -102,6 +117,22 @@ public class AssignEnquiryFacade {
     event.setRequestReferer(requestReferer);
     event.setRequestUserId(consultant.getId());
     statisticsService.fireEvent(event);
+  }
+
+  private void dispatchAcceptanceAfterCommit(Long sessionId) {
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      acceptanceDelivery.dispatchSafely(sessionId);
+      return;
+    }
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                acceptanceDelivery.dispatchSafely(sessionId);
+              }
+            });
   }
 
   /**
@@ -149,8 +180,30 @@ public class AssignEnquiryFacade {
     // ADR-022 decision 1 / ADR-003: a topic-based anonymous enquiry carries no agency until it is
     // accepted. Bind the accepting counsellor's department here, before the assignment save, so
     // agency, consultant and status are persisted together.
-    var departmentBound = bindDepartment && bindDepartmentIfUnbound(session, consultant);
-    sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
+    var servingAgencyId = session.getAgencyId();
+    if (bindDepartment && servingAgencyId == null) {
+      servingAgencyId =
+          anonymousEnquiryDepartmentResolver.resolveAgencyId(session, consultant).orElse(null);
+    }
+    if (session.getStatus() == INITIAL || session.getStatus() == NEW) {
+      if (servingAgencyId != null) {
+        dpaPolicy.requireForAgency(servingAgencyId);
+      } else if (bindDepartment) {
+        // A topic queue may have no matching department. The accepting organisation serves it.
+        dpaPolicy.requireForConcreteTenant(consultant.getTenantId());
+      } else {
+        dpaPolicy.requireForAgency((Long) null);
+      }
+    }
+    var departmentBound =
+        bindDepartment && session.getAgencyId() == null && servingAgencyId != null;
+    if (departmentBound) {
+      session.setAgencyId(servingAgencyId);
+    }
+    var previousConsultant = session.getConsultant();
+    var previousStatus = session.getStatus();
+    var assignment =
+        sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
 
     // Create Matrix room and invite user
     try {
@@ -189,8 +242,7 @@ public class AssignEnquiryFacade {
             }
 
             var agencyCredentials = agencyCredentialsOpt.get();
-            if (isBlank(agencyCredentials.getMatrixUserId())
-                || isBlank(agencyCredentials.getMatrixPassword())) {
+            if (isBlank(agencyCredentials.getMatrixUserId())) {
               log.warn(
                   "Agency Matrix credentials incomplete for agency {}, falling back to create new room",
                   session.getAgencyId());
@@ -198,13 +250,7 @@ public class AssignEnquiryFacade {
               return;
             }
 
-            // Extract agency Matrix username
-            String agencyMatrixUsername = null;
-            if (agencyCredentials.getMatrixUserId().startsWith("@")) {
-              agencyMatrixUsername = MatrixIds.localpart(agencyCredentials.getMatrixUserId());
-            }
-
-            if (isBlank(agencyMatrixUsername)) {
+            if (!MatrixIds.isUserId(agencyCredentials.getMatrixUserId())) {
               log.warn("Invalid agency Matrix user ID, falling back to create new room");
               createNewMatrixRoomOrFail(session, consultant);
               return;
@@ -212,8 +258,7 @@ public class AssignEnquiryFacade {
 
             // Login as agency service account (room creator)
             String agencyToken =
-                sessionRoomGateway.loginUser(
-                    agencyMatrixUsername, agencyCredentials.getMatrixPassword());
+                sessionRoomGateway.loginAsUser(agencyCredentials.getMatrixUserId());
 
             if (isBlank(agencyToken)) {
               log.error(
@@ -330,7 +375,8 @@ public class AssignEnquiryFacade {
                 session.getId(), user.getMatrixUserId(), consultant.getMatrixUserId()));
       }
     } catch (Exception e) {
-      rollbackSessionUpdate(session, departmentBound);
+      rollbackSessionUpdate(
+          session, assignment, previousConsultant, previousStatus, departmentBound);
       log.error(
           "Matrix room creation failed for session: {}, rolling back assignment",
           session.getId(),
@@ -343,25 +389,22 @@ public class AssignEnquiryFacade {
     }
 
     emailNotificationFacade.sendInquiryAcceptedNotification(
-        session.getUser(), consultant, TenantContext.getCurrentTenantData());
+        session.getUser(), consultant, TenantContext.getCurrentTenantData(), session);
   }
 
-  private boolean bindDepartmentIfUnbound(Session session, Consultant consultant) {
-    if (nonNull(session.getAgencyId())) {
-      return false;
-    }
-    var agencyId = anonymousEnquiryDepartmentResolver.resolveAgencyId(session, consultant);
-    agencyId.ifPresent(session::setAgencyId);
-    return agencyId.isPresent();
-  }
-
-  private void rollbackSessionUpdate(Session session, boolean departmentBound) {
+  private void rollbackSessionUpdate(
+      Session session,
+      de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange
+          assignment,
+      Consultant previousConsultant,
+      SessionStatus previousStatus,
+      boolean departmentBound) {
     if (nonNull(session)) {
       if (departmentBound) {
-        // The enquiry returns to the queue unaccepted, so it no longer belongs to a department.
         session.setAgencyId(null);
       }
-      sessionService.updateConsultantAndStatusForSession(session, null, NEW);
+      sessionService.compensateConsultantAssignment(
+          session.getId(), assignment, previousConsultant, previousStatus, departmentBound);
     }
   }
 

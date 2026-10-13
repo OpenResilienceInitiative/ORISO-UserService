@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
@@ -49,6 +50,9 @@ import org.springframework.transaction.support.TransactionTemplate;
   ConsultantPictureService.class,
   PictureIntake.class,
   ConsultantAdminService.class,
+  SessionOwnershipService.class,
+  de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore.class,
+  de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class,
   DeletionLifecycleService.class,
   DeleteDatabaseConsultantAction.class
 })
@@ -295,7 +299,7 @@ class ConsultantPictureDatabaseIT {
               return null;
             })
         .when(preDelete)
-        .performPreDeletionSteps(any(), eq(false));
+        .performPreDeletionSteps(any(), eq(false), any());
     try (var executor = Executors.newFixedThreadPool(2)) {
       var deleteResult = executor.submit(() -> deletion.markConsultantForDeletion(id, false));
       assertThat(deleting.await(5, TimeUnit.SECONDS)).isTrue();

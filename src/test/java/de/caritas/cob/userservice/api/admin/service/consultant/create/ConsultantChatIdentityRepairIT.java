@@ -46,7 +46,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
-class ConsultantChatIdentityRepairIT {
+class ConsultantChatIdentityRepairIT
+    extends de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture {
 
   private static final String VALID_USERNAME = "chatlessUsername";
   private static final String VALID_EMAILADDRESS = "chatless@emailaddress.de";

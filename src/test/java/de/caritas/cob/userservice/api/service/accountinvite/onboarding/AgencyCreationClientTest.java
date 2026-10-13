@@ -65,10 +65,10 @@ class AgencyCreationClientTest {
   @BeforeEach
   void setUp() {
     var technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
+    technicalUser.setClientId("technical");
+    technicalUser.setClientSecret("secret");
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.login(anyString(), anyString()))
+    when(identityAuthentication.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("access-token", 60, 60, "refresh-token"));
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(anyString()))
         .thenReturn(new HttpHeaders());
@@ -107,6 +107,29 @@ class AgencyCreationClientTest {
     assertThatThrownBy(this::createAgency)
         .isInstanceOf(InternalServerErrorException.class)
         .hasMessageContaining("400");
+  }
+
+  @Test
+  void policyConflict_isCorrectableInputRatherThanAConsumedReservation() {
+    HttpHeaders headers = new HttpHeaders();
+    headers.add("X-Reason", "ONE_TOPIC_PER_AGENCY");
+    when(adminAgencyControllerApi.createAgency(any(AgencyDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.CONFLICT, "Conflict", headers, null, null));
+    assertThatThrownBy(this::createAgency)
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class)
+        .satisfies(
+            failure -> {
+              var validationFailure =
+                  (de.caritas.cob.userservice.api.exception.httpresponses
+                          .CustomValidationHttpStatusException)
+                      failure;
+              assertThat(validationFailure.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(validationFailure.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("ONE_TOPIC_PER_AGENCY");
+            });
   }
 
   /** The documented single-use outcome keeps its own status. */

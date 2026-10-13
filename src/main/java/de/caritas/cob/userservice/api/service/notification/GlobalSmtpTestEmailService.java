@@ -1,21 +1,18 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSmtpTestEmailDTO;
-import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
-import jakarta.mail.Authenticator;
+import de.caritas.cob.userservice.api.service.email.OrisoSmtpTransport;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import jakarta.mail.Message;
-import jakarta.mail.PasswordAuthentication;
-import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Properties;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,9 +24,9 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class GlobalSmtpTestEmailService {
 
-  private final @NonNull ApplicationSettingsService applicationSettingsService;
   private final @NonNull OrisoEmailRenderer emailRenderer;
   private final @NonNull OrisoEmailBrand emailBrand;
+  private final @NonNull PlatformSmtpSettingsProvider platformSmtpSettings;
 
   // No fallback: an admin-triggered diagnostic mail that silently links into another
   // deployment is worse than a startup failure that says so.
@@ -42,64 +39,52 @@ public class GlobalSmtpTestEmailService {
     void send(MimeMessage message) throws Exception;
   }
 
-  private SmtpTransport transport = Transport::send;
+  private SmtpTransport transport = OrisoSmtpTransport::send;
 
   public void sendTestEmail(GlobalSmtpTestEmailDTO dto) throws Exception {
-    var credentials =
-        applicationSettingsService
-            .getGlobalSmtpCredentials()
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "SMTP credentials are not configured in application settings."));
-    Properties props = new Properties();
-    props.put("mail.smtp.auth", "true");
-    props.put("mail.smtp.host", dto.getHost());
-    props.put("mail.smtp.port", String.valueOf(dto.getPort()));
-    if (Boolean.TRUE.equals(dto.getSecure())) {
-      props.put("mail.smtp.ssl.enable", "true");
-    } else {
-      props.put("mail.smtp.starttls.enable", "true");
+    PlatformSmtpSettingsProvider.Settings configured;
+    try {
+      configured = platformSmtpSettings.requireConfigured();
+    } catch (PlatformSmtpSettingsProvider.ConfigurationException exception) {
+      throw new ConfigurationException(exception.getMessage());
     }
-
     jakarta.mail.Session session =
-        jakarta.mail.Session.getInstance(
-            props,
-            new Authenticator() {
-              @Override
-              protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(
-                    credentials.getGlobalSmtpUsername(), credentials.getGlobalSmtpPassword());
-              }
-            });
+        OrisoSmtpTransport.session(
+            configured.host(),
+            configured.port(),
+            configured.secure(),
+            configured.username(),
+            configured.password());
 
-    var email = renderSmtpTest(dto);
+    var email = renderSmtpTest(configured);
     MimeMessage message = new MimeMessage(session);
-    message.setFrom(new InternetAddress(dto.getFrom()));
+    message.setFrom(new InternetAddress(configured.from()));
     message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(dto.getRecipientEmail()));
     message.setSubject(email.subject(), "UTF-8");
     message.setContent(OrisoEmailMime.alternative(email));
 
-    log.info("Sending global SMTP test email to {}", mask(dto.getRecipientEmail()));
+    log.info("Sending global SMTP test email");
     transport.send(message);
   }
 
-  /**
-   * {@code a***@example.com} — enough to confirm the right inbox in a log line, not the address.
-   */
-  private static String mask(String email) {
-    int at = email == null ? -1 : email.indexOf('@');
-    if (at <= 0) {
-      return "***";
+  /** Only this validated saved-settings error is safe to show to the platform administrator. */
+  public static class ConfigurationException extends IllegalStateException {
+    public ConfigurationException(String message) {
+      super(message);
     }
-    return email.charAt(0) + "***" + email.substring(at);
   }
 
-  private OrisoEmailRenderer.RenderedEmail renderSmtpTest(GlobalSmtpTestEmailDTO dto) {
-    Map<String, String> values =
-        new LinkedHashMap<>(emailBrand.values(appBaseUrl, dto.getEmailThemeColor()));
-    values.put("smtpHost", dto.getHost() + ":" + dto.getPort());
-    values.put("smtpFrom", dto.getFrom());
+  private OrisoEmailRenderer.RenderedEmail renderSmtpTest(
+      PlatformSmtpSettingsProvider.Settings configured) {
+    try {
+      emailBrand.platformName();
+    } catch (IllegalStateException exception) {
+      throw new ConfigurationException(
+          "EMAIL_BRANDING_NAME is missing; configure the platform name before sending email");
+    }
+    Map<String, String> values = new LinkedHashMap<>(emailBrand.valuesForTenant(appBaseUrl, null));
+    values.put("smtpHost", configured.host() + ":" + configured.port());
+    values.put("smtpFrom", configured.from());
     values.put("sentAt", OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
     // A diagnostic that renders differently from production mail tests the
     // wrong thing, so this one goes through the same skeleton as everything

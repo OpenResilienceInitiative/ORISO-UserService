@@ -43,6 +43,8 @@ import org.springframework.stereotype.Service;
 public class CreateEnquiryMessageFacade {
 
   private final @NonNull SessionService sessionService;
+  private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
+      dpaPolicy;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull EmailNotificationFacade emailNotificationFacade;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
@@ -55,9 +57,7 @@ public class CreateEnquiryMessageFacade {
   public CreateEnquiryMessageResponseDTO createEnquiryMessage(EnquiryData enquiryData) {
     try {
       Session session =
-          fetchSessionForEnquiryMessage(enquiryData.getSessionId(), enquiryData.getUser());
-      checkIfNotAnonymousEnquiry(session);
-      checkIfEnquiryMessageIsAlreadyWrittenForSession(session);
+          validateEnquiryPermission(enquiryData.getSessionId(), enquiryData.getUser());
 
       List<ConsultantAgency> agencyList = resolveConsultantAgenciesForEnquiry(session);
       return createMatrixEnquiryMessage(enquiryData, session, agencyList);
@@ -65,6 +65,26 @@ public class CreateEnquiryMessageFacade {
       log.error("CreateEnquiryMessageFacade error: ", exception);
       throw new InternalServerErrorException(exception.getMessage(), exception);
     }
+  }
+
+  public void checkEnquiryPermission(Long sessionId, User user) {
+    var session = validateEnquiryPermission(sessionId, user);
+    if (session.getStatus() != SessionStatus.INITIAL
+        && session.getStatus() != SessionStatus.NEW
+        && session.getStatus() != SessionStatus.IN_PROGRESS) {
+      throw new ConflictException("Session is no longer open for an enquiry");
+    }
+  }
+
+  private Session validateEnquiryPermission(Long sessionId, User user) {
+    var session = fetchSessionForEnquiryMessage(sessionId, user);
+    checkIfNotAnonymousEnquiry(session);
+    checkIfEnquiryMessageIsAlreadyWrittenForSession(session);
+    // INITIAL has a room but no first enquiry; NEW is still unaccepted counselling.
+    if (session.getStatus() == SessionStatus.INITIAL || session.getStatus() == SessionStatus.NEW) {
+      dpaPolicy.requireForAgency(session.getAgencyId());
+    }
+    return session;
   }
 
   private CreateEnquiryMessageResponseDTO createMatrixEnquiryMessage(
@@ -90,7 +110,7 @@ public class CreateEnquiryMessageFacade {
             .build();
     updateMatrixSession(session, enquiryData.getLanguage(), matrixRoomId, exceptionInformation);
     sendEnquiryNotifications(session, agencyList);
-    postErstantwort(session);
+    postErstantwort(session, enquiryData.getUiLocale());
 
     return new CreateEnquiryMessageResponseDTO()
         .matrixRoomId(matrixRoomId)
@@ -158,10 +178,7 @@ public class CreateEnquiryMessageFacade {
   private void sendEnquiryNotifications(Session session, List<ConsultantAgency> agencyList) {
     if (session.getIsConsultantDirectlySet()) {
       emailNotificationFacade.sendNewDirectEnquiryEmailNotification(
-          session.getConsultant().getId(),
-          session.getAgencyId(),
-          session.getPostcode(),
-          TenantContext.getCurrentTenantData());
+          session, TenantContext.getCurrentTenantData());
     } else {
       emailNotificationFacade.sendNewEnquiryEmailNotification(
           session, TenantContext.getCurrentTenantData());
@@ -191,7 +208,7 @@ public class CreateEnquiryMessageFacade {
     return session.getUser() == null || session.getUser().isLanguageFormal();
   }
 
-  private void postErstantwort(Session session) {
+  private void postErstantwort(Session session, String uiLocale) {
     try {
       var body =
           erstantwortPayloadBuilder.buildFirstResponseBody(
@@ -208,6 +225,7 @@ public class CreateEnquiryMessageFacade {
                   the User is the same flag AskerDataProvider already uses to pick
                   the German variant everywhere else. */
                   .informal(!isFormalLanguage(session))
+                  .locale(uiLocale)
                   .build());
       if (body == null) {
         return;

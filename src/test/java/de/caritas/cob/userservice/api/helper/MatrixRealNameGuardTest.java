@@ -41,7 +41,7 @@ class MatrixRealNameGuardTest {
   @DisplayName("catches every spelling of the real name in a plain argument")
   void assertNoRealNameReachedMatrix_Should_Fail_ForEveryVariant(String leakingValue) {
     var matrixUserClient = mock(MatrixUserClient.class);
-    matrixUserClient.updateUserDisplayName("@beraterin1:matrix.oriso.org", leakingValue);
+    matrixUserClient.updateUserDisplayName("@beraterin1:matrix.example.org", leakingValue);
 
     assertThatThrownBy(() -> assertNoRealNameReachedMatrix(matrixUserClient, FIRST, LAST))
         .isInstanceOf(AssertionError.class)
@@ -106,10 +106,10 @@ class MatrixRealNameGuardTest {
   @DisplayName("passes for the pseudonym and the username, which are the permitted values")
   void assertNoRealNameReachedMatrix_Should_Pass_ForPermittedValues() throws Exception {
     var matrixUserClient = mock(MatrixUserClient.class);
-    matrixUserClient.updateUserDisplayName("@beraterin1:matrix.oriso.org", "Frau M.");
+    matrixUserClient.updateUserDisplayName("@beraterin1:matrix.example.org", "Frau M.");
     matrixUserClient.createUserId("beraterin1", "pw", "beraterin1");
     matrixUserClient.updateUserDisplayName(
-        "@beraterin1:matrix.oriso.org", "Beratung wird jetzt von Frau M. fortgefuehrt.");
+        "@beraterin1:matrix.example.org", "Beratung wird jetzt von Frau M. fortgefuehrt.");
 
     assertThatCode(() -> assertNoRealNameReachedMatrix(matrixUserClient, FIRST, LAST))
         .doesNotThrowAnyException();
@@ -119,7 +119,8 @@ class MatrixRealNameGuardTest {
   @DisplayName("one name part alone is not a leak")
   void assertNoRealNameReachedMatrix_Should_Pass_When_OnlyOnePartIsPresent() {
     var matrixUserClient = mock(MatrixUserClient.class);
-    matrixUserClient.updateUserDisplayName("@beraterin1:matrix.oriso.org", "Frau Musterfrau-Nord");
+    matrixUserClient.updateUserDisplayName(
+        "@beraterin1:matrix.example.org", "Frau Musterfrau-Nord");
 
     assertThatCode(() -> assertNoRealNameReachedMatrix(matrixUserClient, FIRST, "Beispiel"))
         .doesNotThrowAnyException();
@@ -130,7 +131,7 @@ class MatrixRealNameGuardTest {
   void assertNoRealNameReachedMatrix_Should_Pass_When_ThePartsAreFarApart() {
     var matrixUserClient = mock(MatrixUserClient.class);
     matrixUserClient.updateUserDisplayName(
-        "@beraterin1:matrix.oriso.org", "Angela is not the same token sequence as Musterfrau");
+        "@beraterin1:matrix.example.org", "Angela is not the same token sequence as Musterfrau");
 
     assertThatCode(() -> assertNoRealNameReachedMatrix(matrixUserClient, FIRST, LAST))
         .doesNotThrowAnyException();

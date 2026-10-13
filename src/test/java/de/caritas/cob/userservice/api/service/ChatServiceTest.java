@@ -23,6 +23,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
@@ -41,6 +42,7 @@ import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.UserChat;
@@ -49,11 +51,16 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
+import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokenService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -78,9 +85,15 @@ class ChatServiceTest {
 
   @Mock private ConsultantService consultantService;
 
+  @Mock private GroupChatConsultantAccess groupChatConsultantAccess;
+
+  @Mock private GroupChatInviteTokenService groupChatInviteTokenService;
+
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
 
   @Mock private GroupChatParticipantReconciliationService participantReconciliationService;
+
+  @Mock private GroupAppointmentSeriesEventProducer appointmentEvents;
 
   @Mock private AgencyService agencyService;
 
@@ -350,6 +363,8 @@ class ChatServiceTest {
         .thenReturn(singletonList(activeChatWithAgency()));
     when(consultantService.findConsultantsByAgencyIds(Mockito.any()))
         .thenReturn(singletonList(CONSULTANT));
+    when(groupChatInviteTokenService.tokensFor(List.of(CHAT_ID)))
+        .thenReturn(Map.of(CHAT_ID, "legacy-token"));
 
     List<ConsultantSessionResponseDTO> resultList = chatService.getChatsForConsultant(consultant);
 
@@ -377,6 +392,8 @@ class ChatServiceTest {
     assertNotNull(resultList.get(0).getChat().getModerators());
     assertEquals(1, resultList.get(0).getChat().getModerators().length);
     assertEquals(CONSULTANT.getMatrixUserId(), resultList.get(0).getChat().getModerators()[0]);
+    assertEquals("legacy-token", resultList.get(0).getChat().getInviteToken());
+    verify(groupChatInviteTokenService).tokensFor(List.of(CHAT_ID));
   }
 
   @Test
@@ -482,6 +499,34 @@ class ChatServiceTest {
     verify(chatRepository, times(1)).save(chatArgumentCaptor.capture());
     assertEquals(CHAT_HINT_MESSAGE, chatArgumentCaptor.getValue().getHintMessage());
     verify(participantReconciliationService).reconcile(inactiveChat, CHAT_DTO.getConsultantIds());
+  }
+
+  @Test
+  void updateChatExcludesNewCounselorsFromOldScheduleFanoutBeforeTheirJoinConfirmation() {
+    Chat inactiveChat = new Chat();
+    inactiveChat.setId(CHAT_ID);
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+    var existing = GroupChatParticipant.builder().consultantId("existing").build();
+    var added = GroupChatParticipant.builder().consultantId("added").build();
+    when(groupChatParticipantRepository.findBySeriesId(CHAT_ID))
+        .thenReturn(List.of(existing), List.of(existing, added));
+
+    chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER_CONSULTANT);
+
+    var order = inOrder(appointmentEvents);
+    order.verify(appointmentEvents).seedBeforeEdit(inactiveChat);
+    order
+        .verify(appointmentEvents)
+        .recordAfterEdit(
+            inactiveChat,
+            0,
+            Set.of(new GroupAppointmentMailQueue.Member(RecipientRole.COUNSELOR, "added")));
+    order
+        .verify(appointmentEvents)
+        .recordMemberJoined(inactiveChat, RecipientRole.COUNSELOR, "added");
   }
 
   @Test
@@ -729,12 +774,29 @@ class ChatServiceTest {
   void getChatSessionsForConsultantByIds_Should_returnConsultantSessionsForGivenIds() {
     when(chatRepository.findByIdsWithChatAgencies(Set.of(CHAT_ID)))
         .thenReturn(List.of(activeChatWithAgency()));
+    when(groupChatConsultantAccess.filterAccessible(Mockito.anyList(), eq(CONSULTANT)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(groupChatInviteTokenService.tokensFor(List.of(CHAT_ID)))
+        .thenReturn(Map.of(CHAT_ID, "legacy-token"));
 
     List<ConsultantSessionResponseDTO> result =
-        chatService.getChatSessionsForConsultantByIds(Set.of(CHAT_ID));
+        chatService.getChatSessionsForConsultantByIds(Set.of(CHAT_ID), CONSULTANT);
 
     assertThat(result, hasSize(1));
     assertNotNull(result.get(0).getChat());
+    assertEquals("legacy-token", result.get(0).getChat().getInviteToken());
+    verify(groupChatInviteTokenService).tokensFor(List.of(CHAT_ID));
+  }
+
+  @Test
+  void getChatSessionsForConsultantByIds_Should_OmitChatsDeniedByAccessFilter() {
+    when(chatRepository.findByIdsWithChatAgencies(Set.of(CHAT_ID)))
+        .thenReturn(List.of(activeChatWithAgency()));
+    when(groupChatConsultantAccess.filterAccessible(Mockito.anyList(), eq(CONSULTANT)))
+        .thenReturn(List.of());
+
+    assertThat(
+        chatService.getChatSessionsForConsultantByIds(Set.of(CHAT_ID), CONSULTANT), hasSize(0));
   }
 
   @Test
@@ -753,11 +815,27 @@ class ChatServiceTest {
   void getChatSessionsForConsultantByGroupIds_Should_returnConsultantSessionsForGivenGroupIds() {
     when(chatRepository.findByMatrixRoomIdIn(Set.of(MATRIX_ROOM_ID)))
         .thenReturn(List.of(activeChatWithAgency()));
+    when(groupChatConsultantAccess.filterAccessible(Mockito.anyList(), eq(CONSULTANT)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(groupChatInviteTokenService.tokensFor(List.of(CHAT_ID)))
+        .thenReturn(Map.of(CHAT_ID, "legacy-token"));
 
     List<ConsultantSessionResponseDTO> result =
-        chatService.getChatSessionsForConsultantByRoomIds(Set.of(MATRIX_ROOM_ID));
+        chatService.getChatSessionsForConsultantByRoomIds(Set.of(MATRIX_ROOM_ID), CONSULTANT);
 
     assertThat(result, hasSize(1));
     assertNotNull(result.get(0).getChat());
+  }
+
+  @Test
+  void getChatSessionsForConsultantByGroupIds_Should_OmitChatsDeniedByAccessFilter() {
+    when(chatRepository.findByMatrixRoomIdIn(Set.of(MATRIX_ROOM_ID)))
+        .thenReturn(List.of(activeChatWithAgency()));
+    when(groupChatConsultantAccess.filterAccessible(Mockito.anyList(), eq(CONSULTANT)))
+        .thenReturn(List.of());
+
+    assertThat(
+        chatService.getChatSessionsForConsultantByRoomIds(Set.of(MATRIX_ROOM_ID), CONSULTANT),
+        hasSize(0));
   }
 }

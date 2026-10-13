@@ -15,7 +15,6 @@ import de.caritas.cob.userservice.api.model.ConversationType;
 import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -40,11 +39,7 @@ public class ChatConverter {
     }
     LocalDateTime startDate = nowInUtc();
     if (nonNull(chatDTO.getStartDate()) && nonNull(chatDTO.getStartTime())) {
-      startDate =
-          LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime())
-              .atZone(zoneId)
-              .withZoneSameInstant(ZoneOffset.UTC)
-              .toLocalDateTime();
+      startDate = Chat.toUtc(chatDTO.getStartDate(), chatDTO.getStartTime(), zoneId);
     }
 
     int repeatCount =
@@ -95,6 +90,20 @@ public class ChatConverter {
     return nonNull(chatDTO.getRepeatCount())
             || nonNull(chatDTO.getChatInterval())
             || isTrue(chatDTO.getRepetitive())
+        ? ConversationType.SELF_HELP
+        : ConversationType.INTERNAL_GROUP;
+  }
+
+  /**
+   * The persisted format of a group chat. Legacy rows without {@code conversation_type} are
+   * classified by the same rule as {@link #conversationTypeOf(ChatDTO)}: anything that repeats is a
+   * conversation circle.
+   */
+  public static ConversationType conversationTypeOf(Chat chat) {
+    if (nonNull(chat.getConversationType())) {
+      return chat.getConversationType();
+    }
+    return chat.isRepetitive() || chat.getRepeatCount() > 1 || nonNull(chat.getChatInterval())
         ? ConversationType.SELF_HELP
         : ConversationType.INTERNAL_GROUP;
   }

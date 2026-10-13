@@ -8,6 +8,7 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -44,6 +45,11 @@ class EventNotificationControllerTest {
 
   @Mock private EventNotificationService eventNotificationService;
   @Mock private TeamDiscussionNotificationService teamDiscussionNotificationService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService
+      feedbackMessageEmailService;
+
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
 
@@ -56,14 +62,51 @@ class EventNotificationControllerTest {
         new EventNotificationController(
             eventNotificationService,
             teamDiscussionNotificationService,
+            feedbackMessageEmailService,
             authenticatedUser,
             Optional.of(redisMessageMirrorService));
     controllerWithoutMirror =
         new EventNotificationController(
             eventNotificationService,
             teamDiscussionNotificationService,
+            feedbackMessageEmailService,
             authenticatedUser,
             Optional.empty());
+  }
+
+  @Test
+  void explicitFeedbackIntentPersistsBeforeResponseButOrdinaryAsideDoesNot() {
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    var protectedAside = new EventNotificationController.MessageEventRequestDTO();
+    protectedAside.setRoomId("!protected:matrix.example");
+    protectedAside.setMatrixEventId("$aside");
+    protectedAside.setSupervisorMessage(true);
+
+    assertThat(
+            controllerWithoutMirror.createMessageEventNotification(protectedAside).getStatusCode())
+        .isEqualTo(HttpStatus.NO_CONTENT);
+    verifyNoInteractions(feedbackMessageEmailService);
+
+    var feedback = new EventNotificationController.MessageEventRequestDTO();
+    feedback.setRoomId("!protected:matrix.example");
+    feedback.setMatrixEventId("$feedback");
+    feedback.setFeedbackMailIntent(true);
+
+    assertThat(controllerWithoutMirror.createMessageEventNotification(feedback).getStatusCode())
+        .isEqualTo(HttpStatus.NO_CONTENT);
+    verify(feedbackMessageEmailService)
+        .onFeedbackIntent("!protected:matrix.example", "$feedback", authenticatedUser);
+  }
+
+  @Test
+  void feedbackIntentWithoutMatrixEventIsRejectedBeforeAnyNotification() {
+    var feedback = new EventNotificationController.MessageEventRequestDTO();
+    feedback.setRoomId("!protected:matrix.example");
+    feedback.setFeedbackMailIntent(true);
+
+    assertThat(controllerWithoutMirror.createMessageEventNotification(feedback).getStatusCode())
+        .isEqualTo(HttpStatus.BAD_REQUEST);
+    verifyNoInteractions(feedbackMessageEmailService, eventNotificationService);
   }
 
   // ---------------------------------------------------------------------------
@@ -88,10 +131,15 @@ class EventNotificationControllerTest {
             consultantRepository,
             identityTombstoneService,
             deduplicationWriter,
+            mock(de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService.class),
             new ConsultantDisplayNameResolver());
     var controller =
         new EventNotificationController(
-            realService, teamDiscussionNotificationService, authenticatedUser, Optional.empty());
+            realService,
+            teamDiscussionNotificationService,
+            feedbackMessageEmailService,
+            authenticatedUser,
+            Optional.empty());
 
     when(authenticatedUser.getUserId()).thenReturn("counsellor-1");
     when(consultantRepository.findByIdAndDeleteDateIsNull("counsellor-1"))

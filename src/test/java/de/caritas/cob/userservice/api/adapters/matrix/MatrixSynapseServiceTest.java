@@ -903,9 +903,10 @@ class MatrixSynapseServiceTest {
   }
 
   @Test
-  void loginBrowserDevice_rotatesTransientPasswordWithoutLoggingOutExistingDevices() {
+  void loginBrowserDevice_usesInteractiveAuthPasswordWithoutLoggingOutExistingDevices() {
     // Browser E2EE requires a normal Matrix login whose access token is bound to a real device.
-    // The transient password must never become an application credential or invalidate another
+    // The interactive-auth password must never become an application credential or invalidate
+    // another
     // browser's encryption keys.
     matrixConfig.setApiUrl(MATRIX_BASE_URL);
     matrixConfig.setAdminUsername("admin");
@@ -1133,6 +1134,25 @@ class MatrixSynapseServiceTest {
     var result = matrixSynapseService().sendMessage(MATRIX_ROOM_ID, "hello", ACCESS_TOKEN);
 
     assertThat(result).isEqualTo(synapseResponse);
+  }
+
+  @Test
+  void durableNoticeSendPreservesProvidedTransactionId() {
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("event_id", "$event123")));
+    var result =
+        matrixSynapseService()
+            .sendMessage(MATRIX_ROOM_ID, "acceptance", ACCESS_TOKEN, "inquiry-accepted-231");
+    assertThat(result).containsEntry("event_id", "$event123");
+    verify(restTemplate)
+        .exchange(
+            org.mockito.ArgumentMatchers.argThat(
+                uri -> uri.toString().endsWith("/send/m.room.message/inquiry-accepted-231")),
+            eq(HttpMethod.PUT),
+            any(HttpEntity.class),
+            eq(Map.class));
   }
 
   @Test

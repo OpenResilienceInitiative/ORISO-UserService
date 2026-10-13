@@ -9,6 +9,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService;
 import de.caritas.cob.userservice.api.service.notification.DpaSigningEmailPreview;
 import java.time.LocalDateTime;
+import java.util.EnumSet;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -21,10 +23,16 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class TenantAdminDpaMailPreviewController {
 
+  private static final Set<AccountInviteStatus> PREVIEWABLE_STATUSES =
+      EnumSet.of(AccountInviteStatus.EMAIL_SENT, AccountInviteStatus.ACCEPTED);
+
   private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull DpaForwardEmailService dpaForwardEmailService;
 
-  @GetMapping("/users/account-invites/{token}/onboarding/dpa-mail-preview")
+  @GetMapping({
+    "/users/account-invites/{token}/onboarding/dpa-mail-preview",
+    "/service/users/account-invites/{token}/onboarding/dpa-mail-preview"
+  })
   public ResponseEntity<DpaSigningMailPreviewResponse> preview(@PathVariable String token) {
     AccountInvite invite = accountInviteService.findInviteByToken(token);
     validatePreviewableTenantAdminInvite(invite);
@@ -37,7 +45,12 @@ public class TenantAdminDpaMailPreviewController {
     if (invite.getTargetRole() != AccountInviteTargetRole.TENANT_ADMIN) {
       throw new NotFoundException("Account invite not found");
     }
-    if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT
+    // The DPA step runs after registration, which claims the invite into ACCEPTED, so both the
+    // not-yet-registered and the registered state are legitimate here — compare the two-factor
+    // guard in TenantAdminOnboardingService, which treats ACCEPTED as the post-registration
+    // norm. Only terminal links (revoked, superseded, expired) are refused. Rendering is
+    // read-only: it mints no sign link and sends no mail.
+    if (!PREVIEWABLE_STATUSES.contains(invite.getStatus())
         || invite.getExpiresAt() == null
         || invite.getExpiresAt().isBefore(LocalDateTime.now())) {
       throw new BadRequestException("Account invite is not active");

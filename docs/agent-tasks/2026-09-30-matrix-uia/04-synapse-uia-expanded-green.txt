@@ -1,0 +1,37 @@
+US #1224: expanded real Synapse GREEN, 2026-09-30
+
+Environment: local disposable Docker Synapse v1.158.0, Java 21.
+Accounts and configuration: synthetic public fixtures only.
+Command:
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B -q test-compile surefire:test@integration-tests -Dtest=MatrixBrowserDeviceSynapseIT -Dskip.unit-tests=true
+
+Surefire: Tests run 2, Failures 0, Errors 0, Skipped 0; class elapsed 12.26 seconds.
+Maven exit 0. Disposable Synapse container was closed after the class completed.
+
+Reset regression:
+- Device A uploads a genuine Ed25519 master key and creates a backup version.
+- A second backend instance logs in device B with the same user but a distinct device ID.
+- After 1.5 seconds, A's existing device-bound token still authenticates correctly.
+- A deletes the old backup version; Synapse confirms HTTP 404 / M_NOT_FOUND.
+- A changes the master identity using real m.login.password UIA with its original password.
+- Both A and B can read the replacement master identity.
+- A creates a new backup version; both A and B see it as current.
+- The original backup remains deleted when checked from B.
+
+First-time setup regression:
+- Another synthetic user logs into devices A and B through separate backend instances.
+- After 1.5 seconds, A creates the first master identity and backup version.
+- Both devices can read the same master identity and current backup metadata.
+- Both device-bound tokens still identify their original user and device.
+- First-time setup intentionally requires no UIA on Synapse v1.158.0 (MSC3967).
+
+Fixture capacity correction:
+The first expanded run hit Synapse's default login address burst of 5 because synthetic
+clients share the runner's IP. The public disposable configuration now permits a bounded
+burst of 20 at 1 request/second. Password UIA remains enabled and is verified by the reset test.
+That fixture-rate-limit failure was not counted as a regression RED.
+
+Scope boundary: this verifies real server-side cross-signing and backup metadata lifecycle.
+It does not verify browser recovery-key screens, local secret storage, encrypted room-key
+payload restoration, or existing Dev sessions. Those need separate browser acceptance.
+No request bodies, credentials, access tokens or UIA session identifiers are retained here.

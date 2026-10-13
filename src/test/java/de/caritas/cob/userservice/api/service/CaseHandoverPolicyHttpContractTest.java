@@ -73,11 +73,11 @@ class CaseHandoverPolicyHttpContractTest {
   @BeforeEach
   void setUp() {
     var technical = new TechnicalUserConfig();
-    technical.setUsername("synthetic-service");
-    technical.setPassword("synthetic-password");
+    technical.setClientId("synthetic-service");
+    technical.setClientSecret("synthetic-password");
     when(identityConfig.getTechnicalUser()).thenReturn(technical);
     lenient().when(requestUser.getAccessToken()).thenReturn("synthetic-admin-token");
-    when(identity.login("synthetic-service", "synthetic-password"))
+    when(identity.loginService("synthetic-service", "synthetic-password"))
         .thenReturn(new IdentityLogin("synthetic-token", 60, 120, "synthetic-refresh"));
     ReflectionTestUtils.setField(headers, "csrfHeaderProperty", "X-CSRF-TOKEN");
     ReflectionTestUtils.setField(headers, "csrfCookieProperty", "CSRF-TOKEN");
@@ -103,15 +103,21 @@ class CaseHandoverPolicyHttpContractTest {
             mock(de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepository.class),
             cacheService,
             mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            mock(de.caritas.cob.userservice.api.service.session.SessionOwnershipService.class),
             mock(de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.class),
             mock(de.caritas.cob.userservice.api.service.user.UserAccountService.class),
             mock(
                 de.caritas.cob.userservice.api.service.notification.EventNotificationService.class),
+            mock(
+                de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification
+                    .class),
             mock(de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.class),
             mock(de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService.class),
             mock(
                 de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService
                     .class),
+            mock(de.caritas.cob.userservice.api.service.ConsultantService.class),
+            mock(de.caritas.cob.userservice.api.helper.AuthenticatedUser.class),
             new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver(),
             claims,
             clock,

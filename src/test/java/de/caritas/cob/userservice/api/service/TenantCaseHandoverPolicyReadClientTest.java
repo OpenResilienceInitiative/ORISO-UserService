@@ -5,7 +5,6 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.*;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
-import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -15,7 +14,6 @@ import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantPermissionPolicies;
-import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -42,10 +40,10 @@ class TenantCaseHandoverPolicyReadClientTest {
   @BeforeEach
   void setup() {
     var technical = new TechnicalUserConfig();
-    technical.setUsername("synthetic-service");
-    technical.setPassword("synthetic-password");
+    technical.setClientId("synthetic-service");
+    technical.setClientSecret("synthetic-password");
     when(config.getTechnicalUser()).thenReturn(technical);
-    when(identity.login("synthetic-service", "synthetic-password"))
+    when(identity.loginService("synthetic-service", "synthetic-password"))
         .thenReturn(new IdentityLogin("synthetic-token", 60, 120, "synthetic-refresh"));
     ReflectionTestUtils.setField(headers, "csrfHeaderProperty", "X-CSRF-TOKEN");
     ReflectionTestUtils.setField(headers, "csrfCookieProperty", "CSRF-TOKEN");
@@ -79,7 +77,7 @@ class TenantCaseHandoverPolicyReadClientTest {
         .isEqualTo(180);
     assertThat(reasons.get("COUNSELLOR_ON_HOLIDAY").getClientConsentRequired().getValue())
         .isFalse();
-    verify(identity).logout("synthetic-refresh", "synthetic-token");
+    verify(identity, never()).logout(anyString(), anyString());
     verifyNoInteractions(requestUser);
     server.verify();
   }
@@ -185,22 +183,22 @@ class TenantCaseHandoverPolicyReadClientTest {
         .hasMessageContaining("HTTP " + status)
         .hasMessageNotContaining("synthetic-sensitive")
         .hasNoCause();
-    verify(identity).logout("synthetic-refresh", "synthetic-token");
+    verify(identity, never()).logout(anyString(), anyString());
     server.verify();
   }
 
   @Test
   void missingTokenCannotIssueUnauthenticatedRead() {
-    when(identity.login(anyString(), anyString()))
+    when(identity.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("", 0, 0, "synthetic-refresh"));
     assertThatThrownBy(() -> client.getTenantPermissionPolicies(40L)).hasNoCause();
-    verify(identity).logout("synthetic-refresh", "");
+    verify(identity, never()).logout(anyString(), anyString());
     server.verify();
   }
 
   @Test
   void loginFailureCannotExposeCredentialsOrAttemptLogout() {
-    when(identity.login(anyString(), anyString()))
+    when(identity.loginService(anyString(), anyString()))
         .thenThrow(new IllegalStateException("synthetic-password"));
     assertThatThrownBy(() -> client.getTenantPermissionPolicies(40L))
         .hasMessageNotContaining("synthetic-password")
@@ -210,21 +208,12 @@ class TenantCaseHandoverPolicyReadClientTest {
   }
 
   @Test
-  void logoutFailureDoesNotDiscardSuccessfulRead() {
+  void statelessServiceReadNeverLogsOutAHumanSession() {
     server
         .expect(anything())
         .andRespond(withSuccess("{\"tenantId\":40,\"policies\":{}}", MediaType.APPLICATION_JSON));
-    when(identity.logout("synthetic-refresh", "synthetic-token"))
-        .thenThrow(new IllegalStateException("synthetic-sensitive-reply"));
-    try (var logs = LogbackCaptor.forClass(TenantCaseHandoverPolicyReadClient.class)) {
-      assertThat(client.getTenantPermissionPolicies(40L).getTenantId()).isEqualTo(40L);
-      assertThat(logs.messages(Level.WARN))
-          .anySatisfy(
-              message ->
-                  assertThat(message)
-                      .contains("Technical-user logout failed", "IllegalStateException")
-                      .doesNotContain("synthetic-sensitive-reply"));
-    }
+    assertThat(client.getTenantPermissionPolicies(40L).getTenantId()).isEqualTo(40L);
+    verify(identity, never()).logout(anyString(), anyString());
     server.verify();
   }
 

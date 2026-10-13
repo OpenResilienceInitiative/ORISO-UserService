@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.NotificationRoomLevel;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
 import jakarta.validation.Valid;
@@ -35,6 +36,7 @@ public class EventNotificationController {
 
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull TeamDiscussionNotificationService teamDiscussionNotificationService;
+  private final @NonNull FeedbackMessageEmailService feedbackMessageEmailService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
@@ -156,6 +158,19 @@ public class EventNotificationController {
       @Valid @RequestBody MessageEventRequestDTO request) {
     if (request == null || request.getRoomId() == null || request.getRoomId().isBlank()) {
       return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+    }
+
+    if (Boolean.TRUE.equals(request.getFeedbackMailIntent())) {
+      if (request.getMatrixEventId() == null
+          || request.getMatrixEventId().isBlank()
+          || Boolean.TRUE.equals(request.getTeamDiscussion())
+          || !authenticatedUser.isConsultant()) {
+        return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+      }
+      // This durable classifier must be saved before acknowledging the browser. The actual
+      // Matrix event and case authority are verified by the retrying mail worker.
+      feedbackMessageEmailService.onFeedbackIntent(
+          request.getRoomId(), request.getMatrixEventId(), authenticatedUser);
     }
 
     if (request.getTeamDiscussion() != null && request.getTeamDiscussion()) {
@@ -289,10 +304,14 @@ public class EventNotificationController {
   }
 
   public static class MessageEventRequestDTO {
-    @NotBlank private String roomId;
+    @NotBlank
+    @Size(max = 255)
+    private String roomId;
+
     private String messagePreview;
     private String threadRootId;
     private Boolean supervisorMessage;
+    private Boolean feedbackMailIntent;
 
     /**
      * ADR-002 §2 / #1201: only the team-discussion branch still reads this, a
@@ -324,6 +343,14 @@ public class EventNotificationController {
 
     public Boolean getTeamDiscussion() {
       return teamDiscussion;
+    }
+
+    public Boolean getFeedbackMailIntent() {
+      return feedbackMailIntent;
+    }
+
+    public void setFeedbackMailIntent(Boolean feedbackMailIntent) {
+      this.feedbackMailIntent = feedbackMailIntent;
     }
 
     public String getMatrixEventId() {

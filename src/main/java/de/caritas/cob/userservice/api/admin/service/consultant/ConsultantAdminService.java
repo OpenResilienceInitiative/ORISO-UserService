@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.admin.service.consultant;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_ARCHIVE;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
@@ -13,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTopicDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
+import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantTopicsByAgencyMapper;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
 import de.caritas.cob.userservice.api.admin.service.consultant.delete.ConsultantPreDeletionService;
 import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
@@ -29,6 +31,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.Collections;
@@ -54,6 +57,7 @@ public class ConsultantAdminService {
   private final @NonNull ConsultantPreDeletionService consultantPreDeletionService;
 
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull SessionOwnershipService sessionOwnershipService;
   private final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
 
@@ -100,6 +104,12 @@ public class ConsultantAdminService {
   }
 
   private void enrichWithTopics(String consultantId, ConsultantAdminResponseDTO response) {
+    response
+        .getEmbedded()
+        .setTopicsByAgency(
+            ConsultantTopicsByAgencyMapper.topicsByAgencyOf(
+                    consultantTopicRepository, List.of(consultantId))
+                .getOrDefault(consultantId, Collections.emptyList()));
     var topicIds = consultantTopicRepository.findTopicIdsByConsultantId(consultantId);
     if (topicIds.isEmpty()) {
       response.getEmbedded().setTopics(Collections.emptyList());
@@ -199,7 +209,11 @@ public class ConsultantAdminService {
   public void markConsultantForDeletion(String consultantId, Boolean forceDeleteSessions) {
     var consultant = pictureStore.lockActiveConsultant(consultantId);
 
-    this.consultantPreDeletionService.performPreDeletionSteps(consultant, forceDeleteSessions);
+    // One date for the counsellor and the relations removed with it: that pair marks the agencies
+    // it belonged to when deleted, as opposed to those it had left before.
+    var deletedAt = nowInUtc();
+    this.consultantPreDeletionService.performPreDeletionSteps(
+        consultant, forceDeleteSessions, deletedAt);
 
     if (Boolean.TRUE.equals(forceDeleteSessions)) {
       deleteAndUnassignSessions(consultant);
@@ -210,6 +224,7 @@ public class ConsultantAdminService {
           consultantId);
     }
 
+    consultant.setDeleteDate(deletedAt);
     deletionLifecycleService.beginConsultantDeletion(consultant, authenticatedUser.getUserId());
     pictureStore.removeForConsultantDeletion(consultantId);
     consultant.setStatus(ConsultantStatus.IN_DELETION);
@@ -236,13 +251,7 @@ public class ConsultantAdminService {
   }
 
   private void unassignNewOrInitialSessions(Consultant consultant) {
-    sessionRepository
-        .findByConsultantAndStatusIn(consultant, Lists.newArrayList(NEW, INITIAL))
-        .forEach(
-            session -> {
-              session.setConsultant(null);
-              sessionRepository.save(session);
-            });
+    sessionOwnershipService.clearOwnerFromSessions(consultant, Lists.newArrayList(NEW, INITIAL));
   }
 
   private void deleteSessionsInProgressOrArchived(Consultant consultant) {

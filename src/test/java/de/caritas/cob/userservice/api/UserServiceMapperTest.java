@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.model.Appointment;
 import de.caritas.cob.userservice.api.model.Appointment.AppointmentStatus;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -58,6 +59,33 @@ class UserServiceMapperTest {
   }
 
   @Test
+  void consultantWalkThroughDefaultsToFalse() {
+    assertThat(new Consultant().getWalkThroughEnabled()).isFalse();
+    var built =
+        Consultant.builder()
+            .id("1")
+            .username("u")
+            .firstName("f")
+            .lastName("l")
+            .email("e@example.org")
+            .build();
+    assertThat(built.getWalkThroughEnabled()).isFalse();
+  }
+
+  @Test
+  void switchWalkThroughOffAgain() {
+    Map<String, Object> requestData = new HashMap<>();
+    requestData.put("walkThroughEnabled", false);
+    requestData.put("id", "1");
+    Consultant consultant = new Consultant();
+    consultant.setWalkThroughEnabled(true);
+
+    userServiceMapper.consultantOf(consultant, requestData);
+
+    assertThat(consultant.getWalkThroughEnabled()).isFalse();
+  }
+
+  @Test
   void saveLiveChatViaSidebar() {
     Map<String, Object> requestData = new HashMap<>();
     requestData.put("liveChatViaSidebar", true);
@@ -67,6 +95,77 @@ class UserServiceMapperTest {
     userServiceMapper.consultantOf(consultant, requestData);
 
     assertThat(consultant.getLiveChatViaSidebar()).isTrue();
+  }
+
+  @Test
+  void saveConsultantAvatarMotif() {
+    var consultant = new Consultant();
+
+    userServiceMapper.consultantOf(
+        consultant, new HashMap<>(Map.of("id", "1", "avatarKind", "ICON", "avatarId", "magpie")));
+
+    assertThat(consultant.getAvatarKind()).isEqualTo(ConsultantAvatarKind.ICON);
+    assertThat(consultant.getAvatarId()).isEqualTo("magpie");
+  }
+
+  @Test
+  void consultantAvatarIdSentAloneMeansAMotif() {
+    var consultant = new Consultant();
+
+    userServiceMapper.consultantOf(consultant, new HashMap<>(Map.of("id", "1", "avatarId", "fox")));
+
+    assertThat(consultant.getAvatarKind()).isEqualTo(ConsultantAvatarKind.ICON);
+    assertThat(consultant.getAvatarId()).isEqualTo("fox");
+  }
+
+  @Test
+  void consultantInitialsDropTheMotif() {
+    var consultant = new Consultant();
+    consultant.setAvatarKind(ConsultantAvatarKind.ICON);
+    consultant.setAvatarId("magpie");
+
+    userServiceMapper.consultantOf(
+        consultant, new HashMap<>(Map.of("id", "1", "avatarKind", "INITIALS", "avatarId", "")));
+
+    assertThat(consultant.getAvatarKind()).isEqualTo(ConsultantAvatarKind.INITIALS);
+    assertThat(consultant.getAvatarId()).isNull();
+  }
+
+  @Test
+  void clearingWithoutKindRemovesExplicitMotifsAndInitials() {
+    for (var kind :
+        new ConsultantAvatarKind[] {ConsultantAvatarKind.ICON, ConsultantAvatarKind.INITIALS}) {
+      var consultant = new Consultant();
+      consultant.setAvatarKind(kind);
+      consultant.setAvatarId(kind == ConsultantAvatarKind.ICON ? "magpie" : null);
+      userServiceMapper.consultantOf(consultant, new HashMap<>(Map.of("id", "1", "avatarId", "")));
+      assertThat(consultant.getAvatarKind()).isNull();
+      assertThat(consultant.getAvatarId()).isNull();
+    }
+  }
+
+  @Test
+  void consultantPatchWithoutAvatarKeepsTheStoredChoice() {
+    var consultant = new Consultant();
+    consultant.setAvatarKind(ConsultantAvatarKind.ICON);
+    consultant.setAvatarId("magpie");
+
+    userServiceMapper.consultantOf(
+        consultant, new HashMap<>(Map.of("id", "1", "walkThroughEnabled", true)));
+
+    assertThat(consultant.getAvatarKind()).isEqualTo(ConsultantAvatarKind.ICON);
+    assertThat(consultant.getAvatarId()).isEqualTo("magpie");
+  }
+
+  @Test
+  void saveAndClearAdviceSeekerAvatar() {
+    var adviceSeeker = new User();
+
+    userServiceMapper.adviceSeekerOf(adviceSeeker, new HashMap<>(Map.of("avatarId", "magpie")));
+    assertThat(adviceSeeker.getAvatarId()).isEqualTo("magpie");
+
+    userServiceMapper.adviceSeekerOf(adviceSeeker, new HashMap<>(Map.of("avatarId", "")));
+    assertThat(adviceSeeker.getAvatarId()).isNull();
   }
 
   @Test

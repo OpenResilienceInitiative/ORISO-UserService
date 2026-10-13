@@ -73,7 +73,12 @@ public class KeycloakTestConfig {
 
       @Override
       public IdentityLogin login(String userName, String password) {
-        // A real login always yields an access token; service flows fail closed without one.
+        // Human password sign-in remains separate from backend service authentication.
+        return new IdentityLogin("synthetic-human-token", 0, 0, "");
+      }
+
+      @Override
+      public IdentityLogin loginService(String clientId, String clientSecret) {
         return new IdentityLogin("synthetic-service-token", 0, 0, "");
       }
 

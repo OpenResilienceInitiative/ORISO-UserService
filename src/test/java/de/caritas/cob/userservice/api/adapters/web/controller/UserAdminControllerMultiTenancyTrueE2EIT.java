@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static de.caritas.cob.userservice.api.adapters.web.controller.UserAdminControllerIT.AGENCY_ADMIN_PATH;
 import static de.caritas.cob.userservice.api.adapters.web.controller.UserAdminControllerIT.TENANT_ADMIN_PATH;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
@@ -18,8 +19,12 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -27,7 +32,9 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
@@ -35,10 +42,27 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
+import de.caritas.cob.userservice.api.testHelper.ExistingAccountSetupFixtureCleanup;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,13 +73,17 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -63,7 +91,7 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {"multitenancy.enabled=true"})
 @Transactional
-class UserAdminControllerMultiTenancyTrueE2EIT {
+class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHttpFixture {
 
   private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
@@ -74,17 +102,36 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
 
   @Autowired private IdentityConfig identityConfig;
 
+  @Autowired private AccountInviteRepository accountInvites;
+
+  @Autowired private JdbcTemplate jdbc;
+
+  @Autowired private PlatformTransactionManager transactions;
+
+  @MockitoBean private EmailBrandingResolver branding;
+
+  @MockitoBean private TenantEmailBrandValues brandValues;
+
+  @MockitoBean private OrisoEmailRenderer renderer;
+
+  @MockitoBean private InviteMailDispatchService mail;
+
+  private String createdIdentityId;
+  private String cleanupIdentityId;
+
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
+        IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityLocaleLookup.class,
+        IdentityPasswordChangeRequirement.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,
@@ -105,19 +152,72 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
 
   @AfterEach
   void reset() {
-    identityConfig.setDisplayNameAllowedForConsultants(false);
+    try {
+      ExistingAccountSetupFixtureCleanup.admin(jdbc, transactions, cleanupIdentityId);
+    } finally {
+      identityConfig.setDisplayNameAllowedForConsultants(false);
+    }
   }
 
   @BeforeEach
   public void setUp() {
 
     CreatedIdentity keycloakResponse = new CreatedIdentity();
-    keycloakResponse.setUserId(new EasyRandom().nextObject(String.class));
+    createdIdentityId = UUID.randomUUID().toString();
+    keycloakResponse.setUserId(createdIdentityId);
     when(identityClient.createUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(keycloakResponse);
+    var resolved = new EmailBranding("Test product", null, "#124078", null, null);
+    when(branding.resolve(Mockito.nullable(Long.class))).thenReturn(resolved);
+    when(brandValues.values(Mockito.eq(resolved), Mockito.nullable(Long.class)))
+        .thenReturn(Map.of("platformName", "Test product"));
+    when(renderer.render(Mockito.eq("konto-einrichten"), Mockito.any(), Mockito.any()))
+        .thenReturn(new OrisoEmailRenderer.RenderedEmail("Setup", "<p>Setup</p>", "Setup"));
+    when(mail.sendRendered(Mockito.anyString(), Mockito.any(), Mockito.any()))
+        .thenAnswer(
+            invocation -> new InviteMailSendReceipt(invocation.getArgument(0), Instant.now()));
+  }
+
+  private void givenCurrentSetupIdentity(CreateAdminDTO input, AccountInviteTargetRole role) {
+    cleanupIdentityId = createdIdentityId;
+    when(((IdentityProfileLookup) identityClient).findById(createdIdentityId))
+        .thenReturn(
+            Optional.of(
+                new IdentityProfile(
+                    createdIdentityId,
+                    new UsernameTranscoder().encodeUsername(input.getUsername()),
+                    null,
+                    null,
+                    input.getEmail())));
+    when(((IdentityRoleLookup) identityClient).findAllByUserId(createdIdentityId))
+        .thenReturn(
+            List.of(
+                role == AccountInviteTargetRole.TENANT_ADMIN
+                    ? "tenant-admin"
+                    : "restricted-agency-admin"));
+    when(((IdentityPasswordChangeRequirement) identityClient)
+            .requiresPasswordChange(createdIdentityId))
+        .thenReturn(true);
+  }
+
+  private void assertIssuedSetup(AccountInviteTargetRole role, Long tenantId) {
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            status -> {
+              var invite =
+                  accountInvites.findByActiveSetupIdentityKey(createdIdentityId).orElseThrow();
+              assertThat(invite.getPurpose())
+                  .isEqualTo(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+              assertThat(invite.getProvisionedUserId()).isEqualTo(createdIdentityId);
+              assertThat(invite.getTargetRole()).isEqualTo(role);
+              assertThat(invite.getTenantId()).isEqualTo(tenantId);
+            });
+    org.mockito.Mockito.verify((IdentityPasswordChangeRequirement) identityClient)
+        .requiresPasswordChange(createdIdentityId);
   }
 
   @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void createNewAgencyAdmin_Should_returnOk_When_requiredCreateAgencyAdminIsGiven()
       throws Exception {
@@ -125,8 +225,10 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(95);
+    givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.AGENCY_ADMIN);
     givenTenant();
     givenTenantSuperAdmin();
+    givenPlatformAdmin();
 
     // when
 
@@ -147,17 +249,28 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
             .andReturn();
     String content = mvcResult.getResponse().getContentAsString();
     JsonPath.read(content, "_embedded.id");
+    assertIssuedSetup(AccountInviteTargetRole.AGENCY_ADMIN, 95L);
+    var inactivity =
+        jdbc.queryForMap(
+            "SELECT tenant_id,assigned_months,revision,status FROM account_inactivity WHERE identity_id=?",
+            createdIdentityId);
+    assertThat(((Number) inactivity.get("TENANT_ID")).longValue()).isEqualTo(95L);
+    assertThat(((Number) inactivity.get("ASSIGNED_MONTHS")).intValue()).isEqualTo(24);
+    assertThat(((Number) inactivity.get("REVISION")).longValue()).isZero();
+    assertThat(inactivity.get("STATUS")).isEqualTo("ACTIVE");
   }
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
-  void createNewAgencyAdmin_Should_return500_When_superAdminHasNullTenantID() throws Exception {
+  void createNewAgencyAdmin_Should_return500_When_platformAdminOmitsTargetTenantId()
+      throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(null);
     givenTenant();
     givenTenantSuperAdmin();
+    givenPlatformAdmin();
 
     // when
 
@@ -170,6 +283,29 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
                 .content(objectMapper.writeValueAsString(createAdminDTO)))
         .andExpect(status().isInternalServerError())
         .andReturn();
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void createNewAgencyAdmin_Should_returnForbidden_When_tenantSuperAdminHasNoTenant()
+      throws Exception {
+    // given a tenant super admin whose token carries no tenant
+    CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setEmail("agencyadmin@email.com");
+    createAdminDTO.setTenantId(95);
+    givenTenant();
+    givenTenantSuperAdmin();
+    givenCallerBelongsToTenant(null);
+
+    // when, then
+    this.mockMvc
+        .perform(
+            post(AGENCY_ADMIN_PATH)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(createAdminDTO)))
+        .andExpect(status().isForbidden());
   }
 
   @Test
@@ -196,12 +332,14 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
   }
 
   @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void createNewAgencyAdmin_Should_returnOk_When_tenantAdminTargetsOwnTenant() throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(95);
+    givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.AGENCY_ADMIN);
     givenTenant();
     givenTenantSuperAdmin();
     givenCallerBelongsToTenant(95L);
@@ -216,6 +354,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
                 .content(objectMapper.writeValueAsString(createAdminDTO)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("_embedded.tenantId", is("95")));
+    assertIssuedSetup(AccountInviteTargetRole.AGENCY_ADMIN, 95L);
   }
 
   @Test
@@ -241,12 +380,14 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
   }
 
   @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void createNewTenantAdmin_Should_returnOk_When_tenantAdminTargetsOwnTenant() throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
     createAdminDTO.setEmail("tenantadmin@email.com");
     createAdminDTO.setTenantId(95);
+    givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.TENANT_ADMIN);
     givenTenant();
     givenCallerBelongsToTenant(95L);
 
@@ -260,9 +401,11 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
                 .content(objectMapper.writeValueAsString(createAdminDTO)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("_embedded.tenantId", is("95")));
+    assertIssuedSetup(AccountInviteTargetRole.TENANT_ADMIN, 95L);
   }
 
   @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void createNewTenantAdmin_Should_returnOk_When_platformAdminCreatesPlatformAdmin()
       throws Exception {
@@ -270,8 +413,10 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
     createAdminDTO.setEmail("platformadmin@email.com");
     createAdminDTO.setTenantId(0);
+    givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.TENANT_ADMIN);
     givenTenant();
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    givenPlatformAdmin();
+    when(tenantResolverService.resolve(any())).thenReturn(0L);
 
     // when, then
     this.mockMvc
@@ -283,6 +428,26 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
                 .content(objectMapper.writeValueAsString(createAdminDTO)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("_embedded.tenantId", is("0")));
+    assertIssuedSetup(AccountInviteTargetRole.TENANT_ADMIN, 0L);
+  }
+
+  // Production only builds a platform admin from tenant 0 plus both super-admin roles: the real
+  // predicates run on that state, so a broken rule fails here instead of being stubbed to true.
+  private void givenPlatformAdmin() {
+    givenCaller(0L, UserRole.AGENCY_ADMIN, UserRole.TENANT_ADMIN);
+  }
+
+  private void givenCaller(Long tenantId, UserRole... roles) {
+    Mockito.doCallRealMethod().when(authenticatedUser).setRoles(any());
+    Mockito.doCallRealMethod().when(authenticatedUser).setTenantId(any());
+    authenticatedUser.setRoles(
+        Arrays.stream(roles).map(UserRole::getValue).collect(Collectors.toSet()));
+    authenticatedUser.setTenantId(tenantId);
+    Mockito.doCallRealMethod().when(authenticatedUser).getRoles();
+    Mockito.doCallRealMethod().when(authenticatedUser).isAgencySuperAdmin();
+    Mockito.doCallRealMethod().when(authenticatedUser).isTenantSuperAdmin();
+    Mockito.doCallRealMethod().when(authenticatedUser).isPlatformAdmin();
+    when(authenticatedUser.getTenantId()).thenReturn(tenantId);
   }
 
   private void givenCallerBelongsToTenant(Long tenantId) {
