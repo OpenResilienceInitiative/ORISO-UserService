@@ -427,15 +427,29 @@ public class CaseHandoverService {
 
   @Transactional(readOnly = true)
   public List<CaseHandoverReason> listReasonPolicies() {
-    return listReasons(TenantContext.getCurrentTenant(), "de", true, true);
+    return listReasonPolicies(null);
   }
 
-  /** Compatibility bridge until ORISO-Admin writes tenant-owned policy settings directly. */
+  /** Reads the rules of {@code tenantId} (the Träger), checked against the caller (FE#1725). */
+  @Transactional(readOnly = true)
+  public List<CaseHandoverReason> listReasonPolicies(Long tenantId) {
+    return listReasons(resolvePolicyTenant(tenantId), "de", true, true);
+  }
+
   public List<CaseHandoverReason> updateReasonPolicies(List<CaseHandoverReason> requestedReasons) {
+    return updateReasonPolicies(null, requestedReasons);
+  }
+
+  /**
+   * Compatibility bridge until ORISO-Admin writes tenant-owned policy settings directly. Writes the
+   * rules of {@code requestedTenantId} (the Träger), checked against the caller (FE#1725).
+   */
+  public List<CaseHandoverReason> updateReasonPolicies(
+      Long requestedTenantId, List<CaseHandoverReason> requestedReasons) {
+    Long tenantId = resolvePolicyTenant(requestedTenantId);
     if (requestedReasons == null || requestedReasons.isEmpty()) {
       throw new BadRequestException("At least one handover reason policy is required");
     }
-    Long tenantId = TenantContext.getCurrentTenant();
     if (tenantId == null || tenantId <= 0) {
       throw new BadRequestException("A tenant is required to update handover policies");
     }
@@ -475,6 +489,25 @@ public class CaseHandoverService {
                     java.util.Comparator.nullsLast(Integer::compareTo))
                 .thenComparing(CaseHandoverReason::getCode))
         .toList();
+  }
+
+  /**
+   * Platform admin (tenant 0): the Träger must be named, any is allowed. Everyone else: their own
+   * Träger only; omitted means the token tenant.
+   */
+  private Long resolvePolicyTenant(Long requestedTenantId) {
+    Long callerTenantId = TenantContext.getCurrentTenant();
+    if (TenantContext.isTechnicalOrSuperAdminContext()) {
+      if (requestedTenantId == null || requestedTenantId <= 0) {
+        throw new BadRequestException(
+            "tenantId is required: name the Träger whose handover rules are meant");
+      }
+      return requestedTenantId;
+    }
+    if (requestedTenantId != null && !requestedTenantId.equals(callerTenantId)) {
+      throw new ForbiddenException("Handover rules of another Träger are not accessible");
+    }
+    return callerTenantId;
   }
 
   private void applyPolicyUpdate(
