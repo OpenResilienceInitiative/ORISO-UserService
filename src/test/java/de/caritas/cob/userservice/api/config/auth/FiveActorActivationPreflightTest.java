@@ -8,7 +8,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 /** The public startup boundary must not activate C over unmigrated native account flows. */
 class FiveActorActivationPreflightTest {
@@ -55,7 +54,7 @@ class FiveActorActivationPreflightTest {
     return failure;
   }
 
-  @Configuration(proxyBeanMethods = false)
+  // Explicit runner registration only; AppConfig also scans test component stereotypes.
   static class SafeLegacyClients {
     @Bean
     KeycloakCustomConfig keycloakCustomConfig() {
