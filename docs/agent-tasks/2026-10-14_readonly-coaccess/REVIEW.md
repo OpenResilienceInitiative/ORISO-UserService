@@ -24,3 +24,12 @@ Both independent reviewers passed the test-only diff against published `4b97720`
 Temporary production mutations of UUID, ownership revision and equality comparison each made the corresponding public behavior check fail with actual Matrix power 100 instead of −1. The reviewers inspected the test isolation and supplied sensitivity results; they did not independently execute those runs. All mutations were restored before final validation.
 
 Final local proof is 323 related unit tests plus 9 public integration cases (34.974 s), package, Spotless and diff checks passing. Production source and migrations are unchanged from `4b97720`. Actual Dev acceptance remains separate.
+
+
+## PR #1397 asynchronous task-consumption follow-up
+
+Both independent reviewers passed the fixture-only diff against `01c690a` without actionable findings. A completed failed worker attempt and consumption of its exact task replace elapsed-time assumptions before final permission checks. Database queries coordinate worker progress only; business assertions remain at public HTTP and actual Matrix. A paused worker now times out rather than producing a false pass.
+
+All three guard mutations produced direct assertion failures after task consumption: UUID 1 case / 1 failure, ownership revision 1 case / 1 failure, equal timestamp 2 cases / 1 failure, all with zero errors. All production mutations were restored. Reviewers inspected the supplied mutation receipts and did not independently execute them.
+
+Final local gates passed: 9 public integration cases in 52.851 s, package, Spotless and diff checks. The unchanged production and unit source retain the earlier 323 passing related-unit receipt. Disposable Testcontainers cleanup was verified. No production, migration, merge, deployment or Dev acceptance change is implied.

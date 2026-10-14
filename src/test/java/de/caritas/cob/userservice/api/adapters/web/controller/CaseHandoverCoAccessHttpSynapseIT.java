@@ -542,15 +542,15 @@ class CaseHandoverCoAccessHttpSynapseIT {
     try {
       rejectedGrant();
       await().atMost(Duration.ofSeconds(8)).until(() -> attempts.get() >= 2);
+      long queuedRepairId = awaitFailedScheduledRepair();
       mvc.perform(get(route()).header("Authorization", "Bearer " + OWNER_A_ID))
           .andExpect(status().isOk())
           .andExpect(jsonPath("$.canViewContent").value(false));
       assertThat(powerOfFormerOwner()).isEqualTo(-1);
       outage.set(false);
       DOMAIN_TIME.set(DOMAIN_TIME.get().plusSeconds(1));
-      await()
-          .atMost(Duration.ofSeconds(8))
-          .untilAsserted(() -> assertThat(powerOfFormerOwner()).isEqualTo(100));
+      awaitRepairCompletion(queuedRepairId);
+      assertThat(powerOfFormerOwner()).isEqualTo(100);
       mvc.perform(get(route()).header("Authorization", "Bearer " + OWNER_B_ID))
           .andExpect(status().isOk())
           .andExpect(jsonPath("$.auditOutcome").value("ACTIVE_OWNER"))
@@ -572,6 +572,7 @@ class CaseHandoverCoAccessHttpSynapseIT {
     try {
       rejectedGrant();
       await().atMost(Duration.ofSeconds(8)).until(() -> attempts.get() >= 2);
+      long queuedRepairId = awaitFailedScheduledRepair();
       var result =
           mvc.perform(
                   post(route())
@@ -596,12 +597,8 @@ class CaseHandoverCoAccessHttpSynapseIT {
       }
       outage.set(false);
       DOMAIN_TIME.set(DOMAIN_TIME.get().plusSeconds(1));
-      // The scheduled worker has already demonstrated real retry attempts at the Matrix boundary.
-      // Over several more sweep intervals, a newer grant must retain its protocol write denial.
-      await()
-          .during(Duration.ofMillis(700))
-          .atMost(Duration.ofSeconds(5))
-          .untilAsserted(() -> assertThat(powerOfFormerOwner()).isEqualTo(-1));
+      awaitRepairCompletion(queuedRepairId);
+      assertThat(powerOfFormerOwner()).isEqualTo(-1);
       assertThatThrownBy(() -> matrixSend(selmaToken, "Still forbidden"))
           .isInstanceOfSatisfying(
               HttpClientErrorException.class,
@@ -614,10 +611,7 @@ class CaseHandoverCoAccessHttpSynapseIT {
                     .content("{\"approved\":false}"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("CLIENT_CONSENT_DECLINED"));
-        await()
-            .during(Duration.ofMillis(700))
-            .atMost(Duration.ofSeconds(5))
-            .untilAsserted(() -> assertThat(powerOfFormerOwner()).isEqualTo(0));
+        assertThat(powerOfFormerOwner()).isEqualTo(0);
         mvc.perform(get(route()).header("Authorization", "Bearer " + OWNER_A_ID))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.canViewContent").value(false));
@@ -638,6 +632,7 @@ class CaseHandoverCoAccessHttpSynapseIT {
     try {
       rejectedGrant();
       await().atMost(Duration.ofSeconds(8)).until(() -> attempts.get() >= 2);
+      long queuedRepairId = awaitFailedScheduledRepair();
       // The failed attempt's request was rolled back. Retry its public operation identity with
       // an older clock, so creation/resolution dates cannot protect it from the old repair task.
       DOMAIN_TIME.set(originalTime.minus(Duration.ofHours(4)));
@@ -661,10 +656,8 @@ class CaseHandoverCoAccessHttpSynapseIT {
           .andExpect(jsonPath("$.status").value("EXPIRED"))
           .andExpect(jsonPath("$.canViewContent").value(false));
       outage.set(false);
-      await()
-          .during(Duration.ofMillis(700))
-          .atMost(Duration.ofSeconds(5))
-          .untilAsserted(() -> assertThat(powerOfFormerOwner()).isEqualTo(-1));
+      awaitRepairCompletion(queuedRepairId);
+      assertThat(powerOfFormerOwner()).isEqualTo(-1);
       assertThatThrownBy(() -> matrixSend(selmaToken, "Expired retry must not grant writing"))
           .isInstanceOfSatisfying(
               HttpClientErrorException.class,
@@ -689,6 +682,7 @@ class CaseHandoverCoAccessHttpSynapseIT {
     try {
       rejectedGrant();
       await().atMost(Duration.ofSeconds(8)).until(() -> attempts.get() >= 2);
+      long queuedRepairId = awaitFailedScheduledRepair();
       mvc.perform(
               post(route())
                   .header("Authorization", "Bearer " + OWNER_C_ID)
@@ -703,10 +697,8 @@ class CaseHandoverCoAccessHttpSynapseIT {
           .andExpect(jsonPath("$.ownershipRevision").value(1));
       outage.set(false);
       DOMAIN_TIME.set(DOMAIN_TIME.get().plusSeconds(1));
-      await()
-          .during(Duration.ofMillis(700))
-          .atMost(Duration.ofSeconds(5))
-          .untilAsserted(() -> assertThat(powerOfFormerOwner()).isEqualTo(-1));
+      awaitRepairCompletion(queuedRepairId);
+      assertThat(powerOfFormerOwner()).isEqualTo(-1);
       assertThatThrownBy(() -> matrixSend(selmaToken, "Old rollback must not grant writing"))
           .isInstanceOfSatisfying(
               HttpClientErrorException.class,
@@ -725,6 +717,50 @@ class CaseHandoverCoAccessHttpSynapseIT {
       outage.set(false);
       matrixTransport.getInterceptors().remove(fault);
     }
+  }
+
+  /**
+   * Queue identity/attempt completion are fixture coordination only. Permission and ownership
+   * outcomes remain asserted through public HTTP and actual Matrix, never through database rows.
+   */
+  private long awaitFailedScheduledRepair() {
+    var queuedId = new AtomicReference<Long>();
+    await()
+        .atMost(Duration.ofSeconds(8))
+        .until(
+            () -> {
+              var ids =
+                  jdbc.queryForList(
+                      """
+          SELECT id FROM case_handover_matrix_repair_task
+          WHERE session_id = ? AND room_id = ? AND member_id = ? AND action = 'POWER_RESTORE'
+            AND attempt_count > 0 AND last_attempt_at IS NOT NULL
+          """,
+                      Long.class,
+                      sessionId,
+                      roomId,
+                      ownerA.getMatrixUserId());
+              if (ids.size() != 1) {
+                return false;
+              }
+              queuedId.set(ids.get(0));
+              return true;
+            });
+    return queuedId.get();
+  }
+
+  private void awaitRepairCompletion(long queuedRepairId) {
+    // A guarded no-op need not send any Matrix PUT. Wait for the exact previously observed task's
+    // committed completion, so a quiet/paused worker can never make unchanged power a false pass.
+    await()
+        .atMost(Duration.ofSeconds(8))
+        .until(
+            () ->
+                jdbc.queryForList(
+                        "SELECT id FROM case_handover_matrix_repair_task WHERE id = ?",
+                        Long.class,
+                        queuedRepairId)
+                    .isEmpty());
   }
 
   private String fixtureTimestamp() {
