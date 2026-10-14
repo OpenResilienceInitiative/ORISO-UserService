@@ -838,7 +838,11 @@ public class CaseHandoverService {
     if (hasGrantedAccess(status)) {
       request.setMatrixMembershipAdded(
           ensureRequesterJoinedMatrixRoom(
-              session, requester, session.getConsultant(), request.getAccessType()));
+              session,
+              requester,
+              session.getConsultant(),
+              request.getAccessType(),
+              request.getOperationId()));
       if (request.getAccessType() == AccessType.TAKEOVER) {
         sessionOwnershipService.updateOwner(session, requester, session.getStatus(), now);
         attachStandingSupervisorAfterCommit(session.getId(), requester);
@@ -1105,7 +1109,11 @@ public class CaseHandoverService {
     request.setResolvedAt(now);
     request.setMatrixMembershipAdded(
         ensureRequesterJoinedMatrixRoom(
-            session, liveRecipient, request.getPreviousConsultant(), AccessType.TAKEOVER));
+            session,
+            liveRecipient,
+            request.getPreviousConsultant(),
+            AccessType.TAKEOVER,
+            request.getOperationId()));
     sessionOwnershipService.updateOwner(session, liveRecipient, session.getStatus(), now);
     attachStandingSupervisorAfterCommit(session.getId(), liveRecipient);
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
@@ -1187,7 +1195,8 @@ public class CaseHandoverService {
               session,
               request.getRequesterConsultant(),
               request.getPreviousConsultant(),
-              request.getAccessType()));
+              request.getAccessType(),
+              request.getOperationId()));
       if (request.getAccessType() == AccessType.TAKEOVER) {
         sessionOwnershipService.updateOwner(
             session, request.getRequesterConsultant(), session.getStatus(), now);
@@ -2580,7 +2589,11 @@ public class CaseHandoverService {
   }
 
   private boolean ensureRequesterJoinedMatrixRoom(
-      Session session, Consultant requester, Consultant previousConsultant, AccessType accessType) {
+      Session session,
+      Consultant requester,
+      Consultant previousConsultant,
+      AccessType accessType,
+      UUID operationId) {
     if (session == null || isBlank(session.getMatrixRoomId())) {
       return false;
     }
@@ -2645,10 +2658,29 @@ public class CaseHandoverService {
         wasMemberBefore);
 
     // Fail closed: a co-access that could write to the advice seeker must not be granted at all.
-    if (accessType == AccessType.CO_ACCESS
-        && !matrixSynapseService.setUserPowerLevel(
-            roomId, requester.getMatrixUserId(), CO_ACCESS_POWER_LEVEL, previousConsultantToken)) {
-      throw new InternalServerErrorException("Case handover co-access could not be made read-only");
+    if (accessType == AccessType.CO_ACCESS) {
+      var originalPower =
+          matrixSynapseService.makeUserReadOnly(
+              roomId,
+              requester.getMatrixUserId(),
+              CO_ACCESS_POWER_LEVEL,
+              previousConsultant.getMatrixUserId(),
+              previousConsultantToken,
+              requesterToken);
+      if (originalPower.isEmpty()) {
+        throw new InternalServerErrorException(
+            "Case handover co-access could not be made read-only");
+      }
+      if (wasMemberBefore) {
+        matrixRepairService.registerPowerRollback(
+            roomId,
+            requester.getMatrixUserId(),
+            session.getId(),
+            requester.getId(),
+            originalPower.get(),
+            session.getOwnershipRevision(),
+            operationId);
+      }
     }
     // The new owner needs the owner's room rights: later co-access grants on this case lower and
     // restore levels and remove members with the owner's token. Never block an absence cover over
