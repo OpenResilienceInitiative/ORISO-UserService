@@ -1440,6 +1440,14 @@ public class MatrixSynapseService implements MatrixUserClient {
 
   public java.util.Map<String, Object> sendMessage(
       String roomId, String message, String accessToken) {
+    return sendMessage(roomId, message, accessToken, java.util.UUID.randomUUID().toString());
+  }
+
+  /**
+   * Stable transport transaction id for durable notices; callers still reconcile ambiguous sends.
+   */
+  public java.util.Map<String, Object> sendMessage(
+      String roomId, String message, String accessToken, String transactionId) {
     try {
       var headers = getClientHttpHeaders(accessToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -1450,7 +1458,7 @@ public class MatrixSynapseService implements MatrixUserClient {
 
       HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(messageBody, headers);
 
-      String txnId = java.util.UUID.randomUUID().toString();
+      String txnId = transactionId;
       var url =
           MatrixUrlBuilder.buildUrl(
               matrixConfig,
@@ -1968,6 +1976,23 @@ public class MatrixSynapseService implements MatrixUserClient {
    * @param accessToken Access token of user with permission to set power levels
    * @return true if successful, false otherwise
    */
+  public java.util.Optional<Integer> makeUserReadOnly(
+      String roomId,
+      String userId,
+      int readerPower,
+      String ownerId,
+      String ownerToken,
+      String memberToken) {
+    return matrixRoomClient.makeUserReadOnly(
+        roomId, userId, readerPower, ownerId, ownerToken, memberToken);
+  }
+
+  public boolean restoreUserPowerLevel(
+      String roomId, String userId, int expectedPower, int originalPower, String ownerToken) {
+    return matrixRoomClient.restoreUserPowerLevel(
+        roomId, userId, expectedPower, originalPower, ownerToken);
+  }
+
   public boolean setUserPowerLevel(
       String roomId, String userId, int powerLevel, String accessToken) {
     return matrixRoomClient.setUserPowerLevel(roomId, userId, powerLevel, accessToken);

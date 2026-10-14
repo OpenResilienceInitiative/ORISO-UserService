@@ -794,6 +794,22 @@
       "status": "bounded"
     },
     {
+      "id": "inquiry-acceptance-notice-retry",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/InquiryAcceptanceNoticeScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryPending"
+      ],
+      "decision": "Retries only due PENDING notices; a pessimistic row lock and independently committed PENDING-to-UNCERTAIN claim precede Matrix transport, so competing replicas cannot send the same notice. PREPARING and ambiguous UNCERTAIN outcomes remain durable for operator reconciliation without automatic replay. Pre-transport failures receive a durable backoff so newer deliverable rows can progress.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "matrix-feed-signal-coalescer",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/FeedSignalCoalescer.java",
       "kind": "local-state",
