@@ -36,6 +36,18 @@ class ErstantwortTenantTextResolverTest {
   }
 
   @Test
+  void englishComesAfterTheOriginalAndBeforeTheGermanDefault() {
+    // original (fr) missing for this field, reader speaks Turkish: English beats German
+    var texts = Map.of("de", "<p>Hallo</p>", "en", "<p>Hello</p>", "fr__meta", "{\"src\":\"fr\"}");
+    assertThat(resolveGreeting(texts, "tr", false)).isEqualTo("Hello");
+    // without any English the German variant still catches
+    assertThat(resolveGreeting(Map.of("de", "<p>Hallo</p>"), "tr", false)).isEqualTo("Hallo");
+    // the original still wins over English
+    var withOriginal = Map.of("de", "<p>Hallo</p>", "en", "<p>Hello</p>", "de__meta", META_DE);
+    assertThat(resolveGreeting(withOriginal, "tr", false)).isEqualTo("Hallo");
+  }
+
+  @Test
   void fallsBackToTheGermanVariantMatchingLanguageFormal() {
     var texts = Map.of("de", "<p>Guten Tag</p>", "de@informal", "<p>Hallo</p>");
     assertThat(resolveGreeting(texts, "ru", true)).isEqualTo("Hallo");

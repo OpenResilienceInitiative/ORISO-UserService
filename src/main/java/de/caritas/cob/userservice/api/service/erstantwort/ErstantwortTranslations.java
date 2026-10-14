@@ -112,6 +112,7 @@ public final class ErstantwortTranslations {
               context.getWhoReadsAlongByTopic(),
               context.getWhoReadsAlongByAgency(),
               context.getWhoReadsAlongByTenant());
+      case "emergencyAddition" -> true;
       case "closing" ->
           any(
               context.getClosingByTopic(),

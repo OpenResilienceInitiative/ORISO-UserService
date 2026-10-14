@@ -171,6 +171,17 @@ public class ErstantwortPayloadBuilder {
                 + " Daten umgehen, steht in der Datenschutzerklärung.");
     addLinks(dataProtection, context);
 
+    /* ADR-018 §6: the Träger's emergency numbers are an addition, never a replacement. They
+    travel as their own Baustein so the client can file them with the other collapsible infos
+    instead of appending them to the always-visible platform bubble. */
+    if (isNotBlank(context.getEmergencyAdditionByTenant())) {
+      add(
+          bausteine,
+          "emergencyAddition",
+          "Weitere Notfallkontakte",
+          context.getEmergencyAdditionByTenant().trim());
+    }
+
     // The single escape hatch, at a fixed position. Absent until a Träger fills it.
     var freeNotice =
         resolve(
@@ -217,20 +228,7 @@ public class ErstantwortPayloadBuilder {
                 : "Bis bald — wir melden uns bei Ihnen."));
 
     ErstantwortTranslations.localizePlatformDefaults(bausteine, context);
-    appendEmergencyAddition(bausteine, context.getEmergencyAdditionByTenant());
     return bausteine;
-  }
-
-  /** ADR-018 §6: the platform numbers stay as written; a Träger can only add after them. */
-  private void appendEmergencyAddition(List<Map<String, Object>> bausteine, String addition) {
-    if (!isNotBlank(addition)) {
-      return;
-    }
-    for (var baustein : bausteine) {
-      if ("emergencyNumbers".equals(baustein.get("id"))) {
-        baustein.put("body", baustein.get("body") + "\n\n" + addition.trim());
-      }
-    }
   }
 
   /**

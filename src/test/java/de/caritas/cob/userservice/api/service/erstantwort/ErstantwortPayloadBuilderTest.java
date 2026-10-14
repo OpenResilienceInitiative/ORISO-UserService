@@ -214,28 +214,45 @@ class ErstantwortPayloadBuilderTest {
   }
 
   @Test
-  void tenantTextsReplaceDefaultsAndEmergencyAdditionIsAppendedNotSubstituted() throws Exception {
-    JsonNode bausteine =
+  void tenantTextsReplaceDefaultsAndEmergencyAdditionIsItsOwnBaustein() throws Exception {
+    JsonNode payload =
         buildFor(
-                agencyCounselling()
-                    .locale("de")
-                    .greetingByTenant("Moin!")
-                    .closingByTenant("Tschüss")
-                    .freeNoticeByTenant("Wir sind keine Chat-Beratung.")
-                    .emergencyAdditionByTenant("Hausnotruf 0123")
-                    .responseDeadlineDays(5)
-                    .build())
-            .get("bausteine");
-    String all = bausteine.toString();
+            agencyCounselling()
+                .locale("de")
+                .greetingByTenant("Moin!")
+                .closingByTenant("Tschüss")
+                .freeNoticeByTenant("Wir sind keine Chat-Beratung.")
+                .emergencyAdditionByTenant("Hausnotruf 0123")
+                .responseDeadlineDays(5)
+                .build());
+    String all = payload.get("bausteine").toString();
     assertThat(all).contains("Moin!").contains("Tschüss").contains("keine Chat-Beratung");
     assertThat(all).contains("innerhalb von 5 Werktagen");
-    for (JsonNode b : bausteine) {
-      if (b.get("id").asText().equals("emergencyNumbers")) {
-        assertThat(b.get("body").asText())
-            .contains("0800 111 0 111")
-            .endsWith("\n\nHausnotruf 0123");
-      }
+    // The fixed bubble stays exactly as the platform wrote it ...
+    assertThat(bodyOf(payload, "emergencyNumbers"))
+        .contains("0800 111 0 111")
+        .doesNotContain("Hausnotruf");
+    // ... and the addition travels in its own Baustein, with a question label for the FAQ group.
+    var addition = bausteinOf(payload, "emergencyAddition");
+    assertThat(addition.get("body").asText()).isEqualTo("Hausnotruf 0123");
+    assertThat(addition.get("headline").asText()).isNotBlank();
+    // Placed with the FAQ group (after dataProtection), before the free notice.
+    var ids = idsOf(payload);
+    assertThat(ids.indexOf("emergencyAddition")).isGreaterThan(ids.indexOf("dataProtection"));
+    assertThat(ids.indexOf("emergencyAddition")).isLessThan(ids.indexOf("freeNotice"));
+    for (JsonNode b : payload.get("bausteine")) {
       assertThat(b.get("body").asText()).doesNotContain("<p>");
+    }
+  }
+
+  @Test
+  void emergencyAdditionStaysVerbatimAndGetsALocalizedHeadlineInEveryLocale() throws Exception {
+    for (var locale : List.of("de", "de@informal", "en", "fr", "ru", "ti", "tr")) {
+      var payload =
+          buildFor(agencyCounselling().locale(locale).emergencyAdditionByTenant("XYZ 42").build());
+      var addition = bausteinOf(payload, "emergencyAddition");
+      assertThat(addition.get("body").asText()).as(locale).isEqualTo("XYZ 42");
+      assertThat(addition.get("headline").asText()).as(locale).isNotBlank();
     }
   }
 

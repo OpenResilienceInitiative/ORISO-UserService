@@ -17,10 +17,10 @@ import org.springframework.stereotype.Component;
 
 /**
  * Resolves the Träger-authored Erstantwort texts at send time (ADR-018 §6, §8). Per field: the
- * reader's locale, else the original publication language (named by {@code <lang>__meta.src}, else
- * the Träger's German variant), else nothing — and nothing means the platform default. The editor
- * stores HTML, the bubble renders plain text, so markup is removed here, before the event freezes.
- * Never throws: an unreachable TenantService must not cost anyone their enquiry.
+ * reader's locale, else the original publication language (named by {@code <lang>__meta.src}), else
+ * English, else the Träger's German variant, else nothing — and nothing means the platform default.
+ * The editor stores HTML, the bubble renders plain text, so markup is removed here, before the
+ * event freezes. Never throws: an unreachable TenantService must not cost anyone their enquiry.
  */
 @Slf4j
 @Component
@@ -75,6 +75,7 @@ public class ErstantwortTenantTextResolver {
     if (source != null) {
       addVariants(candidates, source, informal);
     }
+    addVariants(candidates, "en", informal);
     addVariants(candidates, "de", informal);
     for (var key : candidates) {
       var plain = toPlainText(texts.get(key));
