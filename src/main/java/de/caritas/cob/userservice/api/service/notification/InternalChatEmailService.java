@@ -92,17 +92,19 @@ public class InternalChatEmailService {
     if (isBlank(roomId) || isBlank(eventId)) return;
     Session session = resolveGroup(roomId);
     if (!currentParticipant(session, actor, participantIds(session))) return;
+    String eventKey = AdviceSeekerReplyEmailService.eventKey(roomId, eventId);
     try {
       writer.reserveInternalIntent(
           actor.getId(),
           actor.getMatrixUserId(),
           roomId,
           eventId,
-          AdviceSeekerReplyEmailService.eventKey(roomId, eventId),
+          eventKey,
           session.getTenantId(),
           session.getId());
-    } catch (DataIntegrityViolationException replay) {
-      // Both producers and HTTP retries converge on one durable intent.
+    } catch (DataIntegrityViolationException failure) {
+      // Both producers and HTTP retries converge on one durable intent; anything else is a fault.
+      if (!writer.hasInternalIntent(actor.getId(), eventKey)) throw failure;
     }
   }
 
@@ -115,7 +117,8 @@ public class InternalChatEmailService {
       return;
     }
     try {
-      if (!tenantAllowsMail(tenants.getRestrictedTenantDataFresh(intent.getTenantId()))) {
+      if (!tenantAllowsMail(
+          id, intent.getTenantId(), tenants.getRestrictedTenantDataFresh(intent.getTenantId()))) {
         writer.finish(id, Status.REJECTED);
         return;
       }
@@ -196,12 +199,8 @@ public class InternalChatEmailService {
       route = selectedRoute.get();
       delivery.requireConfigured(route);
       var tenant = tenants.getRestrictedTenantDataFresh(claim.getTenantId());
-      if (tenant == null || !Objects.equals(tenant.getId(), claim.getTenantId())) {
-        throw new IllegalStateException("Internal-chat email tenant is unavailable");
-      }
-      if (!tenantAllowsMail(tenant)) {
+      if (!tenantAllowsMail(id, claim.getTenantId(), tenant)) {
         writer.finish(id, Status.REJECTED);
-        log.info("Internal-chat email {} suppressed by the Träger's internal group switch", id);
         return;
       }
       if (multitenancyEnabled && !singleDomainMultitenancy && isBlank(tenant.getSubdomain())) {
@@ -244,12 +243,23 @@ public class InternalChatEmailService {
     }
   }
 
-  /** FE#1725 story 40: the internal group chats tile switch; absent means on. */
-  private static boolean tenantAllowsMail(RestrictedTenantDTO tenant) {
-    return tenant == null
-        || tenant.getSettings() == null
-        || !Boolean.FALSE.equals(
-            tenant.getSettings().getFeatureConsultantEmailInternalGroupEnabled());
+  /**
+   * FE#1725 story 40: the internal group chats tile switch; an absent switch means on. A missing
+   * Träger fails closed: no mail, never retried.
+   */
+  private static boolean tenantAllowsMail(long id, Long tenantId, RestrictedTenantDTO tenant) {
+    if (tenant == null || !Objects.equals(tenant.getId(), tenantId)) {
+      log.warn("Internal-chat email {} rejected: Träger {} is unavailable", id, tenantId);
+      return false;
+    }
+    boolean allowed =
+        tenant.getSettings() == null
+            || !Boolean.FALSE.equals(
+                tenant.getSettings().getFeatureConsultantEmailInternalGroupEnabled());
+    if (!allowed) {
+      log.info("Internal-chat email {} suppressed by the Träger's internal group switch", id);
+    }
+    return allowed;
   }
 
   private Session resolveGroup(String roomId) {

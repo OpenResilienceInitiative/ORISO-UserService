@@ -15,6 +15,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -24,6 +25,7 @@ import static org.mockito.Mockito.when;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -116,6 +118,7 @@ class CaseHandoverServiceTest {
   @Mock private PlatformTransactionManager transactionManager;
   @Mock private TransactionStatus transactionStatus;
   @Mock private AgencyService agencyService;
+  @Mock private AdminScope adminScope;
   @Spy private Clock clock = Clock.fixed(Instant.parse("2026-08-16T10:00:00Z"), ZoneOffset.UTC);
 
   // The real rule, not a mock: ConsultantDisplayNameResolver is the single place that decides
@@ -131,6 +134,14 @@ class CaseHandoverServiceTest {
 
   @BeforeEach
   void setUp() {
+    // The caller reaches the TenantContext's Träger; none means a single-tenant platform.
+    lenient()
+        .when(adminScope.current())
+        .thenAnswer(
+            call ->
+                TenantContext.getCurrentTenant() == null
+                    ? new AdminScope.Platform()
+                    : new AdminScope.Tenant(TenantContext.getCurrentTenant()));
     requester = consultant("requester", "Requesting Counsellor");
     previous = consultant("previous", "Previous Counsellor");
 
@@ -486,6 +497,7 @@ class CaseHandoverServiceTest {
     try {
       var updated =
           caseHandoverService.updateReasonPolicies(
+              null,
               List.of(
                   CaseHandoverService.CaseHandoverReason.builder()
                       .code("COUNSELLOR_IS_ILL")
@@ -509,6 +521,7 @@ class CaseHandoverServiceTest {
     TenantContext.setCurrentTenant(7L);
     try {
       caseHandoverService.updateReasonPolicies(
+          null,
           List.of(
               CaseHandoverService.CaseHandoverReason.builder()
                   .code("COUNSELLOR_ASKED_FOR_ADVICE")
@@ -560,6 +573,7 @@ class CaseHandoverServiceTest {
     try {
       var updated =
           caseHandoverService.updateReasonPolicies(
+              null,
               List.of(
                   CaseHandoverService.CaseHandoverReason.builder()
                       .code("COUNSELLOR_ASKED_FOR_ADVICE")
@@ -604,6 +618,7 @@ class CaseHandoverServiceTest {
           BadRequestException.class,
           () ->
               caseHandoverService.updateReasonPolicies(
+                  null,
                   List.of(
                       CaseHandoverService.CaseHandoverReason.builder()
                           .code("COUNSELLOR_ASKED_FOR_ADVICE")
@@ -4090,7 +4105,7 @@ class CaseHandoverServiceTest {
     assertThat(reasons)
         .extracting(CaseHandoverService.CaseHandoverReason::getCode)
         .containsExactlyElementsOf(NEUTRAL_CODES);
-    assertThat(caseHandoverService.listReasonPolicies())
+    assertThat(caseHandoverService.listReasonPolicies(null))
         .allSatisfy(
             reason -> {
               assertThat(reason.getLabel()).doesNotContainIgnoringCase("ill");
@@ -4110,7 +4125,7 @@ class CaseHandoverServiceTest {
                 reasonPolicy("COUNSELLOR_IS_ILL", "Counsellor is ill", false, false, false, 40),
                 reasonPolicy("UNPLANNED_ABSENCE", "Unplanned absence", false, true, true, 40)));
 
-    var reasons = caseHandoverService.listReasonPolicies();
+    var reasons = caseHandoverService.listReasonPolicies(null);
 
     assertThat(reasons)
         .extracting(CaseHandoverService.CaseHandoverReason::getCode)
@@ -4163,6 +4178,7 @@ class CaseHandoverServiceTest {
     TenantContext.setCurrentTenant(7L);
     try {
       caseHandoverService.updateReasonPolicies(
+          null,
           List.of(
               CaseHandoverService.CaseHandoverReason.builder()
                   .code("UNPLANNED_ABSENCE")

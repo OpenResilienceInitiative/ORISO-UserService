@@ -78,6 +78,15 @@ class InternalChatEmailServiceTest {
               stored.put(row.getId(), row);
               return row;
             });
+    when(repository.existsByRecipientKindAndRecipientUserIdAndEventKey(any(), any(), any()))
+        .thenAnswer(
+            i ->
+                stored.values().stream()
+                    .anyMatch(
+                        row ->
+                            row.getRecipientKind() == i.getArgument(0)
+                                && row.getRecipientUserId().equals(i.getArgument(1))
+                                && row.getEventKey().equals(i.getArgument(2))));
     when(repository.findById(anyLong()))
         .thenAnswer(i -> Optional.ofNullable(stored.get(i.getArgument(0))));
     when(repository.findByIdForUpdate(anyLong()))
@@ -396,6 +405,41 @@ class InternalChatEmailServiceTest {
     service.onMessageIntent(ROOM, EVENT, caller);
     drain();
     assertThat(received).hasSize(1);
+  }
+
+  /** FE#1725 review: a missing Träger fails closed in both checks, also once it is back. */
+  @Test
+  void missingTenantAtFanOutSendsNoMailEvenAfterItReturns() {
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(null);
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
+    makeRetryDue();
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  @Test
+  void missingTenantAtDispatchSendsNoMailEvenAfterItReturns() {
+    service.onMessageIntent(ROOM, EVENT, caller);
+    writer.pendingIds().forEach(service::resolveIntent);
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(null);
+    writer.pendingIds().forEach(service::deliverPending);
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
+    makeRetryDue();
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  /** Only a replayed intent is swallowed; any other integrity failure reaches the caller. */
+  @Test
+  void integrityFailureThatIsNoReplayIsNotSwallowed() {
+    doThrow(new DataIntegrityViolationException("column cannot be null"))
+        .when(repository)
+        .saveAndFlush(any());
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> service.onMessageIntent(ROOM, EVENT, caller))
+        .isInstanceOf(DataIntegrityViolationException.class);
   }
 
   private void makeRetryDue() {

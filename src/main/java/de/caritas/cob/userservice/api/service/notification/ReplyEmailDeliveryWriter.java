@@ -93,6 +93,13 @@ public class ReplyEmailDeliveryWriter {
         sessionId);
   }
 
+  /** Tells a replayed internal intent apart from any other integrity failure. */
+  @Transactional(readOnly = true)
+  public boolean hasInternalIntent(String actorId, String eventKey) {
+    return repository.existsByRecipientKindAndRecipientUserIdAndEventKey(
+        RecipientKind.INTERNAL_INTENT, actorId, eventKey);
+  }
+
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public long reserveInternalRecipient(String recipientId, ReplyEmailDelivery intent) {
     return saveNew(

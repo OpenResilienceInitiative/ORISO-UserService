@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResp
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -61,7 +62,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -346,6 +346,7 @@ public class CaseHandoverService {
   private final @NonNull Clock clock;
   private final @NonNull PlatformTransactionManager transactionManager;
   private final @NonNull AgencyService agencyService;
+  private final @NonNull AdminScope adminScope;
 
   /**
    * When topics are off, a department degenerates to the agency. When they are on, an empty topic
@@ -425,19 +426,10 @@ public class CaseHandoverService {
         : legacy;
   }
 
-  @Transactional(readOnly = true)
-  public List<CaseHandoverReason> listReasonPolicies() {
-    return listReasonPolicies(null);
-  }
-
   /** Reads the rules of {@code tenantId} (the Träger), checked against the caller (FE#1725). */
   @Transactional(readOnly = true)
   public List<CaseHandoverReason> listReasonPolicies(Long tenantId) {
-    return listReasons(resolvePolicyTenant(tenantId), "de", true, true);
-  }
-
-  public List<CaseHandoverReason> updateReasonPolicies(List<CaseHandoverReason> requestedReasons) {
-    return updateReasonPolicies(null, requestedReasons);
+    return listReasons(resolvePolicyTenant(tenantId, false), "de", true, true);
   }
 
   /**
@@ -446,7 +438,7 @@ public class CaseHandoverService {
    */
   public List<CaseHandoverReason> updateReasonPolicies(
       Long requestedTenantId, List<CaseHandoverReason> requestedReasons) {
-    Long tenantId = resolvePolicyTenant(requestedTenantId);
+    Long tenantId = resolvePolicyTenant(requestedTenantId, true);
     if (requestedReasons == null || requestedReasons.isEmpty()) {
       throw new BadRequestException("At least one handover reason policy is required");
     }
@@ -492,22 +484,30 @@ public class CaseHandoverService {
   }
 
   /**
-   * Platform admin (tenant 0): the Träger must be named, any is allowed. Everyone else: their own
-   * Träger only; omitted means the token tenant.
+   * The Träger whose rules are meant, within the caller's {@link AdminScope}. Platform reach: the
+   * Träger must be named (tenant 0 has no rules of its own). Träger admins: their own only; omitted
+   * means it. Agency (BST) admins: read their own Träger, never write.
    */
-  private Long resolvePolicyTenant(Long requestedTenantId) {
-    Long callerTenantId = TenantContext.getCurrentTenant();
-    if (TenantContext.isTechnicalOrSuperAdminContext()) {
-      if (requestedTenantId == null || requestedTenantId <= 0) {
+  private Long resolvePolicyTenant(Long requestedTenantId, boolean write) {
+    AdminScope.Reach reach = adminScope.current();
+    if (reach instanceof AdminScope.Platform) {
+      if (requestedTenantId != null && requestedTenantId > 0) {
+        return requestedTenantId;
+      }
+      if (requestedTenantId != null || TenantContext.isTechnicalOrSuperAdminContext()) {
         throw new BadRequestException(
             "tenantId is required: name the Träger whose handover rules are meant");
       }
-      return requestedTenantId;
+      // Single-tenant deployment: no Träger to name.
+      return TenantContext.getCurrentTenant();
     }
-    if (requestedTenantId != null && !requestedTenantId.equals(callerTenantId)) {
+    Long tenantId = requestedTenantId != null ? requestedTenantId : reach.tenantId();
+    if (write) {
+      adminScope.assertMay(AdminScope.Target.tenant(tenantId));
+    } else if (!Objects.equals(tenantId, reach.tenantId())) {
       throw new ForbiddenException("Handover rules of another Träger are not accessible");
     }
-    return callerTenantId;
+    return tenantId;
   }
 
   private void applyPolicyUpdate(
@@ -1372,7 +1372,7 @@ public class CaseHandoverService {
                 session.getConsultant() != null ? session.getConsultant().getLastName() : null),
             nullable(
                 session.getConsultant() != null
-                    ? candidateInternalName(session.getConsultant())
+                    ? decodeUsername(session.getConsultant().getInternalDisplayNameOrRealName())
                     : null));
 
     return haystack.stream()
@@ -1495,27 +1495,13 @@ public class CaseHandoverService {
               .username(decodeUsername(consultant.getUsername()))
               // #1725: public profile name; colleagues read internalName (#996)
               .displayName(decodeUsername(consultant.getDisplayName()))
-              .internalName(candidateInternalName(consultant))
+              .internalName(decodeUsername(consultant.getInternalDisplayNameOrRealName()))
               .avatarKind(
                   consultant.getAvatarKind() == null ? null : consultant.getAvatarKind().name())
               .avatarId(consultant.getAvatarId()));
     }
 
     return dto;
-  }
-
-  /** Colleague-facing name: internal display name, else first + last name, else null. */
-  private String candidateInternalName(Consultant consultant) {
-    String internal = consultant.getInternalDisplayName();
-    if (internal != null && !internal.isBlank()) {
-      return decodeUsername(internal);
-    }
-    String fullName =
-        Stream.of(consultant.getFirstName(), consultant.getLastName())
-            .filter(part -> part != null && !part.isBlank())
-            .map(String::trim)
-            .collect(Collectors.joining(" "));
-    return fullName.isEmpty() ? null : fullName;
   }
 
   private String decodeUsername(String username) {

@@ -12,6 +12,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -71,6 +72,7 @@ class CaseHandoverPolicyHttpContractTest {
       mock(PlatformTransactionManager.class);
   private final Clock clock = Clock.fixed(Instant.parse("2026-09-15T10:00:00Z"), ZoneOffset.UTC);
 
+  private final AdminScope adminScope = mock(AdminScope.class);
   private CaseHandoverService caseHandoverService;
 
   @BeforeEach
@@ -92,6 +94,26 @@ class CaseHandoverPolicyHttpContractTest {
         .when(transactionManager.getTransaction(any()))
         .thenReturn(mock(TransactionStatus.class));
     lenient().when(cacheRepository.findById(any())).thenReturn(Optional.empty());
+    // Tenant 0 is the platform admin, any other tenant a Träger admin (AdminScope rules).
+    lenient()
+        .when(adminScope.current())
+        .thenAnswer(
+            call ->
+                Long.valueOf(0L).equals(TenantContext.getCurrentTenant())
+                    ? new AdminScope.Platform()
+                    : new AdminScope.Tenant(TenantContext.getCurrentTenant()));
+    lenient()
+        .doAnswer(
+            call -> {
+              // Träger admins here only ever reach their own Träger 7.
+              if (!(adminScope.current() instanceof AdminScope.Platform)
+                  && !TenantContext.getCurrentTenant().equals(7L)) {
+                throw new ForbiddenException("out of scope");
+              }
+              return null;
+            })
+        .when(adminScope)
+        .assertMay(any());
 
     var policyClient =
         new TenantCaseHandoverPolicyReadClient(factory, identity, identityConfig, headers);
@@ -125,7 +147,8 @@ class CaseHandoverPolicyHttpContractTest {
             claims,
             clock,
             transactionManager,
-            mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class));
+            mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
+            adminScope);
 
     TenantContext.setCurrentTenant(7L);
   }
@@ -184,6 +207,7 @@ class CaseHandoverPolicyHttpContractTest {
         .andRespond(withSuccess(storedWithoutDuration, MediaType.APPLICATION_JSON));
 
     caseHandoverService.updateReasonPolicies(
+        null,
         List.of(
             MAPPER.readValue(
                 """

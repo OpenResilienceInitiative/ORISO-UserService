@@ -80,6 +80,23 @@ class EventNotificationControllerTest {
             Optional.empty());
   }
 
+  /** api-error-contract: a failed durable step never answers 2xx; the client retries. */
+  @Test
+  void internalChatIntentDatabaseFailureIsNotAcknowledged() {
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("!internal:matrix.example");
+    request.setMatrixEventId("$event");
+    org.mockito.Mockito.doThrow(
+            new org.springframework.dao.DataIntegrityViolationException("column cannot be null"))
+        .when(internalChatEmailService)
+        .onMessageIntent("!internal:matrix.example", "$event", authenticatedUser);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        org.springframework.dao.DataAccessException.class,
+        () -> controllerWithoutMirror.createMessageEventNotification(request));
+    verifyNoInteractions(eventNotificationService);
+  }
+
   @Test
   void explicitFeedbackIntentPersistsBeforeResponseButOrdinaryAsideDoesNot() {
     when(authenticatedUser.isConsultant()).thenReturn(true);
