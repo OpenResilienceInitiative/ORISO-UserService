@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponse
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -486,10 +487,15 @@ public class CaseHandoverService {
   /**
    * The Träger whose rules are meant, within the caller's {@link AdminScope}. Platform reach: the
    * Träger must be named (tenant 0 has no rules of its own). Träger admins: their own only; omitted
-   * means it. Agency (BST) admins: read their own Träger, never write.
+   * means it. Agency (BST) admins: read their own Träger, never write. The technical user gets no
+   * access although AdminScope gives it platform reach: these rules are for humans
+   * (ORISO-Helm#367).
    */
   private Long resolvePolicyTenant(Long requestedTenantId, boolean write) {
     AdminScope.Reach reach = adminScope.current();
+    if (reach instanceof AdminScope.Platform && isTechnicalWithoutPlatformAdmin()) {
+      throw new ForbiddenException("The technical user may not access handover rules");
+    }
     if (reach instanceof AdminScope.Platform) {
       if (requestedTenantId != null && requestedTenantId > 0) {
         return requestedTenantId;
@@ -508,6 +514,13 @@ public class CaseHandoverService {
       throw new ForbiddenException("Handover rules of another Träger are not accessible");
     }
     return tenantId;
+  }
+
+  private boolean isTechnicalWithoutPlatformAdmin() {
+    var roles = authenticatedUser.getRoles();
+    return roles != null
+        && roles.contains(UserRole.TECHNICAL.getValue())
+        && !authenticatedUser.isPlatformAdmin();
   }
 
   private void applyPolicyUpdate(

@@ -131,17 +131,21 @@ class CaseHandoverReasonPolicyAuthorizationIT {
     verify(policies, never()).updateEffective(anyLong(), any());
   }
 
-  /** By design AdminScope gives the technical user platform reach; TenantService checks again. */
+  /**
+   * Least privilege (ORISO-Helm#367): the technical user is a machine identity, so it may neither
+   * write nor read a Träger's handover rules, although AdminScope grants it platform reach.
+   */
   @Test
-  void technicalUser_Should_WriteTheNamedTraeger_AsAdminScopeGrantsPlatformReach()
-      throws Exception {
+  void technicalUser_Should_Answer403_When_WritingOrReadingAnyTraeger() throws Exception {
     var technical =
         jwt()
             .jwt(claims -> claims.claim("realm_access", Map.of("roles", List.of("technical"))))
             .authorities(new SimpleGrantedAuthority(AuthorityValue.TECHNICAL_DEFAULT));
-    write(null, technical).andExpect(status().isBadRequest());
-    write(OTHER, technical).andExpect(status().isOk());
-    verify(policies).updateEffective(eq(OTHER), any());
+    write(OTHER, technical).andExpect(status().isForbidden());
+    write(null, technical).andExpect(status().isForbidden());
+    read(OTHER, technical).andExpect(status().isForbidden());
+    verify(policies, never()).updateEffective(anyLong(), any());
+    verify(policies, never()).getEffective(anyLong());
   }
 
   private ResultActions write(Long tenantId, JwtRequestPostProcessor token) throws Exception {
