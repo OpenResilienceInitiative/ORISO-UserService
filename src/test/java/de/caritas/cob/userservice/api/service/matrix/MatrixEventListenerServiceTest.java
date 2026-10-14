@@ -85,6 +85,11 @@ class MatrixEventListenerServiceTest {
   @Mock private ConsultantMessageStatService consultantMessageStatService;
   @Mock private AdviceSeekerReplyEmailService replyEmailService;
   @Mock private MatrixEmailSyncCursorStore emailSyncCursorStore;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
+      internalChatEmailService;
+
   @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
 
   private Logger logger;
@@ -130,7 +135,8 @@ class MatrixEventListenerServiceTest {
             sessionRepository,
             consultantMessageStatService,
             replyEmailService,
-            emailSyncCursorStore);
+            emailSyncCursorStore,
+            internalChatEmailService);
     service.setDiagnosticMetrics(diagnosticMetrics);
     return service;
   }
@@ -204,7 +210,8 @@ class MatrixEventListenerServiceTest {
             sessionRepository,
             consultantMessageStatService,
             replyEmailService,
-            emailSyncCursorStore) {
+            emailSyncCursorStore,
+            internalChatEmailService) {
           @Override
           void sleep(long millis) {
             // deterministic: never actually sleep in the test
@@ -651,7 +658,8 @@ class MatrixEventListenerServiceTest {
             sessionRepository,
             consultantMessageStatService,
             replyEmailService,
-            emailSyncCursorStore) {
+            emailSyncCursorStore,
+            internalChatEmailService) {
           @Override
           void sleep(long millis) {
             // no-op
@@ -685,7 +693,8 @@ class MatrixEventListenerServiceTest {
             sessionRepository,
             consultantMessageStatService,
             replyEmailService,
-            emailSyncCursorStore) {
+            emailSyncCursorStore,
+            internalChatEmailService) {
           @Override
           void sleep(long millis) throws InterruptedException {
             throw new InterruptedException("shutdown");
@@ -1156,6 +1165,9 @@ class MatrixEventListenerServiceTest {
             anyString(), any(), anyString(), any(PrivacyEnvelope.class));
     verify(replyEmailService)
         .onConsultantReply(MATRIX_ROOM_ID, "$evt-direct", CONSULTANT_MATRIX_ID);
+    // FE#1725 story 40: the service itself ignores rooms that are not internal groups.
+    verify(internalChatEmailService)
+        .onMatrixMessage(MATRIX_ROOM_ID, "$evt-direct", CONSULTANT_MATRIX_ID);
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
   }
 

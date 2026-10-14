@@ -50,6 +50,10 @@ class EventNotificationControllerTest {
   private de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService
       feedbackMessageEmailService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
+      internalChatEmailService;
+
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
 
@@ -63,6 +67,7 @@ class EventNotificationControllerTest {
             eventNotificationService,
             teamDiscussionNotificationService,
             feedbackMessageEmailService,
+            internalChatEmailService,
             authenticatedUser,
             Optional.of(redisMessageMirrorService));
     controllerWithoutMirror =
@@ -70,6 +75,7 @@ class EventNotificationControllerTest {
             eventNotificationService,
             teamDiscussionNotificationService,
             feedbackMessageEmailService,
+            internalChatEmailService,
             authenticatedUser,
             Optional.empty());
   }
@@ -138,6 +144,7 @@ class EventNotificationControllerTest {
             realService,
             teamDiscussionNotificationService,
             feedbackMessageEmailService,
+            internalChatEmailService,
             authenticatedUser,
             Optional.empty());
 
