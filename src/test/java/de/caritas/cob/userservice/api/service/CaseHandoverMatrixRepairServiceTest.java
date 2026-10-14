@@ -48,6 +48,8 @@ class CaseHandoverMatrixRepairServiceTest {
             repository,
             handoverRequestRepository,
             matrixSynapseService,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.SessionRepository.class),
             Clock.fixed(Instant.parse("2026-09-14T10:00:00Z"), ZoneOffset.UTC),
             transactionManager);
     ReflectionTestUtils.setField(service, "maxAttempts", 100);
