@@ -25,7 +25,7 @@ Final candidate checks passed on Java 21:
 
 | Check | Result |
 | --- | --- |
-| Public HTTP/MariaDB/Synapse/Redis integration | 9 cases, 0 failures, 0 errors, 0 skipped; 34.974 s |
+| Public HTTP/MariaDB/Synapse/Redis integration | 9 cases, 0 failures, 0 errors, 0 skipped; 52.851 s (latest task-consumption follow-up) |
 | Related unit tests | 323 cases, 0 failures, 0 errors, 0 skipped: handover 213, repair 8, room client 36, Synapse adapter 66 |
 | Maven package | Passed; `target/UserService.jar` produced |
 | Spotless and `git diff --check` | Passed |
@@ -58,3 +58,12 @@ The follow-up adds public behavior checks rather than private or mocked repair-h
 These are guard-sensitivity checks, not additional original defect reproductions. Every temporary mutation was reverted byte-for-byte. The follow-up changes no production source or migration: `git diff 4b97720 --name-only -- src/main` returned no paths.
 
 Final follow-up gates: 323 related unit tests and 9 public integration cases passed; Maven package, Spotless and diff checks passed. Independent specification and standards follow-up reviews passed. After the test JVM exited, `docker ps -a --filter label=org.testcontainers=true` returned no disposable containers. Existing local containers were not changed.
+
+
+## PR #1397 asynchronous repair completion follow-up
+
+CodeRabbit comment `4268100880` correctly identified that a guarded repair may make no Matrix write. The previous elapsed-time window could therefore observe unchanged power before the worker had consumed the task. The fixture now captures the opaque repair ID only after a failed scheduled attempt has completed, then waits for that exact task to be consumed before asserting Matrix power and send authorization. Database reads coordinate the disposable worker only; ownership and permission outcomes still use public HTTP and actual Matrix.
+
+With this synchronization, removing only the UUID guard yields 1 case / 1 assertion failure / 0 errors; removing only the ownership-revision guard yields the same result. Changing the equality-safe timestamp comparison to strict-after yields 2 cases / 1 assertion failure / 0 errors. Each failure observes actual power 100 instead of expected −1 after task consumption. Production mutations were restored byte-for-byte before final validation.
+
+The final public run passed all 9 cases in 52.851 s, with no failures, errors or skips. Maven package, Spotless and diff checks passed. The previously verified 323 related unit cases remain valid because this follow-up changes no production or unit source. Both independent follow-up reviews passed; reviewers inspected source and supplied results rather than rerunning the suite. The Testcontainers inventory was empty after the test JVM exited. Production and migrations remain unchanged from `01c690a` and `4b97720`; Dev acceptance remains pending separately.
