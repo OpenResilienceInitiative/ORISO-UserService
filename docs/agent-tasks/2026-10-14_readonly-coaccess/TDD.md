@@ -25,7 +25,7 @@ Final candidate checks passed on Java 21:
 
 | Check | Result |
 | --- | --- |
-| Public HTTP/MariaDB/Synapse/Redis integration | 7 cases, 0 failures, 0 errors, 0 skipped; 29.297 s |
+| Public HTTP/MariaDB/Synapse/Redis integration | 9 cases, 0 failures, 0 errors, 0 skipped; 34.974 s |
 | Related unit tests | 323 cases, 0 failures, 0 errors, 0 skipped: handover 213, repair 8, room client 36, Synapse adapter 66 |
 | Maven package | Passed; `target/UserService.jar` produced |
 | Spotless and `git diff --check` | Passed |
@@ -41,3 +41,20 @@ The owner-authorized power update remains first. Self-demotion is restricted to 
 Rollback restoration holds the session lock and checks the ownership revision, persisted superseding grants, original attempt boundary, operation identity and expected Matrix power. Failed restoration extends the existing durable repair queue. Three nullable columns carry the prior power, ownership revision and attempt operation identity; no live database is changed by this work.
 
 Ordinary objection and expiry continue restoring member power 0, rather than former-owner power 100. Review, merge, image build, deployment and full browser acceptance remain separate delivery gates.
+
+
+## PR #1397 review follow-up
+
+CodeRabbit comment `4267896111` identified two useful coverage gaps: a matching-operation retry and a changed ownership revision were not separately isolated. Its claim that the existing equal timestamps depended on execution timing was incorrect: the primary fixture clock remains frozen across both requests. That case now also checks its public `createdAt` response against the given whole-second fixture time.
+
+The follow-up adds public behavior checks rather than private or mocked repair-helper tests:
+
+| Guard | Independent public scenario | Sensitivity result |
+| --- | --- | --- |
+| Matching operation identity | A failed grant is retried with the same UUID after moving the fixture clock four hours backward. Returning to the original time expires the retry, so date/active-grant checks cannot mask the UUID safeguard. | Removing only the UUID safeguard causes 1 case to fail: Matrix power becomes 100 instead of −1. |
+| Ownership revision | A third eligible counsellor takes over through the normal public request, advancing revision 0→1 while the first failed advice request has no grant. | Removing only the revision safeguard causes 1 case to fail: the old worker restores Matrix power 100 instead of preserving −1. |
+| Equal persisted timestamp | The later advice grant has the same whole-second fixture time as the failed attempt, a different UUID and an expired status. | Replacing equality-safe comparison with strict-after causes the expired scenario to fail (2 cases, 1 error): Matrix power becomes 100 instead of −1. |
+
+These are guard-sensitivity checks, not additional original defect reproductions. Every temporary mutation was reverted byte-for-byte. The follow-up changes no production source or migration: `git diff 4b97720 --name-only -- src/main` returned no paths.
+
+Final follow-up gates: 323 related unit tests and 9 public integration cases passed; Maven package, Spotless and diff checks passed. Independent specification and standards follow-up reviews passed. After the test JVM exited, `docker ps -a --filter label=org.testcontainers=true` returned no disposable containers. Existing local containers were not changed.

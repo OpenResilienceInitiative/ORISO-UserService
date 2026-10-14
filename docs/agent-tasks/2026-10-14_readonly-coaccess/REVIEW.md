@@ -15,3 +15,12 @@ PASS: no blocking documented breach. The independent reviewer checked the bounde
 One optional duplication heuristic remains: the existing `MatrixRoomClient.setUserPowerLevel` has the same GET–copy–PUT shape as the new private helpers. Reusing them could shorten the legacy method, but leaving its existing behavior/logging unchanged is reasonable for this repair. This is not a blocking finding.
 
 Reviewer: independent `coaccess_standards_review` agent. Local gates passed; no Dev acceptance or merge is implied.
+
+
+## PR #1397 public guard coverage follow-up
+
+Both independent reviewers passed the test-only diff against published `4b97720` without new actionable findings. The new matching-operation case prevents date/active-grant checks from masking identity correlation. The public takeover case changes the ownership revision without adding another advice grant. The existing same-timestamp case now explicitly checks the public creation date against the controlled clock.
+
+Temporary production mutations of UUID, ownership revision and equality comparison each made the corresponding public behavior check fail with actual Matrix power 100 instead of −1. The reviewers inspected the test isolation and supplied sensitivity results; they did not independently execute those runs. All mutations were restored before final validation.
+
+Final local proof is 323 related unit tests plus 9 public integration cases (34.974 s), package, Spotless and diff checks passing. Production source and migrations are unchanged from `4b97720`. Actual Dev acceptance remains separate.

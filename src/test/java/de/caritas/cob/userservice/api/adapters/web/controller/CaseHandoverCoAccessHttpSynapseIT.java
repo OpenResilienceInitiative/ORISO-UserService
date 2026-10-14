@@ -26,6 +26,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
@@ -229,6 +230,7 @@ class CaseHandoverCoAccessHttpSynapseIT {
     transactions = new TransactionTemplate(transactionManager);
     String selmaId = createMatrixUser(OWNER_A_ID + "-" + UUID.randomUUID());
     String pattyId = createMatrixUser(OWNER_B_ID + "-" + UUID.randomUUID());
+    String herbId = createMatrixUser(OWNER_C_ID + "-" + UUID.randomUUID());
     selmaToken = matrix.loginAsUserAccessToken(selmaId);
     pattyToken = matrix.loginAsUserAccessToken(pattyId);
     roomId =
@@ -267,6 +269,16 @@ class CaseHandoverCoAccessHttpSynapseIT {
               ownerB.setMatrixUserId(pattyId);
               consultantRepository.save(ownerB);
               ownerC = consultantRepository.save(consultant(OWNER_C_ID, now));
+              ownerC.setMatrixUserId(herbId);
+              consultantRepository.save(ownerC);
+              consultantAgencyRepository.save(
+                  ConsultantAgency.builder()
+                      .consultant(ownerC)
+                      .agencyId(700L)
+                      .tenantId(7L)
+                      .createDate(now)
+                      .updateDate(now)
+                      .build());
               consultantAgencyRepository.save(
                   ConsultantAgency.builder()
                       .consultant(ownerA)
@@ -281,7 +293,7 @@ class CaseHandoverCoAccessHttpSynapseIT {
                       .refreshedAt(now)
                       .policies(
                           """
-                {"reasons":{"COUNSELLOR_ASKED_FOR_ADVICE":{"code":"COUNSELLOR_ASKED_FOR_ADVICE","labels":{"value":{"de":"Rat erbeten"}},"enabled":{"value":true},"accessAllowed":{"value":true},"clientConsent":{"value":"OPT_OUT"},"maxAccessDurationMinutes":{"value":180},"approvalRoles":{"value":[]}}}}
+                {"reasons":{"COUNSELLOR_ASKED_FOR_ADVICE":{"code":"COUNSELLOR_ASKED_FOR_ADVICE","labels":{"value":{"de":"Rat erbeten"}},"enabled":{"value":true},"accessAllowed":{"value":true},"clientConsent":{"value":"OPT_OUT"},"maxAccessDurationMinutes":{"value":180},"approvalRoles":{"value":[]}},"COUNSELLOR_IS_ILL":{"code":"COUNSELLOR_IS_ILL","labels":{"value":{"de":"Ungeplant abwesend"}},"enabled":{"value":true},"accessAllowed":{"value":true},"clientConsent":{"value":"NONE"},"approvalRoles":{"value":[]}}}}
                 """)
                       .build());
               consultantAgencyRepository.save(
@@ -316,11 +328,14 @@ class CaseHandoverCoAccessHttpSynapseIT {
                   consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(OWNER_B_ID));
               consultantAgencyRepository.deleteAll(
                   consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(OWNER_A_ID));
+              consultantAgencyRepository.deleteAll(
+                  consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(OWNER_C_ID));
               jdbc.update(
-                  "DELETE FROM event_notification WHERE recipient_user_id IN (?, ?, ?)",
+                  "DELETE FROM event_notification WHERE recipient_user_id IN (?, ?, ?, ?)",
                   USER_ID,
                   OWNER_A_ID,
-                  OWNER_B_ID);
+                  OWNER_B_ID,
+                  OWNER_C_ID);
               policyCache.deleteById(7L);
               consultantRepository.deleteAllById(List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID));
               userRepository.deleteById(USER_ID);
@@ -568,6 +583,7 @@ class CaseHandoverCoAccessHttpSynapseIT {
           """))
               .andExpect(status().isCreated())
               .andExpect(jsonPath("$.canViewContent").value(true))
+              .andExpect(jsonPath("$.createdAt").value(fixtureTimestamp()))
               .andReturn();
       long requestId =
           JSON.readTree(result.getResponse().getContentAsString()).path("requestId").asLong();
@@ -610,6 +626,110 @@ class CaseHandoverCoAccessHttpSynapseIT {
       outage.set(false);
       matrixTransport.getInterceptors().remove(fault);
     }
+  }
+
+  @Test
+  void matchingOperationRetryProtectsExpiredGrantDespiteBackwardClockAdjustment() throws Exception {
+    var originalTime = DOMAIN_TIME.get();
+    var outage = new AtomicBoolean(true);
+    var attempts = new AtomicInteger();
+    var fault = rejectRestorationDuring(outage, attempts);
+    matrixTransport.getInterceptors().add(fault);
+    try {
+      rejectedGrant();
+      await().atMost(Duration.ofSeconds(8)).until(() -> attempts.get() >= 2);
+      // The failed attempt's request was rolled back. Retry its public operation identity with
+      // an older clock, so creation/resolution dates cannot protect it from the old repair task.
+      DOMAIN_TIME.set(originalTime.minus(Duration.ofHours(4)));
+      mvc.perform(
+              post(route())
+                  .header("Authorization", "Bearer " + OWNER_A_ID)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      """
+          {"reasonCode":"ADVICE_REQUESTED","explanation":"Review","expectedOwnershipRevision":0,"operationId":"11b14fd5-48bb-4b4d-a05b-f65632b66ca0"}
+          """))
+          .andExpect(status().isCreated())
+          .andExpect(jsonPath("$.status").value("GRANTED_PENDING_CLIENT_OPTOUT"))
+          .andExpect(jsonPath("$.operationId").value("11b14fd5-48bb-4b4d-a05b-f65632b66ca0"))
+          .andExpect(jsonPath("$.createdAt").value(fixtureTimestamp()))
+          .andExpect(jsonPath("$.resolvedAt").isEmpty())
+          .andExpect(jsonPath("$.ownershipRevision").value(0));
+      DOMAIN_TIME.set(originalTime.plusSeconds(1));
+      mvc.perform(get(route()).header("Authorization", "Bearer " + OWNER_A_ID))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.status").value("EXPIRED"))
+          .andExpect(jsonPath("$.canViewContent").value(false));
+      outage.set(false);
+      await()
+          .during(Duration.ofMillis(700))
+          .atMost(Duration.ofSeconds(5))
+          .untilAsserted(() -> assertThat(powerOfFormerOwner()).isEqualTo(-1));
+      assertThatThrownBy(() -> matrixSend(selmaToken, "Expired retry must not grant writing"))
+          .isInstanceOfSatisfying(
+              HttpClientErrorException.class,
+              e -> assertThat(e.getStatusCode().value()).isEqualTo(403));
+      mvc.perform(get(route()).header("Authorization", "Bearer " + OWNER_B_ID))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.auditOutcome").value("ACTIVE_OWNER"))
+          .andExpect(jsonPath("$.ownershipRevision").value(0));
+    } finally {
+      outage.set(false);
+      DOMAIN_TIME.set(originalTime.plusSeconds(1));
+      matrixTransport.getInterceptors().remove(fault);
+    }
+  }
+
+  @Test
+  void laterTakeoverSupersedesQueuedRollbackWithoutAnyNewCoAccessGrant() throws Exception {
+    var outage = new AtomicBoolean(true);
+    var attempts = new AtomicInteger();
+    var fault = rejectRestorationDuring(outage, attempts);
+    matrixTransport.getInterceptors().add(fault);
+    try {
+      rejectedGrant();
+      await().atMost(Duration.ofSeconds(8)).until(() -> attempts.get() >= 2);
+      mvc.perform(
+              post(route())
+                  .header("Authorization", "Bearer " + OWNER_C_ID)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      """
+          {"reasonCode":"UNPLANNED_ABSENCE","explanation":"Cover the current case","expectedOwnershipRevision":0,"operationId":"c203d3ed-9a5c-4324-80c1-d421eed61572"}
+          """))
+          .andExpect(status().isCreated())
+          .andExpect(jsonPath("$.status").value("GRANTED"))
+          .andExpect(jsonPath("$.accessType").value("TAKEOVER"))
+          .andExpect(jsonPath("$.ownershipRevision").value(1));
+      outage.set(false);
+      DOMAIN_TIME.set(DOMAIN_TIME.get().plusSeconds(1));
+      await()
+          .during(Duration.ofMillis(700))
+          .atMost(Duration.ofSeconds(5))
+          .untilAsserted(() -> assertThat(powerOfFormerOwner()).isEqualTo(-1));
+      assertThatThrownBy(() -> matrixSend(selmaToken, "Old rollback must not grant writing"))
+          .isInstanceOfSatisfying(
+              HttpClientErrorException.class,
+              e -> assertThat(e.getStatusCode().value()).isEqualTo(403));
+      mvc.perform(get(route()).header("Authorization", "Bearer " + OWNER_C_ID))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.auditOutcome").value("ACTIVE_OWNER"))
+          .andExpect(jsonPath("$.ownershipRevision").value(1));
+      mvc.perform(get(route()).header("Authorization", "Bearer " + OWNER_A_ID))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.status").value("NOT_REQUESTED"))
+          .andExpect(jsonPath("$.canViewContent").value(false));
+      var herbToken = matrix.loginAsUserAccessToken(ownerC.getMatrixUserId());
+      assertThat(matrixSend(herbToken, "The new owner can still send")).containsKey("event_id");
+    } finally {
+      outage.set(false);
+      matrixTransport.getInterceptors().remove(fault);
+    }
+  }
+
+  private String fixtureTimestamp() {
+    return LocalDateTime.ofInstant(DOMAIN_TIME.get(), ZoneOffset.UTC)
+        .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
   }
 
   private ClientHttpRequestInterceptor rejectRestorationDuring(
