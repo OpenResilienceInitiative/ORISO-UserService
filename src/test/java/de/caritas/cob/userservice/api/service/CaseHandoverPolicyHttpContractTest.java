@@ -121,7 +121,8 @@ class CaseHandoverPolicyHttpContractTest {
             new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver(),
             claims,
             clock,
-            transactionManager);
+            transactionManager,
+            mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class));
 
     TenantContext.setCurrentTenant(7L);
   }

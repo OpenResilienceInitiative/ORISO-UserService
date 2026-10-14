@@ -23,6 +23,7 @@ import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -48,6 +49,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverRecipient;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
@@ -113,6 +115,7 @@ class CaseHandoverServiceTest {
   @Mock private ScheduledTaskClaimService scheduledTaskClaimService;
   @Mock private PlatformTransactionManager transactionManager;
   @Mock private TransactionStatus transactionStatus;
+  @Mock private AgencyService agencyService;
   @Spy private Clock clock = Clock.fixed(Instant.parse("2026-08-16T10:00:00Z"), ZoneOffset.UTC);
 
   // The real rule, not a mock: ConsultantDisplayNameResolver is the single place that decides
@@ -2648,6 +2651,34 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void searchCandidates_itemCarriesAgencyIdAndName() {
+    givenCandidates(session);
+    when(agencyService.getAgencies(List.of(10L)))
+        .thenReturn(
+            List.of(new AgencyDTO().id(10L).name("Beratungsstelle Nord").postcode("12345")));
+
+    var candidate =
+        caseHandoverService.searchCandidates("asker", 0, 15, false).getSessions().get(0);
+
+    assertEquals(10L, candidate.getAgency().getId());
+    assertEquals("Beratungsstelle Nord", candidate.getAgency().getName());
+    // metadata only: id + name, nothing else from the agency record
+    assertNull(candidate.getAgency().getPostcode());
+  }
+
+  @Test
+  void searchCandidates_keepsAgencyIdWhenAgencyLookupFails() {
+    givenCandidates(session);
+    when(agencyService.getAgencies(List.of(10L))).thenThrow(new IllegalStateException("down"));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(1, response.getTotal());
+    assertEquals(10L, response.getSessions().get(0).getAgency().getId());
+    assertNull(response.getSessions().get(0).getAgency().getName());
+  }
+
+  @Test
   void searchCandidates_matchesInternalDisplayNameOnlyQuery() {
     // The candidate list renders the internal name with fallback (#996), so a query matching
     // ONLY the internal name must not filter the session out before rendering; the public
@@ -2662,10 +2693,57 @@ class CaseHandoverServiceTest {
     var publicNameResponse = caseHandoverService.searchCandidates("anna b", 0, 15, false);
 
     assertEquals(1, internalNameResponse.getTotal());
-    assertEquals(
-        "Standort Nord Team 7",
-        internalNameResponse.getSessions().get(0).getConsultant().getDisplayName());
+    var consultant = internalNameResponse.getSessions().get(0).getConsultant();
+    // #1725: displayName is the public profile name, internalName the colleague-facing one
+    assertEquals("Anna B.", consultant.getDisplayName());
+    assertEquals("Standort Nord Team 7", consultant.getInternalName());
     assertEquals(1, publicNameResponse.getTotal());
+  }
+
+  @Test
+  void searchCandidates_internalNameFallsBackToFirstAndLastName() {
+    previous.setDisplayName("Anna B.");
+    previous.setFirstName("Anna");
+    previous.setLastName("Berger");
+    givenCandidates(session);
+
+    var consultant =
+        caseHandoverService
+            .searchCandidates("asker", 0, 15, false)
+            .getSessions()
+            .get(0)
+            .getConsultant();
+
+    assertEquals("Anna B.", consultant.getDisplayName());
+    assertEquals("Anna Berger", consultant.getInternalName());
+  }
+
+  @Test
+  void searchCandidates_internalNameIsNullWithoutInternalOrRealName() {
+    previous.setFirstName("");
+    previous.setLastName(" ");
+    givenCandidates(session);
+
+    var consultant =
+        caseHandoverService
+            .searchCandidates("asker", 0, 15, false)
+            .getSessions()
+            .get(0)
+            .getConsultant();
+
+    assertNull(consultant.getInternalName());
+  }
+
+  @Test
+  void searchCandidates_matchesConsultantFullInternalName() {
+    previous.setDisplayName("Anna B.");
+    previous.setFirstName("Anna");
+    previous.setLastName("Berger");
+    givenCandidates(session);
+
+    assertEquals(1, caseHandoverService.searchCandidates("berger", 0, 15, false).getTotal());
+    assertEquals(1, caseHandoverService.searchCandidates("Anna Berger", 0, 15, false).getTotal());
+    assertEquals(0, caseHandoverService.searchCandidates("anna meier", 0, 15, false).getTotal());
   }
 
   @Test

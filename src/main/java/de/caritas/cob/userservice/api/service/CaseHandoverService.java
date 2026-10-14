@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
@@ -35,6 +36,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepositor
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
 import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
@@ -59,6 +61,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -342,6 +345,7 @@ public class CaseHandoverService {
   private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
   private final @NonNull Clock clock;
   private final @NonNull PlatformTransactionManager transactionManager;
+  private final @NonNull AgencyService agencyService;
 
   /**
    * When topics are off, a department degenerates to the agency. When they are on, an empty topic
@@ -644,11 +648,12 @@ public class CaseHandoverService {
             .filter(session -> isInRequesterDepartment(session, requester))
             .filter(session -> matchesCandidateQuery(session, query))
             .collect(Collectors.toList());
+    List<Session> pageSessions =
+        matchingCandidates.stream().skip(safeOffset).limit(safeCount).toList();
+    Map<Long, String> agencyNames = candidateAgencyNames(pageSessions);
     List<ConsultantSessionResponseDTO> page =
-        matchingCandidates.stream()
-            .skip(safeOffset)
-            .limit(safeCount)
-            .map(this::toCandidateDto)
+        pageSessions.stream()
+            .map(candidate -> toCandidateDto(candidate, agencyNames))
             .collect(Collectors.toList());
 
     return new ConsultantSessionListResponseDTO()
@@ -1323,9 +1328,7 @@ public class CaseHandoverService {
                 session.getConsultant() != null
                     ? decodeUsername(session.getConsultant().getDisplayName())
                     : null),
-            // The candidate list renders the internal name with fallback (#996), so the search
-            // must cover it too — otherwise an internal-name-only query filters the session out
-            // before it is rendered. The public display name above stays a valid search term.
+            // Colleagues search by internal name too (#996, #1725); public name stays searchable.
             nullable(
                 session.getConsultant() != null
                     ? decodeUsername(session.getConsultant().getInternalDisplayNameOrFallback())
@@ -1333,7 +1336,11 @@ public class CaseHandoverService {
             nullable(
                 session.getConsultant() != null ? session.getConsultant().getFirstName() : null),
             nullable(
-                session.getConsultant() != null ? session.getConsultant().getLastName() : null));
+                session.getConsultant() != null ? session.getConsultant().getLastName() : null),
+            nullable(
+                session.getConsultant() != null
+                    ? candidateInternalName(session.getConsultant())
+                    : null));
 
     return haystack.stream()
         .map(this::normalizeSearchText)
@@ -1402,10 +1409,38 @@ public class CaseHandoverService {
     return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
   }
 
-  private ConsultantSessionResponseDTO toCandidateDto(Session session) {
+  /** Agency names for one candidate page; a failing lookup degrades to id-only agencies. */
+  private Map<Long, String> candidateAgencyNames(List<Session> sessions) {
+    List<Long> agencyIds =
+        sessions.stream().map(Session::getAgencyId).filter(Objects::nonNull).distinct().toList();
+    if (agencyIds.isEmpty()) {
+      return Map.of();
+    }
+    try {
+      List<AgencyDTO> agencies = agencyService.getAgencies(agencyIds);
+      return agencies == null
+          ? Map.of()
+          : agencies.stream()
+              .filter(
+                  agency -> agency != null && agency.getId() != null && agency.getName() != null)
+              .collect(
+                  Collectors.toMap(AgencyDTO::getId, AgencyDTO::getName, (first, second) -> first));
+    } catch (RuntimeException e) {
+      log.warn("Case-handover candidates: agency lookup failed for {}", agencyIds, e);
+      return Map.of();
+    }
+  }
+
+  private ConsultantSessionResponseDTO toCandidateDto(
+      Session session, Map<Long, String> agencyNames) {
     ConsultantSessionResponseDTO dto =
         new ConsultantSessionResponseDTO()
             .session(new SessionMapper().convertToSessionDTO(session));
+    if (session.getAgencyId() != null) {
+      // id + name only: candidates are metadata, not the full agency record
+      dto.agency(
+          new AgencyDTO().id(session.getAgencyId()).name(agencyNames.get(session.getAgencyId())));
+    }
 
     User user = session.getUser();
     if (user != null) {
@@ -1425,14 +1460,29 @@ public class CaseHandoverService {
               .firstName(consultant.getFirstName())
               .lastName(consultant.getLastName())
               .username(decodeUsername(consultant.getUsername()))
-              // Handover candidates are shown to colleagues (internal surface, #996).
-              .displayName(decodeUsername(consultant.getInternalDisplayNameOrFallback()))
+              // #1725: public profile name; colleagues read internalName (#996)
+              .displayName(decodeUsername(consultant.getDisplayName()))
+              .internalName(candidateInternalName(consultant))
               .avatarKind(
                   consultant.getAvatarKind() == null ? null : consultant.getAvatarKind().name())
               .avatarId(consultant.getAvatarId()));
     }
 
     return dto;
+  }
+
+  /** Colleague-facing name: internal display name, else first + last name, else null. */
+  private String candidateInternalName(Consultant consultant) {
+    String internal = consultant.getInternalDisplayName();
+    if (internal != null && !internal.isBlank()) {
+      return decodeUsername(internal);
+    }
+    String fullName =
+        Stream.of(consultant.getFirstName(), consultant.getLastName())
+            .filter(part -> part != null && !part.isBlank())
+            .map(String::trim)
+            .collect(Collectors.joining(" "));
+    return fullName.isEmpty() ? null : fullName;
   }
 
   private String decodeUsername(String username) {
