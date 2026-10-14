@@ -217,7 +217,20 @@ public class ErstantwortPayloadBuilder {
                 : "Bis bald — wir melden uns bei Ihnen."));
 
     ErstantwortTranslations.localizePlatformDefaults(bausteine, context);
+    appendEmergencyAddition(bausteine, context.getEmergencyAdditionByTenant());
     return bausteine;
+  }
+
+  /** ADR-018 §6: the platform numbers stay as written; a Träger can only add after them. */
+  private void appendEmergencyAddition(List<Map<String, Object>> bausteine, String addition) {
+    if (!isNotBlank(addition)) {
+      return;
+    }
+    for (var baustein : bausteine) {
+      if ("emergencyNumbers".equals(baustein.get("id"))) {
+        baustein.put("body", baustein.get("body") + "\n\n" + addition.trim());
+      }
+    }
   }
 
   /**

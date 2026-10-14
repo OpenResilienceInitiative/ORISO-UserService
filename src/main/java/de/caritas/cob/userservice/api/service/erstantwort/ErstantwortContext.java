@@ -49,6 +49,9 @@ public class ErstantwortContext {
   String freeNoticeByAgency;
   String freeNoticeByTenant;
 
+  /** Träger addition to the fixed emergency-numbers sentence: appended, never a replacement. */
+  String emergencyAdditionByTenant;
+
   String closingByTopic;
   String closingByAgency;
   String closingByTenant;

@@ -212,4 +212,37 @@ class ErstantwortPayloadBuilderTest {
   private static List<String> idsOf(JsonNode payload) {
     return payload.get("bausteine").findValuesAsText("id");
   }
+
+  @Test
+  void tenantTextsReplaceDefaultsAndEmergencyAdditionIsAppendedNotSubstituted() throws Exception {
+    JsonNode bausteine =
+        buildFor(
+                agencyCounselling()
+                    .locale("de")
+                    .greetingByTenant("Moin!")
+                    .closingByTenant("Tschüss")
+                    .freeNoticeByTenant("Wir sind keine Chat-Beratung.")
+                    .emergencyAdditionByTenant("Hausnotruf 0123")
+                    .responseDeadlineDays(5)
+                    .build())
+            .get("bausteine");
+    String all = bausteine.toString();
+    assertThat(all).contains("Moin!").contains("Tschüss").contains("keine Chat-Beratung");
+    assertThat(all).contains("innerhalb von 5 Werktagen");
+    for (JsonNode b : bausteine) {
+      if (b.get("id").asText().equals("emergencyNumbers")) {
+        assertThat(b.get("body").asText())
+            .contains("0800 111 0 111")
+            .endsWith("\n\nHausnotruf 0123");
+      }
+      assertThat(b.get("body").asText()).doesNotContain("<p>");
+    }
+  }
+
+  @Test
+  void blankEmergencyAdditionChangesNothing() throws Exception {
+    String with = buildFor(agencyCounselling().emergencyAdditionByTenant("  ").build()).toString();
+    String without = buildFor(agencyCounselling().build()).toString();
+    assertThat(with).isEqualTo(without);
+  }
 }
