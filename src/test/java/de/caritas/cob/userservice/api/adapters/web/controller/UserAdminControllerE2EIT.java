@@ -575,6 +575,34 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   }
 
   @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void createPlatformAdminWithoutTenantZeroRecordPersistsInactivityAndIssuesSetup()
+      throws Exception {
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(authenticatedUser.getAccessToken()).thenReturn("platform-caller-token");
+    var request = new EasyRandom().nextObject(CreateAdminDTO.class);
+    request.setTenantId(0);
+    request.setEmail("platform-admin@example.test");
+    givenCurrentSetupIdentity(
+        request.getUsername(), request.getEmail(), AccountInviteTargetRole.TENANT_ADMIN, false);
+
+    mockMvc
+        .perform(
+            post(TENANT_ADMIN_PATH)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("_embedded.id", is(createdIdentityId)));
+
+    assertThat(adminRepository.findById(createdIdentityId).orElseThrow().getTenantId()).isZero();
+    assertDefaultInactivityPolicy(createdIdentityId);
+    assertIssuedSetup(AccountInviteTargetRole.TENANT_ADMIN, 0L);
+  }
+
+  @Test
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void
       createNewTenantAdmin_Should_returnBadRequest_When_requiredCreateTenantAdminIsGivenButTenantIdIsNull()
