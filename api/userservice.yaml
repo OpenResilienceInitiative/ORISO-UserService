@@ -2849,6 +2849,8 @@ components:
           $ref: '#/components/schemas/SessionUserDTO'
         consultant:
           $ref: '#/components/schemas/SessionConsultantForConsultantDTO'
+        agency:
+          $ref: '#/components/schemas/AgencyDTO'
         latestMessage:
           $ref: '#/components/schemas/Date'
 
@@ -3501,6 +3503,10 @@ components:
         displayName:
           type: string
           example: Berater XYZ
+        internalName:
+          type: string
+          description: Colleague-facing name (internal display name, else first + last name). Only set on case-handover candidates.
+          example: Max Mustermann
         avatarKind:
           type: string
           description: Stored counsellor avatar kind; absent for advice seekers or when unset.
@@ -4360,6 +4366,13 @@ components:
           # switchable, not opt-in. A counsellor who never opens the settings
           # screen still gets their work queue.
           default: true
+        internalChatNotificationEnabled:
+          type: boolean
+          description: >-
+            Counsellor: a new ordinary internal-group message. Independent of
+            advice-seeker messages and protected professional feedback. Omitted
+            legacy values mean enabled; an omitted PATCH preserves the saved choice.
+          example: true
         feedbackNotificationEnabled:
           type: boolean
           description: >-

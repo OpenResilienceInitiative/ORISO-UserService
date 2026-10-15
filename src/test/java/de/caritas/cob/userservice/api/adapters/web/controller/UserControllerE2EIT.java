@@ -1279,7 +1279,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     assertThat(savedUser.isNotificationsEnabled()).isTrue();
     assertThat(savedUser.getNotificationsSettings())
         .isEqualTo(
-            "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":true,\"reassignmentNotificationEnabled\":true,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
+            "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":true,\"reassignmentNotificationEnabled\":true,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"internalChatNotificationEnabled\":null,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
   }
 
   @Test
@@ -1314,7 +1314,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     assertThat(savedConsultant.isNotificationsEnabled()).isTrue();
     assertThat(savedConsultant.getNotificationsSettings())
         .isEqualTo(
-            "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":false,\"reassignmentNotificationEnabled\":false,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
+            "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":false,\"reassignmentNotificationEnabled\":false,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"internalChatNotificationEnabled\":null,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
   }
 
   @Test
