@@ -72,9 +72,10 @@ public abstract class AccountInactivityPolicyHttpFixture {
               exchange.close();
               return;
             }
-            if (path.startsWith("/tenant/public/id/")
-                && NOT_YET_CREATED.contains(
-                    Long.valueOf(path.substring("/tenant/public/id/".length())))) {
+            if (path.equals("/tenant/public/id/0")
+                || (path.startsWith("/tenant/public/id/")
+                    && NOT_YET_CREATED.contains(
+                        Long.valueOf(path.substring("/tenant/public/id/".length()))))) {
               exchange.sendResponseHeaders(404, -1);
               exchange.close();
               return;
@@ -84,6 +85,30 @@ public abstract class AccountInactivityPolicyHttpFixture {
                 {"settings":{"tenantAdminControls":{"accountInactivitySettings":{
                   "askerMonths":24,"consultantMonths":24,"otherMonths":24,"revision":0
                 }}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var output = exchange.getResponseBody()) {
+              output.write(body);
+            }
+          });
+      server.createContext(
+          "/tenantadmin/controls",
+          exchange -> {
+            String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+            if (!"GET".equals(exchange.getRequestMethod())
+                || authorization == null
+                || !authorization.startsWith("Bearer ")) {
+              exchange.sendResponseHeaders(401, -1);
+              exchange.close();
+              return;
+            }
+            byte[] body =
+                """
+                {"accountInactivitySettings":{
+                  "askerMonths":24,"consultantMonths":24,"otherMonths":24,"revision":0
+                }}
                 """
                     .getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
