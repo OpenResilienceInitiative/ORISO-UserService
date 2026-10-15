@@ -3,10 +3,11 @@ FROM eclipse-temurin:21-jre@sha256:273396ed5998598ed1091e8d72711c2d36980a0e65103
 # It is unused by this single-process Java runtime and carries fixable
 # HIGH Go stdlib/x-net CVEs, so it is removed from the final filesystem.
 RUN rm -f /usr/bin/pebble
-# The pinned Ubuntu base carries OpenSSL 3.5.5-1ubuntu3.2; upgrade its three
-# packages to a patched release before the image vulnerability scan.
+# The pinned Ubuntu base carries OpenSSL 3.5.5-1ubuntu3.2 and curl 8.18.0-1ubuntu2.3
+# (CVE-2026-92392); upgrade those packages to patched releases before the image
+# vulnerability scan.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends --only-upgrade libssl3t64 openssl openssl-provider-legacy \
+    && apt-get install -y --no-install-recommends --only-upgrade libssl3t64 openssl openssl-provider-legacy curl libcurl4t64 \
     && rm -rf /var/lib/apt/lists/*
 VOLUME ["/tmp","/log"]
 EXPOSE 8082
