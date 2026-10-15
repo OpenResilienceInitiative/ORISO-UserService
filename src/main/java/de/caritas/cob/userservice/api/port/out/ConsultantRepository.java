@@ -11,8 +11,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface ConsultantRepository
     extends JpaRepository<Consultant, String>, JpaSpecificationExecutor<Consultant> {
@@ -136,4 +138,20 @@ public interface ConsultantRepository
   long countByDeleteDateIsNull();
 
   long countByTenantIdAndDeleteDateIsNull(Long tenantId);
+
+  /**
+   * Opens the account-setup gate once the counsellor has set their own password (#1144, #1699).
+   * Native SQL on purpose: a public setup or reset link runs with the link's tenant, and the tenant
+   * filter would hide a counsellor of another provider from an entity lookup.
+   *
+   * @return the number of counsellors whose requirement was cleared (0 or 1)
+   */
+  @Modifying
+  @Transactional
+  @Query(
+      value =
+          "UPDATE consultant SET password_change_required = FALSE WHERE consultant_id = :id"
+              + " AND password_change_required = TRUE AND delete_date IS NULL",
+      nativeQuery = true)
+  int clearPasswordChangeRequired(@Param("id") String id);
 }

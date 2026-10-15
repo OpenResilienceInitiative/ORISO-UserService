@@ -139,13 +139,7 @@ public class ExistingAccountSetupService {
             // A changed account during the remote call must not silently complete the old link.
             requireSameSavedIdentity(target);
             if (target.role() == AccountInviteTargetRole.COUNSELLOR) {
-              consultants
-                  .findByIdAndDeleteDateIsNull(target.identityId())
-                  .ifPresent(
-                      c -> {
-                        c.setPasswordChangeRequired(false);
-                        consultants.save(c);
-                      });
+              consultants.clearPasswordChangeRequired(target.identityId());
             }
             int completed =
                 invites.completeExistingAccountSetup(

@@ -41,6 +41,11 @@ public class ConsultantService {
    * @param consultantId consultant ID
    * @return An {@link Optional} with the {@link Consultant} if found
    */
+  /** Clears the "must change password" flag, whatever the request's tenant (#1144, #1699). */
+  public void clearPasswordChangeRequirement(String consultantId) {
+    consultantRepository.clearPasswordChangeRequired(consultantId);
+  }
+
   public Optional<Consultant> getConsultant(String consultantId) {
     return consultantRepository.findByIdAndDeleteDateIsNull(consultantId);
   }

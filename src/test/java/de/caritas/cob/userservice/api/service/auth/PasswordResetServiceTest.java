@@ -299,6 +299,28 @@ class PasswordResetServiceTest {
   }
 
   @Test
+  void confirmPasswordReset_Should_StopAskingForAnotherPassword_When_ResetSucceeds() {
+    // #1699: after a reset the password is the owner's own; the app must not ask again.
+    when(oneTimeTokenStore.claim("password-reset", "valid-token"))
+        .thenReturn(Optional.of(validClaim()));
+
+    passwordResetService.confirmPasswordReset("valid-token", "NewPassw0rd!");
+
+    verify(consultantService).clearPasswordChangeRequirement("user-keycloak-id");
+  }
+
+  @Test
+  void confirmPasswordReset_Should_StillSucceed_When_ClearingTheRequirementFails() {
+    when(oneTimeTokenStore.claim("password-reset", "valid-token"))
+        .thenReturn(Optional.of(validClaim()));
+    doThrow(new IllegalStateException("db down"))
+        .when(consultantService)
+        .clearPasswordChangeRequirement("user-keycloak-id");
+
+    assertThat(passwordResetService.confirmPasswordReset("valid-token", "NewPassw0rd!")).isTrue();
+  }
+
+  @Test
   void confirmPasswordReset_Should_KeepToken_When_KeycloakRejectsPasswordPolicy() {
     // Definitive policy rejection: Keycloak did NOT apply the password, so the token must
     // survive for a retry with a different password using the same emailed link.
