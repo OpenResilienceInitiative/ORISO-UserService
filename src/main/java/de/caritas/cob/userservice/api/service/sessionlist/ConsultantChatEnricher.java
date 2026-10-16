@@ -26,6 +26,8 @@ public class ConsultantChatEnricher {
         consultantSessionResponseDTO -> {
           var chat = consultantSessionResponseDTO.getChat();
           chat.setSubscribed(joinedRoomIds.contains(chat.getMatrixRoomId()));
+          // messagesRead is deprecated in the API spec: always true, read state is derived
+          // client-side from the Matrix room (ORISO-Frontend#1147). Kept for compatibility.
           chat.setMessagesRead(true);
           if (chat.getStartDateWithTime() != null) {
             consultantSessionResponseDTO.setLatestMessage(

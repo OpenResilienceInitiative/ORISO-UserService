@@ -131,6 +131,8 @@ public class UserSessionListService {
     sessions.forEach(
         sessionResponse -> {
           var session = sessionResponse.getSession();
+          // messagesRead is deprecated in the API spec: always true, read state is derived
+          // client-side from the Matrix room (ORISO-Frontend#1147). Kept for compatibility.
           session.setMessagesRead(true);
           if (sessionResponse.getLatestMessage() == null
               && session.getMessageDate() != null
@@ -147,6 +149,8 @@ public class UserSessionListService {
         sessionResponse -> {
           var chat = sessionResponse.getChat();
           chat.setSubscribed(joinedRoomIds.contains(chat.getMatrixRoomId()));
+          // messagesRead is deprecated in the API spec: always true, read state is derived
+          // client-side from the Matrix room (ORISO-Frontend#1147). Kept for compatibility.
           chat.setMessagesRead(true);
           if (sessionResponse.getLatestMessage() == null && chat.getStartDateWithTime() != null) {
             sessionResponse.setLatestMessage(Timestamp.valueOf(chat.getStartDateWithTime()));
