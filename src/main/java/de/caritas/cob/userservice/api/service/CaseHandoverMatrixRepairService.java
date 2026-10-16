@@ -12,6 +12,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
 import lombok.NonNull;
@@ -60,6 +63,66 @@ public class CaseHandoverMatrixRepairService {
         operatorId,
         sessionId,
         requesterConsultantId);
+  }
+
+  /** A case's Matrix room, as the repair queue needs it. */
+  public record RoomRef(Long sessionId, String roomId) {}
+
+  /**
+   * Queues that {@code memberMatrixId} leaves the given rooms. Joins the caller's transaction on
+   * purpose: when the change that makes the member leave is rolled back, so are the tasks.
+   *
+   * @return the number of distinct rooms queued
+   */
+  @Transactional
+  public int enqueueLeaves(String memberMatrixId, String memberConsultantId, List<RoomRef> rooms) {
+    var now = LocalDateTime.now(clock);
+    var existingByRoom = new HashMap<String, CaseHandoverMatrixRepairTask>();
+    repository
+        .findByActionAndMemberId(CaseHandoverMatrixRepairAction.LEAVE, memberMatrixId)
+        .forEach(task -> existingByRoom.put(task.getRoomId(), task));
+    var queuedRooms = new LinkedHashSet<String>();
+    var created = new ArrayList<CaseHandoverMatrixRepairTask>();
+    for (var room : rooms) {
+      if (room.roomId() == null || room.roomId().isBlank() || !queuedRooms.add(room.roomId())) {
+        continue;
+      }
+      var existing = existingByRoom.get(room.roomId());
+      if (existing != null) {
+        // A task of an earlier move (possibly exhausted): start it over for this one.
+        existing.setSessionId(room.sessionId());
+        existing.setRequesterConsultantId(memberConsultantId);
+        existing.setAttemptCount(0);
+        existing.setLastAttemptAt(null);
+        existing.setCreateDate(now);
+        existing.setGeneration(existing.getGeneration() + 1);
+        repository.save(existing);
+      } else {
+        created.add(
+            CaseHandoverMatrixRepairTask.builder()
+                .action(CaseHandoverMatrixRepairAction.LEAVE)
+                .roomId(room.roomId())
+                .memberId(memberMatrixId)
+                .sessionId(room.sessionId())
+                .requesterConsultantId(memberConsultantId)
+                .createDate(now)
+                .build());
+      }
+    }
+    if (!created.isEmpty()) {
+      repository.saveAll(created);
+    }
+    return queuedRooms.size();
+  }
+
+  /**
+   * Forgets the pending leaves of {@code memberMatrixId} for the cases of {@code tenantId}, e.g.
+   * when the counsellor moves back before the rooms were left.
+   */
+  @Transactional
+  public void cancelPendingLeavesInTenant(String memberMatrixId, Long tenantId) {
+    repository.deleteByActionAndMemberIdInTenant(
+        CaseHandoverMatrixRepairAction.LEAVE, memberMatrixId, tenantId);
   }
 
   public void enqueueJoin(
@@ -270,12 +333,15 @@ public class CaseHandoverMatrixRepairService {
       if (task.getAction() == CaseHandoverMatrixRepairAction.POWER_RESTORE) {
         return restorePowerUnlessSuperseded(task);
       }
-      boolean activeAccess = hasActiveAccess(task);
+      // A LEAVE ends the counsellor's own access; a co-access grant of an earlier time is no
+      // reason to keep them in the room of a Träger they left.
+      boolean leave = task.getAction() == CaseHandoverMatrixRepairAction.LEAVE;
+      boolean activeAccess = !leave && hasActiveAccess(task);
       if (task.getAction() == CaseHandoverMatrixRepairAction.REMOVE && activeAccess) {
         return true;
       }
       String loginId =
-          task.getAction() == CaseHandoverMatrixRepairAction.JOIN
+          task.getAction() == CaseHandoverMatrixRepairAction.JOIN || leave
               ? task.getMemberId()
               : task.getOperatorId();
       if (isBlank(loginId)) {
@@ -288,6 +354,7 @@ public class CaseHandoverMatrixRepairService {
       return switch (task.getAction()) {
         case JOIN -> reconcileJoin(task, token, activeAccess);
         case REMOVE -> removeOrConfirmAbsent(task, token);
+        case LEAVE -> leaveOrConfirmAbsent(task, token);
         case POWER_RESTORE ->
             throw new IllegalStateException("Power restore uses the session lock");
       };

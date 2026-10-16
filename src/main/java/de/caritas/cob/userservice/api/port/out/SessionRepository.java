@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.port.out;
 
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -7,6 +8,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -496,4 +498,31 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "FROM Session s WHERE s.agencyId IN :agencyIds GROUP BY s.agencyId")
   List<AgencyConsultingTypeProjection> findLowestConsultingTypeIdsByAgencyIds(
       @Param("agencyIds") Set<Long> agencyIds);
+
+  /** Cases a counsellor currently owns, for counting what a move leaves behind. */
+  long countByConsultantIdAndStatusIn(String consultantId, Collection<SessionStatus> statuses);
+
+  /**
+   * The Matrix rooms through which a counsellor can read the cases of the Träger they are leaving
+   * (#1419): the rooms of cases they own, of team cases of the centres they leave, of cases they
+   * supervise and of cases a colleague granted them access to. No case data leaves the query: a
+   * case id and a room id.
+   */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(s.id, s.matrixRoomId)
+      FROM Session s
+      WHERE s.matrixRoomId IS NOT NULL
+        AND (s.consultant.id = :consultantId
+          OR (s.teamSession = true AND s.agencyId IN :agencyIds)
+          OR s.id IN (SELECT sv.session.id FROM SessionSupervisor sv
+                      WHERE sv.supervisorConsultant.id = :consultantId AND sv.isActive = true)
+          OR s.id IN (SELECT r.session.id FROM CaseHandoverRequest r
+                      WHERE r.requesterConsultant.id = :consultantId
+                        AND r.status IN :grantedStatuses))
+      """)
+  List<SessionRoomRow> findRoomsReadableBy(
+      @Param("consultantId") String consultantId,
+      @Param("agencyIds") Collection<Long> agencyIds,
+      @Param("grantedStatuses") Collection<CaseHandoverRequest.Status> grantedStatuses);
 }

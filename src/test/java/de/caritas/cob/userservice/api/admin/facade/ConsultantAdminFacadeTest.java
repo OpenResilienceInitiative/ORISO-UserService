@@ -79,6 +79,10 @@ class ConsultantAdminFacadeTest {
 
   @Mock private AdminScope adminScope;
 
+  @Mock
+  private de.caritas.cob.userservice.api.admin.service.consultant.ConsultantTenantChangeService
+      consultantTenantChangeService;
+
   @Test
   void findConsultant_Should_useConsultantAdminService() {
     this.consultantAdminFacade.findConsultant("");
@@ -651,5 +655,45 @@ class ConsultantAdminFacadeTest {
   private CreateConsultantAgencyDTO argThatAgencyId(Long expectedAgencyId) {
     return org.mockito.ArgumentMatchers.argThat(
         dto -> dto != null && expectedAgencyId.equals(dto.getAgencyId()));
+  }
+
+  @Test
+  void changeConsultantTenant_Should_RefuseEveryCallerThatIsNotThePlatform() {
+    when(adminScope.current()).thenReturn(new AdminScope.Tenant(7L));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> consultantAdminFacade.changeConsultantTenant("mover", tenantChange(8L, 800L)));
+
+    verifyNoInteractions(consultantTenantChangeService);
+  }
+
+  @Test
+  void changeConsultantTenant_Should_MoveAndReportNumbersOnlyForThePlatform() {
+    when(adminScope.current()).thenReturn(new AdminScope.Platform());
+    when(authenticatedUser.getUserId()).thenReturn("platform-admin");
+    when(consultantTenantChangeService.changeTenant(
+            eq("mover"), eq(8L), anyList(), eq(List.of(5L)), eq("platform-admin")))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.admin.service.consultant
+                .ConsultantTenantChangeService.Result("mover", 7L, 8L, List.of(800L), 3, 2));
+    var request = tenantChange(8L, 800L);
+    request.setTopicIds(List.of(5L));
+
+    var response = consultantAdminFacade.changeConsultantTenant("mover", request);
+
+    assertThat(response.getConsultantId(), org.hamcrest.Matchers.is("mover"));
+    assertThat(response.getPreviousTenantId(), org.hamcrest.Matchers.is(7L));
+    assertThat(response.getTenantId(), org.hamcrest.Matchers.is(8L));
+    assertThat(response.getAgencyIds(), contains(800L));
+    assertThat(response.getCasesLeftWithPreviousTenant(), org.hamcrest.Matchers.is(3));
+    assertThat(response.getMatrixAccessRevocationsQueued(), org.hamcrest.Matchers.is(2));
+  }
+
+  private de.caritas.cob.userservice.api.adapters.web.dto.ChangeConsultantTenantDTO tenantChange(
+      long tenantId, long agencyId) {
+    return new de.caritas.cob.userservice.api.adapters.web.dto.ChangeConsultantTenantDTO()
+        .tenantId(tenantId)
+        .agencies(List.of(new CreateConsultantAgencyDTO().agencyId(agencyId)));
   }
 }

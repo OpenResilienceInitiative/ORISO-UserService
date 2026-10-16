@@ -42,7 +42,10 @@ class CaseHandoverMatrixRepairServiceTest {
 
   @BeforeEach
   void setUp() {
-    when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+    // lenient: enqueueLeaves/cancelPendingLeaves join the caller's transaction and open none.
+    org.mockito.Mockito.lenient()
+        .when(transactionManager.getTransaction(any()))
+        .thenReturn(transactionStatus);
     service =
         new CaseHandoverMatrixRepairService(
             repository,
@@ -245,5 +248,160 @@ class CaseHandoverMatrixRepairServiceTest {
 
     verify(repository, org.mockito.Mockito.never()).delete(any());
     verify(repository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
+  void enqueueLeavesQueuesOneDurableTaskPerRoomInsideTheCallersTransaction() {
+    when(repository.findByActionAndMemberId(CaseHandoverMatrixRepairAction.LEAVE, "@mover:matrix"))
+        .thenReturn(java.util.List.of());
+
+    int queued =
+        service.enqueueLeaves(
+            "@mover:matrix",
+            "mover",
+            java.util.List.of(
+                new CaseHandoverMatrixRepairService.RoomRef(1L, "!a:matrix"),
+                new CaseHandoverMatrixRepairService.RoomRef(2L, "!b:matrix"),
+                new CaseHandoverMatrixRepairService.RoomRef(3L, "!a:matrix")));
+
+    assertThat(queued).isEqualTo(2);
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Iterable<CaseHandoverMatrixRepairTask>> saved =
+        ArgumentCaptor.forClass(Iterable.class);
+    verify(repository).saveAll(saved.capture());
+    assertThat(saved.getValue())
+        .extracting(
+            CaseHandoverMatrixRepairTask::getAction,
+            CaseHandoverMatrixRepairTask::getRoomId,
+            CaseHandoverMatrixRepairTask::getMemberId,
+            CaseHandoverMatrixRepairTask::getSessionId,
+            CaseHandoverMatrixRepairTask::getRequesterConsultantId,
+            CaseHandoverMatrixRepairTask::getOperatorId)
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple(
+                CaseHandoverMatrixRepairAction.LEAVE,
+                "!a:matrix",
+                "@mover:matrix",
+                1L,
+                "mover",
+                null),
+            org.assertj.core.groups.Tuple.tuple(
+                CaseHandoverMatrixRepairAction.LEAVE,
+                "!b:matrix",
+                "@mover:matrix",
+                2L,
+                "mover",
+                null));
+    // A REQUIRES_NEW write would outlive a rolled-back move and kick the counsellor out anyway.
+    verify(repository, org.mockito.Mockito.never())
+        .saveAndFlush(any(CaseHandoverMatrixRepairTask.class));
+  }
+
+  @Test
+  void enqueueLeavesReactivatesAnExhaustedTaskOfAnEarlierMove() {
+    var exhausted =
+        CaseHandoverMatrixRepairTask.builder()
+            .id(5L)
+            .action(CaseHandoverMatrixRepairAction.LEAVE)
+            .roomId("!a:matrix")
+            .memberId("@mover:matrix")
+            .sessionId(1L)
+            .requesterConsultantId("mover")
+            .attemptCount(100)
+            .generation(2)
+            .lastAttemptAt(LocalDateTime.parse("2026-09-13T09:00:00"))
+            .createDate(LocalDateTime.parse("2026-09-13T08:00:00"))
+            .build();
+    when(repository.findByActionAndMemberId(CaseHandoverMatrixRepairAction.LEAVE, "@mover:matrix"))
+        .thenReturn(java.util.List.of(exhausted));
+
+    int queued =
+        service.enqueueLeaves(
+            "@mover:matrix",
+            "mover",
+            java.util.List.of(new CaseHandoverMatrixRepairService.RoomRef(1L, "!a:matrix")));
+
+    assertThat(queued).isEqualTo(1);
+    assertThat(exhausted.getAttemptCount()).isZero();
+    assertThat(exhausted.getLastAttemptAt()).isNull();
+    assertThat(exhausted.getGeneration()).isEqualTo(3);
+    assertThat(exhausted.getCreateDate()).isEqualTo(LocalDateTime.parse("2026-09-14T10:00:00"));
+    verify(repository).save(exhausted);
+  }
+
+  @Test
+  void cancelPendingLeavesDropsOnlyTheMembersLeavesInThatTenant() {
+    service.cancelPendingLeavesInTenant("@mover:matrix", 8L);
+
+    verify(repository)
+        .deleteByActionAndMemberIdInTenant(
+            CaseHandoverMatrixRepairAction.LEAVE, "@mover:matrix", 8L);
+  }
+
+  @Test
+  void processLeaveMakesTheMemberLeaveWithTheirOwnTokenEvenWhileAnEarlierGrantIsActive() {
+    var task = leaveTask(11L);
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    // An earlier co-access grant would make a REMOVE task a no-op. The move ends it.
+    org.mockito.Mockito.lenient()
+        .when(
+            handoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+                123L, "mover"))
+        .thenReturn(
+            java.util.List.of(
+                CaseHandoverRequest.builder().status(CaseHandoverRequest.Status.GRANTED).build()));
+    when(matrixSynapseService.loginAsUserAccessToken("@mover:matrix")).thenReturn("own-token");
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(Optional.of(java.util.List.of("@mover:matrix", "@colleague:matrix")));
+    when(matrixSynapseService.leaveRoom("!room:matrix", "own-token")).thenReturn(true);
+
+    service.process(11L);
+
+    verify(matrixSynapseService).leaveRoom("!room:matrix", "own-token");
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void processLeaveIsDoneWhenTheMemberIsNotInTheRoomAnymore() {
+    var task = leaveTask(12L);
+    when(repository.findById(12L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
+    when(matrixSynapseService.loginAsUserAccessToken("@mover:matrix")).thenReturn("own-token");
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(Optional.of(java.util.List.of("@colleague:matrix")));
+
+    service.process(12L);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).leaveRoom(any(), any());
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void processLeaveKeepsTheTaskForRetryWhileMatrixRefusesTheLeave() {
+    var task = leaveTask(13L);
+    when(repository.findById(13L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(13L)).thenReturn(Optional.of(task));
+    when(matrixSynapseService.loginAsUserAccessToken("@mover:matrix")).thenReturn("own-token");
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(Optional.of(java.util.List.of("@mover:matrix")));
+    when(matrixSynapseService.leaveRoom("!room:matrix", "own-token")).thenReturn(false);
+
+    service.process(13L);
+
+    assertThat(task.getAttemptCount()).isEqualTo(1);
+    verify(repository).save(task);
+    verify(repository, org.mockito.Mockito.never()).delete(task);
+  }
+
+  private static CaseHandoverMatrixRepairTask leaveTask(long id) {
+    return CaseHandoverMatrixRepairTask.builder()
+        .id(id)
+        .action(CaseHandoverMatrixRepairAction.LEAVE)
+        .roomId("!room:matrix")
+        .memberId("@mover:matrix")
+        .sessionId(123L)
+        .requesterConsultantId("mover")
+        .build();
   }
 }

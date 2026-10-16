@@ -280,6 +280,69 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /useradmin/consultants/{consultantId}/tenant:
+    put:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Moves a consultant to another Träger (tenant) and assigns the counselling centres there
+        [Authorization: platform admin only]
+      description: >-
+        The consultant's cases stay with the old Träger (ORISO-Admin#952): sessions, their chat
+        rooms and the advice seekers' conversations are neither moved nor deleted. The consultant
+        loses access to them (the old centre assignments end, the identity provider tenant changes
+        and the chat rooms of the old Träger are left), and they become takeover candidates for
+        the colleagues of the old Träger through the case handover with the reason
+        ASSIGNMENT_ENDED. New enquiries reach the consultant only through the new centres.
+
+        The move does not wait for open cases. It is refused when a centre does not belong to the
+        new Träger, when the consultant is the last one of a still active centre of the old
+        Träger, and when the account also holds an admin identity. A successful move writes an
+        audit entry (who, when, old and new Träger) without any case data.
+
+        The chat rooms are left asynchronously through the durable Matrix repair queue; the number
+        of queued rooms is returned as matrixAccessRevocationsQueued. Standing supervisions of the
+        old Träger (the consultant's own supervisor, and colleagues who have the consultant as
+        supervisor) are cleared.
+      operationId: changeConsultantTenant
+      parameters:
+        - name: consultantId
+          in: path
+          description: consultant id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/ChangeConsultantTenantDTO'
+        required: true
+      responses:
+        200:
+          description: OK - the consultant belongs to the new Träger
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/ConsultantTenantChangeResultDTO'
+        400:
+          description: >-
+            BAD REQUEST - invalid request, a centre does not belong to the new Träger, the
+            consultant already belongs to the Träger or multi-tenancy is off
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - the caller is not a platform admin
+        404:
+          description: NOT FOUND - consultant not found
+        409:
+          description: >-
+            CONFLICT - the consultant is the last one of a still active centre of the old Träger
+            or the account also holds an admin identity
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /useradmin/askers/{askerId}:
     get:
       tags:
@@ -2642,6 +2705,69 @@ components:
           type: string
           minLength: 1
           maxLength: 255
+
+    ChangeConsultantTenantDTO:
+      type: object
+      required:
+        - tenantId
+        - agencies
+      properties:
+        tenantId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The Träger (tenant) the consultant moves to
+          example: 12
+        agencies:
+          type: array
+          minItems: 1
+          description: >-
+            The counselling centres the consultant gets in the new Träger. Every centre must
+            belong to the new Träger; the centres of the old Träger are always removed.
+          items:
+            $ref: '#/components/schemas/CreateConsultantAgencyDTO'
+        topicIds:
+          type: array
+          description: >-
+            Topics the consultant offers at the new centres. Each topic is stored for every
+            selected centre that offers it. The old topics never carry over; omit to start
+            without topics.
+          items:
+            type: integer
+            format: int64
+          example: [3, 7]
+
+    ConsultantTenantChangeResultDTO:
+      type: object
+      required:
+        - consultantId
+        - previousTenantId
+        - tenantId
+        - agencyIds
+        - casesLeftWithPreviousTenant
+        - matrixAccessRevocationsQueued
+      properties:
+        consultantId:
+          type: string
+        previousTenantId:
+          type: integer
+          format: int64
+        tenantId:
+          type: integer
+          format: int64
+        agencyIds:
+          type: array
+          items:
+            type: integer
+            format: int64
+        casesLeftWithPreviousTenant:
+          type: integer
+          description: >-
+            How many cases the consultant owned in the old Träger. They stay there until a
+            colleague takes them over (reason ASSIGNMENT_ENDED). A number only, no case data.
+        matrixAccessRevocationsQueued:
+          type: integer
+          description: How many chat rooms of the old Träger the consultant will be removed from.
 
     ConsultantAgencyResponseDTO:
       type: object

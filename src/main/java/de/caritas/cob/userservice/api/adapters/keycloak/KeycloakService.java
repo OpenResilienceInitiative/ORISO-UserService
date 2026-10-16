@@ -48,6 +48,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -107,6 +108,7 @@ public class KeycloakService
         IdentityPasswordChangeRequirement,
         IdentityProfileLookup,
         IdentityProfileUpdater,
+        IdentityTenantUpdater,
         IdentityRoleLookup,
         IdentityRoleUpdater,
         IdentitySecondFactor,
@@ -223,6 +225,51 @@ public class KeycloakService
   @Override
   public boolean logout(final String refreshToken, final String accessToken) {
     return keycloakAuthClient.logoutUser(refreshToken, accessToken);
+  }
+
+  /**
+   * Sets only the {@code tenantId} attribute: unlike {@link #updateProfile} it neither touches the
+   * enabled flag nor any other attribute, so a deactivated account stays deactivated.
+   */
+  @Override
+  public void updateTenant(final String userId, final Long tenantId) {
+    if (tenantId == null) {
+      throw new IllegalArgumentException("A tenant id is required");
+    }
+    try {
+      updateTenantOnce(userId, tenantId);
+    } catch (NotAuthorizedException unauthorized) {
+      log.warn(
+          "Keycloak admin session was unauthorized while changing the tenant, forcing token"
+              + " refresh and retrying once");
+      keycloakClient.refreshAdminSession();
+      updateTenantOnce(userId, tenantId);
+    }
+  }
+
+  private void updateTenantOnce(String userId, Long tenantId) {
+    var userResource = keycloakClient.getUsersResource().get(userId);
+    var representation = userResource.toRepresentation();
+    Map<String, List<String>> attributes =
+        representation.getAttributes() == null
+            ? new LinkedHashMap<>()
+            : new LinkedHashMap<>(representation.getAttributes());
+    attributes.put(TENANT_ID_ATTRIBUTE, Collections.singletonList(tenantId.toString()));
+    representation.setAttributes(attributes);
+    userResource.update(representation);
+  }
+
+  @Override
+  public void endSessions(final String userId) {
+    try {
+      keycloakClient.getUsersResource().get(userId).logout();
+    } catch (NotAuthorizedException unauthorized) {
+      log.warn(
+          "Keycloak admin session was unauthorized while ending sessions, forcing token refresh"
+              + " and retrying once");
+      keycloakClient.refreshAdminSession();
+      keycloakClient.getUsersResource().get(userId).logout();
+    }
   }
 
   /**

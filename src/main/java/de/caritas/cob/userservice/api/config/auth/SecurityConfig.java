@@ -517,6 +517,13 @@ public class SecurityConfig {
                     HttpMethod.PUT,
                     "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
                 .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Moving a counsellor to another Träger crosses the boundary between two Träger:
+                // platform admin only (tenant 0 and both admin roles), not even a Träger admin.
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/tenant",
+                    "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/tenant")
+                .access(this::isPlatformAdmin)
                 // Repairing a missing chat identity changes the consultant, so it follows the
                 // consultant-update authority rather than the /useradmin/** catch-all, which only
                 // a user admin passes.

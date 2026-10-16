@@ -6,11 +6,13 @@ import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ChangeConsultantTenantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTenantChangeResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
@@ -23,9 +25,11 @@ import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminFilterService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminService;
+import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantTenantChangeService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.CreateConsultantAgencyDTOInputAdapter;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -63,6 +67,8 @@ public class ConsultantAdminFacade {
   private final @NonNull ConsultantChatIdentityService consultantChatIdentityService;
 
   private final @NonNull AdminScope adminScope;
+
+  private final @NonNull ConsultantTenantChangeService consultantTenantChangeService;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
@@ -244,6 +250,42 @@ public class ConsultantAdminFacade {
     agenciesToCreate.forEach(
         agency ->
             consultantAgencyRelationCreatorService.createNewConsultantAgency(consultantId, agency));
+  }
+
+  /**
+   * Moves a consultant to another Träger (#1419). Platform admins only: the move crosses the
+   * boundary between two Träger, which no Träger admin may do.
+   *
+   * @param consultantId the consultant to move
+   * @param request the new Träger, its centres and the topics offered there
+   * @return the ids and counts of what the move did
+   */
+  public ConsultantTenantChangeResultDTO changeConsultantTenant(
+      String consultantId, ChangeConsultantTenantDTO request) {
+    if (!(adminScope.current() instanceof AdminScope.Platform)) {
+      throw new ForbiddenException("Only a platform admin can move a consultant to another Träger");
+    }
+    var agencies =
+        request.getAgencies().stream()
+            .filter(java.util.Objects::nonNull)
+            .collect(Collectors.toList());
+    if (agencies.isEmpty() || agencies.stream().anyMatch(agency -> agency.getAgencyId() == null)) {
+      throw new BadRequestException("At least one centre with an id is required");
+    }
+    var result =
+        consultantTenantChangeService.changeTenant(
+            consultantId,
+            request.getTenantId(),
+            agencies,
+            request.getTopicIds(),
+            authenticatedUser.getUserId());
+    return new ConsultantTenantChangeResultDTO()
+        .consultantId(result.consultantId())
+        .previousTenantId(result.previousTenantId())
+        .tenantId(result.tenantId())
+        .agencyIds(result.agencyIds())
+        .casesLeftWithPreviousTenant(result.casesLeftWithPreviousTenant())
+        .matrixAccessRevocationsQueued(result.matrixAccessRevocationsQueued());
   }
 
   /**
