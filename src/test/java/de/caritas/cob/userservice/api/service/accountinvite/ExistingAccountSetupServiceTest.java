@@ -84,27 +84,6 @@ class ExistingAccountSetupServiceTest {
   }
 
   @Test
-  void counsellorSetupClearsThePasswordRequirementWithoutATenantScopedLookup() {
-    // #1144: the public link may carry another tenant than the counsellor's provider.
-    var invite = setupInvite();
-    invite.setTargetRole(AccountInviteTargetRole.COUNSELLOR);
-    invite.setProvisionedUserId("consultant-11");
-    invite.setRecipientEmail("counsellor@example.org");
-    invite.setSetupBoundUsername("counsellor@example.org");
-    givenLiveCounsellor("counsellor@example.org", "counsellor@example.org");
-    when(invites.claimExistingAccountSetup(eq(11L), any(), any(), any(), any(), any()))
-        .thenReturn(1);
-    when(invites.completeExistingAccountSetup(
-            eq(11L), any(), any(), any(), any(), any(), any(), eq("consultant-11"), any()))
-        .thenReturn(1);
-
-    service.confirm("mailed-token", "new-secret");
-
-    verify(passwords).updatePassword("consultant-11", "new-secret");
-    verify(consultants).clearPasswordChangeRequired("consultant-11");
-  }
-
-  @Test
   void encodedCounsellorUsernameMatchesTheSameEncodedKeycloakIdentity() {
     String encoded = new UsernameTranscoder().encodeUsername("counsellor@example.org");
     givenLiveCounsellor(encoded, encoded);

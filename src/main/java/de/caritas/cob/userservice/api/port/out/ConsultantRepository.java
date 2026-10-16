@@ -140,9 +140,9 @@ public interface ConsultantRepository
   long countByTenantIdAndDeleteDateIsNull(Long tenantId);
 
   /**
-   * Opens the account-setup gate once the counsellor has set their own password (#1144, #1699).
-   * Native SQL on purpose: a public setup or reset link runs with the link's tenant, and the tenant
-   * filter would hide a counsellor of another provider from an entity lookup.
+   * Opens the account-setup gate once the counsellor has reset their own password (#1699). Native
+   * SQL on purpose: a public reset link runs with the link's tenant, and the tenant filter would
+   * hide a counsellor of another provider from an entity lookup.
    *
    * @return the number of counsellors whose requirement was cleared (0 or 1)
    */

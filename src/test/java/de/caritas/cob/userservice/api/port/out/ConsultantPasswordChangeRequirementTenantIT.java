@@ -19,7 +19,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * #1144: a counsellor of provider 26 completes the setup link on a request that carries another
+ * #1699: a counsellor of provider 26 resets their password on a request that carries another
  * tenant. The tenant filter hides them from an entity lookup, so the requirement must be cleared
  * without one.
  */
