@@ -21,6 +21,9 @@
     "headline": "Si cela ne peut pas attendre",
     "body": "En cas d'urgence aiguë, vous pouvez joindre Telefonseelsorge 24 h/24 au 0800 111 0 111 ou au 0800 111 0 222, et les secours au 112."
   },
+  "emergencyAddition": {
+    "headline": "Autres contacts d'urgence"
+  },
   "dataProtection": {
     "body": "La manière dont nous traitons vos données est décrite dans la déclaration de protection des données."
   },

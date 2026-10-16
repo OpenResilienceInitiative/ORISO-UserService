@@ -21,6 +21,9 @@
     "headline": "If it cannot wait",
     "body": "In an acute emergency you can reach Telefonseelsorge around the clock on 0800 111 0 111 or 0800 111 0 222, and the emergency services on 112."
   },
+  "emergencyAddition": {
+    "headline": "Further emergency contacts"
+  },
   "dataProtection": {
     "body": "How we handle your data is set out in the privacy policy."
   },

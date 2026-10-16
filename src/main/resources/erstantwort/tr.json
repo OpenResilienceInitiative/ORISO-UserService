@@ -21,6 +21,9 @@
     "headline": "Bekleyemeyecek durumdaysanız",
     "body": "Acil bir durumda Telefonseelsorge'a günün her saati 0800 111 0 111 veya 0800 111 0 222 numaralarından, acil yardım servisine ise 112'den ulaşabilirsiniz."
   },
+  "emergencyAddition": {
+    "headline": "Diğer acil durum iletişim bilgileri"
+  },
   "dataProtection": {
     "body": "Verilerinizi nasıl işlediğimiz gizlilik politikasında yer alır."
   },

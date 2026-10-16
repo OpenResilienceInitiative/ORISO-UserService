@@ -171,6 +171,17 @@ public class ErstantwortPayloadBuilder {
                 + " Daten umgehen, steht in der Datenschutzerklärung.");
     addLinks(dataProtection, context);
 
+    /* ADR-018 §6: the Träger's emergency numbers are an addition, never a replacement. They
+    travel as their own Baustein so the client can file them with the other collapsible infos
+    instead of appending them to the always-visible platform bubble. */
+    if (isNotBlank(context.getEmergencyAdditionByTenant())) {
+      add(
+          bausteine,
+          "emergencyAddition",
+          "Weitere Notfallkontakte",
+          context.getEmergencyAdditionByTenant().trim());
+    }
+
     // The single escape hatch, at a fixed position. Absent until a Träger fills it.
     var freeNotice =
         resolve(
