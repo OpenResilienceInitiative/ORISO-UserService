@@ -1,19 +1,30 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.AvailabilityEndpoint;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
@@ -22,8 +33,25 @@ class TopicConsultantAvailabilityControllerTest {
   private static final Long TOPIC_ID = 7L;
 
   @Mock private TopicConsultantRoutingService topicConsultantRoutingService;
+  @Mock private LiveChatDiagnosticMetrics liveChatDiagnosticMetrics;
 
   @InjectMocks private TopicConsultantAvailabilityController controller;
+
+  private Logger logger;
+  private ListAppender<ILoggingEvent> logAppender;
+
+  @BeforeEach
+  void captureLog() {
+    logger = (Logger) LoggerFactory.getLogger(TopicConsultantAvailabilityController.class);
+    logAppender = new ListAppender<>();
+    logAppender.start();
+    logger.addAppender(logAppender);
+  }
+
+  @AfterEach
+  void releaseLog() {
+    logger.detachAppender(logAppender);
+  }
 
   @Test
   void getTopicConsultantAvailability_consultantsFound_returnsAvailableWithCount() {
@@ -75,5 +103,41 @@ class TopicConsultantAvailabilityControllerTest {
 
     verify(topicConsultantRoutingService).findAvailableConsultantIds(topicIdCaptor.capture());
     assertEquals(TOPIC_ID, topicIdCaptor.getValue());
+  }
+
+  @Test
+  void getTopicConsultantAvailability_serviceThrows_warnsAndCountsTheSwallowedFailure() {
+    // Business reason (#1270): a failed lookup is reported to the guest as "nobody is live".
+    // Without a log line and a counter nobody can tell a real zero from a swallowed failure.
+    when(topicConsultantRoutingService.findAvailableConsultantIds(TOPIC_ID))
+        .thenThrow(new IllegalStateException("redis down for guest anon_4711@example.org"));
+
+    controller.getTopicConsultantAvailability(TOPIC_ID, null);
+
+    assertThat(logAppender.list)
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.getLevel()).isEqualTo(Level.WARN);
+              assertThat(event.getFormattedMessage())
+                  .contains("topicId=7")
+                  .contains("IllegalStateException");
+              // KDG: neither the exception message nor a stack trace may carry personal data.
+              assertThat(event.getFormattedMessage()).doesNotContain("anon_4711");
+              assertThat(event.getThrowableProxy()).isNull();
+            });
+    verify(liveChatDiagnosticMetrics)
+        .recordAvailabilityLookupFailure(AvailabilityEndpoint.ANONYMOUS_DOOR);
+  }
+
+  @Test
+  void getTopicConsultantAvailability_noFailure_logsNothingAndCountsNothing() {
+    // Business reason: a real zero must stay distinguishable from a failure.
+    when(topicConsultantRoutingService.findAvailableConsultantIds(TOPIC_ID)).thenReturn(List.of());
+
+    controller.getTopicConsultantAvailability(TOPIC_ID, null);
+
+    assertThat(logAppender.list).isEmpty();
+    verifyNoInteractions(liveChatDiagnosticMetrics);
   }
 }
