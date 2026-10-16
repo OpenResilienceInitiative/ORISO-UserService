@@ -39,6 +39,7 @@ import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPref
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService.ListSort;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
@@ -55,6 +56,7 @@ import java.util.Locale;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -90,6 +92,7 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull de.caritas.cob.userservice.api.service.accountinvite
           .ExistingAccountSetupIssuer
       accountSetupIssuer;
+  private final @NonNull UserHelper userHelper;
 
   /**
    * Creates the root hal based navigation entity.
@@ -154,6 +157,10 @@ public class UserAdminController implements UseradminApi {
         createConsultantDTO.getUsername(), null);
 
     createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
+    // #1144: the setup e-mail is the way in, so the first password is one nobody knows.
+    if (StringUtils.isBlank(createConsultantDTO.getPassword())) {
+      createConsultantDTO.setPassword(userHelper.getRandomPassword());
+    }
     var consultant = consultantAdminFacade.createNewConsultant(createConsultantDTO);
     accountSetupIssuer.issueAfterCreation(
         de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole.COUNSELLOR,
