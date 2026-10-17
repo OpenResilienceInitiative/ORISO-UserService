@@ -8,10 +8,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ChangeConsultantTenantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTenantChangeResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -256,6 +258,19 @@ public class UserAdminController implements UseradminApi {
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
     this.consultantAdminFacade.setConsultantAgencies(consultantId, agencyList);
     return ResponseEntity.ok().build();
+  }
+
+  /**
+   * Moves a consultant to another Träger; their cases stay with the old one [platform admin only].
+   *
+   * @param consultantId Consultant Id (required)
+   * @param changeConsultantTenantDTO the new Träger, its centres and topics (required)
+   */
+  @Override
+  public ResponseEntity<ConsultantTenantChangeResultDTO> changeConsultantTenant(
+      @PathVariable String consultantId, ChangeConsultantTenantDTO changeConsultantTenantDTO) {
+    return ResponseEntity.ok(
+        consultantAdminFacade.changeConsultantTenant(consultantId, changeConsultantTenantDTO));
   }
 
   /**

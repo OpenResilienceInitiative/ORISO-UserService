@@ -59,6 +59,8 @@ mariadb_owned_tests=(
   SupportRoomMigrationConvergenceIT
   SessionOwnershipMariaDbIT
   AccountInviteRevokeAcceptRaceMariaDbIT
+  ConsultantTenantChangeMariaDbIT
+  CaseHandoverLeaveAdminPowerMariaDbIT
 )
 required_test_pattern="**/*IT"
 for mariadb_owned_test in "${mariadb_owned_tests[@]}"; do

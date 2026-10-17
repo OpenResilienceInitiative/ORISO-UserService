@@ -28,6 +28,19 @@ public interface ConsultantRepository
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
   Optional<Consultant> findByIdAndDeleteDateIsNull(String id);
 
+  /**
+   * Ends every standing supervision that points at {@code supervisorId} (#1419): a counsellor who
+   * moves to another Träger must not stay attached, read-only, to the cases their former colleagues
+   * accept.
+   */
+  @org.springframework.data.jpa.repository.Modifying(
+      flushAutomatically = true,
+      clearAutomatically = false)
+  @Query(
+      "UPDATE Consultant c SET c.assignedSupervisorId = null"
+          + " WHERE c.assignedSupervisorId = :supervisorId")
+  int clearAssignedSupervisor(@Param("supervisorId") String supervisorId);
+
   Optional<Consultant> findByEmailAndDeleteDateIsNull(String email);
 
   List<Consultant> findAllByEmailAndDeleteDateIsNull(String email);

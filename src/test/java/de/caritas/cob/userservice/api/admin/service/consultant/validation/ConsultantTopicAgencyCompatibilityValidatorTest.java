@@ -9,7 +9,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
-import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -80,12 +79,21 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
 
     var exception =
         assertThrows(
-            BadRequestException.class,
+            AgencyOutsideTenantException.class,
             () ->
                 validator.validateGrantTopicsAgainstSelectedAgencies(
                     List.of(3L), List.of(10L), 1L));
 
     assertTrue(exception.getMessage().contains("tenant 1"));
+  }
+
+  @Test
+  void validateGrantTopicsAgainstSelectedAgencies_RejectsAnAgencyThatDoesNotExistAsUnknown() {
+    when(agencyService.getAgenciesWithoutCaching(List.of(10L))).thenReturn(List.of());
+
+    assertThrows(
+        UnknownAgencyException.class,
+        () -> validator.validateGrantTopicsAgainstSelectedAgencies(List.of(), List.of(10L), 1L));
   }
 
   @Test
@@ -95,7 +103,7 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
 
     var exception =
         assertThrows(
-            BadRequestException.class,
+            AgencyOutsideTenantException.class,
             () ->
                 validator.validateGrantTopicsAgainstSelectedAgencies(List.of(), List.of(10L), 1L));
 
@@ -176,7 +184,7 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
 
     var exception =
         assertThrows(
-            BadRequestException.class,
+            TopicsNotCoveredException.class,
             () ->
                 validator.validateTopicUpdateAgainstAssignedAgencies(
                     "consultant-id", List.of(3L), 1L));

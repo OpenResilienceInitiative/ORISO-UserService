@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -105,4 +106,21 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
       "delete from SessionSupervisor supervisor where supervisor.supervisorConsultant.id ="
           + " :consultantId or supervisor.addedByConsultant.id = :consultantId")
   int deleteAllByConsultantId(@Param("consultantId") String consultantId);
+
+  /**
+   * Ends every active supervision of a counsellor, e.g. when they move to another Träger (#1421).
+   * The side-room membership is taken separately; this keeps the rows from granting supervision
+   * again, for instance when the counsellor is moved back. Does not clear the persistence context:
+   * it runs inside a larger change that holds loaded entities.
+   *
+   * @return the number of supervisions ended
+   */
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "update SessionSupervisor supervisor set supervisor.isActive = false,"
+          + " supervisor.removedDate = :removedAt"
+          + " where supervisor.supervisorConsultant.id = :consultantId"
+          + " and supervisor.isActive = true")
+  int endActiveSupervisionsOf(
+      @Param("consultantId") String consultantId, @Param("removedAt") LocalDateTime removedAt);
 }

@@ -8,6 +8,7 @@ import java.util.Optional;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -32,6 +33,28 @@ public interface CaseHandoverMatrixRepairTaskRepository
       @Param("action") de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairAction action,
       @Param("roomId") String roomId,
       @Param("memberId") String memberId);
+
+  @Query(
+      "SELECT task FROM CaseHandoverMatrixRepairTask task"
+          + " WHERE task.action = :action AND task.memberId = :memberId")
+  List<CaseHandoverMatrixRepairTask> findByActionAndMemberId(
+      @Param("action") de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairAction action,
+      @Param("memberId") String memberId);
+
+  /**
+   * Drops the pending tasks of one member for the cases of one Träger, e.g. when they return. Does
+   * not clear the persistence context: it runs inside a larger change that holds loaded entities.
+   */
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "DELETE FROM CaseHandoverMatrixRepairTask task"
+          + " WHERE task.action = :action AND task.memberId = :memberId"
+          + " AND task.sessionId IN (SELECT s.id FROM Session s WHERE s.tenantId = :tenantId"
+          + " OR (s.tenantId IS NULL AND :tenantId = 1))")
+  int deleteByActionAndMemberIdInTenant(
+      @Param("action") de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairAction action,
+      @Param("memberId") String memberId,
+      @Param("tenantId") Long tenantId);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT task FROM CaseHandoverMatrixRepairTask task WHERE task.id = :id")
