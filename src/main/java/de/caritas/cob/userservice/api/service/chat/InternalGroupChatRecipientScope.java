@@ -18,8 +18,9 @@ public enum InternalGroupChatRecipientScope {
   /** Colleagues of the same counselling centre (Beratungsstelle) and the same Träger. */
   AGENCY {
     @Override
-    public boolean permits(Consultant creator, Consultant colleague, Long agencyId) {
-      if (!sameTenant(creator, colleague)) {
+    public boolean permits(
+        Consultant creator, Consultant colleague, Long agencyId, boolean multitenancy) {
+      if (!sameTenant(creator, colleague, multitenancy)) {
         return false;
       }
       if (agencyId != null) {
@@ -31,14 +32,16 @@ public enum InternalGroupChatRecipientScope {
   /** Every colleague of the same Träger, whatever the counselling centre. */
   TENANT {
     @Override
-    public boolean permits(Consultant creator, Consultant colleague, Long agencyId) {
-      return sameTenant(creator, colleague);
+    public boolean permits(
+        Consultant creator, Consultant colleague, Long agencyId, boolean multitenancy) {
+      return sameTenant(creator, colleague, multitenancy);
     }
   },
   /** Every colleague of the platform, whatever the Träger. */
   PLATFORM {
     @Override
-    public boolean permits(Consultant creator, Consultant colleague, Long agencyId) {
+    public boolean permits(
+        Consultant creator, Consultant colleague, Long agencyId, boolean multitenancy) {
       return true;
     }
   };
@@ -52,7 +55,13 @@ public enum InternalGroupChatRecipientScope {
    * @param agencyId the counselling centre the chat is created for; {@code null} when none is named
    *     (then any centre the two share counts)
    */
-  public abstract boolean permits(Consultant creator, Consultant colleague, Long agencyId);
+  public abstract boolean permits(
+      Consultant creator, Consultant colleague, Long agencyId, boolean multitenancy);
+
+  /** {@link #permits(Consultant, Consultant, Long, boolean)} with multitenancy enforced. */
+  public boolean permits(Consultant creator, Consultant colleague, Long agencyId) {
+    return permits(creator, colleague, agencyId, true);
+  }
 
   /**
    * Reads the resolved scope from the raw {@code GET /tenantadmin/{id}/permission-policies} body.
@@ -73,9 +82,17 @@ public enum InternalGroupChatRecipientScope {
     return AGENCY;
   }
 
-  private static boolean sameTenant(Consultant creator, Consultant colleague) {
-    return creator.getTenantId() != null
-        && Objects.equals(creator.getTenantId(), colleague.getTenantId());
+  /**
+   * With multitenancy an unknown tenant never matches another one. Without it consultants carry no
+   * tenant at all, and "same Träger" is then simply "same stored value" ({@link
+   * GroupChatConsultantAccess} applies the same rule to a chat's owner).
+   */
+  private static boolean sameTenant(
+      Consultant creator, Consultant colleague, boolean multitenancy) {
+    if (multitenancy && creator.getTenantId() == null) {
+      return false;
+    }
+    return Objects.equals(creator.getTenantId(), colleague.getTenantId());
   }
 
   private static Set<Long> agencyIdsOf(Consultant consultant) {

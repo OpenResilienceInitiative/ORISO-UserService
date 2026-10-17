@@ -77,6 +77,47 @@ class MembersOnlySessionAssignmentTest {
     verify(sessions, never()).save(session);
   }
 
+  @Test
+  void aSessionStaysWhenNoOtherMemberIsAnActiveConsultant() {
+    when(consultants.findByIdAndDeleteDateIsNull("owner")).thenReturn(Optional.empty());
+    when(consultants.findByIdAndDeleteDateIsNull("member")).thenReturn(Optional.empty());
+
+    assignment.handOverFrom(chat, participant("creator", ParticipantRole.CO_MODERATOR));
+
+    assertThat(session.getConsultant()).isSameAs(creator);
+    verify(sessions, never()).save(session);
+  }
+
+  @Test
+  void aMissingSessionIsLeftAlone() {
+    when(sessions.findById(9L)).thenReturn(Optional.empty());
+
+    assignment.handOverFrom(chat, participant("creator", ParticipantRole.CO_MODERATOR));
+
+    verify(sessions, never()).save(session);
+  }
+
+  @Test
+  void aParticipationWithoutASessionIdIsLeftAlone() {
+    var withoutSession = participant("creator", ParticipantRole.CO_MODERATOR);
+    withoutSession.setChatId(null);
+
+    assignment.handOverFrom(chat, withoutSession);
+
+    assertThat(session.getConsultant()).isSameAs(creator);
+    verify(sessions, never()).save(session);
+  }
+
+  @Test
+  void aRemainingMemberTakesOverWhenTheOwnerIsNoLongerActive() {
+    when(consultants.findByIdAndDeleteDateIsNull("owner")).thenReturn(Optional.empty());
+
+    assignment.handOverFrom(chat, participant("creator", ParticipantRole.CO_MODERATOR));
+
+    assertThat(session.getConsultant()).isSameAs(member);
+    verify(sessions).save(session);
+  }
+
   private static Consultant consultant(String id) {
     var consultant = new Consultant();
     consultant.setId(id);

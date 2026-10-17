@@ -42,6 +42,59 @@ class InternalGroupChatRecipientScopeTest {
   }
 
   @Test
+  void withoutMultitenancyTenantlessColleaguesOfTheSameCentreAreAdmitted() {
+    var tenantlessCreator = consultant("creator", null, 100L);
+
+    for (var scope : InternalGroupChatRecipientScope.values()) {
+      assertThat(
+              scope.permits(tenantlessCreator, consultant("same-centre", null, 100L), 100L, false))
+          .as("%s admits a tenantless colleague of the same centre", scope)
+          .isTrue();
+    }
+  }
+
+  @Test
+  void withoutMultitenancyTheCentreStillBoundsTheAgencyScope() {
+    var tenantlessCreator = consultant("creator", null, 100L);
+
+    assertThat(
+            InternalGroupChatRecipientScope.AGENCY.permits(
+                tenantlessCreator, consultant("other-centre", null, 200L), null, false))
+        .isFalse();
+    assertThat(
+            InternalGroupChatRecipientScope.AGENCY.permits(
+                tenantlessCreator, consultant("same-centre", null, 100L), 200L, false))
+        .isFalse();
+  }
+
+  @Test
+  void withoutMultitenancyATenantlessCallerStillDoesNotReachATenantScopedColleague() {
+    var tenantlessCreator = consultant("creator", null, 100L);
+
+    assertThat(
+            InternalGroupChatRecipientScope.AGENCY.permits(
+                tenantlessCreator, consultant("scoped", 7L, 100L), null, false))
+        .isFalse();
+  }
+
+  @Test
+  void withMultitenancyATenantlessCallerReachesNobodyBelowPlatform() {
+    var tenantlessCreator = consultant("creator", null, 100L);
+
+    for (var scope :
+        new InternalGroupChatRecipientScope[] {
+          InternalGroupChatRecipientScope.AGENCY, InternalGroupChatRecipientScope.TENANT
+        }) {
+      assertThat(scope.permits(tenantlessCreator, consultant("tenantless", null, 100L), 100L, true))
+          .as("%s with multitenancy: tenantless colleague", scope)
+          .isFalse();
+      assertThat(scope.permits(tenantlessCreator, consultant("scoped", 7L, 100L), 100L, true))
+          .as("%s with multitenancy: tenant-scoped colleague", scope)
+          .isFalse();
+    }
+  }
+
+  @Test
   void platformScopeAdmitsColleaguesOfAnyTraeger() {
     var scope = InternalGroupChatRecipientScope.PLATFORM;
 

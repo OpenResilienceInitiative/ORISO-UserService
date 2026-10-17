@@ -32,6 +32,7 @@ import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -59,6 +60,9 @@ public class InternalSubsetChatFacade {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull MemberSetLock memberSetLock;
   private final @NonNull CreateChatFacade createChatFacade;
+
+  @Value("${multitenancy.enabled:true}")
+  private boolean multitenancy;
 
   public OpenedRoom open(InternalSubsetChatDTO request, Consultant creator) {
     requireEncryption();
@@ -130,7 +134,7 @@ public class InternalSubsetChatFacade {
    * caller that the whole selection is within the recipient scope for, else the lowest-numbered
    * centre (which the scope check then refuses). The scope is always checked against this centre.
    */
-  private static Long resolveAgencyId(
+  private Long resolveAgencyId(
       InternalSubsetChatDTO request,
       Consultant creator,
       Map<String, Consultant> looked,
@@ -156,7 +160,7 @@ public class InternalSubsetChatFacade {
         .filter(
             centre ->
                 looked.values().stream()
-                    .allMatch(c -> c != null && scope.permits(creator, c, centre)))
+                    .allMatch(c -> c != null && scope.permits(creator, c, centre, multitenancy)))
         .findFirst()
         .orElse(centres.get(0));
   }
@@ -186,7 +190,7 @@ public class InternalSubsetChatFacade {
       Long agencyId) {
     looked.forEach(
         (id, colleague) -> {
-          if (colleague == null || !scope.permits(creator, colleague, agencyId)) {
+          if (colleague == null || !scope.permits(creator, colleague, agencyId, multitenancy)) {
             log.info("A selected colleague is outside the recipient scope {}", scope);
             throw new CustomValidationHttpStatusException(
                 HttpStatusExceptionReason.INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE,

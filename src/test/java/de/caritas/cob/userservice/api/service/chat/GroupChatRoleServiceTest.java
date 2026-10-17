@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.chat;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -17,6 +18,7 @@ import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -105,6 +107,9 @@ class GroupChatRoleServiceTest {
     verify(participantRepository).delete(target);
     verify(groupChatMembershipService)
         .removeLeavingMemberFromRoom(series, "@target:matrix.example");
+    InOrder handOver = inOrder(sessionAssignment, participantRepository);
+    handOver.verify(sessionAssignment).handOverFrom(series, target);
+    handOver.verify(participantRepository).delete(target);
   }
 
   @Test
@@ -136,6 +141,9 @@ class GroupChatRoleServiceTest {
     verify(participantRepository).delete(coModerator);
     verify(groupChatMembershipService)
         .removeLeavingMemberFromRoom(series, "@co-mod:matrix.example");
+    InOrder handOver = inOrder(sessionAssignment, participantRepository);
+    handOver.verify(sessionAssignment).handOverFrom(series, coModerator);
+    handOver.verify(participantRepository).delete(coModerator);
   }
 
   private GroupChatParticipant participant(
