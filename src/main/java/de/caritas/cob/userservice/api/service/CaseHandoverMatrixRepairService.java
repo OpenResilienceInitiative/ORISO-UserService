@@ -73,6 +73,21 @@ public class CaseHandoverMatrixRepairService {
         requesterConsultantId);
   }
 
+  /**
+   * Retry the owner power raise after a committed takeover whose new owner is read-only without it.
+   * The retry gives up once another counsellor owns the case.
+   */
+  public void enqueuePowerRaise(
+      String roomId, String memberId, Long sessionId, String requesterConsultantId) {
+    enqueue(
+        CaseHandoverMatrixRepairAction.POWER_RAISE,
+        roomId,
+        memberId,
+        null,
+        sessionId,
+        requesterConsultantId);
+  }
+
   /** Restore a pre-existing member only when their grant transaction actually rolls back. */
   public void registerPowerRollback(
       String roomId,
@@ -270,6 +285,9 @@ public class CaseHandoverMatrixRepairService {
       if (task.getAction() == CaseHandoverMatrixRepairAction.POWER_RESTORE) {
         return restorePowerUnlessSuperseded(task);
       }
+      if (task.getAction() == CaseHandoverMatrixRepairAction.POWER_RAISE) {
+        return raisePowerWhileStillOwner(task);
+      }
       boolean activeAccess = hasActiveAccess(task);
       if (task.getAction() == CaseHandoverMatrixRepairAction.REMOVE && activeAccess) {
         return true;
@@ -290,6 +308,7 @@ public class CaseHandoverMatrixRepairService {
         case REMOVE -> removeOrConfirmAbsent(task, token);
         case POWER_RESTORE ->
             throw new IllegalStateException("Power restore uses the session lock");
+        case POWER_RAISE -> throw new IllegalStateException("Power raise is handled above");
       };
     } catch (RuntimeException exception) {
       log.warn(
@@ -298,6 +317,19 @@ public class CaseHandoverMatrixRepairService {
           exception.getClass().getSimpleName());
       return false;
     }
+  }
+
+  private boolean raisePowerWhileStillOwner(CaseHandoverMatrixRepairTask task) {
+    var session = sessionRepository.findById(task.getSessionId());
+    boolean stillOwner =
+        session.isPresent()
+            && session.get().getConsultant() != null
+            && java.util.Objects.equals(
+                session.get().getConsultant().getId(), task.getRequesterConsultantId());
+    if (!stillOwner) {
+      return true;
+    }
+    return matrixSynapseService.makeRoomAdmin(task.getRoomId(), task.getMemberId());
   }
 
   private boolean reconcileJoin(

@@ -4390,6 +4390,45 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void takeover_queuesADurableRaise_whenTheRaiseThatRestoresWritingFailsAfterCommit() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, ADMIN_MXID, 100);
+    homeserver.member(caseRoom, REQUESTER_MXID, -1);
+    previousOwnerHasLeft();
+    var gateway = org.mockito.Mockito.spy(homeserver.gateway());
+    org.mockito.Mockito.doReturn(false).when(gateway).makeRoomAdmin(anyString(), anyString());
+    ReflectionTestUtils.setField(caseHandoverService, "matrixSynapseService", gateway);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      takeOverBecauseAssignmentEnded();
+      verify(matrixRepairService, never()).enqueuePowerRaise(any(), any(), any(), any());
+      runSynchronizations(TransactionSynchronization::afterCommit);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    verify(matrixRepairService)
+        .enqueuePowerRaise(caseRoom, REQUESTER_MXID, 123L, requester.getId());
+  }
+
+  @Test
+  void takeover_queuesNoRepair_whenTheColleagueCanPostAnywayAndNobodyCanRaiseThem() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    previousOwnerHasLeft();
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      takeOverBecauseAssignmentEnded();
+      runSynchronizations(TransactionSynchronization::afterCommit);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    verify(matrixRepairService, never()).enqueuePowerRaise(any(), any(), any(), any());
+  }
+
+  @Test
   void takeover_isUnavailable_whenTheRoomPowerLevelsCannotBeRead() {
     givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
     homeserver.member(caseRoom, REQUESTER_MXID, 0);

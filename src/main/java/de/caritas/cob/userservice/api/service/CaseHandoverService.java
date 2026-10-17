@@ -2713,7 +2713,8 @@ public class CaseHandoverService {
           () ->
               matrixSynapseService.setUserPowerLevel(
                   roomId, requesterMatrixId, OWNER_POWER_LEVEL, previousConsultantToken),
-          "the previous owner's token is no longer accepted or lacks the power to raise it");
+          "the previous owner's token is no longer accepted or lacks the power to raise it",
+          null);
     }
 
     // The previous counsellor deliberately keeps their membership. ADR-002's reveal lifecycle has
@@ -2773,12 +2774,20 @@ public class CaseHandoverService {
 
     // Also after a force-join: Synapse keeps the power entry of someone who left, so a colleague
     // who left at -1 comes back mute. A refusal rolls back, which removes a force-joined member.
-    requireRequesterCanPost(roomId, requesterMatrixId, requesterToken, membersBefore);
+    boolean mutedWithoutRaise =
+        requireRequesterCanPost(roomId, requesterMatrixId, requesterToken, membersBefore);
     raiseOwnerPowerOnceCommitted(
         session.getId(),
         roomId,
         () -> matrixSynapseService.makeRoomAdmin(roomId, requesterMatrixId),
-        "no joined room member holds power to raise it");
+        "no joined room member holds power to raise it",
+        // The takeover was only allowed because this raise restores writing, so a failure must
+        // not stay a log line: hand it to the persistent Matrix repair queue.
+        mutedWithoutRaise
+            ? () ->
+                matrixRepairService.enqueuePowerRaise(
+                    roomId, requesterMatrixId, session.getId(), requester.getId())
+            : null);
     return !wasMemberBefore;
   }
 
@@ -2790,7 +2799,7 @@ public class CaseHandoverService {
    * it only works while a joined member still holds the power to change power levels. A takeover
    * that would leave the new owner mute is refused before anything is committed instead.
    */
-  private void requireRequesterCanPost(
+  private boolean requireRequesterCanPost(
       String roomId, String requesterMatrixId, String requesterToken, List<String> members) {
     var power = matrixSynapseService.getPowerLevels(roomId, requesterToken);
     if (power.isEmpty()) {
@@ -2804,7 +2813,7 @@ public class CaseHandoverService {
     java.util.function.ToIntFunction<String> powerOf =
         member -> powerLevelOf(users.get(member), usersDefault);
     if (powerOf.applyAsInt(requesterMatrixId) >= eventsDefault) {
-      return;
+      return false;
     }
     int needed = powerLevelOf(levels.get("state_default"), 50);
     if (levels.get("events") instanceof Map<?, ?> events) {
@@ -2822,6 +2831,7 @@ public class CaseHandoverService {
           "Case handover refused: the requester is read-only in the Matrix room and no room member"
               + " can restore their right to write");
     }
+    return true;
   }
 
   private static int powerLevelOf(Object value, int fallback) {
@@ -2844,13 +2854,20 @@ public class CaseHandoverService {
    *
    * @param raise performs the raise and returns whether Synapse accepted it
    * @param refusalReason why a refused raise is expected to happen, for the log line
+   * @param onFailure what to do when the raise did not work (nullable), e.g. queue a repair
    */
   private void raiseOwnerPowerOnceCommitted(
-      Long sessionId, String roomId, BooleanSupplier raise, String refusalReason) {
+      Long sessionId,
+      String roomId,
+      BooleanSupplier raise,
+      String refusalReason,
+      Runnable onFailure) {
     Runnable raiseSafely =
         () -> {
+          boolean raised;
           try {
-            if (!raise.getAsBoolean()) {
+            raised = raise.getAsBoolean();
+            if (!raised) {
               log.warn(
                   "Could not give the new owner of session {} the owner power level in room {}: {}",
                   sessionId,
@@ -2858,11 +2875,22 @@ public class CaseHandoverService {
                   refusalReason);
             }
           } catch (RuntimeException exception) {
+            raised = false;
             log.warn(
                 "Could not give the new owner of session {} the owner power level in room {} ({})",
                 sessionId,
                 roomId,
                 exception.getClass().getSimpleName());
+          }
+          if (!raised && onFailure != null) {
+            try {
+              onFailure.run();
+            } catch (RuntimeException exception) {
+              log.error(
+                  "Could not queue the repair of the owner power level of session {} ({})",
+                  sessionId,
+                  exception.getClass().getSimpleName());
+            }
           }
         };
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {

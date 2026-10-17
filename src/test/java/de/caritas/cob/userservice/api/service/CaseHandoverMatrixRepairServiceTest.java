@@ -35,6 +35,7 @@ class CaseHandoverMatrixRepairServiceTest {
   @Mock private CaseHandoverMatrixRepairTaskRepository repository;
   @Mock private CaseHandoverRequestRepository handoverRequestRepository;
   @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessionRepository;
   @Mock private PlatformTransactionManager transactionManager;
   @Mock private TransactionStatus transactionStatus;
 
@@ -48,8 +49,7 @@ class CaseHandoverMatrixRepairServiceTest {
             repository,
             handoverRequestRepository,
             matrixSynapseService,
-            org.mockito.Mockito.mock(
-                de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            sessionRepository,
             Clock.fixed(Instant.parse("2026-09-14T10:00:00Z"), ZoneOffset.UTC),
             transactionManager);
     ReflectionTestUtils.setField(service, "maxAttempts", 100);
@@ -144,6 +144,77 @@ class CaseHandoverMatrixRepairServiceTest {
 
     service.process(9L);
 
+    verify(repository).delete(task);
+  }
+
+  private CaseHandoverMatrixRepairTask powerRaiseTask() {
+    return CaseHandoverMatrixRepairTask.builder()
+        .id(11L)
+        .action(CaseHandoverMatrixRepairAction.POWER_RAISE)
+        .roomId("!room:matrix")
+        .memberId("@requester:matrix")
+        .sessionId(123L)
+        .requesterConsultantId("requester")
+        .build();
+  }
+
+  private de.caritas.cob.userservice.api.model.Session sessionOwnedBy(String consultantId) {
+    var owner = new de.caritas.cob.userservice.api.model.Consultant();
+    owner.setId(consultantId);
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setConsultant(owner);
+    return session;
+  }
+
+  @Test
+  void enqueuePowerRaisePersistsATaskForTheNewOwner() {
+    service.enqueuePowerRaise("!room:matrix", "@requester:matrix", 123L, "requester");
+
+    var captor = ArgumentCaptor.forClass(CaseHandoverMatrixRepairTask.class);
+    verify(repository).saveAndFlush(captor.capture());
+    assertThat(captor.getValue().getAction()).isEqualTo(CaseHandoverMatrixRepairAction.POWER_RAISE);
+    assertThat(captor.getValue().getMemberId()).isEqualTo("@requester:matrix");
+    assertThat(captor.getValue().getRequesterConsultantId()).isEqualTo("requester");
+  }
+
+  @Test
+  void processPowerRaiseRetriesTheRaiseAndDeletesTheTaskOnSuccess() {
+    var task = powerRaiseTask();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    when(sessionRepository.findById(123L)).thenReturn(Optional.of(sessionOwnedBy("requester")));
+    when(matrixSynapseService.makeRoomAdmin("!room:matrix", "@requester:matrix")).thenReturn(true);
+
+    service.process(11L);
+
+    verify(matrixSynapseService).makeRoomAdmin("!room:matrix", "@requester:matrix");
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void processPowerRaiseKeepsTheTaskWhileTheRaiseStillFails() {
+    var task = powerRaiseTask();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    when(sessionRepository.findById(123L)).thenReturn(Optional.of(sessionOwnedBy("requester")));
+    when(matrixSynapseService.makeRoomAdmin("!room:matrix", "@requester:matrix")).thenReturn(false);
+
+    service.process(11L);
+
+    assertThat(task.getAttemptCount()).isEqualTo(1);
+    verify(repository, org.mockito.Mockito.never()).delete(task);
+  }
+
+  @Test
+  void processPowerRaiseDropsTheTaskWhenAnotherCounsellorOwnsTheCaseNow() {
+    var task = powerRaiseTask();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    when(sessionRepository.findById(123L)).thenReturn(Optional.of(sessionOwnedBy("someone-else")));
+
+    service.process(11L);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).makeRoomAdmin(any(), any());
     verify(repository).delete(task);
   }
 
