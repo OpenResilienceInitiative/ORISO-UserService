@@ -830,6 +830,24 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void aColleagueFromAnotherTraegerLeavingDoesNotDeleteTheRoomOthersAreStillIn() throws Exception {
+    theTraegerScopeIs("PLATFORM");
+    var created = openRoom(creator, otherTraeger, sameCentre);
+    assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+
+    var left = request("PUT", "/users/chat/" + chatId + "/leave", otherTraeger, "");
+
+    assertThat(left.statusCode()).as(left.body()).isIn(200, 204);
+    // The others belong to another Traeger than the one who left, and are still in the room.
+    assertThat(Tenants.acrossAll(() -> chats.findById(Long.parseLong(chatId)))).isPresent();
+    assertThat(synapse.joined(roomId)).contains(matrix(creator), matrix(sameCentre));
+    assertThat(synapse.joined(roomId)).doesNotContain(matrix(otherTraeger));
+    assertTheRoomStillWorksFor(creator, chatId, roomId, sessionOf(chatId));
+  }
+
+  @Test
   void aLeftOverAssignmentAndSupervisionGrantAFormerMemberNothing() throws Exception {
     var created = openRoom(creator, sameCentre, anotherSameCentre);
     var chatId = field(created, "chatId");

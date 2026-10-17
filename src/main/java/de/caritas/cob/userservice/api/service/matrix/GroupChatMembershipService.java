@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -242,9 +243,14 @@ public class GroupChatMembershipService {
       return true;
     }
 
-    return members.get().stream()
-        .filter(memberId -> !memberId.equals(leavingMatrixUserId))
-        .anyMatch(this::isHumanAppMember);
+    // The answer decides whether the chat and its room are deleted. A colleague admitted from
+    // another Träger (recipient scope PLATFORM) must count as present, so the accounts are looked
+    // up across Träger; under the leaver's own Träger they would read as unknown accounts.
+    return TenantContext.supplyAcrossTenants(
+        () ->
+            members.get().stream()
+                .filter(memberId -> !memberId.equals(leavingMatrixUserId))
+                .anyMatch(this::isHumanAppMember));
   }
 
   /**
