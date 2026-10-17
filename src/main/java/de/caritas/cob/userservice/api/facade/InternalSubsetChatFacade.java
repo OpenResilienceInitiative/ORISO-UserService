@@ -227,31 +227,41 @@ public class InternalSubsetChatFacade {
       return Optional.empty();
     }
     var candidates = TenantContext.supplyAcrossTenants(() -> chatRepository.findAllById(seriesIds));
+    var someRoomCouldNotBeRead = false;
     for (Chat chat : candidates) {
       if (chat.isMembersOnly()
           && chat.isActive()
           && ChatConverter.conversationTypeOf(chat) == ConversationType.INTERNAL_GROUP
-          && MatrixIds.isRoomId(chat.getMatrixRoomId())
-          && roomHoldsExactly(chat.getMatrixRoomId(), matrixIds)) {
-        return Optional.of(chat);
+          && MatrixIds.isRoomId(chat.getMatrixRoomId())) {
+        var holdsExactly = roomHoldsExactly(chat.getMatrixRoomId(), matrixIds);
+        if (holdsExactly == null) {
+          // Keep looking: a later candidate may hold exactly these people.
+          someRoomCouldNotBeRead = true;
+        } else if (holdsExactly) {
+          return Optional.of(chat);
+        }
       }
+    }
+    if (someRoomCouldNotBeRead) {
+      // Unknown is not "different": no candidate matched and one could not be read, so a second
+      // room for the same people could split their history. Ask the caller to try again once
+      // Matrix answers.
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.INTERNAL_CHAT_BUSY, HttpStatus.SERVICE_UNAVAILABLE);
     }
     return Optional.empty();
   }
 
   /**
-   * Every account in the room, mapped or not: a user of a foreign homeserver, a deleted consultant
-   * or any other stranger makes the room unfit. Only the configured technical admin, which the
-   * platform adds to rooms for administration, is ignored. A room whose members cannot be read
-   * refuses the request (503, try again) instead of being replaced.
+   * Whether the room holds exactly the matching Matrix accounts, or {@code null} when its members
+   * cannot be read. Every account in the room, mapped or not, counts: a user of a foreign
+   * homeserver, a deleted consultant or any other stranger makes the room unfit. Only the
+   * configured technical admin, which the platform adds to rooms for administration, is ignored.
    */
-  private boolean roomHoldsExactly(String matrixRoomId, Set<String> matrixIds) {
+  private Boolean roomHoldsExactly(String matrixRoomId, Set<String> matrixIds) {
     var joined = matrixSynapseService.getRoomMembers(matrixRoomId);
     if (joined.isEmpty()) {
-      // Unknown is not "different": a second room for the same people would split their history.
-      // Ask the caller to try again once Matrix answers.
-      throw new CustomValidationHttpStatusException(
-          HttpStatusExceptionReason.INTERNAL_CHAT_BUSY, HttpStatus.SERVICE_UNAVAILABLE);
+      return null;
     }
     var admin = "@" + matrixConfig.getAdminUsername() + ":" + matrixConfig.getServerName();
     var present = new java.util.HashSet<>(joined.get());

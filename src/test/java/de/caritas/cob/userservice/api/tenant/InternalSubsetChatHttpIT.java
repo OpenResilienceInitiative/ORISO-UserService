@@ -400,6 +400,36 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void anUnreadableOlderDuplicateDoesNotHideALaterRoomWithTheExactMembers() throws Exception {
+    var older = openRoom(creator, sameCentre);
+    synapse.joinDirectly(field(older, "matrixRoomId"), matrix(anotherSameCentre));
+    var newer = openRoom(creator, sameCentre);
+    assertThat(newer.statusCode()).as(newer.body()).isEqualTo(201);
+    synapse.unreadableRooms.add(field(older, "matrixRoomId"));
+
+    var again = openRoom(creator, sameCentre);
+
+    assertThat(again.statusCode()).as(again.body()).isEqualTo(200);
+    assertThat(field(again, "matrixRoomId")).isEqualTo(field(newer, "matrixRoomId"));
+    assertThat(synapse.roomsCreated()).as("no third room").isEqualTo(2);
+  }
+
+  @Test
+  void whenNoCandidateMatchesAndOneCannotBeReadNoSecondRoomIsCreated() throws Exception {
+    var older = openRoom(creator, sameCentre);
+    synapse.joinDirectly(field(older, "matrixRoomId"), matrix(anotherSameCentre));
+    var newer = openRoom(creator, sameCentre);
+    synapse.joinDirectly(field(newer, "matrixRoomId"), matrix(otherCentre));
+    synapse.unreadableRooms.add(field(older, "matrixRoomId"));
+
+    var again = openRoom(creator, sameCentre);
+
+    assertThat(again.statusCode()).as(again.body()).isEqualTo(503);
+    assertThat(reason(again)).isEqualTo("INTERNAL_CHAT_BUSY");
+    assertThat(synapse.roomsCreated()).as("no third room").isEqualTo(2);
+  }
+
+  @Test
   void theTechnicalAdminInTheRoomDoesNotPreventItsReuse() throws Exception {
     var first = openRoom(creator, sameCentre);
     synapse.joinDirectly(
@@ -1191,6 +1221,7 @@ class InternalSubsetChatHttpIT {
     private int numbering;
     volatile int createDelayMillis;
     volatile boolean failMemberReads;
+    final Set<String> unreadableRooms = java.util.concurrent.ConcurrentHashMap.newKeySet();
     volatile boolean failPurge;
 
     private static final class Room {
@@ -1314,7 +1345,7 @@ class InternalSubsetChatHttpIT {
       }
       if (path.startsWith("/_synapse/admin/v1/rooms/")
           && path.endsWith("/members")
-          && failMemberReads) {
+          && (failMemberReads || unreadableRooms.stream().anyMatch(room -> path.contains(room)))) {
         return withStatus(HttpStatus.INTERNAL_SERVER_ERROR).createResponse(request);
       }
       if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/members")) {
