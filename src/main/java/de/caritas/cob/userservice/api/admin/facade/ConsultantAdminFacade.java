@@ -29,7 +29,9 @@ import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantTenantC
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.CreateConsultantAgencyDTOInputAdapter;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -45,6 +47,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -270,7 +273,8 @@ public class ConsultantAdminFacade {
             .filter(java.util.Objects::nonNull)
             .collect(Collectors.toList());
     if (agencies.isEmpty() || agencies.stream().anyMatch(agency -> agency.getAgencyId() == null)) {
-      throw new BadRequestException("At least one centre with an id is required");
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.TENANT_CHANGE_AGENCIES_REQUIRED, HttpStatus.BAD_REQUEST);
     }
     var result =
         consultantTenantChangeService.changeTenant(

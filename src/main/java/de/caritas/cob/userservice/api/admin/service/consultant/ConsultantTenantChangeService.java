@@ -6,11 +6,14 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.CreateConsultantAgencyDTOInputAdapter;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.AgencyOutsideTenantException;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
-import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.TopicsNotCoveredException;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.UnknownAgencyException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantTenantChangeAudit;
@@ -28,6 +31,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -35,6 +39,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -63,6 +68,14 @@ public class ConsultantTenantChangeService {
       List.of(
           CaseHandoverRequest.Status.GRANTED,
           CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT);
+
+  /** The agency guards that mean "this is the last counsellor of a centre that still needs one". */
+  private static final Set<String> LAST_COUNSELLOR_GUARDS =
+      Set.of(
+          HttpStatusExceptionReason.CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_IS_STILL_ACTIVE
+              .name(),
+          HttpStatusExceptionReason.CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_HAS_OPEN_ENQUIRIES
+              .name());
 
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
@@ -94,9 +107,10 @@ public class ConsultantTenantChangeService {
    * @param agencies the centres they get there; each must belong to {@code newTenantId}
    * @param topicIds topics they offer at the new centres, or {@code null} for none
    * @param actorId the platform admin who asked, for the audit entry
-   * @throws BadRequestException on multi-tenancy off, same Träger or a centre of another Träger
+   * @throws CustomValidationHttpStatusException with an {@code X-Reason} of {@code TENANT_CHANGE_*}
+   *     (400 or 409) on every refusal: multi-tenancy off, same Träger, unknown centre, centre of
+   *     another Träger, topics not covered, last counsellor of a centre, admin identity
    * @throws NotFoundException if the counsellor does not exist
-   * @throws ConflictException if the account also holds an admin identity
    * @throws ServiceUnavailableException if the identity provider could not switch the tenant; the
    *     whole move is rolled back
    */
@@ -108,7 +122,10 @@ public class ConsultantTenantChangeService {
       List<Long> topicIds,
       String actorId) {
     if (!multiTenancyEnabled) {
-      throw new BadRequestException("A counsellor can only change the Träger with multi-tenancy");
+      throw refusal(
+          HttpStatus.BAD_REQUEST,
+          HttpStatusExceptionReason.TENANT_CHANGE_MULTITENANCY_OFF,
+          "multi-tenancy is off");
     }
     var consultant =
         consultantRepository
@@ -117,20 +134,23 @@ public class ConsultantTenantChangeService {
                 () -> new NotFoundException("Consultant with id %s not found", consultantId));
     var previousTenantId = consultant.getTenantId();
     if (Objects.equals(previousTenantId, newTenantId)) {
-      throw new BadRequestException("The consultant already belongs to this Träger");
+      throw refusal(
+          HttpStatus.BAD_REQUEST,
+          HttpStatusExceptionReason.TENANT_CHANGE_SAME_TENANT,
+          "consultant already belongs to Träger " + newTenantId);
     }
     if (adminRepository.existsById(consultantId)) {
       // The identity provider keeps one tenant per account, so the admin identity would move too.
-      throw new ConflictException(
-          "The account also holds an admin identity and cannot change the Träger as a consultant");
+      throw refusal(
+          HttpStatus.CONFLICT,
+          HttpStatusExceptionReason.TENANT_CHANGE_ADMIN_IDENTITY,
+          "account also holds an admin identity");
     }
 
     var newAgencyIds =
         agencies.stream().map(CreateConsultantAgencyDTO::getAgencyId).distinct().toList();
     // Checks that every centre exists, belongs to the new Träger and covers the topics.
-    var topicsByAgency =
-        topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(
-            topicIds, newAgencyIds, newTenantId);
+    var topicsByAgency = validateNewCentres(topicIds, newAgencyIds, newTenantId);
 
     var oldAgencyIds =
         consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultantId).stream()
@@ -151,7 +171,7 @@ public class ConsultantTenantChangeService {
     // The old centres go first: this is where the "last counsellor of an active centre" guard can
     // still stop the whole move, before anything outside the database was touched.
     if (!oldAgencyIds.isEmpty()) {
-      consultantAgencyAdminService.markConsultantAgenciesForDeletion(consultantId, oldAgencyIds);
+      endOldCentres(consultantId, oldAgencyIds);
     }
     dropDeletedRelationsFromLoadedConsultant(consultant);
 
@@ -194,6 +214,53 @@ public class ConsultantTenantChangeService {
         queued);
 
     return new Result(consultantId, previousTenantId, newTenantId, newAgencyIds, casesLeft, queued);
+  }
+
+  private Map<Long, Set<Long>> validateNewCentres(
+      List<Long> topicIds, List<Long> newAgencyIds, Long newTenantId) {
+    try {
+      return topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(
+          topicIds, newAgencyIds, newTenantId);
+    } catch (UnknownAgencyException unknown) {
+      throw refusal(
+          HttpStatus.BAD_REQUEST,
+          HttpStatusExceptionReason.TENANT_CHANGE_AGENCY_UNKNOWN,
+          unknown.getMessage());
+    } catch (AgencyOutsideTenantException foreign) {
+      throw refusal(
+          HttpStatus.BAD_REQUEST,
+          HttpStatusExceptionReason.TENANT_CHANGE_AGENCY_OTHER_TENANT,
+          foreign.getMessage());
+    } catch (TopicsNotCoveredException uncovered) {
+      throw refusal(
+          HttpStatus.BAD_REQUEST,
+          HttpStatusExceptionReason.TENANT_CHANGE_TOPICS_NOT_COVERED,
+          uncovered.getMessage());
+    }
+  }
+
+  private void endOldCentres(String consultantId, List<Long> oldAgencyIds) {
+    try {
+      consultantAgencyAdminService.markConsultantAgenciesForDeletion(consultantId, oldAgencyIds);
+    } catch (CustomValidationHttpStatusException guard) {
+      var reason = guard.getCustomHttpHeaders().getFirst("X-Reason");
+      if (LAST_COUNSELLOR_GUARDS.contains(reason)) {
+        throw refusal(
+            HttpStatus.CONFLICT,
+            HttpStatusExceptionReason.TENANT_CHANGE_LAST_COUNSELLOR,
+            "last counsellor of a centre that still needs one");
+      }
+      throw guard;
+    }
+  }
+
+  /**
+   * A refusal with a stable {@code X-Reason}; the log gets the detail, the response only the code.
+   */
+  private static CustomValidationHttpStatusException refusal(
+      HttpStatus status, HttpStatusExceptionReason reason, String detail) {
+    log.info("Move of a consultant refused ({}): {}", reason, detail);
+    return new CustomValidationHttpStatusException(reason, status);
   }
 
   private List<RoomRef> roomsOf(String consultantId, List<Long> oldAgencyIds) {

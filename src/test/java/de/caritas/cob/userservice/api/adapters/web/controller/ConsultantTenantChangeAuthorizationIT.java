@@ -13,11 +13,14 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTenantChangeResultDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import jakarta.servlet.http.Cookie;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor;
@@ -125,6 +129,29 @@ class ConsultantTenantChangeAuthorizationIT {
         .andExpect(status().isBadRequest());
 
     verifyNoInteractions(consultantAdminFacade);
+  }
+
+  /** The Admin maps these codes; the status and the header must reach it over HTTP. */
+  @Test
+  void everyRefusalAnswersWithItsStatusAndAStableXReasonHeader() throws Exception {
+    var refusals =
+        Map.of(
+            HttpStatusExceptionReason.TENANT_CHANGE_MULTITENANCY_OFF, HttpStatus.BAD_REQUEST,
+            HttpStatusExceptionReason.TENANT_CHANGE_SAME_TENANT, HttpStatus.BAD_REQUEST,
+            HttpStatusExceptionReason.TENANT_CHANGE_AGENCIES_REQUIRED, HttpStatus.BAD_REQUEST,
+            HttpStatusExceptionReason.TENANT_CHANGE_AGENCY_UNKNOWN, HttpStatus.BAD_REQUEST,
+            HttpStatusExceptionReason.TENANT_CHANGE_AGENCY_OTHER_TENANT, HttpStatus.BAD_REQUEST,
+            HttpStatusExceptionReason.TENANT_CHANGE_TOPICS_NOT_COVERED, HttpStatus.BAD_REQUEST,
+            HttpStatusExceptionReason.TENANT_CHANGE_LAST_COUNSELLOR, HttpStatus.CONFLICT,
+            HttpStatusExceptionReason.TENANT_CHANGE_ADMIN_IDENTITY, HttpStatus.CONFLICT);
+    for (var refusal : refusals.entrySet()) {
+      when(consultantAdminFacade.changeConsultantTenant(eq(CONSULTANT_ID), any()))
+          .thenThrow(new CustomValidationHttpStatusException(refusal.getKey(), refusal.getValue()));
+
+      mvc.perform(request(ENDPOINT).with(adminToken(0, TENANT_ADMIN)))
+          .andExpect(status().is(refusal.getValue().value()))
+          .andExpect(header().string("X-Reason", refusal.getKey().name()));
+    }
   }
 
   private static MockHttpServletRequestBuilder request(String path) {

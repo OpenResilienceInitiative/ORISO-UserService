@@ -51,6 +51,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -665,6 +666,25 @@ class ConsultantAdminFacadeTest {
         ForbiddenException.class,
         () -> consultantAdminFacade.changeConsultantTenant("mover", tenantChange(8L, 800L)));
 
+    verifyNoInteractions(consultantTenantChangeService);
+  }
+
+  @Test
+  void changeConsultantTenant_Should_RefuseACentreWithoutIdWithAStableReason() {
+    when(adminScope.current()).thenReturn(new AdminScope.Platform());
+    var request = tenantChange(8L, 800L);
+    request.setAgencies(List.of(new CreateConsultantAgencyDTO()));
+
+    var thrown =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> consultantAdminFacade.changeConsultantTenant("mover", request));
+
+    assertThat(thrown.getHttpStatus(), org.hamcrest.Matchers.is(HttpStatus.BAD_REQUEST));
+    assertThat(
+        thrown.getCustomHttpHeaders().getFirst("X-Reason"),
+        org.hamcrest.Matchers.is("TENANT_CHANGE_AGENCIES_REQUIRED"));
     verifyNoInteractions(consultantTenantChangeService);
   }
 

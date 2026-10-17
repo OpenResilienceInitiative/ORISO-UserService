@@ -20,11 +20,14 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyCreationInput;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.AgencyOutsideTenantException;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
-import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.TopicsNotCoveredException;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.UnknownAgencyException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -56,6 +59,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -130,7 +134,8 @@ class ConsultantTenantChangeServiceTest {
   void refusesToMoveWhenMultiTenancyIsOff() {
     ReflectionTestUtils.setField(service, "multiTenancyEnabled", false);
 
-    assertThatThrownBy(() -> move(NEW_TENANT, 800L)).isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> move(NEW_TENANT, 800L))
+        .satisfies(refusal(HttpStatus.BAD_REQUEST, "TENANT_CHANGE_MULTITENANCY_OFF"));
 
     verifyNoInteractions(identityTenantUpdater, consultantAgencyAdminService, auditRepository);
   }
@@ -149,7 +154,8 @@ class ConsultantTenantChangeServiceTest {
   void refusesToMoveToTheTraegerTheConsultantAlreadyBelongsTo() {
     found();
 
-    assertThatThrownBy(() -> move(OLD_TENANT, 700L)).isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> move(OLD_TENANT, 700L))
+        .satisfies(refusal(HttpStatus.BAD_REQUEST, "TENANT_CHANGE_SAME_TENANT"));
 
     verifyNoInteractions(identityTenantUpdater, consultantAgencyAdminService, auditRepository);
   }
@@ -159,7 +165,8 @@ class ConsultantTenantChangeServiceTest {
     found();
     when(adminRepository.existsById(CONSULTANT_ID)).thenReturn(true);
 
-    assertThatThrownBy(() -> move(NEW_TENANT, 800L)).isInstanceOf(ConflictException.class);
+    assertThatThrownBy(() -> move(NEW_TENANT, 800L))
+        .satisfies(refusal(HttpStatus.CONFLICT, "TENANT_CHANGE_ADMIN_IDENTITY"));
 
     verifyNoInteractions(identityTenantUpdater, consultantAgencyAdminService, auditRepository);
   }
@@ -169,12 +176,37 @@ class ConsultantTenantChangeServiceTest {
     found();
     when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(
             any(), eq(List.of(700L)), eq(NEW_TENANT)))
-        .thenThrow(new BadRequestException("agency 700 does not belong to tenant 8"));
+        .thenThrow(new AgencyOutsideTenantException("agency 700 does not belong to tenant 8"));
 
-    assertThatThrownBy(() -> move(NEW_TENANT, 700L)).isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> move(NEW_TENANT, 700L))
+        .satisfies(refusal(HttpStatus.BAD_REQUEST, "TENANT_CHANGE_AGENCY_OTHER_TENANT"));
 
     verifyNoInteractions(identityTenantUpdater, consultantAgencyAdminService, auditRepository);
     assertThat(consultant.getTenantId()).isEqualTo(OLD_TENANT);
+  }
+
+  @Test
+  void refusesAnUnknownAgencyWithItsOwnReason() {
+    found();
+    when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
+        .thenThrow(new UnknownAgencyException("Agency ids [999] are not valid agencies"));
+
+    assertThatThrownBy(() -> move(NEW_TENANT, 999L))
+        .satisfies(refusal(HttpStatus.BAD_REQUEST, "TENANT_CHANGE_AGENCY_UNKNOWN"));
+
+    verifyNoInteractions(identityTenantUpdater, consultantAgencyAdminService, auditRepository);
+  }
+
+  @Test
+  void refusesTopicsTheNewCentresDoNotCoverWithTheirOwnReason() {
+    found();
+    when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
+        .thenThrow(new TopicsNotCoveredException("topic ids [5] are not covered"));
+
+    assertThatThrownBy(() -> move(NEW_TENANT, 800L))
+        .satisfies(refusal(HttpStatus.BAD_REQUEST, "TENANT_CHANGE_TOPICS_NOT_COVERED"));
+
+    verifyNoInteractions(identityTenantUpdater, consultantAgencyAdminService, auditRepository);
   }
 
   @Test
@@ -298,11 +330,16 @@ class ConsultantTenantChangeServiceTest {
     oldAgencies(700L);
     when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
         .thenReturn(Map.of());
-    doThrow(new ConflictException("last consultant of an active centre"))
+    doThrow(
+            new CustomValidationHttpStatusException(
+                HttpStatusExceptionReason
+                    .CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_IS_STILL_ACTIVE,
+                HttpStatus.CONFLICT))
         .when(consultantAgencyAdminService)
         .markConsultantAgenciesForDeletion(anyString(), anyList());
 
-    assertThatThrownBy(() -> move(NEW_TENANT, 800L)).isInstanceOf(ConflictException.class);
+    assertThatThrownBy(() -> move(NEW_TENANT, 800L))
+        .satisfies(refusal(HttpStatus.CONFLICT, "TENANT_CHANGE_LAST_COUNSELLOR"));
 
     verifyNoInteractions(identityTenantUpdater);
     verify(auditRepository, never()).save(any());
@@ -378,7 +415,36 @@ class ConsultantTenantChangeServiceTest {
         .forEach(TransactionSynchronization::afterCommit);
   }
 
+  @Test
+  void aCentreWithOpenEnquiriesThatLosesItsLastCounsellorIsTheSameReason() {
+    found();
+    oldAgencies(700L);
+    when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
+        .thenReturn(Map.of());
+    doThrow(
+            new CustomValidationHttpStatusException(
+                HttpStatusExceptionReason
+                    .CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_HAS_OPEN_ENQUIRIES,
+                HttpStatus.CONFLICT))
+        .when(consultantAgencyAdminService)
+        .markConsultantAgenciesForDeletion(anyString(), anyList());
+
+    assertThatThrownBy(() -> move(NEW_TENANT, 800L))
+        .satisfies(refusal(HttpStatus.CONFLICT, "TENANT_CHANGE_LAST_COUNSELLOR"));
+  }
+
   // --- helpers ---------------------------------------------------------------------------
+
+  /** A refusal the Admin can map: the status and a stable X-Reason code. */
+  private static org.assertj.core.api.ThrowingConsumer<Throwable> refusal(
+      HttpStatus status, String reason) {
+    return thrown -> {
+      assertThat(thrown).isInstanceOf(CustomValidationHttpStatusException.class);
+      var refusal = (CustomValidationHttpStatusException) thrown;
+      assertThat(refusal.getHttpStatus()).isEqualTo(status);
+      assertThat(refusal.getCustomHttpHeaders().getFirst("X-Reason")).isEqualTo(reason);
+    };
+  }
 
   private ConsultantTenantChangeService.Result move(long tenantId, long agencyId) {
     return service.changeTenant(CONSULTANT_ID, tenantId, List.of(agency(agencyId)), null, ACTOR_ID);

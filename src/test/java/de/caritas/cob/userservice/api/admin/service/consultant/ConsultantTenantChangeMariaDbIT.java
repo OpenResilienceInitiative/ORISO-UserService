@@ -25,7 +25,7 @@ import de.caritas.cob.userservice.api.admin.service.agency.RemoveConsultantFromS
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationFinalizer;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
-import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -82,6 +82,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
@@ -376,7 +377,13 @@ class ConsultantTenantChangeMariaDbIT {
                     List.of(new CreateConsultantAgencyDTO().agencyId(OLD_AGENCY)),
                     null,
                     "platform-admin"))
-        .isInstanceOf(BadRequestException.class);
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            refusal -> {
+              assertThat(refusal.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+              assertThat(refusal.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("TENANT_CHANGE_AGENCY_OTHER_TENANT");
+            });
 
     assertNothingChanged();
   }
@@ -402,9 +409,13 @@ class ConsultantTenantChangeMariaDbIT {
         .thenReturn(agency(OLD_AGENCY, OLD_TRAEGER));
 
     assertThatThrownBy(this::move)
-        .isInstanceOf(
-            de.caritas.cob.userservice.api.exception.httpresponses
-                .CustomValidationHttpStatusException.class);
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            refusal -> {
+              assertThat(refusal.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(refusal.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("TENANT_CHANGE_LAST_COUNSELLOR");
+            });
 
     assertNothingChanged();
     verify(identityTenantUpdater, never()).updateTenant(anyString(), any());
