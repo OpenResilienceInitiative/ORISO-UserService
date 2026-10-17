@@ -1308,6 +1308,67 @@ public class MatrixSynapseService implements MatrixUserClient {
   }
 
   /**
+   * Joins a local user into a room as the technical Matrix admin, without any room member's or the
+   * user's own token ({@code POST /_synapse/admin/v1/join/{roomId}}).
+   *
+   * <p>Synapse needs the admin to be a room member with permission to invite. Session rooms get the
+   * admin as a member when they are provisioned, but not every older room did, so when the first
+   * attempt is refused this gets the admin into the room via {@link #ensureAdminInRoom} and tries
+   * once more.
+   *
+   * @param roomId the Matrix room ID
+   * @param userId full Matrix ID of the local user to join
+   * @param fallbackMembers full Matrix IDs of current room members (never {@code userId}) that may
+   *     be used, in order, to invite the admin when it is not in the room yet; may be empty
+   * @return true when the user has been joined, false otherwise
+   */
+  public boolean forceJoinUserToRoom(
+      String roomId, String userId, java.util.List<String> fallbackMembers) {
+    if (roomId == null || roomId.isBlank() || userId == null || userId.isBlank()) {
+      return false;
+    }
+    String adminToken = getAdminToken();
+    if (adminToken == null) {
+      return false;
+    }
+    if (matrixRoomClient.forceJoinUser(roomId, userId, adminToken)) {
+      return true;
+    }
+    // Without any member the admin can only get in if it was already invited or the room is open.
+    java.util.List<String> candidates =
+        fallbackMembers == null || fallbackMembers.isEmpty()
+            ? java.util.Collections.singletonList(null)
+            : fallbackMembers;
+    for (String member : candidates) {
+      if (ensureAdminInRoom(roomId, member)) {
+        return matrixRoomClient.forceJoinUser(roomId, userId, adminToken);
+      }
+    }
+    log.warn("Matrix admin is not a member of room {} and could not join it", roomId);
+    return false;
+  }
+
+  /**
+   * Gives a user the highest power level a local member of the room holds, as the technical Matrix
+   * admin and without the previous room owner ({@code POST
+   * /_synapse/admin/v1/rooms/{roomId}/make_room_admin}).
+   *
+   * @param roomId the Matrix room ID
+   * @param userId full Matrix ID of the user to raise
+   * @return true when Synapse accepted the request, false otherwise
+   */
+  public boolean makeRoomAdmin(String roomId, String userId) {
+    if (roomId == null || roomId.isBlank() || userId == null || userId.isBlank()) {
+      return false;
+    }
+    String adminToken = getAdminToken();
+    if (adminToken == null) {
+      return false;
+    }
+    return matrixRoomClient.makeRoomAdmin(roomId, userId, adminToken);
+  }
+
+  /**
    * Leaves a Matrix room with the given user's own access token.
    *
    * @param roomId the room ID
@@ -1991,6 +2052,11 @@ public class MatrixSynapseService implements MatrixUserClient {
       String roomId, String userId, int expectedPower, int originalPower, String ownerToken) {
     return matrixRoomClient.restoreUserPowerLevel(
         roomId, userId, expectedPower, originalPower, ownerToken);
+  }
+
+  public java.util.Optional<java.util.Map<String, Object>> getPowerLevels(
+      String roomId, String accessToken) {
+    return matrixRoomClient.getPowerLevels(roomId, accessToken);
   }
 
   public boolean setUserPowerLevel(
