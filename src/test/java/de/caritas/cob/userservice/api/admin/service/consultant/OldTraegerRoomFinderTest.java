@@ -37,6 +37,7 @@ class OldTraegerRoomFinderTest {
   @Test
   void findsTheRoomsTheDatabaseKnowsAboutIncludingTheSupervisionSideRooms() {
     when(sessionRepository.findRoomsReadableBy(
+            eq(OLD_TENANT),
             eq(MOVER),
             eq(List.of(700L)),
             eq(
@@ -44,7 +45,7 @@ class OldTraegerRoomFinderTest {
                     CaseHandoverRequest.Status.GRANTED,
                     CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT))))
         .thenReturn(List.of(new SessionRoomRow(1L, "!owned")));
-    when(sessionRepository.findSupervisionSideRoomsOf(MOVER))
+    when(sessionRepository.findSupervisionSideRoomsOf(OLD_TENANT, MOVER))
         .thenReturn(List.of(new SessionRoomRow(2L, "!side")));
     when(roomMembershipLookup.findJoinedRoomsForMatrixUser(MATRIX_ID))
         .thenReturn(Optional.of(List.of()));
@@ -56,7 +57,8 @@ class OldTraegerRoomFinderTest {
   /** The finding of #1421: a silent member of a colleague's accepted case is in no query. */
   @Test
   void addsTheRoomsOfTheOldTraegerTheMoverIsActuallyAMemberOf() {
-    when(sessionRepository.findRoomsReadableBy(eq(MOVER), anyCollection(), anyCollection()))
+    when(sessionRepository.findRoomsReadableBy(
+            eq(OLD_TENANT), eq(MOVER), anyCollection(), anyCollection()))
         .thenReturn(List.of(new SessionRoomRow(1L, "!owned")));
     when(roomMembershipLookup.findJoinedRoomsForMatrixUser(MATRIX_ID))
         .thenReturn(Optional.of(List.of("!owned", "!colleague", "!side-old", "!not-a-case")));
@@ -113,7 +115,8 @@ class OldTraegerRoomFinderTest {
 
   @Test
   void aRoomFoundTwiceIsQueuedOnce() {
-    when(sessionRepository.findRoomsReadableBy(eq(MOVER), anyCollection(), anyCollection()))
+    when(sessionRepository.findRoomsReadableBy(
+            eq(OLD_TENANT), eq(MOVER), anyCollection(), anyCollection()))
         .thenReturn(List.of(new SessionRoomRow(1L, "!owned")));
     when(roomMembershipLookup.findJoinedRoomsForMatrixUser(MATRIX_ID))
         .thenReturn(Optional.of(List.of("!owned")));
@@ -130,7 +133,8 @@ class OldTraegerRoomFinderTest {
 
     finder.roomsToLeave(MOVER, MATRIX_ID, OLD_TENANT, List.of());
 
-    verify(sessionRepository).findRoomsReadableBy(eq(MOVER), eq(List.of(-1L)), anyCollection());
+    verify(sessionRepository)
+        .findRoomsReadableBy(eq(OLD_TENANT), eq(MOVER), eq(List.of(-1L)), anyCollection());
   }
 
   private List<RoomRef> rooms() {

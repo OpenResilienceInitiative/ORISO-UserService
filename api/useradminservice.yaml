@@ -313,9 +313,13 @@ paths:
         and standing supervisors of the old Träger (the consultant's own, and colleagues who have
         the consultant as supervisor) are cleared. Group chats are not handled.
 
-        The identity provider is changed last and in one move: if it refuses, nothing is changed
-        (503). The roles of the new centres' consulting types are added after the tenant switch;
-        roles of the old centres are not removed.
+        The identity provider is changed last and in one move: if it refuses, the database move is
+        rolled back and the old tenant is put back best-effort (503). A restore that fails is
+        logged as an error and counted in the metric
+        userservice.tenant_change.identity_restore.failed; the identity provider then keeps the new
+        tenant until the move is repeated. The roles of the new centres' consulting types are added
+        after the tenant switch; roles that were already granted when a later step fails are not
+        taken back, and roles of the old centres are not removed.
       operationId: changeConsultantTenant
       parameters:
         - name: consultantId
@@ -352,8 +356,9 @@ paths:
         503:
           description: >-
             SERVICE UNAVAILABLE - the identity provider could not switch the Träger or grant the
-            roles. Nothing is changed (the database is rolled back, the identity provider is put
-            back) and the request can be repeated. 503 rather than 424/502 because this is a
+            roles. The database is rolled back and the old tenant is put back in the identity
+            provider best-effort (a failed restore is logged and counted); roles that were already
+            granted are not taken back. The request can be repeated. 503 rather than 424/502 because this is a
             temporary refusal of a dependency that the caller can simply retry, as everywhere else
             in this service where a lock or a downstream step is unavailable.
       security:

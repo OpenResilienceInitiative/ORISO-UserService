@@ -42,6 +42,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService.RoomRef;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -86,6 +87,7 @@ class ConsultantTenantChangeServiceTest {
   @Mock private AdminRepository adminRepository;
   @Mock private ConsultantTenantChangeAuditRepository auditRepository;
 
+  private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private ConsultantTenantChangeService service;
   private Consultant consultant;
 
@@ -106,6 +108,7 @@ class ConsultantTenantChangeServiceTest {
             identityRoleUpdater,
             adminRepository,
             auditRepository,
+            meterRegistry,
             Clock.fixed(Instant.parse("2026-10-16T09:00:00Z"), ZoneOffset.UTC));
     ReflectionTestUtils.setField(service, "multiTenancyEnabled", true);
     consultant =
@@ -415,6 +418,60 @@ class ConsultantTenantChangeServiceTest {
 
     verify(identityTenantUpdater).updateTenant(CONSULTANT_ID, OLD_TENANT);
     verify(identityRoleUpdater, never()).ensureRoles(anyString(), anyCollection());
+  }
+
+  /**
+   * #1421 review: when the restore itself fails, Keycloak keeps the new tenant while the database
+   * is back on the old one. That is only recoverable by hand, so it must be countable for an alert.
+   */
+  @Test
+  void countsARestoreOfTheOldTenantThatFailed() {
+    TransactionSynchronizationManager.initSynchronization();
+    found();
+    oldAgencies(700L);
+    when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
+        .thenReturn(Map.of());
+    doThrow(new IllegalStateException("timeout after the write"))
+        .when(identityTenantUpdater)
+        .updateTenant(CONSULTANT_ID, NEW_TENANT);
+    doThrow(new IllegalStateException("keycloak still down"))
+        .when(identityTenantUpdater)
+        .updateTenant(CONSULTANT_ID, OLD_TENANT);
+
+    assertThatThrownBy(() -> move(NEW_TENANT, 800L))
+        .isInstanceOf(ServiceUnavailableException.class);
+    TransactionSynchronizationManager.getSynchronizations()
+        .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+
+    assertThat(
+            meterRegistry
+                .counter(ConsultantTenantChangeService.IDENTITY_RESTORE_FAILED_METRIC)
+                .count())
+        .isEqualTo(1.0);
+  }
+
+  /** A restore that worked is no incident: the counter stays at zero. */
+  @Test
+  void doesNotCountARestoreThatWorked() {
+    TransactionSynchronizationManager.initSynchronization();
+    found();
+    oldAgencies(700L);
+    when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
+        .thenReturn(Map.of());
+    doThrow(new IllegalStateException("timeout after the write"))
+        .when(identityTenantUpdater)
+        .updateTenant(CONSULTANT_ID, NEW_TENANT);
+
+    assertThatThrownBy(() -> move(NEW_TENANT, 800L))
+        .isInstanceOf(ServiceUnavailableException.class);
+    TransactionSynchronizationManager.getSynchronizations()
+        .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+
+    assertThat(
+            meterRegistry
+                .counter(ConsultantTenantChangeService.IDENTITY_RESTORE_FAILED_METRIC)
+                .count())
+        .isZero();
   }
 
   /**

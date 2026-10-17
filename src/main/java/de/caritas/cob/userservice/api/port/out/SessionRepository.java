@@ -505,8 +505,10 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   /**
    * The Matrix rooms through which a counsellor can read the cases of the Träger they are leaving
    * (#1419): the rooms of cases they own, of team cases of the centres they leave, of cases they
-   * supervise and of cases a colleague granted them access to. No case data leaves the query: a
-   * case id and a room id.
+   * supervise and of cases a colleague granted them access to, all of the given Träger only: the
+   * owner stays on a case when its counsellor moves, so without the Träger a move back would pick
+   * up the cases of the Träger they are returning to. No case data leaves the query: a case id and
+   * a room id.
    */
   @Query(
       """
@@ -520,8 +522,10 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           OR s.id IN (SELECT r.session.id FROM CaseHandoverRequest r
                       WHERE r.requesterConsultant.id = :consultantId
                         AND r.status IN :grantedStatuses))
+        AND (s.tenantId = :tenantId OR (s.tenantId IS NULL AND :tenantId = 1))
       """)
   List<SessionRoomRow> findRoomsReadableBy(
+      @Param("tenantId") Long tenantId,
       @Param("consultantId") String consultantId,
       @Param("agencyIds") Collection<Long> agencyIds,
       @Param("grantedStatuses") Collection<CaseHandoverRequest.Status> grantedStatuses);
@@ -529,7 +533,7 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   /**
    * The staff-only supervision side rooms (ADR-008) a counsellor sits in: those of cases they
    * supervise and those of cases they own. Rows that were ended earlier count as well, because the
-   * member stays in the room until somebody removes them.
+   * member stays in the room until somebody removes them. Only those of cases of the given Träger.
    */
   @Query(
       """
@@ -539,8 +543,11 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       WHERE ss.matrixRoomId IS NOT NULL
         AND (ss.supervisorConsultant.id = :consultantId
           OR ss.session.consultant.id = :consultantId)
+        AND (ss.session.tenantId = :tenantId
+          OR (ss.session.tenantId IS NULL AND :tenantId = 1))
       """)
-  List<SessionRoomRow> findSupervisionSideRoomsOf(@Param("consultantId") String consultantId);
+  List<SessionRoomRow> findSupervisionSideRoomsOf(
+      @Param("tenantId") Long tenantId, @Param("consultantId") String consultantId);
 
   /**
    * Of the given Matrix rooms, those that are the chat room of a case of the Träger (#1421). A

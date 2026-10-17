@@ -17,7 +17,7 @@ The cases stay with the old Träger; colleagues there take them over with the ne
 | Standing supervisor | The counsellor's own is cleared, and so is every colleague's that points at them. |
 | Supervisions | The counsellor's active `session_supervisor` rows end (`is_active = false`, `removed_date`), so moving back does not silently restore them. Colleagues' supervisions of the counsellor's cases stay. |
 | Matrix | Every room of the old Träger the counsellor is a member of is left through the durable repair queue (`LEAVE`), at most 100 per minute: owned, team, supervised and co-access cases, the staff-only supervision side rooms (owned and supervised), and the accepted cases of colleagues they sit in as a silent department member (ADR-002 §1). Found by asking the chat server for their joined rooms and intersecting with the rooms of the old Träger; when it cannot be asked, every room of the old centres is queued (leaving a room one never sat in is a no-op). Open-enquiry and team-discussion rooms of the old centres are also left by the existing `ConsultantLeftAgencyEvent` listener. |
-| Identity provider | Tenant attribute switched last but one, roles of the new centres last, both inside the transaction. The restore of the old tenant is registered before the write, so a failure after the write (timeout) is undone as well. A refusal (503) leaves the identity provider as it was. Roles of the old centres are not removed. |
+| Identity provider | Tenant attribute switched last but one, roles of the new centres last, both inside the transaction. The restore of the old tenant is registered before the write, so a failure after the write (timeout) is undone as well. A refusal (503) rolls the database back and puts the old tenant back in the identity provider on a best-effort basis: a restore that fails is logged as an error and counted in `userservice.tenant_change.identity_restore.failed` (alert on it), and then the identity provider keeps the new tenant until the move is repeated or fixed by hand. Roles that were already granted are not taken back, and roles of the old centres are not removed. |
 | Audit | `consultant_tenant_change_audit`: actor, old and new Träger, centre ids, counts. No case data. |
 
 ## Refused
@@ -28,7 +28,7 @@ The cases stay with the old Träger; colleagues there take them over with the ne
 | 403 | caller is not a platform admin |
 | 404 | counsellor not found |
 | 409 | last counsellor of a still active centre of the old Träger, or the account also holds an admin identity |
-| 503 | the identity provider could not switch the tenant or grant the roles (nothing is changed) |
+| 503 | the identity provider could not switch the tenant or grant the roles. The database move is rolled back and the old tenant is put back in the identity provider best-effort (a failed restore is logged as an error and counted in `userservice.tenant_change.identity_restore.failed`). Roles that were already granted are not taken back. The request can be repeated. |
 
 Every 400 and 409 above carries a stable `X-Reason` header (ORISO-Admin#1217 maps them):
 

@@ -276,6 +276,7 @@ class ConsultantTenantChangeMariaDbIT {
     when(agencyService.getAgency(NEW_AGENCY)).thenReturn(agency(NEW_AGENCY, NEW_TRAEGER));
     when(agencyService.getAgenciesWithoutCaching(List.of(OLD_AGENCY)))
         .thenReturn(List.of(agency(OLD_AGENCY, OLD_TRAEGER)));
+    when(agencyService.getAgency(OLD_AGENCY)).thenReturn(agency(OLD_AGENCY, OLD_TRAEGER));
     sessionId = null;
     secondSessionId = null;
     teamSessionId = null;
@@ -723,6 +724,45 @@ class ConsultantTenantChangeMariaDbIT {
     assertThat(colleaguesSupervision.getRemovedDate()).isNull();
   }
 
+  /**
+   * #1421 review: the mover keeps the cases they own (the owner stays on the row). On the way back
+   * to the Träger they came from those cases are the current Träger's again, so the move back must
+   * not queue their rooms for leaving: the room lookup is scoped to the Träger being left.
+   */
+  @Test
+  void movingBackToTheFirstTraegerDoesNotQueueTheRoomsOfTheCasesTheyStillOwnThere() {
+    move();
+    processTheRepairQueue();
+
+    var result = moveBack();
+
+    assertThat(result.matrixAccessRevocationsQueued()).isZero();
+    assertThat(
+            repairTaskRepository.findByActionAndMemberId(
+                CaseHandoverMatrixRepairAction.LEAVE, matrixId(MOVER_ID)))
+        .isEmpty();
+    assertThat(reload(MOVER_ID).getTenantId()).isEqualTo(OLD_TRAEGER);
+  }
+
+  /**
+   * Same, before the first move's queue ran: the pending leaves are cancelled and none is added.
+   */
+  @Test
+  void movingBackBeforeTheQueueRanKeepsTheMoverInTheirRooms() {
+    move();
+
+    var result = moveBack();
+
+    assertThat(result.matrixAccessRevocationsQueued()).isZero();
+    assertThat(
+            repairTaskRepository.findByActionAndMemberId(
+                CaseHandoverMatrixRepairAction.LEAVE, matrixId(MOVER_ID)))
+        .isEmpty();
+    processTheRepairQueue();
+    assertThat(roomMembers.get(ROOM_ID)).contains(matrixId(MOVER_ID));
+    assertThat(roomMembers.get(SECOND_ROOM_ID)).contains(matrixId(MOVER_ID));
+  }
+
   // --- helpers ---------------------------------------------------------------------------
 
   private void givenTheNewCentreGivesTheRole(String role) {
@@ -833,6 +873,16 @@ class ConsultantTenantChangeMariaDbIT {
         MOVER_ID,
         NEW_TRAEGER,
         List.of(new CreateConsultantAgencyDTO().agencyId(NEW_AGENCY).roleSetKey("consultant")),
+        null,
+        "platform-admin");
+  }
+
+  private ConsultantTenantChangeService.Result moveBack() {
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+    return tenantChangeService.changeTenant(
+        MOVER_ID,
+        OLD_TRAEGER,
+        List.of(new CreateConsultantAgencyDTO().agencyId(OLD_AGENCY).roleSetKey("consultant")),
         null,
         "platform-admin");
   }

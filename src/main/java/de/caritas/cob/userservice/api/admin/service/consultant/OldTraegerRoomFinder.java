@@ -56,8 +56,11 @@ public class OldTraegerRoomFinder {
     // IN () is not valid SQL on every dialect: a counsellor without centre has no team rooms.
     Collection<Long> agencyIds = oldAgencyIds.isEmpty() ? List.of(-1L) : oldAgencyIds;
     var rooms = new LinkedHashMap<String, Long>();
-    collect(rooms, sessionRepository.findRoomsReadableBy(consultantId, agencyIds, GRANTED_STATES));
-    collect(rooms, sessionRepository.findSupervisionSideRoomsOf(consultantId));
+    collect(
+        rooms,
+        sessionRepository.findRoomsReadableBy(
+            previousTenantId, consultantId, agencyIds, GRANTED_STATES));
+    collect(rooms, sessionRepository.findSupervisionSideRoomsOf(previousTenantId, consultantId));
 
     var joined = roomMembershipLookup.findJoinedRoomsForMatrixUser(matrixUserId);
     if (joined.isPresent()) {

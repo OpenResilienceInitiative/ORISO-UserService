@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService.RoomRef;
 import de.caritas.cob.userservice.api.service.LogService;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -73,6 +74,14 @@ public class ConsultantTenantChangeService {
           HttpStatusExceptionReason.CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_HAS_OPEN_ENQUIRIES
               .name());
 
+  /**
+   * One count per rolled-back move whose identity-provider tenant could not be put back: Keycloak
+   * keeps the new tenant while the database is on the old one, and only a retry of the move or a
+   * manual fix recovers it. Alert on a sustained rate.
+   */
+  static final String IDENTITY_RESTORE_FAILED_METRIC =
+      "userservice.tenant_change.identity_restore.failed";
+
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull ConsultantAgencyAdminService consultantAgencyAdminService;
@@ -86,6 +95,7 @@ public class ConsultantTenantChangeService {
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull ConsultantTenantChangeAuditRepository auditRepository;
+  private final @NonNull MeterRegistry meterRegistry;
   private final @NonNull Clock clock;
 
   @Value("${multitenancy.enabled}")
@@ -406,6 +416,7 @@ public class ConsultantTenantChangeService {
           "Move of consultant {} was rolled back but the identity provider tenant could not be"
               + " restored: the previous tenant is unknown",
           consultantId);
+      meterRegistry.counter(IDENTITY_RESTORE_FAILED_METRIC).increment();
       return;
     }
     try {
@@ -417,6 +428,7 @@ public class ConsultantTenantChangeService {
           consultantId,
           previousTenantId,
           failure.getClass().getSimpleName());
+      meterRegistry.counter(IDENTITY_RESTORE_FAILED_METRIC).increment();
     }
   }
 
