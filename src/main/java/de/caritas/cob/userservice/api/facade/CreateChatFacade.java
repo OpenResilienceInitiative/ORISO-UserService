@@ -155,28 +155,32 @@ public class CreateChatFacade {
     session.setCreateDate(now);
     session.setUpdateDate(now);
 
-    // Save session to database first
-    session = sessionService.saveSession(session);
-    Long sessionId = session.getId();
-    log.info("Created session {} for group chat", sessionId);
-
-    // Persist the Chat entity (needed for frontend - has topic field!)
-    // A Series is visible immediately, but its occurrence is opened explicitly by a counsellor:
-    // keeping it inactive preserves the Waiting Area and makes the opened lifecycle event
-    // observable exactly once through StartChatFacade.
-    //
-    // An internal team chat has no occurrence to open. It is a persistent room for colleagues,
-    // so there is nothing to wait for and nobody to open it for — creating it inactive sent
-    // counsellors into the askers' Waiting Area, countdown and all. It is open on
-    // creation.
-    chat.setActive(ConversationType.INTERNAL_GROUP.equals(chat.getConversationType()));
-    chat = chatService.saveChat(chat);
-    Long chatId = chat.getId();
-    log.info("Created chat {} for group chat", chatId);
-
     String matrixRoomId = null;
+    Long sessionId = null;
+    Long chatId = null;
 
+    // The first writes are inside the guarded block too: whatever fails after the session is
+    // saved leaves nothing behind.
     try {
+      // Save session to database first
+      session = sessionService.saveSession(session);
+      sessionId = session.getId();
+      log.info("Created session {} for group chat", sessionId);
+
+      // Persist the Chat entity (needed for frontend - has topic field!)
+      // A Series is visible immediately, but its occurrence is opened explicitly by a counsellor:
+      // keeping it inactive preserves the Waiting Area and makes the opened lifecycle event
+      // observable exactly once through StartChatFacade.
+      //
+      // An internal team chat has no occurrence to open. It is a persistent room for colleagues,
+      // so there is nothing to wait for and nobody to open it for — creating it inactive sent
+      // counsellors into the askers' Waiting Area, countdown and all. It is open on
+      // creation.
+      chat.setActive(ConversationType.INTERNAL_GROUP.equals(chat.getConversationType()));
+      chat = chatService.saveChat(chat);
+      chatId = chat.getId();
+      log.info("Created chat {} for group chat", chatId);
+
       // Create Matrix room with PROPER ALIAS
       String roomName = chatDTO.getTopic();
       String roomAlias = "group_chat_" + sessionId;

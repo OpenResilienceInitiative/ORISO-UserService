@@ -497,6 +497,22 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     verify(sessionService).deleteSession(any());
   }
 
+  @Test
+  void createMembersOnlyChat_Should_RemoveTheSession_When_TheChatCannotBeSaved() throws Exception {
+    var colleague = colleagueWhoseInviteIsRefused();
+    when(chatService.saveChat(any())).thenThrow(new RuntimeException("database down"));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () ->
+            createChatFacade.createMembersOnlyChat(
+                chatDtoWithConsultantIds(List.of()), consultant, List.of(colleague)));
+
+    // Nothing may be left behind: the session was saved first and must go again.
+    verify(sessionService).deleteSession(any());
+    verify(matrixSynapseService, never()).createRoomAsMatrixUser(any(), any(), any());
+  }
+
   // ---------------------------------------------------------------------------
   // resolveOrCreateGroupChatSystemUser — system user resolution
   // ---------------------------------------------------------------------------
