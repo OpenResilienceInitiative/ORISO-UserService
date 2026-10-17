@@ -291,19 +291,31 @@ paths:
         The consultant's cases stay with the old Träger (ORISO-Admin#952): sessions, their chat
         rooms and the advice seekers' conversations are neither moved nor deleted. The consultant
         loses access to them (the old centre assignments end, the identity provider tenant changes
-        and the chat rooms of the old Träger are left), and they become takeover candidates for
-        the colleagues of the old Träger through the case handover with the reason
+        and the consultant is taken out of the old Träger's chat rooms), and they become takeover
+        candidates for the colleagues of the old Träger through the case handover with the reason
         ASSIGNMENT_ENDED. New enquiries reach the consultant only through the new centres.
 
-        The move does not wait for open cases. It is refused when a centre does not belong to the
-        new Träger, when the consultant is the last one of a still active centre of the old
-        Träger, and when the account also holds an admin identity. A successful move writes an
-        audit entry (who, when, old and new Träger) without any case data.
+        The move does not wait for open cases. It is refused when a centre does not exist or does
+        not belong to the new Träger, when the requested topics are not offered by the new centres,
+        when the consultant is the last one of a still active centre of the old Träger, and when
+        the account also holds an admin identity. Every refusal (400 and 409) carries an X-Reason
+        header with a stable code. A successful move writes an audit entry (who, when, old and new
+        Träger) without any case data.
 
-        The chat rooms are left asynchronously through the durable Matrix repair queue; the number
-        of queued rooms is returned as matrixAccessRevocationsQueued. Standing supervisions of the
-        old Träger (the consultant's own supervisor, and colleagues who have the consultant as
-        supervisor) are cleared.
+        Leaving the chat rooms is a promise, not a result. The rooms are found through the chat
+        accounts' actual memberships in the old Träger (owned, team, supervised, co-access cases,
+        the staff-only supervision side rooms, and the accepted cases of colleagues the consultant
+        sits in as a silent department member) and queued; matrixAccessRevocationsQueued is how
+        many were queued, not how many were left. A durable queue works them off at most 100 per
+        minute, so until it has run the consultant can still read and write in those rooms. A room
+        that cannot be left after the retry budget is logged as a warning and counted in the metric
+        userservice.matrix.leave.exhausted. The consultant's active supervisions end with the move,
+        and standing supervisors of the old Träger (the consultant's own, and colleagues who have
+        the consultant as supervisor) are cleared. Group chats are not handled.
+
+        The identity provider is changed last and in one move: if it refuses, nothing is changed
+        (503). The roles of the new centres' consulting types are added after the tenant switch;
+        roles of the old centres are not removed.
       operationId: changeConsultantTenant
       parameters:
         - name: consultantId
@@ -326,9 +338,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ConsultantTenantChangeResultDTO'
         400:
-          description: >-
-            BAD REQUEST - invalid request, a centre does not belong to the new Träger, the
-            consultant already belongs to the Träger or multi-tenancy is off
+          $ref: '#/components/responses/ConsultantTenantChangeBadRequest'
         401:
           description: UNAUTHORIZED - no/invalid role/authorization
         403:
@@ -336,11 +346,16 @@ paths:
         404:
           description: NOT FOUND - consultant not found
         409:
-          description: >-
-            CONFLICT - the consultant is the last one of a still active centre of the old Träger
-            or the account also holds an admin identity
+          $ref: '#/components/responses/ConsultantTenantChangeConflict'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
+        503:
+          description: >-
+            SERVICE UNAVAILABLE - the identity provider could not switch the Träger or grant the
+            roles. Nothing is changed (the database is rolled back, the identity provider is put
+            back) and the request can be repeated. 503 rather than 424/502 because this is a
+            temporary refusal of a dependency that the caller can simply retry, as everywhere else
+            in this service where a lock or a downstream step is unavailable.
       security:
         - Bearer: [ ]
   /useradmin/askers/{askerId}:
@@ -2767,7 +2782,10 @@ components:
             colleague takes them over (reason ASSIGNMENT_ENDED). A number only, no case data.
         matrixAccessRevocationsQueued:
           type: integer
-          description: How many chat rooms of the old Träger the consultant will be removed from.
+          description: >-
+            How many chat rooms of the old Träger were queued to be left. A promise, not a result:
+            the rooms are left asynchronously (at most 100 per minute) and until then the
+            consultant can still read and write in them.
 
     ConsultantAgencyResponseDTO:
       type: object
@@ -3273,6 +3291,47 @@ components:
         format: int64
 
   responses:
+    ConsultantTenantChangeBadRequest:
+      description: >-
+        BAD REQUEST - the move is refused or the request is invalid. X-Reason names the case; a
+        400 without it is a malformed request body.
+      headers:
+        X-Reason:
+          schema:
+            type: string
+            enum:
+              - TENANT_CHANGE_MULTITENANCY_OFF
+              - TENANT_CHANGE_SAME_TENANT
+              - TENANT_CHANGE_AGENCIES_REQUIRED
+              - TENANT_CHANGE_AGENCY_UNKNOWN
+              - TENANT_CHANGE_AGENCY_OTHER_TENANT
+              - TENANT_CHANGE_TOPICS_NOT_COVERED
+          description: >-
+            TENANT_CHANGE_MULTITENANCY_OFF - multi-tenancy is off, there is no other Träger;
+            TENANT_CHANGE_SAME_TENANT - the consultant already belongs to the requested Träger;
+            TENANT_CHANGE_AGENCIES_REQUIRED - no centre, or a centre without id, was sent;
+            TENANT_CHANGE_AGENCY_UNKNOWN - a requested centre does not exist;
+            TENANT_CHANGE_AGENCY_OTHER_TENANT - a requested centre belongs to another Träger than
+            the new one;
+            TENANT_CHANGE_TOPICS_NOT_COVERED - the requested topics are not offered by the
+            requested centres.
+
+    ConsultantTenantChangeConflict:
+      description: >-
+        CONFLICT - the move is refused because of the current state. X-Reason names the case.
+      headers:
+        X-Reason:
+          schema:
+            type: string
+            enum:
+              - TENANT_CHANGE_LAST_COUNSELLOR
+              - TENANT_CHANGE_ADMIN_IDENTITY
+          description: >-
+            TENANT_CHANGE_LAST_COUNSELLOR - the consultant is the last one of a centre of the old
+            Träger that is still active or has open enquiries;
+            TENANT_CHANGE_ADMIN_IDENTITY - the account also holds an admin identity, which would
+            move with it.
+
     AccountInviteConflict:
       description: >-
         CONFLICT. X-Reason names the case; a 409 without it is a Träger or agency number that is
