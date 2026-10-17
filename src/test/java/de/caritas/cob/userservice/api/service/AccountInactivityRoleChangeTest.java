@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.*;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import java.time.*;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,19 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 class AccountInactivityRoleChangeTest {
+  /**
+   * A named class on purpose: AspectJ cannot reliably match an execution pointcut against the
+   * hidden class the JVM generates for a lambda, so a lambda target is sometimes left unproxied.
+   */
+  private static final class CountingRoleUpdater implements IdentityRoleUpdater {
+    private final AtomicInteger writes = new AtomicInteger();
+
+    @Override
+    public void ensureRoles(String userId, Collection<String> roleNames) {
+      writes.incrementAndGet();
+    }
+  }
+
   @Test
   void claimedIdentityCannotAcquireRolesUntilReactivated() {
     var ds =
@@ -39,16 +53,15 @@ class AccountInactivityRoleChangeTest {
             clock,
             new AccountInactivityEnrollmentTest.ExternalEffects());
     lifecycle.assignAtCreation("person", 1L, 24, 0, clock.instant());
-    var remoteWrites = new AtomicInteger();
-    IdentityRoleUpdater remote = (id, roles) -> remoteWrites.incrementAndGet();
+    var remote = new CountingRoleUpdater();
     var proxyFactory = new AspectJProxyFactory(remote);
     proxyFactory.addAspect(new AccountInactivityRoleMutationAspect(lifecycle));
     IdentityRoleUpdater gateway = proxyFactory.getProxy();
     gateway.ensureRoles("person", List.of("user-admin"));
-    assertThat(remoteWrites.get()).isEqualTo(1);
+    assertThat(remote.writes.get()).isEqualTo(1);
     assertThat(lifecycle.suspend("person")).isTrue();
     assertThatThrownBy(() -> gateway.ensureRoles("person", List.of("consultant")))
         .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
-    assertThat(remoteWrites.get()).isEqualTo(1);
+    assertThat(remote.writes.get()).isEqualTo(1);
   }
 }
