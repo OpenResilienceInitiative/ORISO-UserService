@@ -35,6 +35,7 @@ public class GroupChatConsultantAccess {
 
   private final GroupChatParticipantRepository participantRepository;
   private final InternalGroupChatRecipientScopeResolver recipientScopes;
+  private final MembersOnlyChatAccess membersOnly;
 
   @Value("${multitenancy.enabled:true}")
   private boolean multitenancy;
@@ -44,7 +45,7 @@ public class GroupChatConsultantAccess {
       return false;
     }
     return isParticipant(chat, consultant)
-        || (!chat.isMembersOnly() && scopeAdmits(chat, consultant));
+        || (!membersOnly.concerns(chat) && scopeAdmits(chat, consultant));
   }
 
   /** Applies the same access rule to a list with one membership query for the whole list. */
@@ -67,7 +68,7 @@ public class GroupChatConsultantAccess {
         .filter(
             chat ->
                 memberSeriesIds.contains(chat.getId())
-                    || (!chat.isMembersOnly() && scopeAdmits(chat, consultant)))
+                    || (!membersOnly.concerns(chat) && scopeAdmits(chat, consultant)))
         .toList();
   }
 
@@ -85,7 +86,7 @@ public class GroupChatConsultantAccess {
         .map(participant -> isModeratorRole(participant.getRole()))
         .orElseGet(
             () ->
-                !chat.isMembersOnly()
+                !membersOnly.concerns(chat)
                     && isSameTenantAsOwner(chat, consultant)
                     && sharesAgency(chat, consultant));
   }
@@ -104,7 +105,10 @@ public class GroupChatConsultantAccess {
             ? List.<GroupChatParticipant>of()
             : participantRepository.findBySeriesId(chat.getId());
     if (members.isEmpty()) {
-      return isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant);
+      // A members-only chat has no colleague fallback, not even before its members are saved.
+      return !membersOnly.concerns(chat)
+          && isSameTenantAsOwner(chat, consultant)
+          && sharesAgency(chat, consultant);
     }
     return members.stream()
         .anyMatch(

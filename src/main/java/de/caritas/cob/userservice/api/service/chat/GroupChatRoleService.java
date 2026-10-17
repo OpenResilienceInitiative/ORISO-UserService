@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.transaction.Transactional;
 import java.util.List;
 import java.util.function.Supplier;
@@ -27,7 +28,7 @@ public class GroupChatRoleService {
   private final ChatRepository chatRepository;
   private final ConsultantRepository consultantRepository;
   private final GroupChatMembershipService groupChatMembershipService;
-  private final MembersOnlySessionAssignment sessionAssignment;
+  private final MembersOnlyRevocation revocation;
 
   @Transactional
   public void changeRole(
@@ -82,10 +83,7 @@ public class GroupChatRoleService {
         chatRepository
             .findById(seriesId)
             .orElseThrow(() -> new NotFoundException("Chat Series not found"));
-    var newPrimaryOwner =
-        consultantRepository
-            .findById(targetConsultantId)
-            .orElseThrow(() -> new NotFoundException("Consultant not found"));
+    var newPrimaryOwner = participantAccount(targetConsultantId);
 
     actor.setRole(ParticipantRole.CO_MODERATOR);
     target.setRole(ParticipantRole.OWNER);
@@ -122,12 +120,9 @@ public class GroupChatRoleService {
         chatRepository
             .findById(seriesId)
             .orElseThrow(() -> new NotFoundException("Chat Series not found"));
-    var targetConsultant =
-        consultantRepository
-            .findById(targetConsultantId)
-            .orElseThrow(() -> new NotFoundException("Consultant not found"));
+    var targetConsultant = participantAccount(targetConsultantId);
 
-    sessionAssignment.handOverFrom(series, target);
+    revocation.revokeAccessOf(series, target);
     participantRepository.delete(target);
     groupChatMembershipService.removeLeavingMemberFromRoom(
         series, targetConsultant.getMatrixUserId());
@@ -156,7 +151,7 @@ public class GroupChatRoleService {
               "The last Series Owner cannot leave before transferring ownership");
         }
       }
-      sessionAssignment.handOverFrom(series, leavingParticipant);
+      revocation.revokeAccessOf(series, leavingParticipant);
       participantRepository.delete(leavingParticipant);
     }
 
@@ -171,6 +166,17 @@ public class GroupChatRoleService {
         .filter(participant -> consultantId.equals(participant.getConsultantId()))
         .findFirst()
         .orElseThrow(exceptionSupplier);
+  }
+
+  /**
+   * The account of someone who already is a participant. A colleague admitted from another Träger
+   * (recipient scope PLATFORM) is one, and the lookup of the owner's Träger would not find them:
+   * revoking or handing over must work for every participant, so it is resolved by participation
+   * and across Träger. It never widens who can be picked.
+   */
+  private Consultant participantAccount(String consultantId) {
+    return TenantContext.supplyAcrossTenants(() -> consultantRepository.findById(consultantId))
+        .orElseThrow(() -> new NotFoundException("Consultant not found"));
   }
 
   private long ownerCount(List<GroupChatParticipant> participants) {

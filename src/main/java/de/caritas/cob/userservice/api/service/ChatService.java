@@ -33,6 +33,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
 import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokenService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -71,6 +72,7 @@ public class ChatService {
 
   private final @NonNull AgencyService agencyService;
   private final @NonNull GroupChatConsultantAccess groupChatConsultantAccess;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
   private final @NonNull GroupChatInviteTokenService groupChatInviteTokenService;
 
   /**
@@ -144,7 +146,7 @@ public class ChatService {
   private boolean isVisibleToConsultant(Chat chat, Consultant consultant) {
     var explicitParticipants = groupChatParticipantRepository.findBySeriesId(chat.getId());
     // A members-only chat belongs to its participants alone: until they are saved, it is nobody's.
-    return (explicitParticipants.isEmpty() && !chat.isMembersOnly())
+    return (explicitParticipants.isEmpty() && !membersOnlyChatAccess.concerns(chat))
         || explicitParticipants.stream()
             .anyMatch(participant -> consultant.getId().equals(participant.getConsultantId()));
   }
@@ -268,9 +270,15 @@ public class ChatService {
   public List<UserSessionResponseDTO> getChatsForUserId(String userId) {
     List<Chat> chats =
         chatRepository.findByUserId(userId).stream()
+            // A members-only chat is never an advice seeker's, not even before its members are
+            // saved.
+            .filter(chat -> !membersOnlyChatAccess.concerns(chat))
             .filter(chat -> groupChatParticipantRepository.findBySeriesId(chat.getId()).isEmpty())
             .toList();
-    List<Chat> assignedChats = chatRepository.findAssignedByUserId(userId);
+    List<Chat> assignedChats =
+        chatRepository.findAssignedByUserId(userId).stream()
+            .filter(chat -> !membersOnlyChatAccess.concerns(chat))
+            .toList();
     var allChats = new ArrayList<>(chats);
     assignedChats.stream()
         .filter(

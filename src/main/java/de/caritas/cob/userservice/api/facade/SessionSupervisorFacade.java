@@ -7,25 +7,22 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
-import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.api.service.session.AnonymousSessionRegistration;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.supervision.SupervisionConsent;
 import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
 import de.caritas.cob.userservice.api.supervision.SupervisionReason;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -54,8 +51,7 @@ public class SessionSupervisorFacade {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull IdentityClient identityClient;
-  private final @NonNull ChatRepository chatRepository;
-  private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * ADR-008 item 4: the current request's authenticated user, used to check the Berater-Admin
@@ -136,6 +132,11 @@ public class SessionSupervisorFacade {
             .findById(sessionId)
             .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
 
+    // A members-only chat is managed by its participants alone: neither the assigned consultant,
+    // nor a colleague of the centre, nor an agency admin who is not in it. Asked first, so that a
+    // counsellor outside the chat is told the same thing whatever else is true of the session.
+    membersOnlyChatAccess.requireAccess(session, addedByConsultant);
+
     if (AnonymousSessionRegistration.matches(session)) {
       throw new BadRequestException("Anonymous sessions do not support supervision");
     }
@@ -204,12 +205,8 @@ public class SessionSupervisorFacade {
     }
 
     // A members-only room holds exactly the selected colleagues. Supervision would add a reader
-    // who was not selected, so only one of its members may be attached.
-    if (isMembersOnlyRoom(matrixRoomId)
-        && !groupChatParticipantRepository.existsByChatIdAndConsultantId(
-            sessionId, supervisorConsultantId)) {
-      throw new ForbiddenException("A members-only chat cannot be supervised by a non-member");
-    }
+    // who was not selected, so only one of its participants may be attached.
+    membersOnlyChatAccess.requireAccess(session, supervisorConsultant);
 
     // Get supervisor's Matrix user ID
     String supervisorMatrixUserId = supervisorConsultant.getMatrixUserId();
@@ -248,12 +245,6 @@ public class SessionSupervisorFacade {
         sessionId,
         addedByConsultant.getUsername());
     return saved;
-  }
-
-  private boolean isMembersOnlyRoom(String matrixRoomId) {
-    return TenantContext.supplyAcrossTenants(() -> chatRepository.findByMatrixRoomId(matrixRoomId))
-        .map(Chat::isMembersOnly)
-        .orElse(false);
   }
 
   /**
@@ -337,6 +328,8 @@ public class SessionSupervisorFacade {
             .findById(sessionId)
             .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
 
+    membersOnlyChatAccess.requireAccess(session, removedByConsultant);
+
     // Verify removedByConsultant has permission
     if (!hasPermissionToManageSupervisors(session, removedByConsultant)) {
       throw new ForbiddenException(
@@ -412,6 +405,7 @@ public class SessionSupervisorFacade {
             .findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
                 sessionId, requestingConsultant.getId())
             .isPresent();
+    membersOnlyChatAccess.requireAccess(session, requestingConsultant);
     if (!session.isAdvisedBy(requestingConsultant) && !activeSupervisor) {
       throw new ForbiddenException("Consultant does not have access to this supervision session");
     }

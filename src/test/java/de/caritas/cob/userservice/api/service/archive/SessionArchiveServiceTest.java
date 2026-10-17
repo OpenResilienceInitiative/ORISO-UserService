@@ -40,6 +40,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 public class SessionArchiveServiceTest {
 
   @InjectMocks SessionArchiveService sessionArchiveService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock SessionRepository sessionRepository;
 
   @Mock

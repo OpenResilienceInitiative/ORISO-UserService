@@ -61,6 +61,9 @@ class SessionSupervisorFacadeTest {
 
   @InjectMocks private SessionSupervisorFacade facade;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantRepository consultantRepository;
@@ -69,11 +72,6 @@ class SessionSupervisorFacadeTest {
   @Mock private de.caritas.cob.userservice.api.service.user.UserAccountService userAccountService;
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
   @Mock private de.caritas.cob.userservice.api.helper.AuthenticatedUser authenticatedUser;
-  @Mock private de.caritas.cob.userservice.api.port.out.ChatRepository chatRepository;
-
-  @Mock
-  private de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository
-      groupChatParticipantRepository;
 
   private Session session;
   private Consultant addedBy;
@@ -124,18 +122,13 @@ class SessionSupervisorFacadeTest {
         .thenAnswer(inv -> inv.getArgument(0, SessionSupervisor.class));
   }
 
-  private void theSessionBelongsToAMembersOnlyChat() {
-    var chat = new de.caritas.cob.userservice.api.model.Chat();
-    chat.setMembersOnly(true);
-    when(chatRepository.findByMatrixRoomId(CLIENT_ROOM)).thenReturn(Optional.of(chat));
-  }
-
   @Test
   void addSupervisor_Should_refuseAMembersOnlyRoom_whenTheSupervisorIsNotOneOfItsMembers()
       throws Exception {
-    theSessionBelongsToAMembersOnlyChat();
-    when(groupChatParticipantRepository.existsByChatIdAndConsultantId(SESSION_ID, SUPERVISOR_ID))
-        .thenReturn(false);
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("no"))
+        .when(membersOnlyChatAccess)
+        .requireAccess(session, supervisor);
 
     org.junit.jupiter.api.Assertions.assertThrows(
         de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
@@ -148,9 +141,6 @@ class SessionSupervisorFacadeTest {
 
   @Test
   void addSupervisor_Should_acceptAMembersOnlyRoom_whenTheSupervisorIsAlreadyOneOfItsMembers() {
-    theSessionBelongsToAMembersOnlyChat();
-    when(groupChatParticipantRepository.existsByChatIdAndConsultantId(SESSION_ID, SUPERVISOR_ID))
-        .thenReturn(true);
 
     SessionSupervisor saved =
         facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");

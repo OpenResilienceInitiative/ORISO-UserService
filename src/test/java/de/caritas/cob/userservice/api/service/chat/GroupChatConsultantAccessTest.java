@@ -29,6 +29,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class GroupChatConsultantAccessTest {
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock private GroupChatParticipantRepository participants;
   @Mock private InternalGroupChatRecipientScopeResolver scopes;
   @InjectMocks private GroupChatConsultantAccess access;
@@ -190,6 +193,7 @@ class GroupChatConsultantAccessTest {
     var owner = consultant("owner", 1L, 100L);
     var chat = series(41L, owner, 100L);
     chat.setMembersOnly(true);
+    when(membersOnlyChatAccess.concerns(chat)).thenReturn(true);
     lenient().when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.PLATFORM);
     var member = consultant("member", 1L, 100L);
     var colleague = consultant("colleague", 1L, 100L);

@@ -31,7 +31,7 @@ class GroupChatParticipantReconciliationServiceTest {
   @Mock private GroupChatParticipantRepository participantRepository;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private GroupChatMembershipService membershipService;
-  @Mock private MembersOnlySessionAssignment sessionAssignment;
+  @Mock private MembersOnlyRevocation revocation;
 
   private GroupChatParticipantReconciliationService service;
   private Chat series;
@@ -47,7 +47,7 @@ class GroupChatParticipantReconciliationServiceTest {
             consultantRepository,
             membershipService,
             groupPolicy,
-            sessionAssignment);
+            revocation);
     var ownerConsultant = consultant("owner", "@owner:matrix");
     series = Mockito.mock(Chat.class);
     Mockito.lenient().when(series.getId()).thenReturn(42L);
@@ -96,8 +96,8 @@ class GroupChatParticipantReconciliationServiceTest {
     verify(membershipService).removeLeavingMemberFromRoom(series, "@removed:matrix");
     verify(participantRepository).delete(removed);
     verify(participantRepository, never()).delete(owner);
-    var handOver = Mockito.inOrder(sessionAssignment, participantRepository);
-    handOver.verify(sessionAssignment).handOverFrom(series, removed);
+    var handOver = Mockito.inOrder(revocation, participantRepository);
+    handOver.verify(revocation).revokeAccessOf(series, removed);
     handOver.verify(participantRepository).delete(removed);
   }
 

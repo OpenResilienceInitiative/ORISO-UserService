@@ -154,6 +154,12 @@ class InternalSubsetChatHttpIT {
           var owners =
               everyone.stream().map(c -> "'" + c.getId() + "'").collect(Collectors.joining(","));
           database.update(
+              "DELETE FROM session_supervisor WHERE supervisor_consultant_id IN ("
+                  + owners
+                  + ") OR added_by_consultant_id IN ("
+                  + owners
+                  + ")");
+          database.update(
               "DELETE FROM event_notification WHERE deduplication_key LIKE 'group-chat:%'");
           database.update(
               "DELETE FROM group_chat_participant WHERE consultant_id IN (" + owners + ")");
@@ -652,6 +658,179 @@ class InternalSubsetChatHttpIT {
         .isEqualTo(200);
     assertThat(request("GET", "/users/chat/" + chatId, otherCentre, "").statusCode())
         .isEqualTo(403);
+  }
+
+  @Test
+  void aMemberWhoLeftIsRefusedByEveryEndpoint() throws Exception {
+    var created = openRoom(creator, sameCentre, anotherSameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var sessionId = sessionOf(chatId);
+    var left = request("PUT", "/users/chat/" + chatId + "/leave", sameCentre, "");
+    assertThat(left.statusCode()).as(left.body()).isIn(200, 204);
+
+    assertEveryEndpointRefuses(sameCentre, chatId, roomId, sessionId);
+    assertTheRoomStillWorksFor(creator, chatId, roomId, sessionId);
+  }
+
+  @Test
+  void aLeftOverAssignmentAndSupervisionGrantAFormerMemberNothing() throws Exception {
+    var created = openRoom(creator, sameCentre, anotherSameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var sessionId = sessionOf(chatId);
+    var left = request("PUT", "/users/chat/" + chatId + "/leave", sameCentre, "");
+    assertThat(left.statusCode()).as(left.body()).isIn(200, 204);
+    // What the data of a release without revocation looks like: the session assigned to the
+    // former member and an active supervision row.
+    Tenants.acrossAll(
+        () -> {
+          database.update(
+              "UPDATE session SET consultant_id = ? WHERE id = ?", sameCentre.getId(), sessionId);
+          database.update(
+              "INSERT INTO session_supervisor (session_id, supervisor_consultant_id,"
+                  + " added_by_consultant_id, added_date, is_active, matrix_room_id)"
+                  + " VALUES (?, ?, ?, NOW(), 1, ?)",
+              sessionId,
+              sameCentre.getId(),
+              creator.getId(),
+              "!side-of-" + sessionId + ":oriso");
+          return null;
+        });
+
+    assertEveryEndpointRefuses(sameCentre, chatId, roomId, sessionId);
+  }
+
+  @Test
+  void aColleagueOfTheCentreWhoWasNeverInvitedIsRefusedByEveryEndpoint() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var sessionId = sessionOf(chatId);
+
+    assertEveryEndpointRefuses(anotherSameCentre, chatId, roomId, sessionId);
+
+    var handedOver =
+        request(
+            "PUT",
+            "/users/sessions/" + sessionId + "/consultant/" + anotherSameCentre.getId(),
+            creator,
+            "");
+    assertThat(handedOver.statusCode()).as("assign the room to a non-member").isEqualTo(403);
+    var supervised =
+        request(
+            "POST",
+            "/users/sessions/" + sessionId + "/supervisors",
+            creator,
+            "{\"supervisorConsultantId\":\"" + anotherSameCentre.getId() + "\"}");
+    // The technical session counts as anonymous, which supervision refuses for everyone (400).
+    assertThat(supervised.statusCode()).as("supervisor who is no member").isIn(400, 403);
+    var candidates = request("GET", "/users/case-handover/candidates", anotherSameCentre, "");
+    assertThat(candidates.body()).as("case-handover candidates").doesNotContain(roomId);
+    assertThat(synapse.joined(roomId))
+        .containsExactlyInAnyOrder(matrix(creator), matrix(sameCentre));
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId))))
+        .containsExactlyInAnyOrder(creator.getId(), sameCentre.getId());
+  }
+
+  @Test
+  void anOwnerCanRemoveAndHandOverToAColleagueAdmittedFromAnotherTraeger() throws Exception {
+    theTraegerScopeIs("PLATFORM");
+    var created = openRoom(creator, otherTraeger, sameCentre);
+    assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+
+    var transferred =
+        request(
+            "POST",
+            "/users/chat-series/" + chatId + "/transfer-ownership",
+            creator,
+            "{\"consultantId\":\"" + otherTraeger.getId() + "\"}");
+    assertThat(transferred.statusCode()).as("ownership to the other Traeger").isEqualTo(204);
+    var handedBack =
+        request(
+            "POST",
+            "/users/chat-series/" + chatId + "/transfer-ownership",
+            otherTraeger,
+            "{\"consultantId\":\"" + creator.getId() + "\"}");
+    assertThat(handedBack.statusCode()).as(handedBack.body()).isEqualTo(204);
+    var removed =
+        request(
+            "DELETE",
+            "/users/chat-series/" + chatId + "/participants/" + otherTraeger.getId(),
+            creator,
+            "");
+
+    assertThat(removed.statusCode()).as(removed.body()).isIn(200, 204);
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId))))
+        .containsExactlyInAnyOrder(creator.getId(), sameCentre.getId());
+    assertThat(synapse.joined(roomId)).doesNotContain(matrix(otherTraeger));
+    assertThat(request("GET", "/users/chat/" + chatId, otherTraeger, "").statusCode())
+        .as("the removed colleague of the other Traeger")
+        .isEqualTo(403);
+  }
+
+  private Long sessionOf(String chatId) {
+    return Tenants.acrossAll(
+        () ->
+            database.queryForObject(
+                "SELECT chat_id FROM group_chat_participant WHERE series_id = ? LIMIT 1",
+                Long.class,
+                Long.parseLong(chatId)));
+  }
+
+  /** The one rule seen from outside: whoever is no participant gets nothing, on any path. */
+  private void assertEveryEndpointRefuses(
+      Consultant outsider, String chatId, String roomId, Long sessionId) throws Exception {
+    var session = "/users/sessions/" + sessionId;
+    var chat = "/users/chat/" + chatId;
+    for (var call :
+        List.of(
+            List.of("GET", chat),
+            List.of("PUT", chat + "/join"),
+            List.of("GET", chat + "/members"),
+            List.of("PUT", chat + "/start"),
+            List.of("PUT", chat + "/stop"),
+            List.of("PUT", session + "/archive"),
+            List.of("GET", session + "/supervisors"),
+            List.of("GET", session + "/case-handover"))) {
+      var response = request(call.get(0), call.get(1), outsider, "");
+      assertThat(response.statusCode()).as(call + " " + response.body()).isIn(403, 404);
+    }
+    var supervisors =
+        request(
+            "POST",
+            session + "/supervisors",
+            outsider,
+            "{\"supervisorConsultantId\":\"" + outsider.getId() + "\"}");
+    assertThat(supervisors.statusCode()).as("add supervisor " + supervisors.body()).isEqualTo(403);
+    var assign = request("PUT", session + "/consultant/" + outsider.getId(), outsider, "");
+    assertThat(assign.statusCode()).as("assign to self " + assign.body()).isEqualTo(403);
+    var unassign = request("DELETE", session + "/consultant/" + creator.getId(), outsider, "");
+    assertThat(unassign.statusCode()).as("unassign the creator " + unassign.body()).isEqualTo(403);
+    var bySessionId = request("GET", "/users/sessions/room/" + sessionId, outsider, "");
+    assertThat(bySessionId.statusCode()).as("session by id").isEqualTo(204);
+    assertThat(bySessionId.body()).as("session by id").isEmpty();
+    for (var status : List.of(1, 2, 3)) {
+      var list =
+          request(
+              "GET",
+              "/users/sessions/consultants?status=" + status + "&offset=0&count=100&filter=all",
+              outsider,
+              "");
+      assertThat(list.statusCode()).as(list.body()).isIn(200, 204);
+      assertThat(list.body()).as("session list, status " + status).doesNotContain(roomId);
+    }
+    var candidates = request("GET", "/users/case-handover/candidates", outsider, "");
+    assertThat(candidates.body()).as("case-handover candidates").doesNotContain(roomId);
+    assertThat(synapse.joined(roomId)).doesNotContain(matrix(outsider));
+  }
+
+  private void assertTheRoomStillWorksFor(
+      Consultant member, String chatId, String roomId, Long sessionId) throws Exception {
+    assertThat(request("GET", "/users/chat/" + chatId, member, "").statusCode()).isEqualTo(200);
+    assertThat(sessionListOf(member).body()).contains(roomId);
   }
 
   /** The resolver remembers an answer for a minute; a test that changes the setting forgets it. */

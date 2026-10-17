@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.ArchiveOrDeleteSessionStatisticsEvent;
 import java.time.LocalDateTime;
@@ -28,6 +29,7 @@ public class SessionArchiveService {
   private final @NonNull SessionArchiveValidator sessionArchiveValidator;
   private final @NonNull AccountManager accountManager;
   private final @NonNull StatisticsService statisticsService;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * Archive a session.
@@ -73,6 +75,12 @@ public class SessionArchiveService {
   }
 
   public void checkPermission(Session session) {
+    if (membersOnlyChatAccess.excludes(session, authenticatedUser.getUserId())) {
+      throw new ForbiddenException(
+          String.format(
+              "Archive/reactivate session %s is not allowed for user with id %s",
+              session.getId(), authenticatedUser.getUserId()));
+    }
     if (!hasConsultantPermission(session) && !session.isAdvised(authenticatedUser.getUserId())) {
       var template = "Archive/reactivate session %s is not allowed for user with id %s";
       var message = String.format(template, session.getId(), authenticatedUser.getUserId());

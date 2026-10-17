@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -29,7 +30,7 @@ public class GroupChatParticipantReconciliationService {
   private final ConsultantRepository consultantRepository;
   private final GroupChatMembershipService membershipService;
   private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
-  private final MembersOnlySessionAssignment sessionAssignment;
+  private final MembersOnlyRevocation revocation;
 
   /**
    * Reconciles co-moderators only when the client explicitly supplies {@code consultantIds}. A null
@@ -74,13 +75,15 @@ public class GroupChatParticipantReconciliationService {
     for (var existing : participants) {
       if (existing.getRole() == ParticipantRole.CO_MODERATOR
           && !desiredIds.contains(existing.getConsultantId())) {
-        consultantRepository
-            .findByIdAndDeleteDateIsNull(existing.getConsultantId())
+        // An existing participant may come from another Träger (recipient scope PLATFORM): the
+        // owner's own Träger would not find them, and they would stay in the Matrix room.
+        TenantContext.supplyAcrossTenants(
+                () -> consultantRepository.findByIdAndDeleteDateIsNull(existing.getConsultantId()))
             .ifPresent(
                 consultant ->
                     membershipService.removeLeavingMemberFromRoom(
                         series, consultant.getMatrixUserId()));
-        sessionAssignment.handOverFrom(series, existing);
+        revocation.revokeAccessOf(series, existing);
         participantRepository.delete(existing);
       }
     }

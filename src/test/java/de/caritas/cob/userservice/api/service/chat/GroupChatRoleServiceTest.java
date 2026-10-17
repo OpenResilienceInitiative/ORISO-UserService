@@ -34,7 +34,7 @@ class GroupChatRoleServiceTest {
 
   @Mock private GroupChatMembershipService groupChatMembershipService;
 
-  @Mock private MembersOnlySessionAssignment sessionAssignment;
+  @Mock private MembersOnlyRevocation revocation;
 
   @InjectMocks private GroupChatRoleService roleService;
 
@@ -107,8 +107,8 @@ class GroupChatRoleServiceTest {
     verify(participantRepository).delete(target);
     verify(groupChatMembershipService)
         .removeLeavingMemberFromRoom(series, "@target:matrix.example");
-    InOrder handOver = inOrder(sessionAssignment, participantRepository);
-    handOver.verify(sessionAssignment).handOverFrom(series, target);
+    InOrder handOver = inOrder(revocation, participantRepository);
+    handOver.verify(revocation).revokeAccessOf(series, target);
     handOver.verify(participantRepository).delete(target);
   }
 
@@ -141,8 +141,8 @@ class GroupChatRoleServiceTest {
     verify(participantRepository).delete(coModerator);
     verify(groupChatMembershipService)
         .removeLeavingMemberFromRoom(series, "@co-mod:matrix.example");
-    InOrder handOver = inOrder(sessionAssignment, participantRepository);
-    handOver.verify(sessionAssignment).handOverFrom(series, coModerator);
+    InOrder handOver = inOrder(revocation, participantRepository);
+    handOver.verify(revocation).revokeAccessOf(series, coModerator);
     handOver.verify(participantRepository).delete(coModerator);
   }
 

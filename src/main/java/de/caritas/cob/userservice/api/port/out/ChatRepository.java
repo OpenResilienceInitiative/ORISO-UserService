@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -45,6 +46,15 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
   List<Chat> findByAgencyIds(@Param(value = "agency_ids") Set<Long> agencyIds);
 
   Optional<Chat> findByMatrixRoomId(String matrixRoomId);
+
+  /** Whether the room belongs to a members-only chat (#1418). */
+  boolean existsByMatrixRoomIdAndMembersOnlyTrue(String matrixRoomId);
+
+  /** Of these rooms, the ones that belong to a members-only chat (#1418). */
+  @Query(
+      "select c.matrixRoomId from Chat c where c.membersOnly = true and c.matrixRoomId in :room_ids")
+  Set<String> findMembersOnlyMatrixRoomIds(
+      @Param(value = "room_ids") Collection<String> matrixRoomIds);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select c from Chat c where c.id = :chatId")

@@ -39,6 +39,7 @@ import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
@@ -82,6 +83,7 @@ public class SessionService {
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
   private final @NonNull SessionSupervisionMarkerService supervisionMarkerService;
   private final @NonNull SessionOwnershipService sessionOwnershipService;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   @Value("${feature.topics.enabled}")
   private boolean topicsFeatureEnabled;
@@ -384,7 +386,7 @@ public class SessionService {
       }
     }
 
-    return mapSessionsToConsultantSessionDto(sessions);
+    return mapSessionsToConsultantSessionDto(withoutExcluded(sessions, consultant));
   }
 
   /**
@@ -510,7 +512,20 @@ public class SessionService {
       }
     }
 
-    return allSessions;
+    return withoutExcluded(allSessions, consultant);
+  }
+
+  /**
+   * Leaves out the sessions of members-only chats the consultant does not take part in, whatever
+   * else lists them (assignment, supervision row).
+   */
+  private List<Session> withoutExcluded(List<Session> sessions, Consultant consultant) {
+    var excluded = membersOnlyChatAccess.excludedSessionIds(sessions, consultant);
+    return excluded.isEmpty()
+        ? sessions
+        : sessions.stream()
+            .filter(session -> !excluded.contains(session.getId()))
+            .collect(Collectors.toList());
   }
 
   private List<UserSessionResponseDTO> convertToUserSessionResponseDTO(
@@ -711,6 +726,7 @@ public class SessionService {
             () ->
                 StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
                     .filter(session -> session.isAdvisedBy(consultant))
+                    .filter(session -> !membersOnlyChatAccess.excludes(session, consultant))
                     .collect(Collectors.toList()));
     return mapSessionsToConsultantSessionDto(sessions);
   }
@@ -801,6 +817,7 @@ public class SessionService {
   }
 
   private void checkConsultantAssignment(Consultant consultant, Session session) {
+    membersOnlyChatAccess.requireAccess(session, consultant);
     if (session.isAdvisedBy(consultant)
         || isSupervisor(consultant, session)
         || isAllowedToAdvise(consultant, session)
@@ -823,7 +840,8 @@ public class SessionService {
 
   /**
    * A member of the group chat of this session. A members-only chat's session is no team session,
-   * so membership is the only thing that opens it to a colleague who is not its creator.
+   * so membership is what opens it to a colleague who is not its creator; {@link
+   * MembersOnlyChatAccess} has already refused everyone who is not a member.
    */
   private boolean isMemberOfGroupChat(Consultant consultant, Session session) {
     return session.getId() != null
@@ -938,6 +956,7 @@ public class SessionService {
   }
 
   private void checkPermissionForConsultantSession(Session session, Consultant consultant) {
+    membersOnlyChatAccess.requireAccess(session, consultant);
     if (!session.isAdvisedBy(consultant)
         && !isSupervisor(consultant, session)
         && !(session.isTeamSession() && consultant.isInAgency(session.getAgencyId()))
@@ -961,7 +980,7 @@ public class SessionService {
       Consultant consultant) {
     final List<Session> sessions = retrieveArchivedSessions(consultant);
 
-    return mapSessionsToConsultantSessionDto(sessions);
+    return mapSessionsToConsultantSessionDto(withoutExcluded(sessions, consultant));
   }
 
   private List<Session> retrieveArchivedSessions(Consultant consultant) {

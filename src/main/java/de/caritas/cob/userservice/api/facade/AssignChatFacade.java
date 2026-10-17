@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokens;
 import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ public class AssignChatFacade {
   private final UserChatRepository userChats;
   private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
   private final GroupAppointmentSeriesEventProducer appointmentEvents;
+  private final MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * Assign a chat to the authenticated user.
@@ -66,7 +68,7 @@ public class AssignChatFacade {
 
   private void assignChat(Chat chat, AuthenticatedUser authenticatedUser) {
     // A members-only chat is a room of selected colleagues; no advice seeker is ever one of them.
-    if (chat.isMembersOnly()) {
+    if (membersOnlyChatAccess.concerns(chat)) {
       throw new ForbiddenException("Chat %s cannot be joined", chat.getId());
     }
     User user = getUser(authenticatedUser);

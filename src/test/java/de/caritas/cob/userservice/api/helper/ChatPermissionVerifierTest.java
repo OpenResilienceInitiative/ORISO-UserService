@@ -53,6 +53,10 @@ class ChatPermissionVerifierTest {
 
   @BeforeEach
   void setUp() {
+    var membersOnly =
+        new de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess(
+            org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.ChatRepository.class),
+            participantRepository);
     chatPermissionVerifier =
         new ChatPermissionVerifier(
             consultantService,
@@ -62,7 +66,9 @@ class ChatPermissionVerifierTest {
                 participantRepository,
                 org.mockito.Mockito.mock(
                     de.caritas.cob.userservice.api.service.chat
-                        .InternalGroupChatRecipientScopeResolver.class)));
+                        .InternalGroupChatRecipientScopeResolver.class),
+                membersOnly),
+            membersOnly);
   }
 
   @Test
