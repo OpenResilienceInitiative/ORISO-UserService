@@ -81,7 +81,7 @@ public class GroupChatParticipantReconciliationService {
                 () -> consultantRepository.findByIdAndDeleteDateIsNull(existing.getConsultantId()))
             .ifPresent(
                 consultant ->
-                    membershipService.removeLeavingMemberFromRoom(
+                    membershipService.removeParticipantFromRoom(
                         series, consultant.getMatrixUserId()));
         revocation.revokeAccessOf(series, existing);
         participantRepository.delete(existing);

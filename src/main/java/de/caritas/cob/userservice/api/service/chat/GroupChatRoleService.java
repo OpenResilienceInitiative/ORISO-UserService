@@ -124,7 +124,7 @@ public class GroupChatRoleService {
 
     revocation.revokeAccessOf(series, target);
     participantRepository.delete(target);
-    groupChatMembershipService.removeLeavingMemberFromRoom(
+    groupChatMembershipService.removeParticipantFromRoom(
         series, targetConsultant.getMatrixUserId());
   }
 
@@ -155,7 +155,7 @@ public class GroupChatRoleService {
       participantRepository.delete(leavingParticipant);
     }
 
-    groupChatMembershipService.removeLeavingMemberFromRoom(series, consultant.getMatrixUserId());
+    groupChatMembershipService.removeParticipantFromRoom(series, consultant.getMatrixUserId());
   }
 
   private GroupChatParticipant requireParticipant(

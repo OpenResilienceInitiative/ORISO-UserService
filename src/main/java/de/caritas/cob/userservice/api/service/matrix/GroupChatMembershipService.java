@@ -3,6 +3,8 @@ package de.caritas.cob.userservice.api.service.matrix;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -15,6 +17,7 @@ import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
@@ -138,8 +141,38 @@ public class GroupChatMembershipService {
    * @param memberMatrixUserId the full Matrix user ID to remove, may be blank
    */
   public void removeMemberFromRoom(String matrixRoomId, String memberMatrixUserId) {
+    leaveRoomAsMember(matrixRoomId, memberMatrixUserId);
+  }
+
+  /**
+   * Takes a participant out of the chat's Matrix room. For a members-only chat the room is the
+   * access: a participant who stays joined keeps reading an encrypted room whose database record
+   * says they are gone. So there a failed leave is not swallowed but reported as {@code 502 Bad
+   * Gateway}; the caller runs in the transaction that deletes the participation, which therefore
+   * rolls back and can simply be repeated. For any other chat the removal stays best effort.
+   *
+   * @param chat the group chat the participant is removed from
+   * @param memberMatrixUserId the full Matrix user ID of the participant, may be blank
+   */
+  public void removeParticipantFromRoom(Chat chat, String memberMatrixUserId) {
+    var matrixRoomId = resolveMatrixRoomId(chat);
+    var left = leaveRoomAsMember(matrixRoomId, memberMatrixUserId);
+    if (!left && chat != null && chat.isMembersOnly()) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED, HttpStatus.BAD_GATEWAY);
+    }
+  }
+
+  /**
+   * Leaves with the member's own admin-minted token. Idempotent (already-gone counts as success)
+   * and never throws.
+   *
+   * @return {@code false} only when the member may still be joined; {@code true} when they left,
+   *     were gone already, or there was no room or member to leave
+   */
+  private boolean leaveRoomAsMember(String matrixRoomId, String memberMatrixUserId) {
     if (isBlank(matrixRoomId) || isBlank(memberMatrixUserId)) {
-      return;
+      return true;
     }
 
     try {
@@ -149,18 +182,21 @@ public class GroupChatMembershipService {
             "Could not mint Matrix token for {}; member stays in room {}",
             memberMatrixUserId,
             matrixRoomId);
-        return;
+        return false;
       }
       if (!matrixSynapseService.leaveRoom(matrixRoomId, memberToken)) {
         log.warn(
             "Could not remove member {} from Matrix room {}", memberMatrixUserId, matrixRoomId);
+        return false;
       }
+      return true;
     } catch (Exception e) {
       log.warn(
           "Matrix room leave failed for member {} in room {}: {}",
           memberMatrixUserId,
           matrixRoomId,
           e.getMessage());
+      return false;
     }
   }
 

@@ -105,8 +105,7 @@ class GroupChatRoleServiceTest {
     roleService.removeParticipant(42L, "owner", "target");
 
     verify(participantRepository).delete(target);
-    verify(groupChatMembershipService)
-        .removeLeavingMemberFromRoom(series, "@target:matrix.example");
+    verify(groupChatMembershipService).removeParticipantFromRoom(series, "@target:matrix.example");
     InOrder handOver = inOrder(revocation, participantRepository);
     handOver.verify(revocation).revokeAccessOf(series, target);
     handOver.verify(participantRepository).delete(target);
@@ -124,7 +123,7 @@ class GroupChatRoleServiceTest {
     assertThrows(ConflictException.class, () -> roleService.leaveSeries(series, consultant));
 
     verify(participantRepository, never()).delete(owner);
-    verify(groupChatMembershipService, never()).removeLeavingMemberFromRoom(series, null);
+    verify(groupChatMembershipService, never()).removeParticipantFromRoom(series, null);
   }
 
   @Test
@@ -139,8 +138,7 @@ class GroupChatRoleServiceTest {
     roleService.leaveSeries(series, consultant);
 
     verify(participantRepository).delete(coModerator);
-    verify(groupChatMembershipService)
-        .removeLeavingMemberFromRoom(series, "@co-mod:matrix.example");
+    verify(groupChatMembershipService).removeParticipantFromRoom(series, "@co-mod:matrix.example");
     InOrder handOver = inOrder(revocation, participantRepository);
     handOver.verify(revocation).revokeAccessOf(series, coModerator);
     handOver.verify(participantRepository).delete(coModerator);

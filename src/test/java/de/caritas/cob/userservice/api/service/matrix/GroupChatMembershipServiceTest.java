@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.matrix;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -15,6 +16,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -317,6 +319,76 @@ class GroupChatMembershipServiceTest {
     groupChatMembershipService.removeLeavingMemberFromRoom(chatWithMatrixRoom(), LEAVER_MATRIX_ID);
 
     verify(matrixSynapseService, never()).leaveRoom(anyString(), any());
+  }
+
+  // ── removeParticipantFromRoom: a members-only room must not keep a former participant ─────
+
+  private Chat membersOnlyChatWithMatrixRoom() {
+    return chatBuilder().matrixRoomId(MATRIX_ROOM_ID).membersOnly(true).build();
+  }
+
+  @Test
+  void removeParticipantFromRoom_Should_FailForAMembersOnlyRoom_When_NoTokenCanBeMinted() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn(null);
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () ->
+            groupChatMembershipService.removeParticipantFromRoom(
+                membersOnlyChatWithMatrixRoom(), LEAVER_MATRIX_ID));
+  }
+
+  @Test
+  void removeParticipantFromRoom_Should_FailForAMembersOnlyRoom_When_MatrixRefusesTheLeave() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.leaveRoom(MATRIX_ROOM_ID, "token")).thenReturn(false);
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () ->
+            groupChatMembershipService.removeParticipantFromRoom(
+                membersOnlyChatWithMatrixRoom(), LEAVER_MATRIX_ID));
+  }
+
+  @Test
+  void removeParticipantFromRoom_Should_FailForAMembersOnlyRoom_When_MatrixCannotBeReached() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID))
+        .thenThrow(new RuntimeException("synapse down"));
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () ->
+            groupChatMembershipService.removeParticipantFromRoom(
+                membersOnlyChatWithMatrixRoom(), LEAVER_MATRIX_ID));
+  }
+
+  @Test
+  void removeParticipantFromRoom_Should_LeaveWithTheMembersOwnToken_ForAMembersOnlyRoom() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.leaveRoom(MATRIX_ROOM_ID, "token")).thenReturn(true);
+
+    groupChatMembershipService.removeParticipantFromRoom(
+        membersOnlyChatWithMatrixRoom(), LEAVER_MATRIX_ID);
+
+    verify(matrixSynapseService).leaveRoom(MATRIX_ROOM_ID, "token");
+  }
+
+  @Test
+  void removeParticipantFromRoom_Should_StayBestEffortForAnOrdinaryChat() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn(null);
+
+    groupChatMembershipService.removeParticipantFromRoom(chatWithMatrixRoom(), LEAVER_MATRIX_ID);
+
+    verify(matrixSynapseService, never()).leaveRoom(anyString(), any());
+  }
+
+  @Test
+  void removeParticipantFromRoom_Should_DoNothing_When_ThereIsNoMemberOrNoRoomToLeave() {
+    groupChatMembershipService.removeParticipantFromRoom(membersOnlyChatWithMatrixRoom(), null);
+    groupChatMembershipService.removeParticipantFromRoom(
+        chatBuilder().matrixRoomId(null).membersOnly(true).build(), LEAVER_MATRIX_ID);
+
+    verifyNoInteractions(matrixSynapseService);
   }
 
   // ── resolveHumanMembers ────────────────────────────────────────────────────

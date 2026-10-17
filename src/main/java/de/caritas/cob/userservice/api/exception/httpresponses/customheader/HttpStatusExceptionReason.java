@@ -50,7 +50,7 @@ public enum HttpStatusExceptionReason {
   INTERNAL_CHAT_RECIPIENT_UNKNOWN,
   /** A selected colleague is outside the Träger's recipient scope (ORISO-TenantService#319). */
   INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE,
-  /** The chat service could not add every selected colleague to the room. */
+  /** The chat service could not add or remove every selected colleague in the room. */
   INTERNAL_CHAT_MEMBERSHIP_FAILED,
   /** A private room is only created when end-to-end encryption is enabled. */
   INTERNAL_CHAT_ENCRYPTION_REQUIRED,

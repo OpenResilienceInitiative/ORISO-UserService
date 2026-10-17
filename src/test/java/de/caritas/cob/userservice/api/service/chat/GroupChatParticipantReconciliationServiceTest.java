@@ -93,7 +93,7 @@ class GroupChatParticipantReconciliationServiceTest {
 
     service.reconcile(series, List.of());
 
-    verify(membershipService).removeLeavingMemberFromRoom(series, "@removed:matrix");
+    verify(membershipService).removeParticipantFromRoom(series, "@removed:matrix");
     verify(participantRepository).delete(removed);
     verify(participantRepository, never()).delete(owner);
     var handOver = Mockito.inOrder(revocation, participantRepository);

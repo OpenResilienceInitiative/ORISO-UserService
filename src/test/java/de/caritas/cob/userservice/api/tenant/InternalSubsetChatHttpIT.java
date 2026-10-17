@@ -705,6 +705,54 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void aLeaveThatMatrixDoesNotCarryOutKeepsTheMemberAndCanBeRepeated() throws Exception {
+    var created = openRoom(creator, sameCentre, anotherSameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var sessionId = sessionOf(chatId);
+    synapse.roomsRefusingLeave.add(roomId);
+
+    var refused = request("PUT", "/users/chat/" + chatId + "/leave", sameCentre, "");
+
+    // Not a half revoked state: the database still says participant, as Matrix does.
+    assertThat(refused.statusCode()).as(refused.body()).isEqualTo(502);
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId)))).contains(sameCentre.getId());
+    assertThat(synapse.joined(roomId)).contains(matrix(sameCentre));
+    assertTheRoomStillWorksFor(sameCentre, chatId, roomId, sessionId);
+
+    synapse.roomsRefusingLeave.clear();
+    var repeated = request("PUT", "/users/chat/" + chatId + "/leave", sameCentre, "");
+
+    assertThat(repeated.statusCode()).as(repeated.body()).isIn(200, 204);
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId))))
+        .doesNotContain(sameCentre.getId());
+    assertThat(synapse.joined(roomId)).doesNotContain(matrix(sameCentre));
+  }
+
+  @Test
+  void aRemovalThatMatrixDoesNotCarryOutKeepsTheParticipantAndCanBeRepeated() throws Exception {
+    var created = openRoom(creator, sameCentre, anotherSameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var uri = "/users/chat-series/" + chatId + "/participants/" + sameCentre.getId();
+    synapse.roomsRefusingLeave.add(roomId);
+
+    var refused = request("DELETE", uri, creator, "");
+
+    assertThat(refused.statusCode()).as(refused.body()).isEqualTo(502);
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId)))).contains(sameCentre.getId());
+    assertThat(synapse.joined(roomId)).contains(matrix(sameCentre));
+
+    synapse.roomsRefusingLeave.clear();
+    var repeated = request("DELETE", uri, creator, "");
+
+    assertThat(repeated.statusCode()).as(repeated.body()).isIn(200, 204);
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId))))
+        .doesNotContain(sameCentre.getId());
+    assertThat(synapse.joined(roomId)).doesNotContain(matrix(sameCentre));
+  }
+
+  @Test
   void aLeftOverAssignmentAndSupervisionGrantAFormerMemberNothing() throws Exception {
     var created = openRoom(creator, sameCentre, anotherSameCentre);
     var chatId = field(created, "chatId");
@@ -1223,6 +1271,7 @@ class InternalSubsetChatHttpIT {
     volatile boolean failMemberReads;
     final Set<String> unreadableRooms = java.util.concurrent.ConcurrentHashMap.newKeySet();
     volatile boolean failPurge;
+    final Set<String> roomsRefusingLeave = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private static final class Room {
       final Set<String> invited = new LinkedHashSet<>();
@@ -1337,6 +1386,9 @@ class InternalSubsetChatHttpIT {
       }
       if (path.startsWith("/_matrix/client/r0/rooms/") && path.endsWith("/leave")) {
         var room = rooms.get(roomOf(path, "/leave"));
+        if (roomsRefusingLeave.contains(roomOf(path, "/leave"))) {
+          return withStatus(HttpStatus.INTERNAL_SERVER_ERROR).createResponse(request);
+        }
         if (room != null) {
           room.joined.remove(actor);
           room.invited.remove(actor);
