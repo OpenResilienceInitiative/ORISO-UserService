@@ -58,7 +58,11 @@ class ChatPermissionVerifierTest {
             consultantService,
             userService,
             authenticatedUser,
-            new GroupChatConsultantAccess(participantRepository));
+            new GroupChatConsultantAccess(
+                participantRepository,
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.chat
+                        .InternalGroupChatRecipientScopeResolver.class)));
   }
 
   @Test

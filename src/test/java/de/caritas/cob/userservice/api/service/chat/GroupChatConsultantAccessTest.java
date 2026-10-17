@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -28,6 +29,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class GroupChatConsultantAccessTest {
 
   @Mock private GroupChatParticipantRepository participants;
+  @Mock private InternalGroupChatRecipientScopeResolver scopes;
   @InjectMocks private GroupChatConsultantAccess access;
 
   @Test
@@ -180,6 +182,50 @@ class GroupChatConsultantAccessTest {
     assertThat(access.mayStartStopOrBan(series, consultant("colleague", 1L, 100L))).isTrue();
     assertThat(access.mayStartStopOrBan(series, consultant("foreign", 2L, 100L))).isFalse();
     assertThat(access.mayStartStopOrBan(series, consultant("elsewhere", 1L, 200L))).isFalse();
+  }
+
+  @Test
+  void aMembersOnlyChatIsOpenToItsMembersAndToNobodyElseWhateverTheScope() {
+    var owner = consultant("owner", 1L, 100L);
+    var chat = series(41L, owner, 100L);
+    chat.setMembersOnly(true);
+    lenient().when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.PLATFORM);
+    var member = consultant("member", 1L, 100L);
+    var colleague = consultant("colleague", 1L, 100L);
+    when(participants.findBySeriesIdAndConsultantId(41L, "member"))
+        .thenReturn(Optional.of(participant(41L, "member", ParticipantRole.PARTICIPANT)));
+    when(participants.findBySeriesIdAndConsultantId(41L, "colleague")).thenReturn(Optional.empty());
+    when(participants.findBySeriesIdInAndConsultantId(List.of(41L), "colleague"))
+        .thenReturn(List.of());
+    when(participants.findBySeriesIdInAndConsultantId(List.of(41L), "member"))
+        .thenReturn(List.of(participant(41L, "member", ParticipantRole.PARTICIPANT)));
+
+    assertThat(access.mayAccess(chat, member)).isTrue();
+    assertThat(access.mayAccess(chat, colleague)).isFalse();
+    assertThat(access.mayModerate(chat, colleague)).isFalse();
+    assertThat(access.filterAccessible(List.of(chat), colleague)).isEmpty();
+    assertThat(access.filterAccessible(List.of(chat), member)).containsExactly(chat);
+  }
+
+  @Test
+  void theTraegerScopeDecidesWhoMaySeeAndJoinAnOrdinaryInternalChat() {
+    var owner = consultant("owner", 1L, 100L);
+    var chat = series(42L, owner, 100L);
+    var otherCentre = consultant("other-centre", 1L, 200L);
+    var otherTraeger = consultant("other-traeger", 2L, 300L);
+    when(participants.findBySeriesIdAndConsultantId(any(), any())).thenReturn(Optional.empty());
+
+    when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.AGENCY);
+    assertThat(access.mayAccess(chat, otherCentre)).isFalse();
+    assertThat(access.mayAccess(chat, otherTraeger)).isFalse();
+
+    when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.TENANT);
+    assertThat(access.mayAccess(chat, otherCentre)).isTrue();
+    assertThat(access.mayAccess(chat, otherTraeger)).isFalse();
+
+    when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.PLATFORM);
+    assertThat(access.mayAccess(chat, otherCentre)).isTrue();
+    assertThat(access.mayAccess(chat, otherTraeger)).isTrue();
   }
 
   private static GroupChatParticipant participant(
