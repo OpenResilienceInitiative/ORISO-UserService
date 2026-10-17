@@ -153,7 +153,10 @@ public class ChatPermissionVerifier {
                     new NotFoundException(
                         "User with id %s not found", authenticatedUser.getUserId()));
 
-    if (!hasChatUserAssignment(chat, user) && !hasSameAgencyAssigned(chat, user)) {
+    // A members-only chat is a room of colleagues: no advice seeker is ever a member, and sharing
+    // the counselling centre must not open it.
+    if (chat.isMembersOnly()
+        || (!hasChatUserAssignment(chat, user) && !hasSameAgencyAssigned(chat, user))) {
       throw new ForbiddenException(
           String.format(
               "User with id %s has no permission for chat with id %s",

@@ -12,9 +12,12 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.service.chat.InternalGroupChatRecipientScopeResolver;
 import java.io.IOException;
 import java.net.URI;
@@ -100,6 +103,7 @@ class InternalSubsetChatHttpIT {
   @Autowired private SessionRepository sessions;
   @Autowired private GroupChatParticipantRepository participants;
   @Autowired private JdbcTemplate database;
+  @Autowired private UserAgencyRepository userAgencies;
   @Autowired private MatrixConfig matrixConfig;
   @Autowired private InternalGroupChatRecipientScopeResolver recipientScopes;
 
@@ -538,6 +542,33 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void anAdviceSeekerOfTheCentreCannotOpenJoinOrListMembersOfAMembersOnlyRoom() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var adviceSeeker = fixtures.adviceSeeker(TRAEGER);
+    Tenants.in(TRAEGER, () -> userAgencies.save(new UserAgency(adviceSeeker, CENTRE)));
+    try {
+      for (var call :
+          List.of(
+              List.of("GET", "/users/chat/" + chatId),
+              List.of("PUT", "/users/chat/" + chatId + "/join"),
+              List.of("GET", "/users/chat/" + chatId + "/members"))) {
+        var response = requestAsAdviceSeeker(call.get(0), call.get(1), adviceSeeker);
+        assertThat(response.statusCode()).as(call + " " + response.body()).isEqualTo(403);
+      }
+      assertThat(synapse.joined(roomId))
+          .containsExactlyInAnyOrder(matrix(creator), matrix(sameCentre));
+    } finally {
+      Tenants.in(
+          TRAEGER,
+          () ->
+              database.update(
+                  "DELETE FROM user_agency WHERE user_id = ?", adviceSeeker.getUserId()));
+    }
+  }
+
+  @Test
   void anOrdinaryInternalChatStaysOpenToTheColleaguesOfItsCentre() throws Exception {
     var ordinary =
         request(
@@ -639,6 +670,28 @@ class InternalSubsetChatHttpIT {
             .header("X-CSRF-Token", "test")
             .header("Content-Type", "application/json")
             .method(method, HttpRequest.BodyPublishers.ofString(body))
+            .build();
+    return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String> requestAsAdviceSeeker(String method, String path, User adviceSeeker)
+      throws Exception {
+    var token =
+        Jwt.withTokenValue("synthetic-token-" + adviceSeeker.getUserId())
+            .header("alg", "none")
+            .subject(adviceSeeker.getUserId())
+            .claim("username", adviceSeeker.getUsername())
+            .claim("tenantId", adviceSeeker.getTenantId())
+            .claim("realm_access", Map.of("roles", List.of("user")))
+            .build();
+    when(jwtDecoder.decode("synthetic-token-" + adviceSeeker.getUserId())).thenReturn(token);
+    var request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+            .header("Authorization", "Bearer synthetic-token-" + adviceSeeker.getUserId())
+            .header("Cookie", "CSRF-TOKEN=test")
+            .header("X-CSRF-Token", "test")
+            .header("Content-Type", "application/json")
+            .method(method, HttpRequest.BodyPublishers.ofString(""))
             .build();
     return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
   }
