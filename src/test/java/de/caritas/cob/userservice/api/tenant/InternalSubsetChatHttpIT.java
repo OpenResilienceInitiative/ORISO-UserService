@@ -542,6 +542,43 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void aCreatorWhoTransferredOwnershipAndLeftNoLongerSeesTheSessionOfTheRoom() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var sessionId =
+        Tenants.acrossAll(
+            () ->
+                database.queryForObject(
+                    "SELECT chat_id FROM group_chat_participant WHERE series_id = ? LIMIT 1",
+                    Long.class,
+                    Long.parseLong(chatId)));
+    assertThat(sessionListOf(creator).body()).as("before leaving").contains(roomId);
+
+    var transfer =
+        request(
+            "POST",
+            "/users/chat-series/" + chatId + "/transfer-ownership",
+            creator,
+            "{\"consultantId\":\"" + sameCentre.getId() + "\"}");
+    assertThat(transfer.statusCode()).as(transfer.body()).isEqualTo(204);
+    var left = request("PUT", "/users/chat/" + chatId + "/leave", creator, "");
+    assertThat(left.statusCode()).as(left.body()).isIn(200, 204);
+
+    var list = sessionListOf(creator);
+    assertThat(list.statusCode()).as(list.body()).isIn(200, 204);
+    assertThat(list.body()).as("session list of the former member").doesNotContain(roomId);
+    var bySessionId = request("GET", "/users/sessions/room/" + sessionId, creator, "");
+    assertThat(bySessionId.statusCode()).as("session by id").isIn(204, 403);
+    assertThat(bySessionId.body()).as("session by id").doesNotContain(roomId);
+    assertThat(request("GET", "/users/chat/" + chatId, creator, "").statusCode())
+        .as("chat by id")
+        .isEqualTo(403);
+    var memberList = sessionListOf(sameCentre);
+    assertThat(memberList.body()).as("the new owner keeps the session").contains(roomId);
+  }
+
+  @Test
   void anAdviceSeekerOfTheCentreCannotOpenJoinOrListMembersOfAMembersOnlyRoom() throws Exception {
     var created = openRoom(creator, sameCentre);
     var chatId = field(created, "chatId");
@@ -930,6 +967,14 @@ class InternalSubsetChatHttpIT {
               .createResponse(request);
         }
         room.joined.add(actor);
+        return withSuccess("{}", MediaType.APPLICATION_JSON).createResponse(request);
+      }
+      if (path.startsWith("/_matrix/client/r0/rooms/") && path.endsWith("/leave")) {
+        var room = rooms.get(roomOf(path, "/leave"));
+        if (room != null) {
+          room.joined.remove(actor);
+          room.invited.remove(actor);
+        }
         return withSuccess("{}", MediaType.APPLICATION_JSON).createResponse(request);
       }
       if (path.startsWith("/_synapse/admin/v1/rooms/")

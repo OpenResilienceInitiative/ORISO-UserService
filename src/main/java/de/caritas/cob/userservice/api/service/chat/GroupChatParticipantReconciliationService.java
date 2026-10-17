@@ -29,6 +29,7 @@ public class GroupChatParticipantReconciliationService {
   private final ConsultantRepository consultantRepository;
   private final GroupChatMembershipService membershipService;
   private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
+  private final MembersOnlySessionAssignment sessionAssignment;
 
   /**
    * Reconciles co-moderators only when the client explicitly supplies {@code consultantIds}. A null
@@ -79,6 +80,7 @@ public class GroupChatParticipantReconciliationService {
                 consultant ->
                     membershipService.removeLeavingMemberFromRoom(
                         series, consultant.getMatrixUserId()));
+        sessionAssignment.handOverFrom(series, existing);
         participantRepository.delete(existing);
       }
     }

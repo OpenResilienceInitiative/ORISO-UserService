@@ -450,6 +450,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   void createMembersOnlyChat_Should_ReportMembershipFailure_When_RollbackSucceeded()
       throws Exception {
     var colleague = colleagueWhoseInviteIsRefused();
+    when(matrixSynapseService.purgeRoomOrConfirmGone("!room:matrix.org"))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.PURGED);
 
     var failure =
         assertThrows(
@@ -459,6 +461,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
                     chatDtoWithConsultantIds(List.of()), consultant, List.of(colleague)));
 
     assertThat(failure.getHttpStatus().value()).isEqualTo(502);
+    verify(matrixSynapseService).purgeRoomOrConfirmGone("!room:matrix.org");
     verify(sessionService).deleteSession(any());
     verify(chatService).deleteChat(any());
   }

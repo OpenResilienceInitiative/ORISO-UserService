@@ -32,6 +32,8 @@ class GroupChatRoleServiceTest {
 
   @Mock private GroupChatMembershipService groupChatMembershipService;
 
+  @Mock private MembersOnlySessionAssignment sessionAssignment;
+
   @InjectMocks private GroupChatRoleService roleService;
 
   @Test

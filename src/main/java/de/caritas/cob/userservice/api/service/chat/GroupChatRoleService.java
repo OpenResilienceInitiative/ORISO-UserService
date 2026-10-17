@@ -27,6 +27,7 @@ public class GroupChatRoleService {
   private final ChatRepository chatRepository;
   private final ConsultantRepository consultantRepository;
   private final GroupChatMembershipService groupChatMembershipService;
+  private final MembersOnlySessionAssignment sessionAssignment;
 
   @Transactional
   public void changeRole(
@@ -126,6 +127,7 @@ public class GroupChatRoleService {
             .findById(targetConsultantId)
             .orElseThrow(() -> new NotFoundException("Consultant not found"));
 
+    sessionAssignment.handOverFrom(series, target);
     participantRepository.delete(target);
     groupChatMembershipService.removeLeavingMemberFromRoom(
         series, targetConsultant.getMatrixUserId());
@@ -154,6 +156,7 @@ public class GroupChatRoleService {
               "The last Series Owner cannot leave before transferring ownership");
         }
       }
+      sessionAssignment.handOverFrom(series, leavingParticipant);
       participantRepository.delete(leavingParticipant);
     }
 
