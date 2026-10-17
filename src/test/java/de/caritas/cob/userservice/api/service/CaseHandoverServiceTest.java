@@ -4526,6 +4526,41 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void takeover_skipsTheRaise_whenAnotherTakeoverCommittedBeforeTheCallbackRan() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, ADMIN_MXID, 100);
+    previousOwnerHasLeft();
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      takeOverBecauseAssignmentEnded();
+      // A back-to-back takeover committed first: the case belongs to someone else now.
+      session.setConsultant(previous);
+      runSynchronizations(TransactionSynchronization::afterCommit);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    assertEquals(0, homeserver.powerOf(caseRoom, REQUESTER_MXID));
+  }
+
+  @Test
+  void takeover_withTheOwnerPresent_skipsTheRaise_whenAnotherTakeoverCommittedFirst() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      takeOverBecauseAssignmentEnded();
+      session.setConsultant(previous);
+      runSynchronizations(TransactionSynchronization::afterCommit);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    assertEquals(0, homeserver.powerOf(caseRoom, REQUESTER_MXID));
+  }
+
+  @Test
   void takeover_withTheOwnerPresent_raisesThePowerLevelOnlyAfterTheTransactionCommits() {
     givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
 

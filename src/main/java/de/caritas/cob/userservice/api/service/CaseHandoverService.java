@@ -61,6 +61,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -2721,6 +2722,7 @@ public class CaseHandoverService {
       boolean reliesOnRaise = !requesterCanPostNow(roomId, requesterMatrixId, requesterToken);
       raiseOwnerPowerOnceCommitted(
           session.getId(),
+          requester.getId(),
           roomId,
           () ->
               matrixSynapseService.setUserPowerLevel(
@@ -2794,6 +2796,7 @@ public class CaseHandoverService {
         requireRequesterCanPost(roomId, requesterMatrixId, requesterToken, membersBefore);
     raiseOwnerPowerOnceCommitted(
         session.getId(),
+        requester.getId(),
         roomId,
         () -> matrixSynapseService.makeRoomAdmin(roomId, requesterMatrixId),
         "no joined room member holds power to raise it",
@@ -2885,56 +2888,67 @@ public class CaseHandoverService {
    * not own. Used by both takeover paths (previous owner left or still present). Best effort - a
    * refused or failed raise only logs, the colleague then stays at level 0 and can still answer.
    *
+   * @param ownerConsultantId the new owner; after the commit the raise only runs while they still
+   *     own the case (see {@link SessionOwnerLock})
    * @param raise performs the raise and returns whether Synapse accepted it
    * @param refusalReason why a refused raise is expected to happen, for the log line
    * @param onFailure what to do when the raise did not work (nullable), e.g. queue a repair
    */
   private void raiseOwnerPowerOnceCommitted(
       Long sessionId,
+      String ownerConsultantId,
       String roomId,
       BooleanSupplier raise,
       String refusalReason,
       Runnable onFailure) {
-    Runnable raiseSafely =
-        () -> {
-          boolean raised;
-          try {
-            raised = raise.getAsBoolean();
-            if (!raised) {
-              log.warn(
-                  "Could not give the new owner of session {} the owner power level in room {}: {}",
-                  sessionId,
-                  roomId,
-                  refusalReason);
-            }
-          } catch (RuntimeException exception) {
-            raised = false;
-            log.warn(
-                "Could not give the new owner of session {} the owner power level in room {} ({})",
-                sessionId,
-                roomId,
-                exception.getClass().getSimpleName());
-          }
-          if (!raised && onFailure != null) {
-            try {
-              onFailure.run();
-            } catch (RuntimeException exception) {
-              log.error(
-                  "Could not queue the repair of the owner power level of session {} ({})",
-                  sessionId,
-                  exception.getClass().getSimpleName());
-            }
-          }
-        };
+    Function<BooleanSupplier, Runnable> safely =
+        attempt ->
+            () -> {
+              boolean raised;
+              try {
+                raised = attempt.getAsBoolean();
+                if (!raised) {
+                  log.warn(
+                      "Could not give the new owner of session {} the owner power level in room {}: {}",
+                      sessionId,
+                      roomId,
+                      refusalReason);
+                }
+              } catch (RuntimeException exception) {
+                raised = false;
+                log.warn(
+                    "Could not give the new owner of session {} the owner power level in room {} ({})",
+                    sessionId,
+                    roomId,
+                    exception.getClass().getSimpleName());
+              }
+              if (!raised && onFailure != null) {
+                try {
+                  onFailure.run();
+                } catch (RuntimeException exception) {
+                  log.error(
+                      "Could not queue the repair of the owner power level of session {} ({})",
+                      sessionId,
+                      exception.getClass().getSimpleName());
+                }
+              }
+            };
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      raiseSafely.run();
+      safely.apply(raise).run();
       return;
     }
+    // After the commit the session row lock is gone: a back-to-back takeover may already own the
+    // case, so the raise only runs while the new owner still does, under the same lock.
+    Runnable afterCommitRaise =
+        safely.apply(
+            () ->
+                SessionOwnerLock.runWhileStillOwner(
+                    transactionManager, sessionRepository, sessionId, ownerConsultantId, raise));
     TransactionSynchronizationManager.registerSynchronization(
         new TransactionSynchronization() {
           @Override
           public void afterCommit() {
-            raiseSafely.run();
+            afterCommitRaise.run();
           }
         });
   }
