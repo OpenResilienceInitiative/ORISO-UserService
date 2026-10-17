@@ -1400,7 +1400,7 @@ paths:
         503:
           description: >-
             SERVICE UNAVAILABLE - X-Reason INTERNAL_CHAT_ENCRYPTION_REQUIRED (end-to-end encryption is not enabled on this installation, so no private room is created)
-            or INTERNAL_CHAT_BUSY (another request for the same people is still being processed; try again)
+            or INTERNAL_CHAT_BUSY (another request for the same people is still being processed, or the members of the existing room could not be read; try again)
           headers:
             X-Reason:
               schema:

@@ -238,13 +238,16 @@ public class InternalSubsetChatFacade {
   /**
    * Every account in the room, mapped or not: a user of a foreign homeserver, a deleted consultant
    * or any other stranger makes the room unfit. Only the configured technical admin, which the
-   * platform adds to rooms for administration, is ignored. A room whose members cannot be read is
-   * not reused.
+   * platform adds to rooms for administration, is ignored. A room whose members cannot be read
+   * refuses the request (503, try again) instead of being replaced.
    */
   private boolean roomHoldsExactly(String matrixRoomId, Set<String> matrixIds) {
     var joined = matrixSynapseService.getRoomMembers(matrixRoomId);
     if (joined.isEmpty()) {
-      return false;
+      // Unknown is not "different": a second room for the same people would split their history.
+      // Ask the caller to try again once Matrix answers.
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.INTERNAL_CHAT_BUSY, HttpStatus.SERVICE_UNAVAILABLE);
     }
     var admin = "@" + matrixConfig.getAdminUsername() + ":" + matrixConfig.getServerName();
     var present = new java.util.HashSet<>(joined.get());

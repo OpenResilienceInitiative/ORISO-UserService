@@ -376,15 +376,20 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
-  void aRoomWhoseMembersCannotBeReadIsNeverReused() throws Exception {
+  void aRoomWhoseMembersCannotBeReadIsNeitherReusedNorReplacedByASecondRoom() throws Exception {
     var first = openRoom(creator, sameCentre);
     synapse.failMemberReads = true;
 
     var again = openRoom(creator, sameCentre);
 
     synapse.failMemberReads = false;
-    assertThat(again.statusCode()).as(again.body()).isEqualTo(201);
-    assertThat(field(again, "matrixRoomId")).isNotEqualTo(field(first, "matrixRoomId"));
+    assertThat(again.statusCode()).as(again.body()).isEqualTo(503);
+    assertThat(reason(again)).isEqualTo("INTERNAL_CHAT_BUSY");
+    assertThat(synapse.roomsCreated()).as("no second room").isEqualTo(1);
+    // Once Matrix answers again, the same room is found.
+    var retried = openRoom(creator, sameCentre);
+    assertThat(retried.statusCode()).as(retried.body()).isEqualTo(200);
+    assertThat(field(retried, "matrixRoomId")).isEqualTo(field(first, "matrixRoomId"));
   }
 
   @Test
@@ -604,6 +609,25 @@ class InternalSubsetChatHttpIT {
               database.update(
                   "DELETE FROM user_agency WHERE user_id = ?", adviceSeeker.getUserId()));
     }
+  }
+
+  @Test
+  void anAdviceSeekerCannotAttachAMembersOnlyRoomToTheirChatsByItsRoomId() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = Long.parseLong(field(created, "chatId"));
+    var roomId = field(created, "matrixRoomId");
+    var adviceSeeker = fixtures.adviceSeeker(TRAEGER);
+
+    var assigned = requestAsAdviceSeeker("PUT", "/users/chat/" + roomId + "/assign", adviceSeeker);
+
+    assertThat(assigned.statusCode()).as(assigned.body()).isEqualTo(403);
+    assertThat(
+            Tenants.acrossAll(
+                () ->
+                    database.queryForObject(
+                        "SELECT COUNT(*) FROM user_chat WHERE chat_id = ?", Integer.class, chatId)))
+        .as("no relation to the room")
+        .isZero();
   }
 
   @Test

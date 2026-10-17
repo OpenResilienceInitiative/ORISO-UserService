@@ -65,6 +65,10 @@ public class AssignChatFacade {
   }
 
   private void assignChat(Chat chat, AuthenticatedUser authenticatedUser) {
+    // A members-only chat is a room of selected colleagues; no advice seeker is ever one of them.
+    if (chat.isMembersOnly()) {
+      throw new ForbiddenException("Chat %s cannot be joined", chat.getId());
+    }
     User user = getUser(authenticatedUser);
     if (userChats.findByChatAndUser(chat, user).isPresent()) {
       throw new ConflictException("User is already assigned to chat");
