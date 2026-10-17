@@ -21,6 +21,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriUtils;
 
@@ -66,6 +67,9 @@ public final class FakeSynapseHomeserver extends RestTemplate {
   private int roomCounter;
   private int adminJoinRequests;
   private int makeRoomAdminRequests;
+  private boolean adminJoinFailsAfterInvite;
+  private boolean leavesAreRefused;
+  private final List<String> impersonated = new ArrayList<>();
 
   private static final class Room {
     private final Set<String> joined = new LinkedHashSet<>();
@@ -168,6 +172,30 @@ public final class FakeSynapseHomeserver extends RestTemplate {
     return room.joined.contains(mxid) && powerOf(roomId, mxid) >= room.eventsDefault;
   }
 
+  /**
+   * The admin join endpoint invites the target and then answers 500 before the join step ran, like
+   * a Synapse that dies or times out between its two membership events.
+   */
+  public FakeSynapseHomeserver adminJoinFailsAfterInvite() {
+    adminJoinFailsAfterInvite = true;
+    return this;
+  }
+
+  /** Every membership leave (own or kick) is answered with 500. */
+  public FakeSynapseHomeserver leavesAreRefused() {
+    leavesAreRefused = true;
+    return this;
+  }
+
+  /** Accounts the admin logged in as, in order (Synapse admin login-as-user). */
+  public List<String> impersonatedAccounts() {
+    return List.copyOf(impersonated);
+  }
+
+  public boolean isInvited(String roomId, String mxid) {
+    return room(roomId).invited.contains(mxid);
+  }
+
   /** How often the admin force-join endpoint was called. */
   public int adminJoinRequests() {
     return adminJoinRequests;
@@ -230,6 +258,7 @@ public final class FakeSynapseHomeserver extends RestTemplate {
       if (!accounts.contains(target)) {
         throw error(HttpStatus.NOT_FOUND, "M_NOT_FOUND", "User not found");
       }
+      impersonated.add(target);
       return ResponseEntity.ok(Map.of("access_token", tokenOf(target)));
     }
     if (path.size() >= 4 && path.get(0).equals("_synapse")) {
@@ -282,6 +311,11 @@ public final class FakeSynapseHomeserver extends RestTemplate {
     requireMayInvite(room, admin);
     if (room.joined.contains(target)) {
       throw error(HttpStatus.FORBIDDEN, "M_FORBIDDEN", "User is already in the room.");
+    }
+    if (adminJoinFailsAfterInvite) {
+      room.invited.add(target);
+      throw HttpServerErrorException.create(
+          HttpStatus.INTERNAL_SERVER_ERROR, "Internal Server Error", null, new byte[0], null);
     }
     join(room, target);
     return ResponseEntity.ok(Map.of("room_id", roomId));
@@ -386,6 +420,9 @@ public final class FakeSynapseHomeserver extends RestTemplate {
   }
 
   private void leaveOrKick(Room room, String sender, String target) {
+    if (leavesAreRefused) {
+      throw error(HttpStatus.INTERNAL_SERVER_ERROR, "M_UNKNOWN", "Internal server error");
+    }
     if (sender.equals(target)) {
       room.joined.remove(target);
       room.invited.remove(target);

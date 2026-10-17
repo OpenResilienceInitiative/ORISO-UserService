@@ -17,6 +17,8 @@ After a Traeger change the repair queue (#1421) makes the previous owner leave t
 - `POST /_synapse/admin/v1/join/{room}`: for a non-public room Synapse invites the target as the calling admin first, so the admin must be a joined member who may invite.
 - `POST /_synapse/admin/v1/rooms/{room}/make_room_admin`: acts through the highest-power local user in the `users` map who is currently joined (a user who left is skipped) and gives the target that user's level. It answers 400 when nobody qualifies.
 
+The power raise runs after the transaction commits (Synapse keeps a user's power-level entry after they leave, so a raise inside a rolled-back takeover would survive). The membership rollback compensation is registered before the force-join, because the admin join is an invite followed by a join. The staff member who lets the admin in is picked from the consultants of the session's centre, never from "any other member"; with no known Matrix id for the advice seeker nobody is picked.
+
 Consequence: the new owner only reaches power 100 when a joined member still holds power. In a room where the agency account was removed after acceptance and the owner has left, nobody does, and the new owner stays at level 0 (can post, cannot change power levels).
 
 ## Red-green

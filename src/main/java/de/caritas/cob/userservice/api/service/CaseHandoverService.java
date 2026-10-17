@@ -2741,15 +2741,10 @@ public class CaseHandoverService {
     String roomId = session.getMatrixRoomId();
     boolean wasMemberBefore = membersBefore.contains(requesterMatrixId);
     if (!wasMemberBefore) {
-      // The admin has to be in the room to add anybody. If an older room never got it, a staff
-      // member who is still there lets it in; the advice seeker's account is never used for that.
-      String staffMember = firstStaffMember(session, requesterMatrixId, membersBefore);
-      if (!matrixSynapseService.forceJoinUserToRoom(roomId, requesterMatrixId, staffMember)) {
-        throw new InternalServerErrorException(
-            "Failed to join case handover requester to Matrix room: the previous owner has left"
-                + " and the technical Matrix admin could not add the requester");
-      }
-      // The previous owner is gone, so the requester removes themselves again on rollback.
+      // Registered before the join: Synapse's admin join is an invite followed by a join, so a
+      // failure in between (or a lost answer) can leave the colleague invited or joined while the
+      // takeover ends in an error. The previous owner is gone, so the colleague removes
+      // themselves with their own token.
       registerMatrixJoinRollbackCompensation(
           roomId,
           requesterMatrixId,
@@ -2758,25 +2753,83 @@ public class CaseHandoverService {
           requesterMatrixId,
           requesterToken,
           false);
+      if (!matrixSynapseService.forceJoinUserToRoom(
+          roomId,
+          requesterMatrixId,
+          staffMembersInRoom(session, requesterMatrixId, membersBefore))) {
+        throw new InternalServerErrorException(
+            "Failed to join case handover requester to Matrix room: the previous owner has left"
+                + " and the technical Matrix admin could not add the requester");
+      }
     }
 
-    if (!matrixSynapseService.makeRoomAdmin(roomId, requesterMatrixId)) {
-      log.warn(
-          "Could not give the new owner of session {} the owner power level in room {}: no joined"
-              + " room member holds power to raise it",
-          session.getId(),
-          roomId);
-    }
+    raiseOwnerPowerOnceCommitted(session.getId(), roomId, requesterMatrixId);
     return !wasMemberBefore;
   }
 
-  private static String firstStaffMember(
+  /**
+   * Synapse keeps a user's power-level entry after they leave, so a raise must not happen before
+   * the takeover is committed: after a rollback the colleague would leave the room but keep owner
+   * rights for any later rejoin. Best effort - see the method above.
+   */
+  private void raiseOwnerPowerOnceCommitted(Long sessionId, String roomId, String matrixUserId) {
+    Runnable raise =
+        () -> {
+          try {
+            if (!matrixSynapseService.makeRoomAdmin(roomId, matrixUserId)) {
+              log.warn(
+                  "Could not give the new owner of session {} the owner power level in room {}: no"
+                      + " joined room member holds power to raise it",
+                  sessionId,
+                  roomId);
+            }
+          } catch (RuntimeException exception) {
+            log.warn(
+                "Could not give the new owner of session {} the owner power level in room {} ({})",
+                sessionId,
+                roomId,
+                exception.getClass().getSimpleName());
+          }
+        };
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      raise.run();
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            raise.run();
+          }
+        });
+  }
+
+  /**
+   * Room members who may let the technical admin into the room: consultants of the session's centre
+   * (same tenant). An allow-list, not "anybody but the seeker": a bot or any other account must
+   * never be impersonated. Without a known Matrix id for the advice seeker nobody is offered,
+   * because then the seeker could not be told apart from a member we have no record of.
+   */
+  private List<String> staffMembersInRoom(
       Session session, String requesterMatrixId, List<String> members) {
     String askerMatrixId = session.getUser() == null ? null : session.getUser().getMatrixUserId();
+    if (isBlank(askerMatrixId) || session.getAgencyId() == null) {
+      return List.of();
+    }
+    Set<String> centreStaff =
+        consultantAgencyRepository
+            .findByAgencyIdAndDeleteDateIsNullOrderByConsultantFirstNameAsc(session.getAgencyId())
+            .stream()
+            .map(ConsultantAgency::getConsultant)
+            .filter(Objects::nonNull)
+            .filter(consultant -> Objects.equals(session.getTenantId(), consultant.getTenantId()))
+            .map(Consultant::getMatrixUserId)
+            .filter(matrixId -> !isBlank(matrixId))
+            .collect(Collectors.toSet());
     return members.stream()
+        .filter(centreStaff::contains)
         .filter(member -> !member.equals(requesterMatrixId) && !member.equals(askerMatrixId))
-        .findFirst()
-        .orElse(null);
+        .toList();
   }
 
   /**

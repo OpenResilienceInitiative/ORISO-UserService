@@ -1318,12 +1318,12 @@ public class MatrixSynapseService implements MatrixUserClient {
    *
    * @param roomId the Matrix room ID
    * @param userId full Matrix ID of the local user to join
-   * @param fallbackMemberMatrixUserId full Matrix ID of a current room member (never {@code
-   *     userId}) used to invite the admin when it is not in the room yet; may be {@code null}
+   * @param fallbackMembers full Matrix IDs of current room members (never {@code userId}) that may
+   *     be used, in order, to invite the admin when it is not in the room yet; may be empty
    * @return true when the user has been joined, false otherwise
    */
   public boolean forceJoinUserToRoom(
-      String roomId, String userId, String fallbackMemberMatrixUserId) {
+      String roomId, String userId, java.util.List<String> fallbackMembers) {
     if (roomId == null || roomId.isBlank() || userId == null || userId.isBlank()) {
       return false;
     }
@@ -1334,11 +1334,18 @@ public class MatrixSynapseService implements MatrixUserClient {
     if (matrixRoomClient.forceJoinUser(roomId, userId, adminToken)) {
       return true;
     }
-    if (!ensureAdminInRoom(roomId, fallbackMemberMatrixUserId)) {
-      log.warn("Matrix admin is not a member of room {} and could not join it", roomId);
-      return false;
+    // Without any member the admin can only get in if it was already invited or the room is open.
+    java.util.List<String> candidates =
+        fallbackMembers == null || fallbackMembers.isEmpty()
+            ? java.util.Collections.singletonList(null)
+            : fallbackMembers;
+    for (String member : candidates) {
+      if (ensureAdminInRoom(roomId, member)) {
+        return matrixRoomClient.forceJoinUser(roomId, userId, adminToken);
+      }
     }
-    return matrixRoomClient.forceJoinUser(roomId, userId, adminToken);
+    log.warn("Matrix admin is not a member of room {} and could not join it", roomId);
+    return false;
   }
 
   /**
