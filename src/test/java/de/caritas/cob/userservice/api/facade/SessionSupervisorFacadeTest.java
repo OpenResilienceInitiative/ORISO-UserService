@@ -61,6 +61,9 @@ class SessionSupervisorFacadeTest {
 
   @InjectMocks private SessionSupervisorFacade facade;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantRepository consultantRepository;
@@ -117,6 +120,32 @@ class SessionSupervisorFacadeTest {
     when(matrixSynapseService.joinRoom(any(), any())).thenReturn(true);
     when(sessionSupervisorRepository.save(any()))
         .thenAnswer(inv -> inv.getArgument(0, SessionSupervisor.class));
+  }
+
+  @Test
+  void addSupervisor_Should_refuseAMembersOnlyRoom_whenTheSupervisorIsNotOneOfItsMembers()
+      throws Exception {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("no"))
+        .when(membersOnlyChatAccess)
+        .requireAccess(session, supervisor);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"));
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).inviteUserToRoom(any(), any(), any());
+    verify(matrixSynapseService, org.mockito.Mockito.never()).joinRoom(any(), any());
+    verify(sessionSupervisorRepository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
+  void addSupervisor_Should_acceptAMembersOnlyRoom_whenTheSupervisorIsAlreadyOneOfItsMembers() {
+
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    assertThat(saved).isNotNull();
   }
 
   @Test

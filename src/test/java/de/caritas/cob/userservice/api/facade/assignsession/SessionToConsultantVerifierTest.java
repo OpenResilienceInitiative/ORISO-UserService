@@ -27,6 +27,9 @@ class SessionToConsultantVerifierTest {
 
   @InjectMocks private SessionToConsultantVerifier sessionToConsultantVerifier;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock private SessionToConsultantConditionProvider sessionToConsultantConditionProvider;
 
   @Test
@@ -42,6 +45,23 @@ class SessionToConsultantVerifierTest {
     assertThrows(
         ConflictException.class,
         () -> sessionToConsultantVerifier.verifySessionIsNotInProgress(consultantSessionDTO));
+  }
+
+  @Test
+  void
+      verifyPreconditionsForAssignment_Should_refuse_When_theTargetIsNoParticipantOfAMembersOnlyChat() {
+    var session = mock(Session.class);
+    var colleague = mock(Consultant.class);
+    org.mockito.Mockito.doThrow(new ForbiddenException("not a participant"))
+        .when(membersOnlyChatAccess)
+        .requireAccess(session, colleague);
+    ConsultantSessionDTO consultantSessionDTO =
+        ConsultantSessionDTO.builder().consultant(colleague).session(session).build();
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> sessionToConsultantVerifier.verifyPreconditionsForAssignment(consultantSessionDTO));
+    org.mockito.Mockito.verifyNoInteractions(sessionToConsultantConditionProvider);
   }
 
   @Test

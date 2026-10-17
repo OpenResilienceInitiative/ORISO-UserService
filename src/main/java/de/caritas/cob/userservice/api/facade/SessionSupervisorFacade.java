@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.api.service.session.AnonymousSessionRegistration;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -50,6 +51,7 @@ public class SessionSupervisorFacade {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * ADR-008 item 4: the current request's authenticated user, used to check the Berater-Admin
@@ -130,6 +132,11 @@ public class SessionSupervisorFacade {
             .findById(sessionId)
             .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
 
+    // A members-only chat is managed by its participants alone: neither the assigned consultant,
+    // nor a colleague of the centre, nor an agency admin who is not in it. Asked first, so that a
+    // counsellor outside the chat is told the same thing whatever else is true of the session.
+    membersOnlyChatAccess.requireAccess(session, addedByConsultant);
+
     if (AnonymousSessionRegistration.matches(session)) {
       throw new BadRequestException("Anonymous sessions do not support supervision");
     }
@@ -196,6 +203,10 @@ public class SessionSupervisorFacade {
     if (matrixRoomId == null || matrixRoomId.isEmpty()) {
       throw new BadRequestException("Session does not have a Matrix room");
     }
+
+    // A members-only room holds exactly the selected colleagues. Supervision would add a reader
+    // who was not selected, so only one of its participants may be attached.
+    membersOnlyChatAccess.requireAccess(session, supervisorConsultant);
 
     // Get supervisor's Matrix user ID
     String supervisorMatrixUserId = supervisorConsultant.getMatrixUserId();
@@ -317,6 +328,8 @@ public class SessionSupervisorFacade {
             .findById(sessionId)
             .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
 
+    membersOnlyChatAccess.requireAccess(session, removedByConsultant);
+
     // Verify removedByConsultant has permission
     if (!hasPermissionToManageSupervisors(session, removedByConsultant)) {
       throw new ForbiddenException(
@@ -392,6 +405,7 @@ public class SessionSupervisorFacade {
             .findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
                 sessionId, requestingConsultant.getId())
             .isPresent();
+    membersOnlyChatAccess.requireAccess(session, requestingConsultant);
     if (!session.isAdvisedBy(requestingConsultant) && !activeSupervisor) {
       throw new ForbiddenException("Consultant does not have access to this supervision session");
     }

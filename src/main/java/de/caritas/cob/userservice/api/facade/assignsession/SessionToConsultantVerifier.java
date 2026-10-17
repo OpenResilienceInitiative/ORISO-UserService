@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Service;
 public class SessionToConsultantVerifier {
 
   private final @NonNull SessionToConsultantConditionProvider conditionProvider;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /** verifies if {@link Session} is not already in progress. */
   public void verifySessionIsNotInProgress(ConsultantSessionDTO consultantSessionDTO) {
@@ -38,6 +40,10 @@ public class SessionToConsultantVerifier {
   /** verifies necessary input data of {@link Session} and {@link Consultant}. */
   public void verifyPreconditionsForAssignment(
       ConsultantSessionDTO consultantSessionDTO, boolean skipSameConsultantAssignmentVerification) {
+    // A members-only chat is handed to nobody who is not in it: assigning its case would invite
+    // the colleague into the room and take the others out.
+    membersOnlyChatAccess.requireAccess(
+        consultantSessionDTO.getSession(), consultantSessionDTO.getConsultant());
     verifyIfSessionIsAlreadyAssignedToConsultant(
         consultantSessionDTO, skipSameConsultantAssignmentVerification);
 

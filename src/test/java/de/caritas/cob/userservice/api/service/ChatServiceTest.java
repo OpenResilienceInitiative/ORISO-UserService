@@ -77,6 +77,12 @@ class ChatServiceTest {
 
   @InjectMocks private ChatService chatService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation membersOnlyRevocation;
+
   @Mock private ChatRepository chatRepository;
 
   @Mock private ChatAgencyRepository chatAgencyRepository;
@@ -190,6 +196,22 @@ class ChatServiceTest {
     when(chatRepository.findByUserId(USER_ID)).thenReturn(List.of(series));
     when(groupChatParticipantRepository.findBySeriesId(series.getId()))
         .thenReturn(List.of(GroupChatParticipant.builder().consultantId("owner").build()));
+
+    List<UserSessionResponseDTO> result = chatService.getChatsForUserId(USER_ID);
+
+    assertThat(result, hasSize(0));
+  }
+
+  @Test
+  void getChatsForUserId_Should_NeverListAMembersOnlyChatToAnAdviceSeeker() {
+    Chat related = activeChatWithAgency();
+    related.setMembersOnly(true);
+    Chat assigned = activeChatWithAgency();
+    assigned.setMembersOnly(true);
+    when(membersOnlyChatAccess.concerns(related)).thenReturn(true);
+    when(membersOnlyChatAccess.concerns(assigned)).thenReturn(true);
+    when(chatRepository.findByUserId(USER_ID)).thenReturn(List.of(related));
+    when(chatRepository.findAssignedByUserId(USER_ID)).thenReturn(List.of(assigned));
 
     List<UserSessionResponseDTO> result = chatService.getChatsForUserId(USER_ID);
 
@@ -414,6 +436,21 @@ class ChatServiceTest {
     when(groupChatParticipantRepository.findBySeriesId(series.getId()))
         .thenReturn(
             List.of(GroupChatParticipant.builder().consultantId("explicit-member").build()));
+
+    List<ConsultantSessionResponseDTO> result = chatService.getChatsForConsultant(consultant);
+
+    assertThat(result, hasSize(0));
+  }
+
+  @Test
+  void getChatsForConsultant_Should_NeverListAMembersOnlyChatBeforeItsParticipantsAreSaved() {
+    Consultant consultant = Mockito.mock(Consultant.class);
+    when(consultant.getId()).thenReturn("colleague-of-the-centre");
+    Chat series = activeChatWithAgency();
+    series.setMembersOnly(true);
+    when(membersOnlyChatAccess.concerns(series)).thenReturn(true);
+    when(chatRepository.findByAgencyIds(Mockito.any())).thenReturn(List.of(series));
+    when(groupChatParticipantRepository.findBySeriesId(series.getId())).thenReturn(List.of());
 
     List<ConsultantSessionResponseDTO> result = chatService.getChatsForConsultant(consultant);
 
@@ -710,6 +747,21 @@ class ChatServiceTest {
     deletionOrder.verify(groupChatParticipantRepository).deleteBySeriesId(CHAT_ID);
     deletionOrder.verify(chatRepository).delete(chat);
     verify(chatRepository).delete(chat);
+  }
+
+  @Test
+  void deleteChat_Should_retireTheCaseOfTheChatBeforeItsParticipationsGo() {
+    Chat chat = new Chat();
+    chat.setId(CHAT_ID);
+    chat.setMembersOnly(true);
+
+    chatService.deleteChat(chat);
+
+    var deletionOrder =
+        inOrder(membersOnlyRevocation, groupChatParticipantRepository, chatRepository);
+    deletionOrder.verify(membersOnlyRevocation).retireCaseOf(chat);
+    deletionOrder.verify(groupChatParticipantRepository).deleteBySeriesId(CHAT_ID);
+    deletionOrder.verify(chatRepository).delete(chat);
   }
 
   @Test

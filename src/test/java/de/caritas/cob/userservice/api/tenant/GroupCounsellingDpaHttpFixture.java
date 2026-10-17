@@ -257,6 +257,13 @@ abstract class GroupCounsellingDpaHttpFixture {
   /** Extension point for a route's outgoing Matrix/HTTP responses, never an internal mock. */
   protected org.springframework.http.client.ClientHttpResponse additionalExternalResponse(
       org.springframework.http.client.ClientHttpRequest request) throws java.io.IOException {
-    throw new AssertionError("Unexpected external HTTP path: " + request.getURI().getPath());
+    var path = request.getURI().getPath();
+    if (path.matches("/tenantadmin/\\d+/permission-policies")) {
+      // A TenantService that does not know the internal-group-chat recipient scope (#1418).
+      return org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+              "{\"policies\":{}}", org.springframework.http.MediaType.APPLICATION_JSON)
+          .createResponse(request);
+    }
+    throw new AssertionError("Unexpected external HTTP path: " + path);
   }
 }
