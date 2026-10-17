@@ -4,6 +4,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyCreationInput;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.CreateConsultantAgencyDTOInputAdapter;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.AgencyOutsideTenantException;
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTenantChangeAuditRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
@@ -81,6 +83,7 @@ public class ConsultantTenantChangeService {
   private final @NonNull OldTraegerRoomFinder roomFinder;
   private final @NonNull CaseHandoverMatrixRepairService matrixRepairService;
   private final @NonNull IdentityTenantUpdater identityTenantUpdater;
+  private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull ConsultantTenantChangeAuditRepository auditRepository;
   private final @NonNull Clock clock;
@@ -188,12 +191,15 @@ public class ConsultantTenantChangeService {
     int supervisionsEnded =
         sessionSupervisorRepository.endActiveSupervisionsOf(consultantId, LocalDateTime.now(clock));
 
-    createRelations(consultantId, agencies, newAgencyIds);
+    var relations = createRelations(consultantId, agencies, newAgencyIds);
 
     int queued =
         rooms.isEmpty() ? 0 : matrixRepairService.enqueueLeaves(matrixUserId, consultantId, rooms);
 
+    // Both writes to the identity provider come last and in this order: the tenant switch is the
+    // step that can refuse, and a refusal anywhere after it puts the old tenant back (#1421).
     switchIdentityTenant(consultantId, previousTenantId, newTenantId);
+    grantRolesOfTheNewCentres(consultantId, relations);
 
     auditRepository.save(
         ConsultantTenantChangeAudit.builder()
@@ -279,7 +285,7 @@ public class ConsultantTenantChangeService {
     }
   }
 
-  private void createRelations(
+  private List<ConsultantAgencyCreationInput> createRelations(
       String consultantId, List<CreateConsultantAgencyDTO> agencies, List<Long> newAgencyIds) {
     Set<Long> additionalAgencyIds = Set.copyOf(newAgencyIds);
     var inputs =
@@ -294,17 +300,49 @@ public class ConsultantTenantChangeService {
             .stream()
             .map(
                 dto ->
-                    new CreateConsultantAgencyDTOInputAdapter(consultantId, dto) {
-                      @Override
-                      public Set<Long> getAdditionalAgencyIds() {
-                        return additionalAgencyIds;
-                      }
-                    })
+                    (ConsultantAgencyCreationInput)
+                        new CreateConsultantAgencyDTOInputAdapter(consultantId, dto) {
+                          @Override
+                          public Set<Long> getAdditionalAgencyIds() {
+                            return additionalAgencyIds;
+                          }
+
+                          @Override
+                          public boolean defersIdentityRoles() {
+                            return true;
+                          }
+                        })
             .toList();
     inputs.forEach(relationCreatorService::prepareConsultantAgencyRelation);
     inputs.forEach(
         input ->
             relationCreatorService.completeConsultantAgencyAssigment(input, LogService::logInfo));
+    return inputs;
+  }
+
+  /**
+   * The roles of the new centres' consulting types, in one call. Roles are only ever added: those
+   * of the old centres stay, as they do when a centre is detached anywhere else. They carry no
+   * tenant data access, the tenant claim does.
+   */
+  private void grantRolesOfTheNewCentres(
+      String consultantId, List<ConsultantAgencyCreationInput> relations) {
+    var roles =
+        relations.stream()
+            .flatMap(input -> relationCreatorService.identityRolesOf(input).stream())
+            .collect(Collectors.toCollection(java.util.LinkedHashSet::new));
+    if (roles.isEmpty()) {
+      return;
+    }
+    try {
+      identityRoleUpdater.ensureRoles(consultantId, roles);
+    } catch (RuntimeException failure) {
+      log.error(
+          "Identity provider refused the roles of the new centres of consultant {} ({})",
+          consultantId,
+          failure.getClass().getSimpleName());
+      throw new ServiceUnavailableException("The identity provider could not grant the roles");
+    }
   }
 
   /**
@@ -313,6 +351,25 @@ public class ConsultantTenantChangeService {
    * Ending the login sessions waits for the commit and cannot undo the move.
    */
   private void switchIdentityTenant(String consultantId, Long previousTenantId, Long newTenantId) {
+    boolean transactional = TransactionSynchronizationManager.isSynchronizationActive();
+    if (transactional) {
+      // Registered before the call: the identity provider may apply the change and still fail on
+      // the way back (timeout, retry after an expired admin session). The restore is idempotent.
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+              endSessionsQuietly(consultantId);
+            }
+
+            @Override
+            public void afterCompletion(int status) {
+              if (status != STATUS_COMMITTED) {
+                restoreIdentityTenant(consultantId, previousTenantId);
+              }
+            }
+          });
+    }
     try {
       identityTenantUpdater.updateTenant(consultantId, newTenantId);
     } catch (RuntimeException failure) {
@@ -320,26 +377,14 @@ public class ConsultantTenantChangeService {
           "Identity provider refused the tenant change of consultant {} ({})",
           consultantId,
           failure.getClass().getSimpleName());
+      if (!transactional) {
+        restoreIdentityTenant(consultantId, previousTenantId);
+      }
       throw new ServiceUnavailableException("The identity provider could not change the Träger");
     }
-    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+    if (!transactional) {
       endSessionsQuietly(consultantId);
-      return;
     }
-    TransactionSynchronizationManager.registerSynchronization(
-        new TransactionSynchronization() {
-          @Override
-          public void afterCommit() {
-            endSessionsQuietly(consultantId);
-          }
-
-          @Override
-          public void afterCompletion(int status) {
-            if (status != STATUS_COMMITTED) {
-              restoreIdentityTenant(consultantId, previousTenantId);
-            }
-          }
-        });
   }
 
   private void endSessionsQuietly(String consultantId) {

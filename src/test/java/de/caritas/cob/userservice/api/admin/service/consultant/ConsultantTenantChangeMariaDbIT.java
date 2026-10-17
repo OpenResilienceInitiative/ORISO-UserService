@@ -5,6 +5,7 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROG
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -150,6 +151,11 @@ class ConsultantTenantChangeMariaDbIT {
     @Bean
     java.time.Clock clock() {
       return java.time.Clock.systemUTC();
+    }
+
+    @Bean
+    io.micrometer.core.instrument.MeterRegistry meterRegistry() {
+      return new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
     }
   }
 
@@ -452,6 +458,37 @@ class ConsultantTenantChangeMariaDbIT {
     assertThatThrownBy(this::move).isInstanceOf(ServiceUnavailableException.class);
 
     assertNothingChanged();
+    // The identity provider may have applied the write before it failed: the old tenant is put
+    // back, and no role was granted before the refusal.
+    verify(identityTenantUpdater).updateTenant(MOVER_ID, OLD_TRAEGER);
+    verify(identityRoleUpdater, never()).ensureRoles(anyString(), anyCollection());
+  }
+
+  /** #1421 finding 5b: the roles follow the tenant switch; a refused grant undoes the move. */
+  @Test
+  void aRefusedRoleGrantRollsTheWholeMoveBackAndPutsTheOldTenantBack() {
+    givenTheNewCentreGivesTheRole("new-traeger-role");
+    doThrow(new IllegalStateException("keycloak down"))
+        .when(identityRoleUpdater)
+        .ensureRoles(anyString(), anyCollection());
+
+    assertThatThrownBy(this::move).isInstanceOf(ServiceUnavailableException.class);
+
+    assertNothingChanged();
+    verify(identityTenantUpdater).updateTenant(MOVER_ID, NEW_TRAEGER);
+    verify(identityTenantUpdater).updateTenant(MOVER_ID, OLD_TRAEGER);
+  }
+
+  @Test
+  void theRolesOfTheNewCentreAreGrantedAfterTheTenantSwitchInTheSameMove() {
+    givenTheNewCentreGivesTheRole("new-traeger-role");
+
+    move();
+
+    var order = org.mockito.Mockito.inOrder(identityTenantUpdater, identityRoleUpdater);
+    order.verify(identityTenantUpdater).updateTenant(MOVER_ID, NEW_TRAEGER);
+    order.verify(identityRoleUpdater).ensureRoles(MOVER_ID, java.util.Set.of("new-traeger-role"));
+    verify(identityTenantUpdater, never()).updateTenant(MOVER_ID, OLD_TRAEGER);
   }
 
   @Test
@@ -633,6 +670,19 @@ class ConsultantTenantChangeMariaDbIT {
   }
 
   // --- helpers ---------------------------------------------------------------------------
+
+  private void givenTheNewCentreGivesTheRole(String role) {
+    var roleSets = new java.util.LinkedHashMap<String, List<String>>();
+    roleSets.put("consultant", List.of(role));
+    var consultantRoles =
+        new de.caritas.cob.userservice.api.manager.consultingtype.roles.Consultant();
+    consultantRoles.setRoleSets(roleSets);
+    var roles = new de.caritas.cob.userservice.consultingtypeservice.generated.web.model.RolesDTO();
+    roles.setConsultant(consultantRoles);
+    var settings = new ExtendedConsultingTypeResponseDTO();
+    settings.setRoles(roles);
+    when(consultingTypeManager.getConsultingTypeSettings(0)).thenReturn(settings);
+  }
 
   /** Chat server double that remembers memberships: the leave and the room lookups are real. */
   private void chatServerWithMembers() {

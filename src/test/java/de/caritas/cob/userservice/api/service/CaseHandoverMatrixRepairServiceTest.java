@@ -38,6 +38,9 @@ class CaseHandoverMatrixRepairServiceTest {
   @Mock private PlatformTransactionManager transactionManager;
   @Mock private TransactionStatus transactionStatus;
 
+  private final io.micrometer.core.instrument.simple.SimpleMeterRegistry meters =
+      new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+
   private CaseHandoverMatrixRepairService service;
 
   @BeforeEach
@@ -54,7 +57,8 @@ class CaseHandoverMatrixRepairServiceTest {
             org.mockito.Mockito.mock(
                 de.caritas.cob.userservice.api.port.out.SessionRepository.class),
             Clock.fixed(Instant.parse("2026-09-14T10:00:00Z"), ZoneOffset.UTC),
-            transactionManager);
+            transactionManager,
+            meters);
     ReflectionTestUtils.setField(service, "maxAttempts", 100);
     ReflectionTestUtils.setField(service, "retryBackoff", Duration.ofMinutes(1));
   }
@@ -392,6 +396,77 @@ class CaseHandoverMatrixRepairServiceTest {
     assertThat(task.getAttemptCount()).isEqualTo(1);
     verify(repository).save(task);
     verify(repository, org.mockito.Mockito.never()).delete(task);
+  }
+
+  /** #1421 finding 4: a revocation that is given up must not fail silently. */
+  @Test
+  void aLeaveThatUsedItsLastAttemptIsLoggedAsWarningWithoutPersonalDataAndCounted() {
+    var task = leaveTask(21L);
+    task.setAttemptCount(99);
+    when(repository.findByIdForUpdate(21L)).thenReturn(Optional.of(task));
+    var logs =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(CaseHandoverMatrixRepairService.class);
+    logs.start();
+    logger.addAppender(logs);
+    try {
+      service.recordResult(21L, 0, false);
+    } finally {
+      logger.detachAppender(logs);
+    }
+
+    assertThat(task.getAttemptCount()).isEqualTo(100);
+    assertThat(meters.counter("userservice.matrix.leave.exhausted").count()).isEqualTo(1.0);
+    assertThat(logs.list)
+        .filteredOn(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN)
+        .singleElement()
+        .satisfies(
+            event -> {
+              var message = event.getFormattedMessage();
+              assertThat(message).contains("123").contains("100");
+              // Neither the chat account, nor the room, nor the counsellor's id.
+              assertThat(message)
+                  .doesNotContain("@mover:matrix")
+                  .doesNotContain("!room:matrix")
+                  .doesNotContain("mover");
+            });
+  }
+
+  @Test
+  void aLeaveThatStillHasAttemptsLeftIsNeitherWarnedAboutNorCounted() {
+    var task = leaveTask(22L);
+    task.setAttemptCount(98);
+    when(repository.findByIdForUpdate(22L)).thenReturn(Optional.of(task));
+
+    service.recordResult(22L, 0, false);
+
+    assertThat(task.getAttemptCount()).isEqualTo(99);
+    assertThat(meters.find("userservice.matrix.leave.exhausted").counter()).isNull();
+  }
+
+  @Test
+  void aSucceededLeaveIsNotCounted() {
+    var task = leaveTask(23L);
+    task.setAttemptCount(99);
+    when(repository.findByIdForUpdate(23L)).thenReturn(Optional.of(task));
+
+    service.recordResult(23L, 0, true);
+
+    assertThat(meters.find("userservice.matrix.leave.exhausted").counter()).isNull();
+  }
+
+  @Test
+  void anExhaustedTaskOfAnotherActionIsNotCountedAsAFailedRevocation() {
+    var task = leaveTask(24L);
+    task.setAction(CaseHandoverMatrixRepairAction.JOIN);
+    task.setAttemptCount(99);
+    when(repository.findByIdForUpdate(24L)).thenReturn(Optional.of(task));
+
+    service.recordResult(24L, 0, false);
+
+    assertThat(meters.find("userservice.matrix.leave.exhausted").counter()).isNull();
   }
 
   private static CaseHandoverMatrixRepairTask leaveTask(long id) {

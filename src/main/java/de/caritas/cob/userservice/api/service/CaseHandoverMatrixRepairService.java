@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverMatrixRepairTaskRepository;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -37,12 +38,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Slf4j
 public class CaseHandoverMatrixRepairService {
 
+  /** Counts revocations the repair queue gave up on; alert on any increase. */
+  static final String LEAVE_EXHAUSTED_METRIC = "userservice.matrix.leave.exhausted";
+
   private final @NonNull CaseHandoverMatrixRepairTaskRepository repository;
   private final @NonNull CaseHandoverRequestRepository handoverRequestRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull Clock clock;
   private final @NonNull PlatformTransactionManager transactionManager;
+  private final @NonNull MeterRegistry meterRegistry;
 
   @Value("${case.handover.matrix-repair.max-attempts:100}")
   private int maxAttempts;
@@ -469,10 +474,29 @@ public class CaseHandoverMatrixRepairService {
                       task.setAttemptCount(task.getAttemptCount() + 1);
                       task.setLastAttemptAt(LocalDateTime.now(clock));
                       repository.save(task);
+                      reportExhaustedLeave(task);
                     }
                   });
           return null;
         });
+  }
+
+  /**
+   * A LEAVE that is given up leaves the counsellor in a room of a Träger they no longer belong to
+   * (#1421). That must not pass unseen: a WARN without ids of people or rooms, and a counter an
+   * alert can watch.
+   */
+  private void reportExhaustedLeave(CaseHandoverMatrixRepairTask task) {
+    if (task.getAction() != CaseHandoverMatrixRepairAction.LEAVE
+        || task.getAttemptCount() != maxAttempts) {
+      return;
+    }
+    meterRegistry.counter(LEAVE_EXHAUSTED_METRIC).increment();
+    log.warn(
+        "Chat room membership of a counsellor who changed the Träger could not be revoked for"
+            + " session {} after {} attempts; the repair queue gave up on it",
+        task.getSessionId(),
+        task.getAttemptCount());
   }
 
   private <T> T inNewTransaction(java.util.function.Supplier<T> action) {

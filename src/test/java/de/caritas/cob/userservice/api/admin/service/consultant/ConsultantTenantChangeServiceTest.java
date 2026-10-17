@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTenantChangeAuditRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
@@ -81,6 +82,7 @@ class ConsultantTenantChangeServiceTest {
   @Mock private OldTraegerRoomFinder roomFinder;
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private IdentityTenantUpdater identityTenantUpdater;
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private AdminRepository adminRepository;
   @Mock private ConsultantTenantChangeAuditRepository auditRepository;
 
@@ -101,6 +103,7 @@ class ConsultantTenantChangeServiceTest {
             roomFinder,
             matrixRepairService,
             identityTenantUpdater,
+            identityRoleUpdater,
             adminRepository,
             auditRepository,
             Clock.fixed(Instant.parse("2026-10-16T09:00:00Z"), ZoneOffset.UTC));
@@ -389,6 +392,94 @@ class ConsultantTenantChangeServiceTest {
     verify(auditRepository, never()).save(any());
   }
 
+  /**
+   * #1421 finding 5a: the identity provider can apply the change and still fail on the way back (a
+   * timeout, the retry after an expired admin session). The restore must already be registered.
+   */
+  @Test
+  void putsTheOldTenantBackEvenWhenTheIdentityProviderFailedAfterApplyingIt() {
+    TransactionSynchronizationManager.initSynchronization();
+    found();
+    oldAgencies(700L);
+    when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
+        .thenReturn(Map.of());
+    doThrow(new IllegalStateException("timeout after the write"))
+        .when(identityTenantUpdater)
+        .updateTenant(CONSULTANT_ID, NEW_TENANT);
+
+    assertThatThrownBy(() -> move(NEW_TENANT, 800L))
+        .isInstanceOf(ServiceUnavailableException.class);
+    // The exception rolls the transaction back; Spring then completes the registered hooks.
+    TransactionSynchronizationManager.getSynchronizations()
+        .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+
+    verify(identityTenantUpdater).updateTenant(CONSULTANT_ID, OLD_TENANT);
+    verify(identityRoleUpdater, never()).ensureRoles(anyString(), anyCollection());
+  }
+
+  /**
+   * #1421 finding 5b: roles are a second write to the identity provider. They come after the tenant
+   * switch, the only step that can refuse, and not while the relations are made.
+   */
+  @Test
+  void grantsTheRolesOfTheNewCentresOnlyAfterTheTenantWasSwitched() {
+    found();
+    oldAgencies(700L);
+    when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
+        .thenReturn(Map.of());
+    var created = createdRelationsRecorder();
+    when(relationCreatorService.identityRolesOf(any()))
+        .thenAnswer(
+            invocation ->
+                ((ConsultantAgencyCreationInput) invocation.getArgument(0)).getAgencyId() == 800L
+                    ? Set.of("role-a")
+                    : Set.of("role-a", "role-b"));
+
+    service.changeTenant(
+        CONSULTANT_ID, NEW_TENANT, List.of(agency(800L), agency(801L)), null, ACTOR_ID);
+
+    assertThat(created.rolesDeferred).containsExactly(true, true);
+    InOrder order = inOrder(identityTenantUpdater, identityRoleUpdater);
+    order.verify(identityTenantUpdater).updateTenant(CONSULTANT_ID, NEW_TENANT);
+    order
+        .verify(identityRoleUpdater)
+        .ensureRoles(eq(CONSULTANT_ID), eq(Set.of("role-a", "role-b")));
+  }
+
+  @Test
+  void aRefusedRoleGrantRollsTheMoveBackAndPutsTheOldTenantBack() {
+    TransactionSynchronizationManager.initSynchronization();
+    found();
+    oldAgencies(700L);
+    when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
+        .thenReturn(Map.of());
+    when(relationCreatorService.identityRolesOf(any())).thenReturn(Set.of("role-a"));
+    doThrow(new IllegalStateException("keycloak down"))
+        .when(identityRoleUpdater)
+        .ensureRoles(anyString(), anyCollection());
+
+    assertThatThrownBy(() -> move(NEW_TENANT, 800L))
+        .isInstanceOf(ServiceUnavailableException.class);
+    TransactionSynchronizationManager.getSynchronizations()
+        .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+
+    verify(identityTenantUpdater).updateTenant(CONSULTANT_ID, OLD_TENANT);
+    verify(auditRepository, never()).save(any());
+  }
+
+  @Test
+  void grantsNoRolesWhenTheNewCentresNeedNone() {
+    found();
+    oldAgencies(700L);
+    when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
+        .thenReturn(Map.of());
+    when(relationCreatorService.identityRolesOf(any())).thenReturn(Set.of());
+
+    move(NEW_TENANT, 800L);
+
+    verify(identityRoleUpdater, never()).ensureRoles(anyString(), anyCollection());
+  }
+
   @Test
   void putsTheOldTenantBackIntoTheIdentityProviderWhenTheTransactionRollsBack() {
     TransactionSynchronizationManager.initSynchronization();
@@ -503,6 +594,7 @@ class ConsultantTenantChangeServiceTest {
               ConsultantAgencyCreationInput input = invocation.getArgument(0);
               recorder.tenantAtCreation.add(consultant.getTenantId());
               recorder.additionalAgencyIds.add(List.copyOf(input.getAdditionalAgencyIds()));
+              recorder.rolesDeferred.add(input.defersIdentityRoles());
               return null;
             })
         .when(relationCreatorService)
@@ -513,5 +605,6 @@ class ConsultantTenantChangeServiceTest {
   private static final class Recorder {
     final java.util.List<Long> tenantAtCreation = new java.util.ArrayList<>();
     final java.util.List<List<Long>> additionalAgencyIds = new java.util.ArrayList<>();
+    final java.util.List<Boolean> rolesDeferred = new java.util.ArrayList<>();
   }
 }
