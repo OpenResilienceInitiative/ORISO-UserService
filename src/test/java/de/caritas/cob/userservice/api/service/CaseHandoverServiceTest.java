@@ -22,6 +22,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.matrix.FakeSynapseHomeserver;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -185,7 +186,15 @@ class CaseHandoverServiceTest {
         .thenReturn(List.of());
     when(caseHandoverRequestRepository.save(any(CaseHandoverRequest.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(matrixSynapseService.getRoomMembers(anyString())).thenReturn(Optional.of(List.of()));
+    // By default the previous owner is still a room member (their token does the inviting); the
+    // #1422 tests below cover the owner having left.
+    when(matrixSynapseService.getRoomMembers(anyString()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    previous.getMatrixUserId() == null
+                        ? List.<String>of()
+                        : List.of(previous.getMatrixUserId())));
     // Revoking co-access gives the requester their member power level back first (#200).
     when(matrixSynapseService.setUserPowerLevel(anyString(), anyString(), eq(0), anyString()))
         .thenReturn(true);
@@ -4165,5 +4174,165 @@ class CaseHandoverServiceTest {
         .getClientConsent()
         .setValue(CaseHandoverConsentValue.OPT_IN);
     when(caseHandoverPolicyCacheService.getEffective(7L)).thenReturn(policies);
+  }
+
+  // ── #1422: takeover when the previous owner has left the Matrix room ───────
+  //
+  // These tests put a Synapse that remembers membership behind the real Matrix gateway, so a join
+  // only succeeds when Synapse would let it (invite-only rooms) - never "always true".
+
+  private static final String HOMESERVER = FakeSynapseHomeserver.SERVER_NAME;
+  private static final String PREVIOUS_MXID = FakeSynapseHomeserver.mxid("previous");
+  private static final String REQUESTER_MXID = FakeSynapseHomeserver.mxid("requester");
+  private static final String ASKER_MXID = FakeSynapseHomeserver.mxid("asker");
+  private static final String SILENT_COLLEAGUE_MXID = FakeSynapseHomeserver.mxid("silent");
+  private static final String ADMIN_MXID = FakeSynapseHomeserver.adminMxid();
+
+  private FakeSynapseHomeserver homeserver;
+  private String caseRoom;
+
+  /**
+   * A session room the way ADR-002 leaves it after acceptance: owner at 100, seeker, tech admin.
+   */
+  private void givenCaseRoomWithOwnerSeekerAndTechnicalAdmin() {
+    homeserver = new FakeSynapseHomeserver();
+    caseRoom = homeserver.createRoom(PREVIOUS_MXID);
+    homeserver.member(caseRoom, ASKER_MXID, 0).member(caseRoom, ADMIN_MXID, 0);
+    homeserver.account(REQUESTER_MXID);
+    session.setMatrixRoomId(caseRoom);
+    asker.setMatrixUserId(ASKER_MXID);
+    previous.setMatrixUserId(PREVIOUS_MXID);
+    requester.setMatrixUserId(REQUESTER_MXID);
+    assignValidRequesterId();
+    ReflectionTestUtils.setField(caseHandoverService, "matrixSynapseService", homeserver.gateway());
+  }
+
+  /** What the repair queue's LEAVE task does after a Traeger change (#1421). */
+  private void previousOwnerHasLeft() {
+    homeserver.memberLeaves(caseRoom, PREVIOUS_MXID);
+  }
+
+  private CaseHandoverStatus takeOverBecauseAssignmentEnded() {
+    return caseHandoverService.requestAccess(123L, "ASSIGNMENT_ENDED", "Counsellor moved on.");
+  }
+
+  @Test
+  void takeover_joinsAColleagueWhoIsNotInTheRoom_whenThePreviousOwnerHasLeft() {
+    // The colleague joined the centre after the case was accepted, so the department's silent
+    // members (ADR-002) never included them.
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, SILENT_COLLEAGUE_MXID, 0);
+    previousOwnerHasLeft();
+
+    takeOverBecauseAssignmentEnded();
+
+    assertTrue(homeserver.isMember(caseRoom, REQUESTER_MXID));
+    assertTrue(homeserver.canPost(caseRoom, REQUESTER_MXID));
+    assertFalse(homeserver.isMember(caseRoom, PREVIOUS_MXID));
+    assertEquals(requester, session.getConsultant());
+    verify(caseHandoverRequestRepository)
+        .save(
+            org.mockito.ArgumentMatchers.argThat(
+                saved -> Boolean.TRUE.equals(saved.getMatrixMembershipAdded())));
+  }
+
+  @Test
+  void takeover_joinsAColleagueIntoADirectlyAssignedSessionRoom_whenThePreviousOwnerHasLeft() {
+    // Directly assigned sessions never get department members: only owner, seeker and tech admin.
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    previousOwnerHasLeft();
+
+    takeOverBecauseAssignmentEnded();
+
+    assertTrue(homeserver.canPost(caseRoom, REQUESTER_MXID));
+    assertEquals(Set.of(ASKER_MXID, ADMIN_MXID, REQUESTER_MXID), homeserver.members(caseRoom));
+  }
+
+  @Test
+  void takeover_reachesTheAdminThroughAStaffMember_whenAnOlderRoomNeverGotTheTechnicalAdmin() {
+    // Pre-ADR-002 case: no department membership, no technical admin (never provisioned), and the
+    // owner has left. The only way in is a staff member who is still there.
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.memberLeaves(caseRoom, ADMIN_MXID);
+    homeserver.member(caseRoom, SILENT_COLLEAGUE_MXID, 0);
+    previousOwnerHasLeft();
+
+    takeOverBecauseAssignmentEnded();
+
+    assertTrue(homeserver.canPost(caseRoom, REQUESTER_MXID));
+  }
+
+  @Test
+  void takeover_failsClearlyAndChangesNothing_whenNoStaffMemberCanLetTheAdminIn() {
+    // Only the advice seeker is left: the seeker's account must not be impersonated to let the
+    // admin in, so the takeover is refused instead of ending in a half state.
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.memberLeaves(caseRoom, ADMIN_MXID);
+    previousOwnerHasLeft();
+
+    assertThrows(InternalServerErrorException.class, this::takeOverBecauseAssignmentEnded);
+
+    assertFalse(homeserver.isMember(caseRoom, REQUESTER_MXID));
+    verify(sessionOwnershipService, never())
+        .updateOwner(any(Session.class), any(Consultant.class), any(SessionStatus.class), any());
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void takeover_givesTheNewOwnerPowerLevel100_whenAJoinedMemberStillHoldsPower() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, ADMIN_MXID, 100);
+    previousOwnerHasLeft();
+
+    takeOverBecauseAssignmentEnded();
+
+    assertEquals(100, homeserver.powerOf(caseRoom, REQUESTER_MXID));
+  }
+
+  @Test
+  void takeover_stillSucceedsAtPowerLevel0_whenNobodyLeftInTheRoomCanRaiseIt() {
+    // Synapse's make_room_admin acts through a joined local member with power; the owner left and
+    // nobody else holds any. The case must still reach the colleague - Synapse's limit, not a
+    // reason to leave the advice seeker with nobody (documented in the PR).
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    previousOwnerHasLeft();
+
+    takeOverBecauseAssignmentEnded();
+
+    assertTrue(homeserver.canPost(caseRoom, REQUESTER_MXID));
+    assertEquals(0, homeserver.powerOf(caseRoom, REQUESTER_MXID));
+  }
+
+  @Test
+  void takeover_keepsThePreviousFlowUnchanged_whenThePreviousOwnerIsStillInTheRoom() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+
+    takeOverBecauseAssignmentEnded();
+
+    assertTrue(homeserver.isMember(caseRoom, REQUESTER_MXID));
+    assertTrue(homeserver.isMember(caseRoom, PREVIOUS_MXID));
+    assertEquals(100, homeserver.powerOf(caseRoom, REQUESTER_MXID));
+    assertEquals(0, homeserver.adminJoinRequests() + homeserver.makeRoomAdminRequests());
+  }
+
+  @Test
+  void takeover_removesTheJoinedColleagueAgainOnRollback_withoutTheLeftOwner() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    previousOwnerHasLeft();
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      takeOverBecauseAssignmentEnded();
+      assertTrue(homeserver.isMember(caseRoom, REQUESTER_MXID));
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(
+              synchronization ->
+                  synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    assertFalse(homeserver.isMember(caseRoom, REQUESTER_MXID));
+    verify(matrixRepairService, never()).enqueueRemoval(any(), any(), any(), any(), any());
   }
 }

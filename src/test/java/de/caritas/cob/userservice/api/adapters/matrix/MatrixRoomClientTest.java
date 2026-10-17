@@ -733,4 +733,99 @@ class MatrixRoomClientTest {
 
     assertThat(matrixRoomClient.banUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
   }
+
+  // ── forceJoinUser / makeRoomAdmin (Synapse admin API, #1422) ────────────────
+
+  private static final String ADMIN_TOKEN = "admin-token";
+
+  @Test
+  void forceJoinUser_ShouldPostUserIdToTheAdminJoinEndpointWithTheAdminToken() {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_synapse/admin/v1/join/" + ENCODED_ROOM_ID)),
+            mapRequestCaptor.capture(),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("room_id", ROOM_ID)));
+
+    assertThat(matrixRoomClient.forceJoinUser(ROOM_ID, USER_ID, ADMIN_TOKEN)).isTrue();
+
+    assertThat(mapRequestCaptor.getValue().getHeaders().getFirst("Authorization"))
+        .isEqualTo("Bearer " + ADMIN_TOKEN);
+    assertThat(mapRequestCaptor.getValue().getBody()).isEqualTo(Map.of("user_id", USER_ID));
+  }
+
+  @Test
+  void forceJoinUser_ShouldReturnFalse_WhenSynapseRefusesTheJoin() {
+    doThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN,
+                "Forbidden",
+                null,
+                "{\"error\":\"not in room\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .when(restTemplate)
+        .postForEntity(
+            eq(uri(API_URL + "/_synapse/admin/v1/join/" + ENCODED_ROOM_ID)),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.forceJoinUser(ROOM_ID, USER_ID, ADMIN_TOKEN)).isFalse();
+  }
+
+  @Test
+  void forceJoinUser_ShouldReturnFalse_WhenSynapseIsUnreachable() {
+    doThrow(new RuntimeException("synapse down"))
+        .when(restTemplate)
+        .postForEntity(
+            eq(uri(API_URL + "/_synapse/admin/v1/join/" + ENCODED_ROOM_ID)),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.forceJoinUser(ROOM_ID, USER_ID, ADMIN_TOKEN)).isFalse();
+  }
+
+  @Test
+  void makeRoomAdmin_ShouldPostUserIdToTheMakeRoomAdminEndpointWithTheAdminToken() {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_synapse/admin/v1/rooms/" + ENCODED_ROOM_ID + "/make_room_admin")),
+            mapRequestCaptor.capture(),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+
+    assertThat(matrixRoomClient.makeRoomAdmin(ROOM_ID, USER_ID, ADMIN_TOKEN)).isTrue();
+
+    assertThat(mapRequestCaptor.getValue().getHeaders().getFirst("Authorization"))
+        .isEqualTo("Bearer " + ADMIN_TOKEN);
+    assertThat(mapRequestCaptor.getValue().getBody()).isEqualTo(Map.of("user_id", USER_ID));
+  }
+
+  @Test
+  void makeRoomAdmin_ShouldReturnFalse_WhenNoLocalMemberCanChangePowerLevels() {
+    doThrow(
+            HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,
+                "Bad Request",
+                null,
+                "{\"error\":\"No local admin user in room with power to update power levels.\"}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .when(restTemplate)
+        .postForEntity(
+            eq(uri(API_URL + "/_synapse/admin/v1/rooms/" + ENCODED_ROOM_ID + "/make_room_admin")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.makeRoomAdmin(ROOM_ID, USER_ID, ADMIN_TOKEN)).isFalse();
+  }
+
+  @Test
+  void makeRoomAdmin_ShouldReturnFalse_WhenSynapseIsUnreachable() {
+    doThrow(new RuntimeException("synapse down"))
+        .when(restTemplate)
+        .postForEntity(
+            eq(uri(API_URL + "/_synapse/admin/v1/rooms/" + ENCODED_ROOM_ID + "/make_room_admin")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.makeRoomAdmin(ROOM_ID, USER_ID, ADMIN_TOKEN)).isFalse();
+  }
 }

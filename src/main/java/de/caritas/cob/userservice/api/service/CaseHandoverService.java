@@ -2601,12 +2601,30 @@ public class CaseHandoverService {
       throw new InternalServerErrorException(
           "Case handover requester does not have Matrix credentials");
     }
+
+    String roomId = session.getMatrixRoomId();
+    var membersBefore = matrixSynapseService.getRoomMembers(roomId);
+    if (membersBefore.isEmpty()) {
+      throw new ServiceUnavailableException(
+          "Case Handover Matrix membership could not be verified");
+    }
+
+    // After a Traeger change the previous owner has left the room (the LEAVE repair task), so
+    // there is nobody whose token could invite the new owner or raise their power level. Only a
+    // takeover can end up here: a co-access needs the owner in the room to be made read-only.
+    boolean previousOwnerInRoom =
+        previousConsultant != null
+            && !isBlank(previousConsultant.getMatrixUserId())
+            && membersBefore.get().contains(previousConsultant.getMatrixUserId());
+    if (accessType == AccessType.TAKEOVER && !previousOwnerInRoom) {
+      return ensureRequesterJoinedWithoutPreviousOwner(session, requester, membersBefore.get());
+    }
+
     if (previousConsultant == null || isBlank(previousConsultant.getMatrixUserId())) {
       throw new InternalServerErrorException(
           "Previous consultant does not have Matrix credentials for case handover");
     }
 
-    String roomId = session.getMatrixRoomId();
     String previousConsultantToken =
         matrixSynapseService.loginAsUserAccessToken(previousConsultant.getMatrixUserId());
     if (isBlank(previousConsultantToken)) {
@@ -2636,11 +2654,6 @@ public class CaseHandoverService {
           "Failed to create requester Matrix token for case handover");
     }
 
-    var membersBefore = matrixSynapseService.getRoomMembers(roomId);
-    if (membersBefore.isEmpty()) {
-      throw new ServiceUnavailableException(
-          "Case Handover Matrix membership could not be verified");
-    }
     boolean wasMemberBefore = membersBefore.get().contains(requester.getMatrixUserId());
 
     boolean joined = matrixSynapseService.joinRoom(roomId, requesterToken);
@@ -2700,6 +2713,70 @@ public class CaseHandoverService {
     // case when they return — and under Megolm a counsellor removed here could never be given the
     // history back. Hiding the conversation is the application curtain's job, not Matrix's.
     return !wasMemberBefore;
+  }
+
+  /**
+   * Takeover when the previous owner is no longer in the Matrix room, e.g. because the repair queue
+   * made them leave after a Traeger change. Their token can neither invite the new owner nor raise
+   * a power level any more, so the technical Matrix admin does both instead: a force-join (it
+   * invites as the admin, the pattern {@code ensureAdminInRoom} uses) and {@code make_room_admin}.
+   *
+   * <p>The join is mandatory - without it the case would stay with someone who is gone, so a
+   * failure ends the takeover and the surrounding transaction rolls back. The owner power level is
+   * best effort: Synapse hands it out through a joined member who still holds power, and in a room
+   * where nobody does the new owner stays at level 0, which still lets them answer the advice
+   * seeker.
+   *
+   * @return true when this call added the requester to the room
+   */
+  private boolean ensureRequesterJoinedWithoutPreviousOwner(
+      Session session, Consultant requester, List<String> membersBefore) {
+    String requesterMatrixId = requester.getMatrixUserId();
+    String requesterToken = matrixSynapseService.loginAsUserAccessToken(requesterMatrixId);
+    if (isBlank(requesterToken)) {
+      throw new InternalServerErrorException(
+          "Failed to create requester Matrix token for case handover");
+    }
+
+    String roomId = session.getMatrixRoomId();
+    boolean wasMemberBefore = membersBefore.contains(requesterMatrixId);
+    if (!wasMemberBefore) {
+      // The admin has to be in the room to add anybody. If an older room never got it, a staff
+      // member who is still there lets it in; the advice seeker's account is never used for that.
+      String staffMember = firstStaffMember(session, requesterMatrixId, membersBefore);
+      if (!matrixSynapseService.forceJoinUserToRoom(roomId, requesterMatrixId, staffMember)) {
+        throw new InternalServerErrorException(
+            "Failed to join case handover requester to Matrix room: the previous owner has left"
+                + " and the technical Matrix admin could not add the requester");
+      }
+      // The previous owner is gone, so the requester removes themselves again on rollback.
+      registerMatrixJoinRollbackCompensation(
+          roomId,
+          requesterMatrixId,
+          session.getId(),
+          requester.getId(),
+          requesterMatrixId,
+          requesterToken,
+          false);
+    }
+
+    if (!matrixSynapseService.makeRoomAdmin(roomId, requesterMatrixId)) {
+      log.warn(
+          "Could not give the new owner of session {} the owner power level in room {}: no joined"
+              + " room member holds power to raise it",
+          session.getId(),
+          roomId);
+    }
+    return !wasMemberBefore;
+  }
+
+  private static String firstStaffMember(
+      Session session, String requesterMatrixId, List<String> members) {
+    String askerMatrixId = session.getUser() == null ? null : session.getUser().getMatrixUserId();
+    return members.stream()
+        .filter(member -> !member.equals(requesterMatrixId) && !member.equals(askerMatrixId))
+        .findFirst()
+        .orElse(null);
   }
 
   /**
