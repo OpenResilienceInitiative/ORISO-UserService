@@ -2,12 +2,17 @@ package de.caritas.cob.userservice.api.service.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -88,6 +93,32 @@ class DatabaseMemberSetLockTest {
       release.countDown();
       pool.shutdownNow();
     }
+  }
+
+  @Test
+  void aLockThatCannotBeReleasedEndsTheDatabaseSessionSoItCannotStayHeldOnAPooledConnection()
+      throws Exception {
+    var metadata = mock(DatabaseMetaData.class);
+    when(metadata.getDatabaseProductName()).thenReturn("MariaDB");
+    var taken = mock(ResultSet.class);
+    when(taken.next()).thenReturn(true);
+    when(taken.getInt(1)).thenReturn(1);
+    var getLock = mock(PreparedStatement.class);
+    when(getLock.executeQuery()).thenReturn(taken);
+    var connection = mock(Connection.class);
+    when(connection.getMetaData()).thenReturn(metadata);
+    when(connection.prepareStatement("SELECT GET_LOCK(?, ?)")).thenReturn(getLock);
+    when(connection.prepareStatement("SELECT RELEASE_LOCK(?)"))
+        .thenThrow(new SQLException("statement cancelled"));
+    var dataSource = mock(DataSource.class);
+    when(dataSource.getConnection()).thenReturn(connection);
+
+    var lock = new DatabaseMemberSetLock(dataSource, 1);
+    lock.acquire(List.of("a", "b")).close();
+
+    // A session that still holds the lock would keep every other replica waiting until the pool
+    // retires the connection; ending the session releases the lock on the server.
+    verify(connection).abort(any());
   }
 
   private static DataSource h2() {

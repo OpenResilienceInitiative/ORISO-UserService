@@ -130,8 +130,20 @@ public class DatabaseMemberSetLock implements MemberSetLock {
       statement.executeQuery().close();
     } catch (SQLException failure) {
       log.warn("The lock for a members-only room could not be released: {}", failure.getMessage());
+      // The lock belongs to this database session. If it is still held, handing the connection
+      // back to the pool would keep it held (and other replicas waiting) until the pool retires
+      // the connection. Ending the session releases it on the server.
+      abortQuietly(connection);
     } finally {
       closeQuietly(connection);
+    }
+  }
+
+  private static void abortQuietly(Connection connection) {
+    try {
+      connection.abort(Runnable::run);
+    } catch (SQLException | RuntimeException ignored) {
+      // the connection is unusable either way; closeQuietly discards it
     }
   }
 

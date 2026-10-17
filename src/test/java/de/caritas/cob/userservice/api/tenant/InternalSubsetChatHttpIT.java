@@ -462,6 +462,28 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void aBlankOrMissingEntryInTheSelectionRefusesTheRequestInsteadOfBeingDropped() throws Exception {
+    for (var invalidEntry : List.of("\"\"", "\"   \"", "null")) {
+      var response =
+          request(
+              "POST",
+              "/users/chat/internal-subset",
+              creator,
+              "{\"consultantIds\":[\""
+                  + sameCentre.getId()
+                  + "\","
+                  + invalidEntry
+                  + "],\"agencyId\":"
+                  + CENTRE
+                  + "}");
+
+      assertThat(response.statusCode()).as(invalidEntry + ": " + response.body()).isEqualTo(400);
+      assertThat(reason(response)).as(invalidEntry).isEqualTo("INTERNAL_CHAT_RECIPIENT_UNKNOWN");
+      assertNothingWasCreated();
+    }
+  }
+
+  @Test
   void aFailedInviteLeavesNoRoomNoChatAndNoSessionBehind() throws Exception {
     synapse.refuseInvitationOf(matrix(anotherSameCentre));
 

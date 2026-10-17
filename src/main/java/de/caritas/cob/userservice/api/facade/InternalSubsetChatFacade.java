@@ -107,10 +107,16 @@ public class InternalSubsetChatFacade {
   private static Set<String> colleagueIdsOf(InternalSubsetChatDTO request, Consultant creator) {
     var ids = new LinkedHashSet<String>();
     if (request.getConsultantIds() != null) {
-      request.getConsultantIds().stream()
-          .filter(id -> id != null && !id.isBlank())
-          .filter(id -> !id.equals(creator.getId()))
-          .forEach(ids::add);
+      for (String id : request.getConsultantIds()) {
+        // A selection is never shortened silently: an entry that names nobody refuses the request.
+        if (id == null || id.isBlank()) {
+          throw new CustomValidationHttpStatusException(
+              HttpStatusExceptionReason.INTERNAL_CHAT_RECIPIENT_UNKNOWN);
+        }
+        if (!id.equals(creator.getId())) {
+          ids.add(id);
+        }
+      }
     }
     if (ids.isEmpty()) {
       throw new CustomValidationHttpStatusException(

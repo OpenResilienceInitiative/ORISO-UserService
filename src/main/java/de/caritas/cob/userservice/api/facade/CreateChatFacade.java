@@ -298,11 +298,14 @@ public class CreateChatFacade {
               matrixRoomId);
         }
       }
-      // Rollback: delete session and chat
+      // Rollback: delete session and chat. A step that fails is remembered: the caller must not be
+      // told that nothing was left behind when a record still is.
+      var recordsLeftBehind = false;
       if (session.getId() != null) {
         try {
           sessionService.deleteSession(session);
         } catch (Exception ex) {
+          recordsLeftBehind = true;
           log.error("Failed to rollback session: {}", ex.getMessage());
         }
       }
@@ -310,13 +313,14 @@ public class CreateChatFacade {
         try {
           chatService.deleteChat(chat);
         } catch (Exception ex) {
+          recordsLeftBehind = true;
           log.error("Failed to rollback chat: {}", ex.getMessage());
         }
       }
-      if (roomLeftBehind) {
-        // Not the "nothing was left behind" answer: the room is still there.
+      if (roomLeftBehind || recordsLeftBehind) {
+        // Not the "nothing was left behind" answer: the room or a record is still there.
         throw new InternalServerErrorException(
-            "Failed to create group chat and the room could not be removed again");
+            "Failed to create group chat and it could not be removed again");
       }
       if (e instanceof CustomValidationHttpStatusException reasoned) {
         throw reasoned;

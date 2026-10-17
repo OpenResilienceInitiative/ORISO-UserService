@@ -1372,7 +1372,8 @@ paths:
         400:
           description: >-
             BAD REQUEST - X-Reason INTERNAL_CHAT_RECIPIENTS_REQUIRED (no colleague besides the caller) or
-            INTERNAL_CHAT_RECIPIENT_UNKNOWN (a colleague the caller may pick has no chat identity yet and cannot join a room)
+            INTERNAL_CHAT_RECIPIENT_UNKNOWN (a colleague the caller may pick has no chat identity yet and cannot join a room,
+            or an entry of consultantIds is null or blank; the selection is never shortened silently)
           headers:
             X-Reason:
               schema:
