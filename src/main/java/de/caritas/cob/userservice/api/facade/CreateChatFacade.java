@@ -315,7 +315,7 @@ public class CreateChatFacade {
       }
       if (chat != null && chat.getId() != null) {
         try {
-          chatService.deleteChat(chat);
+          chatService.deleteChatRecords(chat);
         } catch (Exception ex) {
           recordsLeftBehind = true;
           log.error("Failed to rollback chat: {}", ex.getMessage());

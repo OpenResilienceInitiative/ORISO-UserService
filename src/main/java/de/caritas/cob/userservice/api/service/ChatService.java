@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
+import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatParticipantDTO;
@@ -75,6 +76,7 @@ public class ChatService {
   private final @NonNull GroupChatConsultantAccess groupChatConsultantAccess;
   private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
   private final @NonNull MembersOnlyRevocation membersOnlyRevocation;
+  private final @NonNull MatrixChatShutdownService matrixChatShutdownService;
   private final @NonNull GroupChatInviteTokenService groupChatInviteTokenService;
 
   /**
@@ -516,6 +518,21 @@ public class ChatService {
    */
   @Transactional
   public void deleteChat(Chat chat) {
+    deleteChatRecords(chat);
+    if (chat.isMembersOnly()) {
+      // Last, inside this transaction: a room that cannot be purged still holds everyone, so the
+      // whole deletion rolls back and can be repeated. Ordinary chats are shut down by the caller,
+      // best effort.
+      matrixChatShutdownService.shutdownRoom(chat);
+    }
+  }
+
+  /**
+   * Deletes the chat and what hangs on it in the database only, for a caller that has dealt with
+   * the Matrix room itself (the rollback of a failed creation).
+   */
+  @Transactional
+  public void deleteChatRecords(Chat chat) {
     // Needs the participations: they name the case of a members-only chat.
     membersOnlyRevocation.retireCaseOf(chat);
     groupChatParticipantRepository.deleteBySeriesId(chat.getId());

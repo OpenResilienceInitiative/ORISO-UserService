@@ -301,7 +301,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         () -> createChatFacade.createChatV1(chatDto, consultant));
 
     verify(sessionService).deleteSession(any());
-    verify(chatService).deleteChat(any());
+    verify(chatService).deleteChatRecords(any());
   }
 
   @Test
@@ -316,7 +316,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         () -> createChatFacade.createChatV1(chatDto, consultant));
 
     verify(sessionService).deleteSession(any());
-    verify(chatService).deleteChat(any());
+    verify(chatService).deleteChatRecords(any());
   }
 
   @Test
@@ -332,7 +332,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         () -> createChatFacade.createChatV1(chatDto, consultant));
 
     verify(sessionService).deleteSession(any());
-    verify(chatService).deleteChat(any());
+    verify(chatService).deleteChatRecords(any());
   }
 
   @Test
@@ -349,7 +349,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         () -> createChatFacade.createChatV1(chatDto, consultant));
 
     verify(sessionService).deleteSession(any());
-    verify(chatService).deleteChat(any());
+    verify(chatService).deleteChatRecords(any());
   }
 
   // ---------------------------------------------------------------------------
@@ -463,7 +463,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     assertThat(failure.getHttpStatus().value()).isEqualTo(502);
     verify(matrixSynapseService).purgeRoomOrConfirmGone("!room:matrix.org");
     verify(sessionService).deleteSession(any());
-    verify(chatService).deleteChat(any());
+    verify(chatService).deleteChatRecords(any());
   }
 
   @Test
@@ -479,14 +479,14 @@ class CreateChatSimplifiedGroupChatFacadeTest {
                 chatDtoWithConsultantIds(List.of()), consultant, List.of(colleague)));
 
     // The chat is still removed: one failed cleanup step does not skip the other.
-    verify(chatService).deleteChat(any());
+    verify(chatService).deleteChatRecords(any());
   }
 
   @Test
   void createMembersOnlyChat_Should_NotClaimACleanRollback_When_TheChatCannotBeDeleted()
       throws Exception {
     var colleague = colleagueWhoseInviteIsRefused();
-    doThrow(new RuntimeException("database down")).when(chatService).deleteChat(any());
+    doThrow(new RuntimeException("database down")).when(chatService).deleteChatRecords(any());
 
     assertThrows(
         InternalServerErrorException.class,

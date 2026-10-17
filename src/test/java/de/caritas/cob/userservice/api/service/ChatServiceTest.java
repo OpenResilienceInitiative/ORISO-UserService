@@ -28,8 +28,10 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
@@ -84,6 +86,8 @@ class ChatServiceTest {
   private de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation membersOnlyRevocation;
 
   @Mock private ChatRepository chatRepository;
+
+  @Mock private MatrixChatShutdownService shutdown;
 
   @Mock private ChatAgencyRepository chatAgencyRepository;
 
@@ -762,6 +766,29 @@ class ChatServiceTest {
     deletionOrder.verify(membersOnlyRevocation).retireCaseOf(chat);
     deletionOrder.verify(groupChatParticipantRepository).deleteBySeriesId(CHAT_ID);
     deletionOrder.verify(chatRepository).delete(chat);
+  }
+
+  @Test
+  void deleteChat_Should_purgeTheRoomOfAMembersOnlyChatInTheSameTransactionAsTheLastStep() {
+    Chat chat = new Chat();
+    chat.setId(CHAT_ID);
+    chat.setMembersOnly(true);
+
+    chatService.deleteChat(chat);
+
+    var order = inOrder(chatRepository, shutdown);
+    order.verify(chatRepository).delete(chat);
+    order.verify(shutdown).shutdownRoom(chat);
+  }
+
+  @Test
+  void deleteChat_Should_leaveTheRoomOfAnOrdinaryChatToItsCaller() {
+    Chat chat = new Chat();
+    chat.setId(CHAT_ID);
+
+    chatService.deleteChat(chat);
+
+    verifyNoInteractions(shutdown);
   }
 
   @Test

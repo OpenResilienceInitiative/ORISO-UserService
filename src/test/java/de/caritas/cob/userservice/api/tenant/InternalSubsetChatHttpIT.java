@@ -1028,6 +1028,34 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void stoppingTheChatFailsAndChangesNothingWhileTheRoomCannotBePurged() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var sessionId = sessionOf(chatId);
+    var before = statusOf(sessionId);
+    synapse.failPurge = true;
+
+    var refused = request("PUT", "/users/chat/" + chatId + "/stop", creator, "");
+
+    synapse.failPurge = false;
+    // Everyone is still in the encrypted room, so the chat, its participants and its case stay.
+    assertThat(refused.statusCode()).as(refused.body()).isEqualTo(502);
+    assertThat(reason(refused)).isEqualTo("INTERNAL_CHAT_MEMBERSHIP_FAILED");
+    assertThat(Tenants.acrossAll(() -> chats.findById(Long.parseLong(chatId)))).isPresent();
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId))))
+        .contains(creator.getId(), sameCentre.getId());
+    assertThat(statusOf(sessionId)).isEqualTo(before);
+    assertThat(synapse.joined(roomId)).contains(matrix(creator), matrix(sameCentre));
+
+    var repeated = request("PUT", "/users/chat/" + chatId + "/stop", creator, "");
+
+    assertThat(repeated.statusCode()).as(repeated.body()).isIn(200, 204);
+    assertThat(Tenants.acrossAll(() -> chats.findById(Long.parseLong(chatId)))).isEmpty();
+    assertThat(synapse.hasRoom(roomId)).as("the room is purged").isFalse();
+  }
+
+  @Test
   void stoppingTheChatRetiresItsSessionSoNobodyKeepsABrokenEntry() throws Exception {
     var created = openRoom(creator, sameCentre);
     var chatId = field(created, "chatId");
@@ -1472,6 +1500,10 @@ class InternalSubsetChatHttpIT {
 
     synchronized Set<String> joined(String roomId) {
       return new TreeSet<>(rooms.get(roomId).joined);
+    }
+
+    synchronized boolean hasRoom(String roomId) {
+      return rooms.containsKey(roomId);
     }
 
     synchronized boolean isEncrypted(String roomId) {
