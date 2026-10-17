@@ -268,6 +268,26 @@ class CaseHandoverTakeoverMatrixMariaDbIT {
   }
 
   @Test
+  void rolledBackTakeoverWithThePreviousOwnerPresentLeavesNoRoomAdminBehind() {
+    Long sessionId = givenAcceptedCase(false);
+    String room = roomOf(sessionId);
+    homeserver.member(room, COLLEAGUE_MXID, 0); // silent department member, never removed again
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                transactions.execute(
+                    ignored -> {
+                      handovers.requestAccess(sessionId, "ASSIGNMENT_ENDED", "Moved on.");
+                      throw new IllegalStateException("commit fails after the grant");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(readSession(sessionId).getConsultant().getId()).isEqualTo(PREVIOUS_ID);
+    assertThat(homeserver.powerOf(room, COLLEAGUE_MXID)).isZero();
+    assertThat(homeserver.isMember(room, PREVIOUS_MXID)).isTrue();
+  }
+
+  @Test
   void failedJoinLeavesTheCaseWithItsOwnerAndTheRoomUntouched() {
     Long sessionId = givenAcceptedCase(false);
     String room = roomOf(sessionId);

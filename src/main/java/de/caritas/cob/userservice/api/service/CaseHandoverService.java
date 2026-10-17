@@ -58,6 +58,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -2697,15 +2698,19 @@ public class CaseHandoverService {
     }
     // The new owner needs the owner's room rights: later co-access grants on this case lower and
     // restore levels and remove members with the owner's token. Never block an absence cover over
-    // this, though: at level 0 the new owner can still post.
-    if (accessType == AccessType.TAKEOVER
-        && !matrixSynapseService.setUserPowerLevel(
-            roomId, requester.getMatrixUserId(), OWNER_POWER_LEVEL, previousConsultantToken)) {
-      log.warn(
-          "Could not give the new owner {} of session {} the owner power level in room {}",
-          requester.getUsername(),
+    // this, though: at level 0 the new owner can still post. Raised only once the takeover is
+    // committed, like on the owner-left path: this level survives a rollback (and the join
+    // compensation never removes a standing department member), which would leave a colleague as
+    // room admin of a case they do not own.
+    if (accessType == AccessType.TAKEOVER) {
+      String requesterMatrixId = requester.getMatrixUserId();
+      raiseOwnerPowerOnceCommitted(
           session.getId(),
-          roomId);
+          roomId,
+          () ->
+              matrixSynapseService.setUserPowerLevel(
+                  roomId, requesterMatrixId, OWNER_POWER_LEVEL, previousConsultantToken),
+          "the previous owner's token is no longer accepted or lacks the power to raise it");
     }
 
     // The previous counsellor deliberately keeps their membership. ADR-002's reveal lifecycle has
@@ -2763,25 +2768,35 @@ public class CaseHandoverService {
       }
     }
 
-    raiseOwnerPowerOnceCommitted(session.getId(), roomId, requesterMatrixId);
+    raiseOwnerPowerOnceCommitted(
+        session.getId(),
+        roomId,
+        () -> matrixSynapseService.makeRoomAdmin(roomId, requesterMatrixId),
+        "no joined room member holds power to raise it");
     return !wasMemberBefore;
   }
 
   /**
-   * Synapse keeps a user's power-level entry after they leave, so a raise must not happen before
-   * the takeover is committed: after a rollback the colleague would leave the room but keep owner
-   * rights for any later rejoin. Best effort - see the method above.
+   * Synapse keeps a user's power-level entry after they leave, and a standing department member is
+   * never removed by the join compensation, so a raise must not happen before the takeover is
+   * committed: after a rollback the colleague would keep owner rights in a room of a case they do
+   * not own. Used by both takeover paths (previous owner left or still present). Best effort - a
+   * refused or failed raise only logs, the colleague then stays at level 0 and can still answer.
+   *
+   * @param raise performs the raise and returns whether Synapse accepted it
+   * @param refusalReason why a refused raise is expected to happen, for the log line
    */
-  private void raiseOwnerPowerOnceCommitted(Long sessionId, String roomId, String matrixUserId) {
-    Runnable raise =
+  private void raiseOwnerPowerOnceCommitted(
+      Long sessionId, String roomId, BooleanSupplier raise, String refusalReason) {
+    Runnable raiseSafely =
         () -> {
           try {
-            if (!matrixSynapseService.makeRoomAdmin(roomId, matrixUserId)) {
+            if (!raise.getAsBoolean()) {
               log.warn(
-                  "Could not give the new owner of session {} the owner power level in room {}: no"
-                      + " joined room member holds power to raise it",
+                  "Could not give the new owner of session {} the owner power level in room {}: {}",
                   sessionId,
-                  roomId);
+                  roomId,
+                  refusalReason);
             }
           } catch (RuntimeException exception) {
             log.warn(
@@ -2792,14 +2807,14 @@ public class CaseHandoverService {
           }
         };
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      raise.run();
+      raiseSafely.run();
       return;
     }
     TransactionSynchronizationManager.registerSynchronization(
         new TransactionSynchronization() {
           @Override
           public void afterCommit() {
-            raise.run();
+            raiseSafely.run();
           }
         });
   }

@@ -4337,6 +4337,44 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void takeover_withTheOwnerPresent_raisesThePowerLevelOnlyAfterTheTransactionCommits() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      takeOverBecauseAssignmentEnded();
+      assertEquals(0, homeserver.powerOf(caseRoom, REQUESTER_MXID));
+
+      runSynchronizations(TransactionSynchronization::afterCommit);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    assertEquals(100, homeserver.powerOf(caseRoom, REQUESTER_MXID));
+  }
+
+  @Test
+  void takeover_withTheOwnerPresent_leavesNoRoomAdminBehind_onRollback() {
+    // The colleague is a silent department member (ADR-002), so the join compensation does not
+    // remove them: whatever power they were given before the rollback would stay.
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, REQUESTER_MXID, 0);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      takeOverBecauseAssignmentEnded();
+      runSynchronizations(
+          synchronization ->
+              synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    assertEquals(0, homeserver.powerOf(caseRoom, REQUESTER_MXID));
+    assertTrue(homeserver.isMember(caseRoom, PREVIOUS_MXID));
+  }
+
+  @Test
   void takeover_removesTheJoinedColleagueAgainOnRollback_withoutTheLeftOwner() {
     givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
     previousOwnerHasLeft();
