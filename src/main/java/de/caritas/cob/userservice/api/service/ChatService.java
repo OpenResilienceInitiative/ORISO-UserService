@@ -143,7 +143,8 @@ public class ChatService {
 
   private boolean isVisibleToConsultant(Chat chat, Consultant consultant) {
     var explicitParticipants = groupChatParticipantRepository.findBySeriesId(chat.getId());
-    return explicitParticipants.isEmpty()
+    // A members-only chat belongs to its participants alone: until they are saved, it is nobody's.
+    return (explicitParticipants.isEmpty() && !chat.isMembersOnly())
         || explicitParticipants.stream()
             .anyMatch(participant -> consultant.getId().equals(participant.getConsultantId()));
   }

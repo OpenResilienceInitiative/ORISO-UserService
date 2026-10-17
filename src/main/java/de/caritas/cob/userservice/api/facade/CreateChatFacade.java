@@ -285,9 +285,18 @@ public class CreateChatFacade {
 
     } catch (Exception e) {
       log.error("Failed to create group chat: {}", e.getMessage(), e);
+      var roomLeftBehind = false;
       if (membersOnly && matrixRoomId != null) {
         // The room is private: do not leave it behind with half of its members.
-        matrixSynapseService.purgeRoomOrConfirmGone(matrixRoomId);
+        roomLeftBehind =
+            matrixSynapseService.purgeRoomOrConfirmGone(matrixRoomId)
+                == MatrixSynapseService.RoomPurgeOutcome.FAILED;
+        if (roomLeftBehind) {
+          log.error(
+              "Members-only room {} could not be removed after a failed creation and must be"
+                  + " purged by an operator",
+              matrixRoomId);
+        }
       }
       // Rollback: delete session and chat
       if (session.getId() != null) {
@@ -303,6 +312,11 @@ public class CreateChatFacade {
         } catch (Exception ex) {
           log.error("Failed to rollback chat: {}", ex.getMessage());
         }
+      }
+      if (roomLeftBehind) {
+        // Not the "nothing was left behind" answer: the room is still there.
+        throw new InternalServerErrorException(
+            "Failed to create group chat and the room could not be removed again");
       }
       if (e instanceof CustomValidationHttpStatusException reasoned) {
         throw reasoned;

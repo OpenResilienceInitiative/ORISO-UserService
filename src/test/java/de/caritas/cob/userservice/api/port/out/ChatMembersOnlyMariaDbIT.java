@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.port.out;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.service.chat.DatabaseMemberSetLock;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -46,6 +48,7 @@ class ChatMembersOnlyMariaDbIT {
   }
 
   @Autowired JdbcTemplate jdbc;
+  @Autowired javax.sql.DataSource dataSource;
   @Autowired ChatRepository chats;
   @Autowired GroupChatParticipantRepository participants;
 
@@ -152,6 +155,33 @@ class ChatMembersOnlyMariaDbIT {
     assertThat(participants.existsByChatIdAndConsultantId(chat + 1000, owner)).isTrue();
     assertThat(participants.existsByChatIdAndConsultantId(chat + 1000, colleague)).isFalse();
     assertThat(participants.existsByChatIdAndConsultantId(chat + 2000, owner)).isFalse();
+  }
+
+  @Test
+  void theMemberSetLockExcludesAnotherReplicaOnTheDatabase() {
+    // Two instances stand for two replicas: they share no JVM lock, only the database.
+    var replicaA = new DatabaseMemberSetLock(dataSource, 1);
+    var replicaB = new DatabaseMemberSetLock(dataSource, 1);
+    var people = List.of(owner, colleague);
+
+    try (var held = replicaA.acquire(people)) {
+      assertThat(held).isNotNull();
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> replicaB.acquire(List.of(colleague, owner)))
+          .isInstanceOfSatisfying(
+              CustomValidationHttpStatusException.class,
+              busy ->
+                  assertThat(busy.getCustomHttpHeaders().getFirst("X-Reason"))
+                      .isEqualTo("INTERNAL_CHAT_BUSY"));
+      // Other people are not held up.
+      try (var other = replicaB.acquire(List.of(owner, third))) {
+        assertThat(other).isNotNull();
+      }
+    }
+    // Released: the next request gets it.
+    try (var again = replicaB.acquire(people)) {
+      assertThat(again).isNotNull();
+    }
   }
 
   private String consultant(String name) {

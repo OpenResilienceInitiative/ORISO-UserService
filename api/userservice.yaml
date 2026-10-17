@@ -1372,7 +1372,7 @@ paths:
         400:
           description: >-
             BAD REQUEST - X-Reason INTERNAL_CHAT_RECIPIENTS_REQUIRED (no colleague besides the caller) or
-            INTERNAL_CHAT_RECIPIENT_UNKNOWN (a selected id is not an active colleague with a chat identity)
+            INTERNAL_CHAT_RECIPIENT_UNKNOWN (a colleague the caller may pick has no chat identity yet and cannot join a room)
           headers:
             X-Reason:
               schema:
@@ -1380,7 +1380,8 @@ paths:
                 example: INTERNAL_CHAT_RECIPIENT_UNKNOWN
         403:
           description: >-
-            FORBIDDEN - X-Reason INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE (a selected colleague is outside the recipient scope),
+            FORBIDDEN - X-Reason INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE (a selected colleague is outside the recipient scope or
+            is not an active consultant; both answer alike),
             or internal group chats are switched off for the Träger or counselling centre (no X-Reason)
           headers:
             X-Reason:
@@ -1398,6 +1399,7 @@ paths:
         503:
           description: >-
             SERVICE UNAVAILABLE - X-Reason INTERNAL_CHAT_ENCRYPTION_REQUIRED (end-to-end encryption is not enabled on this installation, so no private room is created)
+            or INTERNAL_CHAT_BUSY (another request for the same people is still being processed; try again)
           headers:
             X-Reason:
               schema:
@@ -4161,7 +4163,7 @@ components:
         agencyId:
           type: integer
           format: int64
-          description: The counselling centre the chat belongs to. Defaults to the caller's first centre.
+          description: The counselling centre the chat belongs to. Defaults to the lowest-numbered centre of the caller that the whole selection is within the recipient scope for.
           example: 5
         topic:
           type: string

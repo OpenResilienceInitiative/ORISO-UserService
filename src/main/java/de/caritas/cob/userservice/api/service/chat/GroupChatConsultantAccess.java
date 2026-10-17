@@ -1,9 +1,11 @@
 package de.caritas.cob.userservice.api.service.chat;
 
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
@@ -115,7 +117,7 @@ public class GroupChatConsultantAccess {
     return role == ParticipantRole.OWNER || role == ParticipantRole.CO_MODERATOR;
   }
 
-  /** Whether the Träger's recipient scope admits a non-member to this (ordinary) chat. */
+  /** Whether the Träger's recipient scope admits a non-member to this (ordinary) internal chat. */
   private boolean scopeAdmits(Chat chat, Consultant consultant) {
     if (chat.getChatOwner() == null) {
       return false;
@@ -124,6 +126,11 @@ public class GroupChatConsultantAccess {
     // only for a counsellor that rule does not admit.
     if (isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant)) {
       return true;
+    }
+    // The setting is about internal group chats among colleagues. A conversation circle (clients
+    // inside) or any other client-facing chat keeps the centre rule whatever the scope.
+    if (ChatConverter.conversationTypeOf(chat) != ConversationType.INTERNAL_GROUP) {
+      return false;
     }
     var scope = recipientScopes.resolve(chat.getChatOwner().getTenantId());
     if (scope == InternalGroupChatRecipientScope.PLATFORM) {

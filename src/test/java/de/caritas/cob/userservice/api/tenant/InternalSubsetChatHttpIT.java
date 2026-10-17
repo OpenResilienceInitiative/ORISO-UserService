@@ -126,6 +126,7 @@ class InternalSubsetChatHttpIT {
 
   @BeforeEach
   void aTraegerWithColleaguesAndAStatefulMatrix() {
+    signedIn.clear();
     matrixConfig.setEncryptionEnabled(true);
     theTraegerScopeIs("AGENCY");
     systemUserExisted41 = systemUserExists(TRAEGER);
@@ -316,16 +317,138 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
-  void aColleagueThatDoesNotExistIsRefusedNotSkipped() throws Exception {
-    var response =
-        request(
-            "POST",
-            "/users/chat/internal-subset",
-            creator,
-            "{\"consultantIds\":[\"" + sameCentre.getId() + "\",\"no-such-colleague\"]}");
+  void aColleagueTheCallerMayNotPickLooksTheSameWhetherOrNotThatConsultantExists()
+      throws Exception {
+    var unknown = openWithIds(creator, sameCentre.getId(), "no-such-colleague");
+    var existsElsewhere = openRoom(creator, sameCentre, otherTraeger);
+
+    assertThat(unknown.statusCode()).as(unknown.body()).isEqualTo(403);
+    assertThat(reason(unknown)).isEqualTo("INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE");
+    assertThat(existsElsewhere.statusCode()).isEqualTo(unknown.statusCode());
+    assertThat(existsElsewhere.body()).isEqualTo(unknown.body());
+    assertNothingWasCreated();
+  }
+
+  @Test
+  void aColleagueOfTheCentreWithoutAChatIdentityIsRefusedNotSkipped() throws Exception {
+    Tenants.acrossAll(
+        () ->
+            database.update(
+                "UPDATE consultant SET matrix_user_id = NULL WHERE consultant_id = ?",
+                anotherSameCentre.getId()));
+
+    var response = openRoom(creator, sameCentre, anotherSameCentre);
 
     assertThat(response.statusCode()).as(response.body()).isEqualTo(400);
     assertThat(reason(response)).isEqualTo("INTERNAL_CHAT_RECIPIENT_UNKNOWN");
+    assertNothingWasCreated();
+  }
+
+  @Test
+  void aFailedInviteWhoseRoomCannotBeRemovedIsNotReportedAsCleanedUp() throws Exception {
+    synapse.refuseInvitationOf(matrix(anotherSameCentre));
+    synapse.failPurge = true;
+
+    var response = openRoom(creator, sameCentre, anotherSameCentre);
+
+    synapse.failPurge = false;
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(500);
+    assertThat(reason(response)).isNotEqualTo("INTERNAL_CHAT_MEMBERSHIP_FAILED");
+    // The records are gone, so nobody can find the chat; the room is the operator's to remove.
+    assertThat(allChatsOf(everyone)).isEmpty();
+    assertThat(allSessionsOf(everyone)).isEmpty();
+    assertThat(synapse.liveRooms()).hasSize(1);
+  }
+
+  @Test
+  void aRoomWithAMemberWeCannotMapToAColleagueIsNeverReused() throws Exception {
+    var first = openRoom(creator, sameCentre);
+    synapse.joinDirectly(field(first, "matrixRoomId"), "@stranger:elsewhere.example");
+
+    var again = openRoom(creator, sameCentre);
+
+    assertThat(again.statusCode()).as(again.body()).isEqualTo(201);
+    assertThat(field(again, "matrixRoomId")).isNotEqualTo(field(first, "matrixRoomId"));
+  }
+
+  @Test
+  void aRoomWhoseMembersCannotBeReadIsNeverReused() throws Exception {
+    var first = openRoom(creator, sameCentre);
+    synapse.failMemberReads = true;
+
+    var again = openRoom(creator, sameCentre);
+
+    synapse.failMemberReads = false;
+    assertThat(again.statusCode()).as(again.body()).isEqualTo(201);
+    assertThat(field(again, "matrixRoomId")).isNotEqualTo(field(first, "matrixRoomId"));
+  }
+
+  @Test
+  void theTechnicalAdminInTheRoomDoesNotPreventItsReuse() throws Exception {
+    var first = openRoom(creator, sameCentre);
+    synapse.joinDirectly(
+        field(first, "matrixRoomId"),
+        "@" + matrixConfig.getAdminUsername() + ":" + matrixConfig.getServerName());
+
+    var again = openRoom(creator, sameCentre);
+
+    assertThat(again.statusCode()).as(again.body()).isEqualTo(200);
+    assertThat(field(again, "matrixRoomId")).isEqualTo(field(first, "matrixRoomId"));
+  }
+
+  @Test
+  void twoSimultaneousRequestsForTheSameSelectionMakeOneRoom() throws Exception {
+    synapse.createDelayMillis = 400;
+    signIn(creator);
+    signIn(sameCentre);
+    var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+    try {
+      var go = new java.util.concurrent.CountDownLatch(1);
+      var one =
+          pool.submit(
+              () -> {
+                go.await();
+                return openRoom(creator, sameCentre);
+              });
+      var other =
+          pool.submit(
+              () -> {
+                go.await();
+                return openRoom(sameCentre, creator);
+              });
+      go.countDown();
+      var statuses = List.of(one.get().statusCode(), other.get().statusCode());
+
+      assertThat(statuses).containsExactlyInAnyOrder(200, 201);
+      assertThat(field(one.get(), "matrixRoomId")).isEqualTo(field(other.get(), "matrixRoomId"));
+      assertThat(synapse.roomsCreated()).isEqualTo(1);
+    } finally {
+      synapse.createDelayMillis = 0;
+      pool.shutdownNow();
+    }
+  }
+
+  @Test
+  void withoutANamedCentreTheRoomIsCreatedForACentreTheWholeSelectionBelongsTo() throws Exception {
+    var inTwoCentres = fixtures.consultant(TRAEGER, CENTRE, OTHER_CENTRE);
+    everyone.add(inTwoCentres);
+
+    var response = openWithoutCentre(inTwoCentres, otherCentre);
+
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(201);
+    assertThat(centresOf(response)).containsExactly(OTHER_CENTRE);
+  }
+
+  @Test
+  void withoutANamedCentreASelectionSpreadOverCentresTheCallerHasNoneInCommonWithIsRefused()
+      throws Exception {
+    var inTwoCentres = fixtures.consultant(TRAEGER, CENTRE, OTHER_CENTRE);
+    everyone.add(inTwoCentres);
+
+    var response = openWithoutCentre(inTwoCentres, sameCentre, otherCentre);
+
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(403);
+    assertThat(reason(response)).isEqualTo("INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE");
     assertNothingWasCreated();
   }
 
@@ -437,8 +560,42 @@ class InternalSubsetChatHttpIT {
         "{\"consultantIds\":[" + ids + "],\"agencyId\":" + CENTRE + "}");
   }
 
-  private HttpResponse<String> request(String method, String path, Consultant caller, String body)
+  private HttpResponse<String> openWithIds(Consultant caller, String... ids) throws Exception {
+    var list =
+        java.util.Arrays.stream(ids).map(id -> "\"" + id + "\"").collect(Collectors.joining(","));
+    return request(
+        "POST",
+        "/users/chat/internal-subset",
+        caller,
+        "{\"consultantIds\":[" + list + "],\"agencyId\":" + CENTRE + "}");
+  }
+
+  private HttpResponse<String> openWithoutCentre(Consultant caller, Consultant... selection)
       throws Exception {
+    var ids =
+        java.util.Arrays.stream(selection)
+            .map(c -> "\"" + c.getId() + "\"")
+            .collect(Collectors.joining(","));
+    return request(
+        "POST", "/users/chat/internal-subset", caller, "{\"consultantIds\":[" + ids + "]}");
+  }
+
+  private List<Long> centresOf(HttpResponse<String> created) {
+    return Tenants.acrossAll(
+        () ->
+            database.queryForList(
+                "SELECT agency_id FROM chat_agency WHERE chat_id = ?",
+                Long.class,
+                Long.parseLong(field(created, "chatId"))));
+  }
+
+  private final Set<String> signedIn = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+  /** Stubbing the decoder is not thread-safe: do it once, before concurrent requests start. */
+  private synchronized void signIn(Consultant caller) {
+    if (!signedIn.add(caller.getId())) {
+      return;
+    }
     var token =
         Jwt.withTokenValue("synthetic-token-" + caller.getId())
             .header("alg", "none")
@@ -448,6 +605,11 @@ class InternalSubsetChatHttpIT {
             .claim("realm_access", Map.of("roles", List.of("consultant")))
             .build();
     when(jwtDecoder.decode("synthetic-token-" + caller.getId())).thenReturn(token);
+  }
+
+  private HttpResponse<String> request(String method, String path, Consultant caller, String body)
+      throws Exception {
+    signIn(caller);
     var request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
             .header("Authorization", "Bearer synthetic-token-" + caller.getId())
@@ -580,11 +742,24 @@ class InternalSubsetChatHttpIT {
     private final Set<String> refusedInvitations = new HashSet<>();
     private final AtomicInteger created = new AtomicInteger();
     private int numbering;
+    volatile int createDelayMillis;
+    volatile boolean failMemberReads;
+    volatile boolean failPurge;
 
     private static final class Room {
       final Set<String> invited = new LinkedHashSet<>();
       final Set<String> joined = new LinkedHashSet<>();
       boolean encrypted;
+    }
+
+    private static void pause(int millis) {
+      if (millis > 0) {
+        try {
+          Thread.sleep(millis);
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+        }
+      }
     }
 
     synchronized int roomsCreated() {
@@ -643,6 +818,7 @@ class InternalSubsetChatHttpIT {
             .createResponse(request);
       }
       if (path.equals("/_matrix/client/r0/createRoom")) {
+        pause(createDelayMillis);
         var node = JSON.readTree(body);
         var room = new Room();
         var roomId = "!room" + (++numbering) + ":" + SERVER;
@@ -681,6 +857,11 @@ class InternalSubsetChatHttpIT {
         room.joined.add(actor);
         return withSuccess("{}", MediaType.APPLICATION_JSON).createResponse(request);
       }
+      if (path.startsWith("/_synapse/admin/v1/rooms/")
+          && path.endsWith("/members")
+          && failMemberReads) {
+        return withStatus(HttpStatus.INTERNAL_SERVER_ERROR).createResponse(request);
+      }
       if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/members")) {
         var roomId =
             URLDecoder.decode(
@@ -697,6 +878,11 @@ class InternalSubsetChatHttpIT {
                 "{\"members\":[" + members + "],\"total\":" + room.joined.size() + "}",
                 MediaType.APPLICATION_JSON)
             .createResponse(request);
+      }
+      if (path.startsWith("/_synapse/admin/v2/rooms/")
+          && method == HttpMethod.DELETE
+          && failPurge) {
+        return withStatus(HttpStatus.INTERNAL_SERVER_ERROR).createResponse(request);
       }
       if (path.startsWith("/_synapse/admin/v2/rooms/") && method == HttpMethod.DELETE) {
         var roomId =

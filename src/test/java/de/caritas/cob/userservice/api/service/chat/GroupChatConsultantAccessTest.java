@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
@@ -226,6 +227,41 @@ class GroupChatConsultantAccessTest {
     when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.PLATFORM);
     assertThat(access.mayAccess(chat, otherCentre)).isTrue();
     assertThat(access.mayAccess(chat, otherTraeger)).isTrue();
+  }
+
+  @Test
+  void theRecipientScopeNeverWidensAConversationCircleOrAnyOtherClientFacingChat() {
+    var owner = consultant("owner", 1L, 100L);
+    var otherCentre = consultant("other-centre", 1L, 200L);
+    var otherTraeger = consultant("other-traeger", 2L, 300L);
+    var sameCentre = consultant("same-centre", 1L, 100L);
+    lenient().when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.PLATFORM);
+    when(participants.findBySeriesIdAndConsultantId(any(), any())).thenReturn(Optional.empty());
+    when(participants.findBySeriesIdInAndConsultantId(any(), any())).thenReturn(List.of());
+
+    for (var type :
+        List.of(
+            ConversationType.SELF_HELP,
+            ConversationType.AGENCY_COUNSELLING,
+            ConversationType.LIVE_CHAT)) {
+      var circle = series(50L, owner, 100L);
+      circle.setConversationType(type);
+      assertThat(access.mayAccess(circle, otherCentre)).as("%s other centre", type).isFalse();
+      assertThat(access.mayAccess(circle, otherTraeger)).as("%s other Traeger", type).isFalse();
+      assertThat(access.filterAccessible(List.of(circle), otherTraeger))
+          .as("%s list", type)
+          .isEmpty();
+      assertThat(access.mayAccess(circle, sameCentre)).as("%s own centre", type).isTrue();
+    }
+    // A legacy circle without a stored type is recognised by its repetition.
+    var legacyCircle = series(51L, owner, 100L);
+    legacyCircle.setRepetitive(true);
+    assertThat(access.mayAccess(legacyCircle, otherTraeger)).isFalse();
+    assertThat(access.mayAccess(legacyCircle, sameCentre)).isTrue();
+    // The internal chat itself is widened by the same scope.
+    var internal = series(52L, owner, 100L);
+    internal.setConversationType(ConversationType.INTERNAL_GROUP);
+    assertThat(access.mayAccess(internal, otherTraeger)).isTrue();
   }
 
   private static GroupChatParticipant participant(

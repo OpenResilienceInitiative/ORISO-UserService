@@ -421,6 +421,20 @@ class ChatServiceTest {
   }
 
   @Test
+  void getChatsForConsultant_Should_NeverListAMembersOnlyChatBeforeItsParticipantsAreSaved() {
+    Consultant consultant = Mockito.mock(Consultant.class);
+    when(consultant.getId()).thenReturn("colleague-of-the-centre");
+    Chat series = activeChatWithAgency();
+    series.setMembersOnly(true);
+    when(chatRepository.findByAgencyIds(Mockito.any())).thenReturn(List.of(series));
+    when(groupChatParticipantRepository.findBySeriesId(series.getId())).thenReturn(List.of());
+
+    List<ConsultantSessionResponseDTO> result = chatService.getChatsForConsultant(consultant);
+
+    assertThat(result, hasSize(0));
+  }
+
+  @Test
   void getChat_Should_ReturnChatObject() {
     when(chatRepository.findByIdWithPermissionRelations(CHAT_ID))
         .thenReturn(Optional.of(ACTIVE_CHAT));

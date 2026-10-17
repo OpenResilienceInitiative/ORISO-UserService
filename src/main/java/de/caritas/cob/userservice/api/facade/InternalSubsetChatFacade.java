@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.facade;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
@@ -16,16 +17,18 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
+import de.caritas.cob.userservice.api.service.chat.InternalGroupChatRecipientScope;
 import de.caritas.cob.userservice.api.service.chat.InternalGroupChatRecipientScopeResolver;
-import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
-import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
+import de.caritas.cob.userservice.api.service.chat.MemberSetLock;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,35 +56,44 @@ public class InternalSubsetChatFacade {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ChatRepository chatRepository;
   private final @NonNull GroupChatParticipantRepository participantRepository;
-  private final @NonNull GroupChatMembershipService membershipService;
+  private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull MemberSetLock memberSetLock;
   private final @NonNull CreateChatFacade createChatFacade;
 
   public OpenedRoom open(InternalSubsetChatDTO request, Consultant creator) {
     requireEncryption();
     var colleagueIds = colleagueIdsOf(request, creator);
-    var agencyId = resolveAgencyId(request, creator);
+    var looked = lookUp(colleagueIds);
+    var scope = recipientScopes.resolve(creator.getTenantId());
+    var agencyId = resolveAgencyId(request, creator, looked, scope);
     featureGate.requireEnabled(creator, ChatDTO.builder().agencyId(agencyId).build());
 
-    var colleagues = resolveColleagues(colleagueIds);
-    requireInsideScope(creator, colleagues, request.getAgencyId());
+    requireInsideScope(creator, looked, scope, agencyId);
+    var colleagues = requireChatIdentity(looked);
 
     var memberIds = new LinkedHashSet<String>();
     memberIds.add(creator.getId());
     memberIds.addAll(colleagueIds);
+    var matrixIds = new LinkedHashSet<String>();
+    matrixIds.add(creator.getMatrixUserId());
+    colleagues.forEach(colleague -> matrixIds.add(colleague.getMatrixUserId()));
 
-    var reusable = findReusableRoom(creator, memberIds);
-    if (reusable.isPresent()) {
-      return new OpenedRoom(reusable.get().getMatrixRoomId(), reusable.get().getId(), false);
+    // Find-or-create is one step per member set, across replicas: of two simultaneous requests for
+    // the same people the second one finds the first one's room.
+    try (var ignored = memberSetLock.acquire(memberIds)) {
+      var reusable = findReusableRoom(creator, memberIds, matrixIds);
+      if (reusable.isPresent()) {
+        return new OpenedRoom(reusable.get().getMatrixRoomId(), reusable.get().getId(), false);
+      }
+      var chatDto =
+          ChatDTO.builder()
+              .topic(topicOf(request, creator, colleagues))
+              .agencyId(agencyId)
+              .hintMessage("")
+              .build();
+      var created = createChatFacade.createMembersOnlyChat(chatDto, creator, colleagues);
+      return new OpenedRoom(created.response().getMatrixRoomId(), created.chatId(), true);
     }
-
-    var chatDto =
-        ChatDTO.builder()
-            .topic(topicOf(request, creator, colleagues))
-            .agencyId(agencyId)
-            .hintMessage("")
-            .build();
-    var created = createChatFacade.createMembersOnlyChat(chatDto, creator, colleagues);
-    return new OpenedRoom(created.response().getMatrixRoomId(), created.chatId(), true);
   }
 
   private void requireEncryption() {
@@ -107,59 +119,97 @@ public class InternalSubsetChatFacade {
     return ids;
   }
 
-  private static Long resolveAgencyId(InternalSubsetChatDTO request, Consultant creator) {
+  /**
+   * The centre the chat is created for: the named one, else the lowest-numbered centre of the
+   * caller that the whole selection is within the recipient scope for, else the lowest-numbered
+   * centre (which the scope check then refuses). The scope is always checked against this centre.
+   */
+  private static Long resolveAgencyId(
+      InternalSubsetChatDTO request,
+      Consultant creator,
+      Map<String, Consultant> looked,
+      InternalGroupChatRecipientScope scope) {
     if (request.getAgencyId() != null) {
       if (!creator.isInAgency(request.getAgencyId())) {
         throw new ForbiddenException("The caller is not a counsellor of this counselling centre");
       }
       return request.getAgencyId();
     }
-    return creator.getConsultantAgencies() == null
-        ? null
-        : creator.getConsultantAgencies().stream()
-            .map(agency -> agency.getAgencyId())
-            .findFirst()
-            .orElseThrow(
-                () ->
-                    new BadRequestException(
-                        "The caller is not assigned to any counselling centre"));
+    var centres =
+        creator.getConsultantAgencies() == null
+            ? List.<Long>of()
+            : creator.getConsultantAgencies().stream()
+                .map(agency -> agency.getAgencyId())
+                .filter(java.util.Objects::nonNull)
+                .sorted(Comparator.naturalOrder())
+                .toList();
+    if (centres.isEmpty()) {
+      throw new BadRequestException("The caller is not assigned to any counselling centre");
+    }
+    return centres.stream()
+        .filter(
+            centre ->
+                looked.values().stream()
+                    .allMatch(c -> c != null && scope.permits(creator, c, centre)))
+        .findFirst()
+        .orElse(centres.get(0));
   }
 
-  /** Every selected id must be an active colleague with a chat identity, in any Träger. */
-  private List<Consultant> resolveColleagues(Set<String> colleagueIds) {
-    var colleagues = new ArrayList<Consultant>();
+  /** The selected consultants by id; {@code null} for an id that is not an active consultant. */
+  private Map<String, Consultant> lookUp(Set<String> colleagueIds) {
+    var looked = new LinkedHashMap<String, Consultant>();
     for (String id : colleagueIds) {
-      var colleague =
+      looked.put(
+          id,
           TenantContext.supplyAcrossTenants(
-              () -> consultantRepository.findByIdAndDeleteDateIsNull(id));
-      if (colleague.isEmpty() || !MatrixIds.isUserId(colleague.get().getMatrixUserId())) {
+                  () -> consultantRepository.findByIdAndDeleteDateIsNull(id))
+              .orElse(null));
+    }
+    return looked;
+  }
+
+  /**
+   * One colleague outside the scope refuses the whole request. An id that is no active consultant
+   * answers exactly like one outside the scope, so the answer does not tell whether a consultant of
+   * another Träger exists.
+   */
+  private void requireInsideScope(
+      Consultant creator,
+      Map<String, Consultant> looked,
+      InternalGroupChatRecipientScope scope,
+      Long agencyId) {
+    looked.forEach(
+        (id, colleague) -> {
+          if (colleague == null || !scope.permits(creator, colleague, agencyId)) {
+            log.info("A selected colleague is outside the recipient scope {}", scope);
+            throw new CustomValidationHttpStatusException(
+                HttpStatusExceptionReason.INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE,
+                HttpStatus.FORBIDDEN);
+          }
+        });
+  }
+
+  /** A colleague the caller may pick, but who cannot join a room, is reported, never skipped. */
+  private static List<Consultant> requireChatIdentity(Map<String, Consultant> looked) {
+    var colleagues = new ArrayList<Consultant>();
+    for (Consultant colleague : looked.values()) {
+      if (!MatrixIds.isUserId(colleague.getMatrixUserId())) {
         throw new CustomValidationHttpStatusException(
             HttpStatusExceptionReason.INTERNAL_CHAT_RECIPIENT_UNKNOWN);
       }
-      colleagues.add(colleague.get());
+      colleagues.add(colleague);
     }
     return colleagues;
   }
 
-  private void requireInsideScope(
-      Consultant creator, List<Consultant> colleagues, Long requestedAgencyId) {
-    var scope = recipientScopes.resolve(creator.getTenantId());
-    for (Consultant colleague : colleagues) {
-      if (!scope.permits(creator, colleague, requestedAgencyId)) {
-        log.info("Colleague {} is outside the recipient scope {}", colleague.getId(), scope);
-        throw new CustomValidationHttpStatusException(
-            HttpStatusExceptionReason.INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE, HttpStatus.FORBIDDEN);
-      }
-    }
-  }
-
   /**
    * A members-only internal chat whose participants are exactly {@code memberIds} <em>and</em>
-   * whose Matrix room holds exactly those people right now. Matrix is the source of truth for who
-   * can read; the participants table is only a snapshot, so a room that gained or lost anyone since
-   * is not reused.
+   * whose Matrix room holds exactly the matching Matrix accounts right now. Matrix is the source of
+   * truth for who can read; the participants table is only a snapshot, so a room that gained or
+   * lost anyone since is not reused.
    */
-  private Optional<Chat> findReusableRoom(Consultant creator, Set<String> memberIds) {
+  private Optional<Chat> findReusableRoom(
+      Consultant creator, Set<String> memberIds, Set<String> matrixIds) {
     var seriesIds =
         participantRepository.findSeriesIdsWithExactParticipants(
             creator.getId(), memberIds, memberIds.size());
@@ -172,22 +222,28 @@ public class InternalSubsetChatFacade {
           && chat.isActive()
           && ChatConverter.conversationTypeOf(chat) == ConversationType.INTERNAL_GROUP
           && MatrixIds.isRoomId(chat.getMatrixRoomId())
-          && roomHoldsExactly(chat.getMatrixRoomId(), memberIds)) {
+          && roomHoldsExactly(chat.getMatrixRoomId(), matrixIds)) {
         return Optional.of(chat);
       }
     }
     return Optional.empty();
   }
 
-  private boolean roomHoldsExactly(String matrixRoomId, Set<String> memberIds) {
-    var present =
-        TenantContext.supplyAcrossTenants(
-            () -> membershipService.resolveHumanMembers(matrixRoomId));
-    return present.stream().allMatch(ResolvedRoomMember::consultant)
-        && present.stream()
-            .map(ResolvedRoomMember::accountId)
-            .collect(Collectors.toSet())
-            .equals(memberIds);
+  /**
+   * Every account in the room, mapped or not: a user of a foreign homeserver, a deleted consultant
+   * or any other stranger makes the room unfit. Only the configured technical admin, which the
+   * platform adds to rooms for administration, is ignored. A room whose members cannot be read is
+   * not reused.
+   */
+  private boolean roomHoldsExactly(String matrixRoomId, Set<String> matrixIds) {
+    var joined = matrixSynapseService.getRoomMembers(matrixRoomId);
+    if (joined.isEmpty()) {
+      return false;
+    }
+    var admin = "@" + matrixConfig.getAdminUsername() + ":" + matrixConfig.getServerName();
+    var present = new java.util.HashSet<>(joined.get());
+    present.remove(admin);
+    return present.equals(matrixIds);
   }
 
   /** The given topic, else the members' names, within the length a chat topic may have. */

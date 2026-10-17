@@ -96,22 +96,66 @@ class InternalGroupChatRecipientScopeResolverTest {
   }
 
   @Test
-  void theAnswerIsKeptBrieflyAndAFailureIsNeverKept() {
-    server.expect(ExpectedCount.once(), requestTo(URL)).andRespond(withServerError());
+  void theAnswerIsKeptForAMinute() {
     expectPolicies(
         """
         {"tenantId":7,"policies":{},"internalGroupChat":{"recipientScope":
           {"value":"PLATFORM","mode":"SUGGESTED","inherited":false}}}
         """);
-
     expectPolicies("{\"tenantId\":7,\"policies\":{}}");
 
-    assertThat(resolver.resolve(7L)).isEqualTo(InternalGroupChatRecipientScope.AGENCY);
     assertThat(resolver.resolve(7L)).isEqualTo(InternalGroupChatRecipientScope.PLATFORM);
-    // Served from memory: the mock server saw exactly one successful call so far.
+    // Served from memory: the mock server saw exactly one call so far.
     assertThat(resolver.resolve(7L)).isEqualTo(InternalGroupChatRecipientScope.PLATFORM);
     clock.advance(Duration.ofMinutes(10));
     assertThat(resolver.resolve(7L)).isEqualTo(InternalGroupChatRecipientScope.AGENCY);
+    server.verify();
+  }
+
+  @Test
+  void aFailureIsRememberedForSecondsOnlyAndNeverWidens() {
+    server.expect(ExpectedCount.once(), requestTo(URL)).andRespond(withServerError());
+    expectPolicies(
+        """
+        {"tenantId":7,"policies":{},"internalGroupChat":{"recipientScope":
+          {"value":"TENANT","mode":"SUGGESTED","inherited":false}}}
+        """);
+
+    assertThat(resolver.resolve(7L)).isEqualTo(InternalGroupChatRecipientScope.AGENCY);
+    // An outage is not hammered: no second call, no Keycloak login, still the narrow answer.
+    assertThat(resolver.resolve(7L)).isEqualTo(InternalGroupChatRecipientScope.AGENCY);
+    clock.advance(Duration.ofSeconds(11));
+    assertThat(resolver.resolve(7L)).isEqualTo(InternalGroupChatRecipientScope.TENANT);
+    server.verify();
+  }
+
+  @Test
+  void simultaneousCallsForOneTraegerReadTheSettingOnce() throws Exception {
+    expectPolicies(
+        """
+        {"tenantId":7,"policies":{},"internalGroupChat":{"recipientScope":
+          {"value":"TENANT","mode":"ENFORCED","inherited":true}}}
+        """);
+    var pool = java.util.concurrent.Executors.newFixedThreadPool(8);
+    var start = new java.util.concurrent.CountDownLatch(1);
+    try {
+      var answers =
+          new java.util.ArrayList<java.util.concurrent.Future<InternalGroupChatRecipientScope>>();
+      for (int i = 0; i < 8; i++) {
+        answers.add(
+            pool.submit(
+                () -> {
+                  start.await();
+                  return resolver.resolve(7L);
+                }));
+      }
+      start.countDown();
+      for (var answer : answers) {
+        assertThat(answer.get()).isEqualTo(InternalGroupChatRecipientScope.TENANT);
+      }
+    } finally {
+      pool.shutdownNow();
+    }
     server.verify();
   }
 
