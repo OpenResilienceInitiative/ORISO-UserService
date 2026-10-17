@@ -47,10 +47,24 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTenantChangeAuditRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -185,11 +199,36 @@ class ConsultantTenantChangeMariaDbIT {
   @MockitoBean private RemoveConsultantFromSessionRoomsService removeFromSessionRoomsService;
   @MockitoBean private AccountManaging accountManaging;
   @MockitoBean private UserDtoMapper userDtoMapper;
-  @MockitoBean private IdentityClient identityClient;
-  @MockitoBean private IdentityRoleLookup identityRoleLookup;
-  @MockitoBean private IdentityRoleUpdater identityRoleUpdater;
+
+  /**
+   * Stands in for the whole {@code keycloakService} bean, which implements every focused identity
+   * port; the ports this test drives are read back from it in {@link #createCase()}.
+   */
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAccountStatusLookup.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailAddressUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityLocaleLookup.class,
+        IdentityPasswordChangeRequirement.class,
+        IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
+        IdentityProfileUpdater.class,
+        IdentityRoleLookup.class,
+        IdentityRoleUpdater.class,
+        IdentitySecondFactor.class,
+        IdentityTenantUpdater.class,
+        IdentityUsernameAvailability.class
+      })
+  private IdentityClient identityClient;
+
+  private IdentityRoleUpdater identityRoleUpdater;
+  private IdentityTenantUpdater identityTenantUpdater;
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
-  @MockitoBean private IdentityTenantUpdater identityTenantUpdater;
   @MockitoBean private MatrixSynapseService matrixSynapseService;
 
   private TransactionTemplate transactions;
@@ -227,6 +266,8 @@ class ConsultantTenantChangeMariaDbIT {
   @BeforeEach
   void createCase() {
     transactions = new TransactionTemplate(transactionManager);
+    identityRoleUpdater = (IdentityRoleUpdater) identityClient;
+    identityTenantUpdater = (IdentityTenantUpdater) identityClient;
     TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());

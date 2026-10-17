@@ -8,8 +8,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
+import de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomRow;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService.RoomRef;
@@ -31,7 +31,7 @@ class OldTraegerRoomFinderTest {
   private static final long OLD_TENANT = 7L;
 
   @Mock private SessionRepository sessionRepository;
-  @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private MatrixRoomMembershipLookup roomMembershipLookup;
   @InjectMocks private OldTraegerRoomFinder finder;
 
   @Test
@@ -46,7 +46,7 @@ class OldTraegerRoomFinderTest {
         .thenReturn(List.of(new SessionRoomRow(1L, "!owned")));
     when(sessionRepository.findSupervisionSideRoomsOf(MOVER))
         .thenReturn(List.of(new SessionRoomRow(2L, "!side")));
-    when(matrixSynapseService.findJoinedRoomsForMatrixUser(MATRIX_ID))
+    when(roomMembershipLookup.findJoinedRoomsForMatrixUser(MATRIX_ID))
         .thenReturn(Optional.of(List.of()));
 
     assertThat(rooms())
@@ -58,7 +58,7 @@ class OldTraegerRoomFinderTest {
   void addsTheRoomsOfTheOldTraegerTheMoverIsActuallyAMemberOf() {
     when(sessionRepository.findRoomsReadableBy(eq(MOVER), anyCollection(), anyCollection()))
         .thenReturn(List.of(new SessionRoomRow(1L, "!owned")));
-    when(matrixSynapseService.findJoinedRoomsForMatrixUser(MATRIX_ID))
+    when(roomMembershipLookup.findJoinedRoomsForMatrixUser(MATRIX_ID))
         .thenReturn(Optional.of(List.of("!owned", "!colleague", "!side-old", "!not-a-case")));
     when(sessionRepository.findSessionRoomsOfTenantIn(
             OLD_TENANT, List.of("!owned", "!colleague", "!side-old", "!not-a-case")))
@@ -77,7 +77,7 @@ class OldTraegerRoomFinderTest {
   @Test
   void asksInChunksSoALongRoomListNeverBecomesOneHugeQuery() {
     var joined = IntStream.range(0, 1200).mapToObj(i -> "!room" + i).toList();
-    when(matrixSynapseService.findJoinedRoomsForMatrixUser(MATRIX_ID))
+    when(roomMembershipLookup.findJoinedRoomsForMatrixUser(MATRIX_ID))
         .thenReturn(Optional.of(joined));
 
     rooms();
@@ -90,7 +90,7 @@ class OldTraegerRoomFinderTest {
 
   @Test
   void aMoverInNoRoomNeedsNoMembershipQuery() {
-    when(matrixSynapseService.findJoinedRoomsForMatrixUser(MATRIX_ID))
+    when(roomMembershipLookup.findJoinedRoomsForMatrixUser(MATRIX_ID))
         .thenReturn(Optional.of(List.of()));
 
     assertThat(rooms()).isEmpty();
@@ -100,7 +100,7 @@ class OldTraegerRoomFinderTest {
   /** Fail closed: leaving a room one never sat in is a no-op, staying in one is the leak. */
   @Test
   void fallsBackToEveryRoomOfTheOldCentresWhenTheChatServerCannotTell() {
-    when(matrixSynapseService.findJoinedRoomsForMatrixUser(MATRIX_ID)).thenReturn(Optional.empty());
+    when(roomMembershipLookup.findJoinedRoomsForMatrixUser(MATRIX_ID)).thenReturn(Optional.empty());
     when(sessionRepository.findSessionRoomsOfAgencies(List.of(700L)))
         .thenReturn(List.of(new SessionRoomRow(3L, "!colleague")));
     when(sessionRepository.findSideRoomsOfAgencies(List.of(700L)))
@@ -115,7 +115,7 @@ class OldTraegerRoomFinderTest {
   void aRoomFoundTwiceIsQueuedOnce() {
     when(sessionRepository.findRoomsReadableBy(eq(MOVER), anyCollection(), anyCollection()))
         .thenReturn(List.of(new SessionRoomRow(1L, "!owned")));
-    when(matrixSynapseService.findJoinedRoomsForMatrixUser(MATRIX_ID))
+    when(roomMembershipLookup.findJoinedRoomsForMatrixUser(MATRIX_ID))
         .thenReturn(Optional.of(List.of("!owned")));
     when(sessionRepository.findSessionRoomsOfTenantIn(OLD_TENANT, List.of("!owned")))
         .thenReturn(List.of(new SessionRoomRow(1L, "!owned")));
@@ -125,7 +125,7 @@ class OldTraegerRoomFinderTest {
 
   @Test
   void aCounsellorWithoutCentreStillGetsAValidQuery() {
-    when(matrixSynapseService.findJoinedRoomsForMatrixUser(MATRIX_ID))
+    when(roomMembershipLookup.findJoinedRoomsForMatrixUser(MATRIX_ID))
         .thenReturn(Optional.of(List.of()));
 
     finder.roomsToLeave(MOVER, MATRIX_ID, OLD_TENANT, List.of());

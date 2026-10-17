@@ -1,7 +1,7 @@
 package de.caritas.cob.userservice.api.admin.service.consultant;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
+import de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomRow;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService.RoomRef;
@@ -39,7 +39,7 @@ public class OldTraegerRoomFinder {
   private static final int CHUNK_SIZE = 500;
 
   private final @NonNull SessionRepository sessionRepository;
-  private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull MatrixRoomMembershipLookup roomMembershipLookup;
 
   /**
    * @param consultantId the counsellor
@@ -59,7 +59,7 @@ public class OldTraegerRoomFinder {
     collect(rooms, sessionRepository.findRoomsReadableBy(consultantId, agencyIds, GRANTED_STATES));
     collect(rooms, sessionRepository.findSupervisionSideRoomsOf(consultantId));
 
-    var joined = matrixSynapseService.findJoinedRoomsForMatrixUser(matrixUserId);
+    var joined = roomMembershipLookup.findJoinedRoomsForMatrixUser(matrixUserId);
     if (joined.isPresent()) {
       collectMemberRooms(rooms, joined.get(), previousTenantId);
     } else {

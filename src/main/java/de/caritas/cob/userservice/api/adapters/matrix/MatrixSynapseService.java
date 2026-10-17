@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
+import de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -50,7 +51,7 @@ import org.springframework.web.util.UriUtils;
  */
 @Slf4j
 @Service
-public class MatrixSynapseService implements MatrixUserClient {
+public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembershipLookup {
 
   private static final long SERVER_OPERATION_TOKEN_TTL_MS = 10 * 60 * 1000L;
   private static final String ENDPOINT_REGISTER_USER = "/_synapse/admin/v1/register";
@@ -1978,6 +1979,7 @@ public class MatrixSynapseService implements MatrixUserClient {
    * @return the joined room ids, or empty when the server could not be asked or answered without
    *     the list
    */
+  @Override
   public java.util.Optional<java.util.List<String>> findJoinedRoomsForMatrixUser(
       String matrixUserId) {
     String accessToken = loginAsUserAccessToken(matrixUserId);
