@@ -474,6 +474,76 @@ public class MatrixRoomClient {
     }
   }
 
+  /** What {@link #raiseUserPowerLevel} found and did. */
+  public enum PowerRaise {
+    /** The user already held at least the requested level; nothing was written. */
+    ALREADY_HELD,
+    /** The level was written. */
+    RAISED,
+    /** The token holder has less than the requested level themselves, so they cannot give it. */
+    NOT_PERMITTED,
+    /** The room's power levels could not be read or written. */
+    FAILED
+  }
+
+  /**
+   * Gives {@code userId} at least {@code power}, acting with the token of {@code holderId}. Matrix
+   * lets nobody hand out more than they hold, so a holder below {@code power} gets {@link
+   * PowerRaise#NOT_PERMITTED} without a write. Idempotent: a user who already holds the level is
+   * not written again.
+   *
+   * <p>Best-effort: never throws. Logs the exception type only, never a user or room ID.
+   */
+  public PowerRaise raiseUserPowerLevel(
+      String roomId, String userId, String holderId, int power, String holderToken) {
+    try {
+      var current = readPowerLevels(roomId, holderToken);
+      if (userPower(current, userId) >= power) {
+        return PowerRaise.ALREADY_HELD;
+      }
+      if (userPower(current, holderId) < power) {
+        return PowerRaise.NOT_PERMITTED;
+      }
+      writePowerLevels(roomId, userId, power, holderToken, current);
+      return PowerRaise.RAISED;
+    } catch (Exception failure) {
+      log.warn("Could not raise a Matrix power level ({})", failure.getClass().getSimpleName());
+      return PowerRaise.FAILED;
+    }
+  }
+
+  /**
+   * One invite attempt, without the retry loop of {@link #inviteUserToRoom} and without logging the
+   * invited user: callers that run in a repair queue retry on their own and must keep Matrix user
+   * IDs out of the log (KDG).
+   *
+   * @return true when the user is invited or already in the room, false otherwise
+   */
+  public boolean inviteUserQuietly(String roomId, String userId, String accessToken) {
+    try {
+      var headers = getClientHttpHeaders(accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      var inviteRequest = new MatrixInviteUserRequestDTO();
+      inviteRequest.setUserId(userId);
+      var response =
+          restTemplate.postForEntity(
+              buildUrl(ENDPOINT_INVITE_USER, Map.of("roomId", roomId)),
+              new HttpEntity<>(inviteRequest, headers),
+              Map.class);
+      return response.getStatusCode().is2xxSuccessful();
+    } catch (HttpClientErrorException ex) {
+      if (ex.getStatusCode().value() == 403
+          && ex.getResponseBodyAsString().contains("already in the room")) {
+        return true;
+      }
+      log.warn("Matrix invite into a room was refused with status {}", ex.getStatusCode());
+      return false;
+    } catch (Exception ex) {
+      log.warn("Matrix invite into a room failed ({})", ex.getClass().getSimpleName());
+      return false;
+    }
+  }
+
   @SuppressWarnings("unchecked")
   private Map<String, Object> readPowerLevels(String roomId, String token) {
     var response =

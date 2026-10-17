@@ -41,6 +41,13 @@ public class CaseHandoverMatrixRepairService {
   /** Counts revocations the repair queue gave up on; alert on any increase. */
   static final String LEAVE_EXHAUSTED_METRIC = "userservice.matrix.leave.exhausted";
 
+  /**
+   * Counts every attempt of a LEAVE that could not first hand the room's owner power to the
+   * technical admin; the counsellor stays in the room meanwhile. Alert on a sustained rate.
+   */
+  static final String LEAVE_ADMIN_POWER_FAILED_METRIC =
+      "userservice.matrix.leave.admin_power.failed";
+
   private final @NonNull CaseHandoverMatrixRepairTaskRepository repository;
   private final @NonNull CaseHandoverRequestRepository handoverRequestRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
@@ -359,7 +366,7 @@ public class CaseHandoverMatrixRepairService {
       return switch (task.getAction()) {
         case JOIN -> reconcileJoin(task, token, activeAccess);
         case REMOVE -> removeOrConfirmAbsent(task, token);
-        case LEAVE -> leaveOrConfirmAbsent(task, token);
+        case LEAVE -> handOverPowerThenLeave(task, token);
         case POWER_RESTORE ->
             throw new IllegalStateException("Power restore uses the session lock");
       };
@@ -383,6 +390,30 @@ public class CaseHandoverMatrixRepairService {
     // Access can expire or be revoked while the technical login/JOIN request is in flight. Never
     // retain a membership based only on the pre-I/O check.
     return hasActiveAccess(task) || leaveOrConfirmAbsent(task, memberToken);
+  }
+
+  /**
+   * The counsellor is the room's owner and the agency account is gone, so once they left nobody
+   * could raise the colleague who takes the case over (#1421). Before leaving, they therefore make
+   * the technical admin a power holder; a failure keeps them in the room until a retry succeeds.
+   */
+  private boolean handOverPowerThenLeave(CaseHandoverMatrixRepairTask task, String memberToken) {
+    var members = matrixSynapseService.getRoomMembers(task.getRoomId());
+    if (members.isPresent() && !members.get().contains(task.getMemberId())) {
+      return true;
+    }
+    if (!matrixSynapseService.ensureAdminHoldsRoomPower(
+        task.getRoomId(), task.getMemberId(), memberToken)) {
+      meterRegistry.counter(LEAVE_ADMIN_POWER_FAILED_METRIC).increment();
+      log.warn(
+          "Chat room power could not be handed to the technical admin before a counsellor who"
+              + " changed the Träger leaves session {} (attempt {}); they stay in the room until"
+              + " a retry succeeds",
+          task.getSessionId(),
+          task.getAttemptCount() + 1);
+      return false;
+    }
+    return leaveOrConfirmAbsent(task, memberToken);
   }
 
   private boolean leaveOrConfirmAbsent(CaseHandoverMatrixRepairTask task, String memberToken) {

@@ -71,6 +71,7 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_SEND_TO_DEVICE =
       "/_matrix/client/v3/sendToDevice/{eventType}/{txnId}";
   private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
+  private static final int ROOM_OWNER_POWER_LEVEL = 100;
 
   // The closed-vocabulary error code in a Synapse error body; never the body's free text.
   private static final java.util.regex.Pattern MATRIX_ERRCODE =
@@ -1316,6 +1317,59 @@ public class MatrixSynapseService implements MatrixUserClient {
    */
   public boolean leaveRoom(String roomId, String accessToken) {
     return matrixRoomClient.leaveRoom(roomId, accessToken);
+  }
+
+  /**
+   * Makes sure the technical Matrix admin is a member of the room and holds the owner power level
+   * there, acting with the token of a member who still holds that level. Called before the room
+   * owner leaves for good (a counsellor who moved to another Träger, #1421): afterwards nobody else
+   * holds power, so neither a colleague who takes the case over nor {@code make_room_admin} could
+   * raise anybody any more.
+   *
+   * <p>Idempotent and retryable. An admin who is not in the room is invited by the member and
+   * joins; an admin who already holds the level is not written again. A member who holds less than
+   * the owner level has nothing to hand over (the room has its owner), which counts as done.
+   *
+   * <p>Never throws and logs no Matrix user ID (KDG).
+   *
+   * @param roomId the Matrix room ID
+   * @param memberMatrixUserId full Matrix ID of the member whose token is passed
+   * @param memberToken access token of that member
+   * @return true when nothing is left to hand over, false when the room could not be prepared and
+   *     the caller must not let the member leave yet
+   */
+  public boolean ensureAdminHoldsRoomPower(
+      String roomId, String memberMatrixUserId, String memberToken) {
+    if (roomId == null
+        || roomId.isBlank()
+        || memberMatrixUserId == null
+        || memberMatrixUserId.isBlank()
+        || memberToken == null
+        || memberToken.isBlank()) {
+      return false;
+    }
+    String adminToken = getAdminToken();
+    if (adminToken == null) {
+      log.warn("Could not get the Matrix admin token to hand room power to the technical admin");
+      return false;
+    }
+    String adminMatrixId =
+        "@" + matrixConfig.getAdminUsername() + ":" + matrixConfig.getServerName();
+
+    var members = getRoomMembers(roomId);
+    if (members.isEmpty()) {
+      return false;
+    }
+    if (!members.get().contains(adminMatrixId)) {
+      // The invite may fail because the admin is invited already; the join decides.
+      matrixRoomClient.inviteUserQuietly(roomId, adminMatrixId, memberToken);
+      if (!matrixRoomClient.joinRoom(roomId, adminToken)) {
+        return false;
+      }
+    }
+    return matrixRoomClient.raiseUserPowerLevel(
+            roomId, adminMatrixId, memberMatrixUserId, ROOM_OWNER_POWER_LEVEL, memberToken)
+        != MatrixRoomClient.PowerRaise.FAILED;
   }
 
   /**

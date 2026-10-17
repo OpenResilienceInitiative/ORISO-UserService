@@ -204,6 +204,10 @@ class ConsultantTenantChangeMariaDbIT {
   private final java.util.Map<String, java.util.Set<String>> roomMembers =
       new java.util.LinkedHashMap<>();
 
+  /** Rooms where the mover's hand-over of power to the admin ran while they still sat in it. */
+  private final java.util.Set<String> adminPowerHandedOverBeforeLeaving =
+      new java.util.LinkedHashSet<>();
+
   @DynamicPropertySource
   private static void databaseProperties(DynamicPropertyRegistry registry) {
     registry.add("spring.datasource.url", () -> System.getenv("LIQUIBASE_IT_DB_URL"));
@@ -596,9 +600,18 @@ class ConsultantTenantChangeMariaDbIT {
   @Test
   void onceTheQueueHasRunTheMoverIsInNoRoomOfTheOldTraegerAndColleaguesStayAsTheyWere() {
     move();
+    var roomsOfTheMover =
+        roomMembers.entrySet().stream()
+            .filter(room -> room.getValue().contains(matrixId(MOVER_ID)))
+            .map(java.util.Map.Entry::getKey)
+            .filter(room -> !UNRELATED_ROOM_ID.equals(room))
+            .toList();
 
     processTheRepairQueue();
 
+    assertThat(adminPowerHandedOverBeforeLeaving)
+        .as("the admin got the room's power in every room the mover left")
+        .containsExactlyInAnyOrderElementsOf(roomsOfTheMover);
     var moverId = matrixId(MOVER_ID);
     assertThat(roomMembers.entrySet())
         .filteredOn(room -> room.getValue().contains(moverId))
@@ -726,6 +739,16 @@ class ConsultantTenantChangeMariaDbIT {
             invocation ->
                 Optional.ofNullable(roomMembers.get(invocation.<String>getArgument(0)))
                     .map(List::copyOf));
+    // #1421: the mover hands the technical admin the room's power while still sitting in it.
+    when(matrixSynapseService.ensureAdminHoldsRoomPower(anyString(), anyString(), anyString()))
+        .thenAnswer(
+            invocation -> {
+              var room = roomMembers.get(invocation.<String>getArgument(0));
+              if (room != null && room.contains(invocation.<String>getArgument(1))) {
+                adminPowerHandedOverBeforeLeaving.add(invocation.getArgument(0));
+              }
+              return true;
+            });
     when(matrixSynapseService.leaveRoom(anyString(), anyString()))
         .thenAnswer(
             invocation -> {

@@ -46,6 +46,21 @@ Every 400 and 409 above carries a stable `X-Reason` header (ORISO-Admin#1217 map
 Watch `userservice.matrix.leave.exhausted`: it counts `LEAVE` tasks the repair queue gave up on
 (counsellor still in a room of the old Träger). Each also logs one WARN with the case id only.
 
+## Power hand-over before the LEAVE
+
+The counsellor is the owner (power 100) of their case rooms and the agency account is gone, so once
+they left nobody could raise the colleague who takes the case over (#1422 acts through
+`make_room_admin`, which needs a joined member with power). Before a `LEAVE` task makes the
+counsellor leave, the counsellor therefore makes the technical Matrix admin a member of the room
+(invite and join if it is not) and raises it to 100 with their own token
+(`MatrixSynapseService.ensureAdminHoldsRoomPower`). Idempotent: an admin who holds 100 is not
+written again; a counsellor below 100 (silent department member, read-only co-reader) has nothing
+to hand over and just leaves. If the hand-over fails the counsellor stays in the room and the task
+is retried like any other `LEAVE` failure. The admin keeps 100 afterwards.
+
+Watch `userservice.matrix.leave.admin_power.failed`: it counts every attempt that could not hand
+the power over (one WARN with the case id only per attempt; no Matrix ids are logged).
+
 ## Known limits
 
 - **#1421 must not ship without #1422.** A colleague who is not already a member of the case room
@@ -55,8 +70,9 @@ Watch `userservice.matrix.leave.exhausted`: it counts `LEAVE` tasks the repair q
   case was accepted, directly assigned cases, cases from before ADR-002); department members are
   members already, so the common case works. The new owner also keeps Matrix power 0 instead of
   100. The LEAVE cannot be ordered after the takeover (it happens when the move happens, the
-  takeover whenever a colleague gets to it), so the fix is the admin force-join of #1422. Merge
-  order: #1422, then #1421.
+  takeover whenever a colleague gets to it), so the fix is the admin force-join of #1422 (and the
+  power hand-over above, so that `make_room_admin` finds someone with power). Merge order: #1422,
+  then #1421.
 - Megolm keys already on the counsellor's devices cannot be revoked. Group chats and appointments
   are not handled.
 - The rooms are left asynchronously: until the queue has run (at most 100 per minute) the

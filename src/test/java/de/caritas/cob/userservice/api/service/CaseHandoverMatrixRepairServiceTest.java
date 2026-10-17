@@ -358,6 +358,9 @@ class CaseHandoverMatrixRepairServiceTest {
     when(matrixSynapseService.loginAsUserAccessToken("@mover:matrix")).thenReturn("own-token");
     when(matrixSynapseService.getRoomMembers("!room:matrix"))
         .thenReturn(Optional.of(java.util.List.of("@mover:matrix", "@colleague:matrix")));
+    when(matrixSynapseService.ensureAdminHoldsRoomPower(
+            "!room:matrix", "@mover:matrix", "own-token"))
+        .thenReturn(true);
     when(matrixSynapseService.leaveRoom("!room:matrix", "own-token")).thenReturn(true);
 
     service.process(11L);
@@ -389,6 +392,9 @@ class CaseHandoverMatrixRepairServiceTest {
     when(matrixSynapseService.loginAsUserAccessToken("@mover:matrix")).thenReturn("own-token");
     when(matrixSynapseService.getRoomMembers("!room:matrix"))
         .thenReturn(Optional.of(java.util.List.of("@mover:matrix")));
+    when(matrixSynapseService.ensureAdminHoldsRoomPower(
+            "!room:matrix", "@mover:matrix", "own-token"))
+        .thenReturn(true);
     when(matrixSynapseService.leaveRoom("!room:matrix", "own-token")).thenReturn(false);
 
     service.process(13L);
