@@ -1423,7 +1423,7 @@ class CaseHandoverServiceTest {
   @ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(
       value = CaseHandoverRequest.Status.class,
-      names = {"GRANTED", "CLIENT_CONSENT_DECLINED", "DENIED", "EXPIRED"})
+      names = {"GRANTED", "CLIENT_CONSENT_DECLINED", "EXPIRED"})
   void getRequestStatus_adviceSeekerOfTheSessionReadsTheRealFinalStatusWithoutStaffDetails(
       CaseHandoverRequest.Status closed) {
     CaseHandoverRequest request = pendingConsentRequest();
@@ -1443,6 +1443,77 @@ class CaseHandoverServiceTest {
     assertNull(status.getReasonCode());
     assertNull(status.getReasonLabel());
     assertNull(status.getPolicyAuthority());
+  }
+
+  @Test
+  void getRequestStatus_adviceSeekerViewCarriesExactlyTheClientSafeFields() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(CaseHandoverRequest.Status.GRANTED);
+    request.setAuditOutcome("ACCESS_GRANTED");
+    request.setAccessType(CaseHandoverRequest.AccessType.CO_ACCESS);
+    request.setCreatedAt(LocalDateTime.of(2026, 10, 17, 9, 0));
+    request.setResolvedAt(LocalDateTime.of(2026, 10, 17, 9, 5));
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    CaseHandoverStatus status = caseHandoverService.getRequestStatus(123L, 88L);
+
+    // Anything not listed here must stay unset: it would show the asker staff-side detail.
+    CaseHandoverStatus expected =
+        CaseHandoverStatus.builder()
+            .requestId(88L)
+            .sessionId(123L)
+            .status("GRANTED")
+            .canViewContent(true)
+            .clientConsent(CaseHandoverConsentMode.OPT_IN)
+            .clientConsentRequired(true)
+            .ownershipRevision(session.getOwnershipRevision())
+            .auditOutcome("ACCESS_GRANTED")
+            .createdAt(LocalDateTime.of(2026, 10, 17, 9, 0))
+            .resolvedAt(LocalDateTime.of(2026, 10, 17, 9, 5))
+            .accessType("CO_ACCESS")
+            .build();
+    assertEquals(expected, status);
+  }
+
+  @Test
+  void getRequestStatus_adviceSeekerCannotReadARequestOfAnotherTenant() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(CaseHandoverRequest.Status.GRANTED);
+    request.setTenantId(8L);
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.getRequestStatus(123L, 88L));
+  }
+
+  /**
+   * A request that was denied at once (access not allowed, or someone else already holds access)
+   * stores the reason's consent mode, but the asker was never asked and never told. It must not be
+   * readable, whatever the stored mode says.
+   */
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"ALREADY_ANSWERED", "ACCESS_DENIED"})
+  void getRequestStatus_adviceSeekerNeverSeesARequestDeniedBeforeTheyWereAsked(
+      String auditOutcome) {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(CaseHandoverRequest.Status.DENIED);
+    request.setAuditOutcome(auditOutcome);
+    request.setClientConsent(CaseHandoverConsentMode.OPT_IN);
+    request.setClientConsentRequired(true);
+    request.setCreatedAt(LocalDateTime.of(2026, 10, 17, 9, 0));
+    request.setResolvedAt(LocalDateTime.of(2026, 10, 17, 9, 0));
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.getRequestStatus(123L, 88L));
   }
 
   @Test
@@ -2908,6 +2979,46 @@ class CaseHandoverServiceTest {
     assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
     assertEquals(previous, session.getConsultant());
     verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+  }
+
+  @Test
+  void resolveClientConsent_namesTheOwnerChangeWhenTheOwnershipRevisionMoved() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    session.setOwnershipRevision(request.getExpectedOwnershipRevision() + 1);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    var conflict =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+            () -> caseHandoverService.resolveClientConsent(123L, 88L, true));
+
+    assertEquals(
+        java.util.Optional.of(
+            de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                .HttpStatusExceptionReason.CASE_OWNER_CHANGED),
+        conflict.getReason());
+  }
+
+  @Test
+  void resolveClientConsent_namesTheOwnerChangeWhenThePushingOwnerIsNoLongerOwner() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request = pushRequest(recipient, UUID.randomUUID());
+    request.setStatus(CaseHandoverRequest.Status.PENDING_CLIENT_CONSENT);
+    session.setConsultant(previous);
+    when(caseHandoverRequestRepository.findByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
+
+    var conflict =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+            () -> caseHandoverService.resolveClientConsent(123L, 501L, true));
+
+    assertEquals(
+        java.util.Optional.of(
+            de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                .HttpStatusExceptionReason.CASE_OWNER_CHANGED),
+        conflict.getReason());
   }
 
   @Test
