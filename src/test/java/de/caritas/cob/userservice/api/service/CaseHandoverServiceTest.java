@@ -4413,6 +4413,70 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void takeover_withTheOwnerPresent_queuesADurableRaise_whenAMuteColleaguesRaiseFailsAfterCommit() {
+    // A failed co-access restore left the colleague at -1 and the owner left before the raise.
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, REQUESTER_MXID, -1);
+    var gateway = org.mockito.Mockito.spy(homeserver.gateway());
+    org.mockito.Mockito.doReturn(false)
+        .when(gateway)
+        .setUserPowerLevel(anyString(), anyString(), eq(100), anyString());
+    ReflectionTestUtils.setField(caseHandoverService, "matrixSynapseService", gateway);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      takeOverBecauseAssignmentEnded();
+      runSynchronizations(TransactionSynchronization::afterCommit);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    verify(matrixRepairService)
+        .enqueuePowerRaise(caseRoom, REQUESTER_MXID, 123L, requester.getId());
+  }
+
+  @Test
+  void takeover_withTheOwnerPresent_queuesNoRepair_whenTheColleagueCanPostAnyway() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, REQUESTER_MXID, 0);
+    var gateway = org.mockito.Mockito.spy(homeserver.gateway());
+    org.mockito.Mockito.doReturn(false)
+        .when(gateway)
+        .setUserPowerLevel(anyString(), anyString(), eq(100), anyString());
+    ReflectionTestUtils.setField(caseHandoverService, "matrixSynapseService", gateway);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      takeOverBecauseAssignmentEnded();
+      runSynchronizations(TransactionSynchronization::afterCommit);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    verify(matrixRepairService, never()).enqueuePowerRaise(any(), any(), any(), any());
+  }
+
+  @Test
+  void takeover_forceJoins_whenTheOwnerLeavesBetweenTheMemberSnapshotAndTheInvite() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    var snapshotWithOwner =
+        List.of(PREVIOUS_MXID, ASKER_MXID, ADMIN_MXID); // what getRoomMembers saw first
+    previousOwnerHasLeft(); // ...and the owner is gone by the time the invite is sent
+    var gateway = org.mockito.Mockito.spy(homeserver.gateway());
+    org.mockito.Mockito.doReturn(Optional.of(snapshotWithOwner))
+        .doCallRealMethod()
+        .when(gateway)
+        .getRoomMembers(anyString());
+    ReflectionTestUtils.setField(caseHandoverService, "matrixSynapseService", gateway);
+
+    takeOverBecauseAssignmentEnded();
+
+    assertTrue(homeserver.isMember(caseRoom, REQUESTER_MXID));
+    assertTrue(homeserver.canPost(caseRoom, REQUESTER_MXID));
+    assertEquals(requester, session.getConsultant());
+  }
+
+  @Test
   void takeover_queuesNoRepair_whenTheColleagueCanPostAnywayAndNobodyCanRaiseThem() {
     givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
     previousOwnerHasLeft();

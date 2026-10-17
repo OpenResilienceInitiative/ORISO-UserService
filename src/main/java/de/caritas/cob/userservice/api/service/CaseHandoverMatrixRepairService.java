@@ -319,17 +319,26 @@ public class CaseHandoverMatrixRepairService {
     }
   }
 
+  /**
+   * The ownership check and the raise run under the session row lock, like the power restore: a
+   * newer takeover holds the same lock, so it cannot commit between the check and the Matrix call
+   * and leave the former owner with power 100.
+   */
   private boolean raisePowerWhileStillOwner(CaseHandoverMatrixRepairTask task) {
-    var session = sessionRepository.findById(task.getSessionId());
-    boolean stillOwner =
-        session.isPresent()
-            && session.get().getConsultant() != null
-            && java.util.Objects.equals(
-                session.get().getConsultant().getId(), task.getRequesterConsultantId());
-    if (!stillOwner) {
-      return true;
-    }
-    return matrixSynapseService.makeRoomAdmin(task.getRoomId(), task.getMemberId());
+    return Boolean.TRUE.equals(
+        inNewTransaction(
+            () -> {
+              var session = sessionRepository.findByIdForUpdate(task.getSessionId());
+              boolean stillOwner =
+                  session.isPresent()
+                      && session.get().getConsultant() != null
+                      && java.util.Objects.equals(
+                          session.get().getConsultant().getId(), task.getRequesterConsultantId());
+              if (!stillOwner) {
+                return true;
+              }
+              return matrixSynapseService.makeRoomAdmin(task.getRoomId(), task.getMemberId());
+            }));
   }
 
   private boolean reconcileJoin(

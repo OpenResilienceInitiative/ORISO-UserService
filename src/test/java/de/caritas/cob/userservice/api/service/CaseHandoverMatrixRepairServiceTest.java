@@ -182,7 +182,8 @@ class CaseHandoverMatrixRepairServiceTest {
     var task = powerRaiseTask();
     when(repository.findById(11L)).thenReturn(Optional.of(task));
     when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
-    when(sessionRepository.findById(123L)).thenReturn(Optional.of(sessionOwnedBy("requester")));
+    when(sessionRepository.findByIdForUpdate(123L))
+        .thenReturn(Optional.of(sessionOwnedBy("requester")));
     when(matrixSynapseService.makeRoomAdmin("!room:matrix", "@requester:matrix")).thenReturn(true);
 
     service.process(11L);
@@ -196,7 +197,8 @@ class CaseHandoverMatrixRepairServiceTest {
     var task = powerRaiseTask();
     when(repository.findById(11L)).thenReturn(Optional.of(task));
     when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
-    when(sessionRepository.findById(123L)).thenReturn(Optional.of(sessionOwnedBy("requester")));
+    when(sessionRepository.findByIdForUpdate(123L))
+        .thenReturn(Optional.of(sessionOwnedBy("requester")));
     when(matrixSynapseService.makeRoomAdmin("!room:matrix", "@requester:matrix")).thenReturn(false);
 
     service.process(11L);
@@ -210,7 +212,8 @@ class CaseHandoverMatrixRepairServiceTest {
     var task = powerRaiseTask();
     when(repository.findById(11L)).thenReturn(Optional.of(task));
     when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
-    when(sessionRepository.findById(123L)).thenReturn(Optional.of(sessionOwnedBy("someone-else")));
+    when(sessionRepository.findByIdForUpdate(123L))
+        .thenReturn(Optional.of(sessionOwnedBy("someone-else")));
 
     service.process(11L);
 

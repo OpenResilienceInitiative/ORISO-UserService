@@ -2662,6 +2662,14 @@ public class CaseHandoverService {
 
     boolean joined = matrixSynapseService.joinRoom(roomId, requesterToken);
     if (!joined) {
+      // The owner may have left between the member snapshot and the invite: then the invite was
+      // refused and the join fails, although the force-join path could complete the takeover.
+      if (accessType == AccessType.TAKEOVER) {
+        var current = matrixSynapseService.getRoomMembers(roomId);
+        if (current.isPresent() && !current.get().contains(previousConsultant.getMatrixUserId())) {
+          return ensureRequesterJoinedWithoutPreviousOwner(session, requester, current.get());
+        }
+      }
       throw new InternalServerErrorException(
           "Failed to join case handover requester to Matrix room");
     }
@@ -2707,6 +2715,10 @@ public class CaseHandoverService {
     // room admin of a case they do not own.
     if (accessType == AccessType.TAKEOVER) {
       String requesterMatrixId = requester.getMatrixUserId();
+      // A colleague left at -1 by a failed co-access restore cannot post without this raise, so
+      // a failed raise goes to the persistent repair queue instead of staying a log line. Unknown
+      // power levels count as "relies on it": the queue is only used when the raise failed.
+      boolean reliesOnRaise = !requesterCanPostNow(roomId, requesterMatrixId, requesterToken);
       raiseOwnerPowerOnceCommitted(
           session.getId(),
           roomId,
@@ -2714,7 +2726,11 @@ public class CaseHandoverService {
               matrixSynapseService.setUserPowerLevel(
                   roomId, requesterMatrixId, OWNER_POWER_LEVEL, previousConsultantToken),
           "the previous owner's token is no longer accepted or lacks the power to raise it",
-          null);
+          reliesOnRaise
+              ? () ->
+                  matrixRepairService.enqueuePowerRaise(
+                      roomId, requesterMatrixId, session.getId(), requester.getId())
+              : null);
     }
 
     // The previous counsellor deliberately keeps their membership. ADR-002's reveal lifecycle has
@@ -2789,6 +2805,23 @@ public class CaseHandoverService {
                     roomId, requesterMatrixId, session.getId(), requester.getId())
             : null);
     return !wasMemberBefore;
+  }
+
+  /** Whether the requester can write right now; false also when the levels cannot be read. */
+  private boolean requesterCanPostNow(String roomId, String requesterMatrixId, String token) {
+    return matrixSynapseService
+        .getPowerLevels(roomId, token)
+        .map(levels -> powerOfMember(levels, requesterMatrixId) >= eventsDefaultOf(levels))
+        .orElse(false);
+  }
+
+  private static int eventsDefaultOf(Map<String, Object> levels) {
+    return powerLevelOf(levels.get("events_default"), 0);
+  }
+
+  private static int powerOfMember(Map<String, Object> levels, String member) {
+    Map<?, ?> users = levels.get("users") instanceof Map<?, ?> map ? map : Map.of();
+    return powerLevelOf(users.get(member), powerLevelOf(levels.get("users_default"), 0));
   }
 
   /**
