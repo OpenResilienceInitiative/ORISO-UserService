@@ -57,6 +57,8 @@ class ChatStartTimeContractTest {
   @Mock
   private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
 
+  @Mock private de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation revocation;
+
   @Mock private ChatRepository chatRepository;
   @Mock private ChatAgencyRepository chatAgencyRepository;
   @Mock private UserChatRepository chatUserRepository;

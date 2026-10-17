@@ -34,6 +34,7 @@ import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
 import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokenService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -73,6 +74,7 @@ public class ChatService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull GroupChatConsultantAccess groupChatConsultantAccess;
   private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
+  private final @NonNull MembersOnlyRevocation membersOnlyRevocation;
   private final @NonNull GroupChatInviteTokenService groupChatInviteTokenService;
 
   /**
@@ -514,6 +516,8 @@ public class ChatService {
    */
   @Transactional
   public void deleteChat(Chat chat) {
+    // Needs the participations: they name the case of a members-only chat.
+    membersOnlyRevocation.retireCaseOf(chat);
     groupChatParticipantRepository.deleteBySeriesId(chat.getId());
     chatRepository.delete(chat);
   }

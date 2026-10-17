@@ -55,7 +55,19 @@ public class MembersOnlyChatAccess {
         && session.getConversationType() != ConversationType.INTERNAL_GROUP) {
       return false;
     }
-    return chatRepository.existsByMatrixRoomIdAndMembersOnlyTrue(session.getMatrixRoomId());
+    return chatRepository.existsByMatrixRoomIdAndMembersOnlyTrue(session.getMatrixRoomId())
+        || isOrphanedCase(session)
+            && !chatRepository.existsByMatrixRoomId(session.getMatrixRoomId());
+  }
+
+  /**
+   * The technical case of an internal chat that is no team session can only belong to a
+   * members-only chat. When that chat is gone the case belongs to nobody: the rule fails closed and
+   * does not fall back to who the session is assigned to.
+   */
+  private static boolean isOrphanedCase(Session session) {
+    return session.getConversationType() == ConversationType.INTERNAL_GROUP
+        && !session.isTeamSession();
   }
 
   /** Whether the counsellor takes part in the members-only chat right now. */
@@ -139,8 +151,22 @@ public class MembersOnlyChatAccess {
             .map(Session::getMatrixRoomId)
             .collect(Collectors.toCollection(HashSet::new));
     var membersOnlyRooms = chatRepository.findMembersOnlyMatrixRoomIds(roomIds);
+    var possiblyOrphaned =
+        candidates.stream()
+            .filter(session -> !membersOnlyRooms.contains(session.getMatrixRoomId()))
+            .filter(MembersOnlyChatAccess::isOrphanedCase)
+            .map(Session::getMatrixRoomId)
+            .collect(Collectors.toCollection(HashSet::new));
+    var roomsWithAChat =
+        possiblyOrphaned.isEmpty()
+            ? Set.<String>of()
+            : chatRepository.findExistingMatrixRoomIds(possiblyOrphaned);
     return candidates.stream()
-        .filter(session -> membersOnlyRooms.contains(session.getMatrixRoomId()))
+        .filter(
+            session ->
+                membersOnlyRooms.contains(session.getMatrixRoomId())
+                    || isOrphanedCase(session)
+                        && !roomsWithAChat.contains(session.getMatrixRoomId()))
         .map(Session::getId)
         .collect(Collectors.toSet());
   }

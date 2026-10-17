@@ -114,6 +114,52 @@ class MembersOnlyChatAccessTest {
   }
 
   @Test
+  void theCaseOfAChatThatIsGoneBelongsToNobodyNotEvenToItsAssignedConsultant() {
+    var creator = consultant("creator");
+    var session = new Session();
+    session.setId(7L);
+    session.setMatrixRoomId(ROOM);
+    session.setConversationType(ConversationType.INTERNAL_GROUP);
+    session.setTeamSession(false);
+    session.setConsultant(creator);
+    when(chats.existsByMatrixRoomIdAndMembersOnlyTrue(ROOM)).thenReturn(false);
+    when(chats.existsByMatrixRoomId(ROOM)).thenReturn(false);
+    when(participants.existsByChatIdAndConsultantId(7L, "creator")).thenReturn(false);
+
+    assertThat(guard.concerns(session)).isTrue();
+    assertThat(guard.excludes(session, creator)).isTrue();
+    assertThrows(ForbiddenException.class, () -> guard.requireAccess(session, creator));
+  }
+
+  @Test
+  void anInternalTeamSessionWhoseChatIsGoneIsNotAMembersOnlyCase() {
+    var session = new Session();
+    session.setId(7L);
+    session.setMatrixRoomId(ROOM);
+    session.setConversationType(ConversationType.INTERNAL_GROUP);
+    session.setTeamSession(true);
+
+    assertThat(guard.concerns(session)).isFalse();
+  }
+
+  @Test
+  void aListFailsClosedForTheCasesOfChatsThatAreGone() {
+    var gone = new Session();
+    gone.setId(7L);
+    gone.setMatrixRoomId("!gone:oriso");
+    gone.setConversationType(ConversationType.INTERNAL_GROUP);
+    var team = new Session();
+    team.setId(8L);
+    team.setMatrixRoomId("!team:oriso");
+    team.setConversationType(ConversationType.INTERNAL_GROUP);
+    team.setTeamSession(true);
+    when(chats.findMembersOnlyMatrixRoomIds(any())).thenReturn(Set.of());
+    when(chats.findExistingMatrixRoomIds(any())).thenReturn(Set.of());
+
+    assertThat(guard.membersOnlySessionIds(List.of(gone, team))).containsExactly(7L);
+  }
+
+  @Test
   void aSessionWithoutARoomIsNotAMembersOnlyCase() {
     var session = new Session();
     session.setId(3L);

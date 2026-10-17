@@ -48,6 +48,11 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
   Optional<Chat> findByMatrixRoomId(String matrixRoomId);
 
   /** Whether the room belongs to a members-only chat (#1418). */
+  boolean existsByMatrixRoomId(String matrixRoomId);
+
+  @Query("select c.matrixRoomId from Chat c where c.matrixRoomId in :room_ids")
+  Set<String> findExistingMatrixRoomIds(@Param("room_ids") Collection<String> roomIds);
+
   boolean existsByMatrixRoomIdAndMembersOnlyTrue(String matrixRoomId);
 
   /** Of these rooms, the ones that belong to a members-only chat (#1418). */

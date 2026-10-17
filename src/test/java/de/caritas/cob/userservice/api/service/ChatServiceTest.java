@@ -80,6 +80,9 @@ class ChatServiceTest {
   @Mock
   private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation membersOnlyRevocation;
+
   @Mock private ChatRepository chatRepository;
 
   @Mock private ChatAgencyRepository chatAgencyRepository;
@@ -744,6 +747,21 @@ class ChatServiceTest {
     deletionOrder.verify(groupChatParticipantRepository).deleteBySeriesId(CHAT_ID);
     deletionOrder.verify(chatRepository).delete(chat);
     verify(chatRepository).delete(chat);
+  }
+
+  @Test
+  void deleteChat_Should_retireTheCaseOfTheChatBeforeItsParticipationsGo() {
+    Chat chat = new Chat();
+    chat.setId(CHAT_ID);
+    chat.setMembersOnly(true);
+
+    chatService.deleteChat(chat);
+
+    var deletionOrder =
+        inOrder(membersOnlyRevocation, groupChatParticipantRepository, chatRepository);
+    deletionOrder.verify(membersOnlyRevocation).retireCaseOf(chat);
+    deletionOrder.verify(groupChatParticipantRepository).deleteBySeriesId(CHAT_ID);
+    deletionOrder.verify(chatRepository).delete(chat);
   }
 
   @Test

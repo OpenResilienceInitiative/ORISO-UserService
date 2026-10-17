@@ -215,6 +215,47 @@ class MembersOnlyRevocationTest {
     verifyNoInteractions(membership);
   }
 
+  @Test
+  void aDeletedChatClosesItsSessionAndEndsEverySupervisionOfIt() {
+    var supervision = supervisionInSideRoom("!side:oriso", "@member:oriso");
+    when(supervisions.findBySessionIdAndIsActiveTrue(9L)).thenReturn(List.of(supervision));
+    session.setId(9L);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    when(chat.getMatrixRoomId()).thenReturn("!room:oriso");
+    when(sessions.findByMatrixRoomId("!room:oriso")).thenReturn(Optional.of(session));
+
+    revocation.retireCaseOf(chat);
+
+    assertThat(session.getStatus()).isEqualTo(Session.SessionStatus.DONE);
+    verify(sessions).save(session);
+    assertThat(supervision.getIsActive()).isFalse();
+    verify(supervisions).save(supervision);
+  }
+
+  @Test
+  void aDeletedChatWithoutParticipationsStillFindsItsSessionByRoom() {
+    when(participants.findBySeriesId(5L)).thenReturn(List.of());
+    session.setId(9L);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    when(chat.getMatrixRoomId()).thenReturn("!room:oriso");
+    when(sessions.findByMatrixRoomId("!room:oriso")).thenReturn(Optional.of(session));
+
+    revocation.retireCaseOf(chat);
+
+    assertThat(session.getStatus()).isEqualTo(Session.SessionStatus.DONE);
+  }
+
+  @Test
+  void aDeletedOrdinaryChatLeavesItsSessionAlone() {
+    when(chat.isMembersOnly()).thenReturn(false);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+
+    revocation.retireCaseOf(chat);
+
+    assertThat(session.getStatus()).isEqualTo(Session.SessionStatus.IN_PROGRESS);
+    verify(sessions, never()).save(session);
+  }
+
   private SessionSupervisor supervisionInSideRoom(String sideRoomId, String matrixUserId) {
     var supervisor = consultant("member");
     supervisor.setMatrixUserId(matrixUserId);

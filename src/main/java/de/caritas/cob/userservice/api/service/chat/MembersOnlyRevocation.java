@@ -3,6 +3,8 @@ package de.caritas.cob.userservice.api.service.chat;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
@@ -12,6 +14,8 @@ import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -66,6 +70,44 @@ public class MembersOnlyRevocation {
         });
   }
 
+  /**
+   * Call when a members-only chat is deleted, before its participations are, in the same
+   * transaction: the technical session of the chat is closed and every supervision of it ends, so
+   * nobody keeps an in-progress case that points at a room that no longer exists. Does nothing for
+   * an ordinary chat.
+   */
+  public void retireCaseOf(Chat series) {
+    if (series == null || !series.isMembersOnly()) {
+      return;
+    }
+    TenantContext.supplyAcrossTenants(
+        () -> {
+          var sessionIds = new LinkedHashSet<Long>();
+          participantRepository.findBySeriesId(series.getId()).stream()
+              .map(GroupChatParticipant::getChatId)
+              .filter(Objects::nonNull)
+              .forEach(sessionIds::add);
+          if (series.getMatrixRoomId() != null) {
+            sessionRepository
+                .findByMatrixRoomId(series.getMatrixRoomId())
+                .map(Session::getId)
+                .ifPresent(sessionIds::add);
+          }
+          sessionIds.stream()
+              .map(sessionRepository::findById)
+              .flatMap(Optional::stream)
+              .forEach(this::close);
+          return null;
+        });
+  }
+
+  private void close(Session session) {
+    supervisorRepository.findBySessionIdAndIsActiveTrue(session.getId()).forEach(this::end);
+    session.setStatus(SessionStatus.DONE);
+    session.setUpdateDate(LocalDateTime.now());
+    sessionRepository.save(session);
+  }
+
   private void handOverSessionFrom(Chat series, GroupChatParticipant leaving) {
     var session = sessionRepository.findById(leaving.getChatId()).orElse(null);
     if (session == null || !session.isAdvisedBy(leaving.getConsultantId())) {
@@ -92,13 +134,14 @@ public class MembersOnlyRevocation {
     supervisorRepository
         .findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
             leaving.getChatId(), leaving.getConsultantId())
-        .ifPresent(
-            supervision -> {
-              supervision.setIsActive(false);
-              supervision.setRemovedDate(LocalDateTime.now());
-              supervisorRepository.save(supervision);
-              leaveSideRoomAfterCommit(supervision);
-            });
+        .ifPresent(this::end);
+  }
+
+  private void end(SessionSupervisor supervision) {
+    supervision.setIsActive(false);
+    supervision.setRemovedDate(LocalDateTime.now());
+    supervisorRepository.save(supervision);
+    leaveSideRoomAfterCommit(supervision);
   }
 
   private void leaveSideRoomAfterCommit(SessionSupervisor supervision) {

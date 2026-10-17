@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
@@ -769,6 +770,44 @@ class InternalSubsetChatHttpIT {
     assertThat(request("GET", "/users/chat/" + chatId, otherTraeger, "").statusCode())
         .as("the removed colleague of the other Traeger")
         .isEqualTo(403);
+  }
+
+  @Test
+  void stoppingTheChatRetiresItsSessionSoNobodyKeepsABrokenEntry() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var sessionId = sessionOf(chatId);
+    assertThat(sessionListOf(creator).body()).as("before stopping").contains(roomId);
+
+    var stopped = request("PUT", "/users/chat/" + chatId + "/stop", creator, "");
+    assertThat(stopped.statusCode()).as(stopped.body()).isIn(200, 204);
+
+    assertThat(Tenants.acrossAll(() -> chats.findById(Long.parseLong(chatId))))
+        .as("the chat is gone")
+        .isEmpty();
+    assertThat(
+            Tenants.acrossAll(
+                () ->
+                    database.queryForObject(
+                        "SELECT status FROM session WHERE id = ?", Integer.class, sessionId)))
+        .as("the paired session is closed, not left in progress")
+        .isNotEqualTo(Session.SessionStatus.IN_PROGRESS.getValue());
+    for (var former : List.of(creator, sameCentre, anotherSameCentre)) {
+      for (var status : List.of(1, 2, 3)) {
+        var list =
+            request(
+                "GET",
+                "/users/sessions/consultants?status=" + status + "&offset=0&count=100&filter=all",
+                former,
+                "");
+        assertThat(list.body())
+            .as("session list of " + former.getId() + ", status " + status)
+            .doesNotContain(roomId);
+      }
+      var bySessionId = request("GET", "/users/sessions/room/" + sessionId, former, "");
+      assertThat(bySessionId.statusCode()).as("session by id").isEqualTo(204);
+    }
   }
 
   private Long sessionOf(String chatId) {
