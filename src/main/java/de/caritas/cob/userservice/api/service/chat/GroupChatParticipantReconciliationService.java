@@ -75,6 +75,10 @@ public class GroupChatParticipantReconciliationService {
     for (var existing : participants) {
       if (existing.getRole() == ParticipantRole.CO_MODERATOR
           && !desiredIds.contains(existing.getConsultantId())) {
+        // The side room of a supervision is left first, the main room last: when a leave fails
+        // everything rolls back, and the room that is already gone is then the harmless one.
+        revocation.revokeAccessOf(series, existing);
+        participantRepository.delete(existing);
         // An existing participant may come from another Träger (recipient scope PLATFORM) or may
         // have been deleted since: the owner's own Träger and an active-only lookup would not find
         // them, and their account would stay in the Matrix room. They are resolved by
@@ -85,8 +89,6 @@ public class GroupChatParticipantReconciliationService {
                 consultant ->
                     membershipService.removeParticipantFromRoom(
                         series, consultant.getMatrixUserId()));
-        revocation.revokeAccessOf(series, existing);
-        participantRepository.delete(existing);
       }
     }
 

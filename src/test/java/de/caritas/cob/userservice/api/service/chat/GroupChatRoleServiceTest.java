@@ -105,10 +105,12 @@ class GroupChatRoleServiceTest {
     roleService.removeParticipant(42L, "owner", "target");
 
     verify(participantRepository).delete(target);
-    verify(groupChatMembershipService).removeParticipantFromRoom(series, "@target:matrix.example");
-    InOrder handOver = inOrder(revocation, participantRepository);
+    InOrder handOver = inOrder(revocation, participantRepository, groupChatMembershipService);
     handOver.verify(revocation).revokeAccessOf(series, target);
     handOver.verify(participantRepository).delete(target);
+    handOver
+        .verify(groupChatMembershipService)
+        .removeParticipantFromRoom(series, "@target:matrix.example");
   }
 
   @Test
@@ -138,10 +140,12 @@ class GroupChatRoleServiceTest {
     roleService.leaveSeries(series, consultant);
 
     verify(participantRepository).delete(coModerator);
-    verify(groupChatMembershipService).removeParticipantFromRoom(series, "@co-mod:matrix.example");
-    InOrder handOver = inOrder(revocation, participantRepository);
+    InOrder handOver = inOrder(revocation, participantRepository, groupChatMembershipService);
     handOver.verify(revocation).revokeAccessOf(series, coModerator);
     handOver.verify(participantRepository).delete(coModerator);
+    handOver
+        .verify(groupChatMembershipService)
+        .removeParticipantFromRoom(series, "@co-mod:matrix.example");
   }
 
   private GroupChatParticipant participant(

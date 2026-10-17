@@ -711,9 +711,9 @@ public class SessionService {
    * to the accepted conversation, but {@link #getSessionsByIds} is tenant-filtered and no longer
    * matches the anonymous-NEW fallback above, so the post-accept read returns 204 and the accepted
    * chat never opens. This scoped fallback resolves such a session across tenants, but only when
-   * the consultant is its directly assigned advisor ({@link Session#isAdvisedBy(Consultant)}) — it
-   * never widens access by agency or topic, and it does not change the session's tenant ownership
-   * (the asker keeps seeing their own chat).
+   * the consultant is its directly assigned advisor ({@link Session#isAdvisedBy(Consultant)}) or a
+   * participant of the members-only chat it belongs to — it never widens access by agency or topic,
+   * and it does not change the session's tenant ownership (the asker keeps seeing their own chat).
    */
   @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getDirectlyAssignedSessionsByIdsCrossTenant(
@@ -725,7 +725,10 @@ public class SessionService {
         TenantContext.supplyAcrossTenants(
             () ->
                 StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
-                    .filter(session -> session.isAdvisedBy(consultant))
+                    .filter(
+                        session ->
+                            session.isAdvisedBy(consultant)
+                                || membersOnlyChatAccess.admits(session, consultant))
                     .filter(session -> !membersOnlyChatAccess.excludes(session, consultant))
                     .collect(Collectors.toList()));
     return mapSessionsToConsultantSessionDto(sessions);

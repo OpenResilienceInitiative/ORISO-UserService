@@ -787,6 +787,41 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void aMainRoomThatCannotBeLeftAfterTheSideRoomWasLeftRollsTheSupervisionBack() throws Exception {
+    var created = openRoom(creator, sameCentre, anotherSameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var sessionId = sessionOf(chatId);
+    Tenants.acrossAll(
+        () ->
+            database.update(
+                "INSERT INTO session_supervisor (session_id, supervisor_consultant_id,"
+                    + " added_by_consultant_id, added_date, is_active, matrix_room_id)"
+                    + " VALUES (?, ?, ?, NOW(), 1, ?)",
+                sessionId,
+                sameCentre.getId(),
+                creator.getId(),
+                "!side-of-" + sessionId + ":oriso"));
+    synapse.roomsRefusingLeave.add(roomId);
+
+    var refused = request("PUT", "/users/chat/" + chatId + "/leave", sameCentre, "");
+
+    // The side room is left first, the main room last: nobody is removed in the database, the
+    // person keeps the room that matters, and only the harmless side room is gone. A repeat ends
+    // it.
+    assertThat(refused.statusCode()).as(refused.body()).isEqualTo(502);
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId)))).contains(sameCentre.getId());
+    assertThat(activeSupervisions(sessionId)).isEqualTo(1);
+    assertThat(synapse.joined(roomId)).contains(matrix(sameCentre));
+
+    synapse.roomsRefusingLeave.clear();
+    var repeated = request("PUT", "/users/chat/" + chatId + "/leave", sameCentre, "");
+    assertThat(repeated.statusCode()).as(repeated.body()).isIn(200, 204);
+    assertThat(activeSupervisions(sessionId)).isZero();
+    assertThat(synapse.joined(roomId)).doesNotContain(matrix(sameCentre));
+  }
+
+  @Test
   void aSoftDeletedCoModeratorIsTakenOutOfTheMatrixRoomWhenTheSelectionDropsThem()
       throws Exception {
     var created = openRoom(creator, sameCentre, anotherSameCentre);
@@ -845,6 +880,27 @@ class InternalSubsetChatHttpIT {
     assertThat(synapse.joined(roomId)).contains(matrix(creator), matrix(sameCentre));
     assertThat(synapse.joined(roomId)).doesNotContain(matrix(otherTraeger));
     assertTheRoomStillWorksFor(creator, chatId, roomId, sessionOf(chatId));
+  }
+
+  @Test
+  void aParticipantFromAnotherTraegerOpensTheSessionOfTheRoomAndAnOutsiderOfThatTraegerDoesNot()
+      throws Exception {
+    theTraegerScopeIs("PLATFORM");
+    var outsiderOfThatTraeger = fixtures.consultant(OTHER_TRAEGER, FOREIGN_CENTRE);
+    everyone.add(outsiderOfThatTraeger);
+    var created = openRoom(creator, otherTraeger, sameCentre);
+    assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+    var roomId = field(created, "matrixRoomId");
+    var sessionId = sessionOf(field(created, "chatId"));
+
+    var participant = request("GET", "/users/sessions/room/" + sessionId, otherTraeger, "");
+    var outsider = request("GET", "/users/sessions/room/" + sessionId, outsiderOfThatTraeger, "");
+
+    // The session is assigned to the creator of another Traeger: participation alone admits.
+    assertThat(participant.statusCode()).as(participant.body()).isEqualTo(200);
+    assertThat(participant.body()).contains(roomId);
+    assertThat(outsider.statusCode()).as(outsider.body()).isEqualTo(204);
+    assertThat(outsider.body()).isEmpty();
   }
 
   @Test

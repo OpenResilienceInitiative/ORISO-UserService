@@ -63,6 +63,24 @@ class MembersOnlyChatAccessTest {
   }
 
   @Test
+  void aParticipantIsAdmittedToTheSessionButNeverAnOrdinarySessionOrANonMember() {
+    var member = consultant("member");
+    var session = membersOnlySession(7L);
+    when(participants.existsByChatIdAndConsultantId(7L, "member")).thenReturn(true);
+    when(participants.existsByChatIdAndConsultantId(7L, "other")).thenReturn(false);
+    var ordinary = new Session();
+    ordinary.setId(8L);
+    ordinary.setMatrixRoomId("!ordinary:oriso");
+    ordinary.setConversationType(ConversationType.SELF_HELP);
+    when(participants.existsByChatIdAndConsultantId(8L, "member")).thenReturn(true);
+
+    assertThat(guard.admits(session, member)).isTrue();
+    assertThat(guard.admits(session, consultant("other"))).isFalse();
+    assertThat(guard.admits(ordinary, member)).isFalse();
+    assertThat(guard.admits(session, null)).isFalse();
+  }
+
+  @Test
   void aParticipantIsNeverExcludedAndTheChatIsNotEvenLookedUp() {
     var member = consultant("member");
     var session = membersOnlySession(7L);

@@ -92,12 +92,13 @@ class GroupChatParticipantReconciliationServiceTest {
 
     service.reconcile(series, List.of());
 
-    verify(membershipService).removeParticipantFromRoom(series, "@removed:matrix");
-    verify(participantRepository).delete(removed);
     verify(participantRepository, never()).delete(owner);
-    var handOver = Mockito.inOrder(revocation, participantRepository);
+    // The main room, whose access matters most, is left last: a failure of it rolls everything
+    // back, and what is already gone then is only the side room of a supervision.
+    var handOver = Mockito.inOrder(revocation, participantRepository, membershipService);
     handOver.verify(revocation).revokeAccessOf(series, removed);
     handOver.verify(participantRepository).delete(removed);
+    handOver.verify(membershipService).removeParticipantFromRoom(series, "@removed:matrix");
   }
 
   @Test

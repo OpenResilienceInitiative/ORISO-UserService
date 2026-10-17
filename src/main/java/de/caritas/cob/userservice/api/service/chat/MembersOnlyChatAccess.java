@@ -96,6 +96,15 @@ public class MembersOnlyChatAccess {
     return consultant != null && excludes(session, consultant.getId());
   }
 
+  /**
+   * Whether the session is the case of a members-only chat and the counsellor is one of its
+   * participants. A participant admitted from another Träger is not its assigned advisor and is
+   * invisible to the tenant filter; participation alone makes the session theirs.
+   */
+  public boolean admits(Session session, Consultant consultant) {
+    return consultant != null && concerns(session) && isParticipantOf(session, consultant.getId());
+  }
+
   /** Same as {@link #excludes(Session, Consultant)} for an account id. */
   public boolean excludes(Session session, String consultantId) {
     if (session == null || consultantId == null) {
