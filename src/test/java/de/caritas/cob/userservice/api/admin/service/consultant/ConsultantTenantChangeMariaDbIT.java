@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverMatrixRepairTaskRepository;
@@ -50,6 +51,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairAction;
@@ -112,6 +114,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   EventNotificationService.class,
   EventNotificationDeduplicationWriter.class,
   ConsultantTenantChangeService.class,
+  OldTraegerRoomFinder.class,
   ConsultantAgencyAdminService.class,
   ConsultantAgencyDeletionValidationService.class,
   ConsultantAgencyService.class,
@@ -136,6 +139,11 @@ class ConsultantTenantChangeMariaDbIT {
   private static final String SECOND_ROOM_ID = "!tenant-change-2:oriso.invalid";
   private static final String TEAM_ROOM_ID = "!tenant-change-team:oriso.invalid";
   private static final String COLLEAGUE_ROOM_ID = "!tenant-change-colleague:oriso.invalid";
+  private static final String DIRECT_ROOM_ID = "!tenant-change-direct:oriso.invalid";
+  private static final String SUPERVISED_ROOM_ID = "!tenant-change-supervised:oriso.invalid";
+  private static final String SUPERVISED_SIDE_ROOM_ID = "!tenant-change-side-1:oriso.invalid";
+  private static final String OWNED_SIDE_ROOM_ID = "!tenant-change-side-2:oriso.invalid";
+  private static final String UNRELATED_ROOM_ID = "!not-a-case:oriso.invalid";
 
   @TestConfiguration
   static class ClockConfig {
@@ -154,6 +162,8 @@ class ConsultantTenantChangeMariaDbIT {
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
   @Autowired private CaseHandoverMatrixRepairTaskRepository repairTaskRepository;
   @Autowired private ConsultantTenantChangeAuditRepository auditRepository;
+  @Autowired private SessionSupervisorRepository sessionSupervisorRepository;
+  @Autowired private CaseHandoverMatrixRepairService repairService;
   @Autowired private SessionOwnershipService ownershipService;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private ConsultantTenantChangeService tenantChangeService;
@@ -181,6 +191,12 @@ class ConsultantTenantChangeMariaDbIT {
   private Long secondSessionId;
   private Long teamSessionId;
   private Long colleagueSessionId;
+  private Long directSessionId;
+  private Long supervisedSessionId;
+
+  /** Who is in which chat room, as the chat server would tell. */
+  private final java.util.Map<String, java.util.Set<String>> roomMembers =
+      new java.util.LinkedHashMap<>();
 
   @DynamicPropertySource
   private static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -213,6 +229,8 @@ class ConsultantTenantChangeMariaDbIT {
     secondSessionId = null;
     teamSessionId = null;
     colleagueSessionId = null;
+    directSessionId = null;
+    supervisedSessionId = null;
     transactions.executeWithoutResult(
         ignored -> {
           LocalDateTime now = LocalDateTime.now();
@@ -243,9 +261,33 @@ class ConsultantTenantChangeMariaDbIT {
           var team = session(user, colleague, TEAM_ROOM_ID, now);
           team.setTeamSession(true);
           teamSessionId = sessionRepository.save(team).getId();
+          // An accepted case of a colleague: the mover sits in its room as a silent department
+          // member (ADR-002 §1), without owning, supervising or being granted anything.
           colleagueSessionId =
               sessionRepository.save(session(user, colleague, COLLEAGUE_ROOM_ID, now)).getId();
+          // A direct assignment: the department fan-out skipped it, the mover never joined.
+          directSessionId =
+              sessionRepository.save(session(user, colleague, DIRECT_ROOM_ID, now)).getId();
+          // The mover supervises a case of the colleague (ADR-008): client room plus side room.
+          supervisedSessionId =
+              sessionRepository.save(session(user, colleague, SUPERVISED_ROOM_ID, now)).getId();
+          sessionSupervisorRepository.save(
+              supervision(
+                  sessionRepository.findById(supervisedSessionId).orElseThrow(),
+                  mover,
+                  colleague,
+                  SUPERVISED_SIDE_ROOM_ID,
+                  now));
+          // The colleague supervises a case of the mover: the mover sits in the side room.
+          sessionSupervisorRepository.save(
+              supervision(
+                  sessionRepository.findById(secondSessionId).orElseThrow(),
+                  colleague,
+                  mover,
+                  OWNED_SIDE_ROOM_ID,
+                  now));
         });
+    chatServerWithMembers();
   }
 
   @AfterEach
@@ -255,8 +297,14 @@ class ConsultantTenantChangeMariaDbIT {
         ignored -> {
           for (Long id :
               java.util.Arrays.asList(
-                  sessionId, secondSessionId, teamSessionId, colleagueSessionId)) {
+                  sessionId,
+                  secondSessionId,
+                  teamSessionId,
+                  colleagueSessionId,
+                  directSessionId,
+                  supervisedSessionId)) {
             if (id != null) {
+              sessionSupervisorRepository.deleteAllBySessionId(id);
               caseHandoverRequestRepository.deleteAllBySessionId(id);
               sessionRepository.deleteById(id);
             }
@@ -289,7 +337,7 @@ class ConsultantTenantChangeMariaDbIT {
     assertThat(result.tenantId()).isEqualTo(NEW_TRAEGER);
     assertThat(result.agencyIds()).containsExactly(NEW_AGENCY);
     assertThat(result.casesLeftWithPreviousTenant()).isEqualTo(2);
-    assertThat(result.matrixAccessRevocationsQueued()).isEqualTo(3);
+    assertThat(result.matrixAccessRevocationsQueued()).isEqualTo(7);
 
     Consultant mover = reload(MOVER_ID);
     assertThat(mover.getTenantId()).isEqualTo(NEW_TRAEGER);
@@ -321,7 +369,14 @@ class ConsultantTenantChangeMariaDbIT {
         .containsExactlyInAnyOrder(
             org.assertj.core.groups.Tuple.tuple(ROOM_ID, sessionId, MOVER_ID),
             org.assertj.core.groups.Tuple.tuple(SECOND_ROOM_ID, secondSessionId, MOVER_ID),
-            org.assertj.core.groups.Tuple.tuple(TEAM_ROOM_ID, teamSessionId, MOVER_ID));
+            org.assertj.core.groups.Tuple.tuple(TEAM_ROOM_ID, teamSessionId, MOVER_ID),
+            // #1421 finding 1: a silent member of an accepted case of a colleague.
+            org.assertj.core.groups.Tuple.tuple(COLLEAGUE_ROOM_ID, colleagueSessionId, MOVER_ID),
+            org.assertj.core.groups.Tuple.tuple(SUPERVISED_ROOM_ID, supervisedSessionId, MOVER_ID),
+            // #1421 finding 2: the staff-only side rooms of supervised and owned cases.
+            org.assertj.core.groups.Tuple.tuple(
+                SUPERVISED_SIDE_ROOM_ID, supervisedSessionId, MOVER_ID),
+            org.assertj.core.groups.Tuple.tuple(OWNED_SIDE_ROOM_ID, secondSessionId, MOVER_ID));
 
     assertThat(events.stream(ConsultantLeftAgencyEvent.class))
         .containsExactly(new ConsultantLeftAgencyEvent(MOVER_ID, OLD_AGENCY));
@@ -498,7 +553,165 @@ class ConsultantTenantChangeMariaDbIT {
     assertThat(owned).isEmpty();
   }
 
+  /**
+   * #1421 finding 1, end to end: once the queue has run, the mover is in no room of the old Träger.
+   */
+  @Test
+  void onceTheQueueHasRunTheMoverIsInNoRoomOfTheOldTraegerAndColleaguesStayAsTheyWere() {
+    move();
+
+    processTheRepairQueue();
+
+    var moverId = matrixId(MOVER_ID);
+    assertThat(roomMembers.entrySet())
+        .filteredOn(room -> room.getValue().contains(moverId))
+        .extracting(java.util.Map.Entry::getKey)
+        .containsExactly(UNRELATED_ROOM_ID);
+    // Colleagues keep every seat: the move only takes the mover's own.
+    assertThat(roomMembers.get(COLLEAGUE_ROOM_ID)).containsExactly(matrixId(COLLEAGUE_ID));
+    assertThat(roomMembers.get(SUPERVISED_SIDE_ROOM_ID)).containsExactly(matrixId(COLLEAGUE_ID));
+    assertThat(roomMembers.get(OWNED_SIDE_ROOM_ID)).containsExactly(matrixId(COLLEAGUE_ID));
+  }
+
+  /** A room the mover never joined needs no task: the membership decides, not the centre. */
+  @Test
+  void aCaseTheMoverIsNotAMemberOfGetsNoLeaveTask() {
+    var result = move();
+
+    assertThat(result.matrixAccessRevocationsQueued()).isEqualTo(7);
+    assertThat(
+            repairTaskRepository.findByActionAndMemberId(
+                CaseHandoverMatrixRepairAction.LEAVE, matrixId(MOVER_ID)))
+        .extracting("roomId")
+        .doesNotContain(DIRECT_ROOM_ID, UNRELATED_ROOM_ID);
+  }
+
+  /** The chat server cannot be asked: leave every room of the old centres rather than none. */
+  @Test
+  void whenTheChatServerCannotTellWhereTheMoverSitsEveryRoomOfTheOldCentresIsQueued() {
+    org.mockito.Mockito.doReturn(Optional.empty())
+        .when(matrixSynapseService)
+        .findJoinedRoomsForMatrixUser(matrixId(MOVER_ID));
+
+    move();
+
+    assertThat(
+            repairTaskRepository.findByActionAndMemberId(
+                CaseHandoverMatrixRepairAction.LEAVE, matrixId(MOVER_ID)))
+        .extracting("roomId")
+        .containsExactlyInAnyOrder(
+            ROOM_ID,
+            SECOND_ROOM_ID,
+            TEAM_ROOM_ID,
+            COLLEAGUE_ROOM_ID,
+            DIRECT_ROOM_ID,
+            SUPERVISED_ROOM_ID,
+            SUPERVISED_SIDE_ROOM_ID,
+            OWNED_SIDE_ROOM_ID);
+  }
+
+  /**
+   * #1421 finding 2: the supervisions of the mover end, those of colleagues on mover's cases stay.
+   */
+  @Test
+  void theSupervisionsOfTheMoverEndAndWouldNotComeBackWithTheMove() {
+    var before = LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1);
+
+    move();
+
+    var moversSupervision = sessionSupervisorRepository.findBySessionId(supervisedSessionId).get(0);
+    assertThat(moversSupervision.getSupervisorConsultant().getId()).isEqualTo(MOVER_ID);
+    assertThat(moversSupervision.getIsActive()).isFalse();
+    assertThat(moversSupervision.getRemovedDate()).isAfter(before);
+    assertThat(sessionSupervisorRepository.findActiveSupervisionsByConsultantId(MOVER_ID))
+        .isEmpty();
+
+    var colleaguesSupervision = sessionSupervisorRepository.findBySessionId(secondSessionId).get(0);
+    assertThat(colleaguesSupervision.getSupervisorConsultant().getId()).isEqualTo(COLLEAGUE_ID);
+    assertThat(colleaguesSupervision.getIsActive()).isTrue();
+    assertThat(colleaguesSupervision.getRemovedDate()).isNull();
+  }
+
   // --- helpers ---------------------------------------------------------------------------
+
+  /** Chat server double that remembers memberships: the leave and the room lookups are real. */
+  private void chatServerWithMembers() {
+    roomMembers.clear();
+    var mover = matrixId(MOVER_ID);
+    var colleague = matrixId(COLLEAGUE_ID);
+    for (String room : List.of(ROOM_ID, SECOND_ROOM_ID, OWNED_SIDE_ROOM_ID)) {
+      roomMembers.computeIfAbsent(room, key -> new java.util.LinkedHashSet<>()).add(mover);
+    }
+    for (String room :
+        List.of(TEAM_ROOM_ID, COLLEAGUE_ROOM_ID, SUPERVISED_ROOM_ID, SUPERVISED_SIDE_ROOM_ID)) {
+      roomMembers.computeIfAbsent(room, key -> new java.util.LinkedHashSet<>()).add(mover);
+    }
+    for (String room :
+        List.of(
+            TEAM_ROOM_ID,
+            COLLEAGUE_ROOM_ID,
+            DIRECT_ROOM_ID,
+            SUPERVISED_ROOM_ID,
+            SUPERVISED_SIDE_ROOM_ID,
+            OWNED_SIDE_ROOM_ID)) {
+      roomMembers.computeIfAbsent(room, key -> new java.util.LinkedHashSet<>()).add(colleague);
+    }
+    // Something that is no case of ours at all.
+    roomMembers
+        .computeIfAbsent(UNRELATED_ROOM_ID, key -> new java.util.LinkedHashSet<>())
+        .add(mover);
+
+    when(matrixSynapseService.loginAsUserAccessToken(anyString()))
+        .thenAnswer(invocation -> "token-of:" + invocation.getArgument(0));
+    when(matrixSynapseService.findJoinedRoomsForMatrixUser(anyString()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    roomMembers.entrySet().stream()
+                        .filter(room -> room.getValue().contains(invocation.<String>getArgument(0)))
+                        .map(java.util.Map.Entry::getKey)
+                        .toList()));
+    when(matrixSynapseService.getRoomMembers(anyString()))
+        .thenAnswer(
+            invocation ->
+                Optional.ofNullable(roomMembers.get(invocation.<String>getArgument(0)))
+                    .map(List::copyOf));
+    when(matrixSynapseService.leaveRoom(anyString(), anyString()))
+        .thenAnswer(
+            invocation -> {
+              var member = invocation.<String>getArgument(1).replace("token-of:", "");
+              var room = roomMembers.get(invocation.<String>getArgument(0));
+              return room != null && room.remove(member);
+            });
+  }
+
+  /** What the scheduler does every minute, run until nothing is left. */
+  private void processTheRepairQueue() {
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+    for (int round = 0; round < 5; round++) {
+      var pending = repairService.pendingTaskIds();
+      if (pending.isEmpty()) {
+        return;
+      }
+      pending.forEach(repairService::process);
+    }
+  }
+
+  private static SessionSupervisor supervision(
+      Session session,
+      Consultant supervisor,
+      Consultant addedBy,
+      String sideRoom,
+      LocalDateTime now) {
+    return SessionSupervisor.builder()
+        .session(session)
+        .supervisorConsultant(supervisor)
+        .addedByConsultant(addedBy)
+        .addedDate(now)
+        .isActive(true)
+        .matrixRoomId(sideRoom)
+        .build();
+  }
 
   private ConsultantTenantChangeService.Result move() {
     TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);

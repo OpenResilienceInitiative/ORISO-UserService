@@ -560,6 +560,55 @@ class MatrixSynapseServiceTest {
         nowSupplier);
   }
 
+  // -------------------------------------------------------------------------
+  // findJoinedRoomsForMatrixUser: a lookup that can tell "no rooms" from "could not ask"
+  // -------------------------------------------------------------------------
+
+  @Test
+  void findJoinedRoomsForMatrixUser_returnsTheRoomsTheUserSitsIn() {
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn("user-token").when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("joined_rooms", List.of("!a:x", "!b:x"))));
+
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID))
+        .contains(List.of("!a:x", "!b:x"));
+  }
+
+  @Test
+  void findJoinedRoomsForMatrixUser_aUserInNoRoomIsAnEmptyListNotAFailure() {
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn("user-token").when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("joined_rooms", List.of())));
+
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID)).contains(List.of());
+  }
+
+  @Test
+  void findJoinedRoomsForMatrixUser_isEmptyWhenNoTokenCouldBeCreated() {
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn(null).when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID)).isEmpty();
+    verifyNoInteractions(restTemplate);
+  }
+
+  @Test
+  void findJoinedRoomsForMatrixUser_isEmptyWhenTheServerFailsOrAnswersWithoutTheList() {
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn("user-token").when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(new HttpServerErrorException(HttpStatus.BAD_GATEWAY))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID)).isEmpty();
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID)).isEmpty();
+  }
+
   private MatrixSynapseService matrixSynapseService() {
     return new MatrixSynapseService(
         matrixConfig,

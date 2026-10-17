@@ -28,7 +28,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
-import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantTenantChangeAudit;
@@ -39,7 +38,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTenantChangeAuditRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
-import de.caritas.cob.userservice.api.port.out.SessionRoomRow;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService.RoomRef;
 import java.time.Clock;
@@ -79,6 +78,8 @@ class ConsultantTenantChangeServiceTest {
   @Mock private ConsultantTopicAgencyCompatibilityValidator topicAgencyValidator;
   @Mock private SessionRepository sessionRepository;
   @Mock private CaseHandoverMatrixRepairService matrixRepairService;
+  @Mock private OldTraegerRoomFinder roomFinder;
+  @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private IdentityTenantUpdater identityTenantUpdater;
   @Mock private AdminRepository adminRepository;
   @Mock private ConsultantTenantChangeAuditRepository auditRepository;
@@ -96,6 +97,8 @@ class ConsultantTenantChangeServiceTest {
             relationCreatorService,
             topicAgencyValidator,
             sessionRepository,
+            sessionSupervisorRepository,
+            roomFinder,
             matrixRepairService,
             identityTenantUpdater,
             adminRepository,
@@ -219,14 +222,8 @@ class ConsultantTenantChangeServiceTest {
     when(sessionRepository.countByConsultantIdAndStatusIn(
             CONSULTANT_ID, List.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS)))
         .thenReturn(3L);
-    when(sessionRepository.findRoomsReadableBy(
-            eq(CONSULTANT_ID),
-            eq(List.of(700L, 701L)),
-            eq(
-                List.of(
-                    CaseHandoverRequest.Status.GRANTED,
-                    CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT))))
-        .thenReturn(List.of(new SessionRoomRow(1L, "!a:matrix"), new SessionRoomRow(2L, "!b")));
+    when(roomFinder.roomsToLeave(CONSULTANT_ID, "@mover:matrix", OLD_TENANT, List.of(700L, 701L)))
+        .thenReturn(List.of(new RoomRef(1L, "!a:matrix"), new RoomRef(2L, "!b")));
     when(matrixRepairService.enqueueLeaves(eq("@mover:matrix"), eq(CONSULTANT_ID), anyList()))
         .thenReturn(2);
     var created = createdRelationsRecorder();
@@ -281,6 +278,37 @@ class ConsultantTenantChangeServiceTest {
         .containsExactly(new RoomRef(1L, "!a:matrix"), new RoomRef(2L, "!b"));
   }
 
+  /** #1421 finding 2: the supervisions end with the move, after the rooms were looked up. */
+  @Test
+  void endsTheActiveSupervisionsOfTheMoverAfterTheirRoomsWereCollected() {
+    found();
+    oldAgencies(700L);
+    when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
+        .thenReturn(Map.of());
+
+    service.changeTenant(CONSULTANT_ID, NEW_TENANT, List.of(agency(800L)), null, ACTOR_ID);
+
+    InOrder order = inOrder(roomFinder, sessionSupervisorRepository);
+    order.verify(roomFinder).roomsToLeave(eq(CONSULTANT_ID), anyString(), eq(OLD_TENANT), any());
+    order
+        .verify(sessionSupervisorRepository)
+        .endActiveSupervisionsOf(CONSULTANT_ID, LocalDateTime.parse("2026-10-16T09:00:00"));
+  }
+
+  @Test
+  void endsTheSupervisionsEvenForAConsultantWithoutChatAccount() {
+    consultant.setMatrixUserId(null);
+    found();
+    oldAgencies(700L);
+    when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
+        .thenReturn(Map.of());
+
+    service.changeTenant(CONSULTANT_ID, NEW_TENANT, List.of(agency(800L)), null, ACTOR_ID);
+
+    verify(sessionSupervisorRepository)
+        .endActiveSupervisionsOf(CONSULTANT_ID, LocalDateTime.parse("2026-10-16T09:00:00"));
+  }
+
   @Test
   void writesAnAuditEntryWithAccountsAndCountsOnly() {
     found();
@@ -289,8 +317,8 @@ class ConsultantTenantChangeServiceTest {
         .thenReturn(Map.of());
     when(sessionRepository.countByConsultantIdAndStatusIn(anyString(), anyCollection()))
         .thenReturn(4L);
-    when(sessionRepository.findRoomsReadableBy(anyString(), anyCollection(), anyCollection()))
-        .thenReturn(List.of(new SessionRoomRow(1L, "!a:matrix")));
+    when(roomFinder.roomsToLeave(anyString(), anyString(), anyLong(), anyCollection()))
+        .thenReturn(List.of(new RoomRef(1L, "!a:matrix")));
     when(matrixRepairService.enqueueLeaves(anyString(), anyString(), anyList())).thenReturn(1);
 
     service.changeTenant(CONSULTANT_ID, NEW_TENANT, List.of(agency(800L)), null, ACTOR_ID);
@@ -321,7 +349,7 @@ class ConsultantTenantChangeServiceTest {
         service.changeTenant(CONSULTANT_ID, NEW_TENANT, List.of(agency(800L)), null, ACTOR_ID);
 
     assertThat(result.matrixAccessRevocationsQueued()).isZero();
-    verifyNoInteractions(matrixRepairService);
+    verifyNoInteractions(matrixRepairService, roomFinder);
   }
 
   @Test

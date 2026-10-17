@@ -14,7 +14,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
-import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantTenantChangeAudit;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -24,12 +23,12 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTenantChangeAuditRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService.RoomRef;
 import de.caritas.cob.userservice.api.service.LogService;
 import java.time.Clock;
 import java.time.LocalDateTime;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -64,11 +63,6 @@ public class ConsultantTenantChangeService {
   private static final List<SessionStatus> OPEN_CASE_STATES =
       List.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS);
 
-  private static final List<CaseHandoverRequest.Status> GRANTED_STATES =
-      List.of(
-          CaseHandoverRequest.Status.GRANTED,
-          CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT);
-
   /** The agency guards that mean "this is the last counsellor of a centre that still needs one". */
   private static final Set<String> LAST_COUNSELLOR_GUARDS =
       Set.of(
@@ -83,6 +77,8 @@ public class ConsultantTenantChangeService {
   private final @NonNull ConsultantAgencyRelationCreatorService relationCreatorService;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator topicAgencyValidator;
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
+  private final @NonNull OldTraegerRoomFinder roomFinder;
   private final @NonNull CaseHandoverMatrixRepairService matrixRepairService;
   private final @NonNull IdentityTenantUpdater identityTenantUpdater;
   private final @NonNull AdminRepository adminRepository;
@@ -161,7 +157,10 @@ public class ConsultantTenantChangeService {
         Math.toIntExact(
             sessionRepository.countByConsultantIdAndStatusIn(consultantId, OPEN_CASE_STATES));
     var matrixUserId = consultant.getMatrixUserId();
-    var rooms = isNotBlank(matrixUserId) ? roomsOf(consultantId, oldAgencyIds) : List.<RoomRef>of();
+    var rooms =
+        isNotBlank(matrixUserId)
+            ? roomFinder.roomsToLeave(consultantId, matrixUserId, previousTenantId, oldAgencyIds)
+            : List.<RoomRef>of();
 
     if (isNotBlank(matrixUserId)) {
       // Moving back to a Träger before the rooms of an earlier move were left keeps those rooms.
@@ -184,6 +183,11 @@ public class ConsultantTenantChangeService {
     consultantRepository.save(consultant);
     consultantRepository.clearAssignedSupervisor(consultantId);
 
+    // After the rooms were collected (they include the supervised cases), before the move commits:
+    // a supervision that survives would grant the counsellor the case again if they come back.
+    int supervisionsEnded =
+        sessionSupervisorRepository.endActiveSupervisionsOf(consultantId, LocalDateTime.now(clock));
+
     createRelations(consultantId, agencies, newAgencyIds);
 
     int queued =
@@ -205,13 +209,14 @@ public class ConsultantTenantChangeService {
             .build());
     log.info(
         "Consultant {} moved from Träger {} to {} by {}; {} open cases stay behind, {} chat rooms"
-            + " queued to be left",
+            + " queued to be left, {} supervisions ended",
         consultantId,
         previousTenantId,
         newTenantId,
         actorId,
         casesLeft,
-        queued);
+        queued,
+        supervisionsEnded);
 
     return new Result(consultantId, previousTenantId, newTenantId, newAgencyIds, casesLeft, queued);
   }
@@ -261,13 +266,6 @@ public class ConsultantTenantChangeService {
       HttpStatus status, HttpStatusExceptionReason reason, String detail) {
     log.info("Move of a consultant refused ({}): {}", reason, detail);
     return new CustomValidationHttpStatusException(reason, status);
-  }
-
-  private List<RoomRef> roomsOf(String consultantId, List<Long> oldAgencyIds) {
-    // IN () is not valid SQL on every dialect: a counsellor without centre has no team rooms.
-    Collection<Long> agencyIds = oldAgencyIds.isEmpty() ? List.of(-1L) : oldAgencyIds;
-    var rows = sessionRepository.findRoomsReadableBy(consultantId, agencyIds, GRANTED_STATES);
-    return rows.stream().map(row -> new RoomRef(row.sessionId(), row.roomId())).toList();
   }
 
   /**

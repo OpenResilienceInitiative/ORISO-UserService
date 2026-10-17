@@ -1913,17 +1913,30 @@ public class MatrixSynapseService implements MatrixUserClient {
   }
 
   public java.util.List<String> getJoinedRoomsForMatrixUser(String matrixUserId) {
+    return findJoinedRoomsForMatrixUser(matrixUserId).orElse(java.util.Collections.emptyList());
+  }
+
+  /**
+   * Like {@link #getJoinedRoomsForMatrixUser}, but tells "in no room" (an empty list) from "could
+   * not ask" (empty result), for callers that must not mistake an outage for an empty membership.
+   *
+   * @param matrixUserId full local Matrix user ID
+   * @return the joined room ids, or empty when the server could not be asked or answered without
+   *     the list
+   */
+  public java.util.Optional<java.util.List<String>> findJoinedRoomsForMatrixUser(
+      String matrixUserId) {
     String accessToken = loginAsUserAccessToken(matrixUserId);
     if (accessToken == null) {
       log.warn(
           "Could not create Matrix token for {} to get joined rooms",
           redactor.pseudonym(matrixUserId));
-      return java.util.Collections.emptyList();
+      return java.util.Optional.empty();
     }
-    return getJoinedRoomsWithToken(accessToken, matrixUserId);
+    return findJoinedRoomsWithToken(accessToken, matrixUserId);
   }
 
-  private java.util.List<String> getJoinedRoomsWithToken(
+  private java.util.Optional<java.util.List<String>> findJoinedRoomsWithToken(
       String accessToken, String principalForLog) {
     try {
       var headers = new HttpHeaders();
@@ -1944,25 +1957,31 @@ public class MatrixSynapseService implements MatrixUserClient {
         @SuppressWarnings("unchecked")
         java.util.List<String> joinedRooms =
             (java.util.List<String>) response.getBody().get("joined_rooms");
+        if (joinedRooms == null) {
+          log.warn(
+              "Matrix answered the joined rooms of user {} without a room list",
+              redactor.pseudonym(principalForLog));
+          return java.util.Optional.empty();
+        }
         log.info(
             "✅ User {} has {} joined Matrix rooms",
             redactor.pseudonym(principalForLog),
-            joinedRooms != null ? joinedRooms.size() : 0);
-        return joinedRooms != null ? joinedRooms : java.util.Collections.emptyList();
+            joinedRooms.size());
+        return java.util.Optional.of(joinedRooms);
       }
 
       log.warn(
           "Failed to get joined rooms for user {}: {}",
           redactor.pseudonym(principalForLog),
           response.getStatusCode());
-      return java.util.Collections.emptyList();
+      return java.util.Optional.empty();
 
     } catch (Exception e) {
       log.error(
           "Error getting joined rooms for user {}: {}",
           redactor.pseudonym(principalForLog),
           redactor.scrub(e.getMessage()));
-      return java.util.Collections.emptyList();
+      return java.util.Optional.empty();
     }
   }
 
