@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -1413,6 +1414,114 @@ class CaseHandoverServiceTest {
     assertNull(status.getReasonCode());
     assertNull(status.getReasonLabel());
     assertNull(status.getPolicyAuthority());
+  }
+
+  /**
+   * #1705: once a request is closed, a stale consent card in the advice seeker's chat must be able
+   * to learn the real final status instead of a 404 it cannot tell from "never existed".
+   */
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = CaseHandoverRequest.Status.class,
+      names = {"GRANTED", "CLIENT_CONSENT_DECLINED", "DENIED", "EXPIRED"})
+  void getRequestStatus_adviceSeekerOfTheSessionReadsTheRealFinalStatusWithoutStaffDetails(
+      CaseHandoverRequest.Status closed) {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(closed);
+    request.setResolvedAt(LocalDateTime.now());
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    CaseHandoverStatus status = caseHandoverService.getRequestStatus(123L, 88L);
+
+    assertEquals(closed.name(), status.getStatus());
+    assertEquals(88L, status.getRequestId());
+    assertNotNull(status.getResolvedAt());
+    assertNull(status.getInitiatorConsultantId());
+    assertNull(status.getRecipientConsultantId());
+    assertNull(status.getReasonCode());
+    assertNull(status.getReasonLabel());
+    assertNull(status.getPolicyAuthority());
+  }
+
+  @Test
+  void getRequestStatus_adviceSeekerReadsAPlainPendingRequestTheyMayStillDecide() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(CaseHandoverRequest.Status.PENDING);
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertEquals("PENDING", caseHandoverService.getRequestStatus(123L, 88L).getStatus());
+  }
+
+  @Test
+  void getRequestStatus_anotherAdviceSeekerCannotReadAClosedRequestOfThisSession() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(CaseHandoverRequest.Status.GRANTED);
+    User otherAsker = new User();
+    otherAsker.setUserId("other-asker");
+    otherAsker.setUsername("other-asker");
+    otherAsker.setTenantId(7L);
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(userAccountService.retrieveValidatedUser()).thenReturn(otherAsker);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.getRequestStatus(123L, 88L));
+  }
+
+  @Test
+  void getRequestStatus_adviceSeekerOfAnotherTenantCannotReadAClosedRequest() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(CaseHandoverRequest.Status.GRANTED);
+    asker.setTenantId(8L);
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.getRequestStatus(123L, 88L));
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = CaseHandoverRequest.Status.class,
+      names = {"PENDING_RECIPIENT_ACCEPTANCE", "RECIPIENT_DECLINED"})
+  void getRequestStatus_adviceSeekerNeverSeesColleagueOffersTheyWereNotAskedAbout(
+      CaseHandoverRequest.Status offerOnly) {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(offerOnly);
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.getRequestStatus(123L, 88L));
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = CaseHandoverRequest.Status.class,
+      names = {"GRANTED", "DENIED"})
+  void getRequestStatus_adviceSeekerNeverSeesRequestsThatDidNotInvolveTheirConsent(
+      CaseHandoverRequest.Status closed) {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(closed);
+    request.setClientConsentRequired(false);
+    request.setClientConsent(CaseHandoverConsentMode.NONE);
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.getRequestStatus(123L, 88L));
   }
 
   @Test

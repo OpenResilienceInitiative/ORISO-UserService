@@ -1945,6 +1945,70 @@ paths:
           description: Session does not exist
       security:
         - Bearer: []
+  /users/sessions/{sessionId}/case-handover/{requestId}:
+    get:
+      tags: [case-handover-controller]
+      summary: Read the current status of one case handover request
+      description: >-
+        Also available with /service prefix. Open to the request's counsellor parties and to the
+        registered advice seeker who owns the session. The advice seeker gets the request's real
+        status, including its final one (GRANTED, CLIENT_CONSENT_DECLINED, DENIED, EXPIRED), so a
+        consent prompt that is no longer open can be settled instead of showing an error. The
+        advice seeker's view carries no counsellor identity, reason or explanation. A request of
+        another session or advice seeker, a colleague-to-colleague offer the advice seeker was never
+        asked about (PENDING_RECIPIENT_ACCEPTANCE, RECIPIENT_DECLINED) and a request that did not
+        involve the advice seeker's consent are answered with 404 (#1705). A request whose case
+        owner changed after it was created keeps its stored status here; deciding it answers 409.
+      operationId: getCaseHandoverRequestStatus
+      # Dedicated handwritten controller owns both prefixes; prevent a duplicate UsersApi mapping.
+      x-internal: true
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+        - name: requestId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: Current request status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requestId: {type: integer, format: int64}
+                  sessionId: {type: integer, format: int64}
+                  status:
+                    type: string
+                    description: Existing CaseHandoverRequest status, or EXPIRED once the access window has passed
+                    enum:
+                      - PENDING
+                      - PENDING_RECIPIENT_ACCEPTANCE
+                      - RECIPIENT_DECLINED
+                      - PENDING_CLIENT_CONSENT
+                      - GRANTED_PENDING_CLIENT_OPTOUT
+                      - GRANTED
+                      - DENIED
+                      - CLIENT_CONSENT_DECLINED
+                      - EXPIRED
+                  canViewContent: {type: boolean}
+                  clientConsent: {type: string, enum: [NONE, OPT_IN, OPT_OUT]}
+                  clientConsentRequired: {type: boolean}
+                  accessType: {type: string, enum: [CO_ACCESS, TAKEOVER]}
+                  createdAt: {type: string, format: date-time}
+                  resolvedAt: {type: string, format: date-time, nullable: true}
+                  expiresAt: {type: string, format: date-time, nullable: true}
+        '401':
+          description: Authentication required
+        '403':
+          description: Role is neither consultant nor registered advice seeker
+        '404':
+          description: Request or session does not exist, or the caller may not read it (another advice seeker, wrong tenant, not a party)
+      security:
+        - Bearer: []
   /users/sessions/{sessionId}/supervisors:
     get:
       tags:

@@ -609,14 +609,38 @@ public class CaseHandoverService {
       verifyUserTenant(user, session);
       if (session.getUser() == null
           || !Objects.equals(session.getUser().getUserId(), user.getUserId())
-          || (request.getStatus() != Status.PENDING_CLIENT_CONSENT
-              && request.getStatus() != Status.GRANTED_PENDING_CLIENT_OPTOUT)) {
+          || !isReadableBySessionAsker(request)) {
         throw new NotFoundException("Case handover request not found");
       }
       verifyRequestTenant(request, session);
       return toClientStatus(request);
     }
     throw new ForbiddenException("Current user is not allowed to read this request");
+  }
+
+  /**
+   * Whether the session's own advice seeker may read this request (#1705). A consent card that went
+   * stale must be able to settle on the request's real final status, so closed requests are
+   * readable too, but only those that involved the advice seeker's consent. Colleague-to-colleague
+   * offers and requests that never needed (or never asked for) their consent stay invisible.
+   */
+  private boolean isReadableBySessionAsker(CaseHandoverRequest request) {
+    Status status = request.getStatus();
+    if (status == Status.PENDING_RECIPIENT_ACCEPTANCE || status == Status.RECIPIENT_DECLINED) {
+      return false;
+    }
+    if (status == Status.PENDING
+        || status == Status.PENDING_CLIENT_CONSENT
+        || status == Status.GRANTED_PENDING_CLIENT_OPTOUT) {
+      return true;
+    }
+    CaseHandoverConsentMode consent =
+        request.getClientConsent() != null
+            ? request.getClientConsent()
+            : (Boolean.TRUE.equals(request.getClientConsentRequired())
+                ? CaseHandoverConsentMode.OPT_IN
+                : CaseHandoverConsentMode.NONE);
+    return consent != CaseHandoverConsentMode.NONE;
   }
 
   @Transactional(readOnly = true)
