@@ -25,6 +25,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.FakeSynapseHomeserver;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
@@ -82,6 +83,7 @@ import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -4344,12 +4346,32 @@ class CaseHandoverServiceTest {
     homeserver.member(caseRoom, REQUESTER_MXID, -1);
     previousOwnerHasLeft();
 
-    assertThrows(InternalServerErrorException.class, this::takeOverBecauseAssignmentEnded);
+    var refusal =
+        assertThrows(
+            CustomValidationHttpStatusException.class, this::takeOverBecauseAssignmentEnded);
 
+    assertEquals(HttpStatus.CONFLICT, refusal.getHttpStatus());
+    assertEquals(
+        "CASE_HANDOVER_REQUESTER_CANNOT_WRITE",
+        refusal.getCustomHttpHeaders().getFirst("X-Reason"));
     verify(sessionOwnershipService, never())
         .updateOwner(any(Session.class), any(Consultant.class), any(SessionStatus.class), any());
     verify(caseHandoverRequestRepository, never()).save(any());
     assertFalse(homeserver.canPost(caseRoom, REQUESTER_MXID));
+  }
+
+  @Test
+  void takeover_isUnavailable_whenTheRoomPowerLevelsCannotBeRead() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, REQUESTER_MXID, 0);
+    previousOwnerHasLeft();
+    var gateway = org.mockito.Mockito.spy(homeserver.gateway());
+    when(gateway.getPowerLevels(anyString(), anyString())).thenReturn(Optional.empty());
+    ReflectionTestUtils.setField(caseHandoverService, "matrixSynapseService", gateway);
+
+    assertThrows(ServiceUnavailableException.class, this::takeOverBecauseAssignmentEnded);
+
+    verify(caseHandoverRequestRepository, never()).save(any());
   }
 
   @Test

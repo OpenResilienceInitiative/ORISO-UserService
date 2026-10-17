@@ -9,10 +9,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsu
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
@@ -70,6 +72,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -2813,7 +2816,9 @@ public class CaseHandoverService {
             .filter(member -> !member.equals(requesterMatrixId))
             .anyMatch(member -> powerOf.applyAsInt(member) >= powerLevelsEvent);
     if (!someoneCanRaise) {
-      throw new InternalServerErrorException(
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.CASE_HANDOVER_REQUESTER_CANNOT_WRITE,
+          HttpStatus.CONFLICT,
           "Case handover refused: the requester is read-only in the Matrix room and no room member"
               + " can restore their right to write");
     }

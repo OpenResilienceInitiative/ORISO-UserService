@@ -43,5 +43,10 @@ public enum HttpStatusExceptionReason {
   /** Another request is changing this invite right now; try again. */
   INVITE_BUSY,
   /** The invite changed while the invitee filled in the wizard; reload the link. */
-  INVITE_CHANGED
+  INVITE_CHANGED,
+  /**
+   * A case takeover would leave the new owner unable to write in the Matrix room: they are
+   * read-only and no room member is left who could restore their right to write.
+   */
+  CASE_HANDOVER_REQUESTER_CANNOT_WRITE
 }

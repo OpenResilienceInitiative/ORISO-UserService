@@ -38,4 +38,19 @@ public class CustomValidationHttpStatusException extends CustomHttpStatusExcepti
     this.customHttpHeaders = new CustomHttpHeader(reason).buildHeader();
     this.httpStatus = httpStatus;
   }
+
+  /**
+   * Like {@link #CustomValidationHttpStatusException(HttpStatusExceptionReason, HttpStatus)}, with
+   * a message for callers that report the failure in text, e.g. a batch result.
+   *
+   * @param reason the reason for the exception
+   * @param httpStatus the {@link HttpStatus} to be returned
+   * @param message what went wrong, in words
+   */
+  public CustomValidationHttpStatusException(
+      HttpStatusExceptionReason reason, HttpStatus httpStatus, String message) {
+    super(message, de.caritas.cob.userservice.api.service.LogService::logInfo);
+    this.customHttpHeaders = new CustomHttpHeader(reason).buildHeader();
+    this.httpStatus = httpStatus;
+  }
 }
