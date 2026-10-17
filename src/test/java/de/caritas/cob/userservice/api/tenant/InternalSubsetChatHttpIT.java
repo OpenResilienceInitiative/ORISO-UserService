@@ -855,6 +855,13 @@ class InternalSubsetChatHttpIT {
     assertThat(synapse.joined(roomId)).doesNotContain(matrix(sameCentre));
   }
 
+  private Integer statusOf(Long sessionId) {
+    return Tenants.acrossAll(
+        () ->
+            database.queryForObject(
+                "SELECT status FROM session WHERE id = ?", Integer.class, sessionId));
+  }
+
   private int activeSupervisions(Long sessionId) {
     return Tenants.acrossAll(
         () ->
@@ -901,6 +908,25 @@ class InternalSubsetChatHttpIT {
     assertThat(participant.body()).contains(roomId);
     assertThat(outsider.statusCode()).as(outsider.body()).isEqualTo(204);
     assertThat(outsider.body()).isEmpty();
+  }
+
+  @Test
+  void theSessionOfAMembersOnlyChatCanNeitherBeArchivedNorReactivatedWhileTheChatStays()
+      throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = field(created, "chatId");
+    var sessionId = sessionOf(chatId);
+    var before = statusOf(sessionId);
+
+    for (var action : List.of("archive", "dearchive")) {
+      var participant = request("PUT", "/users/sessions/" + sessionId + "/" + action, creator, "");
+      assertThat(participant.statusCode()).as(action + participant.body()).isEqualTo(409);
+      assertThat(reason(participant)).as(action).isEqualTo("MEMBERS_ONLY_CHAT_STOP_REQUIRED");
+      var outsider =
+          request("PUT", "/users/sessions/" + sessionId + "/" + action, anotherSameCentre, "");
+      assertThat(outsider.statusCode()).as(action + outsider.body()).isEqualTo(403);
+    }
+    assertThat(statusOf(sessionId)).as("the session status is untouched").isEqualTo(before);
   }
 
   @Test

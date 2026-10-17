@@ -1,9 +1,11 @@
 package de.caritas.cob.userservice.api.service.archive;
 
 import de.caritas.cob.userservice.api.AccountManager;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -16,6 +18,7 @@ import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /** Service for archive functionality. */
@@ -70,6 +73,13 @@ public class SessionArchiveService {
 
     Session session = retrieveSession(sessionId);
     checkPermission(session);
+    // The technical session of a members-only chat lives and ends with the chat: archiving it, or
+    // bringing it back, under a chat that stays open is refused. Whoever is no participant was
+    // already refused with 403 above.
+    if (membersOnlyChatAccess.concerns(session)) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.MEMBERS_ONLY_CHAT_STOP_REQUIRED, HttpStatus.CONFLICT);
+    }
     sessionValidateMethod.accept(session);
     executeArchiving(sessionStatusTo, session);
   }

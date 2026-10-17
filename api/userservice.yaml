@@ -489,7 +489,7 @@ paths:
         404:
           description: NOT FOUND - session not found
         409:
-          description: CONFLICT - session is already in the archive or is not in progress
+          description: CONFLICT - session is already in the archive or is not in progress (or X-Reason MEMBERS_ONLY_CHAT_STOP_REQUIRED, the session belongs to a members-only chat and ends with it)
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -521,7 +521,7 @@ paths:
         404:
           description: NOT FOUND - session not found
         409:
-          description: CONFLICT - session is already in progress or not archived
+          description: CONFLICT - session is already in progress or not archived (or X-Reason MEMBERS_ONLY_CHAT_STOP_REQUIRED, the session belongs to a members-only chat and ends with it)
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
