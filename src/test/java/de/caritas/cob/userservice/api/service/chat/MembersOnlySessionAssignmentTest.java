@@ -11,9 +11,11 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,8 +27,9 @@ class MembersOnlySessionAssignmentTest {
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
   private final GroupChatParticipantRepository participants =
       mock(GroupChatParticipantRepository.class);
+  private final SessionSupervisorRepository supervisions = mock(SessionSupervisorRepository.class);
   private final MembersOnlySessionAssignment assignment =
-      new MembersOnlySessionAssignment(sessions, consultants, participants);
+      new MembersOnlySessionAssignment(sessions, consultants, participants, supervisions);
 
   private final Consultant creator = consultant("creator");
   private final Consultant owner = consultant("owner");
@@ -116,6 +119,29 @@ class MembersOnlySessionAssignmentTest {
 
     assertThat(session.getConsultant()).isSameAs(member);
     verify(sessions).save(session);
+  }
+
+  @Test
+  void aMemberWhoLeavesNoLongerSupervisesTheSession() {
+    var supervision = SessionSupervisor.builder().session(session).isActive(true).build();
+    when(supervisions.findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(9L, "member"))
+        .thenReturn(Optional.of(supervision));
+
+    assignment.handOverFrom(chat, participant("member", ParticipantRole.CO_MODERATOR));
+
+    assertThat(supervision.getIsActive()).isFalse();
+    assertThat(supervision.getRemovedDate()).isNotNull();
+    verify(supervisions).save(supervision);
+    verify(sessions, never()).save(session);
+  }
+
+  @Test
+  void supervisionOfAnOrdinaryChatIsLeftAlone() {
+    when(chat.isMembersOnly()).thenReturn(false);
+
+    assignment.handOverFrom(chat, participant("member", ParticipantRole.CO_MODERATOR));
+
+    verify(supervisions, never()).save(org.mockito.ArgumentMatchers.any());
   }
 
   private static Consultant consultant(String id) {
