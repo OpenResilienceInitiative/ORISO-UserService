@@ -569,8 +569,9 @@ class InternalSubsetChatHttpIT {
     assertThat(list.statusCode()).as(list.body()).isIn(200, 204);
     assertThat(list.body()).as("session list of the former member").doesNotContain(roomId);
     var bySessionId = request("GET", "/users/sessions/room/" + sessionId, creator, "");
-    assertThat(bySessionId.statusCode()).as("session by id").isIn(204, 403);
-    assertThat(bySessionId.body()).as("session by id").doesNotContain(roomId);
+    // A session the caller may not see is answered with an empty 204.
+    assertThat(bySessionId.statusCode()).as("session by id").isEqualTo(204);
+    assertThat(bySessionId.body()).as("session by id").isEmpty();
     assertThat(request("GET", "/users/chat/" + chatId, creator, "").statusCode())
         .as("chat by id")
         .isEqualTo(403);
