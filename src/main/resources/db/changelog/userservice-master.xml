@@ -239,4 +239,5 @@
   <include file="db/changelog/changeset/20261007_standing_access_preference_1657/changeSet.xml"/>
   <include file="db/changelog/changeset/20261009_inquiry_acceptance_notice/changeSet.xml" />
   <include file="db/changelog/changeset/20261014_co_access_power_rollback/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261017_chat_members_only_1418/changeSet.xml"/>
 </databaseChangeLog>
