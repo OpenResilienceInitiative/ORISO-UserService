@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.chat;
 
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.service.TenantCaseHandoverPolicyReadClient;
 import java.time.Clock;
 import java.time.Duration;
@@ -8,6 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -29,11 +31,22 @@ public class InternalGroupChatRecipientScopeResolver {
   private static final Duration FAILURE_REMEMBERED_FOR = Duration.ofSeconds(10);
 
   private final @NonNull TenantCaseHandoverPolicyReadClient tenantPolicies;
+  private final @NonNull TenantService tenantService;
   private final @NonNull Clock clock;
   private final ConcurrentHashMap<Long, Remembered> remembered = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Long, Object> reading = new ConcurrentHashMap<>();
 
+  @Value("${multitenancy.enabled:true}")
+  private boolean multitenancy;
+
+  private volatile RememberedTenant singleTenant;
+
   public InternalGroupChatRecipientScope resolve(Long tenantId) {
+    if (tenantId == null && !multitenancy) {
+      // Without multitenancy nobody has a tenant id; the one configured tenant decides (the same
+      // fallback the DPA gate, the chat-recovery policy and the group-chat gate use).
+      tenantId = singleTenantId();
+    }
     if (tenantId == null || tenantId <= 0) {
       return InternalGroupChatRecipientScope.AGENCY;
     }
@@ -70,10 +83,36 @@ public class InternalGroupChatRecipientScopeResolver {
     }
   }
 
+  /** The id of the single configured tenant, remembered like the scope; null when unreadable. */
+  private Long singleTenantId() {
+    var known = singleTenant;
+    var now = Instant.now(clock);
+    if (known != null && now.isBefore(known.until())) {
+      return known.id();
+    }
+    Long id = null;
+    var keptFor = FAILURE_REMEMBERED_FOR;
+    try {
+      var tenant = tenantService.getSingleTenancyTenantDataFresh();
+      id = tenant == null ? null : tenant.getId();
+      if (id != null) {
+        keptFor = REMEMBERED_FOR;
+      }
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Single tenant could not be read; counselling centre only applies: {}",
+          TenantCaseHandoverPolicyReadClient.failureSummary(failure));
+    }
+    singleTenant = new RememberedTenant(id, now.plus(keptFor));
+    return id;
+  }
+
   private InternalGroupChatRecipientScope freshAnswer(Long tenantId) {
     var known = remembered.get(tenantId);
     return known != null && Instant.now(clock).isBefore(known.until()) ? known.scope() : null;
   }
+
+  private record RememberedTenant(Long id, Instant until) {}
 
   private record Remembered(InternalGroupChatRecipientScope scope, Instant until) {}
 }

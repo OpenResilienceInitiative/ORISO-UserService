@@ -2,6 +2,9 @@ package de.caritas.cob.userservice.api.service.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -9,6 +12,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -17,6 +21,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.TenantCaseHandoverPolicyReadClient;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -43,6 +48,7 @@ class InternalGroupChatRecipientScopeResolverTest {
   private final MockRestServiceServer server = MockRestServiceServer.createServer(rest);
   private InternalGroupChatRecipientScopeResolver resolver;
   private MutableClock clock;
+  private final TenantService tenantService = mock(TenantService.class);
 
   @BeforeEach
   void setUp() {
@@ -64,7 +70,10 @@ class InternalGroupChatRecipientScopeResolverTest {
     resolver =
         new InternalGroupChatRecipientScopeResolver(
             new TenantCaseHandoverPolicyReadClient(factory, identity, identityConfig, headers),
+            tenantService,
             clock);
+    // Production default; the single-tenant tests switch it off.
+    ReflectionTestUtils.setField(resolver, "multitenancy", true);
   }
 
   @Test
@@ -160,7 +169,47 @@ class InternalGroupChatRecipientScopeResolverTest {
   }
 
   @Test
-  void aConsultantWithoutATraegerGetsTheMostRestrictiveScopeWithoutAnyCall() {
+  void aConsultantWithoutATraegerStaysOnCounsellingCentreWithMultitenancyAndAsksNobody() {
+    assertThat(resolver.resolve(null)).isEqualTo(InternalGroupChatRecipientScope.AGENCY);
+    verify(tenantService, never()).getSingleTenancyTenantDataFresh();
+    server.verify();
+  }
+
+  @Test
+  void withoutMultitenancyTheConfiguredScopeOfTheSingleTenantApplies() {
+    ReflectionTestUtils.setField(resolver, "multitenancy", false);
+    when(tenantService.getSingleTenancyTenantDataFresh())
+        .thenReturn(new RestrictedTenantDTO().id(7L).name("Tenant"));
+    expectPolicies(
+        """
+        {"tenantId":7,"policies":{},"internalGroupChat":{"recipientScope":
+          {"value":"TENANT","mode":"ENFORCED","inherited":true}}}
+        """);
+
+    assertThat(resolver.resolve(null)).isEqualTo(InternalGroupChatRecipientScope.TENANT);
+    // The single tenant's id is remembered with the answer: no second lookup, no second read.
+    assertThat(resolver.resolve(null)).isEqualTo(InternalGroupChatRecipientScope.TENANT);
+    verify(tenantService, times(1)).getSingleTenancyTenantDataFresh();
+    server.verify();
+  }
+
+  @Test
+  void withoutMultitenancyAnUnreadableSingleTenantMeansCounsellingCentreOnly() {
+    ReflectionTestUtils.setField(resolver, "multitenancy", false);
+    when(tenantService.getSingleTenancyTenantDataFresh()).thenThrow(new IllegalStateException("x"));
+
+    assertThat(resolver.resolve(null)).isEqualTo(InternalGroupChatRecipientScope.AGENCY);
+    // The outage is not hammered, and nothing wider than the narrow default was granted.
+    assertThat(resolver.resolve(null)).isEqualTo(InternalGroupChatRecipientScope.AGENCY);
+    verify(tenantService, times(1)).getSingleTenancyTenantDataFresh();
+    server.verify();
+  }
+
+  @Test
+  void withoutMultitenancyASingleTenantWithoutAnIdMeansCounsellingCentreOnly() {
+    ReflectionTestUtils.setField(resolver, "multitenancy", false);
+    when(tenantService.getSingleTenancyTenantDataFresh()).thenReturn(new RestrictedTenantDTO());
+
     assertThat(resolver.resolve(null)).isEqualTo(InternalGroupChatRecipientScope.AGENCY);
     server.verify();
   }
