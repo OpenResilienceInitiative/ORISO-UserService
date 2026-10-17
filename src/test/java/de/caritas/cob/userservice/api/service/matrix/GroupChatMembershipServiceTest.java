@@ -391,6 +391,34 @@ class GroupChatMembershipServiceTest {
     verifyNoInteractions(matrixSynapseService);
   }
 
+  // ── removeMemberFromRoomOrFail: a side room is left strictly too ─────────────────────
+
+  @Test
+  void removeMemberFromRoomOrFail_Should_Fail_When_TheMemberCannotLeave() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn(null);
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> groupChatMembershipService.removeMemberFromRoomOrFail("!side:x", LEAVER_MATRIX_ID));
+
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.leaveRoom("!side:x", "token")).thenReturn(false);
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> groupChatMembershipService.removeMemberFromRoomOrFail("!side:x", LEAVER_MATRIX_ID));
+  }
+
+  @Test
+  void removeMemberFromRoomOrFail_Should_Leave_And_IgnoreABlankRoomOrMember() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.leaveRoom("!side:x", "token")).thenReturn(true);
+
+    groupChatMembershipService.removeMemberFromRoomOrFail("!side:x", LEAVER_MATRIX_ID);
+    groupChatMembershipService.removeMemberFromRoomOrFail(" ", LEAVER_MATRIX_ID);
+    groupChatMembershipService.removeMemberFromRoomOrFail("!side:x", null);
+
+    verify(matrixSynapseService).leaveRoom("!side:x", "token");
+  }
+
   // ── resolveHumanMembers ────────────────────────────────────────────────────
 
   @Test

@@ -88,8 +88,7 @@ class GroupChatParticipantReconciliationServiceTest {
     var removed = participant(7L, "removed", ParticipantRole.CO_MODERATOR);
     var removedConsultant = consultant("removed", "@removed:matrix");
     when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
-    when(consultantRepository.findByIdAndDeleteDateIsNull("removed"))
-        .thenReturn(Optional.of(removedConsultant));
+    when(consultantRepository.findById("removed")).thenReturn(Optional.of(removedConsultant));
 
     service.reconcile(series, List.of());
 
@@ -99,6 +98,21 @@ class GroupChatParticipantReconciliationServiceTest {
     var handOver = Mockito.inOrder(revocation, participantRepository);
     handOver.verify(revocation).revokeAccessOf(series, removed);
     handOver.verify(participantRepository).delete(removed);
+  }
+
+  @Test
+  void reconcile_ShouldTakeASoftDeletedCoModeratorOutOfTheMatrixRoomToo() {
+    var removed = participant(7L, "removed", ParticipantRole.CO_MODERATOR);
+    var removedConsultant = consultant("removed", "@removed:matrix");
+    removedConsultant.setDeleteDate(java.time.LocalDateTime.now());
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
+    // Only a lookup by participation finds the account; the active-only one does not.
+    when(consultantRepository.findById("removed")).thenReturn(Optional.of(removedConsultant));
+
+    service.reconcile(series, List.of());
+
+    verify(membershipService).removeParticipantFromRoom(series, "@removed:matrix");
+    verify(participantRepository).delete(removed);
   }
 
   @Test

@@ -753,6 +753,83 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void aSupervisionSideRoomThatCannotBeLeftKeepsTheMemberAndTheSupervisionUntilRepeated()
+      throws Exception {
+    var created = openRoom(creator, sameCentre, anotherSameCentre);
+    var chatId = field(created, "chatId");
+    var sessionId = sessionOf(chatId);
+    var sideRoom = "!side-of-" + sessionId + ":oriso";
+    Tenants.acrossAll(
+        () ->
+            database.update(
+                "INSERT INTO session_supervisor (session_id, supervisor_consultant_id,"
+                    + " added_by_consultant_id, added_date, is_active, matrix_room_id)"
+                    + " VALUES (?, ?, ?, NOW(), 1, ?)",
+                sessionId,
+                sameCentre.getId(),
+                creator.getId(),
+                sideRoom));
+    synapse.roomsRefusingLeave.add(sideRoom);
+
+    var refused = request("PUT", "/users/chat/" + chatId + "/leave", sameCentre, "");
+
+    assertThat(refused.statusCode()).as(refused.body()).isEqualTo(502);
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId)))).contains(sameCentre.getId());
+    assertThat(activeSupervisions(sessionId)).isEqualTo(1);
+
+    synapse.roomsRefusingLeave.clear();
+    var repeated = request("PUT", "/users/chat/" + chatId + "/leave", sameCentre, "");
+
+    assertThat(repeated.statusCode()).as(repeated.body()).isIn(200, 204);
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId))))
+        .doesNotContain(sameCentre.getId());
+    assertThat(activeSupervisions(sessionId)).isZero();
+  }
+
+  @Test
+  void aSoftDeletedCoModeratorIsTakenOutOfTheMatrixRoomWhenTheSelectionDropsThem()
+      throws Exception {
+    var created = openRoom(creator, sameCentre, anotherSameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    Tenants.acrossAll(
+        () -> {
+          // Settings and selection can only be edited while the chat is not running.
+          database.update("UPDATE chat SET is_active = 0 WHERE id = ?", Long.parseLong(chatId));
+          return database.update(
+              "UPDATE consultant SET delete_date = NOW() WHERE consultant_id = ?",
+              sameCentre.getId());
+        });
+
+    var updated =
+        request(
+            "PUT",
+            "/users/chat/" + chatId + "/update",
+            creator,
+            "{\"topic\":\"Same\",\"agencyId\":"
+                + CENTRE
+                + ",\"startDate\":\"2999-01-01\",\"startTime\":\"12:00\",\"duration\":60,"
+                + "\"repetitive\":false,\"timezone\":\"UTC\",\"modality\":\"TEXT\","
+                + "\"consultantIds\":[\""
+                + anotherSameCentre.getId()
+                + "\"]}");
+
+    assertThat(updated.statusCode()).as(updated.body()).isIn(200, 204);
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId))))
+        .doesNotContain(sameCentre.getId());
+    assertThat(synapse.joined(roomId)).doesNotContain(matrix(sameCentre));
+  }
+
+  private int activeSupervisions(Long sessionId) {
+    return Tenants.acrossAll(
+        () ->
+            database.queryForObject(
+                "SELECT COUNT(*) FROM session_supervisor WHERE session_id = ? AND is_active = 1",
+                Integer.class,
+                sessionId));
+  }
+
+  @Test
   void aLeftOverAssignmentAndSupervisionGrantAFormerMemberNothing() throws Exception {
     var created = openRoom(creator, sameCentre, anotherSameCentre);
     var chatId = field(created, "chatId");

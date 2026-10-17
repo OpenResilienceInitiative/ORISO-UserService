@@ -75,10 +75,12 @@ public class GroupChatParticipantReconciliationService {
     for (var existing : participants) {
       if (existing.getRole() == ParticipantRole.CO_MODERATOR
           && !desiredIds.contains(existing.getConsultantId())) {
-        // An existing participant may come from another Träger (recipient scope PLATFORM): the
-        // owner's own Träger would not find them, and they would stay in the Matrix room.
+        // An existing participant may come from another Träger (recipient scope PLATFORM) or may
+        // have been deleted since: the owner's own Träger and an active-only lookup would not find
+        // them, and their account would stay in the Matrix room. They are resolved by
+        // participation.
         TenantContext.supplyAcrossTenants(
-                () -> consultantRepository.findByIdAndDeleteDateIsNull(existing.getConsultantId()))
+                () -> consultantRepository.findById(existing.getConsultantId()))
             .ifPresent(
                 consultant ->
                     membershipService.removeParticipantFromRoom(

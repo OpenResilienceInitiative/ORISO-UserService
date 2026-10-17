@@ -20,8 +20,6 @@ import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Takes everything a participant of a members-only chat holds besides the participation itself, in
@@ -30,15 +28,15 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <ul>
  *   <li>the technical session of the chat, when it is assigned to them, goes to a remaining
  *       participant, an owner first;
- *   <li>their active supervision of that session ends;
- *   <li>after the transaction has committed, they leave the supervision side room, which is a
- *       separate Matrix room the group's own leave does not touch.
+ *   <li>their active supervision of that session ends, and they leave the supervision side room,
+ *       which is a separate Matrix room the group's own leave does not touch.
  * </ul>
  *
  * <p>{@link MembersOnlyChatAccess} already refuses a counsellor who is not a participant, so none
  * of these rows grants anything on its own any more; they are ended so that no list, notification
- * or Matrix room still points at someone who left. The Matrix leave is best effort, like the leave
- * of the group's room itself: a failure is logged and does not undo the removal.
+ * or Matrix room still points at someone who left. The Matrix leaves are strict, like the leave of
+ * the group's room itself: when one fails the removal answers 502 and rolls back, so no one is
+ * revoked in the database yet still joined in an encrypted room.
  */
 @Slf4j
 @Component
@@ -141,36 +139,20 @@ public class MembersOnlyRevocation {
     supervision.setIsActive(false);
     supervision.setRemovedDate(LocalDateTime.now());
     supervisorRepository.save(supervision);
-    leaveSideRoomAfterCommit(supervision);
+    leaveSideRoom(supervision);
   }
 
-  private void leaveSideRoomAfterCommit(SessionSupervisor supervision) {
+  /**
+   * Inside the transaction, strictly: a supervisor who stays in the side room keeps reading it
+   * while the database says the supervision ended. A failed leave answers 502 and rolls the whole
+   * removal back, so it can be repeated.
+   */
+  private void leaveSideRoom(SessionSupervisor supervision) {
     var sideRoomId = supervision.getMatrixRoomId();
     var supervisor = supervision.getSupervisorConsultant();
     if (sideRoomId == null || sideRoomId.isBlank() || supervisor == null) {
       return;
     }
-    var matrixUserId = supervisor.getMatrixUserId();
-    Runnable leave =
-        () -> {
-          try {
-            membershipService.removeMemberFromRoom(sideRoomId, matrixUserId);
-          } catch (RuntimeException failure) {
-            log.warn(
-                "A former participant could not leave the supervision side room: {}",
-                failure.getClass().getSimpleName());
-          }
-        };
-    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      leave.run();
-      return;
-    }
-    TransactionSynchronizationManager.registerSynchronization(
-        new TransactionSynchronization() {
-          @Override
-          public void afterCommit() {
-            leave.run();
-          }
-        });
+    membershipService.removeMemberFromRoomOrFail(sideRoomId, supervisor.getMatrixUserId());
   }
 }

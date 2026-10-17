@@ -8,6 +8,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
@@ -23,8 +25,7 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.http.HttpStatus;
 
 class MembersOnlyRevocationTest {
 
@@ -151,56 +152,32 @@ class MembersOnlyRevocationTest {
   }
 
   @Test
-  void aSupervisorWhoLeavesLeavesTheSideRoomOnlyAfterTheTransactionHasCommitted() {
+  void aSupervisorWhoLeavesLeavesTheSideRoomBeforeTheTransactionCommits() {
     var supervision = supervisionInSideRoom("!side:oriso", "@member:oriso");
     when(supervisions.findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(9L, "member"))
         .thenReturn(Optional.of(supervision));
-
-    TransactionSynchronizationManager.initSynchronization();
-    try {
-      revocation.revokeAccessOf(chat, participant("member", ParticipantRole.CO_MODERATOR));
-
-      verify(membership, never()).removeMemberFromRoom(any(), any());
-      TransactionSynchronizationManager.getSynchronizations()
-          .forEach(TransactionSynchronization::afterCommit);
-    } finally {
-      TransactionSynchronizationManager.clearSynchronization();
-    }
-
-    verify(membership).removeMemberFromRoom("!side:oriso", "@member:oriso");
-  }
-
-  @Test
-  void aRolledBackRemovalNeverTouchesTheSideRoom() {
-    var supervision = supervisionInSideRoom("!side:oriso", "@member:oriso");
-    when(supervisions.findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(9L, "member"))
-        .thenReturn(Optional.of(supervision));
-
-    TransactionSynchronizationManager.initSynchronization();
-    try {
-      revocation.revokeAccessOf(chat, participant("member", ParticipantRole.CO_MODERATOR));
-      TransactionSynchronizationManager.getSynchronizations()
-          .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
-    } finally {
-      TransactionSynchronizationManager.clearSynchronization();
-    }
-
-    verify(membership, never()).removeMemberFromRoom(any(), any());
-  }
-
-  @Test
-  void aSideRoomThatCannotBeLeftDoesNotUndoTheRemoval() {
-    var supervision = supervisionInSideRoom("!side:oriso", "@member:oriso");
-    when(supervisions.findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(9L, "member"))
-        .thenReturn(Optional.of(supervision));
-    org.mockito.Mockito.doThrow(new IllegalStateException("synapse down"))
-        .when(membership)
-        .removeMemberFromRoom(any(), any());
 
     revocation.revokeAccessOf(chat, participant("member", ParticipantRole.CO_MODERATOR));
 
+    // Inside the transaction, no commit hook: a failure can still roll the removal back.
+    verify(membership).removeMemberFromRoomOrFail("!side:oriso", "@member:oriso");
     assertThat(supervision.getIsActive()).isFalse();
-    verify(supervisions).save(supervision);
+  }
+
+  @Test
+  void aSideRoomThatCannotBeLeftFailsTheRemovalSoItRollsBack() {
+    var supervision = supervisionInSideRoom("!side:oriso", "@member:oriso");
+    when(supervisions.findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(9L, "member"))
+        .thenReturn(Optional.of(supervision));
+    org.mockito.Mockito.doThrow(
+            new CustomValidationHttpStatusException(
+                HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED, HttpStatus.BAD_GATEWAY))
+        .when(membership)
+        .removeMemberFromRoomOrFail(any(), any());
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> revocation.revokeAccessOf(chat, participant("member", ParticipantRole.CO_MODERATOR)));
   }
 
   @Test

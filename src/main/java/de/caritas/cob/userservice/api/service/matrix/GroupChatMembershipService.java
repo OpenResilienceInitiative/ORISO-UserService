@@ -164,6 +164,19 @@ public class GroupChatMembershipService {
   }
 
   /**
+   * Takes a member out of a room by room id (a supervision side room has no {@link Chat}) and
+   * reports a failed leave as {@code 502 Bad Gateway}, like {@link #removeParticipantFromRoom} for
+   * a members-only chat. Call inside the transaction that ends the member's access, so a failure
+   * rolls it back and the request can be repeated.
+   */
+  public void removeMemberFromRoomOrFail(String matrixRoomId, String memberMatrixUserId) {
+    if (!leaveRoomAsMember(matrixRoomId, memberMatrixUserId)) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED, HttpStatus.BAD_GATEWAY);
+    }
+  }
+
+  /**
    * Leaves with the member's own admin-minted token. Idempotent (already-gone counts as success)
    * and never throws.
    *
