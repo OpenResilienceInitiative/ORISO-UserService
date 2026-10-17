@@ -2768,12 +2768,66 @@ public class CaseHandoverService {
       }
     }
 
+    if (wasMemberBefore) {
+      requireStandingMemberCanPost(roomId, requesterMatrixId, requesterToken, membersBefore);
+    }
     raiseOwnerPowerOnceCommitted(
         session.getId(),
         roomId,
         () -> matrixSynapseService.makeRoomAdmin(roomId, requesterMatrixId),
         "no joined room member holds power to raise it");
     return !wasMemberBefore;
+  }
+
+  /**
+   * A standing room member skips the join, so nothing else guarantees that they can answer the
+   * advice seeker: an expired read-only co-access leaves them at power -1 when the owner had
+   * already left (the owner's token can no longer restore level 0, the sweep keeps retrying). The
+   * after-commit {@code make_room_admin} is the only thing that could fix that, and it only works
+   * while a joined member still holds the power to change power levels. A takeover that would leave
+   * the new owner mute is refused before anything is committed instead.
+   */
+  private void requireStandingMemberCanPost(
+      String roomId, String requesterMatrixId, String requesterToken, List<String> members) {
+    var power = matrixSynapseService.getPowerLevels(roomId, requesterToken);
+    if (power.isEmpty()) {
+      throw new ServiceUnavailableException(
+          "Case Handover Matrix power levels could not be verified");
+    }
+    Map<String, Object> levels = power.get();
+    int usersDefault = powerLevelOf(levels.get("users_default"), 0);
+    int eventsDefault = powerLevelOf(levels.get("events_default"), 0);
+    Map<?, ?> users = levels.get("users") instanceof Map<?, ?> map ? map : Map.of();
+    java.util.function.ToIntFunction<String> powerOf =
+        member -> powerLevelOf(users.get(member), usersDefault);
+    if (powerOf.applyAsInt(requesterMatrixId) >= eventsDefault) {
+      return;
+    }
+    int needed = powerLevelOf(levels.get("state_default"), 50);
+    if (levels.get("events") instanceof Map<?, ?> events) {
+      needed = powerLevelOf(events.get("m.room.power_levels"), needed);
+    }
+    final int powerLevelsEvent = needed;
+    boolean someoneCanRaise =
+        members.stream()
+            .filter(member -> !member.equals(requesterMatrixId))
+            .anyMatch(member -> powerOf.applyAsInt(member) >= powerLevelsEvent);
+    if (!someoneCanRaise) {
+      throw new InternalServerErrorException(
+          "Case handover refused: the requester is read-only in the Matrix room and no room member"
+              + " can restore their right to write");
+    }
+  }
+
+  private static int powerLevelOf(Object value, int fallback) {
+    if (value instanceof Number number) {
+      return number.intValue();
+    }
+    try {
+      return value == null ? fallback : Integer.parseInt(String.valueOf(value));
+    } catch (NumberFormatException malformed) {
+      return fallback;
+    }
   }
 
   /**

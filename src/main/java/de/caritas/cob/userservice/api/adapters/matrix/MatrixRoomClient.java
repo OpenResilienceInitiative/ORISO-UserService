@@ -477,6 +477,22 @@ public class MatrixRoomClient {
     }
   }
 
+  /**
+   * Reads the room's {@code m.room.power_levels} content with the given member's token. Empty when
+   * Matrix refuses or cannot be reached, so a caller can tell "unknown" from a real answer.
+   */
+  public Optional<Map<String, Object>> getPowerLevels(String roomId, String accessToken) {
+    try {
+      return Optional.of(readPowerLevels(roomId, accessToken));
+    } catch (Exception failure) {
+      log.warn(
+          "Could not read the power levels of Matrix room {} ({})",
+          roomId,
+          failure.getClass().getSimpleName());
+      return Optional.empty();
+    }
+  }
+
   @SuppressWarnings("unchecked")
   private Map<String, Object> readPowerLevels(String roomId, String token) {
     var response =

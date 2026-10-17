@@ -363,6 +363,38 @@ class MatrixRoomClientTest {
   }
 
   @Test
+  void getPowerLevels_ShouldReturnTheRoomContentReadWithTheGivenToken() {
+    var content = new HashMap<String, Object>(Map.of("events_default", 0));
+    when(restTemplate.exchange(
+            eq(
+                uri(
+                    API_URL
+                        + "/_matrix/client/r0/rooms/"
+                        + ENCODED_ROOM_ID
+                        + "/state/m.room.power_levels")),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(content));
+
+    assertThat(matrixRoomClient.getPowerLevels(ROOM_ID, ACCESS_TOKEN)).contains(content);
+  }
+
+  @Test
+  void getPowerLevels_ShouldBeEmpty_WhenMatrixRefusesOrAnswersNothing() {
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.any(java.net.URI.class),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(null))
+        .thenThrow(new RuntimeException("refused"));
+
+    assertThat(matrixRoomClient.getPowerLevels(ROOM_ID, ACCESS_TOKEN)).isEmpty();
+    assertThat(matrixRoomClient.getPowerLevels(ROOM_ID, ACCESS_TOKEN)).isEmpty();
+  }
+
+  @Test
   void setUserPowerLevel_ShouldReturnFalse_WhenCurrentPowerLevelsBodyIsNull() {
     when(restTemplate.exchange(
             eq(

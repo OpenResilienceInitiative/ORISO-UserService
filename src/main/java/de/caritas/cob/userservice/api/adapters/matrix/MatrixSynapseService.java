@@ -2054,6 +2054,11 @@ public class MatrixSynapseService implements MatrixUserClient {
         roomId, userId, expectedPower, originalPower, ownerToken);
   }
 
+  public java.util.Optional<java.util.Map<String, Object>> getPowerLevels(
+      String roomId, String accessToken) {
+    return matrixRoomClient.getPowerLevels(roomId, accessToken);
+  }
+
   public boolean setUserPowerLevel(
       String roomId, String userId, int powerLevel, String accessToken) {
     return matrixRoomClient.setUserPowerLevel(roomId, userId, powerLevel, accessToken);

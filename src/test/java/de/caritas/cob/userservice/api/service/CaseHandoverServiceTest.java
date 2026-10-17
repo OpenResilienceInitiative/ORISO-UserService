@@ -4337,6 +4337,41 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void takeover_refusesAMuteStandingMember_whenNobodyLeftCanRestoreTheirRightToWrite() {
+    // An expired read-only co-access left the colleague at -1 and the owner left before the sweep
+    // could restore level 0: they are a member, so no join happens, and nobody can raise them.
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, REQUESTER_MXID, -1);
+    previousOwnerHasLeft();
+
+    assertThrows(InternalServerErrorException.class, this::takeOverBecauseAssignmentEnded);
+
+    verify(sessionOwnershipService, never())
+        .updateOwner(any(Session.class), any(Consultant.class), any(SessionStatus.class), any());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    assertFalse(homeserver.canPost(caseRoom, REQUESTER_MXID));
+  }
+
+  @Test
+  void takeover_restoresAMuteStandingMember_whenAJoinedMemberStillHoldsPower() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, ADMIN_MXID, 100);
+    homeserver.member(caseRoom, REQUESTER_MXID, -1);
+    previousOwnerHasLeft();
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      takeOverBecauseAssignmentEnded();
+      runSynchronizations(TransactionSynchronization::afterCommit);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    assertEquals(requester, session.getConsultant());
+    assertTrue(homeserver.canPost(caseRoom, REQUESTER_MXID));
+  }
+
+  @Test
   void takeover_withTheOwnerPresent_raisesThePowerLevelOnlyAfterTheTransactionCommits() {
     givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
 
