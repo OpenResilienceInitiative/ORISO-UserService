@@ -35,6 +35,7 @@ import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokenService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -88,9 +89,12 @@ public class ChatService {
         agencyIds);
 
     var chats =
-        chatRepository.findByAgencyIds(agencyIds).stream()
-            .filter(chat -> isVisibleToConsultant(chat, consultant))
-            .toList();
+        withMembersOnlyChatsOf(
+            consultant,
+            null,
+            chatRepository.findByAgencyIds(agencyIds).stream()
+                .filter(chat -> isVisibleToConsultant(chat, consultant))
+                .toList());
     log.info("🔍 ChatService: Found {} chats for agencyIds {}", chats.size(), agencyIds);
     chats.forEach(
         chat ->
@@ -105,6 +109,36 @@ public class ChatService {
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
 
     return toConsultantResponses(chats, chatAgenciesByChatId);
+  }
+
+  /**
+   * A members-only chat (#1418) belongs to the people in it, wherever they work: it reaches a
+   * member whose counselling centre or Träger is not the one the chat was created for, which the
+   * agency-based lookup alone would miss. Anybody else never gets it here.
+   *
+   * @param only restricts the lookup to these chat ids; {@code null} for all
+   */
+  private List<Chat> withMembersOnlyChatsOf(
+      Consultant consultant, Set<Long> only, List<Chat> found) {
+    var seriesIds =
+        groupChatParticipantRepository.findByConsultantId(consultant.getId()).stream()
+            .map(participant -> participant.getSeriesId())
+            .filter(Objects::nonNull)
+            .filter(id -> only == null || only.contains(id))
+            .collect(Collectors.toCollection(HashSet::new));
+    found.stream().map(Chat::getId).forEach(seriesIds::remove);
+    if (seriesIds.isEmpty()) {
+      return found;
+    }
+    var extra =
+        TenantContext.supplyAcrossTenants(() -> chatRepository.findByIdsWithChatAgencies(seriesIds))
+            .stream()
+            .filter(Chat::isMembersOnly)
+            .toList();
+    if (extra.isEmpty()) {
+      return found;
+    }
+    return Stream.concat(found.stream(), extra.stream()).toList();
   }
 
   private boolean isVisibleToConsultant(Chat chat, Consultant consultant) {
@@ -411,7 +445,9 @@ public class ChatService {
 
     var chats =
         groupChatConsultantAccess.filterAccessible(
-            chatRepository.findByIdsWithChatAgencies(chatIds), consultant);
+            withMembersOnlyChatsOf(
+                consultant, chatIds, chatRepository.findByIdsWithChatAgencies(chatIds)),
+            consultant);
 
     log.info("🔍 ChatService: Found {} chats in database", chats.size());
     chats.forEach(

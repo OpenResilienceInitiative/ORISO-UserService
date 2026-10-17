@@ -7,7 +7,9 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -30,6 +32,7 @@ import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /** Facade to encapsulate the steps for creating a chat. */
@@ -57,7 +60,7 @@ public class CreateChatFacade {
    * @return the generated chat link URL (String)
    */
   public CreateChatResponseDTO createChatV1(ChatDTO chatDTO, Consultant consultant) {
-    return createMatrixGroupChat(chatDTO, consultant);
+    return createMatrixGroupChat(chatDTO, consultant, null).response();
   }
 
   /**
@@ -68,7 +71,27 @@ public class CreateChatFacade {
    * @return the generated chat link URL (String)
    */
   public CreateChatResponseDTO createChatV2(ChatDTO chatDTO, Consultant consultant) {
-    return createMatrixGroupChat(chatDTO, consultant);
+    return createMatrixGroupChat(chatDTO, consultant, null).response();
+  }
+
+  /** The chat that was created: its client response and its id. */
+  public record CreatedChat(CreateChatResponseDTO response, Long chatId) {}
+
+  /**
+   * Creates the members-only room for a subset of colleagues (ORISO-UserService#1418): an internal
+   * group chat with exactly the creator and {@code colleagues}, and nobody else, ever. Unlike an
+   * ordinary internal chat it is strict. A colleague who cannot be added fails the whole creation,
+   * which then leaves nothing behind in the database or in Matrix. The chat is flagged {@code
+   * membersOnly}, so no other colleague can list, open or join it, and its session is no team
+   * session, so the team lists of the centre do not show it.
+   *
+   * @param chatDTO topic and counselling centre of the chat
+   * @param creator the calling counsellor
+   * @param colleagues the selected colleagues; validated by the caller, never the creator
+   */
+  public CreatedChat createMembersOnlyChat(
+      ChatDTO chatDTO, Consultant creator, List<Consultant> colleagues) {
+    return createMatrixGroupChat(chatDTO, creator, List.copyOf(colleagues));
   }
 
   private void createChatAgencyRelation(Chat chat, Long agencyId) {
@@ -83,8 +106,10 @@ public class CreateChatFacade {
    * @param consultant {@link Consultant} the creator
    * @return {@link CreateChatResponseDTO}
    */
-  private CreateChatResponseDTO createMatrixGroupChat(ChatDTO chatDTO, Consultant consultant) {
+  private CreatedChat createMatrixGroupChat(
+      ChatDTO chatDTO, Consultant consultant, List<Consultant> membersOnlyColleagues) {
     log.info("Creating group chat with Session + Chat: {}", chatDTO.getTopic());
+    final boolean membersOnly = membersOnlyColleagues != null;
 
     // V1 callers may not carry an agency id or participant list.
     List<String> participantIds =
@@ -104,6 +129,7 @@ public class CreateChatFacade {
     // Get consulting type from agency
     AgencyDTO agency = agencyService.getAgency(agencyId);
     Chat chat = chatConverter.convertToEntity(chatDTO, consultant, agency);
+    chat.setMembersOnly(membersOnly);
     session.setConsultingTypeId(agency.getConsultingType());
 
     session.setPostcode("00000"); // Dummy postcode for group chats
@@ -113,7 +139,10 @@ public class CreateChatFacade {
     // teamSession keeps the group visible through the team-session queries. It is NOT the
     // modality (ADR-006 addendum 2026-09-04): the modality is stamped explicitly here, because
     // this facade is the only producer of INTERNAL_GROUP / SELF_HELP sessions.
-    session.setTeamSession(true);
+    // A members-only chat is no team session: every team session is shown to, and may be opened
+    // by, all colleagues of the centre. Its members reach it through their group chat
+    // participation.
+    session.setTeamSession(!membersOnly);
     session.setConversationType(
         chat.getConversationType() == null
             ? ConversationType.INTERNAL_GROUP
@@ -167,7 +196,8 @@ public class CreateChatFacade {
 
       // Persist the Matrix room ID on both domain records.
       session.setMatrixRoomId(matrixRoomId);
-      sessionService.saveSession(session);
+      // Keep the saved instance: its row version is the one a rollback must delete.
+      session = sessionService.saveSession(session);
 
       chat.setMatrixRoomId(matrixRoomId);
       chatService.saveChat(chat);
@@ -189,8 +219,20 @@ public class CreateChatFacade {
       groupChatParticipantRepository.save(creatorParticipant);
       log.info("Added creator consultant {} to group_chat_participant", consultant.getId());
 
+      if (membersOnly) {
+        for (Consultant colleague : membersOnlyColleagues) {
+          addColleagueStrictly(matrixRoomId, consultantToken, colleague);
+          GroupChatParticipant member = new GroupChatParticipant();
+          member.setChatId(sessionId);
+          member.setSeriesId(chatId);
+          member.setRole(GroupChatParticipant.ParticipantRole.CO_MODERATOR);
+          member.setConsultantId(colleague.getId());
+          groupChatParticipantRepository.save(member);
+        }
+      }
+
       // Invite and auto-join all selected consultants
-      for (String participantId : participantIds) {
+      for (String participantId : membersOnly ? List.<String>of() : participantIds) {
         try {
           Consultant participant = consultantRepository.findById(participantId).orElse(null);
           if (participant == null) {
@@ -235,12 +277,18 @@ public class CreateChatFacade {
           matrixRoomId,
           participantIds.size() + 1); // +1 for creator
 
-      return new CreateChatResponseDTO()
-          .matrixRoomId(matrixRoomId)
-          .createdAt(session.getCreateDate().toString());
+      return new CreatedChat(
+          new CreateChatResponseDTO()
+              .matrixRoomId(matrixRoomId)
+              .createdAt(session.getCreateDate().toString()),
+          chatId);
 
     } catch (Exception e) {
       log.error("Failed to create group chat: {}", e.getMessage(), e);
+      if (membersOnly && matrixRoomId != null) {
+        // The room is private: do not leave it behind with half of its members.
+        matrixSynapseService.purgeRoomOrConfirmGone(matrixRoomId);
+      }
       // Rollback: delete session and chat
       if (session.getId() != null) {
         try {
@@ -256,8 +304,36 @@ public class CreateChatFacade {
           log.error("Failed to rollback chat: {}", ex.getMessage());
         }
       }
+      if (e instanceof CustomValidationHttpStatusException reasoned) {
+        throw reasoned;
+      }
       throw new InternalServerErrorException("Failed to create group chat: " + e.getMessage());
     }
+  }
+
+  /**
+   * Adds a colleague to the room of a members-only chat or fails. Whatever goes wrong — the invite,
+   * the Matrix login, the join — the colleague is not in the room, and the room must not exist
+   * without them.
+   */
+  private void addColleagueStrictly(
+      String matrixRoomId, String creatorToken, Consultant colleague) {
+    try {
+      matrixSynapseService.inviteUserToRoom(
+          matrixRoomId, colleague.getMatrixUserId(), creatorToken);
+      String colleagueToken =
+          matrixSynapseService.loginAsUserAccessToken(colleague.getMatrixUserId());
+      if (colleagueToken != null && matrixSynapseService.joinRoom(matrixRoomId, colleagueToken)) {
+        return;
+      }
+    } catch (Exception failure) {
+      log.warn(
+          "Colleague {} could not be added to the members-only room: {}",
+          colleague.getId(),
+          failure.getClass().getSimpleName());
+    }
+    throw new CustomValidationHttpStatusException(
+        HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED, HttpStatus.BAD_GATEWAY);
   }
 
   /**

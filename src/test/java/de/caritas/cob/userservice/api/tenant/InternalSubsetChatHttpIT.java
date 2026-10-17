@@ -1,0 +1,726 @@
+package de.caritas.cob.userservice.api.tenant;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.anything;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withNoContent;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
+import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
+import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant;
+import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.chat.InternalGroupChatRecipientScopeResolver;
+import java.io.IOException;
+import java.net.URI;
+import java.net.URLDecoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpRequest;
+import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.http.client.MockClientHttpRequest;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.test.web.client.ExpectedCount;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestTemplate;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * ORISO-UserService#1418: the members-only room for a subset of selected colleagues.
+ *
+ * <p>Real HTTP, security, JPA and Matrix client. Only the other side of every outgoing call is
+ * played: Keycloak, AgencyService, TenantService and a stateful Synapse that remembers its rooms,
+ * invitations and joins and whether a room was created encrypted. The assertions are on what a
+ * counsellor and Matrix can observe, never on a call that was made.
+ */
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles("testing")
+@TestPropertySource(
+    properties = {
+      "matrix.adminUsername=synthetic-matrix-admin",
+      "matrix.adminPassword=synthetic-fixture",
+      "matrix.encryptionEnabled=true",
+      "multitenancy.enabled=true",
+      "feature.multitenancy.with.single.domain.enabled=true",
+      "feature.topics.enabled=false",
+      "feature.demographics.enabled=false",
+      "logging.level.root=WARN",
+      "logging.level.org.springframework.web=WARN",
+      "logging.level.org.springframework.web.servlet.mvc.method.annotation=WARN"
+    })
+@Import({TenantFixtures.class, IndividualCounsellingDpaGateIT.IncomingIdentityFixture.class})
+class InternalSubsetChatHttpIT {
+
+  private static final long TRAEGER = 41L;
+  private static final long OTHER_TRAEGER = 42L;
+  private static final long CENTRE = 410L;
+  private static final long OTHER_CENTRE = 411L;
+  private static final long FOREIGN_CENTRE = 420L;
+  private static final String SERVER = "synthetic.oriso.test";
+  private static final JsonMapper JSON = JsonMapper.builder().build();
+
+  @LocalServerPort private int port;
+  @Autowired private TenantFixtures fixtures;
+  @Autowired private ChatRepository chats;
+  @Autowired private SessionRepository sessions;
+  @Autowired private GroupChatParticipantRepository participants;
+  @Autowired private JdbcTemplate database;
+  @Autowired private MatrixConfig matrixConfig;
+  @Autowired private InternalGroupChatRecipientScopeResolver recipientScopes;
+
+  @Autowired
+  @Qualifier("restTemplate")
+  private RestTemplate transport;
+
+  @MockitoBean private JwtDecoder jwtDecoder;
+
+  private final SyntheticSynapse synapse = new SyntheticSynapse();
+  private final Map<Long, String> recipientScopeOfTraeger = new LinkedHashMap<>();
+  private final AtomicInteger tenantPolicyReads = new AtomicInteger();
+  private MockRestServiceServer downstream;
+  private boolean tenantServiceKnowsTheSetting = true;
+  private boolean systemUserExisted41;
+  private boolean systemUserExisted42;
+
+  private Consultant creator;
+  private Consultant sameCentre;
+  private Consultant anotherSameCentre;
+  private Consultant otherCentre;
+  private Consultant otherTraeger;
+  private final List<Consultant> everyone = new ArrayList<>();
+
+  @BeforeEach
+  void aTraegerWithColleaguesAndAStatefulMatrix() {
+    matrixConfig.setEncryptionEnabled(true);
+    theTraegerScopeIs("AGENCY");
+    systemUserExisted41 = systemUserExists(TRAEGER);
+    systemUserExisted42 = systemUserExists(OTHER_TRAEGER);
+    creator = fixtures.consultant(TRAEGER, CENTRE);
+    sameCentre = fixtures.consultant(TRAEGER, CENTRE);
+    anotherSameCentre = fixtures.consultant(TRAEGER, CENTRE);
+    otherCentre = fixtures.consultant(TRAEGER, OTHER_CENTRE);
+    otherTraeger = fixtures.consultant(OTHER_TRAEGER, FOREIGN_CENTRE);
+    everyone.addAll(List.of(creator, sameCentre, anotherSameCentre, otherCentre, otherTraeger));
+    downstream = MockRestServiceServer.bindTo(transport).build();
+    downstream
+        .expect(ExpectedCount.between(0, Integer.MAX_VALUE), anything())
+        .andRespond(this::externalWorld);
+  }
+
+  @AfterEach
+  void removeWhatTheTestCreated() {
+    Tenants.acrossAll(
+        () -> {
+          var owners =
+              everyone.stream().map(c -> "'" + c.getId() + "'").collect(Collectors.joining(","));
+          database.update(
+              "DELETE FROM event_notification WHERE deduplication_key LIKE 'group-chat:%'");
+          database.update(
+              "DELETE FROM group_chat_participant WHERE consultant_id IN (" + owners + ")");
+          database.update(
+              "DELETE FROM chat_agency WHERE chat_id IN (SELECT id FROM chat WHERE"
+                  + " consultant_id_owner IN ("
+                  + owners
+                  + "))");
+          database.update("DELETE FROM chat WHERE consultant_id_owner IN (" + owners + ")");
+          database.update("DELETE FROM session WHERE consultant_id IN (" + owners + ")");
+          if (!systemUserExisted41) {
+            database.update("DELETE FROM user WHERE user_id = 'group-chat-system-41'");
+          }
+          if (!systemUserExisted42) {
+            database.update("DELETE FROM user WHERE user_id = 'group-chat-system-42'");
+          }
+        });
+    fixtures.removeAll();
+    TenantContext.clear();
+    matrixConfig.setEncryptionEnabled(true);
+  }
+
+  @Test
+  void aSubsetGetsADedicatedEncryptedRoomOfExactlyTheCreatorAndTheSelection() throws Exception {
+    var response = openRoom(creator, sameCentre);
+
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(201);
+    var roomId = field(response, "matrixRoomId");
+    assertThat(synapse.joined(roomId))
+        .containsExactlyInAnyOrder(matrix(creator), matrix(sameCentre));
+    assertThat(synapse.isEncrypted(roomId)).isTrue();
+    var chat = storedChat(Long.parseLong(field(response, "chatId")));
+    assertThat(chat.isMembersOnly()).isTrue();
+    assertThat(chat.getConversationType()).isEqualTo(ConversationType.INTERNAL_GROUP);
+    assertThat(chat.getMatrixRoomId()).isEqualTo(roomId);
+    assertThat(participantsOf(chat)).containsExactlyInAnyOrder(creator.getId(), sameCentre.getId());
+  }
+
+  @Test
+  void theSameSelectionOpensTheSameRoomFromEitherSideAndInAnyOrder() throws Exception {
+    var first = openRoom(creator, sameCentre, anotherSameCentre);
+    var again = openRoom(creator, anotherSameCentre, sameCentre, creator);
+    var fromTheOtherSide = openRoom(sameCentre, creator, anotherSameCentre);
+
+    assertThat(first.statusCode()).isEqualTo(201);
+    assertThat(again.statusCode()).as(again.body()).isEqualTo(200);
+    assertThat(fromTheOtherSide.statusCode()).as(fromTheOtherSide.body()).isEqualTo(200);
+    assertThat(field(again, "matrixRoomId")).isEqualTo(field(first, "matrixRoomId"));
+    assertThat(field(again, "chatId")).isEqualTo(field(first, "chatId"));
+    assertThat(field(fromTheOtherSide, "matrixRoomId")).isEqualTo(field(first, "matrixRoomId"));
+    assertThat(synapse.roomsCreated()).isEqualTo(1);
+  }
+
+  @Test
+  void aDifferentSelectionGetsItsOwnRoomAndNeverASupersetOrSubsetRoom() throws Exception {
+    var pair = openRoom(creator, sameCentre);
+    var trio = openRoom(creator, sameCentre, anotherSameCentre);
+    var otherPair = openRoom(creator, anotherSameCentre);
+
+    assertThat(List.of(pair.statusCode(), trio.statusCode(), otherPair.statusCode()))
+        .containsOnly(201);
+    assertThat(
+            Set.of(
+                field(pair, "matrixRoomId"),
+                field(trio, "matrixRoomId"),
+                field(otherPair, "matrixRoomId")))
+        .hasSize(3);
+    assertThat(synapse.joined(field(trio, "matrixRoomId")))
+        .containsExactlyInAnyOrder(matrix(creator), matrix(sameCentre), matrix(anotherSameCentre));
+    assertThat(synapse.joined(field(pair, "matrixRoomId")))
+        .containsExactlyInAnyOrder(matrix(creator), matrix(sameCentre));
+  }
+
+  @Test
+  void anOrdinaryInternalChatWithTheSameMembersIsNotReusedBecauseColleaguesCanStillOpenIt()
+      throws Exception {
+    var ordinary =
+        request(
+            "POST",
+            "/users/chat/v2/new",
+            creator,
+            "{\"topic\":\"Team talk\",\"agencyId\":410,\"startDate\":\"2999-01-01\","
+                + "\"startTime\":\"12:00\",\"duration\":60,\"repetitive\":false,"
+                + "\"timezone\":\"UTC\",\"modality\":\"TEXT\",\"consultantIds\":[\""
+                + sameCentre.getId()
+                + "\"]}");
+    assertThat(ordinary.statusCode()).as(ordinary.body()).isEqualTo(201);
+
+    var subset = openRoom(creator, sameCentre);
+
+    assertThat(subset.statusCode()).as(subset.body()).isEqualTo(201);
+    assertThat(field(subset, "matrixRoomId")).isNotEqualTo(field(ordinary, "matrixRoomId"));
+    assertThat(synapse.roomsCreated()).isEqualTo(2);
+  }
+
+  @Test
+  void aRoomThatGainedAnotherMemberInMatrixIsNeverReused() throws Exception {
+    var first = openRoom(creator, sameCentre);
+    synapse.joinDirectly(field(first, "matrixRoomId"), matrix(anotherSameCentre));
+
+    var again = openRoom(creator, sameCentre);
+
+    assertThat(again.statusCode()).as(again.body()).isEqualTo(201);
+    assertThat(field(again, "matrixRoomId")).isNotEqualTo(field(first, "matrixRoomId"));
+    assertThat(synapse.joined(field(again, "matrixRoomId")))
+        .containsExactlyInAnyOrder(matrix(creator), matrix(sameCentre));
+  }
+
+  @Test
+  void aColleagueOutsideTheScopeRefusesTheWholeRequestAndCreatesNothing() throws Exception {
+    var response = openRoom(creator, sameCentre, otherCentre);
+
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(403);
+    assertThat(reason(response)).isEqualTo("INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE");
+    assertThat(response.body()).contains("\"reason\":\"INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE\"");
+    assertNothingWasCreated();
+  }
+
+  @Test
+  void aSettingTheTenantServiceDoesNotKnowYetMeansCounsellingCentreOnly() throws Exception {
+    tenantServiceKnowsTheSetting = false;
+    theTraegerScopeIs("AGENCY");
+
+    var response = openRoom(creator, otherCentre);
+
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(403);
+    assertThat(reason(response)).isEqualTo("INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE");
+    assertNothingWasCreated();
+  }
+
+  @Test
+  void theTraegerScopeWidensWhoCanBePicked() throws Exception {
+    theTraegerScopeIs("TENANT");
+    var sameTraeger = openRoom(creator, otherCentre);
+    var foreign = openRoom(creator, otherTraeger);
+
+    assertThat(sameTraeger.statusCode()).as(sameTraeger.body()).isEqualTo(201);
+    assertThatTheColleagueFindsAndOpens(otherCentre, sameTraeger);
+    assertThat(foreign.statusCode()).as(foreign.body()).isEqualTo(403);
+    assertThat(reason(foreign)).isEqualTo("INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE");
+
+    theTraegerScopeIs("PLATFORM");
+    var acrossTraeger = openRoom(creator, otherTraeger);
+    assertThat(acrossTraeger.statusCode()).as(acrossTraeger.body()).isEqualTo(201);
+    assertThat(synapse.joined(field(acrossTraeger, "matrixRoomId")))
+        .containsExactlyInAnyOrder(matrix(creator), matrix(otherTraeger));
+    assertThatTheColleagueFindsAndOpens(otherTraeger, acrossTraeger);
+  }
+
+  private void assertThatTheColleagueFindsAndOpens(Consultant colleague, HttpResponse<String> room)
+      throws Exception {
+    var list = sessionListOf(colleague);
+    assertThat(list.statusCode()).as(list.body()).isEqualTo(200);
+    assertThat(list.body()).as("session list").contains(field(room, "matrixRoomId"));
+    var opened = request("GET", "/users/chat/" + field(room, "chatId"), colleague, "");
+    assertThat(opened.statusCode()).as(opened.body()).isEqualTo(200);
+  }
+
+  private HttpResponse<String> sessionListOf(Consultant consultant) throws Exception {
+    return request(
+        "GET",
+        "/users/sessions/consultants?status=2&offset=0&count=100&filter=all",
+        consultant,
+        "");
+  }
+
+  @Test
+  void aColleagueThatDoesNotExistIsRefusedNotSkipped() throws Exception {
+    var response =
+        request(
+            "POST",
+            "/users/chat/internal-subset",
+            creator,
+            "{\"consultantIds\":[\"" + sameCentre.getId() + "\",\"no-such-colleague\"]}");
+
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(400);
+    assertThat(reason(response)).isEqualTo("INTERNAL_CHAT_RECIPIENT_UNKNOWN");
+    assertNothingWasCreated();
+  }
+
+  @Test
+  void aRequestWithoutAnyColleagueBesidesTheCallerIsRefused() throws Exception {
+    var onlySelf = openRoom(creator, creator);
+
+    assertThat(onlySelf.statusCode()).as(onlySelf.body()).isEqualTo(400);
+    assertThat(reason(onlySelf)).isEqualTo("INTERNAL_CHAT_RECIPIENTS_REQUIRED");
+    assertNothingWasCreated();
+  }
+
+  @Test
+  void aFailedInviteLeavesNoRoomNoChatAndNoSessionBehind() throws Exception {
+    synapse.refuseInvitationOf(matrix(anotherSameCentre));
+
+    var response = openRoom(creator, sameCentre, anotherSameCentre);
+
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(502);
+    assertThat(reason(response)).isEqualTo("INTERNAL_CHAT_MEMBERSHIP_FAILED");
+    assertThat(synapse.liveRooms()).isEmpty();
+    assertThat(allChatsOf(everyone)).isEmpty();
+    assertThat(allSessionsOf(everyone)).isEmpty();
+  }
+
+  @Test
+  void withoutEncryptionNoPrivateRoomIsCreated() throws Exception {
+    matrixConfig.setEncryptionEnabled(false);
+
+    var response = openRoom(creator, sameCentre);
+
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(503);
+    assertThat(reason(response)).isEqualTo("INTERNAL_CHAT_ENCRYPTION_REQUIRED");
+    assertNothingWasCreated();
+  }
+
+  @Test
+  void aColleagueOfTheCentreWhoIsNotInTheRoomCannotSeeOpenOrJoinIt() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+
+    for (var outsider : List.of(anotherSameCentre, otherCentre)) {
+      assertThat(request("GET", "/users/chat/" + chatId, outsider, "").statusCode())
+          .as("open by id")
+          .isEqualTo(403);
+      assertThat(request("PUT", "/users/chat/" + chatId + "/join", outsider, "").statusCode())
+          .as("join")
+          .isEqualTo(403);
+      assertThat(request("GET", "/users/chat/" + chatId + "/members", outsider, "").statusCode())
+          .as("members")
+          .isEqualTo(403);
+      var list = sessionListOf(outsider);
+      assertThat(list.statusCode()).as(list.body()).isIn(200, 204);
+      assertThat(list.body()).as("session list").doesNotContain(roomId);
+    }
+    assertThat(synapse.joined(roomId))
+        .containsExactlyInAnyOrder(matrix(creator), matrix(sameCentre));
+
+    var memberList = sessionListOf(sameCentre);
+    assertThat(memberList.statusCode()).as(memberList.body()).isEqualTo(200);
+    assertThat(memberList.body()).contains(roomId);
+    var opened = request("GET", "/users/chat/" + chatId, sameCentre, "");
+    assertThat(opened.statusCode()).as(opened.body() + opened.headers()).isEqualTo(200);
+  }
+
+  @Test
+  void anOrdinaryInternalChatStaysOpenToTheColleaguesOfItsCentre() throws Exception {
+    var ordinary =
+        request(
+            "POST",
+            "/users/chat/v2/new",
+            creator,
+            "{\"topic\":\"Team talk\",\"agencyId\":410,\"startDate\":\"2999-01-01\","
+                + "\"startTime\":\"12:00\",\"duration\":60,\"repetitive\":false,"
+                + "\"timezone\":\"UTC\",\"modality\":\"TEXT\",\"consultantIds\":[\""
+                + sameCentre.getId()
+                + "\"]}");
+    assertThat(ordinary.statusCode()).as(ordinary.body()).isEqualTo(201);
+    var chatId =
+        Tenants.acrossAll(
+                () -> chats.findByMatrixRoomId(field(ordinary, "matrixRoomId")).orElseThrow())
+            .getId();
+
+    assertThat(request("GET", "/users/chat/" + chatId, anotherSameCentre, "").statusCode())
+        .isEqualTo(200);
+    assertThat(request("GET", "/users/chat/" + chatId, otherCentre, "").statusCode())
+        .isEqualTo(403);
+  }
+
+  /** The resolver remembers an answer for a minute; a test that changes the setting forgets it. */
+  private void theTraegerScopeIs(String scope) {
+    recipientScopeOfTraeger.put(TRAEGER, scope);
+    ((java.util.Map<?, ?>) ReflectionTestUtils.getField(recipientScopes, "remembered")).clear();
+  }
+
+  // ---- helpers -----------------------------------------------------------------------------
+
+  private HttpResponse<String> openRoom(Consultant caller, Consultant... selection)
+      throws Exception {
+    var ids =
+        java.util.Arrays.stream(selection)
+            .map(c -> "\"" + c.getId() + "\"")
+            .collect(Collectors.joining(","));
+    return request(
+        "POST",
+        "/users/chat/internal-subset",
+        caller,
+        "{\"consultantIds\":[" + ids + "],\"agencyId\":" + CENTRE + "}");
+  }
+
+  private HttpResponse<String> request(String method, String path, Consultant caller, String body)
+      throws Exception {
+    var token =
+        Jwt.withTokenValue("synthetic-token-" + caller.getId())
+            .header("alg", "none")
+            .subject(caller.getId())
+            .claim("username", caller.getUsername())
+            .claim("tenantId", caller.getTenantId())
+            .claim("realm_access", Map.of("roles", List.of("consultant")))
+            .build();
+    when(jwtDecoder.decode("synthetic-token-" + caller.getId())).thenReturn(token);
+    var request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+            .header("Authorization", "Bearer synthetic-token-" + caller.getId())
+            .header("Cookie", "CSRF-TOKEN=test")
+            .header("X-CSRF-Token", "test")
+            .header("Content-Type", "application/json")
+            .method(method, HttpRequest.BodyPublishers.ofString(body))
+            .build();
+    return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static String field(HttpResponse<String> response, String name) {
+    return JSON.readTree(response.body()).get(name).asText();
+  }
+
+  private static String reason(HttpResponse<String> response) {
+    return response.headers().firstValue("X-Reason").orElse("");
+  }
+
+  private static String matrix(Consultant consultant) {
+    return consultant.getMatrixUserId();
+  }
+
+  private Chat storedChat(Long chatId) {
+    return Tenants.acrossAll(() -> chats.findById(chatId).orElseThrow());
+  }
+
+  private Set<String> participantsOf(Chat chat) {
+    return Tenants.acrossAll(
+        () ->
+            participants.findBySeriesId(chat.getId()).stream()
+                .map(GroupChatParticipant::getConsultantId)
+                .collect(Collectors.toSet()));
+  }
+
+  private void assertNothingWasCreated() {
+    assertThat(synapse.roomsCreated()).isZero();
+    assertThat(allChatsOf(everyone)).isEmpty();
+    assertThat(allSessionsOf(everyone)).isEmpty();
+  }
+
+  private List<Long> allChatsOf(List<Consultant> owners) {
+    return Tenants.acrossAll(
+        () ->
+            owners.stream()
+                .flatMap(owner -> chats.findByChatOwner(owner).stream())
+                .map(Chat::getId)
+                .toList());
+  }
+
+  private List<Long> allSessionsOf(List<Consultant> owners) {
+    return Tenants.acrossAll(
+        () ->
+            database.queryForList(
+                "SELECT id FROM session WHERE consultant_id IN ("
+                    + owners.stream()
+                        .map(c -> "'" + c.getId() + "'")
+                        .collect(Collectors.joining(","))
+                    + ")",
+                Long.class));
+  }
+
+  private boolean systemUserExists(long tenant) {
+    return database.queryForObject(
+            "SELECT COUNT(*) FROM user WHERE user_id = 'group-chat-system-" + tenant + "'",
+            Integer.class)
+        > 0;
+  }
+
+  // ---- the other side of every outgoing call -------------------------------------------------
+
+  private ClientHttpResponse externalWorld(ClientHttpRequest request) throws IOException {
+    var path = request.getURI().getPath();
+    var method = request.getMethod();
+    if (path.endsWith("/token")) {
+      return json(
+          request,
+          "{\"access_token\":\"synthetic-service-token\",\"expires_in\":60,"
+              + "\"refresh_expires_in\":60,\"refresh_token\":\"synthetic-refresh\"}");
+    }
+    if (path.endsWith("/logout")) {
+      return withNoContent().createResponse(request);
+    }
+    if (path.startsWith("/tenant/public/id/") || path.equals("/tenant/public/single")) {
+      var id = path.endsWith("/42") ? 42 : 41;
+      return json(request, "{\"id\":" + id + ",\"settings\":{\"featureGroupChatV2Enabled\":true}}");
+    }
+    if (path.startsWith("/tenantadmin/") && path.endsWith("/permission-policies")) {
+      tenantPolicyReads.incrementAndGet();
+      var tenant = Long.parseLong(path.split("/")[2]);
+      var scope = recipientScopeOfTraeger.getOrDefault(tenant, "AGENCY");
+      return json(
+          request,
+          tenantServiceKnowsTheSetting
+              ? "{\"tenantId\":"
+                  + tenant
+                  + ",\"policies\":{},\"internalGroupChat\":{\"recipientScope\":"
+                  + "{\"value\":\""
+                  + scope
+                  + "\",\"mode\":\"SUGGESTED\",\"inherited\":false}}}"
+              : "{\"tenantId\":" + tenant + ",\"policies\":{}}");
+    }
+    if (path.matches(".*/agencies/\\d+")) {
+      var agencyId = Long.parseLong(path.substring(path.lastIndexOf('/') + 1));
+      var tenant = agencyId == FOREIGN_CENTRE ? OTHER_TRAEGER : TRAEGER;
+      return json(
+          request,
+          "[{\"id\":"
+              + agencyId
+              + ",\"tenantId\":"
+              + tenant
+              + ",\"consultingType\":1,\"teamAgency\":false,\"topicIds\":[],\"settings\":"
+              + "{\"featureGroupChatV2Enabled\":true,\"featureInternalGroupChatEnabled\":true}}]");
+    }
+    if (path.startsWith("/_matrix/") || path.startsWith("/_synapse/")) {
+      var body = ((MockClientHttpRequest) request).getBodyAsString(StandardCharsets.UTF_8);
+      return synapse.answer(request, method, path, body);
+    }
+    throw new AssertionError("Unexpected external HTTP path: " + method + " " + path);
+  }
+
+  private static ClientHttpResponse json(ClientHttpRequest request, String body)
+      throws IOException {
+    return withSuccess(body, MediaType.APPLICATION_JSON).createResponse(request);
+  }
+
+  /** A Synapse that remembers: rooms, who was invited, who joined, and whether encryption is on. */
+  private static final class SyntheticSynapse {
+    private final Map<String, Room> rooms = new LinkedHashMap<>();
+    private final Set<String> refusedInvitations = new HashSet<>();
+    private final AtomicInteger created = new AtomicInteger();
+    private int numbering;
+
+    private static final class Room {
+      final Set<String> invited = new LinkedHashSet<>();
+      final Set<String> joined = new LinkedHashSet<>();
+      boolean encrypted;
+    }
+
+    synchronized int roomsCreated() {
+      return created.get();
+    }
+
+    synchronized Set<String> joined(String roomId) {
+      return new TreeSet<>(rooms.get(roomId).joined);
+    }
+
+    synchronized boolean isEncrypted(String roomId) {
+      return rooms.get(roomId).encrypted;
+    }
+
+    synchronized Set<String> liveRooms() {
+      return new LinkedHashSet<>(rooms.keySet());
+    }
+
+    synchronized void joinDirectly(String roomId, String matrixUserId) {
+      rooms.get(roomId).joined.add(matrixUserId);
+    }
+
+    synchronized void refuseInvitationOf(String matrixUserId) {
+      refusedInvitations.add(matrixUserId);
+    }
+
+    synchronized ClientHttpResponse answer(
+        ClientHttpRequest request, HttpMethod method, String path, String body) throws IOException {
+      if (path.equals("/_matrix/client/r0/login")) {
+        var node = JSON.readTree(body);
+        var who = node.path("identifier").path("user").asText(node.path("user").asText(""));
+        var token =
+            who.isBlank() || who.equals("synthetic-matrix-admin")
+                ? "admin-token"
+                : "as:@" + who.replaceFirst("^@", "").replaceFirst(":.*$", "") + ":" + SERVER;
+        return withSuccess("{\"access_token\":\"" + token + "\"}", MediaType.APPLICATION_JSON)
+            .createResponse(request);
+      }
+      if (path.startsWith("/_synapse/admin/v1/users/") && path.endsWith("/login")) {
+        var user =
+            URLDecoder.decode(
+                path.substring(
+                    "/_synapse/admin/v1/users/".length(), path.length() - "/login".length()),
+                StandardCharsets.UTF_8);
+        return withSuccess("{\"access_token\":\"as:" + user + "\"}", MediaType.APPLICATION_JSON)
+            .createResponse(request);
+      }
+      var actor = actorOf(request);
+      if (path.equals("/_matrix/client/r0/joined_rooms")) {
+        var mine =
+            rooms.entrySet().stream()
+                .filter(room -> room.getValue().joined.contains(actor))
+                .map(room -> "\"" + room.getKey() + "\"")
+                .collect(Collectors.joining(","));
+        return withSuccess("{\"joined_rooms\":[" + mine + "]}", MediaType.APPLICATION_JSON)
+            .createResponse(request);
+      }
+      if (path.equals("/_matrix/client/r0/createRoom")) {
+        var node = JSON.readTree(body);
+        var room = new Room();
+        var roomId = "!room" + (++numbering) + ":" + SERVER;
+        room.joined.add(actor);
+        var initialState = node.path("initial_state");
+        for (JsonNode event : initialState) {
+          if ("m.room.encryption".equals(event.path("type").asText())) {
+            room.encrypted = true;
+          }
+        }
+        rooms.put(roomId, room);
+        created.incrementAndGet();
+        return withSuccess("{\"room_id\":\"" + roomId + "\"}", MediaType.APPLICATION_JSON)
+            .createResponse(request);
+      }
+      if (path.startsWith("/_matrix/client/r0/rooms/") && path.endsWith("/invite")) {
+        var room = rooms.get(roomOf(path, "/invite"));
+        var invitee = JSON.readTree(body).path("user_id").asText();
+        if (room == null || !room.joined.contains(actor) || refusedInvitations.contains(invitee)) {
+          return withStatus(HttpStatus.FORBIDDEN)
+              .body("{\"errcode\":\"M_FORBIDDEN\"}")
+              .contentType(MediaType.APPLICATION_JSON)
+              .createResponse(request);
+        }
+        room.invited.add(invitee);
+        return withSuccess("{}", MediaType.APPLICATION_JSON).createResponse(request);
+      }
+      if (path.startsWith("/_matrix/client/r0/rooms/") && path.endsWith("/join")) {
+        var room = rooms.get(roomOf(path, "/join"));
+        if (room == null || !(room.invited.contains(actor) || room.joined.contains(actor))) {
+          return withStatus(HttpStatus.FORBIDDEN)
+              .body("{\"errcode\":\"M_FORBIDDEN\"}")
+              .contentType(MediaType.APPLICATION_JSON)
+              .createResponse(request);
+        }
+        room.joined.add(actor);
+        return withSuccess("{}", MediaType.APPLICATION_JSON).createResponse(request);
+      }
+      if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/members")) {
+        var roomId =
+            URLDecoder.decode(
+                path.substring(
+                    "/_synapse/admin/v1/rooms/".length(), path.length() - "/members".length()),
+                StandardCharsets.UTF_8);
+        var room = rooms.get(roomId);
+        if (room == null) {
+          return withStatus(HttpStatus.NOT_FOUND).createResponse(request);
+        }
+        var members =
+            room.joined.stream().map(m -> "\"" + m + "\"").collect(Collectors.joining(","));
+        return withSuccess(
+                "{\"members\":[" + members + "],\"total\":" + room.joined.size() + "}",
+                MediaType.APPLICATION_JSON)
+            .createResponse(request);
+      }
+      if (path.startsWith("/_synapse/admin/v2/rooms/") && method == HttpMethod.DELETE) {
+        var roomId =
+            URLDecoder.decode(
+                path.substring("/_synapse/admin/v2/rooms/".length()), StandardCharsets.UTF_8);
+        rooms.remove(roomId);
+        return withSuccess("{\"delete_id\":\"x\"}", MediaType.APPLICATION_JSON)
+            .createResponse(request);
+      }
+      throw new AssertionError("Unexpected Matrix path: " + method + " " + path);
+    }
+
+    private static String roomOf(String path, String suffix) {
+      return URLDecoder.decode(
+          path.substring("/_matrix/client/r0/rooms/".length(), path.length() - suffix.length()),
+          StandardCharsets.UTF_8);
+    }
+
+    private static String actorOf(ClientHttpRequest request) {
+      var authorization = request.getHeaders().getFirst("Authorization");
+      if (authorization != null && authorization.startsWith("Bearer as:")) {
+        return authorization.substring("Bearer as:".length());
+      }
+      return "";
+    }
+  }
+}

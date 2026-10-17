@@ -804,6 +804,7 @@ public class SessionService {
     if (session.isAdvisedBy(consultant)
         || isSupervisor(consultant, session)
         || isAllowedToAdvise(consultant, session)
+        || isMemberOfGroupChat(consultant, session)
         || isAllowedToAdviseByTopic(consultant, session)
         || isAnonymousEnquiryAndAllowedToAdviseConsultingType(consultant, session)) {
       return;
@@ -818,6 +819,16 @@ public class SessionService {
         .findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
             session.getId(), consultant.getId())
         .isPresent();
+  }
+
+  /**
+   * A member of the group chat of this session. A members-only chat's session is no team session,
+   * so membership is the only thing that opens it to a colleague who is not its creator.
+   */
+  private boolean isMemberOfGroupChat(Consultant consultant, Session session) {
+    return session.getId() != null
+        && groupChatParticipantRepository.existsByChatIdAndConsultantId(
+            session.getId(), consultant.getId());
   }
 
   private boolean isAllowedToAdvise(Consultant consultant, Session session) {
@@ -930,6 +941,7 @@ public class SessionService {
     if (!session.isAdvisedBy(consultant)
         && !isSupervisor(consultant, session)
         && !(session.isTeamSession() && consultant.isInAgency(session.getAgencyId()))
+        && !isMemberOfGroupChat(consultant, session)
         && !isAllowedToAdviseByTopic(consultant, session)) {
       throw new ForbiddenException(
           String.format(
