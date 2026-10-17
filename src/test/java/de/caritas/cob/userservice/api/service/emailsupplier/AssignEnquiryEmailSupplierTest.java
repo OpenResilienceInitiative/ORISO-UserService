@@ -154,9 +154,12 @@ public class AssignEnquiryEmailSupplierTest {
     var settingsWithoutAssignmentField =
         supplierFor(counsellor(true, "{\"initialEnquiryNotificationEnabled\":true}"));
     var settingsNull = supplierFor(counsellor(true, null));
+    // the column defaults to an empty string
+    var settingsBlank = supplierFor(counsellor(true, ""));
 
     assertThat(settingsWithoutAssignmentField.generateEmails(), hasSize(1));
     assertThat(settingsNull.generateEmails(), hasSize(1));
+    assertThat(settingsBlank.generateEmails(), hasSize(1));
   }
 
   @Test
