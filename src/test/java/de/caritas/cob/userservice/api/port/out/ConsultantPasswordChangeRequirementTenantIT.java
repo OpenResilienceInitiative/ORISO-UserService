@@ -30,6 +30,9 @@ import org.springframework.transaction.annotation.Transactional;
 class ConsultantPasswordChangeRequirementTenantIT {
 
   private static final String ID = "c0ffee00-1144-4000-8000-000000000026";
+  private static final String OTHER_ID = "c0ffee00-1144-4000-8000-000000000027";
+  private static final String DELETED_ID = "c0ffee00-1144-4000-8000-000000000028";
+  private static final LocalDateTime LONG_AGO = LocalDateTime.of(2020, 1, 1, 0, 0);
 
   @Autowired private ConsultantRepository consultants;
   @Autowired private EntityManager entityManager;
@@ -42,32 +45,40 @@ class ConsultantPasswordChangeRequirementTenantIT {
   @Test
   void clearsTheRequirementOfACounsellorOfAnotherProvider() {
     TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-    consultants.save(counsellorOfProvider(26L));
+    consultants.save(counsellorOfProvider(ID, "pcr-1144", 26L));
+    consultants.save(counsellorOfProvider(OTHER_ID, "pcr-1144-other", 26L));
+    var deleted = counsellorOfProvider(DELETED_ID, "pcr-1144-deleted", 26L);
+    deleted.setDeleteDate(LONG_AGO);
+    consultants.save(deleted);
     entityManager.flush();
     entityManager.clear();
 
     TenantContext.setCurrentTenant(1L);
     assertThat(consultants.findByIdAndDeleteDateIsNull(ID)).isEmpty();
-    assertThat(consultants.clearPasswordChangeRequired(ID)).isEqualTo(1);
+    var now = LocalDateTime.now();
+    assertThat(consultants.clearPasswordChangeRequired(ID, now)).isEqualTo(1);
+    assertThat(consultants.clearPasswordChangeRequired("unknown-consultant", now)).isZero();
+    assertThat(consultants.clearPasswordChangeRequired(DELETED_ID, now)).isZero();
     entityManager.clear();
 
     TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-    assertThat(consultants.findByIdAndDeleteDateIsNull(ID))
-        .get()
-        .extracting(Consultant::getPasswordChangeRequired)
-        .isEqualTo(false);
+    var cleared = consultants.findById(ID).orElseThrow();
+    assertThat(cleared.getPasswordChangeRequired()).isFalse();
+    assertThat(cleared.getUpdateDate()).isAfter(LONG_AGO);
+    // Only the counsellor of the link: another counsellor and a deleted one keep the requirement.
+    assertThat(consultants.findById(OTHER_ID).orElseThrow().getPasswordChangeRequired()).isTrue();
+    assertThat(consultants.findById(DELETED_ID).orElseThrow().getPasswordChangeRequired()).isTrue();
   }
 
-  private Consultant counsellorOfProvider(Long tenantId) {
-    var now = LocalDateTime.now();
+  private Consultant counsellorOfProvider(String id, String handle, Long tenantId) {
     var consultant =
         Consultant.builder()
-            .id(ID)
-            .matrixUserId("@pcr-1144:oriso.invalid")
-            .username("pcr-1144")
+            .id(id)
+            .matrixUserId("@" + handle + ":oriso.invalid")
+            .username(handle)
             .firstName("Setup")
             .lastName("Proof")
-            .email("pcr-1144@example.invalid")
+            .email(handle + "@example.invalid")
             .encourage2fa(true)
             .magicLinkLoginEnabled(false)
             .notifyEnquiriesRepeating(true)
@@ -76,8 +87,8 @@ class ConsultantPasswordChangeRequirementTenantIT {
             .languageCode(LanguageCode.de)
             .tenantId(tenantId)
             .status(ConsultantStatus.IN_PROGRESS)
-            .createDate(now)
-            .updateDate(now)
+            .createDate(LONG_AGO)
+            .updateDate(LONG_AGO)
             .build();
     consultant.setPasswordChangeRequired(true);
     return consultant;

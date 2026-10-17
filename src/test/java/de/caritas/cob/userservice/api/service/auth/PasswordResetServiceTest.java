@@ -284,6 +284,7 @@ class PasswordResetServiceTest {
   void confirmPasswordReset_Should_ReturnFalse_When_TokenNotFound() {
     assertThat(passwordResetService.confirmPasswordReset("non-existent-token", "NewPassw0rd!"))
         .isFalse();
+    verify(consultantService, never()).clearPasswordChangeRequirement(any());
   }
 
   @Test
@@ -336,6 +337,7 @@ class PasswordResetServiceTest {
         .isInstanceOf(CustomValidationHttpStatusException.class);
 
     verify(oneTimeTokenStore).restore("password-reset", "retry-token", claim, true);
+    verify(consultantService, never()).clearPasswordChangeRequirement(any());
   }
 
   @Test
@@ -356,6 +358,7 @@ class PasswordResetServiceTest {
 
     verify(oneTimeTokenStore, never())
         .restore("password-reset", "indeterminate-token", claim, true);
+    verify(consultantService, never()).clearPasswordChangeRequirement(any());
   }
 
   @Test
@@ -366,6 +369,7 @@ class PasswordResetServiceTest {
 
     assertThat(result).isFalse();
     verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
+    verify(consultantService, never()).clearPasswordChangeRequirement(any());
   }
 
   @Test

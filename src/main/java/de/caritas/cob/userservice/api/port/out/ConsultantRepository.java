@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -150,8 +151,9 @@ public interface ConsultantRepository
   @Transactional
   @Query(
       value =
-          "UPDATE consultant SET password_change_required = FALSE WHERE consultant_id = :id"
-              + " AND password_change_required = TRUE AND delete_date IS NULL",
+          "UPDATE consultant SET password_change_required = FALSE, update_date = :now"
+              + " WHERE consultant_id = :id AND password_change_required = TRUE"
+              + " AND delete_date IS NULL",
       nativeQuery = true)
-  int clearPasswordChangeRequired(@Param("id") String id);
+  int clearPasswordChangeRequired(@Param("id") String id, @Param("now") LocalDateTime now);
 }
