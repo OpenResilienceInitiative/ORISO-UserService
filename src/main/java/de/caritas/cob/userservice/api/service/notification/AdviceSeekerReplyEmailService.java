@@ -24,6 +24,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Objects;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -237,13 +238,25 @@ public class AdviceSeekerReplyEmailService {
       actionPath = "/sessions/user/view/session/" + session.getId();
     }
 
-    TenantSystemEmailRouteService.Route route;
+    Optional<TenantSystemEmailRouteService.Route> resolvedRoute;
+    try {
+      resolvedRoute = routes.resolve(claim.getTenantId());
+    } catch (RuntimeException unavailable) {
+      retryUnavailablePreflight(deliveryId, unavailable);
+      return;
+    }
+    if (resolvedRoute.isEmpty()) {
+      // The Träger switched notification mails off: a decision, not an outage to retry.
+      writer.finish(deliveryId, Status.REJECTED);
+      log.info(
+          "Reply email {} not sent: notification mails are off for tenant {}",
+          deliveryId,
+          claim.getTenantId());
+      return;
+    }
+    TenantSystemEmailRouteService.Route route = resolvedRoute.get();
     OrisoEmailRenderer.RenderedEmail email;
     try {
-      route =
-          routes
-              .resolve(claim.getTenantId())
-              .orElseThrow(() -> new IllegalStateException("Reply email SMTP route is missing"));
       delivery.requireConfigured(route);
       RestrictedTenantDTO tenant = tenants.getRestrictedTenantDataFresh(claim.getTenantId());
       if (tenant == null || !Objects.equals(tenant.getId(), claim.getTenantId())) {
