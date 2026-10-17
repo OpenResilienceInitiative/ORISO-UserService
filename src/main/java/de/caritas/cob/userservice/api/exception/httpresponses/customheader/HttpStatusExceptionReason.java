@@ -55,5 +55,7 @@ public enum HttpStatusExceptionReason {
   /** A private room is only created when end-to-end encryption is enabled. */
   INTERNAL_CHAT_ENCRYPTION_REQUIRED,
   /** Another request for the same people is still being processed; try again. */
-  INTERNAL_CHAT_BUSY
+  INTERNAL_CHAT_BUSY,
+  /** The session of a members-only chat ends with its chat; stop the chat instead. */
+  MEMBERS_ONLY_CHAT_STOP_REQUIRED
 }

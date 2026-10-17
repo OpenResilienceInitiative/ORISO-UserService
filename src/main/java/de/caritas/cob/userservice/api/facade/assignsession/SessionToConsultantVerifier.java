@@ -26,6 +26,8 @@ public class SessionToConsultantVerifier {
 
   /** verifies if {@link Session} is not already in progress. */
   public void verifySessionIsNotInProgress(ConsultantSessionDTO consultantSessionDTO) {
+    membersOnlyChatAccess.requireAccess(
+        consultantSessionDTO.getSession(), consultantSessionDTO.getConsultant());
     if (this.conditionProvider.isSessionInProgress(consultantSessionDTO.getSession())) {
       var message =
           String.format(

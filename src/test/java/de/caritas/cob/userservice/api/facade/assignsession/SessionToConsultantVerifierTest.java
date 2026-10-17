@@ -33,6 +33,22 @@ class SessionToConsultantVerifierTest {
   @Mock private SessionToConsultantConditionProvider sessionToConsultantConditionProvider;
 
   @Test
+  void
+      verifySessionIsNotInProgress_Should_refuse_When_theConsultantIsNoParticipantOfAMembersOnlyChat() {
+    var session = mock(Session.class);
+    var colleague = mock(Consultant.class);
+    org.mockito.Mockito.doThrow(new ForbiddenException("not a participant"))
+        .when(membersOnlyChatAccess)
+        .requireAccess(session, colleague);
+    ConsultantSessionDTO dto =
+        ConsultantSessionDTO.builder().consultant(colleague).session(session).build();
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> sessionToConsultantVerifier.verifySessionIsNotInProgress(dto));
+  }
+
+  @Test
   void verifySessionIsNotInProgress_Should_throwConflict_When_SessionIsInProgress() {
     when(sessionToConsultantConditionProvider.isSessionInProgress(any())).thenReturn(true);
 

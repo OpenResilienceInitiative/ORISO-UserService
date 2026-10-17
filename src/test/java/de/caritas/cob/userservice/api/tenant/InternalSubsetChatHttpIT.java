@@ -810,6 +810,93 @@ class InternalSubsetChatHttpIT {
     }
   }
 
+  @Test
+  void theSessionOfAMembersOnlyChatIsNotDeletedThroughTheGenericRoute() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = field(created, "chatId");
+    var sessionId = sessionOf(chatId);
+    var outsider = request("DELETE", "/users/sessions/" + sessionId, anotherSameCentre, "");
+    var participant = request("DELETE", "/users/sessions/" + sessionId, sameCentre, "");
+
+    assertThat(outsider.statusCode())
+        .as("non-participant " + outsider.body() + outsider.headers())
+        .isEqualTo(403);
+    assertThat(participant.statusCode()).as("participant " + participant.body()).isEqualTo(409);
+    assertThat(reason(participant)).isEqualTo("MEMBERS_ONLY_CHAT_STOP_REQUIRED");
+    assertThat(
+            Tenants.acrossAll(
+                () ->
+                    database.queryForObject(
+                        "SELECT COUNT(*) FROM session WHERE id = ?", Integer.class, sessionId)))
+        .as("the session is still there")
+        .isEqualTo(1);
+    assertThat(storedChat(Long.parseLong(chatId)).isMembersOnly()).isTrue();
+  }
+
+  @Test
+  void theSessionOfAMembersOnlyChatIsNotFinishedAsAnAnonymousConversation() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = field(created, "chatId");
+    var sessionId = sessionOf(chatId);
+
+    // The assigned consultant of the technical session, who is no anonymous conversation's.
+    var finished = request("PUT", "/conversations/anonymous/" + sessionId + "/finish", creator, "");
+
+    assertThat(finished.statusCode()).as(finished.body()).isEqualTo(403);
+    assertThat(
+            Tenants.acrossAll(
+                () ->
+                    database.queryForObject(
+                        "SELECT status FROM session WHERE id = ?", Integer.class, sessionId)))
+        .as("still in progress")
+        .isEqualTo(Session.SessionStatus.IN_PROGRESS.getValue());
+  }
+
+  @Test
+  void anAdviceSeekerCannotWriteSessionDataOfAMembersOnlyChat() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var sessionId = sessionOf(field(created, "chatId"));
+    var adviceSeeker = fixtures.adviceSeeker(TRAEGER);
+
+    var written =
+        requestAsAdviceSeeker(
+            "PUT", "/users/sessions/" + sessionId + "/data", adviceSeeker, "{\"age\":\"30\"}");
+
+    assertThat(written.statusCode()).as(written.body()).isEqualTo(403);
+    assertThat(
+            Tenants.acrossAll(
+                () ->
+                    database.queryForObject(
+                        "SELECT COUNT(*) FROM session_data WHERE session_id = ?",
+                        Integer.class,
+                        sessionId)))
+        .isZero();
+  }
+
+  @Test
+  void aFormerOwnerCannotChangeTheSettingsOfTheChatAnyMore() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = field(created, "chatId");
+    request(
+        "POST",
+        "/users/chat-series/" + chatId + "/transfer-ownership",
+        creator,
+        "{\"consultantId\":\"" + sameCentre.getId() + "\"}");
+    request("PUT", "/users/chat/" + chatId + "/leave", creator, "");
+
+    var updated =
+        request(
+            "PUT",
+            "/users/chat/" + chatId + "/update",
+            creator,
+            "{\"topic\":\"Hijacked\",\"agencyId\":410,\"startDate\":\"2999-01-01\","
+                + "\"startTime\":\"12:00\",\"duration\":60,\"repetitive\":false,"
+                + "\"timezone\":\"UTC\",\"modality\":\"TEXT\",\"consultantIds\":[]}");
+
+    assertThat(updated.statusCode()).as(updated.body()).isEqualTo(403);
+    assertThat(storedChat(Long.parseLong(chatId)).getTopic()).isNotEqualTo("Hijacked");
+  }
+
   private Long sessionOf(String chatId) {
     return Tenants.acrossAll(
         () ->
@@ -956,6 +1043,11 @@ class InternalSubsetChatHttpIT {
 
   private HttpResponse<String> requestAsAdviceSeeker(String method, String path, User adviceSeeker)
       throws Exception {
+    return requestAsAdviceSeeker(method, path, adviceSeeker, "");
+  }
+
+  private HttpResponse<String> requestAsAdviceSeeker(
+      String method, String path, User adviceSeeker, String body) throws Exception {
     var token =
         Jwt.withTokenValue("synthetic-token-" + adviceSeeker.getUserId())
             .header("alg", "none")
@@ -971,7 +1063,7 @@ class InternalSubsetChatHttpIT {
             .header("Cookie", "CSRF-TOKEN=test")
             .header("X-CSRF-Token", "test")
             .header("Content-Type", "application/json")
-            .method(method, HttpRequest.BodyPublishers.ofString(""))
+            .method(method, HttpRequest.BodyPublishers.ofString(body))
             .build();
     return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
   }
@@ -1253,6 +1345,12 @@ class InternalSubsetChatHttpIT {
                 path.substring("/_synapse/admin/v2/rooms/".length()), StandardCharsets.UTF_8);
         rooms.remove(roomId);
         return withSuccess("{\"delete_id\":\"x\"}", MediaType.APPLICATION_JSON)
+            .createResponse(request);
+      }
+      if (method == HttpMethod.PUT
+          && path.startsWith("/_matrix/client/r0/rooms/")
+          && path.contains("/send/m.room.message/")) {
+        return withSuccess("{\"event_id\":\"$synthetic\"}", MediaType.APPLICATION_JSON)
             .createResponse(request);
       }
       throw new AssertionError("Unexpected Matrix path: " + method + " " + path);

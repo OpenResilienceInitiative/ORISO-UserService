@@ -181,6 +181,16 @@ public class MembersOnlyChatAccess {
     }
   }
 
+  /** Same as {@link #requireAccess(Session, Consultant)} for an account id. */
+  public void requireAccess(Session session, String consultantId) {
+    if (excludes(session, consultantId)) {
+      throw new ForbiddenException(
+          String.format(
+              "Consultant %s is not a participant of the members-only chat of session %s",
+              consultantId, session.getId()));
+    }
+  }
+
   /** Refuses with 403 for the case of any members-only chat, whoever asks. */
   public void requireOrdinary(Session session, String reason) {
     if (concerns(session)) {
