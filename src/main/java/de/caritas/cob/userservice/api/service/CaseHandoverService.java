@@ -2771,9 +2771,9 @@ public class CaseHandoverService {
       }
     }
 
-    if (wasMemberBefore) {
-      requireStandingMemberCanPost(roomId, requesterMatrixId, requesterToken, membersBefore);
-    }
+    // Also after a force-join: Synapse keeps the power entry of someone who left, so a colleague
+    // who left at -1 comes back mute. A refusal rolls back, which removes a force-joined member.
+    requireRequesterCanPost(roomId, requesterMatrixId, requesterToken, membersBefore);
     raiseOwnerPowerOnceCommitted(
         session.getId(),
         roomId,
@@ -2783,14 +2783,14 @@ public class CaseHandoverService {
   }
 
   /**
-   * A standing room member skips the join, so nothing else guarantees that they can answer the
-   * advice seeker: an expired read-only co-access leaves them at power -1 when the owner had
-   * already left (the owner's token can no longer restore level 0, the sweep keeps retrying). The
-   * after-commit {@code make_room_admin} is the only thing that could fix that, and it only works
-   * while a joined member still holds the power to change power levels. A takeover that would leave
-   * the new owner mute is refused before anything is committed instead.
+   * A member who skips the join (or rejoins with a kept power entry) is not guaranteed to be able
+   * to answer the advice seeker: an expired read-only co-access leaves them at power -1 when the
+   * owner had already left (the owner's token can no longer restore level 0, the sweep keeps
+   * retrying). The after-commit {@code make_room_admin} is the only thing that could fix that, and
+   * it only works while a joined member still holds the power to change power levels. A takeover
+   * that would leave the new owner mute is refused before anything is committed instead.
    */
-  private void requireStandingMemberCanPost(
+  private void requireRequesterCanPost(
       String roomId, String requesterMatrixId, String requesterToken, List<String> members) {
     var power = matrixSynapseService.getPowerLevels(roomId, requesterToken);
     if (power.isEmpty()) {

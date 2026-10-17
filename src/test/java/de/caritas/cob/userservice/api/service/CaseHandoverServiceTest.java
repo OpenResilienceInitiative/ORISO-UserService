@@ -4361,6 +4361,35 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void takeover_refusesAColleagueWhoLeftAtReadOnlyPower_andRemovesTheForceJoinAgain() {
+    // Synapse keeps a power-level entry after a leave, so the force-join hands the -1 back.
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, REQUESTER_MXID, -1);
+    homeserver.memberLeaves(caseRoom, REQUESTER_MXID);
+    previousOwnerHasLeft();
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      var refusal =
+          assertThrows(
+              CustomValidationHttpStatusException.class, this::takeOverBecauseAssignmentEnded);
+      runSynchronizations(
+          synchronization ->
+              synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+
+      assertEquals(HttpStatus.CONFLICT, refusal.getHttpStatus());
+      assertEquals(
+          "CASE_HANDOVER_REQUESTER_CANNOT_WRITE",
+          refusal.getCustomHttpHeaders().getFirst("X-Reason"));
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    assertFalse(homeserver.isMember(caseRoom, REQUESTER_MXID));
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
   void takeover_isUnavailable_whenTheRoomPowerLevelsCannotBeRead() {
     givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
     homeserver.member(caseRoom, REQUESTER_MXID, 0);
