@@ -233,7 +233,8 @@ class UserAdminControllerIT {
     // #1144: the counsellor chooses their own password through the setup e-mail.
     CreateConsultantDTO createConsultantDTO =
         new EasyRandom().nextObject(CreateConsultantDTO.class).password(null);
-    when(userHelper.getRandomPassword()).thenReturn("Gen3rated!x");
+    when(userHelper.getRandomPassword(UserAdminController.SETUP_ONLY_PASSWORD_LENGTH))
+        .thenReturn("Gen3rated!x");
     when(this.consultantAdminFacade.createNewConsultant(any()))
         .thenReturn(
             new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id("consultant-1")));
@@ -253,6 +254,22 @@ class UserAdminControllerIT {
             de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole.COUNSELLOR,
             "consultant-1",
             "Gen3rated!x");
+  }
+
+  @Test
+  void createConsultant_Should_returnBadRequest_When_thePasswordIsEmpty() throws Exception {
+    // An empty password is not "none": the request validation rejects it before the controller.
+    CreateConsultantDTO createConsultantDTO =
+        new EasyRandom().nextObject(CreateConsultantDTO.class).password("");
+
+    this.mvc
+        .perform(
+            post(FILTERED_CONSULTANTS_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(createConsultantDTO)))
+        .andExpect(status().isBadRequest());
+
+    verify(this.consultantAdminFacade, org.mockito.Mockito.never()).createNewConsultant(any());
   }
 
   @Test

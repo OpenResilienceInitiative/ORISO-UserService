@@ -56,7 +56,6 @@ import java.util.Locale;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -93,6 +92,9 @@ public class UserAdminController implements UseradminApi {
           .ExistingAccountSetupIssuer
       accountSetupIssuer;
   private final @NonNull UserHelper userHelper;
+
+  /** Never typed by anyone and valid until the setup link expires, so length costs nothing. */
+  static final int SETUP_ONLY_PASSWORD_LENGTH = 32;
 
   /**
    * Creates the root hal based navigation entity.
@@ -157,9 +159,11 @@ public class UserAdminController implements UseradminApi {
         createConsultantDTO.getUsername(), null);
 
     createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
-    // #1144: the setup e-mail is the way in, so the first password is one nobody knows.
-    if (StringUtils.isBlank(createConsultantDTO.getPassword())) {
-      createConsultantDTO.setPassword(userHelper.getRandomPassword());
+    // #1144: the setup e-mail is the way in, so the first password is one nobody knows. It is
+    // generated here, not in the saga, because the setup issuer below needs the same value. An
+    // empty or short password never gets here: the request validation (minLength 8) answers 400.
+    if (createConsultantDTO.getPassword() == null) {
+      createConsultantDTO.setPassword(userHelper.getRandomPassword(SETUP_ONLY_PASSWORD_LENGTH));
     }
     var consultant = consultantAdminFacade.createNewConsultant(createConsultantDTO);
     accountSetupIssuer.issueAfterCreation(
