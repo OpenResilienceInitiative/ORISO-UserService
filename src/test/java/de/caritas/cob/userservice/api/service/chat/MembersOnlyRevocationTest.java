@@ -233,6 +233,49 @@ class MembersOnlyRevocationTest {
     verify(sessions, never()).save(session);
   }
 
+  @Test
+  void aCaseOfADeletedConsultantGoesToARemainingActiveParticipantOwnerFirst() {
+    session.setId(9L);
+    when(participants.findByChatId(9L)).thenReturn(participantsOfTheChat());
+
+    var kept = revocation.keepCaseOnDeletionOf(session, creator);
+
+    assertThat(kept).isTrue();
+    assertThat(session.getConsultant()).isSameAs(owner);
+    verify(sessions).save(session);
+  }
+
+  @Test
+  void aCaseWithNoActiveParticipantLeftIsRetiredNotDeleted() {
+    session.setId(9L);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    when(participants.findByChatId(9L)).thenReturn(participantsOfTheChat());
+    when(consultants.findByIdAndDeleteDateIsNull("owner")).thenReturn(Optional.empty());
+    when(consultants.findByIdAndDeleteDateIsNull("member")).thenReturn(Optional.empty());
+
+    var kept = revocation.keepCaseOnDeletionOf(session, creator);
+
+    assertThat(kept).isTrue();
+    assertThat(session.getStatus()).isEqualTo(Session.SessionStatus.DONE);
+    verify(sessions).save(session);
+  }
+
+  @Test
+  void aSessionWithoutParticipantsIsNotKept() {
+    session.setId(9L);
+    when(participants.findByChatId(9L)).thenReturn(List.of());
+
+    assertThat(revocation.keepCaseOnDeletionOf(session, creator)).isFalse();
+    verify(sessions, never()).save(session);
+  }
+
+  private List<GroupChatParticipant> participantsOfTheChat() {
+    return List.of(
+        participant("creator", ParticipantRole.CO_MODERATOR),
+        participant("member", ParticipantRole.CO_MODERATOR),
+        participant("owner", ParticipantRole.OWNER));
+  }
+
   private SessionSupervisor supervisionInSideRoom(String sideRoomId, String matrixUserId) {
     var supervisor = consultant("member");
     supervisor.setMatrixUserId(matrixUserId);

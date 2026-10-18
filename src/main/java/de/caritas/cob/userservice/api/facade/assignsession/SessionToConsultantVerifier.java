@@ -4,13 +4,16 @@ import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANON
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGISTERED;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
@@ -46,6 +49,12 @@ public class SessionToConsultantVerifier {
     // the colleague into the room and take the others out.
     membersOnlyChatAccess.requireAccess(
         consultantSessionDTO.getSession(), consultantSessionDTO.getConsultant());
+    // Not even to a participant: the assignment would take every other selected colleague out of
+    // the room. The case follows the chat's own ownership transfer, removal and leave.
+    if (membersOnlyChatAccess.concerns(consultantSessionDTO.getSession())) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.MEMBERS_ONLY_CHAT_STOP_REQUIRED, HttpStatus.CONFLICT);
+    }
     verifyIfSessionIsAlreadyAssignedToConsultant(
         consultantSessionDTO, skipSameConsultantAssignmentVerification);
 

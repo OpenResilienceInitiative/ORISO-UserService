@@ -81,6 +81,29 @@ class SessionToConsultantVerifierTest {
   }
 
   @Test
+  void
+      verifyPreconditionsForAssignment_Should_askToStopTheChat_ForAnyAssignmentOfAMembersOnlyCase() {
+    var session = mock(Session.class);
+    var participant = mock(Consultant.class);
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    ConsultantSessionDTO consultantSessionDTO =
+        ConsultantSessionDTO.builder().consultant(participant).session(session).build();
+
+    var refused =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () ->
+                sessionToConsultantVerifier.verifyPreconditionsForAssignment(consultantSessionDTO));
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        org.springframework.http.HttpStatus.CONFLICT, refused.getHttpStatus());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "MEMBERS_ONLY_CHAT_STOP_REQUIRED", refused.getCustomHttpHeaders().getFirst("X-Reason"));
+    org.mockito.Mockito.verifyNoInteractions(sessionToConsultantConditionProvider);
+  }
+
+  @Test
   void verifyPreconditionsForAssignment_Should_throwException_When_sessionIsNew() {
     when(sessionToConsultantConditionProvider.isNewSession(any())).thenReturn(true);
     ConsultantSessionDTO consultantSessionDTO =

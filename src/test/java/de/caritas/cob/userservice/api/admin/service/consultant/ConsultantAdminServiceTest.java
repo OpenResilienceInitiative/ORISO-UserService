@@ -61,6 +61,13 @@ public class ConsultantAdminServiceTest {
   @Mock private AppointmentService appointmentService;
 
   @Mock private SessionRepository sessionRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation membersOnlyRevocation;
+
   @Mock private SessionOwnershipService sessionOwnershipService;
 
   @Mock private CaseHandoverRequestRepository caseHandoverRequestRepository;
@@ -346,6 +353,27 @@ public class ConsultantAdminServiceTest {
     deletionOrder.verify(sessionRepository).delete(session);
     verify(sessionOwnershipService).clearOwnerFromSessions(any(), any());
     verify(deletionLifecycleService).beginConsultantDeletion(any(), any());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void markConsultantForDeletion_Should_KeepTheCaseOfAMembersOnlyChatInsteadOfDeletingIt() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    when(pictureStore.lockActiveConsultant("c-1")).thenReturn(consultant);
+    when(sessionRepository.findByConsultantAndStatusIn(any(Consultant.class), any(List.class)))
+        .thenReturn(List.of(session))
+        .thenReturn(List.of());
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    when(membersOnlyRevocation.keepCaseOnDeletionOf(session, consultant)).thenReturn(true);
+
+    consultantAdminService.markConsultantForDeletion("c-1", true);
+
+    verify(membersOnlyRevocation).keepCaseOnDeletionOf(session, consultant);
+    verify(sessionRepository, org.mockito.Mockito.never()).delete(session);
+    verify(sessionSupervisorRepository, org.mockito.Mockito.never())
+        .deleteAllBySessionId(session.getId());
   }
 
   @Test

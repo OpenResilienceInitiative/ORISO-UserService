@@ -57,6 +57,10 @@ public class ConsultantAdminService {
   private final @NonNull ConsultantPreDeletionService consultantPreDeletionService;
 
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess
+      membersOnlyChatAccess;
+  private final @NonNull de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation
+      membersOnlyRevocation;
   private final @NonNull SessionOwnershipService sessionOwnershipService;
   private final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
@@ -259,6 +263,12 @@ public class ConsultantAdminService {
         .findByConsultantAndStatusIn(consultant, Lists.newArrayList(IN_PROGRESS, IN_ARCHIVE))
         .forEach(
             session -> {
+              // The case of a members-only chat lives with the chat: it goes to a remaining
+              // participant, or is retired, never deleted under a chat that still exists.
+              if (membersOnlyChatAccess.concerns(session)
+                  && membersOnlyRevocation.keepCaseOnDeletionOf(session, consultant)) {
+                return;
+              }
               caseHandoverRequestRepository.deleteAllBySessionId(session.getId());
               sessionSupervisorRepository.deleteAllBySessionId(session.getId());
               sessionRepository.delete(session);

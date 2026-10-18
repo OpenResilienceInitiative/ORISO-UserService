@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.chat;
 
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.Session;
@@ -111,17 +112,53 @@ public class MembersOnlyRevocation {
     if (session == null || !session.isAdvisedBy(leaving.getConsultantId())) {
       return;
     }
-    participantRepository.findBySeriesId(series.getId()).stream()
-        .filter(member -> !leaving.getConsultantId().equals(member.getConsultantId()))
-        .sorted(Comparator.comparing(member -> member.getRole() == ParticipantRole.OWNER ? 0 : 1))
-        .map(member -> consultantRepository.findByIdAndDeleteDateIsNull(member.getConsultantId()))
-        .flatMap(Optional::stream)
-        .findFirst()
+    successorOf(participantRepository.findBySeriesId(series.getId()), leaving.getConsultantId())
         .ifPresent(
             successor -> {
               session.setConsultant(successor);
               sessionRepository.save(session);
             });
+  }
+
+  /** The remaining active participant who takes a case over, an owner first. */
+  private Optional<Consultant> successorOf(
+      java.util.List<GroupChatParticipant> participants, String leavingConsultantId) {
+    return participants.stream()
+        .filter(member -> !leavingConsultantId.equals(member.getConsultantId()))
+        .sorted(Comparator.comparing(member -> member.getRole() == ParticipantRole.OWNER ? 0 : 1))
+        .map(member -> consultantRepository.findByIdAndDeleteDateIsNull(member.getConsultantId()))
+        .flatMap(Optional::stream)
+        .findFirst();
+  }
+
+  /**
+   * Call when a consultant is deleted while still the assignee of the technical session of a
+   * members-only chat: the case goes to a remaining active participant, an owner first, and is
+   * retired (closed, its supervisions ended) when nobody active remains, instead of being deleted
+   * under a chat that still exists.
+   *
+   * @return {@code false} when the session has no participants, so there is no chat to keep it for;
+   *     the caller then treats it like any other session
+   */
+  public boolean keepCaseOnDeletionOf(Session session, Consultant leaving) {
+    if (session == null || session.getId() == null || leaving == null) {
+      return false;
+    }
+    return TenantContext.supplyAcrossTenants(
+        () -> {
+          var participants = participantRepository.findByChatId(session.getId());
+          if (participants.isEmpty()) {
+            return false;
+          }
+          var successor = successorOf(participants, leaving.getId());
+          if (successor.isPresent()) {
+            session.setConsultant(successor.get());
+            sessionRepository.save(session);
+          } else {
+            close(session);
+          }
+          return true;
+        });
   }
 
   /**

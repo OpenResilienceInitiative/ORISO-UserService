@@ -102,6 +102,7 @@ class InternalSubsetChatHttpIT {
   @Autowired private TenantFixtures fixtures;
   @Autowired private ChatRepository chats;
   @Autowired private SessionRepository sessions;
+  @Autowired private de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation revocation;
   @Autowired private GroupChatParticipantRepository participants;
   @Autowired private JdbcTemplate database;
   @Autowired private UserAgencyRepository userAgencies;
@@ -908,6 +909,67 @@ class InternalSubsetChatHttpIT {
     assertThat(participant.body()).contains(roomId);
     assertThat(outsider.statusCode()).as(outsider.body()).isEqualTo(204);
     assertThat(outsider.body()).isEmpty();
+  }
+
+  @Test
+  void noParticipantCanReassignTheCaseOfAMembersOnlyChatAndNobodyIsTakenOutOfTheRoom()
+      throws Exception {
+    var created = openRoom(creator, sameCentre, anotherSameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var sessionId = sessionOf(chatId);
+    var members = synapse.joined(roomId);
+
+    var reassigned =
+        request(
+            "PUT",
+            "/users/sessions/" + sessionId + "/consultant/" + sameCentre.getId(),
+            creator,
+            "");
+
+    assertThat(reassigned.statusCode()).as(reassigned.body()).isEqualTo(409);
+    assertThat(reason(reassigned)).isEqualTo("MEMBERS_ONLY_CHAT_STOP_REQUIRED");
+    assertThat(synapse.joined(roomId)).as("room membership unchanged").isEqualTo(members);
+    assertThat(
+            Tenants.acrossAll(
+                () ->
+                    database.queryForObject(
+                        "SELECT consultant_id FROM session WHERE id = ?", String.class, sessionId)))
+        .as("the case stays with the creator")
+        .isEqualTo(creator.getId());
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId))))
+        .containsExactlyInAnyOrder(creator.getId(), sameCentre.getId(), anotherSameCentre.getId());
+  }
+
+  @Test
+  void theCaseOfADeletedAssigneeGoesToARemainingActiveParticipantAndIsNotDeleted()
+      throws Exception {
+    var created = openRoom(creator, sameCentre, anotherSameCentre);
+    var chatId = field(created, "chatId");
+    var sessionId = sessionOf(chatId);
+    Tenants.acrossAll(
+        () ->
+            database.update(
+                "UPDATE consultant SET delete_date = NOW() WHERE consultant_id = ?",
+                sameCentre.getId()));
+
+    // The forced deletion of the creator: the case is theirs, the chat and its room stay.
+    var kept =
+        Tenants.acrossAll(
+            () -> {
+              var session = sessions.findById(sessionId).orElseThrow();
+              return revocation.keepCaseOnDeletionOf(session, creator);
+            });
+
+    assertThat(kept).isTrue();
+    assertThat(
+            Tenants.acrossAll(
+                () ->
+                    database.queryForObject(
+                        "SELECT consultant_id FROM session WHERE id = ?", String.class, sessionId)))
+        .as("the soft-deleted participant is skipped")
+        .isEqualTo(anotherSameCentre.getId());
+    assertThat(Tenants.acrossAll(() -> chats.findById(Long.parseLong(chatId)))).isPresent();
   }
 
   @Test
