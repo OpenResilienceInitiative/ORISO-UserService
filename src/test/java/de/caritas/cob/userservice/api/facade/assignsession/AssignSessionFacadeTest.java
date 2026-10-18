@@ -92,7 +92,7 @@ class AssignSessionFacadeTest {
 
     verify(emailNotificationFacade)
         .sendAssignEnquiryEmailNotification(
-            consultantToAssign, "assigning-consultant", "advice-seeker", null);
+            session, consultantToAssign, "assigning-consultant", "advice-seeker", null);
   }
 
   @Test

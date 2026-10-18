@@ -38,4 +38,13 @@ public class GroupSessionConsultantDTO {
   private String lastName;
 
   private String id;
+
+  /**
+   * The counsellor's chosen avatar (#1046/#1047), flattened to its wire spelling (ICON, INITIALS or
+   * PICTURE); null when no choice was made.
+   */
+  private String avatarKind;
+
+  /** Id of the chosen counsellor motif; only set together with {@code avatarKind = ICON}. */
+  private String avatarId;
 }

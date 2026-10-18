@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.web.dto.MatrixBrowserTokenResponseDTO;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
@@ -43,12 +44,11 @@ public class MatrixMessageController {
   private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
   /**
-   * Mint a short-lived Matrix access token for the currently authenticated platform user.
+   * Create a device-bound Matrix login for the currently authenticated platform user.
    *
-   * <p>The browser needs a user-scoped Matrix token for sync, sending, typing, and calls, but the
-   * platform must not persist or reuse the user's Matrix password. Synapse admin login-as-user
-   * keeps the token scoped to the mapped Matrix user while avoiding a reversible credential in
-   * MariaDB.
+   * <p>The browser receives a user-scoped token and a stable account credential for interactive
+   * authentication during encryption setup/reset. The credential stays in browser memory. A second
+   * device's login keeps the first device's credential valid; no credential is stored in MariaDB.
    */
   @GetMapping("/me/token")
   public ResponseEntity<?> getCurrentUserMatrixToken(
@@ -69,12 +69,13 @@ public class MatrixMessageController {
             .body(Map.of("error", "Matrix token unavailable"));
       }
 
-      var response = new java.util.HashMap<String, Object>();
-      response.put("accessToken", tokenResponse.get("access_token"));
-      response.put("userId", tokenResponse.getOrDefault("user_id", matrixUserId));
-      response.put("deviceId", tokenResponse.getOrDefault("device_id", ""));
-      response.put("uiaPassword", tokenResponse.getOrDefault("interactive_auth_password", ""));
-      response.put("expiresInMs", MATRIX_BROWSER_TOKEN_TTL_MS);
+      var response =
+          new MatrixBrowserTokenResponseDTO(
+              (String) tokenResponse.get("access_token"),
+              (String) tokenResponse.getOrDefault("user_id", matrixUserId),
+              (String) tokenResponse.getOrDefault("device_id", ""),
+              (String) tokenResponse.getOrDefault("interactive_auth_password", ""),
+              MATRIX_BROWSER_TOKEN_TTL_MS);
 
       return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(response);
     } catch (Exception ex) {
@@ -209,22 +210,20 @@ public class MatrixMessageController {
           var agencyCredentials = matrixCredentialClient.fetchMatrixCredentials(agencyId);
           if (agencyCredentials.isEmpty()) {
             log.warn("No Matrix credentials for agency {}", agencyId);
-            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Map.of("error", "Agency Matrix identity unavailable"));
           }
 
           String agencyMatrixId = agencyCredentials.get().getMatrixUserId();
-          String matrixUsername;
-          if (agencyMatrixId != null && agencyMatrixId.startsWith("@")) {
-            matrixUsername = MatrixIds.localpart(agencyMatrixId);
-          } else {
-            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+          if (!MatrixIds.isUserId(agencyMatrixId)) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Map.of("error", "Agency Matrix identity unavailable"));
           }
-
-          String password = agencyCredentials.get().getMatrixPassword();
-          if (password == null) {
-            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+          accessToken = matrixSynapseService.loginAsUserAccessToken(agencyMatrixId);
+          if (accessToken == null || accessToken.isBlank()) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Map.of("error", "Matrix authentication unavailable"));
           }
-          accessToken = matrixSynapseService.loginUser(matrixUsername, password);
         } else {
           accessToken = createCurrentMatrixAccessToken();
         }

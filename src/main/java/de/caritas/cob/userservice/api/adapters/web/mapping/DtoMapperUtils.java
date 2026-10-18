@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.HalLink;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
+import de.caritas.cob.userservice.api.port.out.SearchSort;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -56,6 +57,13 @@ public interface DtoMapperUtils {
     return new HalLink().href(link.getHref()).method(method).templated(link.isTemplated());
   }
 
+  /** Like {@link #halLinkOf}, but drops unset optional query parameters (e.g. search filters). */
+  default HalLink expandedHalLinkOf(HttpEntity<?> httpEntity, MethodEnum method) {
+    var link = linkTo(httpEntity).withSelfRel().expand();
+
+    return new HalLink().href(link.getHref()).method(method).templated(link.isTemplated());
+  }
+
   default String mappedFieldOf(String field) {
     switch (field) {
       case "FIRSTNAME":
@@ -67,7 +75,7 @@ public interface DtoMapperUtils {
       case "TENANT_ID":
         return "tenantId";
       case "UPDATE_DATE":
-        return "updateDate";
+        return SearchSort.LAST_UPDATED;
       default:
     }
 

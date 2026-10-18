@@ -14,7 +14,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -53,8 +52,9 @@ public class TopicConsultantRoutingService {
       return Collections.emptyList();
     }
 
+    // Public topic availability is cross-tenant: one Live Chat link feeds a shared topic queue.
     AvailableCandidates candidates =
-        runCrossTenant(
+        TenantContext.supplyAcrossTenants(
             () -> {
               List<String> topicConsultantIds =
                   consultantTopicRepository.findConsultantIdsByTopicId(topicId);
@@ -92,25 +92,6 @@ public class TopicConsultantRoutingService {
     return availableConsultantIds;
   }
 
-  /**
-   * Public topic availability is deliberately cross-tenant: one published Live Chat link feeds a
-   * shared topic queue. Disable the tenant filter only while resolving eligible consultant IDs and
-   * always restore the caller context before applying the in-memory activity filter.
-   */
-  private <T> T runCrossTenant(Supplier<T> lookup) {
-    Long callerTenant = TenantContext.getCurrentTenant();
-    try {
-      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      return lookup.get();
-    } finally {
-      if (callerTenant == null) {
-        TenantContext.clear();
-      } else {
-        TenantContext.setCurrentTenant(callerTenant);
-      }
-    }
-  }
-
   private record AvailableCandidates(List<String> consultantIds, boolean hasAssignments) {}
 
   public List<String> findEligibleConsultantIds(Long topicId) {
@@ -119,13 +100,18 @@ public class TopicConsultantRoutingService {
       return Collections.emptyList();
     }
 
-    List<String> topicConsultantIds = consultantTopicRepository.findConsultantIdsByTopicId(topicId);
+    // Same shared topic queue as availability, so eligibility is cross-tenant too.
+    List<String> topicConsultantIds =
+        TenantContext.supplyAcrossTenants(
+            () -> consultantTopicRepository.findConsultantIdsByTopicId(topicId));
     if (topicConsultantIds.isEmpty()) {
       diagnosticMetrics.recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.NO_ASSIGNMENT, 0);
       return Collections.emptyList();
     }
 
-    List<Consultant> consultants = consultantRepository.findAllByIdIn(topicConsultantIds);
+    List<Consultant> consultants =
+        TenantContext.supplyAcrossTenants(
+            () -> consultantRepository.findAllByIdIn(topicConsultantIds));
     List<String> activeConsultantIds =
         consultants.stream()
             .filter(consultant -> consultant != null && !consultant.isAbsent())

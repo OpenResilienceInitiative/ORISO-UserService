@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import java.time.LocalDateTime;
@@ -70,8 +71,11 @@ final class OnboardingTwoFactorGuard {
 
   /**
    * Whether a consumed invite may still re-enter at the 2FA step (#569 resume contract): the link
-   * is {@code ACCEPTED}, its mandatory activation is still pending and it is inside its expiry
-   * window. An invite without an expiry date never leaves that window.
+   * is {@code ACCEPTED}, it provisions a new account, its mandatory activation is still pending and
+   * it is inside its expiry window. An invite without an expiry date never leaves that window.
+   *
+   * <p>An {@code EXISTING_ACCOUNT_SETUP} token never reaches the 2FA step: it belongs to an account
+   * that already carries its own second factor, so the gate of this flow does not apply to it.
    */
   static boolean isResumableAtTwoFactorStep(AccountInvite invite, LocalDateTime now) {
     boolean twoFactorStillPending =
@@ -79,6 +83,7 @@ final class OnboardingTwoFactorGuard {
     boolean withinExpiryWindow =
         invite.getExpiresAt() == null || !invite.getExpiresAt().isBefore(now);
     return invite.getStatus() == AccountInviteStatus.ACCEPTED
+        && invite.getPurpose() == AccountInvitePurpose.INVITE
         && twoFactorStillPending
         && withinExpiryWindow;
   }

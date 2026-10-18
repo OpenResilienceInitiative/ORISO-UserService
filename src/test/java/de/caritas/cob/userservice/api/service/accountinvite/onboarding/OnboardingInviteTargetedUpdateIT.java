@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDT
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.RegisterCounsellorCommand;
@@ -89,6 +91,13 @@ class OnboardingInviteTargetedUpdateIT {
 
   @MockitoBean private AgencyService agencyService;
 
+  /** The accept re-checks the agency with the service token (ORISO-Admin#1026 P2-3). */
+  @MockitoBean private AgencyFacts agencyFacts;
+
+  /** No consultant row exists behind the mocked facade, so its agency relation is mocked too. */
+  @MockitoBean
+  private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
+
   private final List<Long> seededInviteIds = new ArrayList<>();
 
   @BeforeEach
@@ -97,6 +106,13 @@ class OnboardingInviteTargetedUpdateIT {
         .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(DEPARTMENT_TOPIC_ID)));
     when(keycloakService.login(anyString(), anyString()))
         .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
+    // The accept-time agency check asks the technical user for a service token.
+    when(keycloakService.loginService(anyString(), anyString()))
+        .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
+    when(agencyFacts.find(AGENCY_ID))
+        .thenReturn(
+            Optional.of(
+                new AgencyFacts.Agency(AGENCY_ID, 79L, false, List.of(DEPARTMENT_TOPIC_ID))));
   }
 
   @AfterEach

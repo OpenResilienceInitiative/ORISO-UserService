@@ -41,7 +41,7 @@ import org.mockito.quality.Strictness;
 @MockitoSettings(strictness = Strictness.LENIENT)
 public class GetChatMembersFacadeTest {
 
-  private static final String MATRIX_ROOM_ID = "!room:matrix.oriso.org";
+  private static final String MATRIX_ROOM_ID = "!room:matrix.example.org";
 
   @InjectMocks private GetChatMembersFacade getChatMembersFacade;
 
@@ -106,10 +106,12 @@ public class GetChatMembersFacadeTest {
 
     verify(chatService, times(1)).getChat(CHAT_ID);
     verify(chatPermissionVerifier, times(1)).verifyPermissionForChat(ACTIVE_CHAT);
+    org.mockito.Mockito.verifyNoInteractions(groupChatMembershipService);
   }
 
   @Test
-  public void getChatMembers_Should_ReturnMatrixNativeMembers_MappedToAppAccounts() {
+  public void getChatMembers_Should_ReturnMatrixNativeMembers_MappedToAppAccounts()
+      throws Exception {
     var chat = matrixChat();
     when(chatService.getChat(CHAT_ID)).thenReturn(Optional.of(chat));
     when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn(MATRIX_ROOM_ID);
@@ -117,17 +119,21 @@ public class GetChatMembersFacadeTest {
         .thenReturn(
             List.of(
                 new ResolvedRoomMember(
-                    "@consultant:matrix.oriso.org",
+                    "@consultant:matrix.example.org",
                     "consultant-id",
                     "consultantUsername",
                     "Consultant Name",
-                    true),
+                    true,
+                    "ICON",
+                    "magpie"),
                 new ResolvedRoomMember(
-                    "@asker:matrix.oriso.org",
+                    "@asker:matrix.example.org",
                     "asker-id",
                     "askerUsername",
                     "askerUsername",
-                    false)));
+                    false,
+                    null,
+                    "fox")));
 
     ChatMembersResponseDTO response = getChatMembersFacade.getChatMembers(CHAT_ID);
 
@@ -141,8 +147,15 @@ public class GetChatMembersFacadeTest {
         response.getMembers().stream()
             .map(ChatMemberResponseDTO::getId)
             .collect(Collectors.toList());
-    assertThat(matrixIds, contains("@consultant:matrix.oriso.org", "@asker:matrix.oriso.org"));
+    assertThat(matrixIds, contains("@consultant:matrix.example.org", "@asker:matrix.example.org"));
     assertThat(response.getMembers().get(0).getDisplayName(), is("Consultant Name"));
+    var mapper = new de.caritas.cob.userservice.api.config.AppConfig().objectMapper();
+    var json = mapper.readTree(mapper.writeValueAsString(response));
+    assertThat(
+        json.path("members").get(0).path("_id").asText(), is("@consultant:matrix.example.org"));
+    assertThat(json.path("members").get(0).path("avatarKind").asText(), is("ICON"));
+    assertThat(json.path("members").get(0).path("avatarId").asText(), is("magpie"));
+    assertThat(json.path("members").get(1).path("avatarId").asText(), is("fox"));
   }
 
   @Test
@@ -182,7 +195,13 @@ public class GetChatMembersFacadeTest {
         .thenReturn(
             List.of(
                 new ResolvedRoomMember(
-                    "@u:matrix.oriso.org", "u-id", "plainUsername", "Display", false)));
+                    "@u:matrix.example.org",
+                    "u-id",
+                    "plainUsername",
+                    "Display",
+                    false,
+                    null,
+                    null)));
 
     ChatMembersResponseDTO response = getChatMembersFacade.getChatMembers(CHAT_ID);
 

@@ -12,8 +12,8 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 /**
- * US#1060: keeps the Matrix membership of an agency's open enquiry rooms in step with its roster,
- * strictly <em>after</em> the roster change is committed.
+ * Keeps Matrix membership of an agency's open enquiry rooms and joined team-discussion rooms in
+ * step with its roster, strictly <em>after</em> the roster change is committed.
  *
  * <p>Why after the commit and not inline. {@code ConsultantAdminFacade#setConsultantAgencies} is
  * transactional and applies removals before creations, one agency at a time. An inline fan-out
@@ -66,7 +66,7 @@ public class AgencyMembershipSyncListener {
         event.consultantId(),
         event.agencyId(),
         consultant ->
-            agencyLateJoinerMembershipService.removeConsultantFromOpenEnquiryRooms(
+            agencyLateJoinerMembershipService.removeConsultantFromAgencyRooms(
                 consultant, event.agencyId()));
   }
 
@@ -74,7 +74,7 @@ public class AgencyMembershipSyncListener {
       String consultantId, Long agencyId, ToIntFunction<Consultant> membershipChange) {
     if (!lateJoinerMembershipEnabled) {
       log.debug(
-          "Late joiner membership is disabled; enquiry rooms of agency {} left untouched for"
+          "Late joiner membership is disabled; agency rooms of agency {} left untouched for"
               + " consultant {}",
           agencyId,
           consultantId);
@@ -88,13 +88,13 @@ public class AgencyMembershipSyncListener {
               membershipChange::applyAsInt,
               () ->
                   log.warn(
-                      "Consultant {} no longer exists; enquiry room membership of agency {} not"
+                      "Consultant {} no longer exists; agency room membership of agency {} not"
                           + " synchronised",
                       consultantId,
                       agencyId));
     } catch (RuntimeException ex) {
       log.warn(
-          "Could not synchronise enquiry room membership of consultant {} in agency {}: {}",
+          "Could not synchronise agency room membership of consultant {} in agency {}: {}",
           consultantId,
           agencyId,
           ex.getMessage());

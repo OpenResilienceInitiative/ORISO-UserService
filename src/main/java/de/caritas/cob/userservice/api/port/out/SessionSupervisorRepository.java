@@ -1,8 +1,10 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -11,6 +13,9 @@ import org.springframework.data.repository.query.Param;
 public interface SessionSupervisorRepository extends JpaRepository<SessionSupervisor, Long> {
 
   Optional<SessionSupervisor> findByMatrixRoomId(String matrixRoomId);
+
+  @EntityGraph(attributePaths = {"session", "supervisorConsultant"})
+  List<SessionSupervisor> findByMatrixRoomIdAndIsActiveTrue(String matrixRoomId);
 
   /**
    * Find all active supervisors for a session.
@@ -43,6 +48,25 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
           + "AND ss.isActive = true")
   List<SessionSupervisor> findActiveSupervisionsByConsultantId(
       @Param("consultantId") String consultantId);
+
+  /**
+   * ADR-008 list marker: every active supervisor of every given session in ONE query, projected to
+   * the columns the marker needs. Callers group the rows by {@link
+   * SessionSupervisorMarkerRow#sessionId()}; sessions without supervisors simply yield no row.
+   *
+   * @param sessionIds the sessions of one list page (or a singleton for a single read)
+   * @return the marker rows, unordered
+   */
+  // Session and Consultant are query roots because Hibernate does not filter to-one joins.
+  @Query(
+      "SELECT new de.caritas.cob.userservice.api.port.out.SessionSupervisorMarkerRow("
+          + "s.id, c.id, c.username, c.displayName, c.internalDisplayName, "
+          + "ss.matrixRoomId, s.matrixRoomId) "
+          + "FROM Session s, Consultant c, SessionSupervisor ss "
+          + "WHERE ss.session = s AND ss.supervisorConsultant = c "
+          + "AND s.id IN :sessionIds AND ss.isActive = true")
+  List<SessionSupervisorMarkerRow> findActiveMarkerRowsBySessionIdIn(
+      @Param("sessionIds") Collection<Long> sessionIds);
 
   /**
    * Find active supervisor relationship for a session and consultant.

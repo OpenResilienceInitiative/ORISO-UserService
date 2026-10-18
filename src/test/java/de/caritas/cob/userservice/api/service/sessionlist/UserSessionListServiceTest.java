@@ -136,7 +136,8 @@ class UserSessionListServiceTest {
   }
 
   @Test
-  void publicSelfHelpChatCanBeResolvedByDeepLinkWithoutAssignment() {
+  void selfHelpChatIsNotResolvedForAClientWhoHasNotJoinedIt() {
+    // #1237: joining goes through the invite link (with its token) first; reading by id does not.
     var chat =
         chatResponse(
             1088L, "!self-help:matrix.example", ConversationType.SELF_HELP, LocalDateTime.now());
@@ -144,7 +145,7 @@ class UserSessionListServiceTest {
     when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of());
 
     assertThat(userSessionListService.retrieveChatsForUserAndChatIds(USER_ID, List.of(1088L)))
-        .containsExactly(chat);
+        .isEmpty();
   }
 
   private UserSessionResponseDTO sessionResponse(String roomId, long messageDate) {

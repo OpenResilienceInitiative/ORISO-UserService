@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import java.time.LocalDateTime;
@@ -153,6 +154,17 @@ class OnboardingTwoFactorGuardTest {
   void isResumableAtTwoFactorStep_notAccepted_isFalse() {
     AccountInvite row = resumableRow();
     row.setStatus(AccountInviteStatus.EMAIL_SENT);
+
+    assertFalse(OnboardingTwoFactorGuard.isResumableAtTwoFactorStep(row, LocalDateTime.now()));
+  }
+
+  /**
+   * A token bound to an existing account brings its own second factor; this gate is not its gate.
+   */
+  @Test
+  void isResumableAtTwoFactorStep_existingAccountSetup_isFalse() {
+    AccountInvite row = resumableRow();
+    row.setPurpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
 
     assertFalse(OnboardingTwoFactorGuard.isResumableAtTwoFactorStep(row, LocalDateTime.now()));
   }

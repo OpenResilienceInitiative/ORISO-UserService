@@ -3,8 +3,10 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -19,6 +21,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -27,9 +30,12 @@ import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -62,6 +68,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+@WithTenant(1L)
 class CounsellorOnboardingWizardIT {
 
   private static final String CONSULTANT_ID = "wizard-counsellor-id";
@@ -80,11 +87,21 @@ class CounsellorOnboardingWizardIT {
 
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF);
 
+  /** The public route resolves to the main tenant, as on the single-domain deployment. */
+  @MockitoBean private TenantResolverService tenantResolverService;
+
+  @MockitoBean private TenantService tenantService;
+
   @Autowired private MockMvc mockMvc;
 
   @Autowired private AccountInviteRepository accountInviteRepository;
 
   @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation
+          .ConsultantAgencyRelationCreatorService
+      consultantAgencyRelationCreatorService;
 
   /**
    * The single {@code keycloakService} bean implements ALL identity ports (authentication, second
@@ -101,13 +118,112 @@ class CounsellorOnboardingWizardIT {
    */
   @MockitoBean private AgencyService agencyService;
 
+  /** The accept re-checks the agency with the service token (ORISO-Admin#1026 P2-3). */
+  @MockitoBean private AgencyFacts agencyFacts;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService
+      applicationSettingsService;
+
+  private static de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+          .ApplicationSettingsDTO
+      oneTopicSettings() {
+    return new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+            .ApplicationSettingsDTO()
+        .oneTopicPerAgencyEnabled(
+            new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                    .FeatureToggleDTO()
+                .value(true));
+  }
+
+  @Test
+  void newAgencyInvite_resolvesThePlatformTopicLimit() throws Exception {
+    String token = "one-topic-resolve-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(applicationSettingsService.fetchApplicationSettings()).thenReturn(oneTopicSettings());
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.oneTopicPerAgencyEnabled").value(true));
+  }
+
+  @Test
+  void newAgencyWithSeveralTopics_isRejectedBeforeProvisioningAndKeepsTheInviteUsable()
+      throws Exception {
+    String token = "one-topic-register-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(applicationSettingsService.fetchApplicationSettings()).thenReturn(oneTopicSettings());
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/register", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+        {"account":{"username":"codex_policy_user","password":"Valid-Test-Password-2026!"},
+         "topicIds":[2,7],"agency":{"name":"New centre"}}
+        """))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.reason").value("ONE_TOPIC_PER_AGENCY"));
+    String tokenHash = sha256(token);
+    assertThat(
+            accountInviteRepository.findAll().stream()
+                .filter(row -> row.getTokenHash().equals(tokenHash))
+                .findFirst()
+                .orElseThrow()
+                .getStatus())
+        .isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+  }
+
+  @Test
+  void newAgencySettingsOutage_isRetryableAndDoesNotConsumeTheInvite() throws Exception {
+    String token = "one-topic-outage-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("unavailable"));
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.reason").value("SETTINGS_UNAVAILABLE"));
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+  }
+
+  @Test
+  void existingLegacyCentre_keepsMultipleTopicAssignmentsWithoutReadingThePolicy()
+      throws Exception {
+    String token = "one-topic-legacy-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/register", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+        {"account":{"username":"codex_legacy_topics","password":"Valid-Test-Password-2026!"},"topicIds":[2,7]}
+        """))
+        .andExpect(status().isOk());
+    org.mockito.Mockito.verifyNoInteractions(applicationSettingsService);
+  }
+
   @BeforeEach
   void configureProvisioning() {
+    when(agencyFacts.find(anyLong()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    new AgencyFacts.Agency(invocation.getArgument(0), 79L, false, List.of())));
     agencyIsHealthy();
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
         .thenReturn(
             new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id(CONSULTANT_ID)));
-    when(keycloakService.login(anyString(), anyString()))
+    when(keycloakService.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
     when(keycloakService.getOtpCredential(anyString()))
         .thenReturn(
@@ -118,7 +234,7 @@ class CounsellorOnboardingWizardIT {
         .thenReturn(
             Optional.of(
                 new IdentityProfile(
-                    CONSULTANT_ID, "codex_wizard_counsellor", "Lisa", "Simpson", "l@oriso.org")));
+                    CONSULTANT_ID, "codex_wizard_counsellor", "Lisa", "Simpson", "l@example.org")));
   }
 
   /** AgencyService answers: the invite's agency covers the topics 2 (department) and 7. */
@@ -133,12 +249,12 @@ class CounsellorOnboardingWizardIT {
         .thenThrow(new IllegalStateException("agency service unreachable"));
   }
 
-  private void seedInvite(String rawToken) throws Exception {
-    accountInviteRepository.save(
+  private AccountInvite seedInvite(String rawToken) throws Exception {
+    return accountInviteRepository.save(
         AccountInvite.builder()
             .targetRole(AccountInviteTargetRole.COUNSELLOR)
             .tenantId(79L)
-            .recipientEmail("lisa.simpson@oriso.org")
+            .recipientEmail("lisa.simpson@example.org")
             .firstName("Lisa")
             .lastName("Simpson")
             .agencyId(AGENCY_ID)
@@ -164,7 +280,7 @@ class CounsellorOnboardingWizardIT {
         .perform(get("/users/account-invites/{token}/onboarding", token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.targetRole").value("COUNSELLOR"))
-        .andExpect(jsonPath("$.recipientEmail").value("lisa.simpson@oriso.org"))
+        .andExpect(jsonPath("$.recipientEmail").value("lisa.simpson@example.org"))
         .andExpect(jsonPath("$.firstName").value("Lisa"))
         .andExpect(jsonPath("$.lastName").value("Simpson"))
         .andExpect(jsonPath("$.tenantId").value(79))
@@ -205,7 +321,7 @@ class CounsellorOnboardingWizardIT {
     verify(consultantAdminFacade).createNewConsultant(consultantCaptor.capture());
     CreateConsultantDTO consultant = consultantCaptor.getValue();
     assertThat(consultant.getUsername()).isEqualTo("codex_wizard_counsellor");
-    assertThat(consultant.getEmail()).isEqualTo("lisa.simpson@oriso.org");
+    assertThat(consultant.getEmail()).isEqualTo("lisa.simpson@example.org");
     assertThat(consultant.getTenantId()).isEqualTo(79L);
     // Both topics reach the provisioning command — the agency-only topic 7 included.
     assertThat(consultant.getTopicIds()).containsExactly(2L, 7L);
@@ -217,7 +333,7 @@ class CounsellorOnboardingWizardIT {
 
     ArgumentCaptor<CreateConsultantAgencyDTO> agencyCaptor =
         ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
-    verify(consultantAdminFacade)
+    verify(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(eq(CONSULTANT_ID), agencyCaptor.capture());
     assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(AGENCY_ID);
     assertThat(agencyCaptor.getValue().getRoleSetKey()).isEqualTo("CONSULTANT_DEFAULT");
@@ -243,6 +359,72 @@ class CounsellorOnboardingWizardIT {
         .perform(get("/users/account-invites/{token}/onboarding", token))
         .andExpect(status().isGone())
         .andExpect(jsonPath("$.reason").value("CONSUMED"));
+  }
+
+  @Test
+  void emailSetup_publicTokenFlow_requiresVerifiedCodeBeforeConsumption() throws Exception {
+    String token = "email-wizard-" + java.util.UUID.randomUUID();
+    AccountInvite invite = seedInvite(token);
+    invite.setStatus(AccountInviteStatus.ACCEPTED);
+    invite.setAcceptedByUserId(CONSULTANT_ID);
+    invite.setProvisionedUserId(CONSULTANT_ID);
+    accountInviteRepository.save(invite);
+    when(keycloakService.initiateEmailVerification(
+            "codex_wizard_counsellor", "lisa.simpson@example.org"))
+        .thenReturn(
+            de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart.success());
+    when(keycloakService.finishEmailVerification("codex_wizard_counsellor", "000000"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                false, false, true, null));
+    when(keycloakService.finishEmailVerification("codex_wizard_counsellor", "123456"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                true, false, true, "lisa.simpson@example.org"));
+
+    mockMvc
+        .perform(
+            post("/service/users/account-invites/{token}/onboarding/two-factor/email", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE))
+        .andExpect(status().isNoContent());
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/two-factor", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"otp\":\"000000\",\"method\":\"EMAIL\"}"))
+        .andExpect(status().isBadRequest());
+    assertThat(accountInviteRepository.findById(invite.getId()).orElseThrow().getTwoFactorStatus())
+        .isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+    mockMvc
+        .perform(
+            post("/service/users/account-invites/{token}/onboarding/two-factor", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"otp\":\"123456\",\"method\":\"EMAIL\"}"))
+        .andExpect(status().isOk());
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isGone())
+        .andExpect(jsonPath("$.reason").value("CONSUMED"));
+  }
+
+  @Test
+  void emailSetup_unknownTokenIsRejectedBeforeMailAndCsrfStillApplies() throws Exception {
+    mockMvc
+        .perform(post("/users/account-invites/{token}/onboarding/two-factor/email", "unknown"))
+        .andExpect(status().isForbidden());
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/two-factor/email", "unknown")
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE))
+        .andExpect(status().isNotFound());
+    org.mockito.Mockito.verify(keycloakService, org.mockito.Mockito.never())
+        .initiateEmailVerification(anyString(), anyString());
   }
 
   @Test
@@ -313,7 +495,7 @@ class CounsellorOnboardingWizardIT {
             AccountInvite.builder()
                 .targetRole(AccountInviteTargetRole.COUNSELLOR)
                 .tenantId(79L)
-                .recipientEmail("lisa.simpson@oriso.org")
+                .recipientEmail("lisa.simpson@example.org")
                 .firstName("Lisa")
                 .lastName("Simpson")
                 .agencyId(AGENCY_ID)
@@ -336,6 +518,54 @@ class CounsellorOnboardingWizardIT {
     assertThat(accountInviteRepository.findById(expired.getId()))
         .hasValueSatisfying(
             persisted -> assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED));
+  }
+
+  @Test
+  void registerWithoutTopics_intoAnExistingSingleTopicAgency_attachesToItWithItsOnlyTopic()
+      throws Exception {
+    String token = "existing-single-topic-token-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(DEPARTMENT_TOPIC_ID)));
+
+    mockMvc.perform(registerWithoutTopics(token)).andExpect(status().isOk());
+
+    ArgumentCaptor<CreateConsultantDTO> consultantCaptor =
+        ArgumentCaptor.forClass(CreateConsultantDTO.class);
+    verify(consultantAdminFacade).createNewConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getTopicIds()).containsExactly(DEPARTMENT_TOPIC_ID);
+    ArgumentCaptor<CreateConsultantAgencyDTO> agencyCaptor =
+        ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
+    verify(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(eq(CONSULTANT_ID), agencyCaptor.capture());
+    assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(AGENCY_ID);
+  }
+
+  @Test
+  void registerWithoutTopics_whenTheAgencyOffersSeveralTopics_answers400() throws Exception {
+    String token = "existing-multi-topic-token-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+
+    mockMvc
+        .perform(registerWithoutTopics(token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(containsString("At least one topic")));
+
+    assertInviteStillResolvesUnconsumed(token);
+  }
+
+  private MockHttpServletRequestBuilder registerWithoutTopics(String token) {
+    return post("/users/account-invites/{token}/onboarding/register", token)
+        .header("X-CSRF-Token", CSRF)
+        .cookie(CSRF_COOKIE)
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(
+            """
+            {
+              "account": { "username": "codex_wizard_counsellor", "password": "Valid-Test-Password-2026!" },
+              "topicIds": []
+            }
+            """);
   }
 
   private static String sha256(String value) throws Exception {

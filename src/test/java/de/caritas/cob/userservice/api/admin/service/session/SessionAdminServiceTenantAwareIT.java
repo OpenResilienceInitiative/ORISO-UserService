@@ -6,17 +6,22 @@ import static org.hamcrest.Matchers.hasSize;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionFilter;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Answers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.jdbc.Sql;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +34,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class SessionAdminServiceTenantAwareIT {
 
+  @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
+  AuthenticatedUser caller;
+
   @Autowired private SessionAdminService sessionAdminService;
 
   @Autowired private SessionRepository sessionRepository;
@@ -36,6 +44,13 @@ class SessionAdminServiceTenantAwareIT {
   @BeforeEach
   void beforeTests() {
     TenantContext.setCurrentTenant(1L);
+    caller.setUserId("tenant-admin-1");
+    caller.setTenantId(1L);
+    caller.setRoles(
+        Set.of(
+            UserRole.TENANT_ADMIN.getValue(),
+            UserRole.AGENCY_ADMIN.getValue(),
+            UserRole.USER_ADMIN.getValue()));
   }
 
   @AfterEach

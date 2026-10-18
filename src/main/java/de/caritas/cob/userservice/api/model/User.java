@@ -26,9 +26,7 @@ import lombok.Setter;
 import lombok.ToString;
 import lombok.ToString.Exclude;
 import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.ParamDef;
 import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -44,10 +42,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 @Setter
 @ToString
 @EntityListeners(AuditingEntityListener.class)
-@FilterDef(
-    name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
-@Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+@Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION)
 public class User implements TenantAware, NotificationsAware {
 
   @Id
@@ -71,6 +66,20 @@ public class User implements TenantAware, NotificationsAware {
 
   @Column(name = "matrix_user_id")
   private String matrixUserId;
+
+  @Column(name = "chat_recovery_mode", updatable = false)
+  private String chatRecoveryMode;
+
+  @Column(name = "chat_recovery_policy_revision", updatable = false)
+  private Long chatRecoveryPolicyRevision;
+
+  public String getEffectiveChatRecoveryMode() {
+    return chatRecoveryMode == null ? "RECOVERY_KEY" : chatRecoveryMode;
+  }
+
+  public long getEffectiveChatRecoveryPolicyRevision() {
+    return chatRecoveryPolicyRevision == null ? 0L : chatRecoveryPolicyRevision;
+  }
 
   @Column(name = "language_formal", nullable = false, columnDefinition = "tinyint")
   @JdbcTypeCode(SqlTypes.TINYINT)
@@ -153,6 +162,21 @@ public class User implements TenantAware, NotificationsAware {
   // settings JSON overflows it as soon as the notification matrix grows.
   @Column(name = "notifications_settings", length = 4000)
   private String notificationsSettings;
+
+  /**
+   * Joined a self-help group "without an account" (FE#1499): the browser holds the only login, so
+   * the account is deleted once no login can still be alive ({@code
+   * user.temporary.deleteWorkflow}).
+   */
+  @Column(name = "temporary_account", nullable = false, columnDefinition = "bit default false")
+  private boolean temporaryAccount;
+
+  /**
+   * The animal the advice seeker chose in their profile (#1240), as its lower-case file stem. Null
+   * shows the default the app derives from the user id.
+   */
+  @Column(name = "avatar_id", length = 40)
+  private String avatarId;
 
   public User(
       @Size(max = 36) @NonNull String userId,

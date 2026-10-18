@@ -49,11 +49,11 @@ class IdentityConfigTest {
   @Test
   void isProfileEmailUsableForMagicLinkShouldRejectDummyNullAndBlankAddresses() {
     givenAValidIdentityConfig();
-    identityConfig.setEmailDummySuffix("@dummy.oriso.org");
+    identityConfig.setEmailDummySuffix("@dummy.example.org");
 
     // The rule the web layer used to inline; owning it here gives it one definition.
     assertTrue(identityConfig.isProfileEmailUsableForMagicLink("real.user@example.org"));
-    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.example.org"));
     assertFalse(identityConfig.isProfileEmailUsableForMagicLink(null));
     assertFalse(identityConfig.isProfileEmailUsableForMagicLink(""));
     assertFalse(identityConfig.isProfileEmailUsableForMagicLink("   "));
@@ -62,13 +62,13 @@ class IdentityConfigTest {
   @Test
   void isProfileEmailUsableForMagicLinkShouldRejectDummyAddressesRegardlessOfCaseAndWhitespace() {
     givenAValidIdentityConfig();
-    identityConfig.setEmailDummySuffix("@dummy.oriso.org");
+    identityConfig.setEmailDummySuffix("@dummy.example.org");
 
     // A dummy address must stay unusable even when it arrives un-normalized.
-    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org "));
-    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("  u123@dummy.oriso.org"));
-    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@DUMMY.ORISO.ORG"));
-    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("  u123@Dummy.Oriso.Org  "));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.example.org "));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("  u123@dummy.example.org"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@DUMMY.EXAMPLE.ORG"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("  u123@Dummy.Example.Org  "));
     assertTrue(identityConfig.isProfileEmailUsableForMagicLink(" real.user@example.org "));
   }
 
@@ -76,33 +76,33 @@ class IdentityConfigTest {
   void isProfileEmailUsableForMagicLinkShouldNormalizeTheConfiguredSuffixItself() {
     givenAValidIdentityConfig();
     // The configured side must be normalized too, not only the submitted address.
-    identityConfig.setEmailDummySuffix(" @DUMMY.oriso.org ");
+    identityConfig.setEmailDummySuffix(" @DUMMY.example.org ");
 
-    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.example.org"));
     assertTrue(identityConfig.isProfileEmailUsableForMagicLink("real.user@example.org"));
   }
 
   @Test
   void isProfileEmailUsableForMagicLinkShouldRejectDummyAddressesWithUnicodeWhitespace() {
     givenAValidIdentityConfig();
-    identityConfig.setEmailDummySuffix("@dummy.oriso.org");
+    identityConfig.setEmailDummySuffix("@dummy.example.org");
 
     // hasText() accepts Unicode whitespace, so normalization must strip it too.
-    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org\u2003"));
-    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("\u00a0u123@dummy.oriso.org"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.example.org\u2003"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("\u00a0u123@dummy.example.org"));
   }
 
   @Test
   void isProfileEmailUsableForMagicLinkShouldStayLocaleIndependent_WhenDefaultLocaleIsTurkish() {
     givenAValidIdentityConfig();
-    identityConfig.setEmailDummySuffix("@DUMMY.orIso.org");
+    identityConfig.setEmailDummySuffix("@DUMMY.mIxed.example.org");
 
     // Turkish lowercasing maps I to a dotless i; Locale.ROOT must keep the
     // comparison stable regardless of the JVM default locale.
     java.util.Locale previous = java.util.Locale.getDefault();
     java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr-TR"));
     try {
-      assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org"));
+      assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.mixed.example.org"));
       assertTrue(identityConfig.isProfileEmailUsableForMagicLink("real.user@example.org"));
     } finally {
       java.util.Locale.setDefault(previous);

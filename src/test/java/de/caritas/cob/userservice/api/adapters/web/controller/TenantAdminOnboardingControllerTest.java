@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
@@ -22,6 +23,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.onboarding.Counsello
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorRegistrationResult;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.RegisterCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.TopicOption;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.OnboardingInviteState;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
@@ -102,9 +104,49 @@ class TenantAdminOnboardingControllerTest {
   }
 
   @Test
+  void emailSetup_dispatchesByRoleWithoutRecipientInput() {
+    assertEquals(HttpStatus.NO_CONTENT, controller.startEmailTwoFactor("tok").getStatusCode());
+    verify(onboardingService).startEmailTwoFactor("tok");
+    probeAnswersCounsellor();
+    assertEquals(HttpStatus.NO_CONTENT, controller.startEmailTwoFactor("tok").getStatusCode());
+    verify(counsellorOnboardingService).startEmailTwoFactor("tok");
+  }
+
+  @Test
+  void emailActivation_dispatchesSelectedMethodAndKeepsAppDefault() {
+    var request = new TenantAdminOnboardingController.TwoFactorActivationRequestDTO();
+    request.otp = "123456";
+    request.method = de.caritas.cob.userservice.api.identity.IdentityOtpType.EMAIL;
+    controller.activateTwoFactor("tok", request);
+    verify(onboardingService).activateEmailTwoFactor("tok", "123456");
+    probeAnswersCounsellor();
+    controller.activateTwoFactor("tok", request);
+    verify(counsellorOnboardingService).activateEmailTwoFactor("tok", "123456");
+    request.method = null;
+    controller.activateTwoFactor("tok", request);
+    verify(counsellorOnboardingService).activateTwoFactor("tok", "123456");
+  }
+
+  @Test
+  void pendingRegistration_withoutAppSecret_stillAdvertisesEmail() {
+    var response =
+        TenantAdminOnboardingController.TenantAdminRegistrationResponseDTO.from(
+            new CounsellorRegistrationResult("consultant", null, null, true));
+    assertNotNull(response.twoFactor);
+    assertEquals(
+        java.util.List.of(
+            de.caritas.cob.userservice.api.identity.IdentityOtpType.EMAIL,
+            de.caritas.cob.userservice.api.identity.IdentityOtpType.APP),
+        response.twoFactor.methods);
+    assertEquals(
+        de.caritas.cob.userservice.api.identity.IdentityOtpType.EMAIL,
+        response.twoFactor.defaultMethod);
+  }
+
+  @Test
   void resolveOnboardingInvite_plainState_mapsInviteFieldsWithoutPhase() {
     when(onboardingService.resolveOnboardingInvite("tok"))
-        .thenReturn(new OnboardingInviteState(invite(), false, OPERATOR_DPA_JSON));
+        .thenReturn(new OnboardingInviteState(invite(), false, OPERATOR_DPA_JSON, null));
 
     var response = controller.resolveOnboardingInvite("tok");
 
@@ -120,6 +162,8 @@ class TenantAdminOnboardingControllerTest {
     // The DPA step must render the operator's contract text (and its anchor/TOC navigation),
     // never a placeholder while the invitee ticks the acceptance box.
     assertEquals(OPERATOR_DPA_JSON, body.dpaContent);
+    // A rendered contract has nothing to explain away.
+    assertNull(body.dpaUnavailableReason);
     assertNull(body.phase);
     assertNull(body.twoFactor);
   }
@@ -127,12 +171,107 @@ class TenantAdminOnboardingControllerTest {
   @Test
   void resolveOnboardingInvite_withoutPublishedOperatorDpa_answersWithNullDpaContent() {
     when(onboardingService.resolveOnboardingInvite("tok"))
-        .thenReturn(new OnboardingInviteState(invite(), false, null));
+        .thenReturn(
+            new OnboardingInviteState(invite(), false, null, DpaUnavailableReason.NOT_PUBLISHED));
 
     var body = controller.resolveOnboardingInvite("tok").getBody();
 
     assertNotNull(body);
     assertNull(body.dpaContent);
+    assertEquals("NOT_PUBLISHED", body.dpaUnavailableReason);
+  }
+
+  /**
+   * The whole point of the field: the client must be able to tell a content gap from a broken
+   * platform instead of telling the invitee to reload the page.
+   */
+  @Test
+  void resolveOnboardingInvite_operatorDpaLookupFailed_answersWithUpstreamErrorReason() {
+    when(onboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(
+            new OnboardingInviteState(invite(), false, null, DpaUnavailableReason.UPSTREAM_ERROR));
+
+    var response = controller.resolveOnboardingInvite("tok");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    var body = response.getBody();
+    assertNotNull(body);
+    assertNull(body.dpaContent);
+    assertEquals("UPSTREAM_ERROR", body.dpaUnavailableReason);
+  }
+
+  @Test
+  void resolveOnboardingInvite_serialisesTheDpaUnavailableReasonUnderItsWireName()
+      throws Exception {
+    when(onboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(
+            new OnboardingInviteState(invite(), false, null, DpaUnavailableReason.UPSTREAM_ERROR));
+
+    String json =
+        new ObjectMapper()
+            .findAndRegisterModules()
+            .writeValueAsString(controller.resolveOnboardingInvite("tok").getBody());
+
+    assertTrue(json.contains("\"dpaUnavailableReason\":\"UPSTREAM_ERROR\""), json);
+  }
+
+  // --- Forward / confirmation resume (ORISO-Admin#1065) ---
+
+  @Test
+  void resolveOnboardingInvite_untouchedInvite_reportsNeitherForwardNorConfirmation() {
+    when(onboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(new OnboardingInviteState(invite(), false, OPERATOR_DPA_JSON, null));
+
+    var body = controller.resolveOnboardingInvite("tok").getBody();
+
+    assertNotNull(body);
+    assertNull(body.dpaForwardedAt);
+    assertNull(body.dpaSignedAt);
+  }
+
+  @Test
+  void resolveOnboardingInvite_forwardedInvite_reportsWhenItWasForwarded() {
+    AccountInvite forwarded = invite();
+    forwarded.setDpaForwardedAt(LocalDateTime.of(2026, 9, 24, 16, 5, 30));
+    when(onboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(new OnboardingInviteState(forwarded, false, OPERATOR_DPA_JSON, null));
+
+    var body = controller.resolveOnboardingInvite("tok").getBody();
+
+    assertNotNull(body);
+    assertEquals("2026-09-24T16:05:30", body.dpaForwardedAt);
+    assertNull(body.dpaSignedAt);
+  }
+
+  @Test
+  void resolveOnboardingInvite_confirmedInvite_reportsTheConfirmation() throws Exception {
+    AccountInvite confirmed = invite();
+    confirmed.setDpaForwardedAt(LocalDateTime.of(2026, 9, 24, 16, 5, 30));
+    confirmed.setDpaSignedAt(LocalDateTime.of(2026, 9, 25, 9, 12));
+    when(onboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(new OnboardingInviteState(confirmed, false, OPERATOR_DPA_JSON, null));
+
+    String json =
+        new ObjectMapper()
+            .findAndRegisterModules()
+            .writeValueAsString(controller.resolveOnboardingInvite("tok").getBody());
+
+    assertTrue(json.contains("\"dpaForwardedAt\":\"2026-09-24T16:05:30\""), json);
+    assertTrue(json.contains("\"dpaSignedAt\":\"2026-09-25T09:12:00\""), json);
+  }
+
+  @Test
+  void resolveOnboardingInvite_counsellorVariant_leavesTheDpaUnavailableReasonNull() {
+    probeAnswersCounsellor();
+    when(counsellorOnboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(new CounsellorOnboardingState(counsellorInvite(), false, java.util.List.of()));
+
+    var body = controller.resolveOnboardingInvite("tok").getBody();
+
+    assertNotNull(body);
+    // The counsellor wizard has no DPA step, so there is no unavailability to report.
+    assertNull(body.dpaContent);
+    assertNull(body.dpaUnavailableReason);
   }
 
   @Test
@@ -141,7 +280,7 @@ class TenantAdminOnboardingControllerTest {
     resumable.setStatus(AccountInviteStatus.ACCEPTED);
     resumable.setTotpPendingSecret("STOREDSECRET");
     when(onboardingService.resolveOnboardingInvite("tok"))
-        .thenReturn(new OnboardingInviteState(resumable, true, null));
+        .thenReturn(new OnboardingInviteState(resumable, true, null, null));
 
     var body = controller.resolveOnboardingInvite("tok").getBody();
 
@@ -153,17 +292,42 @@ class TenantAdminOnboardingControllerTest {
   }
 
   @Test
-  void resolveOnboardingInvite_resumableWithoutStoredSecret_omitsTwoFactorMaterial() {
+  void resolveOnboardingInvite_resumableWithoutStoredSecret_advertisesEmail() {
     AccountInvite resumable = invite();
     resumable.setStatus(AccountInviteStatus.ACCEPTED);
     when(onboardingService.resolveOnboardingInvite("tok"))
-        .thenReturn(new OnboardingInviteState(resumable, true, null));
+        .thenReturn(new OnboardingInviteState(resumable, true, null, null));
 
     var body = controller.resolveOnboardingInvite("tok").getBody();
 
     assertNotNull(body);
     assertEquals("PENDING_2FA_ACTIVATION", body.phase);
-    assertNull(body.twoFactor);
+    assertNotNull(body.twoFactor);
+    assertNull(body.twoFactor.secret);
+    assertEquals(
+        de.caritas.cob.userservice.api.identity.IdentityOtpType.EMAIL,
+        body.twoFactor.defaultMethod);
+  }
+
+  @Test
+  void registerTenantAdmin_carriesTheTraegerLegalNameAndContactIntoTheCommand() {
+    when(onboardingService.registerTenantAdmin(eq("tok"), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new TenantAdminRegistrationResult(21L, "TOTPSECRET", null));
+    var request = new TenantAdminOnboardingController.TenantAdminRegistrationRequestDTO();
+    request.organisation = new TenantAdminOnboardingController.OrganisationDataDTO();
+    request.organisation.name = "Beispiel gGmbH";
+    request.organisation.legalName = "Beispiel Verband e.V.";
+    request.organisation.contactEmail = "kontakt@beispiel.example";
+    request.organisation.contactPhone = "+49 30 123456";
+
+    controller.registerTenantAdmin("tok", request);
+
+    ArgumentCaptor<RegisterTenantAdminCommand> captor =
+        ArgumentCaptor.forClass(RegisterTenantAdminCommand.class);
+    verify(onboardingService).registerTenantAdmin(eq("tok"), captor.capture());
+    assertEquals("Beispiel Verband e.V.", captor.getValue().legalName());
+    assertEquals("kontakt@beispiel.example", captor.getValue().contactEmail());
+    assertEquals("+49 30 123456", captor.getValue().contactPhone());
   }
 
   @Test
@@ -303,6 +467,9 @@ class TenantAdminOnboardingControllerTest {
     request.names.publicName = "Lena";
     request.names.internalDisplayName = "Lena B. (Nord)";
     request.topicIds = java.util.List.of(12L);
+    request.avatar = new TenantAdminOnboardingController.AvatarDataDTO();
+    request.avatar.kind = "ICON";
+    request.avatar.id = "motif-24";
 
     var response = controller.registerTenantAdmin("tok", request);
 
@@ -327,6 +494,57 @@ class TenantAdminOnboardingControllerTest {
     assertEquals("Lena", command.displayName());
     assertEquals("Lena B. (Nord)", command.internalDisplayName());
     assertEquals(java.util.List.of(12L), command.topicIds());
+    assertEquals("ICON", command.avatarKind());
+    assertEquals("motif-24", command.avatarId());
+  }
+
+  @Test
+  void registerTenantAdmin_counsellorInvite_garbageAvatarKindIsCarriedAsPlainText() {
+    probeAnswersCounsellor();
+    when(counsellorOnboardingService.registerCounsellor(
+            eq("tok"), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new CounsellorRegistrationResult("consultant-1", "TOTPSECRET", "QR", true));
+
+    var request = new TenantAdminOnboardingController.TenantAdminRegistrationRequestDTO();
+    request.account = new TenantAdminOnboardingController.AccountDataDTO();
+    request.account.username = "lena.b";
+    request.account.password = "s3cretPassword";
+    request.topicIds = java.util.List.of(12L);
+    request.avatar = new TenantAdminOnboardingController.AvatarDataDTO();
+    request.avatar.kind = "<script>alert(1)</script>";
+    request.avatar.id = "motif-24";
+
+    var response = controller.registerTenantAdmin("tok", request);
+
+    // The public endpoint must not blow up on an unknown kind; it is resolved to "no choice"
+    // further down the chain (see CounsellorInviteProvisioningService).
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    ArgumentCaptor<RegisterCounsellorCommand> captor =
+        ArgumentCaptor.forClass(RegisterCounsellorCommand.class);
+    verify(counsellorOnboardingService).registerCounsellor(eq("tok"), captor.capture());
+    assertEquals("<script>alert(1)</script>", captor.getValue().avatarKind());
+  }
+
+  @Test
+  void registerTenantAdmin_counsellorInvite_missingAvatarBlockIsNoChoice() {
+    probeAnswersCounsellor();
+    when(counsellorOnboardingService.registerCounsellor(
+            eq("tok"), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new CounsellorRegistrationResult("consultant-1", "TOTPSECRET", "QR", true));
+
+    var request = new TenantAdminOnboardingController.TenantAdminRegistrationRequestDTO();
+    request.account = new TenantAdminOnboardingController.AccountDataDTO();
+    request.account.username = "lena.b";
+    request.account.password = "s3cretPassword";
+    request.topicIds = java.util.List.of(12L);
+
+    controller.registerTenantAdmin("tok", request);
+
+    ArgumentCaptor<RegisterCounsellorCommand> captor =
+        ArgumentCaptor.forClass(RegisterCounsellorCommand.class);
+    verify(counsellorOnboardingService).registerCounsellor(eq("tok"), captor.capture());
+    assertNull(captor.getValue().avatarKind());
+    assertNull(captor.getValue().avatarId());
   }
 
   @Test
@@ -402,7 +620,7 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", true));
+                "https://app.example.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", true));
     var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
     request.recipientEmail = "legal@example.org";
 
@@ -410,7 +628,7 @@ class TenantAdminOnboardingControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertNotNull(response.getBody());
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
     assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
     assertTrue(response.getBody().mailSent);
   }
@@ -421,7 +639,7 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+                "https://app.example.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
     var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
     request.recipientEmail = "legal@example.org";
 
@@ -429,7 +647,7 @@ class TenantAdminOnboardingControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertNotNull(response.getBody());
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
     // the validity window must survive the degraded path - a mail failure may not cost it
     assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
     assertFalse(response.getBody().mailSent);
@@ -440,14 +658,14 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa(eq("raw-token"), eq(null)))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+                "https://app.example.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
 
     var response = controller.forwardDpa("raw-token", null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     // the body must be complete even without a request body - status alone cannot prove that
     assertNotNull(response.getBody());
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
     assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
     assertFalse(response.getBody().mailSent);
     verify(onboardingService).forwardDpa("raw-token", null);
@@ -463,7 +681,7 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa("raw-token", null))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+                "https://app.example.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
 
     controller.forwardDpa("raw-token", null);
 

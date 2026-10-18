@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="20260921-account-invite-allocation-modes" author="oriso">
+    <sqlFile path="migrate.sql" relativeToChangelogFile="true"/>
+    <rollback>
+      <dropColumn tableName="account_invite" columnName="tenant_id_allocation_mode"/>
+      <dropColumn tableName="account_invite" columnName="agency_id_allocation_mode"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

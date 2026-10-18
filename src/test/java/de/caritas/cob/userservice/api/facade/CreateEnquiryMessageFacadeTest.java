@@ -29,7 +29,6 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -59,7 +58,7 @@ class CreateEnquiryMessageFacadeTest {
   @Mock private ErstantwortPayloadBuilder erstantwortPayloadBuilder;
   @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
-  @InjectMocks private CreateEnquiryMessageFacade facade;
+  private CreateEnquiryMessageFacade facade;
 
   private User user;
   private Session session;
@@ -67,6 +66,18 @@ class CreateEnquiryMessageFacadeTest {
 
   @BeforeEach
   void setUp() {
+    facade =
+        new CreateEnquiryMessageFacade(
+            sessionService,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            matrixSynapseService,
+            emailNotificationFacade,
+            consultantAgencyService,
+            topicConsultantRoutingService,
+            eventNotificationService,
+            agencyPreAssignmentRoomService,
+            erstantwortPayloadBuilder,
+            matrixSessionSystemMessageService);
     user = new User();
     user.setUserId(USER_ID);
     user.setMatrixUserId(MATRIX_USER_ID);

@@ -2,8 +2,10 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
@@ -18,10 +20,12 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jayway.jsonpath.JsonPath;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
@@ -50,6 +54,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import jakarta.servlet.http.Cookie;
@@ -149,6 +154,7 @@ class UserControllerConsultantE2EIT {
 
   @BeforeEach
   void setUp() {
+    TenantContext.clear();
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
@@ -159,6 +165,7 @@ class UserControllerConsultantE2EIT {
 
   @AfterEach
   void reset() {
+    TenantContext.clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
       userRepository.save(user);
@@ -629,11 +636,217 @@ class UserControllerConsultantE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
+  void searchConsultantsShouldSortByUpdateDateFallingBackToCreateDate() throws Exception {
+    givenAnInfix();
+    givenAgencyServiceReturningDummyAgencies();
+    // "Zuletzt aktualisiert" = update_date, else create_date; ties broken by id.
+    givenConsultantMatchingWithDates("b1-sort-consultant-1", at(2020, 1), at(2020, 6));
+    givenConsultantMatchingWithDates("b1-sort-consultant-2", at(2025, 1), null);
+    givenConsultantMatchingWithDates("b1-sort-consultant-3", at(2019, 1), at(2022, 1));
+    givenConsultantMatchingWithDates("b1-sort-consultant-4", at(2025, 1), null);
+
+    assertConsultantSearchOrder(
+        "DESC",
+        "b1-sort-consultant-4",
+        "b1-sort-consultant-2",
+        "b1-sort-consultant-3",
+        "b1-sort-consultant-1");
+    assertConsultantSearchOrder(
+        "ASC",
+        "b1-sort-consultant-1",
+        "b1-sort-consultant-3",
+        "b1-sort-consultant-2",
+        "b1-sort-consultant-4");
+  }
+
+  // #1263 B3: Träger (tenantId) and Beratungsstelle (agencyId) filters on the consultant search.
+  private static final Long FILTER_TENANT_A = 5151L;
+  private static final Long FILTER_TENANT_B = 5252L;
+  private static final Long FILTER_AGENCY_X = 71001L;
+  private static final Long FILTER_AGENCY_Y = 71002L;
+  private static final Long FILTER_AGENCY_Z = 71003L;
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
+  void searchConsultantsShouldFilterByAgencyIdListingAConsultantOfTwoAgenciesOnceForEach()
+      throws Exception {
+    givenFilterConsultants();
+
+    assertFilteredConsultantSearch("agencyId", FILTER_AGENCY_X + "", "b3-c1", "b3-c2");
+    assertFilteredConsultantSearch("agencyId", FILTER_AGENCY_Y + "", "b3-c2", "b3-c3");
+    assertFilteredConsultantSearch(
+        "agencyId", FILTER_AGENCY_X + "," + FILTER_AGENCY_Y, "b3-c1", "b3-c2", "b3-c3");
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
+  void searchConsultantsShouldFilterByTenantIdForAPlatformWideCaller() throws Exception {
+    givenFilterConsultants();
+
+    assertFilteredConsultantSearch(
+        "tenantId", FILTER_TENANT_A + "", "b3-c1", "b3-c2", "b3-c4", "b3-c5");
+    assertFilteredConsultantSearch("tenantId", FILTER_TENANT_B + "", "b3-c3");
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
+  void searchConsultantsShouldNotWidenScopeWhenATraegerAdminFiltersByAForeignTenant()
+      throws Exception {
+    givenFilterConsultants();
+    givenCallerTokenOfTenant(FILTER_TENANT_A);
+
+    assertFilteredConsultantSearch("tenantId", FILTER_TENANT_B + "");
+    assertFilteredConsultantSearch("agencyId", FILTER_AGENCY_Y + "", "b3-c2");
+  }
+
+  /** The search reads the caller's tenant from the access token's tenantId claim. */
+  private void givenCallerTokenOfTenant(Long tenantId) {
+    var encoder = java.util.Base64.getUrlEncoder().withoutPadding();
+    var header = encoder.encodeToString("{\"alg\":\"none\"}".getBytes(StandardCharsets.UTF_8));
+    var payload =
+        encoder.encodeToString(
+            ("{\"tenantId\":" + tenantId + "}").getBytes(StandardCharsets.UTF_8));
+    when(authenticatedUser.getAccessToken()).thenReturn(header + "." + payload + ".");
+  }
+
+  /** c2 counsels in two agencies; c3 is the only one of tenant B. */
+  private void givenFilterConsultants() {
+    givenAnInfix();
+    // A fresh agency list per call: the search is called several times per test.
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            i ->
+                i.<List<Long>>getArgument(0).stream()
+                    .distinct()
+                    .map(
+                        agencyId -> {
+                          var agency = new AgencyDTO();
+                          agency.setId(agencyId);
+                          agency.setName("B3 agency " + agencyId);
+                          agency.setPostcode("12345");
+                          return agency;
+                        })
+                    .toList());
+    givenFilterConsultant("b3-c1", FILTER_TENANT_A, FILTER_AGENCY_X);
+    givenFilterConsultant("b3-c2", FILTER_TENANT_A, FILTER_AGENCY_X, FILTER_AGENCY_Y);
+    givenFilterConsultant("b3-c3", FILTER_TENANT_B, FILTER_AGENCY_Y);
+    givenFilterConsultant("b3-c4", FILTER_TENANT_A, FILTER_AGENCY_Z);
+    givenFilterConsultant("b3-c5", FILTER_TENANT_A, FILTER_AGENCY_Z);
+  }
+
+  private void givenFilterConsultant(String id, Long tenantId, Long... agencyIds) {
+    var dbConsultant = consultantRepository.findAll().iterator().next();
+    var newConsultant = new Consultant();
+    BeanUtils.copyProperties(dbConsultant, newConsultant);
+    newConsultant.setId(id);
+    newConsultant.setTenantId(tenantId);
+    newConsultant.setUsername(RandomStringUtils.randomAlphabetic(8));
+    newConsultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
+    newConsultant.setFirstName("B3First");
+    newConsultant.setLastName(aStringWithInfix(infix));
+    newConsultant.setEmail(aValidEmailWithoutInfix(infix));
+    newConsultant.setStatus(ConsultantStatus.CREATED);
+    newConsultant.setDeleteDate(null);
+    newConsultant.setConsultantAgencies(null);
+    var saved = consultantRepository.save(newConsultant);
+    consultantIdsToDelete.add(id);
+    for (Long agencyId : agencyIds) {
+      var consultantAgency =
+          ConsultantAgency.builder()
+              .consultant(saved)
+              .agencyId(agencyId)
+              .tenantId(tenantId)
+              .build();
+      consultantAgencyRepository.save(consultantAgency);
+      consultantAgencies.add(consultantAgency);
+    }
+  }
+
+  /**
+   * Walks every page (two per page) with the given filter and asserts that exactly the expected ids
+   * come back, each once, and that {@code total} is the filtered count.
+   */
+  private void assertFilteredConsultantSearch(String param, String value, String... expectedIds)
+      throws Exception {
+    var ids = new ArrayList<String>();
+    var perPage = 2;
+    var pages = Math.max(1, (expectedIds.length + perPage - 1) / perPage);
+    for (var page = 1; page <= pages; page++) {
+      var body =
+          mockMvc
+              .perform(
+                  get("/users/consultants/search")
+                      .cookie(CSRF_COOKIE)
+                      .header(CSRF_HEADER, CSRF_VALUE)
+                      .accept("application/hal+json")
+                      .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8))
+                      .param("page", String.valueOf(page))
+                      .param("perPage", String.valueOf(perPage))
+                      .param("field", "FIRSTNAME")
+                      .param("order", "ASC")
+                      .param(param, value))
+              .andExpect(status().isOk())
+              .andReturn()
+              .getResponse()
+              .getContentAsString();
+      assertThat((Integer) JsonPath.read(body, "$.total"))
+          .as("total for %s=%s page %d", param, value, page)
+          .isEqualTo(expectedIds.length);
+      if (expectedIds.length > 0) {
+        ids.addAll(JsonPath.<List<String>>read(body, "$._embedded[*]._embedded.id"));
+      }
+    }
+    assertThat(ids).as("ids for %s=%s", param, value).containsExactly(expectedIds);
+  }
+
+  private static LocalDateTime at(int year, int month) {
+    return LocalDateTime.of(year, month, 1, 12, 0);
+  }
+
+  private void givenConsultantMatchingWithDates(
+      String id, LocalDateTime createDate, LocalDateTime updateDate) {
+    var dbConsultant = consultantRepository.findAll().iterator().next();
+    var newConsultant = new Consultant();
+    BeanUtils.copyProperties(dbConsultant, newConsultant);
+    newConsultant.setId(id);
+    newConsultant.setUsername(RandomStringUtils.randomAlphabetic(8));
+    newConsultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
+    newConsultant.setFirstName(aStringWithoutInfix(infix));
+    newConsultant.setLastName(aStringWithInfix(infix));
+    newConsultant.setEmail(aValidEmailWithoutInfix(infix));
+    newConsultant.setStatus(ConsultantStatus.CREATED);
+    newConsultant.setDeleteDate(null);
+    newConsultant.setCreateDate(createDate);
+    newConsultant.setUpdateDate(updateDate);
+    consultantRepository.save(newConsultant);
+    consultantIdsToDelete.add(id);
+  }
+
+  private void assertConsultantSearchOrder(String order, String... expectedIds) throws Exception {
+    mockMvc
+        .perform(
+            get("/users/consultants/search")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept("application/hal+json")
+                .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8))
+                .param("page", "1")
+                .param("perPage", "10")
+                .param("field", "UPDATE_DATE")
+                .param("order", order))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("_embedded[*]._embedded.id", contains(expectedIds)));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
   void searchConsultantsShouldRespondOkAndPayloadIfStarQueryIsGiven() throws Exception {
     givenAnInfix();
     givenConsultantsMatching(easyRandom.nextInt(20) + 11, infix);
     givenAgencyServiceReturningDummyAgencies();
     var numAll = (int) consultantRepository.countByDeleteDateIsNull();
+    // Seeded consultants may have no agency; assert on one this test created (one agency each).
+    var withAgency = "_embedded[?(@._embedded.id == '" + consultantIdsToDelete.get(0) + "')]";
 
     var pageUrlPrefix = "http://localhost/users/consultants/search?";
     var consultantUrlPrefix = "http://localhost/useradmin/consultants/";
@@ -657,18 +870,15 @@ class UserControllerConsultantE2EIT {
             .andExpect(jsonPath("_embedded[0]._embedded.status", not(contains(nullValue()))))
             .andExpect(jsonPath("_embedded[9]._embedded.status", not(contains(nullValue()))))
             .andExpect(jsonPath("_embedded[*]._embedded.email", not(contains(nullValue()))))
+            .andExpect(jsonPath(withAgency + "._embedded.agencies[0].id", hasSize(1)))
             .andExpect(
-                jsonPath("_embedded[0]._embedded.agencies[0].id", not(contains(nullValue()))))
+                jsonPath(withAgency + "._embedded.agencies[0].id", everyItem(notNullValue())))
+            .andExpect(jsonPath(withAgency + "._embedded.agencies[0].name", hasSize(1)))
             .andExpect(
-                jsonPath("_embedded[0]._embedded.agencies[0].name", not(contains(nullValue()))))
+                jsonPath(withAgency + "._embedded.agencies[0].name", everyItem(notNullValue())))
+            .andExpect(jsonPath(withAgency + "._embedded.agencies[0].postcode", hasSize(1)))
             .andExpect(
-                jsonPath("_embedded[0]._embedded.agencies[0].postcode", not(contains(nullValue()))))
-            .andExpect(
-                jsonPath("_embedded[9]._embedded.agencies[0].id", not(contains(nullValue()))))
-            .andExpect(
-                jsonPath("_embedded[9]._embedded.agencies[0].name", not(contains(nullValue()))))
-            .andExpect(
-                jsonPath("_embedded[9]._embedded.agencies[0].postcode", not(contains(nullValue()))))
+                jsonPath(withAgency + "._embedded.agencies[0].postcode", everyItem(notNullValue())))
             .andExpect(jsonPath("_embedded[0]._links.self.href", startsWith(consultantUrlPrefix)))
             .andExpect(jsonPath("_embedded[0]._links.self.method", is("GET")))
             .andExpect(jsonPath("_embedded[0]._links.self.templated", is(false)))
@@ -839,6 +1049,8 @@ class UserControllerConsultantE2EIT {
   void getConsultantsShouldRespondWithDisplayNameAndUsername() throws Exception {
     var agencyId = givenAnAgencyIdWithDefaultLanguageOnly();
     givenMatrixDisplayNames(agencyId, "user1", "user2", "user3");
+    // Before #1107 the authority alone was enough and the caller's agency did not matter.
+    givenCallerIsAConsultantOfAgency(agencyId);
 
     mockMvc
         .perform(
@@ -855,6 +1067,29 @@ class UserControllerConsultantE2EIT {
         .andExpect(jsonPath("[1].username", startsWith("enc.")))
         .andExpect(jsonPath("[2].displayName", is("user3")))
         .andExpect(jsonPath("[2].username", startsWith("enc.")));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.VIEW_AGENCY_CONSULTANTS)
+  void getConsultantsShouldRespondWithForbiddenWhenCallerIsNotInTheRequestedAgency()
+      throws Exception {
+    // #1107 end to end: the authority is present and the agency is real, but the caller is not a
+    // member of it. This is the exact request that used to return the whole roster.
+    var agencyId = givenAnAgencyIdWithDefaultLanguageOnly();
+    givenMatrixDisplayNames(agencyId, "user1", "user2", "user3");
+    when(authenticatedUser.getUserId()).thenReturn(UUID.randomUUID().toString());
+
+    mockMvc
+        .perform(
+            get("/users/consultants")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .param("agencyId", String.valueOf(agencyId))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isForbidden())
+        // Asserted directly rather than via jsonPath: the handler returns an empty body, and a
+        // JSON-path assertion over an empty body proves nothing about what was withheld.
+        .andExpect(content().string(""));
   }
 
   @Test
@@ -1131,6 +1366,15 @@ class UserControllerConsultantE2EIT {
       when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
       when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anAuthority"));
     }
+  }
+
+  private void givenCallerIsAConsultantOfAgency(long agencyId) {
+    var member =
+        consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(agencyId).stream()
+            .map(ConsultantAgency::getConsultant)
+            .findFirst()
+            .orElseThrow();
+    when(authenticatedUser.getUserId()).thenReturn(member.getId());
   }
 
   private long givenAnAgencyIdWithDefaultLanguageOnly() {

@@ -49,6 +49,10 @@ class ConsultantAgencyAdminServiceTest {
   @Mock private ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
   @Mock private ApplicationEventPublisher eventPublisher;
 
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository
+      consultantTopicRepository;
+
   // ---------------------------------------------------------------------------
   // findConsultantAgencies
   // ---------------------------------------------------------------------------

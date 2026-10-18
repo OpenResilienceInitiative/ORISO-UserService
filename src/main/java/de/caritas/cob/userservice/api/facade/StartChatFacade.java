@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
+import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
 import de.caritas.cob.userservice.api.service.notification.GroupChatLifecycleNotificationService;
 import de.caritas.cob.userservice.api.service.notification.GroupChatNotificationRecipientService;
 import lombok.NonNull;
@@ -23,6 +24,7 @@ public class StartChatFacade {
 
   private final @NonNull ChatService chatService;
   private final @NonNull GroupChatPermissionService groupChatPermissionService;
+  private final @NonNull GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
   private final @NonNull GroupChatNotificationRecipientService notificationRecipientService;
   private final @NonNull GroupChatLifecycleNotificationService
       groupChatLifecycleNotificationService;
@@ -38,6 +40,7 @@ public class StartChatFacade {
     groupChatPermissionService.requireCanModerate(chat, consultant);
     checkIfChatIsAlreadyActive(chat);
     checkMatrixRoom(chat);
+    groupCounsellingDpaPolicy.requireFirstStart(chat);
     chat.setActive(true);
     chatService.saveChat(chat);
     try {

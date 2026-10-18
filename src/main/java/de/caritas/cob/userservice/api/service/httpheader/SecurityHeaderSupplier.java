@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.httpheader;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import java.util.Optional;
 import java.util.UUID;
@@ -38,6 +39,10 @@ public class SecurityHeaderSupplier {
   /**
    * Creates the headers containing keycloak token and csrf headers {@link HttpHeaders} object.
    *
+   * <p>A token set in {@link TechnicalAccessTokenContext} takes precedence over the logged-in
+   * user's token. Calls made on behalf of a human must use {@link
+   * #getCallerKeycloakAndCsrfHttpHeaders()} instead.
+   *
    * @return the created {@link HttpHeaders}
    */
   public HttpHeaders getKeycloakAndCsrfHttpHeaders() {
@@ -47,6 +52,23 @@ public class SecurityHeaderSupplier {
     if (StringUtils.isNotBlank(currentAccessToken)) {
       this.addKeycloakAuthorizationHeader(header, currentAccessToken);
     }
+    return header;
+  }
+
+  /**
+   * Headers for a call made on behalf of the logged-in human: always the caller's own token, never
+   * the ambient {@link TechnicalAccessTokenContext}, so the callee decides with the caller's rights
+   * (ORISO-Helm#367). Without a caller token the call is refused instead of falling back.
+   *
+   * @throws ForbiddenException when the current request carries no user token
+   */
+  public HttpHeaders getCallerKeycloakAndCsrfHttpHeaders() {
+    var callerAccessToken =
+        getCurrentAccessTokenIfAvailable()
+            .orElseThrow(
+                () -> new ForbiddenException("This action requires the caller's own credentials"));
+    var header = getCsrfHttpHeaders();
+    this.addKeycloakAuthorizationHeader(header, callerAccessToken);
     return header;
   }
 

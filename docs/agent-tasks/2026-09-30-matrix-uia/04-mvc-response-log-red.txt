@@ -1,0 +1,7 @@
+RED evidence: browser credentials must reach the client without appearing in MVC logs
+Command: ./mvnw -B -q -Dtest=MatrixMessageControllerTest#browserLoginResponseKeepsCredentialsOnWireButOutOfMvcTraceLogs test
+Result: exit1; tests1 failures1 errors0 skipped0
+Wire response status200 and all five JSON fields/no-store assertions passed.
+Actual Spring MVC TRACE body-writing logs contained the synthetic access token and UIA credential.
+Assertion excluding credentials from captured logs failed on the raw HashMap response.
+No real credentials used and no secret-bearing response/log bodies copied into this evidence.
