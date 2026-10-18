@@ -142,10 +142,16 @@ public class SessionService {
     }
     return consultantService
         .getConsultant(userId)
-        .flatMap(
-            consultant ->
-                TenantContext.supplyAcrossTenants(() -> sessionRepository.findById(sessionId))
-                    .filter(session -> membersOnlyChatAccess.admits(session, consultant)));
+        .flatMap(consultant -> participantSessionAcrossTenants(sessionId, consultant));
+  }
+
+  /**
+   * The session of a members-only chat, loaded across Träger, when the consultant is one of its
+   * participants. Fail closed: everyone else gets nothing.
+   */
+  private Optional<Session> participantSessionAcrossTenants(Long sessionId, Consultant consultant) {
+    return TenantContext.supplyAcrossTenants(() -> sessionRepository.findById(sessionId))
+        .filter(session -> membersOnlyChatAccess.admits(session, consultant));
   }
 
   /**
@@ -917,9 +923,17 @@ public class SessionService {
   public ConsultantSessionDTO fetchSessionForConsultant(
       @NonNull Long sessionId, @NonNull Consultant consultant) {
 
-    var session =
-        getSession(sessionId)
-            .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
+    var visible = getSession(sessionId);
+    if (visible.isEmpty()) {
+      // A participant admitted from another Traeger: participation alone opens the case.
+      var admitted = participantSessionAcrossTenants(sessionId, consultant);
+      if (admitted.isPresent()) {
+        return TenantContext.supplyAcrossTenants(
+            () -> toConsultantSessionDTO(admitted.get(), consultant));
+      }
+      throw new NotFoundException("Session with id %s not found.", sessionId);
+    }
+    var session = visible.get();
 
     checkPermissionForConsultantSession(session, consultant);
     return toConsultantSessionDTO(session, consultant);

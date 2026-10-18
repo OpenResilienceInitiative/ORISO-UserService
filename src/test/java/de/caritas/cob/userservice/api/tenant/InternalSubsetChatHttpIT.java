@@ -956,6 +956,52 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void everyParticipantSeesEveryOtherParticipantInTheMemberListWhateverTheirTraeger()
+      throws Exception {
+    theTraegerScopeIs("PLATFORM");
+    var created = openRoom(creator, otherTraeger, sameCentre);
+    var chatId = field(created, "chatId");
+    var everyoneInTheRoom =
+        List.of(creator.getId(), otherTraeger.getId(), sameCentre.getId()).toArray(String[]::new);
+
+    for (var viewer : List.of(creator, otherTraeger, sameCentre)) {
+      var members = request("GET", "/users/chat/" + chatId + "/members", viewer, "");
+
+      assertThat(members.statusCode()).as(members.body()).isEqualTo(200);
+      var listed = new java.util.ArrayList<String>();
+      JSON.readTree(members.body())
+          .get("members")
+          .forEach(m -> listed.add(m.get("userId").asText()));
+      assertThat(listed).containsExactlyInAnyOrder(everyoneInTheRoom);
+    }
+  }
+
+  @Test
+  void aParticipantFromAnotherTraegerReadsTheCaseAndSeesTheNameOfTheOwner() throws Exception {
+    theTraegerScopeIs("PLATFORM");
+    var outsiderOfThatTraeger = fixtures.consultant(OTHER_TRAEGER, FOREIGN_CENTRE);
+    everyone.add(outsiderOfThatTraeger);
+    var created = openRoom(creator, otherTraeger, sameCentre);
+    var chatId = field(created, "chatId");
+    var sessionId = sessionOf(chatId);
+    Tenants.acrossAll(
+        () ->
+            database.update(
+                "UPDATE consultant SET display_name = 'Shown Name' WHERE consultant_id = ?",
+                creator.getId()));
+
+    var theCase = request("GET", "/users/consultants/sessions/" + sessionId, otherTraeger, "");
+    var theCaseOfAnOutsider =
+        request("GET", "/users/consultants/sessions/" + sessionId, outsiderOfThatTraeger, "");
+    var theChat = request("GET", "/users/chat/room/" + chatId, otherTraeger, "");
+
+    assertThat(theCase.statusCode()).as(theCase.body()).isEqualTo(200);
+    assertThat(theCaseOfAnOutsider.statusCode()).isEqualTo(404);
+    assertThat(theChat.statusCode()).as(theChat.body()).isEqualTo(200);
+    assertThat(theChat.body()).contains("\"displayName\":\"Shown Name\"");
+  }
+
+  @Test
   void noParticipantCanReassignTheCaseOfAMembersOnlyChatAndNobodyIsTakenOutOfTheRoom()
       throws Exception {
     var created = openRoom(creator, sameCentre, anotherSameCentre);

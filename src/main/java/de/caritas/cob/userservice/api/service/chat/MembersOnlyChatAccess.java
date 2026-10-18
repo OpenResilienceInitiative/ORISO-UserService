@@ -8,10 +8,12 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -37,6 +39,30 @@ public class MembersOnlyChatAccess {
 
   private final ChatRepository chatRepository;
   private final GroupChatParticipantRepository participantRepository;
+
+  /**
+   * The one place for reading a members-only chat across Träger: its participants may work for
+   * different Träger (recipient scope PLATFORM) and the tenant filter would hide the others from a
+   * plain lookup. Call it only for data of a chat the caller was already admitted to, and only for
+   * fields every participant sees; an ordinary chat is read exactly as before.
+   */
+  public <T> T readingAcrossTraeger(Chat chat, Supplier<T> read) {
+    return concerns(chat) ? TenantContext.supplyAcrossTenants(read) : read.get();
+  }
+
+  /** Same for the technical session of a chat. */
+  public <T> T readingAcrossTraeger(Session session, Supplier<T> read) {
+    return TenantContext.supplyAcrossTenants(() -> concerns(session))
+        ? TenantContext.supplyAcrossTenants(read)
+        : read.get();
+  }
+
+  /** Same for a chat known by its id only. */
+  public <T> T readingAcrossTraegerOfChat(Long chatId, Supplier<T> read) {
+    var membersOnly =
+        chatId != null && chatRepository.findById(chatId).map(Chat::isMembersOnly).orElse(false);
+    return membersOnly ? TenantContext.supplyAcrossTenants(read) : read.get();
+  }
 
   /** Whether the chat is a members-only chat. */
   public boolean concerns(Chat chat) {

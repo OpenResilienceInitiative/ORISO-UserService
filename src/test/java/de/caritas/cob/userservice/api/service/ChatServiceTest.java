@@ -82,6 +82,17 @@ class ChatServiceTest {
   @Mock
   private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
 
+  @org.junit.jupiter.api.BeforeEach
+  void readsRunDirectly() {
+    org.mockito.Mockito.lenient()
+        .when(
+            membersOnlyChatAccess.readingAcrossTraeger(
+                org.mockito.ArgumentMatchers.any(Chat.class),
+                org.mockito.ArgumentMatchers.<java.util.function.Supplier<Object>>any()))
+        .thenAnswer(
+            invocation -> invocation.<java.util.function.Supplier<Object>>getArgument(1).get());
+  }
+
   @Mock
   private de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation membersOnlyRevocation;
 
