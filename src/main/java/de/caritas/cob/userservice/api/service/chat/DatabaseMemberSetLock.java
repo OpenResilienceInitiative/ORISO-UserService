@@ -9,11 +9,13 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Collection;
 import java.util.HexFormat;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import javax.sql.DataSource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -29,20 +31,33 @@ public class DatabaseMemberSetLock implements MemberSetLock {
 
   private static final int STRIPES = 64;
   private static final String NAME_PREFIX = "oriso:subset:";
+  private static final int DEFAULT_MAX_CONNECTIONS = 8;
 
   private final DataSource dataSource;
   private final int waitSeconds;
+
+  /**
+   * Every holder keeps one pooled connection for the whole operation, and up to {@code STRIPES}
+   * could hold one at once. The bound keeps the pool (50 by default) free for everything else; a
+   * request that gets no place within the wait is answered busy.
+   */
+  private final Semaphore connections;
+
   private final ReentrantLock[] stripes = new ReentrantLock[STRIPES];
   private volatile Boolean advisoryLocks;
 
-  @Autowired
-  public DatabaseMemberSetLock(DataSource dataSource) {
-    this(dataSource, 15);
+  public DatabaseMemberSetLock(DataSource dataSource, int waitSeconds) {
+    this(dataSource, waitSeconds, DEFAULT_MAX_CONNECTIONS);
   }
 
-  public DatabaseMemberSetLock(DataSource dataSource, int waitSeconds) {
+  @Autowired
+  public DatabaseMemberSetLock(
+      DataSource dataSource,
+      @Value("${internal-chat.member-set-lock.wait-seconds:15}") int waitSeconds,
+      @Value("${internal-chat.member-set-lock.max-connections:8}") int maxConnections) {
     this.dataSource = dataSource;
     this.waitSeconds = waitSeconds;
+    this.connections = new Semaphore(Math.max(1, maxConnections));
     for (int i = 0; i < STRIPES; i++) {
       stripes[i] = new ReentrantLock();
     }
@@ -61,8 +76,10 @@ public class DatabaseMemberSetLock implements MemberSetLock {
       throw busy();
     }
     Connection connection = null;
+    var placeTaken = false;
     try {
       if (usesAdvisoryLocks()) {
+        placeTaken = takePlace();
         connection = dataSource.getConnection();
         takeAdvisoryLock(connection, name);
       }
@@ -73,16 +90,34 @@ public class DatabaseMemberSetLock implements MemberSetLock {
             releaseAdvisoryLock(held, name);
           }
         } finally {
+          if (held != null) {
+            connections.release();
+          }
           stripe.unlock();
         }
       };
     } catch (SQLException | RuntimeException failure) {
       closeQuietly(connection);
+      if (placeTaken) {
+        connections.release();
+      }
       stripe.unlock();
       if (failure instanceof CustomValidationHttpStatusException busy) {
         throw busy;
       }
       log.warn("The lock for a members-only room could not be taken: {}", failure.getMessage());
+      throw busy();
+    }
+  }
+
+  private boolean takePlace() {
+    try {
+      if (!connections.tryAcquire(waitSeconds, TimeUnit.SECONDS)) {
+        throw busy();
+      }
+      return true;
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
       throw busy();
     }
   }
