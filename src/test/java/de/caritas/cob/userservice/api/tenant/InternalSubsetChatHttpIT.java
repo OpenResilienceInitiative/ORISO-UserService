@@ -937,6 +937,25 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void theCreatorSeesTheNameOfAColleagueAdmittedFromAnotherTraeger() throws Exception {
+    theTraegerScopeIs("PLATFORM");
+    assertThat(openRoom(creator, otherTraeger, sameCentre).statusCode()).isEqualTo(201);
+
+    var opened = sessionListOf(creator);
+
+    assertThat(opened.statusCode()).as(opened.body()).isEqualTo(200);
+    var shown = new java.util.HashMap<String, String>();
+    for (var participant :
+        java.util.Objects.requireNonNull(
+            JSON.readTree(opened.body()).findValue("participants"), opened.body())) {
+      shown.put(participant.get("consultantId").asText(), participant.get("displayName").asText());
+    }
+    assertThat(shown.get(otherTraeger.getId()))
+        .isEqualTo("Synthetic " + otherTraeger.getLastName());
+    assertThat(shown.get(sameCentre.getId())).isEqualTo("Synthetic " + sameCentre.getLastName());
+  }
+
+  @Test
   void noParticipantCanReassignTheCaseOfAMembersOnlyChatAndNobodyIsTakenOutOfTheRoom()
       throws Exception {
     var created = openRoom(creator, sameCentre, anotherSameCentre);

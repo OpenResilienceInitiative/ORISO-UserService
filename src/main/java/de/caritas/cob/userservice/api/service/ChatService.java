@@ -373,10 +373,18 @@ public class ChatService {
   }
 
   private List<GroupChatParticipantDTO> getSeriesParticipants(Chat chat) {
+    // The people in a members-only chat may work for another Traeger, whom the tenant filter hides
+    // from this lookup; the chat was loaded for a participant already, and only the name and
+    // avatar every participant sees are read.
+    var acrossTraeger = membersOnlyChatAccess.concerns(chat);
     return groupChatParticipantRepository.findBySeriesId(chat.getId()).stream()
         .map(
             participant -> {
-              var consultant = consultantService.getConsultant(participant.getConsultantId());
+              var consultant =
+                  acrossTraeger
+                      ? TenantContext.supplyAcrossTenants(
+                          () -> consultantService.getConsultant(participant.getConsultantId()))
+                      : consultantService.getConsultant(participant.getConsultantId());
               return new GroupChatParticipantDTO()
                   .consultantId(participant.getConsultantId())
                   .role(GroupChatParticipantDTO.RoleEnum.fromValue(participant.getRole().name()))
