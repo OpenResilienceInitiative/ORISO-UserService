@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.chat;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
@@ -49,6 +50,32 @@ class GroupChatRoleServiceTest {
         () -> roleService.changeRole(42L, "owner", "owner", ParticipantRole.CO_MODERATOR));
 
     verify(participantRepository, never()).save(owner);
+  }
+
+  @Test
+  void demotingAnOwnerWhileAnotherRemainsPassesThePrimaryOwnershipOn() {
+    var actor = participant(42L, "owner", ParticipantRole.OWNER);
+    var target = participant(42L, "other", ParticipantRole.OWNER);
+    var series = org.mockito.Mockito.mock(Chat.class);
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(actor, target));
+    when(chatRepository.findById(42L)).thenReturn(java.util.Optional.of(series));
+
+    roleService.changeRole(42L, "owner", "other", ParticipantRole.CO_MODERATOR);
+
+    assertThat(target.getRole()).isEqualTo(ParticipantRole.CO_MODERATOR);
+    verify(revocation).passOwnershipOn(series, "other");
+  }
+
+  @Test
+  void changingTheRoleOfANonOwnerDoesNotTouchTheOwnership() {
+    var actor = participant(42L, "owner", ParticipantRole.OWNER);
+    var target = participant(42L, "other", ParticipantRole.CO_MODERATOR);
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(actor, target));
+
+    roleService.changeRole(42L, "owner", "other", ParticipantRole.OWNER);
+    roleService.changeRole(42L, "owner", "other", ParticipantRole.PARTICIPANT);
+
+    verify(revocation, never()).passOwnershipOn(any(), any());
   }
 
   @Test

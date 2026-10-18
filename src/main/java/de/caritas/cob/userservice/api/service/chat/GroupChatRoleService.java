@@ -58,8 +58,16 @@ public class GroupChatRoleService {
       }
     }
 
+    var demotedOwner =
+        target.getRole() == ParticipantRole.OWNER && newRole != ParticipantRole.OWNER;
     target.setRole(newRole);
     participantRepository.save(target);
+    if (demotedOwner) {
+      // The chat must not keep naming someone who is no longer an owner as its primary owner.
+      chatRepository
+          .findById(seriesId)
+          .ifPresent(series -> revocation.passOwnershipOn(series, targetConsultantId));
+    }
   }
 
   @Transactional
