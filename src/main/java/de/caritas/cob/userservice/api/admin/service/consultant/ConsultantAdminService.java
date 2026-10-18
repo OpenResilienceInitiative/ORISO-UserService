@@ -236,6 +236,10 @@ public class ConsultantAdminService {
     pictureStore.removeForConsultantDeletion(consultantId);
     consultant.setStatus(ConsultantStatus.IN_DELETION);
     this.consultantRepository.save(consultant);
+
+    // Last: Keycloak is not rolled back with this transaction, so the login is only taken away
+    // once nothing that can still fail (the strict leaves of the private rooms) is left.
+    this.consultantPreDeletionService.deactivateIdentity(consultant);
   }
 
   public void pauseConsultantDeletion(

@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -439,5 +440,37 @@ public class ConsultantAdminServiceTest {
     verify(pictureStore).removeForConsultantDeletion("id");
     verify(consultant, times(1)).setStatus(ConsultantStatus.IN_DELETION);
     verify(this.consultantRepository, times(1)).save(consultant);
+  }
+
+  @Test
+  void markConsultantForDeletion_Should_leavePrivateRoomsBeforeTheIdentityIsDeactivated() {
+    Consultant consultant = mock(Consultant.class);
+    when(pictureStore.lockActiveConsultant(any())).thenReturn(consultant);
+
+    this.consultantAdminService.markConsultantForDeletion("id", false);
+
+    var order = inOrder(consultantPreDeletionService, membersOnlyRevocation);
+    order
+        .verify(consultantPreDeletionService)
+        .performPreDeletionSteps(eq(consultant), any(), any());
+    order.verify(membersOnlyRevocation).revokeAllAccessOf(consultant);
+    order.verify(consultantPreDeletionService).deactivateIdentity(consultant);
+  }
+
+  @Test
+  void markConsultantForDeletion_Should_notDeactivateTheIdentity_When_aPrivateRoomCannotBeLeft() {
+    Consultant consultant = mock(Consultant.class);
+    when(pictureStore.lockActiveConsultant(any())).thenReturn(consultant);
+    org.mockito.Mockito.doThrow(new IllegalStateException("502"))
+        .when(membersOnlyRevocation)
+        .revokeAllAccessOf(consultant);
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> this.consultantAdminService.markConsultantForDeletion("id", false));
+
+    // Keycloak cannot be rolled back with the transaction: it is only changed once nothing can
+    // fail.
+    verify(consultantPreDeletionService, never()).deactivateIdentity(any());
   }
 }

@@ -1075,6 +1075,36 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void repeatingADeletionThatFailedAfterTheRoomWasLeftTreatsAnAlreadyLeftRoomAsDone()
+      throws Exception {
+    var created = openRoom(creator, sameCentre, anotherSameCentre);
+    var chatId = Long.parseLong(field(created, "chatId"));
+    var roomId = field(created, "matrixRoomId");
+    // A first attempt left the room in Matrix; its transaction rolled back afterwards.
+    synapse.leaveDirectly(roomId, matrix(sameCentre));
+
+    revokeInTransaction(sameCentre);
+
+    assertThat(participantsOf(storedChat(chatId)))
+        .containsExactlyInAnyOrder(creator.getId(), anotherSameCentre.getId());
+    assertThat(synapse.joined(roomId)).doesNotContain(matrix(sameCentre));
+  }
+
+  @Test
+  void repeatingADeletionThatFailedAfterTheRoomWasPurgedTreatsAGoneRoomAsDone() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = Long.parseLong(field(created, "chatId"));
+    var roomId = field(created, "matrixRoomId");
+    revokeInTransaction(sameCentre);
+    // A first attempt purged the room of the last member; its transaction rolled back afterwards.
+    synapse.purgeDirectly(roomId);
+
+    revokeInTransaction(creator);
+
+    assertThat(Tenants.acrossAll(() -> chats.findById(chatId))).isEmpty();
+  }
+
+  @Test
   void theCaseOfADeletedAssigneeGoesToARemainingActiveParticipantAndIsNotDeleted()
       throws Exception {
     var created = openRoom(creator, sameCentre, anotherSameCentre);
@@ -1722,6 +1752,16 @@ class InternalSubsetChatHttpIT {
 
     synchronized void joinDirectly(String roomId, String matrixUserId) {
       rooms.get(roomId).joined.add(matrixUserId);
+    }
+
+    /** Matrix state a failed deletion leaves behind: the member is out of the room already. */
+    synchronized void leaveDirectly(String roomId, String matrixUserId) {
+      rooms.get(roomId).joined.remove(matrixUserId);
+    }
+
+    /** Matrix state a failed deletion leaves behind: the room is purged already. */
+    synchronized void purgeDirectly(String roomId) {
+      rooms.remove(roomId);
     }
 
     synchronized void refuseInvitationOf(String matrixUserId) {
