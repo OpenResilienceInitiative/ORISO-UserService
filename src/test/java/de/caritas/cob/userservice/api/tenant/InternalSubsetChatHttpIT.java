@@ -983,6 +983,55 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void aDeletedOwnerPassesTheChatToARemainingParticipantInsteadOfLeavingItOwnerless()
+      throws Exception {
+    var created = openRoom(creator, sameCentre, anotherSameCentre);
+    var chatId = Long.parseLong(field(created, "chatId"));
+    var roomId = field(created, "matrixRoomId");
+
+    revokeInTransaction(creator);
+
+    var chat = storedChat(chatId);
+    assertThat(participantsOf(chat))
+        .containsExactlyInAnyOrder(sameCentre.getId(), anotherSameCentre.getId());
+    var owners =
+        Tenants.acrossAll(
+            () ->
+                participants.findBySeriesId(chatId).stream()
+                    .filter(p -> p.getRole() == GroupChatParticipant.ParticipantRole.OWNER)
+                    .map(GroupChatParticipant::getConsultantId)
+                    .toList());
+    assertThat(owners).hasSize(1);
+    assertThat(Tenants.acrossAll(() -> chats.findById(chatId).orElseThrow().getChatOwner().getId()))
+        .isEqualTo(owners.get(0))
+        .isIn(sameCentre.getId(), anotherSameCentre.getId());
+    assertThat(synapse.joined(roomId)).doesNotContain(matrix(creator));
+  }
+
+  @Test
+  void aDeletedOwnerWhoIsTheLastMemberRetiresTheChatAndPurgesItsRoom() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = Long.parseLong(field(created, "chatId"));
+    var roomId = field(created, "matrixRoomId");
+    revokeInTransaction(sameCentre);
+    // The creator, still the owner, is the last member now.
+    synapse.failPurge = true;
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> revokeInTransaction(creator))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class);
+    synapse.failPurge = false;
+    assertThat(Tenants.acrossAll(() -> chats.findById(chatId))).as("rolled back").isPresent();
+    assertThat(participantsOf(storedChat(chatId))).containsExactly(creator.getId());
+
+    revokeInTransaction(creator);
+
+    assertThat(Tenants.acrossAll(() -> chats.findById(chatId))).isEmpty();
+    assertThat(Tenants.acrossAll(() -> participants.findBySeriesId(chatId))).isEmpty();
+    assertThat(synapse.hasRoom(roomId)).as("the room is purged").isFalse();
+  }
+
+  @Test
   void theCaseOfADeletedAssigneeGoesToARemainingActiveParticipantAndIsNotDeleted()
       throws Exception {
     var created = openRoom(creator, sameCentre, anotherSameCentre);
@@ -1464,6 +1513,17 @@ class InternalSubsetChatHttpIT {
 
   private static String matrix(Consultant consultant) {
     return consultant.getMatrixUserId();
+  }
+
+  private void revokeInTransaction(Consultant leaving) {
+    var transaction = new org.springframework.transaction.support.TransactionTemplate(txManager);
+    Tenants.acrossAll(
+        () ->
+            transaction.execute(
+                status -> {
+                  revocation.revokeAllAccessOf(leaving);
+                  return null;
+                }));
   }
 
   private Chat storedChat(Long chatId) {

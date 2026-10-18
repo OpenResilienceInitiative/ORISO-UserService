@@ -1,5 +1,8 @@
 package de.caritas.cob.userservice.api.service.chat;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
+
+import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
@@ -17,6 +20,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -51,6 +55,7 @@ public class MembersOnlyRevocation {
   private final SessionSupervisorRepository supervisorRepository;
   private final GroupChatMembershipService membershipService;
   private final ChatRepository chatRepository;
+  private final MatrixChatShutdownService shutdownService;
 
   /**
    * Call before the participation of {@code leaving} is deleted, in the same transaction. Does
@@ -124,7 +129,7 @@ public class MembersOnlyRevocation {
 
   /** The remaining active participant who takes a case over, an owner first. */
   private Optional<Consultant> successorOf(
-      java.util.List<GroupChatParticipant> participants, String leavingConsultantId) {
+      List<GroupChatParticipant> participants, String leavingConsultantId) {
     return participants.stream()
         .filter(member -> !leavingConsultantId.equals(member.getConsultantId()))
         .sorted(Comparator.comparing(member -> member.getRole() == ParticipantRole.OWNER ? 0 : 1))
@@ -156,11 +161,82 @@ public class MembersOnlyRevocation {
       if (series.isEmpty()) {
         continue;
       }
-      revokeAccessOf(series.get(), participation);
+      var chat = series.get();
+      revokeAccessOf(chat, participation);
       participantRepository.delete(participation);
-      membershipService.removeParticipantFromRoom(series.get(), leaving.getMatrixUserId());
+      if (ownedBy(chat, participation)) {
+        var successor = nextOwnerOf(chat, leaving.getId());
+        if (successor.isEmpty()) {
+          // Nobody is left to own it: the chat is retired like a deleted one, the strict purge of
+          // its room (which removes the leaving member as well) last.
+          retire(chat);
+          continue;
+        }
+        passOwnershipTo(chat, successor.get());
+      }
+      membershipService.removeParticipantFromRoom(chat, leaving.getMatrixUserId());
     }
   }
+
+  private static boolean ownedBy(Chat chat, GroupChatParticipant participation) {
+    return participation.getRole() == ParticipantRole.OWNER
+        || (chat.getChatOwner() != null
+            && participation.getConsultantId().equals(chat.getChatOwner().getId()));
+  }
+
+  /**
+   * The remaining active participant who takes a chat over: an owner, else a co-moderator, else the
+   * longest-standing participant (the lowest id). Same database-only change as a transfer of
+   * primary ownership; Matrix power levels are not touched.
+   */
+  private Optional<OwnerCandidate> nextOwnerOf(Chat chat, String leavingConsultantId) {
+    return TenantContext.supplyAcrossTenants(
+        () ->
+            participantRepository.findBySeriesId(chat.getId()).stream()
+                .filter(member -> !leavingConsultantId.equals(member.getConsultantId()))
+                .sorted(
+                    Comparator.comparing((GroupChatParticipant member) -> rank(member.getRole()))
+                        .thenComparing(
+                            GroupChatParticipant::getId,
+                            Comparator.nullsLast(Comparator.naturalOrder())))
+                .flatMap(
+                    member ->
+                        consultantRepository
+                            .findByIdAndDeleteDateIsNull(member.getConsultantId())
+                            .map(account -> new OwnerCandidate(member, account))
+                            .stream())
+                .findFirst());
+  }
+
+  private static int rank(ParticipantRole role) {
+    return role == ParticipantRole.OWNER ? 0 : role == ParticipantRole.CO_MODERATOR ? 1 : 2;
+  }
+
+  private void passOwnershipTo(Chat chat, OwnerCandidate successor) {
+    TenantContext.supplyAcrossTenants(
+        () -> {
+          successor.participation().setRole(ParticipantRole.OWNER);
+          participantRepository.save(successor.participation());
+          chat.setChatOwner(successor.account());
+          chat.setUpdateDate(nowInUtc());
+          return chatRepository.save(chat);
+        });
+  }
+
+  private void retire(Chat chat) {
+    TenantContext.supplyAcrossTenants(
+        () -> {
+          retireCaseOf(chat);
+          participantRepository.deleteBySeriesId(chat.getId());
+          chatRepository.delete(chat);
+          return null;
+        });
+    // Last, in the same transaction: a room that cannot be purged answers 502 and rolls the
+    // deletion of the consultant back.
+    shutdownService.shutdownRoom(chat);
+  }
+
+  private record OwnerCandidate(GroupChatParticipant participation, Consultant account) {}
 
   /**
    * Call when a consultant is deleted while still the assignee of the technical session of a

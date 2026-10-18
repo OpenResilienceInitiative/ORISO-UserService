@@ -38,9 +38,11 @@ class MembersOnlyRevocationTest {
   private final SessionSupervisorRepository supervisions = mock(SessionSupervisorRepository.class);
   private final de.caritas.cob.userservice.api.port.out.ChatRepository chats =
       mock(de.caritas.cob.userservice.api.port.out.ChatRepository.class);
+  private final de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService shutdown =
+      mock(de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService.class);
   private final MembersOnlyRevocation revocation =
       new MembersOnlyRevocation(
-          sessions, consultants, participants, supervisions, membership, chats);
+          sessions, consultants, participants, supervisions, membership, chats, shutdown);
 
   private final Consultant creator = consultant("creator");
   private final Consultant owner = consultant("owner");
@@ -300,6 +302,146 @@ class MembersOnlyRevocationTest {
 
     assertThat(revocation.keepCaseOnDeletionOf(session, creator)).isFalse();
     verify(sessions, never()).save(session);
+  }
+
+  @Test
+  void aDeletedOwnerPassesTheChatToTheLongestStandingActiveParticipant() {
+    var deleted = consultant("owner");
+    deleted.setMatrixUserId("@owner:oriso");
+    var held = stored(1L, "owner", ParticipantRole.OWNER);
+    var older = stored(2L, "creator", ParticipantRole.PARTICIPANT);
+    var newer = stored(3L, "member", ParticipantRole.PARTICIPANT);
+    when(participants.findByConsultantId("owner")).thenReturn(List.of(held));
+    when(participants.findBySeriesId(5L)).thenReturn(List.of(newer, held, older));
+    when(chats.findById(5L)).thenReturn(Optional.of(chat));
+    when(consultants.findByIdAndDeleteDateIsNull("creator")).thenReturn(Optional.of(creator));
+
+    revocation.revokeAllAccessOf(deleted);
+
+    assertThat(older.getRole()).isEqualTo(ParticipantRole.OWNER);
+    assertThat(newer.getRole()).isEqualTo(ParticipantRole.PARTICIPANT);
+    verify(participants).save(older);
+    verify(chat).setChatOwner(creator);
+    verify(chats).save(chat);
+    verify(participants).delete(held);
+    verify(membership).removeParticipantFromRoom(chat, "@owner:oriso");
+    verify(chats, never()).delete(chat);
+    verifyNoInteractions(shutdown);
+  }
+
+  @Test
+  void aCoModeratorIsPromotedBeforeAnOlderPlainParticipant() {
+    var deleted = consultant("owner");
+    var held = stored(1L, "owner", ParticipantRole.OWNER);
+    var plain = stored(2L, "creator", ParticipantRole.PARTICIPANT);
+    var moderator = stored(3L, "member", ParticipantRole.CO_MODERATOR);
+    when(participants.findByConsultantId("owner")).thenReturn(List.of(held));
+    when(participants.findBySeriesId(5L)).thenReturn(List.of(held, plain, moderator));
+    when(chats.findById(5L)).thenReturn(Optional.of(chat));
+    when(consultants.findByIdAndDeleteDateIsNull("creator")).thenReturn(Optional.of(creator));
+    when(consultants.findByIdAndDeleteDateIsNull("member")).thenReturn(Optional.of(member));
+
+    revocation.revokeAllAccessOf(deleted);
+
+    assertThat(moderator.getRole()).isEqualTo(ParticipantRole.OWNER);
+    assertThat(plain.getRole()).isEqualTo(ParticipantRole.PARTICIPANT);
+    verify(chat).setChatOwner(member);
+  }
+
+  @Test
+  void aParticipantWhoIsNoLongerAnActiveConsultantIsNotMadeOwner() {
+    var deleted = consultant("owner");
+    var held = stored(1L, "owner", ParticipantRole.OWNER);
+    var gone = stored(2L, "creator", ParticipantRole.CO_MODERATOR);
+    var active = stored(3L, "member", ParticipantRole.PARTICIPANT);
+    when(participants.findByConsultantId("owner")).thenReturn(List.of(held));
+    when(participants.findBySeriesId(5L)).thenReturn(List.of(held, gone, active));
+    when(chats.findById(5L)).thenReturn(Optional.of(chat));
+    when(consultants.findByIdAndDeleteDateIsNull("creator")).thenReturn(Optional.empty());
+    when(consultants.findByIdAndDeleteDateIsNull("member")).thenReturn(Optional.of(member));
+
+    revocation.revokeAllAccessOf(deleted);
+
+    assertThat(active.getRole()).isEqualTo(ParticipantRole.OWNER);
+    assertThat(gone.getRole()).isEqualTo(ParticipantRole.CO_MODERATOR);
+    verify(chat).setChatOwner(member);
+  }
+
+  @Test
+  void aDeletedOwnerWhoIsTheLastMemberRetiresTheChatAndPurgesItsRoomStrictly() {
+    var deleted = consultant("owner");
+    deleted.setMatrixUserId("@owner:oriso");
+    var held = stored(1L, "owner", ParticipantRole.OWNER);
+    session.setId(9L);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    when(participants.findByConsultantId("owner")).thenReturn(List.of(held));
+    when(participants.findBySeriesId(5L)).thenReturn(List.of(held));
+    when(chats.findById(5L)).thenReturn(Optional.of(chat));
+
+    revocation.revokeAllAccessOf(deleted);
+
+    assertThat(session.getStatus()).isEqualTo(Session.SessionStatus.DONE);
+    var order = org.mockito.Mockito.inOrder(participants, chats, shutdown);
+    order.verify(participants).deleteBySeriesId(5L);
+    order.verify(chats).delete(chat);
+    order.verify(shutdown).shutdownRoom(chat);
+    verify(chat, never()).setChatOwner(any());
+  }
+
+  @Test
+  void aDeletedOwnerWithOnlyInactiveParticipantsLeftRetiresTheChatToo() {
+    var deleted = consultant("owner");
+    var held = stored(1L, "owner", ParticipantRole.OWNER);
+    var gone = stored(2L, "member", ParticipantRole.CO_MODERATOR);
+    session.setId(9L);
+    when(participants.findByConsultantId("owner")).thenReturn(List.of(held));
+    when(participants.findBySeriesId(5L)).thenReturn(List.of(held, gone));
+    when(chats.findById(5L)).thenReturn(Optional.of(chat));
+    when(consultants.findByIdAndDeleteDateIsNull("member")).thenReturn(Optional.empty());
+
+    revocation.revokeAllAccessOf(deleted);
+
+    verify(participants).deleteBySeriesId(5L);
+    verify(chats).delete(chat);
+    verify(shutdown).shutdownRoom(chat);
+  }
+
+  @Test
+  void aRoomThatCannotBePurgedFailsTheDeletionOfTheLastOwnerSoItRollsBack() {
+    var deleted = consultant("owner");
+    var held = stored(1L, "owner", ParticipantRole.OWNER);
+    when(participants.findByConsultantId("owner")).thenReturn(List.of(held));
+    when(participants.findBySeriesId(5L)).thenReturn(List.of(held));
+    when(chats.findById(5L)).thenReturn(Optional.of(chat));
+    org.mockito.Mockito.doThrow(
+            new CustomValidationHttpStatusException(
+                HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED, HttpStatus.BAD_GATEWAY))
+        .when(shutdown)
+        .shutdownRoom(chat);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        CustomValidationHttpStatusException.class, () -> revocation.revokeAllAccessOf(deleted));
+  }
+
+  @Test
+  void aDeletedNonOwnerDoesNotTouchTheOwnershipOfTheChat() {
+    var deleted = consultant("member");
+    var held = stored(1L, "member", ParticipantRole.CO_MODERATOR);
+    when(participants.findByConsultantId("member")).thenReturn(List.of(held));
+    when(chats.findById(5L)).thenReturn(Optional.of(chat));
+
+    revocation.revokeAllAccessOf(deleted);
+
+    verify(chat, never()).setChatOwner(any());
+    verify(chats, never()).save(any());
+    verify(chats, never()).delete(any());
+    verifyNoInteractions(shutdown);
+  }
+
+  private static GroupChatParticipant stored(Long id, String consultantId, ParticipantRole role) {
+    var participant = participant(consultantId, role);
+    participant.setId(id);
+    return participant;
   }
 
   private List<GroupChatParticipant> participantsOfTheChat() {
