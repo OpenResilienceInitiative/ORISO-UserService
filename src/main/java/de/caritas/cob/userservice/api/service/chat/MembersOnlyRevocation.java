@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
+import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -49,6 +50,7 @@ public class MembersOnlyRevocation {
   private final GroupChatParticipantRepository participantRepository;
   private final SessionSupervisorRepository supervisorRepository;
   private final GroupChatMembershipService membershipService;
+  private final ChatRepository chatRepository;
 
   /**
    * Call before the participation of {@code leaving} is deleted, in the same transaction. Does
@@ -129,6 +131,35 @@ public class MembersOnlyRevocation {
         .map(member -> consultantRepository.findByIdAndDeleteDateIsNull(member.getConsultantId()))
         .flatMap(Optional::stream)
         .findFirst();
+  }
+
+  /**
+   * Call when a consultant is marked for deletion, inside that transaction and while their chat
+   * account still works: they leave every members-only chat they take part in exactly as if they
+   * had left or been removed (supervision and side room first, the participation, the main room
+   * last). A Matrix leave that fails answers 502 and rolls the whole deletion back, so a departing
+   * counsellor never keeps reading private rooms until the account is finally deleted. Ordinary
+   * chats are left alone.
+   */
+  public void revokeAllAccessOf(Consultant leaving) {
+    if (leaving == null || leaving.getId() == null) {
+      return;
+    }
+    var participations =
+        TenantContext.supplyAcrossTenants(
+            () -> participantRepository.findByConsultantId(leaving.getId()));
+    for (var participation : participations) {
+      var series =
+          TenantContext.supplyAcrossTenants(
+                  () -> chatRepository.findById(participation.getSeriesId()))
+              .filter(Chat::isMembersOnly);
+      if (series.isEmpty()) {
+        continue;
+      }
+      revokeAccessOf(series.get(), participation);
+      participantRepository.delete(participation);
+      membershipService.removeParticipantFromRoom(series.get(), leaving.getMatrixUserId());
+    }
   }
 
   /**

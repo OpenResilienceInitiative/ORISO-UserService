@@ -102,6 +102,7 @@ class InternalSubsetChatHttpIT {
   @Autowired private TenantFixtures fixtures;
   @Autowired private ChatRepository chats;
   @Autowired private SessionRepository sessions;
+  @Autowired private org.springframework.transaction.PlatformTransactionManager txManager;
   @Autowired private de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation revocation;
   @Autowired private GroupChatParticipantRepository participants;
   @Autowired private JdbcTemplate database;
@@ -939,6 +940,46 @@ class InternalSubsetChatHttpIT {
         .isEqualTo(creator.getId());
     assertThat(participantsOf(storedChat(Long.parseLong(chatId))))
         .containsExactlyInAnyOrder(creator.getId(), sameCentre.getId(), anotherSameCentre.getId());
+  }
+
+  @Test
+  void aDeletedConsultantLeavesThePrivateRoomAndAFailedLeaveRollsTheDeletionBack()
+      throws Exception {
+    var created = openRoom(creator, sameCentre, anotherSameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var transaction = new org.springframework.transaction.support.TransactionTemplate(txManager);
+    synapse.roomsRefusingLeave.add(roomId);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                Tenants.acrossAll(
+                    () ->
+                        transaction.execute(
+                            status -> {
+                              revocation.revokeAllAccessOf(sameCentre);
+                              return null;
+                            })))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class);
+
+    // Nothing was revoked: the participation is back and so is the room membership.
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId)))).contains(sameCentre.getId());
+    assertThat(synapse.joined(roomId)).contains(matrix(sameCentre));
+
+    synapse.roomsRefusingLeave.clear();
+    Tenants.acrossAll(
+        () ->
+            transaction.execute(
+                status -> {
+                  revocation.revokeAllAccessOf(sameCentre);
+                  return null;
+                }));
+
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId))))
+        .containsExactlyInAnyOrder(creator.getId(), anotherSameCentre.getId());
+    assertThat(synapse.joined(roomId)).doesNotContain(matrix(sameCentre));
   }
 
   @Test

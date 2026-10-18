@@ -377,6 +377,20 @@ public class ConsultantAdminServiceTest {
   }
 
   @Test
+  void
+      markConsultantForDeletion_Should_RevokeEveryMembersOnlyParticipation_BeforeTheAccountIsMarked() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    when(pictureStore.lockActiveConsultant("c-1")).thenReturn(consultant);
+
+    consultantAdminService.markConsultantForDeletion("c-1", false);
+
+    var order = inOrder(membersOnlyRevocation, deletionLifecycleService);
+    order.verify(membersOnlyRevocation).revokeAllAccessOf(consultant);
+    order.verify(deletionLifecycleService).beginConsultantDeletion(any(), any());
+  }
+
+  @Test
   void pauseConsultantDeletion_Should_ThrowNotFound_When_ConsultantNotFound() {
     when(consultantRepository.findById("c-1")).thenReturn(Optional.empty());
     assertThrows(

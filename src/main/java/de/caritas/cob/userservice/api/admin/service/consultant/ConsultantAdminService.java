@@ -228,6 +228,9 @@ public class ConsultantAdminService {
           consultantId);
     }
 
+    // Private rooms are left now, in this transaction and while the chat account still works.
+    membersOnlyRevocation.revokeAllAccessOf(consultant);
+
     consultant.setDeleteDate(deletedAt);
     deletionLifecycleService.beginConsultantDeletion(consultant, authenticatedUser.getUserId());
     pictureStore.removeForConsultantDeletion(consultantId);

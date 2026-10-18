@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -35,8 +36,11 @@ class MembersOnlyRevocationTest {
       mock(GroupChatParticipantRepository.class);
   private final GroupChatMembershipService membership = mock(GroupChatMembershipService.class);
   private final SessionSupervisorRepository supervisions = mock(SessionSupervisorRepository.class);
+  private final de.caritas.cob.userservice.api.port.out.ChatRepository chats =
+      mock(de.caritas.cob.userservice.api.port.out.ChatRepository.class);
   private final MembersOnlyRevocation revocation =
-      new MembersOnlyRevocation(sessions, consultants, participants, supervisions, membership);
+      new MembersOnlyRevocation(
+          sessions, consultants, participants, supervisions, membership, chats);
 
   private final Consultant creator = consultant("creator");
   private final Consultant owner = consultant("owner");
@@ -258,6 +262,35 @@ class MembersOnlyRevocationTest {
     assertThat(kept).isTrue();
     assertThat(session.getStatus()).isEqualTo(Session.SessionStatus.DONE);
     verify(sessions).save(session);
+  }
+
+  @Test
+  void aDeletedConsultantLeavesEveryMembersOnlyChatSideRoomFirstMainRoomLast() {
+    session.setId(9L);
+    var deleted = consultant("member");
+    deleted.setMatrixUserId("@member:oriso");
+    var supervision = supervisionInSideRoom("!side:oriso", "@member:oriso");
+    when(supervisions.findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(9L, "member"))
+        .thenReturn(Optional.of(supervision));
+    var held = participant("member", ParticipantRole.CO_MODERATOR);
+    held.setId(1L);
+    var ordinarySeries = mock(Chat.class);
+    when(ordinarySeries.getId()).thenReturn(6L);
+    var inOrdinary = participant("member", ParticipantRole.PARTICIPANT);
+    inOrdinary.setSeriesId(6L);
+    inOrdinary.setId(2L);
+    when(participants.findByConsultantId("member")).thenReturn(List.of(held, inOrdinary));
+    when(chats.findById(5L)).thenReturn(Optional.of(chat));
+    when(chats.findById(6L)).thenReturn(Optional.of(ordinarySeries));
+
+    revocation.revokeAllAccessOf(deleted);
+
+    var order = org.mockito.Mockito.inOrder(membership, participants);
+    order.verify(membership).removeMemberFromRoomOrFail("!side:oriso", "@member:oriso");
+    order.verify(participants).delete(held);
+    order.verify(membership).removeParticipantFromRoom(chat, "@member:oriso");
+    verify(participants, never()).delete(inOrdinary);
+    verify(membership, never()).removeParticipantFromRoom(eq(ordinarySeries), any());
   }
 
   @Test
