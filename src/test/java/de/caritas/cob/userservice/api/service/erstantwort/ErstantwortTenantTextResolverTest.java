@@ -139,4 +139,31 @@ class ErstantwortTenantTextResolverTest {
     assertThat(new ErstantwortTenantTextResolver(client).resolve(5L, "de", false).getGreeting())
         .isNull();
   }
+
+  @Test
+  void slowTenantServiceFallsBackWithinTheBound() {
+    var client = mock(TenantErstantwortContentClient.class);
+    when(client.readContent(anyLong()))
+        .thenAnswer(
+            call -> {
+              Thread.sleep(5_000);
+              return new MultilingualContent().erstantwortGreeting(Map.of("de", "<p>late</p>"));
+            });
+    var resolver = new ErstantwortTenantTextResolver(client, 200);
+    var started = System.nanoTime();
+    var texts = resolver.resolve(1L, "de", false);
+    var elapsedMs = (System.nanoTime() - started) / 1_000_000;
+    assertThat(texts.getGreeting()).isNull();
+    assertThat(elapsedMs).isLessThan(2_000);
+  }
+
+  @Test
+  void fastTenantServiceStillResolvesUnderTheBound() {
+    var client = mock(TenantErstantwortContentClient.class);
+    when(client.readContent(7L))
+        .thenReturn(new MultilingualContent().erstantwortGreeting(Map.of("de", "<p>Hallo</p>")));
+    assertThat(
+            new ErstantwortTenantTextResolver(client, 2_000).resolve(7L, "de", false).getGreeting())
+        .isEqualTo("Hallo");
+  }
 }

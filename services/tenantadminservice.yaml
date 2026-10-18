@@ -2299,6 +2299,8 @@ components:
             type: string
         erstantwortResponseDeadlineDays:
           type: integer
+          minimum: 1
+          maximum: 30
         dataProtectionContactTemplate:
           type: object
           additionalProperties:

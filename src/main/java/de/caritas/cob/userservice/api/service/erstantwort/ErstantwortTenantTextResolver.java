@@ -5,14 +5,22 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualContent;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.TextNode;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -24,28 +32,80 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ErstantwortTenantTextResolver {
 
   static final String META_SUFFIX = "__meta";
   static final int MAX_DEADLINE_DAYS = 30;
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
+  static final long DEFAULT_LOOKUP_TIMEOUT_MS = 2_000;
+  private static final AtomicInteger THREAD_NUMBER = new AtomicInteger();
+
+  /**
+   * The lookup runs after the enquiry is persisted, so it gets its own hard bound: Keycloak and
+   * TenantService each carry their own, longer HTTP timeouts, which would otherwise add up on the
+   * enquiry request. Worker threads are daemons and idle ones die; when all are busy the lookup is
+   * skipped (platform defaults) instead of queued.
+   */
+  private static final ThreadPoolExecutor LOOKUP_EXECUTOR =
+      new ThreadPoolExecutor(
+          0,
+          8,
+          30,
+          TimeUnit.SECONDS,
+          new SynchronousQueue<>(),
+          task -> {
+            var thread =
+                new Thread(task, "erstantwort-tenant-lookup-" + THREAD_NUMBER.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+          });
+
   private final @NonNull TenantErstantwortContentClient client;
+  private final long lookupTimeoutMs;
+
+  @Autowired
+  public ErstantwortTenantTextResolver(
+      @NonNull TenantErstantwortContentClient client,
+      @Value("${erstantwort.tenant-lookup.timeout-ms:" + DEFAULT_LOOKUP_TIMEOUT_MS + "}")
+          long lookupTimeoutMs) {
+    this.client = client;
+    this.lookupTimeoutMs = lookupTimeoutMs > 0 ? lookupTimeoutMs : DEFAULT_LOOKUP_TIMEOUT_MS;
+  }
+
+  public ErstantwortTenantTextResolver(@NonNull TenantErstantwortContentClient client) {
+    this(client, DEFAULT_LOOKUP_TIMEOUT_MS);
+  }
 
   public ErstantwortTenantTexts resolve(Long tenantId, String locale, boolean informal) {
     if (tenantId == null || tenantId <= 0) {
       return ErstantwortTenantTexts.none();
     }
     try {
-      var content = client.readContent(tenantId);
+      var content = readWithinBound(tenantId);
       return content == null ? ErstantwortTenantTexts.none() : resolve(content, locale, informal);
-    } catch (RuntimeException exception) {
+    } catch (RuntimeException | TimeoutException exception) {
       log.warn(
           "Erstantwort Träger texts unavailable for tenant {}, using platform defaults ({})",
           tenantId,
           exception.getClass().getSimpleName());
       return ErstantwortTenantTexts.none();
+    }
+  }
+
+  private MultilingualContent readWithinBound(Long tenantId) throws TimeoutException {
+    Future<MultilingualContent> lookup = LOOKUP_EXECUTOR.submit(() -> client.readContent(tenantId));
+    try {
+      return lookup.get(lookupTimeoutMs, TimeUnit.MILLISECONDS);
+    } catch (TimeoutException timeout) {
+      lookup.cancel(true);
+      throw timeout;
+    } catch (InterruptedException interrupted) {
+      lookup.cancel(true);
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while reading Träger texts", interrupted);
+    } catch (ExecutionException failed) {
+      throw new IllegalStateException(failed.getCause());
     }
   }
 
