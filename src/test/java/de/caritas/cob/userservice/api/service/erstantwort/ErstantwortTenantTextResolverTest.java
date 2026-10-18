@@ -6,9 +6,16 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualContent;
+import java.util.ArrayList;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 class ErstantwortTenantTextResolverTest {
 
@@ -117,8 +124,63 @@ class ErstantwortTenantTextResolverTest {
     var client = mock(TenantErstantwortContentClient.class);
     when(client.readContent(anyLong())).thenThrow(new IllegalStateException("down"));
     var texts = new ErstantwortTenantTextResolver(client).resolve(1L, "de", false);
-    assertThat(texts.getGreeting()).isNull();
-    assertThat(texts.getResponseDeadlineDays()).isNull();
+    assertThat(texts).isEqualTo(ErstantwortTenantTexts.none());
+  }
+
+  @Test
+  void failureLogNamesTheRootCauseWithoutMessageOrStackTrace() {
+    var logger = (Logger) LoggerFactory.getLogger(ErstantwortTenantTextResolver.class);
+    var appender = new ListAppender<ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      var client = mock(TenantErstantwortContentClient.class);
+      when(client.readContent(anyLong())).thenThrow(new IllegalArgumentException("secret-detail"));
+      new ErstantwortTenantTextResolver(client).resolve(3L, "de", false);
+      assertThat(appender.list).hasSize(1);
+      var event = appender.list.get(0);
+      assertThat(event.getFormattedMessage())
+          .contains("tenant 3")
+          .contains("IllegalArgumentException")
+          .doesNotContain("secret-detail");
+      assertThat(event.getThrowableProxy()).isNull();
+    } finally {
+      logger.detachAppender(appender);
+    }
+  }
+
+  @Test
+  void saturatedLookupPoolFallsBackWithoutThrowing() throws Exception {
+    var release = new CountDownLatch(1);
+    var started = new CountDownLatch(8);
+    var client = mock(TenantErstantwortContentClient.class);
+    when(client.readContent(anyLong()))
+        .thenAnswer(
+            call -> {
+              started.countDown();
+              release.await(30, TimeUnit.SECONDS);
+              return null;
+            });
+    var blockers = new ArrayList<Thread>();
+    try {
+      for (int i = 0; i < 8; i++) {
+        var blocker =
+            new Thread(
+                () -> new ErstantwortTenantTextResolver(client, 20_000).resolve(1L, "de", false));
+        blocker.setDaemon(true);
+        blocker.start();
+        blockers.add(blocker);
+      }
+      assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
+      var texts = new ErstantwortTenantTextResolver(client, 20_000).resolve(2L, "de", false);
+      assertThat(texts.getGreeting()).isNull();
+      assertThat(texts.getResponseDeadlineDays()).isNull();
+    } finally {
+      release.countDown();
+      for (var blocker : blockers) {
+        blocker.join(5_000);
+      }
+    }
   }
 
   @Test
@@ -154,7 +216,7 @@ class ErstantwortTenantTextResolverTest {
     var texts = resolver.resolve(1L, "de", false);
     var elapsedMs = (System.nanoTime() - started) / 1_000_000;
     assertThat(texts.getGreeting()).isNull();
-    assertThat(elapsedMs).isLessThan(2_000);
+    assertThat(elapsedMs).isLessThan(1_000);
   }
 
   @Test

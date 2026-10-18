@@ -88,9 +88,15 @@ public class ErstantwortTenantTextResolver {
       log.warn(
           "Erstantwort Träger texts unavailable for tenant {}, using platform defaults ({})",
           tenantId,
-          exception.getClass().getSimpleName());
+          rootCauseName(exception));
       return ErstantwortTenantTexts.none();
     }
+  }
+
+  /** Class name only: messages and stack traces from the client may carry tenant payloads. */
+  private static String rootCauseName(Exception exception) {
+    var cause = exception.getCause();
+    return (cause != null ? cause : exception).getClass().getSimpleName();
   }
 
   private MultilingualContent readWithinBound(Long tenantId) throws TimeoutException {
