@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.chat;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -146,6 +147,35 @@ class GroupChatRoleServiceTest {
     handOver
         .verify(groupChatMembershipService)
         .removeParticipantFromRoom(series, "@co-mod:matrix.example");
+  }
+
+  @Test
+  void anOwnerWhoLeavesWhileAnotherOwnerRemainsPassesThePrimaryOwnershipOn() {
+    var leaving = participant(42L, "owner", ParticipantRole.OWNER);
+    var other = participant(42L, "other", ParticipantRole.OWNER);
+    var series = org.mockito.Mockito.mock(Chat.class);
+    var consultant = org.mockito.Mockito.mock(Consultant.class);
+    when(series.getId()).thenReturn(42L);
+    when(consultant.getId()).thenReturn("owner");
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(leaving, other));
+
+    roleService.leaveSeries(series, consultant);
+
+    verify(revocation).passOwnershipOn(series, "owner");
+  }
+
+  @Test
+  void aCoModeratorWhoLeavesDoesNotTouchTheOwnership() {
+    var coModerator = participant(42L, "co-mod", ParticipantRole.CO_MODERATOR);
+    var series = org.mockito.Mockito.mock(Chat.class);
+    var consultant = org.mockito.Mockito.mock(Consultant.class);
+    when(series.getId()).thenReturn(42L);
+    when(consultant.getId()).thenReturn("co-mod");
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(coModerator));
+
+    roleService.leaveSeries(series, consultant);
+
+    verify(revocation, never()).passOwnershipOn(any(), any());
   }
 
   private GroupChatParticipant participant(

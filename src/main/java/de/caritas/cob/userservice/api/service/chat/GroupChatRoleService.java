@@ -153,6 +153,10 @@ public class GroupChatRoleService {
       }
       revocation.revokeAccessOf(series, leavingParticipant);
       participantRepository.delete(leavingParticipant);
+      if (leavingParticipant.getRole() == ParticipantRole.OWNER) {
+        // Another owner remains (checked above); the chat must not keep naming the one who left.
+        revocation.passOwnershipOn(series, consultant.getId());
+      }
     }
 
     groupChatMembershipService.removeParticipantFromRoom(series, consultant.getMatrixUserId());

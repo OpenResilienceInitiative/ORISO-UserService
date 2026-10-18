@@ -438,6 +438,43 @@ class MembersOnlyRevocationTest {
     verifyNoInteractions(shutdown);
   }
 
+  @Test
+  void thePrimaryOwnerWhoLeavesPassesTheChatToTheRemainingOwnerWithTheLowestId() {
+    var leaving = stored(1L, "owner", ParticipantRole.OWNER);
+    var laterOwner = stored(5L, "member", ParticipantRole.OWNER);
+    var earlierOwner = stored(3L, "creator", ParticipantRole.OWNER);
+    var coModerator = stored(2L, "other", ParticipantRole.CO_MODERATOR);
+    var primary = consultant("owner");
+    when(chat.getChatOwner()).thenReturn(primary);
+    when(participants.findBySeriesId(5L))
+        .thenReturn(List.of(leaving, laterOwner, coModerator, earlierOwner));
+    when(consultants.findByIdAndDeleteDateIsNull("creator")).thenReturn(Optional.of(creator));
+    when(consultants.findByIdAndDeleteDateIsNull("member")).thenReturn(Optional.of(member));
+
+    var someoneRemains = revocation.passOwnershipOn(chat, "owner");
+
+    assertThat(someoneRemains).isTrue();
+    verify(chat).setChatOwner(creator);
+    verify(chats).save(chat);
+    // Another owner remains, so nobody is promoted.
+    assertThat(coModerator.getRole()).isEqualTo(ParticipantRole.CO_MODERATOR);
+    verify(participants, never()).save(any());
+  }
+
+  @Test
+  void aLeavingOwnerWhoIsNotThePrimaryOwnerLeavesTheChatOwnerAlone() {
+    var leaving = stored(1L, "owner", ParticipantRole.OWNER);
+    var other = stored(2L, "member", ParticipantRole.OWNER);
+    when(chat.getChatOwner()).thenReturn(consultant("member"));
+    when(participants.findBySeriesId(5L)).thenReturn(List.of(leaving, other));
+    when(consultants.findByIdAndDeleteDateIsNull("member")).thenReturn(Optional.of(member));
+
+    assertThat(revocation.passOwnershipOn(chat, "owner")).isTrue();
+
+    verify(chat, never()).setChatOwner(any());
+    verify(chats, never()).save(any());
+  }
+
   private static GroupChatParticipant stored(Long id, String consultantId, ParticipantRole role) {
     var participant = participant(consultantId, role);
     participant.setId(id);

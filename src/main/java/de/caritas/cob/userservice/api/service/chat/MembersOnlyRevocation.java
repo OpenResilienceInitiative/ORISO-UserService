@@ -164,18 +164,46 @@ public class MembersOnlyRevocation {
       var chat = series.get();
       revokeAccessOf(chat, participation);
       participantRepository.delete(participation);
-      if (ownedBy(chat, participation)) {
-        var successor = nextOwnerOf(chat, leaving.getId());
-        if (successor.isEmpty()) {
-          // Nobody is left to own it: the chat is retired like a deleted one, the strict purge of
-          // its room (which removes the leaving member as well) last.
-          retire(chat);
-          continue;
-        }
-        passOwnershipTo(chat, successor.get());
+      if (ownedBy(chat, participation) && !passOwnershipOn(chat, leaving.getId())) {
+        // Nobody is left to own it: the chat is retired like a deleted one, the strict purge of
+        // its room (which removes the leaving member as well) last.
+        retire(chat);
+        continue;
       }
       membershipService.removeParticipantFromRoom(chat, leaving.getMatrixUserId());
     }
+  }
+
+  /**
+   * Call when an owner of a chat leaves or is deleted, in the same transaction: the remaining
+   * active participant who takes the chat over (an owner, else a co-moderator, else the
+   * longest-standing participant, the lowest id) becomes {@link Chat#getChatOwner()} when the
+   * leaving consultant was it, and an OWNER when no owner is left. Database only, like a transfer
+   * of primary ownership; Matrix power levels are not touched.
+   *
+   * @return {@code false} when nobody active remains to own the chat
+   */
+  public boolean passOwnershipOn(Chat chat, String leavingConsultantId) {
+    var next = nextOwnerOf(chat, leavingConsultantId);
+    if (next.isEmpty()) {
+      return false;
+    }
+    var successor = next.get();
+    TenantContext.supplyAcrossTenants(
+        () -> {
+          if (successor.participation().getRole() != ParticipantRole.OWNER) {
+            successor.participation().setRole(ParticipantRole.OWNER);
+            participantRepository.save(successor.participation());
+          }
+          var primary = chat.getChatOwner();
+          if (primary == null || leavingConsultantId.equals(primary.getId())) {
+            chat.setChatOwner(successor.account());
+            chat.setUpdateDate(nowInUtc());
+            chatRepository.save(chat);
+          }
+          return null;
+        });
+    return true;
   }
 
   private static boolean ownedBy(Chat chat, GroupChatParticipant participation) {
@@ -210,17 +238,6 @@ public class MembersOnlyRevocation {
 
   private static int rank(ParticipantRole role) {
     return role == ParticipantRole.OWNER ? 0 : role == ParticipantRole.CO_MODERATOR ? 1 : 2;
-  }
-
-  private void passOwnershipTo(Chat chat, OwnerCandidate successor) {
-    TenantContext.supplyAcrossTenants(
-        () -> {
-          successor.participation().setRole(ParticipantRole.OWNER);
-          participantRepository.save(successor.participation());
-          chat.setChatOwner(successor.account());
-          chat.setUpdateDate(nowInUtc());
-          return chatRepository.save(chat);
-        });
   }
 
   private void retire(Chat chat) {
