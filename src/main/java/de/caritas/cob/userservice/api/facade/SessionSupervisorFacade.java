@@ -352,9 +352,10 @@ public class SessionSupervisorFacade {
 
     // Remove the supervisor from BOTH rooms: the supervision side room (stored in
     // supervisor.matrixRoomId, ADR-008) and the client room they observed
-    // (session.matrixRoomId).
+    // (session.matrixRoomId). In a members-only chat the main room is the chat itself and the
+    // supervisor is a selected participant: only the side room is left there.
     String sideRoomId = supervisor.getMatrixRoomId();
-    String clientRoomId = session.getMatrixRoomId();
+    String clientRoomId = observedRoomOf(session);
     String supervisorMatrixUserId = supervisor.getSupervisorConsultant().getMatrixUserId();
     if (supervisorMatrixUserId != null
         && !supervisorMatrixUserId.isEmpty()
@@ -526,7 +527,7 @@ public class SessionSupervisorFacade {
         operator != null && operator.getMatrixUserId() != null
             ? matrixSynapseService.loginAsUserAccessToken(operator.getMatrixUserId())
             : null;
-    String clientRoomId = session.getMatrixRoomId();
+    String clientRoomId = observedRoomOf(session);
 
     for (SessionSupervisor supervisor : active) {
       String supervisorMatrixUserId =
@@ -680,6 +681,14 @@ public class SessionSupervisorFacade {
       throw new InternalServerErrorException(
           "Failed to invite supervisor to Matrix room: " + e.getMessage());
     }
+  }
+
+  /**
+   * The room a supervisor observed and is taken out of when the supervision ends: the client room.
+   * A members-only chat has none, its main room belongs to the participants, so nothing here.
+   */
+  private String observedRoomOf(Session session) {
+    return membersOnlyChatAccess.concerns(session) ? null : session.getMatrixRoomId();
   }
 
   /** Remove a user from a room if a room id is present; log but never fail the removal flow. */

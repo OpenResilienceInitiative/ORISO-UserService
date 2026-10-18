@@ -913,6 +913,30 @@ class InternalSubsetChatHttpIT {
   }
 
   @Test
+  void aParticipantFromAnotherTraegerUsesTheMatrixSessionEndpointsAndAnOutsiderStillGetsNotFound()
+      throws Exception {
+    theTraegerScopeIs("PLATFORM");
+    var outsiderOfThatTraeger = fixtures.consultant(OTHER_TRAEGER, FOREIGN_CENTRE);
+    everyone.add(outsiderOfThatTraeger);
+    var created = openRoom(creator, otherTraeger, sameCentre);
+    var sessionId = sessionOf(field(created, "chatId"));
+
+    var participantSync =
+        request("GET", "/matrix/sessions/" + sessionId + "/sync", otherTraeger, "");
+    var participantUnregister =
+        request("DELETE", "/matrix/sync/register/" + sessionId, otherTraeger, "");
+    var outsiderSync =
+        request("GET", "/matrix/sessions/" + sessionId + "/sync", outsiderOfThatTraeger, "");
+    var outsiderUnregister =
+        request("DELETE", "/matrix/sync/register/" + sessionId, outsiderOfThatTraeger, "");
+
+    assertThat(participantSync.statusCode()).as(participantSync.body()).isEqualTo(200);
+    assertThat(participantUnregister.statusCode()).as(participantUnregister.body()).isEqualTo(200);
+    assertThat(outsiderSync.statusCode()).as(outsiderSync.body()).isEqualTo(404);
+    assertThat(outsiderUnregister.statusCode()).as(outsiderUnregister.body()).isEqualTo(404);
+  }
+
+  @Test
   void noParticipantCanReassignTheCaseOfAMembersOnlyChatAndNobodyIsTakenOutOfTheRoom()
       throws Exception {
     var created = openRoom(creator, sameCentre, anotherSameCentre);

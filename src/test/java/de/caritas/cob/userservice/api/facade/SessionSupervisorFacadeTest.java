@@ -637,6 +637,23 @@ class SessionSupervisorFacadeTest {
   }
 
   @Test
+  void removeSupervisor_Should_leaveOnlyTheSideRoom_When_theSessionIsAMembersOnlyChat() {
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn("tok");
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(true);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(matrixSynapseService).removeUserFromRoom(SIDE_ROOM, SUPERVISOR_MXID, "tok");
+    // The supervisor is still a selected participant: the main room stays until the chat flow
+    // removes them.
+    verify(matrixSynapseService, never()).removeUserFromRoom(eq(CLIENT_ROOM), any(), any());
+    assertThat(active.getIsActive()).isFalse();
+  }
+
+  @Test
   void removeSupervisor_Should_logWarn_When_removeFromRoomReturnsFalse() {
     // ACCEPTED BEHAVIOUR: the supervisor row is always deactivated in the DB even when
     // the Matrix room-removal call returns false (e.g. the user was already absent from

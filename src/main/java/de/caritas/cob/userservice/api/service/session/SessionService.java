@@ -120,13 +120,32 @@ public class SessionService {
    * @return the authorized {@link Session}
    */
   public Session assertUserHasAccess(Long sessionId, AuthenticatedUser authenticatedUser) {
-    var session =
-        getSession(sessionId)
-            .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
     var roles = Optional.ofNullable(authenticatedUser.getRoles()).orElse(emptySet());
+    var visible = getSession(sessionId);
+    if (visible.isEmpty()) {
+      // A colleague admitted from another Träger is a participant of a members-only chat whose
+      // session stays in the creator's tenant: participation alone opens it. Fail closed for
+      // everyone else.
+      return participantSessionAcrossTenants(sessionId, authenticatedUser.getUserId(), roles)
+          .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
+    }
+    var session = visible.get();
 
     checkUserPermissionForSession(session, authenticatedUser.getUserId(), roles);
     return session;
+  }
+
+  private Optional<Session> participantSessionAcrossTenants(
+      Long sessionId, String userId, Set<String> roles) {
+    if (!roles.contains(UserRole.CONSULTANT.getValue()) || userId == null) {
+      return Optional.empty();
+    }
+    return consultantService
+        .getConsultant(userId)
+        .flatMap(
+            consultant ->
+                TenantContext.supplyAcrossTenants(() -> sessionRepository.findById(sessionId))
+                    .filter(session -> membersOnlyChatAccess.admits(session, consultant)));
   }
 
   /**
