@@ -594,6 +594,107 @@ class SessionSupervisorFacadeTest {
     verify(matrixSynapseService, never()).loginAsUserAccessToken(any());
   }
 
+  // --- Codex findings on #1426 (members-only supervision) ---
+
+  private static final String CREATOR_MXID = "@creator:oriso";
+
+  private Consultant membersOnlySessionOfCreatorAndAColleague() {
+    Consultant creator = new Consultant();
+    creator.setId("con-creator");
+    creator.setUsername("creator");
+    creator.setMatrixUserId(CREATOR_MXID);
+    session.setConsultant(creator);
+    // addedBy ("con-1") is a plain participant of the same agency, not the creator.
+    addedBy.setConsultantAgencies(Set.of(ConsultantAgency.builder().agencyId(7L).build()));
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    return creator;
+  }
+
+  @Test
+  void addSupervisor_Should_supportAMembersOnlyChat_whoseTechnicalSessionHasPostcode00000()
+      throws Exception {
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("00000");
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    assertThat(saved.getIsActive()).isTrue();
+    verify(matrixSynapseService).inviteUserToRoom(eq(SIDE_ROOM), eq(SUPERVISOR_MXID), any());
+  }
+
+  @Test
+  void getSupervisors_Should_listThem_forAMembersOnlyChat_whoseTechnicalSessionHasPostcode00000() {
+    session.setPostcode("00000");
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(SESSION_ID))
+        .thenReturn(List.of(active));
+
+    assertThat(facade.getSupervisors(SESSION_ID, addedBy)).containsExactly(active);
+  }
+
+  @Test
+  void addSupervisor_Should_cancelPendingRemovalsOfTheSupervisor_whenTheyAreReAdded()
+      throws Exception {
+    facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    verify(repairs).cancelPendingRemovals(SESSION_ID, SUPERVISOR_MXID);
+  }
+
+  @Test
+  void removeSupervisor_Should_kickWithTheRoomCreator_whenANonCreatorParticipantRemoves() {
+    Consultant creator = membersOnlySessionOfCreatorAndAColleague();
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn("tok-invitee");
+    when(matrixSynapseService.loginAsUserAccessToken(CREATOR_MXID)).thenReturn("tok-creator");
+    // The ordinary invitee has no power to kick in the private room; the creator has.
+    when(matrixSynapseService.removeUserFromRoom(SIDE_ROOM, SUPERVISOR_MXID, "tok-invitee"))
+        .thenReturn(false);
+    when(matrixSynapseService.removeUserFromRoom(SIDE_ROOM, SUPERVISOR_MXID, "tok-creator"))
+        .thenReturn(true);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(matrixSynapseService).removeUserFromRoom(SIDE_ROOM, SUPERVISOR_MXID, "tok-creator");
+    verify(repairs, never()).enqueueRemovalInCurrentTransaction(any(), any(), any(), any());
+    assertThat(active.getIsActive()).isFalse();
+    assertThat(creator.getMatrixUserId()).isEqualTo(CREATOR_MXID);
+  }
+
+  @Test
+  void removeSupervisor_Should_leaveWithTheSupervisorsOwnToken_whenNoOperatorCanKick() {
+    membersOnlySessionOfCreatorAndAColleague();
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(matrixSynapseService.loginAsUserAccessToken(SUPERVISOR_MXID)).thenReturn("tok-sup");
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(false);
+    when(matrixSynapseService.leaveRoom(SIDE_ROOM, "tok-sup")).thenReturn(true);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(matrixSynapseService).leaveRoom(SIDE_ROOM, "tok-sup");
+    verify(repairs, never()).enqueueRemovalInCurrentTransaction(any(), any(), any(), any());
+    assertThat(active.getIsActive()).isFalse();
+  }
+
+  @Test
+  void removeSupervisor_Should_queueTheRetryAsTheRoomCreator_whenNothingWorksNow() {
+    membersOnlySessionOfCreatorAndAColleague();
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(false);
+    when(matrixSynapseService.leaveRoom(any(), any())).thenReturn(false);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(repairs)
+        .enqueueRemovalInCurrentTransaction(SIDE_ROOM, SUPERVISOR_MXID, CREATOR_MXID, SESSION_ID);
+    assertThat(active.getIsActive()).isFalse();
+  }
+
   // --- removeSupervisor ---
 
   @Test

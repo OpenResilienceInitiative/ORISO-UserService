@@ -35,6 +35,11 @@ class CaseHandoverMatrixRepairServiceTest {
   @Mock private CaseHandoverMatrixRepairTaskRepository repository;
   @Mock private CaseHandoverRequestRepository handoverRequestRepository;
   @Mock private MatrixSynapseService matrixSynapseService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository
+      sessionSupervisorRepository;
+
   @Mock private PlatformTransactionManager transactionManager;
   @Mock private TransactionStatus transactionStatus;
 
@@ -52,6 +57,7 @@ class CaseHandoverMatrixRepairServiceTest {
             matrixSynapseService,
             org.mockito.Mockito.mock(
                 de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            sessionSupervisorRepository,
             Clock.fixed(Instant.parse("2026-09-14T10:00:00Z"), ZoneOffset.UTC),
             transactionManager);
     ReflectionTestUtils.setField(service, "maxAttempts", 100);
@@ -253,6 +259,67 @@ class CaseHandoverMatrixRepairServiceTest {
 
     verify(matrixSynapseService, org.mockito.Mockito.never())
         .removeUserFromRoom(any(), any(), any());
+    verify(repository).delete(task);
+  }
+
+  private CaseHandoverMatrixRepairTask supervisionRemoval() {
+    return CaseHandoverMatrixRepairTask.builder()
+        .id(11L)
+        .action(CaseHandoverMatrixRepairAction.REMOVE)
+        .roomId("!side:matrix")
+        .memberId("@sup:matrix")
+        .sessionId(123L)
+        .requesterConsultantId(CaseHandoverMatrixRepairService.SUPERVISION_REMOVAL_REQUESTER)
+        .operatorId("@creator:matrix")
+        .build();
+  }
+
+  @Test
+  void cancelPendingRemovalsDeletesTheSupervisionKicksOfThatSupervisorAndSession() {
+    service.cancelPendingRemovals(123L, "@sup:matrix");
+
+    verify(repository)
+        .deleteByActionAndRequesterConsultantIdAndSessionIdAndMemberId(
+            CaseHandoverMatrixRepairAction.REMOVE,
+            CaseHandoverMatrixRepairService.SUPERVISION_REMOVAL_REQUESTER,
+            123L,
+            "@sup:matrix");
+  }
+
+  @Test
+  void staleSupervisionRemovalNeverKicksASupervisorWhoIsActiveAgain() {
+    var task = supervisionRemoval();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    when(sessionSupervisorRepository
+            .existsBySessionIdAndIsActiveTrueAndSupervisorConsultantMatrixUserId(
+                123L, "@sup:matrix"))
+        .thenReturn(true);
+
+    service.process(11L);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never())
+        .removeUserFromRoom(any(), any(), any());
+    verify(matrixSynapseService, org.mockito.Mockito.never()).leaveRoom(any(), any());
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void supervisionRemovalLeavesWithTheSupervisorsOwnTokenWhenTheOperatorCannotKick() {
+    var task = supervisionRemoval();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    when(matrixSynapseService.loginAsUserAccessToken("@creator:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
+    when(matrixSynapseService.removeUserFromRoom("!side:matrix", "@sup:matrix", "tok-op"))
+        .thenReturn(false);
+    when(matrixSynapseService.getRoomMembers("!side:matrix"))
+        .thenReturn(Optional.of(java.util.List.of("@sup:matrix")));
+    when(matrixSynapseService.leaveRoom("!side:matrix", "tok-sup")).thenReturn(true);
+
+    service.process(11L);
+
+    verify(matrixSynapseService).leaveRoom("!side:matrix", "tok-sup");
     verify(repository).delete(task);
   }
 

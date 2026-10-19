@@ -139,7 +139,7 @@ public class SessionSupervisorFacade {
     // counsellor outside the chat is told the same thing whatever else is true of the session.
     membersOnlyChatAccess.requireAccess(session, addedByConsultant);
 
-    if (AnonymousSessionRegistration.matches(session)) {
+    if (isAnonymousForSupervision(session)) {
       throw new BadRequestException("Anonymous sessions do not support supervision");
     }
 
@@ -236,6 +236,8 @@ public class SessionSupervisorFacade {
     // supervision proceeds by default for every reason; the ratsuchende's opt-out is the only
     // gate (checked above). So there is no PENDING park — every add provisions Matrix access
     // immediately.
+    // A removal queued earlier must not kick the supervisor who is authorised again from now on.
+    matrixRepairService.cancelPendingRemovals(sessionId, supervisorMatrixUserId);
     String sideRoomId =
         provisionSupervisorRooms(
             session, addedByConsultant, supervisorConsultant, supervisorMatrixUserId, matrixRoomId);
@@ -360,28 +362,12 @@ public class SessionSupervisorFacade {
     String clientRoomId = observedRoomOf(session);
     String supervisorMatrixUserId = supervisor.getSupervisorConsultant().getMatrixUserId();
     if (supervisorMatrixUserId != null && !supervisorMatrixUserId.isEmpty()) {
-      String operatorMatrixUserId =
-          removedByConsultant.getMatrixUserId() != null
-              ? removedByConsultant.getMatrixUserId()
-              : session.getConsultant() != null ? session.getConsultant().getMatrixUserId() : null;
-      String consultantToken =
-          removedByConsultant.getMatrixUserId() != null
-              ? matrixSynapseService.loginAsUserAccessToken(removedByConsultant.getMatrixUserId())
-              : null;
+      // Whoever asks, the kick must come from an account that has the power for it. In a private
+      // room an ordinary participant has none; the chat's creator has.
+      List<String> operators = kickOperatorsOf(session, removedByConsultant);
       removeFromRoomOrQueue(
-          sideRoomId,
-          supervisorMatrixUserId,
-          operatorMatrixUserId,
-          consultantToken,
-          supervisor,
-          "supervision side");
-      removeFromRoomOrQueue(
-          clientRoomId,
-          supervisorMatrixUserId,
-          operatorMatrixUserId,
-          consultantToken,
-          supervisor,
-          "client");
+          sideRoomId, supervisorMatrixUserId, operators, supervisor, "supervision side");
+      removeFromRoomOrQueue(clientRoomId, supervisorMatrixUserId, operators, supervisor, "client");
     }
 
     // Deactivate supervisor
@@ -424,7 +410,7 @@ public class SessionSupervisorFacade {
     if (!session.isAdvisedBy(requestingConsultant) && !activeSupervisor) {
       throw new ForbiddenException("Consultant does not have access to this supervision session");
     }
-    if (AnonymousSessionRegistration.matches(session)) {
+    if (isAnonymousForSupervision(session)) {
       return List.of();
     }
     return getSupervisors(sessionId);
@@ -536,12 +522,7 @@ public class SessionSupervisorFacade {
     if (active.isEmpty()) {
       return;
     }
-    Consultant operator = session.getConsultant();
-    String operatorMatrixUserId = operator != null ? operator.getMatrixUserId() : null;
-    String operatorToken =
-        operatorMatrixUserId != null
-            ? matrixSynapseService.loginAsUserAccessToken(operatorMatrixUserId)
-            : null;
+    List<String> operators = kickOperatorsOf(session, null);
     String clientRoomId = observedRoomOf(session);
 
     for (SessionSupervisor supervisor : active) {
@@ -553,17 +534,11 @@ public class SessionSupervisorFacade {
         removeFromRoomOrQueue(
             supervisor.getMatrixRoomId(),
             supervisorMatrixUserId,
-            operatorMatrixUserId,
-            operatorToken,
+            operators,
             supervisor,
             "supervision side");
         removeFromRoomOrQueue(
-            clientRoomId,
-            supervisorMatrixUserId,
-            operatorMatrixUserId,
-            operatorToken,
-            supervisor,
-            "client");
+            clientRoomId, supervisorMatrixUserId, operators, supervisor, "client");
       }
       supervisor.setIsActive(false);
       supervisor.setRemovedDate(LocalDateTime.now());
@@ -705,6 +680,16 @@ public class SessionSupervisorFacade {
   }
 
   /**
+   * Whether the session is an anonymous one that supervision does not cover. The technical session
+   * of a members-only chat carries the dummy postcode 00000 that marks anonymous registrations, but
+   * it is an internal chat between colleagues, so it is never anonymous here.
+   */
+  private boolean isAnonymousForSupervision(Session session) {
+    return AnonymousSessionRegistration.matches(session)
+        && !membersOnlyChatAccess.concerns(session);
+  }
+
+  /**
    * The room a supervisor observed and is taken out of when the supervision ends: the client room.
    * A members-only chat has none, its main room belongs to the participants, so nothing here.
    */
@@ -713,48 +698,85 @@ public class SessionSupervisorFacade {
   }
 
   /**
+   * The Matrix accounts a kick is attempted as, best first, without duplicates. The chat's creator
+   * (the assigned consultant of its technical session) comes first: they hold the power in a
+   * private room, which an ordinary participant who removes the supervisor does not. The caller is
+   * the fallback, and the first operator of an ordinary session, as before.
+   */
+  private List<String> kickOperatorsOf(Session session, Consultant removedBy) {
+    String creator =
+        session.getConsultant() != null ? session.getConsultant().getMatrixUserId() : null;
+    String caller = removedBy != null ? removedBy.getMatrixUserId() : null;
+    var operators = new java.util.LinkedHashSet<String>();
+    if (membersOnlyChatAccess.concerns(session)) {
+      addIfKnown(operators, creator);
+      addIfKnown(operators, caller);
+    } else {
+      addIfKnown(operators, caller);
+      addIfKnown(operators, creator);
+    }
+    return List.copyOf(operators);
+  }
+
+  private static void addIfKnown(java.util.Set<String> operators, String matrixUserId) {
+    if (matrixUserId != null && !matrixUserId.isEmpty()) {
+      operators.add(matrixUserId);
+    }
+  }
+
+  /**
    * Takes a former supervisor out of a room. The supervision ends and the counsellor carries on
-   * whatever Matrix answers, but a kick that did not happen (no token, Matrix refused) is never
-   * silent: it is logged as an error and queued durably, in the caller's transaction, until it
-   * succeeds.
+   * whatever Matrix answers, but a kick that did not happen is never silent. Order: kick as each
+   * operator in turn, then the supervisor leaves with their own token (always allowed, whatever
+   * power levels the room has), and only if all of that fails the removal is queued durably, in the
+   * caller's transaction, as the first operator, until it succeeds.
    */
   private void removeFromRoomOrQueue(
       String roomId,
       String supervisorMatrixUserId,
-      String operatorMatrixUserId,
-      String operatorToken,
+      List<String> operatorMatrixUserIds,
       SessionSupervisor supervisor,
       String roomLabel) {
     if (roomId == null || roomId.isEmpty()) {
       return;
     }
-    boolean removed =
-        operatorToken != null
-            && matrixSynapseService.removeUserFromRoom(
-                roomId, supervisorMatrixUserId, operatorToken);
+    String supervisorName = supervisor.getSupervisorConsultant().getUsername();
+    boolean removed = false;
+    for (String operatorMatrixUserId : operatorMatrixUserIds) {
+      String operatorToken = matrixSynapseService.loginAsUserAccessToken(operatorMatrixUserId);
+      if (operatorToken != null
+          && matrixSynapseService.removeUserFromRoom(
+              roomId, supervisorMatrixUserId, operatorToken)) {
+        removed = true;
+        break;
+      }
+    }
+    if (!removed) {
+      String supervisorToken = matrixSynapseService.loginAsUserAccessToken(supervisorMatrixUserId);
+      removed = supervisorToken != null && matrixSynapseService.leaveRoom(roomId, supervisorToken);
+    }
     if (removed) {
-      log.info(
-          "Removed supervisor {} from {} room {}",
-          supervisor.getSupervisorConsultant().getUsername(),
-          roomLabel,
-          roomId);
+      log.info("Removed supervisor {} from {} room {}", supervisorName, roomLabel, roomId);
       return;
     }
-    if (operatorMatrixUserId == null || operatorMatrixUserId.isEmpty()) {
+    if (operatorMatrixUserIds.isEmpty()) {
       log.error(
           "Could not remove supervisor {} from {} room {} and no operator is known to retry as",
-          supervisor.getSupervisorConsultant().getUsername(),
+          supervisorName,
           roomLabel,
           roomId);
       return;
     }
     log.error(
         "Failed to remove supervisor {} from {} room {}; durable removal queued",
-        supervisor.getSupervisorConsultant().getUsername(),
+        supervisorName,
         roomLabel,
         roomId);
     matrixRepairService.enqueueRemovalInCurrentTransaction(
-        roomId, supervisorMatrixUserId, operatorMatrixUserId, supervisor.getSession().getId());
+        roomId,
+        supervisorMatrixUserId,
+        operatorMatrixUserIds.get(0),
+        supervisor.getSession().getId());
   }
 
   /**
