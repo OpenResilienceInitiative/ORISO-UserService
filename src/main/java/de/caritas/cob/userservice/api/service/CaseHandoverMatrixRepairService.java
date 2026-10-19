@@ -73,19 +73,49 @@ public class CaseHandoverMatrixRepairService {
         requesterConsultantId);
   }
 
+  /** Identifies a staged repair row so the caller can complete exactly that generation. */
+  public record StagedRepair(Long id, long generation) {}
+
   /**
-   * Retry the owner power raise after a committed takeover whose new owner is read-only without it.
-   * The retry gives up once another counsellor owns the case.
+   * Persists the owner power raise retry in the CALLER's transaction, so it commits atomically with
+   * the takeover (and disappears with it on a rollback). A failure here must propagate: it is the
+   * only durable compensation for a new owner left read-only. The retry gives up once another
+   * counsellor owns the case.
    */
-  public void enqueuePowerRaise(
+  public StagedRepair stagePowerRaise(
       String roomId, String memberId, Long sessionId, String requesterConsultantId) {
-    enqueue(
-        CaseHandoverMatrixRepairAction.POWER_RAISE,
-        roomId,
-        memberId,
-        null,
-        sessionId,
-        requesterConsultantId);
+    var existing =
+        repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.POWER_RAISE, roomId, memberId);
+    CaseHandoverMatrixRepairTask task;
+    if (existing.isPresent()) {
+      task = existing.get();
+      task.setSessionId(sessionId);
+      task.setRequesterConsultantId(requesterConsultantId);
+      task.setAttemptCount(0);
+      task.setLastAttemptAt(null);
+      task.setCreateDate(LocalDateTime.now(clock));
+      task.setGeneration(task.getGeneration() + 1);
+    } else {
+      task =
+          CaseHandoverMatrixRepairTask.builder()
+              .action(CaseHandoverMatrixRepairAction.POWER_RAISE)
+              .roomId(roomId)
+              .memberId(memberId)
+              .sessionId(sessionId)
+              .requesterConsultantId(requesterConsultantId)
+              .createDate(LocalDateTime.now(clock))
+              .build();
+    }
+    task = repository.saveAndFlush(task);
+    return new StagedRepair(task.getId(), task.getGeneration());
+  }
+
+  /** Removes a staged repair after its raise succeeded; a newer generation is left untouched. */
+  public void completeStagedRepair(StagedRepair staged) {
+    if (staged != null && staged.id() != null) {
+      recordResult(staged.id(), staged.generation(), true);
+    }
   }
 
   /** Restore a pre-existing member only when their grant transaction actually rolls back. */

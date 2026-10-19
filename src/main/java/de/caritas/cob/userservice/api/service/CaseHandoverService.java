@@ -62,6 +62,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -2730,7 +2731,7 @@ public class CaseHandoverService {
           "the previous owner's token is no longer accepted or lacks the power to raise it",
           reliesOnRaise
               ? () ->
-                  matrixRepairService.enqueuePowerRaise(
+                  matrixRepairService.stagePowerRaise(
                       roomId, requesterMatrixId, session.getId(), requester.getId())
               : null);
     }
@@ -2804,7 +2805,7 @@ public class CaseHandoverService {
         // not stay a log line: hand it to the persistent Matrix repair queue.
         mutedWithoutRaise
             ? () ->
-                matrixRepairService.enqueuePowerRaise(
+                matrixRepairService.stagePowerRaise(
                     roomId, requesterMatrixId, session.getId(), requester.getId())
             : null);
     return !wasMemberBefore;
@@ -2892,7 +2893,9 @@ public class CaseHandoverService {
    *     own the case (see {@link SessionOwnerLock})
    * @param raise performs the raise and returns whether Synapse accepted it
    * @param refusalReason why a refused raise is expected to happen, for the log line
-   * @param onFailure what to do when the raise did not work (nullable), e.g. queue a repair
+   * @param stageRepair persists the durable repair row (nullable). Runs synchronously inside the
+   *     takeover transaction, so the row commits atomically with it and a failure to persist it
+   *     fails the takeover instead of being swallowed. After a successful raise the row is removed.
    */
   private void raiseOwnerPowerOnceCommitted(
       Long sessionId,
@@ -2900,7 +2903,8 @@ public class CaseHandoverService {
       String roomId,
       BooleanSupplier raise,
       String refusalReason,
-      Runnable onFailure) {
+      Supplier<CaseHandoverMatrixRepairService.StagedRepair> stageRepair) {
+    var staged = stageRepair == null ? null : stageRepair.get();
     Function<BooleanSupplier, Runnable> safely =
         attempt ->
             () -> {
@@ -2922,12 +2926,13 @@ public class CaseHandoverService {
                     roomId,
                     exception.getClass().getSimpleName());
               }
-              if (!raised && onFailure != null) {
+              if (raised && staged != null) {
                 try {
-                  onFailure.run();
+                  matrixRepairService.completeStagedRepair(staged);
                 } catch (RuntimeException exception) {
-                  log.error(
-                      "Could not queue the repair of the owner power level of session {} ({})",
+                  // Harmless: the retry is idempotent and removes the row itself.
+                  log.warn(
+                      "Could not remove the completed owner power repair of session {} ({})",
                       sessionId,
                       exception.getClass().getSimpleName());
                 }

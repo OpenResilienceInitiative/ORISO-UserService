@@ -43,7 +43,9 @@ class CaseHandoverMatrixRepairServiceTest {
 
   @BeforeEach
   void setUp() {
-    when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+    org.mockito.Mockito.lenient()
+        .when(transactionManager.getTransaction(any()))
+        .thenReturn(transactionStatus);
     service =
         new CaseHandoverMatrixRepairService(
             repository,
@@ -167,14 +169,44 @@ class CaseHandoverMatrixRepairServiceTest {
   }
 
   @Test
-  void enqueuePowerRaisePersistsATaskForTheNewOwner() {
-    service.enqueuePowerRaise("!room:matrix", "@requester:matrix", 123L, "requester");
+  void stagePowerRaisePersistsATaskInTheCallersTransaction() {
+    when(repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.POWER_RAISE, "!room:matrix", "@requester:matrix"))
+        .thenReturn(java.util.Optional.empty());
+    when(repository.saveAndFlush(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              CaseHandoverMatrixRepairTask saved = invocation.getArgument(0);
+              saved.setId(42L);
+              return saved;
+            });
+
+    var staged = service.stagePowerRaise("!room:matrix", "@requester:matrix", 123L, "requester");
 
     var captor = ArgumentCaptor.forClass(CaseHandoverMatrixRepairTask.class);
     verify(repository).saveAndFlush(captor.capture());
     assertThat(captor.getValue().getAction()).isEqualTo(CaseHandoverMatrixRepairAction.POWER_RAISE);
     assertThat(captor.getValue().getMemberId()).isEqualTo("@requester:matrix");
     assertThat(captor.getValue().getRequesterConsultantId()).isEqualTo("requester");
+    assertThat(staged.id()).isEqualTo(42L);
+    // No REQUIRES_NEW transaction: the row must share the takeover's fate.
+    verify(transactionManager, org.mockito.Mockito.never()).getTransaction(any());
+  }
+
+  @Test
+  void stagePowerRaiseReactivatesAnExistingTaskWithANewGeneration() {
+    var existing = powerRaiseTask();
+    existing.setAttemptCount(7);
+    when(repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.POWER_RAISE, "!room:matrix", "@requester:matrix"))
+        .thenReturn(java.util.Optional.of(existing));
+    when(repository.saveAndFlush(existing)).thenReturn(existing);
+
+    var staged = service.stagePowerRaise("!room:matrix", "@requester:matrix", 123L, "requester");
+
+    assertThat(existing.getAttemptCount()).isZero();
+    assertThat(staged.generation()).isEqualTo(existing.getGeneration());
+    assertThat(existing.getGeneration()).isEqualTo(1L);
   }
 
   @Test

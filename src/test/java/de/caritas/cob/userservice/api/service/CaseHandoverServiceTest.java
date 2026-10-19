@@ -4402,14 +4402,57 @@ class CaseHandoverServiceTest {
     TransactionSynchronizationManager.initSynchronization();
     try {
       takeOverBecauseAssignmentEnded();
-      verify(matrixRepairService, never()).enqueuePowerRaise(any(), any(), any(), any());
+      // Staged inside the takeover transaction, i.e. before the commit callbacks run.
+      verify(matrixRepairService)
+          .stagePowerRaise(caseRoom, REQUESTER_MXID, 123L, requester.getId());
+      verify(matrixRepairService, never()).completeStagedRepair(any());
       runSynchronizations(TransactionSynchronization::afterCommit);
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
 
-    verify(matrixRepairService)
-        .enqueuePowerRaise(caseRoom, REQUESTER_MXID, 123L, requester.getId());
+    // The raise failed: the staged row stays for the retry sweep.
+    verify(matrixRepairService, never()).completeStagedRepair(any());
+  }
+
+  @Test
+  void takeover_removesTheStagedRaiseRepair_afterTheCommitRaiseSucceeds() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, ADMIN_MXID, 100);
+    homeserver.member(caseRoom, REQUESTER_MXID, -1);
+    previousOwnerHasLeft();
+    var staged = new CaseHandoverMatrixRepairService.StagedRepair(5L, 1L);
+    when(matrixRepairService.stagePowerRaise(any(), any(), any(), any())).thenReturn(staged);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      takeOverBecauseAssignmentEnded();
+      verify(matrixRepairService).stagePowerRaise(any(), any(), any(), any());
+      verify(matrixRepairService, never()).completeStagedRepair(any());
+      runSynchronizations(TransactionSynchronization::afterCommit);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    verify(matrixRepairService).completeStagedRepair(staged);
+  }
+
+  @Test
+  void takeover_fails_whenTheDurableRaiseRepairCannotBePersistedBeforeCommit() {
+    givenCaseRoomWithOwnerSeekerAndTechnicalAdmin();
+    homeserver.member(caseRoom, ADMIN_MXID, 100);
+    homeserver.member(caseRoom, REQUESTER_MXID, -1);
+    previousOwnerHasLeft();
+    when(matrixRepairService.stagePowerRaise(any(), any(), any(), any()))
+        .thenThrow(new IllegalStateException("db down"));
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      // Never a silent success: the exception rolls the takeover transaction back.
+      assertThrows(IllegalStateException.class, this::takeOverBecauseAssignmentEnded);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
   @Test
@@ -4431,8 +4474,7 @@ class CaseHandoverServiceTest {
       TransactionSynchronizationManager.clearSynchronization();
     }
 
-    verify(matrixRepairService)
-        .enqueuePowerRaise(caseRoom, REQUESTER_MXID, 123L, requester.getId());
+    verify(matrixRepairService).stagePowerRaise(caseRoom, REQUESTER_MXID, 123L, requester.getId());
   }
 
   @Test
@@ -4453,7 +4495,7 @@ class CaseHandoverServiceTest {
       TransactionSynchronizationManager.clearSynchronization();
     }
 
-    verify(matrixRepairService, never()).enqueuePowerRaise(any(), any(), any(), any());
+    verify(matrixRepairService, never()).stagePowerRaise(any(), any(), any(), any());
   }
 
   @Test
@@ -4489,7 +4531,7 @@ class CaseHandoverServiceTest {
       TransactionSynchronizationManager.clearSynchronization();
     }
 
-    verify(matrixRepairService, never()).enqueuePowerRaise(any(), any(), any(), any());
+    verify(matrixRepairService, never()).stagePowerRaise(any(), any(), any(), any());
   }
 
   @Test
