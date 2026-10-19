@@ -3631,14 +3631,25 @@ class CaseHandoverServiceTest {
   void requestAccess_makesAdviceCoAccessReadOnlyInTheMatrixRoom() {
     givenAdviceIsGrantedWithoutWaitingForTheClient();
     givenARoomTheRequesterCanJoin();
-    when(matrixSynapseService.setUserPowerLevel(
-            "!room:matrix", "@requester:matrix", -1, "previous-token"))
-        .thenReturn(true);
+    when(matrixSynapseService.makeUserReadOnly(
+            "!room:matrix",
+            "@requester:matrix",
+            -1,
+            "@previous:matrix",
+            "previous-token",
+            "requester-token"))
+        .thenReturn(Optional.of(0));
 
     caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Zweitmeinung");
 
     verify(matrixSynapseService)
-        .setUserPowerLevel("!room:matrix", "@requester:matrix", -1, "previous-token");
+        .makeUserReadOnly(
+            "!room:matrix",
+            "@requester:matrix",
+            -1,
+            "@previous:matrix",
+            "previous-token",
+            "requester-token");
   }
 
   @Test
@@ -3703,14 +3714,25 @@ class CaseHandoverServiceTest {
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
     givenARoomTheRequesterCanJoin();
-    when(matrixSynapseService.setUserPowerLevel(
-            "!room:matrix", "@requester:matrix", -1, "previous-token"))
-        .thenReturn(true);
+    when(matrixSynapseService.makeUserReadOnly(
+            "!room:matrix",
+            "@requester:matrix",
+            -1,
+            "@previous:matrix",
+            "previous-token",
+            "requester-token"))
+        .thenReturn(Optional.of(0));
 
     caseHandoverService.resolveClientConsent(123L, 88L, true);
 
     verify(matrixSynapseService)
-        .setUserPowerLevel("!room:matrix", "@requester:matrix", -1, "previous-token");
+        .makeUserReadOnly(
+            "!room:matrix",
+            "@requester:matrix",
+            -1,
+            "@previous:matrix",
+            "previous-token",
+            "requester-token");
   }
 
   private CaseHandoverRequest expiredAdviceGrantOfAStandingMember() {
