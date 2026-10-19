@@ -43,6 +43,7 @@ class ReplicaSafetyInventoryContractTest {
           "case-handover-co-access-expiry",
           "case-handover-matrix-repair",
           "enquiry-rejection-repair",
+          "inquiry-acceptance-notice-retry",
           "appointment-cleanup-scheduler",
           "enquiry-notification-scheduler",
           "group-chat-deactivation-scheduler",

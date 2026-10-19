@@ -68,6 +68,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
 @Import({
   SessionOwnershipService.class,
+  de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore.class,
   de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class,
   EventNotificationService.class,
   EventNotificationDeduplicationWriter.class
@@ -531,19 +532,7 @@ class SessionOwnershipMariaDbIT {
             actor);
     var committedOperation = java.util.UUID.fromString("de949f0d-d1d5-48bb-8694-cbd786863623");
 
-    transactions.execute(
-        ignored ->
-            handovers.createOffer(
-                sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation));
-
-    assertThat(offerNotifications()).hasSize(1);
-
-    transactions.execute(
-        ignored ->
-            handovers.createOffer(
-                sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation));
-    assertThat(offerNotifications()).hasSize(1);
-
+    // The rolled-back offer runs first: once an offer is open, a second one is refused.
     assertThatThrownBy(
             () ->
                 transactions.executeWithoutResult(
@@ -558,6 +547,19 @@ class SessionOwnershipMariaDbIT {
                       throw new IllegalStateException("force rollback");
                     }))
         .isInstanceOf(IllegalStateException.class);
+    assertThat(offerNotifications()).isEmpty();
+
+    transactions.execute(
+        ignored ->
+            handovers.createOffer(
+                sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation));
+
+    assertThat(offerNotifications()).hasSize(1);
+
+    transactions.execute(
+        ignored ->
+            handovers.createOffer(
+                sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation));
     assertThat(offerNotifications()).hasSize(1);
   }
 
@@ -606,6 +608,65 @@ class SessionOwnershipMariaDbIT {
         .createDate(now)
         .updateDate(now)
         .build();
+  }
+
+  @Test
+  void requestStatusCanBeReadInsideAReadOnlyTransaction() {
+    // getRequestStatus is @Transactional(readOnly = true); MariaDB rejects SELECT ... FOR UPDATE
+    // there (1792), so the status lookup must not take the consent-decision write lock.
+    Long requestId =
+        transactions.execute(
+            ignored ->
+                caseHandoverRequestRepository
+                    .save(
+                        CaseHandoverRequest.builder()
+                            .session(sessionRepository.findById(sessionId).orElseThrow())
+                            .requesterConsultant(ownerB)
+                            .initiatorConsultant(ownerA)
+                            .previousConsultant(ownerA)
+                            .direction(CaseHandoverRequest.Direction.PUSH)
+                            .expectedOwnershipRevision(0L)
+                            .operationId(
+                                java.util.UUID.fromString("5b0f3a63-2a43-4f43-9a54-3f0c8e1d2b7a"))
+                            .reasonCode("UNPLANNED_ABSENCE")
+                            .reasonLabel("Other emergency")
+                            .explanation("")
+                            .status(CaseHandoverRequest.Status.PENDING_RECIPIENT_ACCEPTANCE)
+                            .clientConsent(
+                                de.caritas.cob.userservice.api.model.CaseHandoverConsentMode.NONE)
+                            .accessType(CaseHandoverRequest.AccessType.TAKEOVER)
+                            .clientConsentRequired(false)
+                            .policyAuthority("test")
+                            .auditOutcome("PENDING_RECIPIENT_ACCEPTANCE")
+                            .createdAt(LocalDateTime.now())
+                            .tenantId(7L)
+                            .build())
+                    .getId());
+    UserAccountService accounts = mock(UserAccountService.class);
+    when(accounts.retrieveValidatedConsultant())
+        .thenAnswer(
+            ignored ->
+                transactions.execute(
+                    tx -> consultantRepository.findById(OWNER_B_ID).orElseThrow()));
+    AuthenticatedUser caller = mock(AuthenticatedUser.class);
+    when(caller.getUserId()).thenReturn(OWNER_B_ID);
+    when(caller.isConsultant()).thenReturn(true);
+    CaseHandoverService handovers =
+        handoverService(
+            caseHandoverRequestRepository,
+            sessionRepository,
+            accounts,
+            mock(EventNotificationService.class),
+            mock(MatrixSessionSystemMessageService.class),
+            mock(ConsultantService.class),
+            caller);
+    var readOnly = new TransactionTemplate(transactionManager);
+    readOnly.setReadOnly(true);
+
+    var status = readOnly.execute(ignored -> handovers.getRequestStatus(sessionId, requestId));
+
+    assertThat(status.getStatus())
+        .isEqualTo(CaseHandoverRequest.Status.PENDING_RECIPIENT_ACCEPTANCE.name());
   }
 
   private static void await(CountDownLatch latch) {
