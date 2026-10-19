@@ -1427,6 +1427,10 @@ components:
           type: string
         signedAt:
           type: string
+        language:
+          type: string
+          description: Optional stored confirmation language; absent for legacy signatures.
+          example: "de"
     TenantDTO:
       type: object
       required:
@@ -1703,6 +1707,27 @@ components:
     Settings:
       type: object
       properties:
+        featureAskerEmailEnabled:
+          type: boolean
+          default: true
+        featureAskerEmailAgencyCounsellingEnabled:
+          type: boolean
+          default: true
+        featureAskerEmailLiveChatEnabled:
+          type: boolean
+          default: false
+        featureAskerEmailSelfHelpEnabled:
+          type: boolean
+          default: true
+        featureAskerBrowserAgencyCounsellingEnabled:
+          type: boolean
+          default: true
+        featureAskerBrowserLiveChatEnabled:
+          type: boolean
+          default: true
+        featureAskerBrowserSelfHelpEnabled:
+          type: boolean
+          default: true
         featureStatisticsEnabled:
           type: boolean
           example: 'false'

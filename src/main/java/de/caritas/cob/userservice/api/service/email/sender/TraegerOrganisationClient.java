@@ -94,7 +94,8 @@ public class TraegerOrganisationClient {
     var api = controllerFactory.createControllerApi();
     var technicalUser = identityClientConfig.getTechnicalUser();
     var login =
-        identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
+        identityAuthentication.loginService(
+            technicalUser.getClientId(), technicalUser.getClientSecret());
     securityHeaderSupplier
         .getKeycloakAndCsrfHttpHeaders(login.accessToken())
         .forEach((key, value) -> api.getApiClient().addDefaultHeader(key, value.iterator().next()));

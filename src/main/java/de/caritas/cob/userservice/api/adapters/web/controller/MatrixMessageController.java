@@ -210,22 +210,20 @@ public class MatrixMessageController {
           var agencyCredentials = matrixCredentialClient.fetchMatrixCredentials(agencyId);
           if (agencyCredentials.isEmpty()) {
             log.warn("No Matrix credentials for agency {}", agencyId);
-            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Map.of("error", "Agency Matrix identity unavailable"));
           }
 
           String agencyMatrixId = agencyCredentials.get().getMatrixUserId();
-          String matrixUsername;
-          if (agencyMatrixId != null && agencyMatrixId.startsWith("@")) {
-            matrixUsername = MatrixIds.localpart(agencyMatrixId);
-          } else {
-            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+          if (!MatrixIds.isUserId(agencyMatrixId)) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Map.of("error", "Agency Matrix identity unavailable"));
           }
-
-          String password = agencyCredentials.get().getMatrixPassword();
-          if (password == null) {
-            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+          accessToken = matrixSynapseService.loginAsUserAccessToken(agencyMatrixId);
+          if (accessToken == null || accessToken.isBlank()) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Map.of("error", "Matrix authentication unavailable"));
           }
-          accessToken = matrixSynapseService.loginUser(matrixUsername, password);
         } else {
           accessToken = createCurrentMatrixAccessToken();
         }

@@ -11,22 +11,25 @@ jobs:
   validate:
     name: test, build and Docker validation
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
+      with:
+        persist-credentials: false
 
     - name: Run UserService tests and build
       uses: ./.github/actions/maven-build
       with:
         java_version: '21'
 
-    - name: Docker build validation without publishing
+    - name: Docker image security gate without publishing
       uses: ./.github/actions/docker-build-push
       with:
         push_to_ghcr: false
         image_name: oriso-userservice
-        github_token: ${{ secrets.GITHUB_TOKEN }}
 
   redis-contract:
     name: Redis shared-state contracts

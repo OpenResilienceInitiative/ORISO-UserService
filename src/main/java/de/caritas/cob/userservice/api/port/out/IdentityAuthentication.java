@@ -5,6 +5,9 @@ public interface IdentityAuthentication {
 
   IdentityLogin login(String username, String password);
 
+  /** Confidential backend grant. Its result has no human refresh-session token. */
+  IdentityLogin loginService(String clientId, String clientSecret);
+
   boolean logout(String refreshToken);
 
   /** Ends a caller-owned session without requiring a current HTTP request. */

@@ -80,7 +80,7 @@ class IndividualCounsellingDpaTenantScopeIT {
   @org.junit.jupiter.params.provider.CsvSource({"41,200", "42,404"})
   void registeredTopicAssignmentAcceptsOnlyAnEnquiryInTheCallersTenant(
       int sessionTenant, int expectedStatus) throws Exception {
-    when(identity.login(anyString(), anyString()))
+    when(identity.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("synthetic-service-token", 60, 60, "synthetic-refresh"));
     when(matrix.loginUser(anyString(), anyString())).thenReturn("synthetic-matrix-token");
     when(matrix.loginAsUserAccessToken(anyString())).thenReturn("synthetic-matrix-token");
@@ -151,7 +151,7 @@ class IndividualCounsellingDpaTenantScopeIT {
   void firstEnquiryPreflightCannotLoadAnOwnedSessionFromAnotherTenantOrReadItsDpa()
       throws Exception {
     var ownerReads = new java.util.concurrent.atomic.AtomicInteger();
-    when(identity.login(anyString(), anyString()))
+    when(identity.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("synthetic-service-token", 60, 60, "synthetic-refresh"));
     downstream = MockRestServiceServer.bindTo(transport).build();
     downstream
@@ -206,7 +206,7 @@ class IndividualCounsellingDpaTenantScopeIT {
   @Test
   void createdSessionRemainsAccessibleInItsServingTenantAfterTheTechnicalOwnerRead()
       throws Exception {
-    when(identity.login(anyString(), anyString()))
+    when(identity.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("synthetic-service-token", 60, 60, "synthetic-refresh"));
     downstream = MockRestServiceServer.bindTo(transport).build();
     downstream

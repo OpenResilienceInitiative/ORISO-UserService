@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.PaginationLinks;
+import de.caritas.cob.userservice.api.admin.service.admin.AccountLoginStatusService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
@@ -34,6 +35,7 @@ import org.springframework.web.client.HttpClientErrorException;
 public class AdminDtoMapper implements DtoMapperUtils {
 
   private final @NonNull TenantService tenantService;
+  private final AccountLoginStatusService accountLoginStatusService;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
@@ -72,10 +74,13 @@ public class AdminDtoMapper implements DtoMapperUtils {
     var admins = new ArrayList<AdminResponseDTO>();
 
     var adminMaps = (List<Map<String, Object>>) resultMap.get("admins");
+    var activeById =
+        accountLoginStatusService.activeByIds(
+            adminMaps.stream().map(adminMap -> (String) adminMap.get("id")).toList());
     adminMaps.forEach(
         adminMap -> {
           var response = new AdminResponseDTO();
-          response.setEmbedded(adminDtoOf(adminMap));
+          response.setEmbedded(adminDtoOf(adminMap, activeById.get((String) adminMap.get("id"))));
           response.setLinks(consultantLinksOf(adminMap));
           admins.add(response);
         });
@@ -161,9 +166,10 @@ public class AdminDtoMapper implements DtoMapperUtils {
     return halLinkOf(httpEntity, method);
   }
 
-  private AdminDTO adminDtoOf(Map<String, Object> adminUserMap) {
+  private AdminDTO adminDtoOf(Map<String, Object> adminUserMap, Boolean active) {
     var adminDTO = new AdminDTO();
     adminDTO.setId((String) adminUserMap.get("id"));
+    adminDTO.setActive(active);
     adminDTO.setEmail((String) adminUserMap.get("email"));
     adminDTO.setFirstname((String) adminUserMap.get("firstName"));
     adminDTO.setLastname((String) adminUserMap.get("lastName"));

@@ -59,6 +59,19 @@ class ServiceNoticeDraftControllerAuthorizationIT {
 
   private static final String DRAFT = "/service/users/admin/service-notices/drafts/maintenance-1";
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+      lifecycle;
+
+  @org.junit.jupiter.api.BeforeEach
+  void activeCaller() {
+    // This suite tests notice permissions; real lifecycle admission has its own HTTP suite.
+    org.mockito.Mockito.when(
+            lifecycle.admit(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(true);
+  }
+
   @Autowired private MockMvc mvc;
   @MockitoBean private ServiceNoticeDraftService drafts;
   @MockitoBean private AuthenticatedUser authenticatedUser;

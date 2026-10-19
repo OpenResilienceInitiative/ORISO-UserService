@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -23,6 +24,8 @@ public class GroupCounsellingDpaPolicy {
   private final NewCounsellingDpaPolicy newCounselling;
   private final ChatAgencyRepository chatAgencies;
   private final AgencyService agencies;
+  private final de.caritas.cob.userservice.api.service.matrixgroup.MatrixGroupParticipationHistory
+      history;
 
   public void requireCreation(ChatDTO request, Long servingAgencyId, Consultant creator) {
     if (ChatConverter.conversationTypeOf(request) == ConversationType.SELF_HELP) {
@@ -47,8 +50,41 @@ public class GroupCounsellingDpaPolicy {
     }
   }
 
+  /** Called only after ordinary invite/tenant/role permission validation for this stored actor. */
+  public void requireAuthorizedEnrolment(Chat chat, String matrixUserId) {
+    if (chat.getCurrentOccurrenceIndex() == 0
+        && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP
+        && history.commenced(chat, matrixUserId)) return;
+    requireNewEnrolment(chat);
+  }
+
+  /** Preserve the single pure owner decision outside enabled first-room actor classification. */
+  public void requireAuthorizedEnrolments(Chat chat, List<String> matrixUserIds) {
+    if (matrixUserIds.isEmpty()) return;
+    if (historicalReturnEnabled()
+        && chat.getCurrentOccurrenceIndex() == 0
+        && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
+      for (String matrixUserId : matrixUserIds) requireAuthorizedEnrolment(chat, matrixUserId);
+    } else {
+      requireNewEnrolment(chat);
+    }
+  }
+
+  public boolean historicalReturnEnabled() {
+    return history.enabled();
+  }
+
+  public void requireAuthorizedFirstEntry(Chat chat, String matrixUserId) {
+    if (chat.getCurrentOccurrenceIndex() == 0) requireAuthorizedEnrolment(chat, matrixUserId);
+  }
+
   public void requireNewEnrolment(Chat chat) {
-    if (chat.getConversationType() != ConversationType.SELF_HELP) return;
+    // Keep later-occurrence classification while its continuation policy remains undefined.
+    var type =
+        chat.getCurrentOccurrenceIndex() == 0
+            ? ChatConverter.conversationTypeOf(chat)
+            : chat.getConversationType();
+    if (type != ConversationType.SELF_HELP) return;
     Long ownerTenant = chat.getChatOwner() == null ? null : chat.getChatOwner().getTenantId();
     if (ownerTenant == null || ownerTenant <= 0) throw unavailable();
     // Invitations may cross tenants; the recipient never becomes the group's serving owner.

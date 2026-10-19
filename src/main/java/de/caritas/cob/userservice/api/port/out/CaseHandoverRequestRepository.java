@@ -5,6 +5,7 @@ import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -43,15 +44,35 @@ public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandove
   Optional<CaseHandoverRequest> findByIdAndSessionId(
       @Param("id") Long id, @Param("sessionId") Long sessionId);
 
+  /**
+   * Lock-free lookup for status reads. Those run in read-only transactions, where MariaDB rejects
+   * {@code SELECT ... FOR UPDATE} (1792), so they must not use the locked consent-decision lookup.
+   */
+  @Query(
+      "select request from CaseHandoverRequest request where request.id = :id and request.session.id = :sessionId")
+  Optional<CaseHandoverRequest> findWithoutLockByIdAndSessionId(
+      @Param("id") Long id, @Param("sessionId") Long sessionId);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select request from CaseHandoverRequest request where request.id = :id")
   Optional<CaseHandoverRequest> findByIdForUpdate(@Param("id") Long id);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select request from CaseHandoverRequest request where request.id = :id and request.session.id = :sessionId")
+  Optional<CaseHandoverRequest> findByIdAndSessionIdForUpdate(
+      @Param("id") Long id, @Param("sessionId") Long sessionId);
+
+  Optional<CaseHandoverRequest> findByInitiatorConsultantIdAndOperationId(
+      String initiatorConsultantId, UUID operationId);
 
   List<CaseHandoverRequest> findBySessionId(Long sessionId);
 
   List<CaseHandoverRequest> findByRequesterConsultantId(String requesterConsultantId);
 
   List<CaseHandoverRequest> findByPreviousConsultantId(String previousConsultantId);
+
+  List<CaseHandoverRequest> findByInitiatorConsultantId(String initiatorConsultantId);
 
   @EntityGraph(
       attributePaths = {

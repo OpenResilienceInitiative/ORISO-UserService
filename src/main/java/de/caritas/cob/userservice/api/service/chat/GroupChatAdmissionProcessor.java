@@ -38,6 +38,8 @@ public class GroupChatAdmissionProcessor {
   private final GroupChatMembershipService membership;
   private final GroupAppointmentSeriesEventProducer appointmentEvents;
   private final GroupChatAdmissionMatrixRepairService repair;
+  private final GroupCounsellingDpaPolicy dpaPolicy;
+  private final GroupChatPermissionService permission;
 
   @Value("${group.chat.admission.retry-backoff:PT1M}")
   private Duration retryBackoff;
@@ -90,6 +92,21 @@ public class GroupChatAdmissionProcessor {
       return;
     }
 
+    if (dpaPolicy.historicalReturnEnabled()) {
+      if (request.getDecidedBy() == null)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+            "Admission no longer has an authorized moderator");
+      var decider =
+          consultants
+              .findByIdAndDeleteDateIsNull(request.getDecidedBy())
+              .orElseThrow(
+                  () ->
+                      new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+                          "Admission no longer has an authorized moderator"));
+      permission.requireCanModerate(series.get(), decider);
+      permission.requireCanAssignAdmissionRole(
+          series.get(), current, decider, consultant.get(), request.getAdmittedRole());
+    }
     var matrixUserId = consultant.get().getMatrixUserId();
     var wasMemberBefore = membership.isMemberInRoom(series.get(), matrixUserId);
     if (wasMemberBefore.isEmpty()) {
@@ -98,6 +115,15 @@ public class GroupChatAdmissionProcessor {
     }
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException("Group admission requires a transaction before Matrix join");
+    }
+    var alreadyParticipant =
+        current.stream()
+            .anyMatch(
+                participant -> request.getConsultantId().equals(participant.getConsultantId()));
+    // Current JOIN is commencement even if its UserService participant row needs repair.
+    // Disabled deployments retain the existing intent policy until paired rollout.
+    if (!wasMemberBefore.get() || (!dpaPolicy.historicalReturnEnabled() && !alreadyParticipant)) {
+      dpaPolicy.requireAuthorizedFirstEntry(series.get(), matrixUserId);
     }
     var roomId = membership.resolveMatrixRoomId(series.get());
     if (!wasMemberBefore.get()) {
@@ -120,9 +146,7 @@ public class GroupChatAdmissionProcessor {
           });
     }
 
-    if (current.stream()
-        .noneMatch(
-            participant -> request.getConsultantId().equals(participant.getConsultantId()))) {
+    if (!alreadyParticipant) {
       participants.save(
           GroupChatParticipant.builder()
               .chatId(sessionId.get())

@@ -111,7 +111,13 @@ class IndividualCounsellingDpaGateIT {
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(
             new de.caritas.cob.userservice.api.port.out.IdentityLogin(
-                "synthetic-service-token", 60, 60, "synthetic-refresh"));
+                "synthetic-human-token", 60, 60, "synthetic-refresh"));
+    org.mockito.Mockito.when(
+            identityAuthentication.loginService(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.port.out.IdentityLogin(
+                "synthetic-service-token", 60, 0, null));
     when(matrix.loginAsUserAccessToken(org.mockito.ArgumentMatchers.anyString()))
         .thenReturn("synthetic-matrix-token");
     when(matrix.getRoomEvent(

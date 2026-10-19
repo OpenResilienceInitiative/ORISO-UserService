@@ -2182,6 +2182,14 @@ components:
     ConsultantDTO:
       type: object
       properties:
+        active:
+          type: boolean
+          nullable: true
+          description: >-
+            Login enabled in the identity provider. Null means unknown, not disabled.
+            Read-only best-effort metadata; missing identity data, provider outages or
+            exhausted page lookup budgets leave the status unknown without removing rows.
+          readOnly: true
         topicPermission:
           $ref: '#/components/schemas/TopicPermissionDTO'
         id:
@@ -2415,6 +2423,14 @@ components:
     AdminDTO:
       type: object
       properties:
+        active:
+          type: boolean
+          nullable: true
+          description: >-
+            Login enabled in the identity provider. Null means unknown, not disabled.
+            Read-only best-effort metadata; missing identity data, provider outages or
+            exhausted page lookup budgets leave the status unknown without removing rows.
+          readOnly: true
         id:
           type: string
           example: "0f2cca9c-9303-4791-a0a5-a1ce16f1524f"

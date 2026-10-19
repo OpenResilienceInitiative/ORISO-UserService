@@ -76,6 +76,7 @@ public class AskerDataProvider {
             .hasArchive(false)
             .dataPrivacyConfirmation(user.getDataPrivacyConfirmation())
             .termsAndConditionsConfirmation(user.getTermsAndConditionsConfirmation())
+            .avatarId(user.getAvatarId())
             .emailNotifications(emailNotificationMapper.toEmailNotificationsDTO(user));
 
     enrichWithUserSessions(sessionsByUser, userDataResponseDTOBuilder);

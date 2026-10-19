@@ -48,6 +48,7 @@ import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
+import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.Cookie;
@@ -66,6 +67,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -76,7 +78,8 @@ import org.springframework.test.web.servlet.MockMvc;
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @WithTenant(1L)
-class QueuedInviteReleaseOnOnboardingIT {
+class QueuedInviteReleaseOnOnboardingIT
+    extends de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture {
 
   private static final long TENANT = 79L;
   private static final long NEW_AGENCY = 1276L;
@@ -100,6 +103,8 @@ class QueuedInviteReleaseOnOnboardingIT {
   @Autowired private InviteEmailDeliveryRepository deliveryRepository;
   @Autowired private AdminRepository adminRepository;
   @Autowired private AdminAgencyRepository adminAgencyRepository;
+  @Autowired private AccountInactivityService inactivity;
+  @Autowired private JdbcTemplate jdbc;
 
   @MockitoBean private KeycloakService keycloakService;
   @MockitoBean private AgencyService agencyService;
@@ -127,7 +132,7 @@ class QueuedInviteReleaseOnOnboardingIT {
     when(agencyService.getAgencyWithoutCaching(NEW_AGENCY)).thenReturn(null);
     when(topicService.getAllActiveTopicsMap())
         .thenReturn(java.util.Map.of(TOPIC, new TopicDTO().id(TOPIC).name("Sucht")));
-    when(keycloakService.login(anyString(), anyString()))
+    when(keycloakService.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
     when(keycloakService.createUser(any(UserDTO.class), anyString(), anyString()))
         .thenReturn(new CreatedIdentity(ADMIN_ID));
@@ -167,6 +172,8 @@ class QueuedInviteReleaseOnOnboardingIT {
           adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(ADMIN_ID));
           adminRepository.findById(ADMIN_ID).ifPresent(adminRepository::delete);
         });
+    jdbc.update("DELETE FROM account_inactivity WHERE identity_id=?", ADMIN_ID);
+    tenantCreated(NEW_TENANT);
   }
 
   @Test
@@ -267,6 +274,45 @@ class QueuedInviteReleaseOnOnboardingIT {
 
     verify(tenantCreationClient, never()).createTenant(any());
     verify(agencyIdAllocationClient, never()).reserve(any(), anyLong());
+  }
+
+  @Test
+  void foundingTenantAdmin_Should_Register_When_TheReservedTenantDoesNotExistYet()
+      throws Exception {
+    // Dev, 2026-10-09: the policy lookup for the reserved tenant answered 404, register 502.
+    tenantNotCreatedYet(NEW_TENANT);
+    when(tenantCreationClient.createTenant(any()))
+        .thenAnswer(
+            creation -> {
+              tenantCreated(NEW_TENANT);
+              return new MultilingualTenantDTO().id(NEW_TENANT);
+            });
+    String token = seedSentInvite(newTenantAdminInvite("reservation-4242"));
+
+    registerNewTenant(token, "reservation-4242")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.tenantId").value(NEW_TENANT));
+
+    var policy = inactivity.snapshot(ADMIN_ID).orElseThrow();
+    assertThat(policy.tenantId()).isEqualTo(NEW_TENANT);
+    assertThat(policy.assignedMonths()).isEqualTo(24);
+    assertThat(policy.revision()).isZero();
+    verify(keycloakService, never()).rollbackUser(anyString());
+  }
+
+  @Test
+  void foundingTenantAdmin_Should_RollBackTheAccount_When_TheNewTenantsPolicyIsUnavailable()
+      throws Exception {
+    tenantNotCreatedYet(NEW_TENANT);
+    AccountInvite invite = newTenantAdminInvite("reservation-4242");
+    String token = seedSentInvite(invite);
+
+    registerNewTenant(token, "reservation-4242").andExpect(status().isBadGateway());
+
+    verify(keycloakService).rollbackUser(ADMIN_ID);
+    assertThat(reload(invite).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(inactivity.snapshot(ADMIN_ID)).isEmpty();
+    assertThat(Tenants.acrossAll(() -> adminRepository.findById(ADMIN_ID))).isEmpty();
   }
 
   private org.springframework.test.web.servlet.ResultActions registerNewTenant(

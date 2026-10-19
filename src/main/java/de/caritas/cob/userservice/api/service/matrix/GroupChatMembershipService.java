@@ -214,7 +214,9 @@ public class GroupChatMembershipService {
       String accountId,
       String username,
       String displayName,
-      boolean consultant) {}
+      boolean consultant,
+      String avatarKind,
+      String avatarId) {}
 
   /**
    * Resolves the current human members of a Matrix room to their application accounts.
@@ -256,14 +258,26 @@ public class GroupChatMembershipService {
     if (consultant.isPresent()) {
       var c = consultant.get();
       return new ResolvedRoomMember(
-          matrixUserId, c.getId(), c.getUsername(), resolveConsultantDisplayName(c), true);
+          matrixUserId,
+          c.getId(),
+          c.getUsername(),
+          resolveConsultantDisplayName(c),
+          true,
+          c.getAvatarKind() == null ? null : c.getAvatarKind().name(),
+          c.getAvatarId());
     }
 
     var user = userRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
     if (user.isPresent() && !isGroupChatSystemUser(user.get())) {
       var u = user.get();
       return new ResolvedRoomMember(
-          matrixUserId, u.getUserId(), u.getUsername(), u.getUsername(), false);
+          matrixUserId,
+          u.getUserId(),
+          u.getUsername(),
+          u.getUsername(),
+          false,
+          null,
+          u.getAvatarId());
     }
 
     // Unknown Matrix ID (technical account, deleted account, or foreign homeserver user).

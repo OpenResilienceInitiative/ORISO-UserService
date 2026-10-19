@@ -196,6 +196,9 @@
   <include file="db/changelog/changeset/0106_existing_account_setup/0106_changeSet.xml" />
 
   <include file="db/changelog/changeset/0091_matrix_call_binding/0091_changeSet.xml"/>
+  <include file="db/changelog/changeset/0094_session_ownership_revision/0094_changeSet.xml" />
+  <include file="db/changelog/changeset/0095_case_handover_period_operations/0095_changeSet.xml" />
+
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
   <include
@@ -205,6 +208,9 @@
   <include file="db/changelog/changeset/20260915_consultant_picture_1048/changeSet.xml"/>
   <include file="db/changelog/changeset/20260917_consultant_avatar_1046/changeSet.xml"/>
   <include file="db/changelog/changeset/20260917_consultant_picture_visibility_1049/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260916_account_inactivity_bootstrap/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260916_account_inactivity/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260916_account_inactivity_access/changeSet.xml"/>
   <include file="db/changelog/changeset/20260919_consultant_two_factor_required/changeSet.xml"/>
   <include file="db/changelog/changeset/20260919_consultant_password_change_required/changeSet.xml"/>
   <include file="db/changelog/changeset/20260922_consultant_live_chat_via_sidebar/changeSet.xml"/>
@@ -228,4 +234,10 @@
   <include file="db/changelog/changeset/20260923_consultant_walk_through_default_off/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_consultant_topic_per_agency_1264/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_consultant_topic_agency_key_1264/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261006_dpa_notice_role/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260923_user_temporary_account/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261007_user_avatar_1240/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261007_standing_access_preference_1657/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261009_inquiry_acceptance_notice/changeSet.xml" />
+  <include file="db/changelog/changeset/20261014_co_access_power_rollback/changeSet.xml"/>
 </databaseChangeLog>

@@ -48,15 +48,15 @@ public final class SenderOrganisationFixture {
     lenient().when(tenantApi.getTenantById(tenant.getId())).thenReturn(tenant);
 
     var technicalUser = new de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
+    technicalUser.setClientId("technical");
+    technicalUser.setClientSecret("secret");
     var identityClientConfig =
         mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
     lenient().when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
     var identityAuthentication =
         mock(de.caritas.cob.userservice.api.port.out.IdentityAuthentication.class);
     lenient()
-        .when(identityAuthentication.login(any(), any()))
+        .when(identityAuthentication.loginService(any(), any()))
         .thenReturn(new de.caritas.cob.userservice.api.port.out.IdentityLogin("token", 0, 0, null));
     var securityHeaderSupplier =
         mock(de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier.class);

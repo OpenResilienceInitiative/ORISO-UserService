@@ -38,6 +38,11 @@ public class ApplicationSettingsService {
 
   @Cacheable(value = CacheManagerConfig.APPLICATION_SETTINGS_CACHE)
   public ApplicationSettingsDTO getApplicationSettings() {
+    return fetchApplicationSettings();
+  }
+
+  /** Fresh platform policy snapshot; ordinary settings consumers keep their cache. */
+  public ApplicationSettingsDTO fetchApplicationSettings() {
     ApplicationsettingsControllerApi controllerApi =
         applicationSettingsApiControllerFactory.createControllerApi();
     addDefaultHeaders(controllerApi.getApiClient());
@@ -113,17 +118,18 @@ public class ApplicationSettingsService {
   private String loginTechnicalUser() {
     TechnicalUserConfig technicalUser = identityClientConfig.getTechnicalUser();
     if (technicalUser == null
-        || isBlank(technicalUser.getUsername())
-        || isBlank(technicalUser.getPassword())) {
+        || isBlank(technicalUser.getClientId())
+        || isBlank(technicalUser.getClientSecret())) {
       log.warn(
           "Global SMTP credentials lookup skipped: no technical user configured"
-              + " (identity.technical-user.username / .password)");
+              + " (identity.technical-user.client-id / .client-secret)");
       throw new SmtpSettingsUnavailableException();
     }
     de.caritas.cob.userservice.api.port.out.IdentityLogin login;
     try {
       login =
-          identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
+          identityAuthentication.loginService(
+              technicalUser.getClientId(), technicalUser.getClientSecret());
     } catch (RuntimeException ex) {
       log.warn(
           "Global SMTP credentials lookup skipped: technical user login failed ({})",

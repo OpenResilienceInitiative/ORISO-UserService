@@ -838,7 +838,7 @@ public class AccountInviteService {
   }
 
   /** Resolves an invite by its raw link token without any state checks. */
-  @Transactional(readOnly = true)
+  @Transactional
   public AccountInvite findInviteByToken(String rawToken) {
     if (isBlank(rawToken)) {
       throw new BadRequestException("Invite token is required");

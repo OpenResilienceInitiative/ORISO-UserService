@@ -130,7 +130,7 @@ class CounsellorTopicPermissionWizardIT {
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
         .thenReturn(
             new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id(counsellorId)));
-    when(keycloakService.login(anyString(), anyString()))
+    when(keycloakService.loginService(anyString(), anyString()))
         .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
     when(keycloakService.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(false, "SECRET", "QR", IdentityOtpType.APP));

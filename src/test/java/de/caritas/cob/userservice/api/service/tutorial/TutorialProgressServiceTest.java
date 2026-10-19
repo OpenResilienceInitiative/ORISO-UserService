@@ -75,6 +75,21 @@ class TutorialProgressServiceTest {
   }
 
   @Test
+  void upsertOwnProgress_acceptsTheTwoPracticeTours() {
+    // #1622: finishing a practice flow counts as a tutorial completion.
+    when(tutorialProgressStore.upsert(any(), anyInt())).thenAnswer(inv -> inv.getArgument(0));
+    for (var tourId :
+        new String[] {"consultant-practice-accept", "consultant-practice-supervision"}) {
+      var req = request("completed");
+      req.setTourId(tourId);
+
+      var item = service.upsertOwnProgress("user-1", 1L, req);
+
+      assertThat(item.getTourId()).isEqualTo(tourId);
+    }
+  }
+
+  @Test
   void upsertOwnProgress_createsScopedRecordForTheAuthenticatedUser() {
     // Business reason: progress is keyed by user, surface, tour and version so
     // multiple tutorials and audiences can track state independently.

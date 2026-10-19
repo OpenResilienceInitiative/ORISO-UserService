@@ -61,6 +61,10 @@ public class OrisoEmailBrand {
     putSender(values, operator);
     values.put("operatorName", orBlank(operator.name()));
     values.put("logoUrl", orBlank(branding.logoUrl()));
+    if (branding.logoWidth() != null && branding.logoHeight() != null) {
+      values.put("logoWidth", branding.logoWidth().toString());
+      values.put("logoHeight", branding.logoHeight().toString());
+    }
     // ADR-026 amendment 2026-10-02: stripe and button keep the tenant colour as configured; the
     // button label and the text-link colour are derived from it like the web app's tokens.
     values.put("primaryColor", branding.accentColor());

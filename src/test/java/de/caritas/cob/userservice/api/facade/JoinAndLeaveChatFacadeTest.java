@@ -50,6 +50,14 @@ class JoinAndLeaveChatFacadeTest {
   @Mock private MatrixChatShutdownService matrixChatShutdownService;
   @Mock private GroupChatRoleService groupChatRoleService;
 
+  @org.junit.jupiter.api.BeforeEach
+  void wireRealDeployedGroupPolicy() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        facade,
+        "groupCounsellingDpaPolicy",
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy());
+  }
+
   @Test
   void joinChatShouldRejectUnknownChat() {
     when(chatService.getChat(CHAT_ID)).thenReturn(Optional.empty());

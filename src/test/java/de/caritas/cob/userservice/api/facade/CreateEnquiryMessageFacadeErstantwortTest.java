@@ -120,6 +120,33 @@ class CreateEnquiryMessageFacadeErstantwortTest {
     return data;
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"de", "de@informal", "en", "fr", "ru", "tr", "ti"})
+  void enquiryDispatchFreezesTheRequestedUiLanguageInItsSystemMessage(String locale)
+      throws Exception {
+    when(erstantwortPayloadBuilder.buildFirstResponseBody(any()))
+        .thenAnswer(
+            call -> new ErstantwortPayloadBuilder().buildFirstResponseBody(call.getArgument(0)));
+    var data = enquiryData();
+    data.setUiLocale(locale);
+    facade.createEnquiryMessage(data);
+    var context = ArgumentCaptor.forClass(ErstantwortContext.class);
+    verify(erstantwortPayloadBuilder).buildFirstResponseBody(context.capture());
+    assertThat(context.getValue().getLocale()).isEqualTo(locale);
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    var parsed =
+        new com.fasterxml.jackson.databind.ObjectMapper()
+            .readTree(
+                body.getValue()
+                    .substring(ErstantwortPayloadBuilder.SYSTEM_NOTIFICATION_PREFIX.length()));
+    assertThat(parsed.path("type").asText()).isEqualTo("FIRST_RESPONSE");
+    assertThat(parsed.path("bausteine").size()).isGreaterThan(0);
+    assertThat(body.getValue()).doesNotContain("{{", "erstantwort.");
+    verify(eventNotificationService).createFirstResponseNotification(session);
+  }
+
   @Test
   void dispatchPostsTheErstantwortAndWritesOneTimelineEntry() {
     facade.createEnquiryMessage(enquiryData());
