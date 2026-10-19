@@ -820,13 +820,18 @@ class CounsellorOnboardingServiceTest {
   }
 
   @Test
-  void activateEmailTwoFactor_correctCodeCompletesWithoutTotpSecret() {
+  void activateEmailTwoFactor_correctCodeClearsThePendingSecretOnTheLockedRow() {
     AccountInvite pending = pendingEmailInvite();
+    // Seeded on BOTH rows: with the secret null everywhere, the assertion below would hold
+    // even if the gate never cleared it. The e-mail path does not require a blank secret,
+    // it pins whatever the row carries and revalidates against it.
+    pending.setTotpPendingSecret("TOTPSECRET");
     // A DISTINCT instance, as in the app-secret path above: handing back the snapshot would
     // let the test pass even if the gate were activated on the stale row.
     AccountInvite lockedRow = lockedRowIs(invite());
     lockedRow.setStatus(AccountInviteStatus.ACCEPTED);
     lockedRow.setAcceptedByUserId(CONSULTANT_ID);
+    lockedRow.setTotpPendingSecret("TOTPSECRET");
     when(identitySecondFactor.finishEmailVerification("enc.lena.b", "123456"))
         .thenReturn(
             new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
