@@ -44,6 +44,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
+import de.caritas.cob.userservice.api.service.accountinvite.ReservationLedger;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
@@ -73,6 +74,7 @@ class TenantAdminOnboardingServiceTest {
 
   @Mock private AccountInviteRepository accountInviteRepository;
   @Mock private AccountInviteService accountInviteService;
+  @Mock private ReservationLedger reservationLedger;
   @Mock private CreateAdminService createAdminService;
   @Mock private IdentityClient identityClient;
   @Mock private IdentitySecondFactor identitySecondFactor;
@@ -104,6 +106,7 @@ class TenantAdminOnboardingServiceTest {
         new TenantAdminOnboardingService(
             accountInviteRepository,
             accountInviteService,
+            reservationLedger,
             createAdminService,
             identityClient,
             identitySecondFactor,
