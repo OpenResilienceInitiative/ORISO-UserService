@@ -1,0 +1,36 @@
+US #1224: real Synapse public-boundary RED, 2026-09-30
+
+Environment: local disposable Docker Synapse v1.158.0, Java 21.
+Image: ghcr.io/element-hq/synapse:v1.158.0
+Image digest: sha256:5f868df1f5772907c6dbe973a9b69ab530a5d6bb317c011a3788f7ad78eb1292
+Accounts and configuration: synthetic public test fixtures only.
+Production under test: original UUID password rotation in loginBrowserDevice.
+
+Command:
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B -q test-compile surefire:test@integration-tests -Dtest=MatrixBrowserDeviceSynapseIT -Dskip.unit-tests=true
+
+Test: originalDeviceCanReplaceCrossSigningIdentityAfterAnotherBackendInstanceLogsInDeviceB
+
+Successful preconditions:
+- Provisioned disposable Synapse admin/user through real HTTP.
+- Device A logged in through MatrixSynapseService using real RestTemplate.
+- Uploaded a genuine Ed25519 master key and read it back from Synapse.
+- Another MatrixSynapseService instance logged the same user into device B.
+- Verified distinct device IDs and identical user IDs.
+- Waited 1.5 seconds to model returning to the first tab.
+- Device A's original token still authenticated its original user/device through whoami.
+- Replacement master-key upload required a real password UIA challenge/session.
+
+Observed failure:
+- Retrying the replacement with device A's original interactive_auth_password failed.
+- Actual endpoint: POST /_matrix/client/v3/keys/device_signing/upload.
+- HTTP 401; closed Matrix error code M_FORBIDDEN (invalid username/password).
+- The failure occurs at the expected success assertion for the replacement upload.
+
+Surefire: Tests run 1, Failures 0, Errors 1, Skipped 0; Maven exit 1.
+Class elapsed: 9.549 seconds; test elapsed: 3.793 seconds.
+No request bodies, credentials, access tokens or UIA session identifiers are retained here.
+
+Fixture correction before this RED: HttpURLConnection dropped the HTTP 401 response body.
+JdkClientHttpRequestFactory preserves the actual Synapse challenge JSON; that fixture error
+was not counted as a regression RED.

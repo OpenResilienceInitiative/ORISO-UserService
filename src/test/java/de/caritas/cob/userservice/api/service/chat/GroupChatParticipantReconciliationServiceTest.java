@@ -38,9 +38,11 @@ class GroupChatParticipantReconciliationServiceTest {
 
   @BeforeEach
   void setUp() {
+    var groupPolicy =
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy();
     service =
         new GroupChatParticipantReconciliationService(
-            participantRepository, consultantRepository, membershipService);
+            participantRepository, consultantRepository, membershipService, groupPolicy);
     var ownerConsultant = consultant("owner", "@owner:matrix");
     series = Mockito.mock(Chat.class);
     Mockito.lenient().when(series.getId()).thenReturn(42L);

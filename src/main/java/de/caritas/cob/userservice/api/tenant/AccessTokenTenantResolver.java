@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.tenant;
 
+import de.caritas.cob.userservice.api.config.auth.KeycloakRoles;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Collections;
 import java.util.Map;
@@ -25,14 +27,33 @@ public class AccessTokenTenantResolver implements TenantResolver {
     Map<String, Object> claimMap = getClaimMap(request);
     // Never log the full claim map: it carries the complete JWT payload (subject, roles, e-mail,
     // session ids). Only the resolved tenant is of diagnostic value here.
-    var tenantId = getUserTenantIdAttribute(claimMap);
+    var tenantId = getUserTenantIdAttribute(claimMap).filter(id -> mayClaim(id, claimMap));
     log.debug("Resolved tenantId from access token claims: {}", tenantId.orElse(null));
     return tenantId;
+  }
+
+  /** Tenant 0 switches the tenant filter off, so only the platform admin may claim it. */
+  private static boolean mayClaim(Long tenantId, Map<String, Object> claimMap) {
+    if (!TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
+      return true;
+    }
+    // The same roles Spring Security grants authorities from, so the two never disagree.
+    var roles = KeycloakRoles.of(claimMap);
+    boolean platformAdmin =
+        roles.contains(UserRole.AGENCY_ADMIN.getValue())
+            && roles.contains(UserRole.TENANT_ADMIN.getValue());
+    if (!platformAdmin) {
+      log.warn("Refused tenant 0 from the access token of a caller who is no platform admin");
+    }
+    return platformAdmin;
   }
 
   private Optional<Long> getUserTenantIdAttribute(Map<String, Object> claimMap) {
     if (claimMap.containsKey(TENANT_ID)) {
       Object tenantIdClaim = claimMap.get(TENANT_ID);
+      if (tenantIdClaim == null) {
+        return Optional.empty();
+      }
       if (tenantIdClaim instanceof Long) {
         return Optional.of((Long) tenantIdClaim);
       }

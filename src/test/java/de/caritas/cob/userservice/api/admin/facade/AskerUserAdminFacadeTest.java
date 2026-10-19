@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.admin.service.IdentityReactivationOperatio
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairService;
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationSagaStore;
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationUnmutatedException;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
@@ -49,6 +50,7 @@ class AskerUserAdminFacadeTest {
   @Mock private UserService userService;
   @Mock private UsernameTranscoder usernameTranscoder;
   @Mock private DeletionLifecycleService deletionLifecycleService;
+  @Mock private AdminScope adminScope;
 
   @BeforeEach
   void setUp() {

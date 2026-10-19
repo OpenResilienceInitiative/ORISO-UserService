@@ -37,6 +37,7 @@ class MatrixSynapseServiceCredentialLoggingTest {
   private static final String LOGIN_URL = MATRIX_BASE_URL + "/_matrix/client/r0/login";
   private static final String ADMIN_USERNAME = "matrix-admin";
   private static final String ADMIN_PASSWORD = "super-secret-matrix-password";
+  private static final String REGISTRATION_SHARED_SECRET = "synthetic-registration-shared-secret";
   private static final String MATRIX_USER_ID = "@consultant:matrix.example.com";
   private static final String DEVICE_ID = "ORISOWEBDEVICE01";
 
@@ -57,6 +58,7 @@ class MatrixSynapseServiceCredentialLoggingTest {
     matrixConfig.setApiUrl(MATRIX_BASE_URL);
     matrixConfig.setAdminUsername(ADMIN_USERNAME);
     matrixConfig.setAdminPassword(ADMIN_PASSWORD);
+    matrixConfig.setRegistrationSharedSecret(REGISTRATION_SHARED_SECRET);
 
     service =
         new MatrixSynapseService(
@@ -64,7 +66,8 @@ class MatrixSynapseServiceCredentialLoggingTest {
             restTemplate,
             restTemplate,
             mock(MatrixRoomClient.class),
-            mock(MatrixMediaClient.class));
+            mock(MatrixMediaClient.class),
+            MatrixIdentifierRedactor.withKey("test-secret"));
 
     restTemplateLogger = (Logger) LoggerFactory.getLogger(RestTemplate.class);
     previousLevel = restTemplateLogger.getLevel();
@@ -135,12 +138,13 @@ class MatrixSynapseServiceCredentialLoggingTest {
     mockServer.verify();
     assertThat(loginResponse).containsEntry("access_token", "syt_device");
     assertThat(sentPasswords).hasSize(1);
-    var transientPassword = sentPasswords.get(0);
-    assertThat(transientPassword).isNotBlank();
+    var interactiveAuthPassword = sentPasswords.get(0);
+    assertThat(interactiveAuthPassword).isNotBlank();
     assertThat(bodyWriteLogs()).isNotEmpty();
     assertThat(allLogMessages())
         .noneMatch(message -> message.contains(ADMIN_PASSWORD))
-        .noneMatch(message -> message.contains(transientPassword));
+        .noneMatch(message -> message.contains(REGISTRATION_SHARED_SECRET))
+        .noneMatch(message -> message.contains(interactiveAuthPassword));
   }
 
   private List<String> allLogMessages() {

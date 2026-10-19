@@ -19,8 +19,6 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
-import org.hibernate.annotations.ParamDef;
 import org.hibernate.search.annotations.Field;
 import org.hibernate.search.annotations.FieldBridge;
 import org.hibernate.search.bridge.builtin.LongBridge;
@@ -33,10 +31,7 @@ import org.hibernate.search.bridge.builtin.LongBridge;
 @Builder
 @Getter
 @Setter
-@FilterDef(
-    name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
-@Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+@Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION)
 public class ConsultantAgency implements TenantAware {
 
   @Id

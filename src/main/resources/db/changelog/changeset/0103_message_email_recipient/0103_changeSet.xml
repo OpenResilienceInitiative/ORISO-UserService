@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="0103-message-email-recipient" author="oriso">
+    <sqlFile
+      path="db/changelog/changeset/0103_message_email_recipient/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+    <rollback>
+      <sql>ALTER TABLE reply_email_delivery DROP INDEX uk_reply_email_kind_recipient_event, ADD CONSTRAINT uk_reply_email_recipient_event UNIQUE (recipient_user_id, event_key); ALTER TABLE reply_email_delivery DROP COLUMN source_room_id, DROP COLUMN source_matrix_user_id, DROP COLUMN recipient_kind;</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -8,7 +8,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -19,14 +18,13 @@ import static org.mockito.Mockito.when;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantMobileToken;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantMobileTokenRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
@@ -52,7 +50,7 @@ public class DeleteDatabaseConsultantActionTest {
 
   @Mock private ConsultantMobileTokenRepository consultantMobileTokenRepository;
 
-  @Mock private SessionRepository sessionRepository;
+  @Mock private SessionOwnershipService sessionOwnershipService;
 
   @Mock private IdentityTombstoneService identityTombstoneService;
 
@@ -89,17 +87,13 @@ public class DeleteDatabaseConsultantActionTest {
       execute_Should_returnEmptyListAndPerformDeletionAndUnassignConsultantFromSession_When_consultantCanBeDeleted() {
     Session session = new Session();
     session.setConsultant(new Consultant());
-    when(sessionRepository.findByConsultantAndStatusIn(any(), any()))
-        .thenReturn(Lists.newArrayList(session));
     ConsultantDeletionWorkflowDTO workflowDTO =
         new ConsultantDeletionWorkflowDTO(new Consultant(), emptyList());
 
     this.deleteDatabaseConsultantAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
-    verify(sessionRepository).findByConsultantAndStatusIn(any(), any());
-    verify(sessionRepository).save(session);
-    assertNull(session.getConsultant());
+    verify(sessionOwnershipService).clearOwnerFromSessions(any(), any());
     assertThat(workflowErrors, hasSize(0));
     assertThat(
         logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(false));
@@ -129,9 +123,9 @@ public class DeleteDatabaseConsultantActionTest {
   @Test
   public void
       execute_Should_returnExpectedWorkflowErrorAndLogError_When_unassignmentOfSessionsFails() {
-    when(sessionRepository.findByConsultantAndStatusIn(any(), any()))
-        .thenReturn(Lists.newArrayList(new Session(), new Session()));
-    doThrow(new RuntimeException()).when(this.sessionRepository).save(any());
+    doThrow(new RuntimeException())
+        .when(this.sessionOwnershipService)
+        .clearOwnerFromSessions(any(), any());
     Consultant consultant = new Consultant();
     consultant.setId("consultantId");
     ConsultantDeletionWorkflowDTO workflowDTO =

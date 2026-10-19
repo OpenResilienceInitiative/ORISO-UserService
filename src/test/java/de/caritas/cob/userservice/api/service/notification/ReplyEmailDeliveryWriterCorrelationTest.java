@@ -1,0 +1,102 @@
+package de.caritas.cob.userservice.api.service.notification;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
+
+import de.caritas.cob.userservice.api.model.ReplyEmailDelivery;
+import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.RecipientKind;
+import de.caritas.cob.userservice.api.port.out.ReplyEmailDeliveryRepository;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class ReplyEmailDeliveryWriterCorrelationTest {
+  @Mock ReplyEmailDeliveryRepository repository;
+  @InjectMocks ReplyEmailDeliveryWriter writer;
+
+  @Test
+  void oneDeliveryKeepsAnOpaqueCorrelationIdForLaterReconciliation() {
+    when(repository.saveAndFlush(any(ReplyEmailDelivery.class)))
+        .thenAnswer(
+            invocation -> {
+              ReplyEmailDelivery delivery = invocation.getArgument(0);
+              delivery.setId(17L);
+              return delivery;
+            });
+
+    long id =
+        writer.reserve(
+            RecipientKind.ASKER,
+            "asker",
+            "@consultant:matrix.example",
+            "!room:matrix.example",
+            "event-hash",
+            7L,
+            42L);
+
+    assertThat(id).isEqualTo(17L);
+    org.mockito.ArgumentCaptor<ReplyEmailDelivery> saved =
+        org.mockito.ArgumentCaptor.forClass(ReplyEmailDelivery.class);
+    org.mockito.Mockito.verify(repository).saveAndFlush(saved.capture());
+    assertThat(UUID.fromString(saved.getValue().getCorrelationId())).isNotNull();
+    assertThat(saved.getValue().getCorrelationId()).doesNotContain("asker", "event-hash");
+    assertThat(saved.getValue().getRecipientKind()).isEqualTo(RecipientKind.ASKER);
+    assertThat(saved.getValue().getSourceMatrixUserId()).isEqualTo("@consultant:matrix.example");
+    assertThat(saved.getValue().getSourceRoomId()).isEqualTo("!room:matrix.example");
+  }
+
+  @Test
+  void consultantClaimPersistsExplicitRoleWithoutAnAskerForeignKey() {
+    when(repository.saveAndFlush(any(ReplyEmailDelivery.class)))
+        .thenAnswer(
+            invocation -> {
+              ReplyEmailDelivery delivery = invocation.getArgument(0);
+              delivery.setId(18L);
+              return delivery;
+            });
+
+    writer.reserve(
+        RecipientKind.CONSULTANT,
+        "consultant-id",
+        "@asker:matrix.example",
+        "!room:matrix.example",
+        "event-hash",
+        7L,
+        42L);
+
+    org.mockito.ArgumentCaptor<ReplyEmailDelivery> saved =
+        org.mockito.ArgumentCaptor.forClass(ReplyEmailDelivery.class);
+    org.mockito.Mockito.verify(repository).saveAndFlush(saved.capture());
+    assertThat(saved.getValue().getRecipientKind()).isEqualTo(RecipientKind.CONSULTANT);
+    assertThat(saved.getValue().getRecipientUserId()).isEqualTo("consultant-id");
+  }
+
+  @Test
+  void crashedIntentCanRetryWithoutTreatingItAsAnUncertainSmtpOutcome() {
+    var intent = new ReplyEmailDelivery();
+    intent.setRecipientKind(RecipientKind.FEEDBACK_INTENT);
+    intent.setStatus(ReplyEmailDelivery.Status.SENDING);
+    var mail = new ReplyEmailDelivery();
+    mail.setRecipientKind(RecipientKind.FEEDBACK);
+    mail.setStatus(ReplyEmailDelivery.Status.SENDING);
+    when(repository.findByStatusAndAttemptedAtBefore(
+            eq(ReplyEmailDelivery.Status.SENDING), any(LocalDateTime.class)))
+        .thenReturn(List.of(intent, mail));
+
+    int uncertain = writer.markStaleSendingUncertain(Duration.ofMinutes(10));
+
+    assertThat(uncertain).isEqualTo(1);
+    assertThat(intent.getStatus()).isEqualTo(ReplyEmailDelivery.Status.PENDING);
+    assertThat(intent.getNextAttemptAt()).isNotNull();
+    assertThat(mail.getStatus()).isEqualTo(ReplyEmailDelivery.Status.UNCERTAIN);
+  }
+}

@@ -42,6 +42,9 @@ import org.springframework.data.auditing.AuditingHandler;
 
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
+  @Mock
+  private de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
 
   @InjectMocks private UserService userService;
 

@@ -107,6 +107,15 @@ public class UserDTO implements UserRegistrationDTO {
 
   private boolean newUserAccount;
 
+  /**
+   * "Join without an account" from a group invite link (FE#1499): nobody can log in again once the
+   * browser is closed, so the account is deleted after {@code
+   * user.temporary.deleteWorkflow.maxAge}.
+   */
+  @ApiModelProperty(required = false, example = "true")
+  @JsonProperty("temporary")
+  private boolean temporary;
+
   @ApiModelProperty(required = false, example = "\"1\"", position = 12)
   @JsonProperty("tenantId")
   private Long tenantId;
@@ -133,6 +142,19 @@ public class UserDTO implements UserRegistrationDTO {
   @Pattern(regexp = REFERER_REGEXP, message = "{user.custom.referer.invalid}")
   @JsonProperty("referer")
   private String referer;
+
+  /**
+   * Self-help group the person joins through its invite link. Set, the registration assigns the
+   * group instead of opening a counselling enquiry at the agency.
+   */
+  @ApiModelProperty(required = false, example = "19")
+  @JsonProperty("groupChatId")
+  private Long groupChatId;
+
+  /** The secret part of that group's invite link; required with {@link #groupChatId}. */
+  @ApiModelProperty(required = false)
+  @JsonProperty("groupChatInviteToken")
+  private String groupChatInviteToken;
 
   public Integer getUserAge() {
     return StringUtils.isNumeric(age) ? Integer.valueOf(age) : null;
@@ -208,6 +230,8 @@ public class UserDTO implements UserRegistrationDTO {
         + ", counsellingRelation='"
         + counsellingRelation
         + '\''
+        + ", groupChatId="
+        + groupChatId
         + '}';
   }
 }

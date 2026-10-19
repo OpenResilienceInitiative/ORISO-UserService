@@ -7,6 +7,13 @@ on:
     - dev
     - pre-dev
 
+env:
+  REGISTRY: ghcr.io
+  ORG: openresilienceinitiative
+
+permissions:
+  contents: read
+
 jobs:
   validate:
     name: test and build UserService
@@ -15,11 +22,19 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
+      with:
+        persist-credentials: false
 
     - name: Run UserService tests and build
       uses: ./.github/actions/maven-build
       with:
         java_version: '21'
+
+    - name: Docker image security gate without publishing
+      uses: ./.github/actions/docker-build-push
+      with:
+        push_to_ghcr: false
+        image_name: oriso-userservice
 
   required-integration-tests:
     name: required integration tests

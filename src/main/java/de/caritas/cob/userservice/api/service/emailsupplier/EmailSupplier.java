@@ -11,6 +11,7 @@ public interface EmailSupplier {
   String TEMPLATE_NEW_DIRECT_ENQUIRY_NOTIFICATION = "direct-enquiry-notification-consultant";
   String TEMPLATE_ASSIGN_ENQUIRY_NOTIFICATION = "assign-enquiry-notification";
   String TEMPLATE_FREE_TEXT = "free-text";
+  String TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION = "inquiry-accepted-notification";
   String TEMPLATE_DAILY_ENQUIRY_NOTIFICATION = "daily-enquiry-notification";
   String TEMPLATE_REASSIGN_REQUEST_NOTIFICATION = "reassign-request-notification";
   String TEMPLATE_REASSIGN_CONFIRMATION_NOTIFICATION = "reassign-confirmation-notification";

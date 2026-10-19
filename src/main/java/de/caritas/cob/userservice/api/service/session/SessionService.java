@@ -80,6 +80,8 @@ public class SessionService {
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @Nullable ConsultantSessionTopicEnrichmentService sessionTopicEnrichmentService;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
+  private final @NonNull SessionSupervisionMarkerService supervisionMarkerService;
+  private final @NonNull SessionOwnershipService sessionOwnershipService;
 
   @Value("${feature.topics.enabled}")
   private boolean topicsFeatureEnabled;
@@ -146,11 +148,20 @@ public class SessionService {
    * @param consultant the consultant
    * @param status the status of the session
    */
-  public void updateConsultantAndStatusForSession(
+  public SessionOwnershipService.OwnershipChange updateConsultantAndStatusForSession(
       Session session, Consultant consultant, SessionStatus status) {
-    session.setConsultant(consultant);
-    session.setStatus(status);
-    saveSession(session);
+    stampConversationTypeIfAbsent(session);
+    return sessionOwnershipService.updateOwnerAndStatus(session, consultant, status);
+  }
+
+  public boolean compensateConsultantAssignment(
+      Long sessionId,
+      SessionOwnershipService.OwnershipChange assignment,
+      Consultant previousConsultant,
+      SessionStatus previousStatus,
+      boolean clearDepartment) {
+    return sessionOwnershipService.compensateOwnerChange(
+        sessionId, assignment, previousConsultant, previousStatus, nowInUtc(), clearDepartment);
   }
 
   /**
@@ -287,15 +298,22 @@ public class SessionService {
    * @return the {@link Session}
    */
   public Session saveSession(Session session) {
-    if (session.getConversationType() == null) {
-      session.setConversationType(
-          session.isTeamSession()
-              ? ConversationType.INTERNAL_GROUP
-              : session.getRegistrationType() == Session.RegistrationType.ANONYMOUS
-                  ? ConversationType.LIVE_CHAT
-                  : ConversationType.AGENCY_COUNSELLING);
-    }
+    stampConversationTypeIfAbsent(session);
     return sessionRepository.save(session);
+  }
+
+  private void stampConversationTypeIfAbsent(Session session) {
+    if (session.getConversationType() == null) {
+      /* ADR-006 addendum 2026-09-04: `teamSession` is NOT a modality. It also marks a
+       * "Team-Beratungsstelle" 1:1 case (every counsellor of the agency may see it), so deriving
+       * INTERNAL_GROUP from it labelled ordinary counselling as an internal group chat. The only
+       * producer of INTERNAL_GROUP/SELF_HELP sessions is CreateChatFacade, which stamps the
+       * modality explicitly before saving; everything that reaches this default is a 1:1 case. */
+      session.setConversationType(
+          session.getRegistrationType() == Session.RegistrationType.ANONYMOUS
+              ? ConversationType.LIVE_CHAT
+              : ConversationType.AGENCY_COUNSELLING);
+    }
   }
 
   /**
@@ -442,26 +460,14 @@ public class SessionService {
 
   private boolean isVisibleRegisteredEnquiryForConsultant(Session session) {
     if (!isAnonymousStyleRegistration(session)) {
-      return true;
+      return nonNull(session.getEnquiryMessageDate());
     }
     return nonNull(session.getUser()) && nonNull(session.getUser().getDataPrivacyConfirmation());
   }
 
   /** Returns true for invite-link / live-chat style registrations stored as REGISTERED. */
   public boolean isAnonymousStyleRegistration(Session session) {
-    if (isNull(session)) {
-      return false;
-    }
-
-    if ("00000".equals(session.getPostcode())) {
-      return true;
-    }
-
-    if (nonNull(session.getUser()) && nonNull(session.getUser().getUsername())) {
-      return session.getUser().getUsername().startsWith("Anonymous-");
-    }
-
-    return false;
+    return AnonymousSessionRegistration.matches(session);
   }
 
   /**
@@ -534,7 +540,10 @@ public class SessionService {
         consultant.getUsername(),
         consultant.isAbsent(),
         consultant.getAbsenceMessage(),
-        null);
+        null,
+        // #1047: the advice seeker must see the avatar the counsellor chose (#1046).
+        consultant.getAvatarKind() != null ? consultant.getAvatarKind().name() : null,
+        consultant.getAvatarId());
   }
 
   /**
@@ -668,7 +677,7 @@ public class SessionService {
       return emptyList();
     }
     var sessions =
-        runCrossTenant(
+        TenantContext.supplyAcrossTenants(
             () ->
                 sessionRepository.findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
                     sessionIds,
@@ -698,32 +707,12 @@ public class SessionService {
       return emptyList();
     }
     var sessions =
-        runCrossTenant(
+        TenantContext.supplyAcrossTenants(
             () ->
                 StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
                     .filter(session -> session.isAdvisedBy(consultant))
                     .collect(Collectors.toList()));
     return mapSessionsToConsultantSessionDto(sessions);
-  }
-
-  /**
-   * Runs a read in technical-tenant context so the anonymous Live Chat visibility query bypasses
-   * the Hibernate tenant filter (the queue is deliberately cross-tenant), restoring the caller's
-   * tenant afterwards so no other query in the request leaks. Mirrors the queue provider's own
-   * guard.
-   */
-  private <T> T runCrossTenant(Supplier<T> query) {
-    var callerTenant = TenantContext.getCurrentTenant();
-    try {
-      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      return query.get();
-    } finally {
-      if (callerTenant == null) {
-        TenantContext.clear();
-      } else {
-        TenantContext.setCurrentTenant(callerTenant);
-      }
-    }
   }
 
   /**
@@ -800,7 +789,8 @@ public class SessionService {
     }
   }
 
-  private boolean isConsultantPermittedToSession(Consultant consultant, Session session) {
+  /** Whether {@code consultant} advises, supervises or may take on {@code session}. */
+  public boolean isConsultantPermittedToSession(Consultant consultant, Session session) {
     try {
       checkConsultantAssignment(consultant, session);
     } catch (ForbiddenException e) {
@@ -881,7 +871,7 @@ public class SessionService {
             .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
 
     checkPermissionForConsultantSession(session, consultant);
-    return toConsultantSessionDTO(session);
+    return toConsultantSessionDTO(session, consultant);
   }
 
   private boolean isTeamSessionOrNew(Session session) {
@@ -897,11 +887,12 @@ public class SessionService {
         new BadRequestException(String.format("Consultant with id %s does not exist", userId));
   }
 
-  private ConsultantSessionDTO toConsultantSessionDTO(Session session) {
+  private ConsultantSessionDTO toConsultantSessionDTO(Session session, Consultant requester) {
 
     var consultantSessionDTO =
         new ConsultantSessionDTO()
             .isTeamSession(session.isTeamSession())
+            .supervision(supervisionMarkerService.buildFor(session, requester))
             .agencyId(session.getAgencyId())
             .consultingType(session.getConsultingTypeId())
             .id(session.getId())

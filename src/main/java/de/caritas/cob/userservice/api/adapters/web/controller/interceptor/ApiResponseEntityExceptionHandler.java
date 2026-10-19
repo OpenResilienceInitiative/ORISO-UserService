@@ -12,14 +12,17 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.CustomHttpHeader;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException;
 import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
 import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationUpstreamException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
+import de.caritas.cob.userservice.api.picture.PictureDiagnostics;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolationException;
 import java.net.UnknownHostException;
 import java.util.Map;
@@ -32,6 +35,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -54,6 +58,24 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 @ControllerAdvice
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHandler {
+
+  @ExceptionHandler(de.caritas.cob.userservice.api.picture.PictureException.class)
+  public ResponseEntity<Object> handlePicture(
+      de.caritas.cob.userservice.api.picture.PictureException ex, WebRequest request) {
+    if (ex.getStatus().is5xxServerError()) {
+      // PictureException exposes only fixed codes; never attach causes or request details.
+      PictureDiagnostics.withoutRequestContext(
+          () ->
+              log.error(
+                  "Picture request failed: status={}, reason={}",
+                  ex.getStatus().value(),
+                  ex.getMessage()));
+    }
+    var headers = new HttpHeaders();
+    headers.setCacheControl("no-store");
+    return handleExceptionInternal(
+        ex, Map.of("reason", ex.getMessage()), headers, ex.getStatus(), request);
+  }
 
   private static final String BAD_REQUEST = "Bad Request: ";
   private static final String USER_SERVICE_API_LOG_PLACEHOLDER = "UserService API: {}: {}";
@@ -201,7 +223,11 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
    * @param request the invoking request
    * @param ex the thrown exception
    */
-  @ExceptionHandler({InvalidDataAccessApiUsageException.class})
+  @ExceptionHandler({
+    InvalidDataAccessApiUsageException.class,
+    OptimisticLockingFailureException.class,
+    OptimisticLockException.class
+  })
   protected ResponseEntity<Object> handleConflict(
       final RuntimeException ex, final WebRequest request) {
     log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, HttpStatus.CONFLICT, ex.getMessage(), ex);
@@ -221,6 +247,21 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     ex.executeLogging();
 
     return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.CONFLICT, request);
+  }
+
+  /**
+   * 503 - Service Unavailable, the caller should retry.
+   *
+   * @param request the invoking request
+   * @param ex the thrown exception
+   */
+  @ExceptionHandler({ServiceUnavailableException.class})
+  protected ResponseEntity<Object> handleServiceUnavailable(
+      final ServiceUnavailableException ex, final WebRequest request) {
+    ex.executeLogging();
+
+    return handleExceptionInternal(
+        null, null, new HttpHeaders(), HttpStatus.SERVICE_UNAVAILABLE, request);
   }
 
   private Optional<String> conflictReasonOf(Throwable throwable) {

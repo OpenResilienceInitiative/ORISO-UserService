@@ -67,7 +67,7 @@ public class AgencyMatrixCredentialClient {
   private HttpHeaders technicalUserHeaders() {
     var techUser = identityClientConfig.getTechnicalUser();
     var identityLogin =
-        identityAuthentication.login(techUser.getUsername(), techUser.getPassword());
+        identityAuthentication.loginService(techUser.getClientId(), techUser.getClientSecret());
     var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
     tenantHeaderSupplier.addTenantHeader(headers);
     return headers;

@@ -15,34 +15,70 @@ class MatrixOnlyRuntimeConfigurationContractTest {
   private static final Path LOCAL_RUN_EXAMPLE = Path.of("run-local-remote-db.sh.example");
 
   @Test
+  void runtimeLaunchersMustUseTheTechnicalClientSecret() throws IOException {
+    for (var launcher :
+        new Path[] {
+          LOCAL_RUN_EXAMPLE,
+          Path.of("scripts/load/run-authenticated-write-replicas.sh"),
+          Path.of("scripts/load/run-seeded-public-read-replicas.sh")
+        }) {
+      assertThat(Files.readString(launcher))
+          .as(launcher.toString())
+          .contains("IDENTITY_TECHNICAL_CLIENT_ID", "KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET")
+          .doesNotContain("IDENTITY_TECHNICAL_USER_USERNAME", "IDENTITY_TECHNICAL_USER_PASSWORD");
+    }
+  }
+
+  @Test
   void releaseWorkflowMustPublishImmutableMultiPlatformImagesWithEvidence() throws IOException {
     final var buildAction =
         Files.readString(Path.of(".github/actions/docker-build-push/action.yml"));
     final var mainWorkflow = Files.readString(Path.of(".github/workflows/ci-main.yml"));
+    final var scanScript = Files.readString(Path.of("scripts/ci/scan-image-archive.sh"));
+    final var publishScript = Files.readString(Path.of("scripts/ci/publish-image-archive.sh"));
+    final var archiveEnvironment = "IMAGE_ARCHIVE: ${{ runner.temp }}/${{ inputs.image_name }}.tar";
 
     assertThat(buildAction)
         .contains("linux/amd64,linux/arm64")
         .contains("provenance: mode=max")
         .contains("sbom: true")
-        .contains("value: ${{ steps.build.outputs.digest }}")
-        .contains("aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25");
-
-    // The vulnerability scan has to sit ahead of the publish. Scanning after
-    // `push: true` can only redden the run; the image is already in GHCR and the
-    // deploy scripts resolve a tag to a digest without reading workflow results
-    // (OpenResilienceInitiative/ORISO-Docs#88).
-    final var scanIndex = buildAction.indexOf("aquasecurity/trivy-action@");
-    final var publishIndex = buildAction.indexOf("push: ${{ inputs.push_to_ghcr }}");
-    assertThat(scanIndex).isGreaterThan(-1);
-    assertThat(publishIndex).isGreaterThan(-1);
-    assertThat(scanIndex)
-        .as("Trivy must run before the image is pushed to the registry")
-        .isLessThan(publishIndex);
-
+        .contains("push: false")
+        .contains("outputs: type=oci,dest=${{ runner.temp }}/${{ inputs.image_name }}.tar")
+        .contains("EXPECTED_DIGEST: ${{ steps.build.outputs.digest }}")
+        .contains("value: ${{ steps.publish.outputs.digest }}")
+        .containsOnlyOnce("uses: docker/build-push-action@")
+        .doesNotContain("tags: ${{ steps.meta.outputs.tags }}", "continue-on-error:")
+        .containsSubsequence(
+            "uses: docker/build-push-action@",
+            archiveEnvironment,
+            "run: bash scripts/ci/scan-image-archive.sh",
+            "uses: docker/login-action@",
+            archiveEnvironment,
+            "run: bash scripts/ci/publish-image-archive.sh");
+    var scanStep =
+        buildAction.substring(
+            buildAction.indexOf("  - name: Reject fixable high or critical vulnerabilities"),
+            buildAction.indexOf("  - name: Login to GitHub Container Registry"));
+    assertThat(scanStep).doesNotContain("if:");
+    assertThat(scanScript)
+        .contains("set -euo pipefail", "for platform in", "--override-os linux --override-arch")
+        .containsSubsequence("oci-archive:$archive", "trivy image --input")
+        .contains("--exit-code 1", "--ignore-unfixed", "--vuln-type os,library")
+        .contains("--severity CRITICAL,HIGH");
+    assertThat(publishScript)
+        .contains("set -euo pipefail", "skopeo copy --all --preserve-digests")
+        .contains("\"oci-archive:$archive\"", "--digestfile \"$digest_file\"")
+        .containsSubsequence(
+            "if [[ \"$(cat \"$digest_file\")\" != \"$expected_digest\" ]]",
+            "exit 1",
+            "printf 'digest=%s\\n' \"$expected_digest\" >> \"$GITHUB_OUTPUT\"");
     assertThat(mainWorkflow)
         .contains("id-token: write")
         .contains("attestations: write")
-        .contains("actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6")
+        .containsSubsequence(
+            "uses: ./.github/actions/docker-build-push",
+            "uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6")
+        .doesNotContain("continue-on-error:", "if: ${{ always() }}")
         .contains("subject-digest: ${{ steps.image.outputs.digest }}");
   }
 
