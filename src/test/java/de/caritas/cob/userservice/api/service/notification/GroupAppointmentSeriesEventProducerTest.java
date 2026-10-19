@@ -124,7 +124,6 @@ class GroupAppointmentSeriesEventProducerTest {
   @Test
   void aMovedFirstDateConfirmsTheEarlierEffectiveSecondDate() {
     var firstUtc = LocalDateTime.now(java.time.ZoneOffset.UTC).plusDays(5);
-    var secondUtc = firstUtc.plusDays(1);
     var movedFirstUtc = firstUtc.plusDays(2);
     var series =
         Chat.builder()
@@ -137,6 +136,11 @@ class GroupAppointmentSeriesEventProducerTest {
             .chatInterval(ChatInterval.DAILY)
             .conversationType(ConversationType.SELF_HELP)
             .build();
+    // Not firstUtc.plusDays(1): a daily series keeps its local wall-clock time, so in the
+    // week of a Berlin clock change one day later is 23 or 25 UTC hours, not 24. Asking the
+    // series is what the producer does, and it stops this test going red for one week every
+    // spring and autumn — the fixed-date cases above pin that arithmetic itself.
+    var secondUtc = series.occurrenceStart(1);
     when(exceptions.findBySeries_Id(42L))
         .thenReturn(
             List.of(
