@@ -420,6 +420,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
     createAdminDTO.setEmail("platformadmin@email.com");
     createAdminDTO.setTenantId(0);
+    when(authenticatedUser.getAccessToken()).thenReturn("platform-caller-token");
     givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.TENANT_ADMIN);
     givenTenant();
     givenPlatformAdmin();
@@ -435,6 +436,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
                 .content(objectMapper.writeValueAsString(createAdminDTO)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("_embedded.tenantId", is("0")));
+    assertDefaultInactivityPolicy(createdIdentityId);
     assertIssuedSetup(AccountInviteTargetRole.TENANT_ADMIN, 0L);
   }
 
