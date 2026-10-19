@@ -986,6 +986,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TopicDTO'
+        departments:
+          type: array
+          description: >
+            The agency's departments (one per assigned topic). Unlike topics, the topicId is
+            always present - it does not depend on the topic-name lookup in
+            ConsultingTypeService (ORISO-Admin#1026).
+          items:
+            $ref: '#/components/schemas/AgencyAdminDepartmentDTO'
         demographics:
           $ref: '#/components/schemas/DemographicsDTO'
         createDate:
@@ -1018,6 +1026,19 @@ components:
         settings:
           $ref: '#/components/schemas/Settings'
           description: Agency settings including platform-level agencyAdminControls
+    AgencyAdminDepartmentDTO:
+      type: object
+      description: One department (Fachbereich = agency x topic), mirrored from AgencyService.
+      properties:
+        topicId:
+          type: integer
+          format: int64
+          example: 7
+        hasPublishedDpp:
+          type: boolean
+        hasPublishedImprint:
+          type: boolean
+
     DataProtectionDTO:
       type: object
       properties:
@@ -1160,6 +1181,15 @@ components:
         agencyLogo:
           type: string
           example: base64 encoded image
+        reservedAgencyId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: >-
+            Creates the agency with exactly this pre-reserved ID instead of the sequence-generated
+            one (TEN-INV-U2). The reservation is consumed atomically with the insert; an ID that is
+            not held by an open reservation - or already assigned - is answered with 409.
+          example: 42
     AgencyAdminFullResponseDTO:
       type: object
       properties:

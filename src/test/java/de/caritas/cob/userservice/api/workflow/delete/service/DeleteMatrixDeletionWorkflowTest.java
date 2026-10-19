@@ -40,9 +40,9 @@ import org.springframework.data.domain.Pageable;
 @ExtendWith(MockitoExtension.class)
 class DeleteMatrixDeletionWorkflowTest {
 
-  private static final String MATRIX_USER_ID = "@user:oriso.org";
-  private static final String MATRIX_ROOM_ID = "!counselling:oriso.org";
-  private static final String GROUP_CHAT_ROOM_ID = "!group:oriso.org";
+  private static final String MATRIX_USER_ID = "@user:example.org";
+  private static final String MATRIX_ROOM_ID = "!counselling:example.org";
+  private static final String GROUP_CHAT_ROOM_ID = "!group:example.org";
 
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private SessionRepository sessionRepository;

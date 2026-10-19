@@ -19,14 +19,13 @@ import de.caritas.cob.userservice.api.service.notification.GroupChatLifecycleNot
 import de.caritas.cob.userservice.api.service.notification.GroupChatNotificationRecipientService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 public class StartChatFacadeTest {
 
-  @InjectMocks private StartChatFacade startChatFacade;
+  private StartChatFacade startChatFacade;
 
   @Mock private GroupChatPermissionService groupChatPermissionService;
 
@@ -37,6 +36,19 @@ public class StartChatFacadeTest {
   @Mock private GroupChatNotificationRecipientService notificationRecipientService;
 
   @Mock private Chat chat;
+
+  @org.junit.jupiter.api.BeforeEach
+  void wireRealGroupPolicy() {
+    var groupPolicy =
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy();
+    startChatFacade =
+        new StartChatFacade(
+            chatService,
+            groupChatPermissionService,
+            groupPolicy,
+            notificationRecipientService,
+            groupChatLifecycleNotificationService);
+  }
 
   @Test
   public void

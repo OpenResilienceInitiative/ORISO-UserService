@@ -1,0 +1,15 @@
+US #1224: first real Synapse GREEN, 2026-09-30
+
+Verified by main agent after the production HMAC credential fix, before further test additions.
+Environment: local disposable Docker Synapse v1.158.0, Java 21; synthetic public fixtures only.
+Test class: MatrixBrowserDeviceSynapseIT.
+Test: originalDeviceCanReplaceCrossSigningIdentityAfterAnotherBackendInstanceLogsInDeviceB.
+Surefire: Tests run 1, Failures 0, Errors 0, Skipped 0; class elapsed 9.599 seconds.
+
+The identical regression that previously failed with HTTP 401 M_FORBIDDEN now completes real
+password UIA and persists the replacement master identity, readable from both devices.
+Device A keeps its original password and device-bound token across device B's separate backend login.
+
+This initial GREEN does not claim browser recovery-key or encrypted message restoration coverage.
+Backup metadata lifecycle and first-time setup are being added as the next test slice.
+No request bodies, credentials, access tokens or UIA session identifiers are retained here.

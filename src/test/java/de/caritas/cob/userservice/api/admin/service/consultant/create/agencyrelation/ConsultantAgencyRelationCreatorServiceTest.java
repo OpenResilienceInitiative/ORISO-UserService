@@ -8,8 +8,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -27,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.ConsultantJoinedAgencyEvent;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.RolesDTO;
 import java.util.LinkedHashMap;
@@ -40,6 +43,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 @ExtendWith(MockitoExtension.class)
 public class ConsultantAgencyRelationCreatorServiceTest {
@@ -66,6 +70,94 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
   @Mock
   private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
+
+  @Mock private ApplicationEventPublisher eventPublisher;
+
+  /**
+   * US#1060: an agency assignment that stops at the database row leaves the counsellor locked out
+   * of every enquiry that arrived before them, because Matrix membership is what makes an enquiry
+   * visible at all (FE#811). Announcing the completed assignment therefore belongs to "the
+   * assignment is done", not to a separate manual step.
+   */
+  @Test
+  void completeConsultantAgencyAssigment_Should_publishTheJoinedAgencyEvent() {
+    var consultant = new Consultant();
+    consultant.setId("consultant Id");
+    consultant.setStatus(ConsultantStatus.CREATED);
+    var agencyDTO = new AgencyDTO().id(2L).teamAgency(false);
+
+    when(consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.of(consultant));
+    when(agencyService.getAgency(eq(2L))).thenReturn(agencyDTO);
+
+    var input =
+        new CreateConsultantAgencyDTOInputAdapter(
+            "consultant Id", new CreateConsultantAgencyDTO().agencyId(2L));
+
+    consultantAgencyRelationCreatorService.completeConsultantAgencyAssigment(
+        input, LogService::logInfo);
+
+    verify(eventPublisher).publishEvent(new ConsultantJoinedAgencyEvent("consultant Id", 2L));
+  }
+
+  /**
+   * The route the admin UI actually takes (POST /consultants/{id}/agencies) persists the relation
+   * and completes the assignment in one call. The event has to come after the relation is
+   * finalized: a listener that fires earlier could act on a relation the finalizer has not yet made
+   * real.
+   */
+  @Test
+  void createNewConsultantAgency_Should_publishTheJoinedAgencyEvent_afterTheRelationIsFinalized() {
+    var consultant = new Consultant();
+    consultant.setId("consultant Id");
+    consultant.setTenantId(83L);
+    consultant.setStatus(ConsultantStatus.CREATED);
+    var agency = new AgencyDTO().id(280L).consultingType(0).teamAgency(false);
+    when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
+        .thenReturn(Optional.of(consultant));
+    when(agencyService.getAgency(280L)).thenReturn(agency);
+    when(consultingTypeManager.getConsultingTypeSettings(0))
+        .thenReturn(new ExtendedConsultingTypeResponseDTO());
+    when(consultantAgencyService.saveConsultantAgency(any(ConsultantAgency.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    consultantAgencyRelationCreatorService.createNewConsultantAgency(
+        "consultant Id", new CreateConsultantAgencyDTO().agencyId(280L));
+
+    var inOrder = inOrder(consultantAgencyRelationFinalizer, eventPublisher);
+    inOrder
+        .verify(consultantAgencyRelationFinalizer)
+        .finalizeConsultantAgencyRelation(eq(consultant), any(ConsultantAgency.class));
+    inOrder
+        .verify(eventPublisher)
+        .publishEvent(new ConsultantJoinedAgencyEvent("consultant Id", 280L));
+  }
+
+  /**
+   * A rejected assignment never became a relation, so nothing may be announced. Otherwise a
+   * counsellor would be joined into the enquiry rooms of an agency they were refused.
+   */
+  @Test
+  void createNewConsultantAgency_Should_notPublish_When_theRelationIsRejected() {
+    var consultant = new Consultant();
+    consultant.setId("consultant Id");
+    consultant.setTenantId(83L);
+    var agency = new AgencyDTO().id(280L).consultingType(0).teamAgency(false);
+    when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
+        .thenReturn(Optional.of(consultant));
+    when(agencyService.getAgency(280L)).thenReturn(agency);
+    doThrow(new BadRequestException("topics do not match the requested agency"))
+        .when(consultantTopicAgencyCompatibilityValidator)
+        .validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(any(), any(), any());
+
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            consultantAgencyRelationCreatorService.createNewConsultantAgency(
+                "consultant Id", new CreateConsultantAgencyDTO().agencyId(280L)));
+
+    verifyNoInteractions(eventPublisher);
+  }
 
   @Test
   public void
@@ -228,7 +320,6 @@ public class ConsultantAgencyRelationCreatorServiceTest {
                 LogService::logInfo));
 
     verify(identityRoleLookup).findAllByUserId("consultant Id");
-    verify(identityClient, never()).userHasRole(anyString(), anyString());
     verify(consultantAgencyService, never()).saveConsultantAgency(any());
   }
 
@@ -267,7 +358,6 @@ public class ConsultantAgencyRelationCreatorServiceTest {
         LogService::logInfo);
 
     verify(identityRoleLookup).findAllByUserId("consultant Id");
-    verify(identityClient, never()).userHasRole(anyString(), anyString());
     verify(consultantAgencyService).saveConsultantAgency(any(ConsultantAgency.class));
   }
 

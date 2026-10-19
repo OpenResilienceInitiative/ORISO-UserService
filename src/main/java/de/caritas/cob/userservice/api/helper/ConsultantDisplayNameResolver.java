@@ -29,14 +29,62 @@ public class ConsultantDisplayNameResolver {
     if (consultant == null) {
       return null;
     }
+    return resolveMatrixDisplayName(consultant.getDisplayName(), consultant.getUsername());
+  }
 
-    var appDisplayName = consultant.getDisplayName();
-    if (isUsable(appDisplayName)) {
-      return appDisplayName;
+  /**
+   * Raw-parts overload of {@link #resolveMatrixDisplayName(Consultant)}, for the provisioning paths
+   * that have no persisted {@link Consultant} yet: admin/import consultant creation works from a
+   * creation input, and granting a consultant identity works from an {@code Admin}. They call this
+   * instead of re-deciding, so this class stays the only place that knows the rule.
+   *
+   * @param publicDisplayName the public display name the advice seeker is already shown (nullable)
+   * @param username the plain or transcoded username, the last resort (nullable)
+   * @return the display name to register with Synapse, never the counsellor's real name
+   */
+  public String resolveMatrixDisplayName(String publicDisplayName, String username) {
+    if (isUsable(publicDisplayName)) {
+      return publicDisplayName;
     }
 
     // Falls back to what the Matrix ID already exposes, so provisioning adds no new information.
-    return usernameTranscoder.decodeUsername(consultant.getUsername());
+    return username == null ? null : usernameTranscoder.decodeUsername(username);
+  }
+
+  /**
+   * The name a <em>colleague</em> sees on internal surfaces (team lists, the ADR-008 supervision
+   * marker, internal group chats): the #996 rule {@code internalDisplayName ?? displayName}, with
+   * the same usability check as {@link #resolveMatrixDisplayName(Consultant)} and the same username
+   * fallback. Never the real name. Advice-seeker surfaces must not call this.
+   *
+   * @param internalDisplayName the internal display name (nullable)
+   * @param publicDisplayName the public display name (nullable)
+   * @param username the (encoded) username, the last resort
+   * @return the display name for internal surfaces
+   */
+  public String resolveInternalDisplayName(
+      String internalDisplayName, String publicDisplayName, String username) {
+    if (isUsable(internalDisplayName)) {
+      return internalDisplayName;
+    }
+    if (isUsable(publicDisplayName)) {
+      return publicDisplayName;
+    }
+    return usernameTranscoder.decodeUsername(username);
+  }
+
+  /**
+   * Entity overload of {@link #resolveInternalDisplayName(String, String, String)}.
+   *
+   * @param consultant the colleague (nullable)
+   * @return the display name for internal surfaces, or null when the consultant is null
+   */
+  public String resolveInternalDisplayName(Consultant consultant) {
+    if (consultant == null) {
+      return null;
+    }
+    return resolveInternalDisplayName(
+        consultant.getInternalDisplayName(), consultant.getDisplayName(), consultant.getUsername());
   }
 
   /**

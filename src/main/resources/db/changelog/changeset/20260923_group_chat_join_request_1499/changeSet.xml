@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="20260923-group-chat-join-request-1499" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><tableExists tableName="group_chat_join_request"/></not>
+    </preConditions>
+    <sqlFile path="migrate.sql" relativeToChangelogFile="true"/>
+    <rollback><dropTable tableName="group_chat_join_request"/></rollback>
+  </changeSet>
+</databaseChangeLog>

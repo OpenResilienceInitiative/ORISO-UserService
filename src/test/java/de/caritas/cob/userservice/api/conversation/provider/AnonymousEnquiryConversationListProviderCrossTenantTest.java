@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.conversation.model.PageableListRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -88,6 +89,32 @@ class AnonymousEnquiryConversationListProviderCrossTenantTest {
 
     assertThat(tenantDuringQuery.get()).isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
     assertThat(TenantContext.getCurrentTenant()).isEqualTo(CONSULTANT_TENANT);
+  }
+
+  @Test
+  void buildConversations_Should_notAddSupervisionMarkersBecauseLiveChatIsOutOfScope() {
+    var consultant = consultant();
+    var session =
+        Session.builder()
+            .id(91L)
+            .registrationType(Session.RegistrationType.ANONYMOUS)
+            .postcode("12345")
+            .languageCode(LanguageCode.de)
+            .status(Session.SessionStatus.NEW)
+            .teamSession(false)
+            .build();
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    when(consultantTopicRepository.findTopicIdsByConsultantId("consultant-83"))
+        .thenReturn(List.of(11L));
+    when(sessionRepository.findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly(
+            anySet(), any(), any(), any(), any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of(session)));
+
+    var response =
+        newProvider().buildConversations(PageableListRequest.builder().count(5).offset(0).build());
+
+    assertThat(response.getSessions()).hasSize(1);
+    assertThat(response.getSessions().getFirst().getSession().getSupervision()).isNull();
   }
 
   @Test

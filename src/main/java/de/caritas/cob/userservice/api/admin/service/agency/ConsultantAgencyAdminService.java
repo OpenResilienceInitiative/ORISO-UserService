@@ -20,20 +20,26 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.ConsultantLeftAgencyEvent;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.beanutils.BeanUtils;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Service class to handle administrative operations on consultant-agencies. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ConsultantAgencyAdminService {
 
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
@@ -43,6 +49,8 @@ public class ConsultantAgencyAdminService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull AgencyAdminService agencyAdminService;
   private final @NonNull ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
+  private final @NonNull ApplicationEventPublisher eventPublisher;
+  private final @NonNull ConsultantTopicRepository consultantTopicRepository;
 
   /**
    * Returns all Agencies for the given consultantId.
@@ -201,9 +209,17 @@ public class ConsultantAgencyAdminService {
   }
 
   private boolean noOtherTeamAgency(Consultant consultant, Long agencyId) {
-    return consultant.getConsultantAgencies().stream()
+    // Deliberately query the repository instead of navigating consultant.getConsultantAgencies():
+    // this method runs outside of an open Hibernate session (changeAgencyType() is not
+    // @Transactional, and spring.jpa.open-in-view is disabled), so the lazy collection on a
+    // consultant loaded by an earlier, already-closed repository call would raise a
+    // LazyInitializationException. A fresh, explicit query is self-contained and always eager.
+    // Same pattern as ChatService's explicit ChatAgencyRepository lookups (see #288).
+    return consultantAgencyRepository
+        .findByConsultantIdAndDeleteDateIsNull(consultant.getId())
+        .stream()
+        .filter(consultantAgency -> !agencyId.equals(consultantAgency.getAgencyId()))
         .map(this::toAgencyDto)
-        .filter(agencyDTO -> !agencyId.equals(agencyDTO.getId()))
         .noneMatch(AgencyDTO::getTeamAgency);
   }
 
@@ -223,6 +239,8 @@ public class ConsultantAgencyAdminService {
    * @param consultantId the consultant id
    * @param agencyId the agency id
    */
+  // One transaction: the relation and its centre's topic rows (#1264) go together or not at all.
+  @Transactional
   public void markConsultantAgencyForDeletion(String consultantId, Long agencyId) {
     List<ConsultantAgency> consultantAgencies =
         this.consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull(
@@ -235,6 +253,7 @@ public class ConsultantAgencyAdminService {
         .forEach(this::markAsDeleted);
   }
 
+  @Transactional
   public void markConsultantAgenciesForDeletion(String consultantId, List<Long> agencyIds) {
 
     agencyIds.forEach(
@@ -250,6 +269,42 @@ public class ConsultantAgencyAdminService {
     this.agencyDeletionValidationService.validateAndMarkForDeletion(consultantAgency);
     consultantAgency.setDeleteDate(nowInUtc());
     this.consultantAgencyRepository.save(consultantAgency);
+    deleteTopicsOfRemovedCentre(consultantAgency);
+    announceDetachedAgency(consultantAgency);
+  }
+
+  /** #1264: topics offered at a centre go with it; rows without a centre (legacy) stay. */
+  private void deleteTopicsOfRemovedCentre(ConsultantAgency consultantAgency) {
+    if (consultantAgency.getConsultant() != null) {
+      consultantTopicRepository.deleteByConsultantIdAndAgencyId(
+          consultantAgency.getConsultant().getId(), consultantAgency.getAgencyId());
+    }
+  }
+
+  /**
+   * US#1060, symmetric half: a counsellor is joined into the agency's open enquiry rooms when they
+   * are assigned, so detaching them again has to take that membership back. Otherwise they keep
+   * receiving the agency's open initial requests through Matrix {@code /sync} long after the
+   * relation was deleted.
+   *
+   * <p>Announced rather than performed here, and only once the deletion is persisted: the bulk path
+   * behind {@code ConsultantAdminFacade#setConsultantAgencies} applies removals inside a
+   * transaction that a later rejected assignment can still roll back. Revoking Matrix membership
+   * inline would lock the counsellor out of enquiries the database still says are theirs. See
+   * {@code AgencyMembershipSyncListener}.
+   */
+  private void announceDetachedAgency(ConsultantAgency consultantAgency) {
+    var consultant = consultantAgency.getConsultant();
+    if (consultant == null) {
+      log.warn(
+          "Consultant agency relation {} has no consultant; enquiry room membership of agency {}"
+              + " not revoked",
+          consultantAgency.getId(),
+          consultantAgency.getAgencyId());
+      return;
+    }
+    eventPublisher.publishEvent(
+        new ConsultantLeftAgencyEvent(consultant.getId(), consultantAgency.getAgencyId()));
   }
 
   /**

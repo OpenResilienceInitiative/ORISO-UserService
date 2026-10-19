@@ -30,13 +30,18 @@ import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransac
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
+import de.caritas.cob.userservice.api.model.ConsultantAvatars;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -53,6 +58,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
 
 /** Creates consultants in the identity provider, Matrix and the application database. */
 @Service
@@ -60,6 +66,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 public class CreateConsultantSaga {
 
+  private final ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
+  private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
   private static final String CREATE_CONSULTANT = "createConsultant";
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
@@ -69,6 +78,7 @@ public class CreateConsultantSaga {
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull TenantAdminService tenantAdminService;
   private final @NonNull MatrixUserClient matrixUserClient;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
@@ -93,12 +103,14 @@ public class CreateConsultantSaga {
     setCurrentTenant(createConsultantDTO);
     validateTenantId(createConsultantDTO);
     ensureTenantIdResolved(createConsultantDTO);
+    java.util.Map<Long, java.util.Set<Long>> topicIdsByAgencyId = null;
     if (createConsultantDTO.getAgencyIds() != null
         && !createConsultantDTO.getAgencyIds().isEmpty()) {
-      consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
-          createConsultantDTO.getTopicIds(),
-          createConsultantDTO.getAgencyIds(),
-          createConsultantDTO.getTenantId());
+      topicIdsByAgencyId =
+          consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+              createConsultantDTO.getTopicIds(),
+              createConsultantDTO.getAgencyIds(),
+              createConsultantDTO.getTenantId());
     }
 
     assertLicensesNotExceeded(createConsultantDTO);
@@ -107,7 +119,8 @@ public class CreateConsultantSaga {
         new CreateConsultantDTOAbsenceInputAdapter(createConsultantDTO));
 
     ConsultantCreationInput consultantCreationInput =
-        new CreateConsultantDTOCreationInputAdapter(createConsultantDTO);
+        new CreateConsultantDTOCreationInputAdapter(createConsultantDTO)
+            .withTopicIdsByAgencyId(topicIdsByAgencyId);
 
     var roles = asSet(CONSULTANT.getValue());
     addGroupChatConsultantRole(createConsultantDTO, roles);
@@ -201,6 +214,7 @@ public class CreateConsultantSaga {
    * @param roles the roles to add to given {@link Consultant}
    * @return the generated {@link Consultant}
    */
+  @Transactional
   public Consultant createNewConsultant(ImportRecord importRecord, Set<String> roles) {
     ConsultantCreationInput consultantCreationInput =
         new ImportRecordCreationInputAdapter(importRecord);
@@ -215,6 +229,13 @@ public class CreateConsultantSaga {
     de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.PlainCredentials plainCreds =
         de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
 
+    RecoveryPolicySnapshot snapshot =
+        chatRecoveryEnrollmentPolicyService.forNewConsultant(consultantCreationInput.getTenantId());
+    var inactivityPolicy =
+        inactivityEnrollment.capture(
+            consultantCreationInput.getTenantId(),
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
+                .CONSULTANT);
     String keycloakUserId = createKeycloakUser(consultantCreationInput);
 
     String password = consultantCreationInput.getPassword();
@@ -236,39 +257,56 @@ public class CreateConsultantSaga {
     try {
       if (plainCreds != null && plainCreds.getUsername() != null) {
         String matrixPassword = userHelper.getRandomPassword();
-        log.info(
-            "Creating Matrix consultant user with plain username: '{}'", plainCreds.getUsername());
+        // Privacy: the Matrix localpart and the resulting Matrix ID are user identifiers, and
+        // application logs are aggregated, retained and backed up. Only the internal consultant id
+        // (the Keycloak id this row is built from) and the outcome go into the log.
+        log.info("Provisioning the chat account of consultant {}", keycloakUserId);
+        // The Synapse displayname is readable by every member of a shared room, the advice seeker
+        // included, so it must never be the real name. The resolver decides which name may go
+        // there; the saga only hands it the inputs.
+        String matrixDisplayName =
+            consultantDisplayNameResolver.resolveMatrixDisplayName(
+                consultantCreationInput.getDisplayName(), plainCreds.getUsername());
         matrixUserId =
             matrixUserClient.createUserId(
-                plainCreds.getUsername(),
-                matrixPassword,
-                consultantCreationInput.getFirstName()
-                    + " "
-                    + consultantCreationInput.getLastName());
+                plainCreds.getUsername(), matrixPassword, matrixDisplayName);
 
         if (matrixUserId != null) {
-          log.info(
-              "Successfully created Matrix user for consultant '{}' → Matrix ID: {}",
-              plainCreds.getUsername(),
-              matrixUserId);
+          log.info("Provisioned the chat account of consultant {}", keycloakUserId);
         } else {
           log.warn(
-              "Matrix user creation response missing user_id for consultant: {}",
-              plainCreds.getUsername());
+              "Chat account provisioning for consultant {} answered without a user_id; the"
+                  + " consultant is created without a chat identity and must be repaired via POST"
+                  + " /useradmin/consultants/{}/chat-identity (#1194)",
+              keycloakUserId,
+              keycloakUserId);
         }
       } else {
         log.warn(
-            "Plain credentials not available from ThreadLocal, skipping Matrix user creation for consultant");
+            "Plain credentials not available from ThreadLocal, skipping chat account provisioning"
+                + " for consultant {}. The consultant is created without a chat identity and must"
+                + " be repaired via POST /useradmin/consultants/{}/chat-identity (#1194)",
+            keycloakUserId,
+            keycloakUserId);
       }
     } catch (Exception e) {
-      log.error("Matrix user creation failed for consultant, but continuing", e);
+      // Not fatal: a chat outage must not stop onboarding. The consultant is stored with
+      // chatIdentityStatus = MISSING and repaired via POST .../consultants/{id}/chat-identity.
+      log.error(
+          "Chat account provisioning failed for consultant {}; continuing without a chat identity."
+              + " The consultant cannot be used for counselling until it is repaired via POST"
+              + " /useradmin/consultants/{}/chat-identity",
+          keycloakUserId,
+          keycloakUserId,
+          e);
     } finally {
       // Clean up ThreadLocal
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
     }
 
     var consultant =
-        createConsultantInMariaDBOrRollback(consultantCreationInput, keycloakUserId, matrixUserId);
+        createConsultantInMariaDBOrRollback(
+            consultantCreationInput, keycloakUserId, matrixUserId, snapshot, inactivityPolicy);
 
     assignAgenciesOrRollback(consultant, consultantCreationInput.getAgencyIds());
     return consultant;
@@ -295,7 +333,11 @@ public class CreateConsultantSaga {
   private void updateKeycloakPasswordOrRollback(
       ConsultantCreationInput consultantCreationInput, String keycloakUserId, String password) {
     try {
-      identityPasswordUpdater.updatePassword(keycloakUserId, password);
+      if (consultantCreationInput.isPasswordChangeRequired()) {
+        identityPasswordUpdater.updateTemporaryPassword(keycloakUserId, password);
+      } else {
+        identityPasswordUpdater.updatePassword(keycloakUserId, password);
+      }
     } catch (CustomValidationHttpStatusException e) {
       rollbackCreateNewConsultant(
           buildConsultantDataForRollback(consultantCreationInput, keycloakUserId));
@@ -341,9 +383,19 @@ public class CreateConsultantSaga {
   }
 
   private Consultant createConsultantInMariaDBOrRollback(
-      ConsultantCreationInput consultantCreationInput, String keycloakUserId, String matrixUserId) {
+      ConsultantCreationInput consultantCreationInput,
+      String keycloakUserId,
+      String matrixUserId,
+      RecoveryPolicySnapshot snapshot,
+      de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy
+          inactivityPolicy) {
+    var existing = consultantService.getConsultant(keycloakUserId);
+    if (existing.isPresent()) return existing.get();
     Consultant consultant = buildConsultant(consultantCreationInput, keycloakUserId, matrixUserId);
+    consultant.setChatRecoveryMode(snapshot.mode());
+    consultant.setChatRecoveryPolicyRevision(snapshot.revision());
     try {
+      inactivityEnrollment.enroll(keycloakUserId, consultant.getTenantId(), inactivityPolicy);
       return consultantService.saveConsultant(consultant);
     } catch (Exception e) {
       log.error(
@@ -445,6 +497,8 @@ public class CreateConsultantSaga {
             .teamConsultant(consultantCreationInput.isTeamConsultant())
             .matrixUserId(matrixUserId)
             .encourage2fa(true)
+            .twoFactorRequired(consultantCreationInput.isTwoFactorRequired())
+            .passwordChangeRequired(consultantCreationInput.isPasswordChangeRequired())
             .magicLinkLoginEnabled(false)
             .notifyEnquiriesRepeating(true)
             .notifyNewChatMessageFromAdviceSeeker(true)
@@ -454,13 +508,19 @@ public class CreateConsultantSaga {
             .updateDate(consultantCreationInput.getUpdateDate())
             .tenantId(consultantCreationInput.getTenantId())
             .status(ConsultantStatus.CREATED)
-            .walkThroughEnabled(true)
+            .walkThroughEnabled(false)
             .languageCode(LanguageCode.de)
             .notificationsEnabled(true)
             .notificationsSettings(serializeToJsonString(allActiveNotifications()))
             .build();
 
-    consultant.replaceTopics(consultantCreationInput.getTopicIds());
+    consultant.assignInitialTopics(
+        consultantCreationInput.getTopicIds(), consultantCreationInput.getTopicIdsByAgencyId());
+    // Normalised in one shared place so a half avatar choice can never be persisted.
+    ConsultantAvatars.apply(
+        consultant,
+        ConsultantAvatarKind.fromNameOrNull(consultantCreationInput.getAvatarKind()),
+        consultantCreationInput.getAvatarId());
     consultantPublicSlugService.applyAdminSlug(consultant, consultantCreationInput.getPublicSlug());
     return consultant;
   }
@@ -484,27 +544,73 @@ public class CreateConsultantSaga {
     return userDto;
   }
 
+  /**
+   * Enforces the tenant's licensed user limit, when one is configured.
+   *
+   * <p>{@code TenantDTO.licensing} is optional in the tenant admin contract: every tenant created
+   * through the invite flow has {@code licensing_allowed_users = NULL} — only the seed tenant
+   * carries a number. A missing cap therefore means <em>no limit</em> and must not refuse creation;
+   * unboxing it straight into the comparison used to kill consultant creation for every new tenant
+   * with a bare 500, and the previous {@code assert nonNull(...)} guard never executed in
+   * production because the JVM strips assertions unless it is started with {@code -ea}.
+   *
+   * <p>Only states in which the limit cannot be established at all refuse creation: an unresolvable
+   * tenant id is a plain 400, and an unreadable tenant is reported as a named {@code
+   * TENANT_LICENSING_NOT_CONFIGURED} 400 that the admin UI can render — silently treating a
+   * TenantService outage as "unlimited" would let creations slip past a limit that is merely
+   * unreadable at that moment.
+   */
   private void assertLicensesNotExceeded(CreateConsultantDTO createConsultantDTO) {
-    if (multiTenancyEnabled) {
-      TenantDTO tenantById = tenantAdminService.getTenantById(createConsultantDTO.getTenantId());
-      // Licenses are counted per tenant, so always scope the active-consultant count to the
-      // target tenant. Relying on the ambient tenant filter for the current context counts
-      // consultants across all tenants, which falsely triggers NUMBER_OF_LICENSES_EXCEEDED when a
-      // tenant admin creates a consultant.
-      long numberOfActiveConsultants =
-          consultantService.getNumberOfActiveConsultants(createConsultantDTO.getTenantId());
+    if (!multiTenancyEnabled) {
+      return;
+    }
 
-      // No configured limit means no limit. Every tenant created through the invite flow has
-      // `licensing_allowed_users = NULL` — only the seed tenant carries a number — so unboxing it
-      // straight into the comparison killed consultant creation for every new tenant with a bare
-      // 500. The previous `assert nonNull(...)` guard could not catch that: Java disables
-      // assertions at runtime unless `-ea` is passed, so it never executed in production.
-      var licensing = tenantById.getLicensing();
-      Integer allowedNumberOfUsers = isNull(licensing) ? null : licensing.getAllowedNumberOfUsers();
-      if (nonNull(allowedNumberOfUsers) && numberOfActiveConsultants >= allowedNumberOfUsers) {
-        throw new CustomValidationHttpStatusException(
-            HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED);
-      }
+    var tenantId = createConsultantDTO.getTenantId();
+    if (isNull(tenantId)) {
+      // ensureTenantIdResolved only throws for a superadmin (global) context, so a request whose
+      // tenant is in neither the body, the access token nor the tenant context reaches here with
+      // nothing resolved. Everything below is tenant-scoped: the lookup would be a doomed remote
+      // call with a null id, and its failure would then be misreported as a licensing problem.
+      throw new BadRequestException(
+          "TenantId could not be resolved for the consultant to be created");
+    }
+
+    TenantDTO tenant;
+    try {
+      tenant = tenantAdminService.getTenantById(tenantId);
+    } catch (RestClientException exception) {
+      log.warn(
+          "TenantService could not be reached for tenant {}; refusing consultant creation because"
+              + " its licensed user limit cannot be established.",
+          tenantId,
+          exception);
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED);
+    }
+    if (isNull(tenant)) {
+      log.warn(
+          "TenantService returned no tenant {}; refusing consultant creation because its licensed"
+              + " user limit cannot be established.",
+          tenantId);
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED);
+    }
+
+    // No configured limit means no limit — the invite-flow default, see the javadoc above.
+    var licensing = tenant.getLicensing();
+    Integer allowedNumberOfUsers = isNull(licensing) ? null : licensing.getAllowedNumberOfUsers();
+    if (isNull(allowedNumberOfUsers)) {
+      return;
+    }
+
+    // Licenses are counted per tenant, so always scope the active-consultant count to the
+    // target tenant. Relying on the ambient tenant filter for the current context counts
+    // consultants across all tenants, which falsely triggers NUMBER_OF_LICENSES_EXCEEDED when a
+    // tenant admin creates a consultant.
+    long numberOfActiveConsultants = consultantService.getNumberOfActiveConsultants(tenantId);
+    if (numberOfActiveConsultants >= allowedNumberOfUsers) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED);
     }
   }
 

@@ -1,0 +1,28 @@
+So erreichen Sie Ihre Beratung
+==============================
+
+Sie haben die Kontaktdaten Ihrer Beratung angefordert. Die verfügbaren Kontaktwege finden Sie unten.
+
+Beratung: {{consultantName}}
+Durchwahl: {{consultantPhone}}
+Sprechzeiten: {{consultantHours}}
+E-Mail: {{consultantEmail}}
+
+Zum geschützten Chat:
+{{messageUrl}}
+
+----------------------------------------------------------------
+Ihre Nachrichten sind Ende-zu-Ende verschlüsselt. Niemand außer Ihnen und Ihrer Beratung kann sie lesen – auch wir nicht.
+
+{{orgName}}
+{{orgAddress}}
+{{contactLine}}
+
+{{platformName}} ist ein Angebot von {{orgName}}.
+
+Einstellungen: {{settingsUrl}}
+Datenschutz: {{privacyUrl}}
+Impressum: {{imprintUrl}}
+Benachrichtigungen abbestellen: {{unsubscribeUrl}}
+
+Diese E-Mail wurde automatisch versendet. Bitte antworten Sie nicht darauf.

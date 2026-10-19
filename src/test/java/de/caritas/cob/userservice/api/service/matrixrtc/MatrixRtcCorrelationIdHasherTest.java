@@ -8,8 +8,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 class MatrixRtcCorrelationIdHasherTest {
 
-  private static final String ROOM_ID = "!source:matrix.oriso.org";
-  private static final String MATRIX_USER_ID = "@participant:matrix.oriso.org";
+  private static final String ROOM_ID = "!source:matrix.example.org";
+  private static final String MATRIX_USER_ID = "@participant:matrix.example.org";
 
   private MatrixRtcCorrelationIdHasher newHasher(String secret) {
     var hasher = new MatrixRtcCorrelationIdHasher();
@@ -31,8 +31,8 @@ class MatrixRtcCorrelationIdHasherTest {
     var hasher = newHasher("secret-a");
 
     assertThat(hasher.correlationId(ROOM_ID, MATRIX_USER_ID))
-        .isNotEqualTo(hasher.correlationId(ROOM_ID, "@someone-else:matrix.oriso.org"))
-        .isNotEqualTo(hasher.correlationId("!other:matrix.oriso.org", MATRIX_USER_ID));
+        .isNotEqualTo(hasher.correlationId(ROOM_ID, "@someone-else:matrix.example.org"))
+        .isNotEqualTo(hasher.correlationId("!other:matrix.example.org", MATRIX_USER_ID));
   }
 
   @Test

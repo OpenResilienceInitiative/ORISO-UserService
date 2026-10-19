@@ -101,6 +101,13 @@ public class AgencyInviteLinkController {
     return ResponseEntity.ok(body);
   }
 
+  /** Public, read-only invitation metadata for selecting an identity before joining. */
+  @GetMapping("/users/invitelinks/{token}/context")
+  public ResponseEntity<AgencyInviteLinkService.InvitationContext> context(
+      @PathVariable String token) {
+    return ResponseEntity.ok(agencyInviteLinkService.getContext(token));
+  }
+
   // ---------------------------------------------------------------------------------------------
   // POST /users/invitelinks/{token}/redeem — public; marks link used and returns registration
   // metadata.

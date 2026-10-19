@@ -184,6 +184,7 @@ public class AppointmentController implements AppointmentsApi {
             enquiryAppointmentDTO.getCounselorEmail(),
             null);
 
+    enquiryData.setUiLocale(ErstantwortRequestLocale.current());
     var response = createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 
     var consultant =

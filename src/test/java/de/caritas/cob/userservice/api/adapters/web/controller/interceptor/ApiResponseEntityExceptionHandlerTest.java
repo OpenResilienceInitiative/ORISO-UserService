@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller.interceptor;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
@@ -18,21 +19,83 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import jakarta.persistence.OptimisticLockException;
+import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpInputMessage;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.context.request.WebRequest;
 
 class ApiResponseEntityExceptionHandlerTest {
 
   private final ApiResponseEntityExceptionHandler handler = new ApiResponseEntityExceptionHandler();
   private final WebRequest request = mock(WebRequest.class);
+
+  @Test
+  void pictureFailuresLogOnlyFixedServerStatusAndReason() {
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(ApiResponseEntityExceptionHandler.class);
+    var previousLevel = logger.getLevel();
+    boolean previousAdditive = logger.isAdditive();
+    logger.setLevel(ch.qos.logback.classic.Level.TRACE);
+    logger.setAdditive(false);
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(
+            ApiResponseEntityExceptionHandler.class)) {
+      var errors =
+          List.of(
+              de.caritas.cob.userservice.api.picture.PictureException.tooLarge(),
+              de.caritas.cob.userservice.api.picture.PictureException.unsupported(),
+              de.caritas.cob.userservice.api.picture.PictureException.invalid(),
+              de.caritas.cob.userservice.api.picture.PictureException.rejected(),
+              de.caritas.cob.userservice.api.picture.PictureException.unavailable());
+      for (var error : errors) {
+        error.initCause(new IOException("synthetic-private-cause"));
+        error.addSuppressed(new IOException("synthetic-private-suppressed"));
+        var response = handler.handlePicture(error, request);
+        assertEquals(error.getStatus(), response.getStatusCode());
+        assertEquals(Map.of("reason", error.getMessage()), response.getBody());
+        assertEquals("no-store", response.getHeaders().getCacheControl());
+      }
+      org.assertj.core.api.Assertions.assertThat(logs.events())
+          .singleElement()
+          .satisfies(
+              event -> {
+                assertEquals(ch.qos.logback.classic.Level.ERROR, event.getLevel());
+                assertEquals(
+                    "Picture request failed: status=503, reason=PICTURE_SCAN_UNAVAILABLE",
+                    event.getFormattedMessage());
+                org.assertj.core.api.Assertions.assertThat(event.getArgumentArray())
+                    .containsExactly(503, "PICTURE_SCAN_UNAVAILABLE");
+                assertNull(event.getThrowableProxy());
+              });
+      org.mockito.Mockito.verifyNoInteractions(request);
+    } finally {
+      logger.setLevel(previousLevel);
+      logger.setAdditive(previousAdditive);
+    }
+  }
+
+  @Test
+  void unavailableRecoveryPolicyReturnsRetryableStatusAndReason() {
+    var response =
+        handler.handleCustomBadRequest(
+            new CustomValidationHttpStatusException(
+                HttpStatusExceptionReason.CHAT_RECOVERY_POLICY_UNAVAILABLE, HttpStatus.BAD_GATEWAY),
+            request);
+    assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
+    assertEquals("CHAT_RECOVERY_POLICY_UNAVAILABLE", response.getHeaders().getFirst("X-Reason"));
+  }
 
   @Test
   void handleCustomBadRequest_badRequestException_returnsBadRequest() {
@@ -67,6 +130,27 @@ class ApiResponseEntityExceptionHandlerTest {
     assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
     var body = assertInstanceOf(Map.class, response.getBody());
     assertEquals("SMTP_SEND_FAILED", body.get("reason"));
+    // Review 3893231984 / AGENTS.md error contract: the body carries only a stable coarse
+    // category — the detailed diagnosis (field names, remedies, causes) stays in the server log.
+    assertEquals("SMTP_TRANSPORT_FAILED", body.get("detail"));
+    assertNull(body.get("message"));
+    org.junit.jupiter.api.Assertions.assertFalse(body.toString().contains("handover failed"));
+  }
+
+  @Test
+  void handleSmtpSendFailure_carriesTheCoarseCategoryOfTheFailure() {
+    // #1006: the Admin UI companion surfaces the detail field, so it must follow the category.
+    var ex =
+        new de.caritas.cob.userservice.api.exception.SmtpSendException(
+            de.caritas.cob.userservice.api.exception.SmtpSendException.Category
+                .SMTP_CREDENTIALS_MISSING,
+            "no SMTP credentials available — set SMTP_USER and SMTP_PASSWORD");
+    var response = handler.handleSmtpSendFailure(ex, request);
+
+    var body = assertInstanceOf(Map.class, response.getBody());
+    assertEquals("SMTP_SEND_FAILED", body.get("reason"));
+    assertEquals("SMTP_CREDENTIALS_MISSING", body.get("detail"));
+    org.junit.jupiter.api.Assertions.assertFalse(body.toString().contains("SMTP_USER"));
   }
 
   @Test
@@ -169,13 +253,53 @@ class ApiResponseEntityExceptionHandlerTest {
   }
 
   @Test
-  void mappedExceptionHandlers_returnExpectedHttpStatus() {
+  void mappedExceptionHandlers_returnExpectedHttpStatus() throws Exception {
+    var pictureStatuses =
+        java.util.Map.of(
+            de.caritas.cob.userservice.api.picture.PictureException.tooLarge(),
+                HttpStatus.PAYLOAD_TOO_LARGE,
+            de.caritas.cob.userservice.api.picture.PictureException.unsupported(),
+                HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+            de.caritas.cob.userservice.api.picture.PictureException.invalid(),
+                HttpStatus.BAD_REQUEST,
+            de.caritas.cob.userservice.api.picture.PictureException.rejected(),
+                HttpStatus.UNPROCESSABLE_ENTITY,
+            de.caritas.cob.userservice.api.picture.PictureException.unavailable(),
+                HttpStatus.SERVICE_UNAVAILABLE);
+    pictureStatuses.forEach(
+        (error, expectedStatus) -> {
+          var result = handler.handlePicture(error, request);
+          assertEquals(expectedStatus, result.getStatusCode());
+          assertEquals(java.util.Map.of("reason", error.getMessage()), result.getBody());
+        });
     // Business reason: each domain exception type must map to the documented status code.
     assertEquals(
         HttpStatus.CONFLICT,
         handler
             .handleConflict(new InvalidDataAccessApiUsageException("c"), request)
             .getStatusCode());
+    assertEquals(
+        HttpStatus.CONFLICT,
+        handler
+            .handleConflict(new OptimisticLockingFailureException("stale"), request)
+            .getStatusCode());
+    assertEquals(
+        HttpStatus.CONFLICT,
+        handler.handleConflict(new OptimisticLockException("stale"), request).getStatusCode());
+    assertTrue(
+        Arrays.asList(
+                ApiResponseEntityExceptionHandler.class
+                    .getDeclaredMethod("handleConflict", RuntimeException.class, WebRequest.class)
+                    .getAnnotation(ExceptionHandler.class)
+                    .value())
+            .contains(OptimisticLockingFailureException.class));
+    assertTrue(
+        Arrays.asList(
+                ApiResponseEntityExceptionHandler.class
+                    .getDeclaredMethod("handleConflict", RuntimeException.class, WebRequest.class)
+                    .getAnnotation(ExceptionHandler.class)
+                    .value())
+            .contains(OptimisticLockException.class));
     assertEquals(
         HttpStatus.CONFLICT,
         handler.handleCustomConflict(new ConflictException("c"), request).getStatusCode());

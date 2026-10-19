@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.config.auth;
 
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -19,7 +20,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 @Validated
 @Configuration
 @ConfigurationProperties(prefix = "identity")
-public class IdentityConfig implements IdentityClientConfig {
+public class IdentityConfig implements IdentityClientConfig, IdentityPolicy {
 
   private static final char PATH_SEPARATOR = '/';
 
@@ -87,5 +88,31 @@ public class IdentityConfig implements IdentityClientConfig {
             && otpAllowedForSingleTenantAdmins
         || roles.contains(UserRole.RESTRICTED_AGENCY_ADMIN.getValue())
             && otpAllowedForRestrictedAgencyAdmins;
+  }
+
+  @Override
+  public boolean isTwoFactorAuthenticationAllowed(Set<String> roles) {
+    return isOtpAllowed(roles);
+  }
+
+  @Override
+  public boolean isConsultantDisplayNameAllowed() {
+    return Boolean.TRUE.equals(displayNameAllowedForConsultants);
+  }
+
+  /**
+   * Null, blank and dummy addresses are all "not usable" — the classification lives here rather
+   * than in the caller so the dummy-suffix rule has exactly one definition.
+   */
+  @Override
+  public boolean isProfileEmailUsableForMagicLink(String email) {
+    if (!StringUtils.hasText(email) || emailDummySuffix == null) {
+      return false;
+    }
+    // Compare on the normalized form: a dummy address must stay unusable even when it
+    // arrives with surrounding whitespace or different casing. strip() (not trim())
+    // also removes Unicode whitespace such as \u2003, which hasText() accepts.
+    String normalized = email.strip().toLowerCase(java.util.Locale.ROOT);
+    return !normalized.endsWith(emailDummySuffix.strip().toLowerCase(java.util.Locale.ROOT));
   }
 }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="20260910-chat-recovery-policy" author="oriso">
+    <!-- Exact checksum of the initial PreDev validation build; preserve applied snapshots. -->
+    <validCheckSum>9:941bfe351974f96616c71122c14a2977</validCheckSum>
+    <sqlFile path="migrate.sql" relativeToChangelogFile="true"/>
+    <!-- Application rollback retains immutable enrollment snapshots. Reapply is idempotent. -->
+    <rollback><sql>SELECT 1;</sql></rollback>
+  </changeSet>
+</databaseChangeLog>
