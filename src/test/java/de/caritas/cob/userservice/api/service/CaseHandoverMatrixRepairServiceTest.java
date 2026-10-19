@@ -305,6 +305,28 @@ class CaseHandoverMatrixRepairServiceTest {
   }
 
   @Test
+  void supervisorReAddedDuringRemovalIsInvitedAndJoinedAgainAfterTheKick() throws Exception {
+    var task = supervisionRemoval();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    when(matrixSynapseService.loginAsUserAccessToken("@creator:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
+    when(sessionSupervisorRepository
+            .existsBySessionIdAndIsActiveTrueAndSupervisorConsultantMatrixUserId(
+                123L, "@sup:matrix"))
+        .thenReturn(false, false, true);
+    when(matrixSynapseService.removeUserFromRoom("!side:matrix", "@sup:matrix", "tok-op"))
+        .thenReturn(true);
+    when(matrixSynapseService.joinRoom("!side:matrix", "tok-sup")).thenReturn(true);
+
+    service.process(11L);
+
+    verify(matrixSynapseService).inviteUserToRoom("!side:matrix", "@sup:matrix", "tok-op");
+    verify(matrixSynapseService).joinRoom("!side:matrix", "tok-sup");
+    verify(repository).delete(task);
+  }
+
+  @Test
   void supervisionRemovalLeavesWithTheSupervisorsOwnTokenWhenTheOperatorCannotKick() {
     var task = supervisionRemoval();
     when(repository.findById(11L)).thenReturn(Optional.of(task));

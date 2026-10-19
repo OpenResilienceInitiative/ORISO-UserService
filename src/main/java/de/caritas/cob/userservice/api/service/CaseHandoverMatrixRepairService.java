@@ -341,7 +341,7 @@ public class CaseHandoverMatrixRepairService {
       }
       return switch (task.getAction()) {
         case JOIN -> reconcileJoin(task, token, activeAccess);
-        case REMOVE -> removeOrConfirmAbsent(task, token);
+        case REMOVE -> removeThenRestoreIfReAdded(task, token);
         case POWER_RESTORE ->
             throw new IllegalStateException("Power restore uses the session lock");
       };
@@ -441,6 +441,42 @@ public class CaseHandoverMatrixRepairService {
         && sessionSupervisorRepository
             .existsBySessionIdAndIsActiveTrueAndSupervisorConsultantMatrixUserId(
                 task.getSessionId(), task.getMemberId());
+  }
+
+  /**
+   * A re-add can commit between the last active-supervision check and the remote kick. After the
+   * kick the database is therefore checked once more; if the supervisor is active again they are
+   * invited and joined again, using the same steps as the add path.
+   */
+  private boolean removeThenRestoreIfReAdded(CaseHandoverMatrixRepairTask task, String token) {
+    if (!removeOrConfirmAbsent(task, token)) {
+      return false;
+    }
+    if (!supervisorIsActiveAgain(task)) {
+      return true;
+    }
+    log.info(
+        "Supervisor of session {} was re-added during removal from room {}; restoring membership",
+        task.getSessionId(),
+        task.getRoomId());
+    try {
+      if (!isBlank(token)) {
+        try {
+          matrixSynapseService.inviteUserToRoom(task.getRoomId(), task.getMemberId(), token);
+        } catch (Exception exception) {
+          // "already in the room" or a failed invite: joining below decides.
+          log.debug("Re-invite of supervisor skipped: {}", exception.getClass().getSimpleName());
+        }
+      }
+      String memberToken = matrixSynapseService.loginAsUserAccessToken(task.getMemberId());
+      return !isBlank(memberToken) && matrixSynapseService.joinRoom(task.getRoomId(), memberToken);
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Restoring re-added supervisor in room {} failed with {}",
+          task.getRoomId(),
+          exception.getClass().getSimpleName());
+      return false;
+    }
   }
 
   private boolean removeOrConfirmAbsent(CaseHandoverMatrixRepairTask task, String token) {
