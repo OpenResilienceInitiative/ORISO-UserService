@@ -1,0 +1,12 @@
+Scenario: overlapping browser logins on independent UserService instances
+RED isolated baseline: git archive 05ec3eb14 under /tmp/us1224-regression-baseline
+Command: JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./mvnw -B -q '-Dtest=MatrixBrowserDeviceConcurrencyTest#overlappingDeviceLoginsOnSeparateServiceInstancesBothComplete' test
+Result: exit 1; 1 test, 1 failure, 0 errors, 0 skipped; 0.858 seconds
+Observed: device B succeeds while A's /login waits; A is rejected HTTP 403 and returns null.
+Assertion: device A completes its overlapping login; expected non-null but was null.
+
+GREEN changed workspace: stable account credential implementation
+Command: JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./mvnw -B -q -Dtest=MatrixBrowserDeviceConcurrencyTest test
+Result: exit 0; 2 tests, 0 failures, 0 errors, 0 skipped; 0.949 seconds
+Both device logins complete, and both issued credentials pass actual HTTP UIA verification.
+No production source was temporarily reverted in the shared workspace.

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import static com.neovisionaries.i18n.LanguageCode.de;
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANONYMOUS;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_OFFENDER;
@@ -12,7 +13,6 @@ import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
-import java.time.LocalDateTime;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,7 +54,11 @@ class SessionRepositoryAnonymousQueueVisibilityIT {
 
   @Autowired private UserRepository userRepository;
 
-  @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
+  /**
+   * The window the application runs on. No default on purpose: if the property is ever renamed
+   * again, this test must fail to start rather than quietly measure a window nothing uses.
+   */
+  @Value("${live.chat.queue.activePeriodMinutes}")
   private long liveChatQueueActivePeriodMinutes;
 
   private User user;
@@ -82,8 +86,7 @@ class SessionRepositoryAnonymousQueueVisibilityIT {
   void findAnonymousEnquiries_Should_stillExcludeStaleSessions() {
     saveAnonymousSession(
         stale ->
-            stale.setUpdateDate(
-                LocalDateTime.now().minusMinutes(liveChatQueueActivePeriodMinutes + 1)));
+            stale.setUpdateDate(nowInUtc().minusMinutes(liveChatQueueActivePeriodMinutes + 1)));
 
     assertThat(queryQueue().size(), is(0));
   }
@@ -101,7 +104,7 @@ class SessionRepositoryAnonymousQueueVisibilityIT {
         .findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly(
             Set.of(TOPIC_ID),
             NEW,
-            LocalDateTime.now().minusMinutes(liveChatQueueActivePeriodMinutes),
+            nowInUtc().minusMinutes(liveChatQueueActivePeriodMinutes),
             ANONYMOUS,
             PageRequest.of(0, 20))
         .getContent();
@@ -117,8 +120,10 @@ class SessionRepositoryAnonymousQueueVisibilityIT {
     session.setIsConsultantDirectlySet(false);
     session.setLanguageCode(de);
     session.setMainTopicId(TOPIC_ID);
-    session.setCreateDate(LocalDateTime.now().minusMinutes(1));
-    session.setUpdateDate(LocalDateTime.now());
+    /* UTC, like the application writes them — otherwise the fixtures and the cutoff live in
+    different clocks and the test agrees with a bug instead of catching it. */
+    session.setCreateDate(nowInUtc().minusMinutes(1));
+    session.setUpdateDate(nowInUtc());
     customizer.accept(session);
     return sessionRepository.save(session);
   }

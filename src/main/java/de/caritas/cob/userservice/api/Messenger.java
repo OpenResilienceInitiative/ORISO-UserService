@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static java.util.Objects.isNull;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
@@ -43,8 +44,25 @@ public class Messenger implements Messaging {
   private final ConsultantActivityRegistry consultantActivityRegistry;
   private final LiveChatDiagnosticMetrics diagnosticMetrics;
 
-  @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
+  /**
+   * How long a live-chat queue entry stays visible without a sign of life from the guest who is
+   * waiting behind it (ORISO-Frontend#1404).
+   *
+   * <p>Deliberately its own property rather than the deactivate-workflow period it used to borrow:
+   * that one also deactivates the Keycloak account behind a session and covers IN_PROGRESS chats,
+   * so shortening it would end running conversations after a few quiet minutes. This one only
+   * decides what the queue shows.
+   */
+  @Value("${live.chat.queue.activePeriodMinutes:5}")
   private long liveChatQueueActivePeriodMinutes;
+
+  /**
+   * Don't rewrite {@code updateDate} on every single poll. The waiting room polls every 4s; one
+   * write per guest per this many seconds is enough to keep an entry alive within a window measured
+   * in minutes, and keeps the queue from turning into a write loop.
+   */
+  @Value("${live.chat.queue.heartbeatThrottleSeconds:30}")
+  private long liveChatQueueHeartbeatThrottleSeconds;
 
   @Value("${consultant.availability.activeWindowMs:120000}")
   private long consultantAvailabilityActiveWindowMs;
@@ -115,7 +133,10 @@ public class Messenger implements Messaging {
       diagnosticMetrics.recordInvalidQueueRequest();
       return 0L;
     }
-    var minUpdateDate = LocalDateTime.now().minusMinutes(liveChatQueueActivePeriodMinutes);
+    /* Sessions store their dates in UTC (CustomLocalDateTime.nowInUtc), so the cutoff has to be
+    computed in UTC too. With the old six-hour window a server running in a non-UTC zone still
+    produced roughly the right answer; at five minutes the offset would empty the queue. */
+    var minUpdateDate = nowInUtc().minusMinutes(liveChatQueueActivePeriodMinutes);
     var queueDepth =
         sessionRepository.countPendingEnquiriesAheadOf(
             SessionStatus.NEW,
@@ -127,6 +148,29 @@ public class Messenger implements Messaging {
             RegistrationType.ANONYMOUS);
     diagnosticMetrics.recordQueueDepth(queueDepth);
     return queueDepth;
+  }
+
+  /**
+   * Mark a waiting live-chat enquiry as still wanted by its guest.
+   *
+   * <p>A queue entry is only as trustworthy as the last sign of life behind it. Closing the tab,
+   * reloading, or walking away leaves the enquiry in NEW forever — the client cannot reliably say
+   * goodbye, which is why {@code anonymousChatSessionCleanup} has no unload hook. So the queue asks
+   * the opposite question: who is still here? The waiting room polls the enquiry details every 4s,
+   * and that poll lands here; anything that stops polling for {@code
+   * live.chat.queue.activePeriodMinutes} drops out of the count and out of the consultant's list.
+   *
+   * <p>Only ever touches an unassigned NEW session, so it cannot disturb a chat a consultant has
+   * already taken. Callers must have established that the caller owns the session.
+   */
+  @Override
+  public void touchLiveChatQueueHeartbeat(Long sessionId) {
+    if (sessionId == null) {
+      return;
+    }
+    var now = nowInUtc();
+    sessionRepository.touchLiveChatQueueHeartbeat(
+        sessionId, SessionStatus.NEW, now, now.minusSeconds(liveChatQueueHeartbeatThrottleSeconds));
   }
 
   @Override

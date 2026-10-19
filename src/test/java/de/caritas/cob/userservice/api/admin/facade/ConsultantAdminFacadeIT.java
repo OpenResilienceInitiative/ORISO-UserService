@@ -4,13 +4,18 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.core.Is.is;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.agencyserivce.generated.ApiClient;
+import de.caritas.cob.userservice.agencyserivce.generated.web.AgencyControllerApi;
+import de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyResponseDTO;
 import de.caritas.cob.userservice.api.UserServiceApplication;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO.AgencyTypeEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
@@ -21,6 +26,7 @@ import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControlle
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -31,6 +37,7 @@ import jakarta.persistence.EntityManager;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -46,6 +53,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.web.client.RestClientException;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -312,5 +320,105 @@ class ConsultantAdminFacadeIT {
 
     consultantAdminFacade.filterAgencyListForCreation(consultantId, newList);
     assertThat(newList.size(), is(1));
+  }
+
+  // ---------------------------------------------------------------------------
+  // changeAgencyType (regression test for #1069)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Reproduces the original bug behind issue #1069: converting a team agency to a default (single)
+   * agency used to raise a {@code LazyInitializationException}. {@link
+   * de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade#changeAgencyType} is
+   * deliberately NOT annotated {@code @Transactional} (matching production), and this test class
+   * has no class-level {@code @Transactional} either, so — just like on a real request, since
+   * {@code spring.jpa.open-in-view=false} — every repository call below opens and closes its own
+   * Hibernate session. Before the fix, {@code noOtherTeamAgency()} touched a lazy collection on a
+   * consultant loaded by an already-closed prior repository call and blew up with a 500.
+   */
+  @Test
+  void
+      changeAgencyType_Should_notThrowLazyInitializationException_When_ConvertingTeamAgencyToDefaultAgency() {
+    var consultantId = UUID.randomUUID().toString();
+    givenConsultantWithoutAgency(consultantId);
+    var consultant = consultantRepository.findById(consultantId).orElseThrow();
+    consultant.setTeamConsultant(true);
+    consultantRepository.save(consultant);
+
+    var convertedAgencyId = 5551L;
+    var otherTeamAgencyId = 5552L;
+
+    consultantAgencyRepository.saveAll(
+        List.of(
+            ConsultantAgency.builder()
+                .consultant(consultant)
+                .agencyId(convertedAgencyId)
+                .status(ConsultantAgencyStatus.IN_PROGRESS)
+                .build(),
+            ConsultantAgency.builder()
+                .consultant(consultant)
+                .agencyId(otherTeamAgencyId)
+                .status(ConsultantAgencyStatus.IN_PROGRESS)
+                .build()));
+
+    when(agencyServiceApiControllerFactory.createControllerApi())
+        .thenReturn(
+            new TeamAwareAgencyControllerApi(new ApiClient(), Map.of(otherTeamAgencyId, true)));
+
+    var agencyTypeDTO = new AgencyTypeDTO().agencyType(AgencyTypeEnum.DEFAULT_AGENCY);
+
+    assertDoesNotThrow(
+        () -> consultantAdminFacade.changeAgencyType(convertedAgencyId, agencyTypeDTO));
+
+    var reloadedConsultant = consultantRepository.findById(consultantId).orElseThrow();
+    // The consultant still has agency 5552, which IS a team agency, so the team-consultant flag
+    // must be kept.
+    assertThat(reloadedConsultant.isTeamConsultant(), is(true));
+  }
+
+  @Test
+  void changeAgencyType_Should_RemoveTeamConsultantFlag_When_ConvertedAgencyWasTheOnlyTeamAgency() {
+    var consultantId = UUID.randomUUID().toString();
+    givenConsultantWithoutAgency(consultantId);
+    var consultant = consultantRepository.findById(consultantId).orElseThrow();
+    consultant.setTeamConsultant(true);
+    consultantRepository.save(consultant);
+
+    var convertedAgencyId = 5561L;
+    consultantAgencyRepository.save(
+        ConsultantAgency.builder()
+            .consultant(consultant)
+            .agencyId(convertedAgencyId)
+            .status(ConsultantAgencyStatus.IN_PROGRESS)
+            .build());
+
+    var agencyTypeDTO = new AgencyTypeDTO().agencyType(AgencyTypeEnum.DEFAULT_AGENCY);
+
+    assertDoesNotThrow(
+        () -> consultantAdminFacade.changeAgencyType(convertedAgencyId, agencyTypeDTO));
+
+    var reloadedConsultant = consultantRepository.findById(consultantId).orElseThrow();
+    assertThat(reloadedConsultant.isTeamConsultant(), is(false));
+  }
+
+  /** Test double returning a deterministic {@code teamAgency} flag per agency id. */
+  private static final class TeamAwareAgencyControllerApi extends AgencyControllerApi {
+
+    private final Map<Long, Boolean> teamAgencyById;
+
+    private TeamAwareAgencyControllerApi(ApiClient apiClient, Map<Long, Boolean> teamAgencyById) {
+      super(apiClient);
+      this.teamAgencyById = teamAgencyById;
+    }
+
+    @Override
+    public List<AgencyResponseDTO> getAgenciesByIds(List<Long> agencyIds)
+        throws RestClientException {
+      return agencyIds.stream()
+          .map(
+              id ->
+                  new AgencyResponseDTO().id(id).teamAgency(teamAgencyById.getOrDefault(id, false)))
+          .collect(Collectors.toList());
+    }
   }
 }

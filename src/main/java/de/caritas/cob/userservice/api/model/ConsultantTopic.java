@@ -18,7 +18,10 @@ import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.Setter;
 
-/** Represents the direct relation between a consultant and a topic. */
+/**
+ * A topic a consultant offers at one counselling centre (#1264: Fachbereich = centre x topic).
+ * {@code agencyId == null} is a legacy row that applies to every centre of the consultant.
+ */
 @Entity
 @Table(name = "consultant_topic")
 @Getter
@@ -46,6 +49,9 @@ public class ConsultantTopic {
   @NonNull
   private Long topicId;
 
+  @Column(name = "agency_id")
+  private Long agencyId;
+
   @Column(name = "create_date")
   private LocalDateTime createDate;
 
@@ -61,11 +67,13 @@ public class ConsultantTopic {
       return false;
     }
     ConsultantTopic that = (ConsultantTopic) o;
-    return Objects.equals(consultant, that.consultant) && Objects.equals(topicId, that.topicId);
+    return Objects.equals(consultant, that.consultant)
+        && Objects.equals(topicId, that.topicId)
+        && Objects.equals(agencyId, that.agencyId);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(consultant == null ? null : consultant.getId(), topicId);
+    return Objects.hash(consultant == null ? null : consultant.getId(), topicId, agencyId);
   }
 }

@@ -1,0 +1,40 @@
+name: Tenant colour golden fixture
+
+# ORISO-UserService#1252: the mail colour maths must stay identical to the web app. The fixture
+# is owned by ORISO-Frontend and copied into src/test/resources/email. This job fails when the
+# copy differs from the Frontend file (scripts/sync-tenant-colour-golden.sh --check).
+
+on:
+  pull_request:
+  push:
+    branches:
+    - dev
+
+permissions:
+  contents: read
+
+jobs:
+  golden-fixture-identity:
+    name: golden fixture identical to ORISO-Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Checkout ORISO-Frontend fixture
+      uses: actions/checkout@v6
+      with:
+        repository: OpenResilienceInitiative/ORISO-Frontend
+        # TODO(#1252): ORISO-Frontend#1608 is still open, so dev has no fixture yet. Until it
+        # merges, EVERY event (pull request and push) pins its head commit.
+        # AFTER Frontend#1608 MERGES, replace the pinned SHA below with 'dev' (or the merge commit) and delete this comment.
+        ref: 9d0d837d595c8a43beb28ed68c033d6cf0a45f82
+        path: .frontend
+        sparse-checkout: src/utils/theme/__fixtures__
+        persist-credentials: false
+
+    - name: Fixture is identical to the Frontend-owned file
+      run: scripts/sync-tenant-colour-golden.sh --check .frontend

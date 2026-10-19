@@ -9,10 +9,14 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AccountLoginStatusService;
+import de.caritas.cob.userservice.api.config.ConsultantActivityInterceptor;
+import de.caritas.cob.userservice.api.config.CustomWebMvcConfigurer;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.ArrayList;
@@ -25,17 +29,24 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.converter.HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+import tools.jackson.databind.JsonNode;
 
 @ExtendWith(MockitoExtension.class)
 class ConsultantDtoMapperTest {
 
   @Mock private IdentityManaging identityManager;
+  @Mock private AccountLoginStatusService accountLoginStatusService;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
   @Mock private TopicService topicService;
+
+  @Mock private ObjectProvider<ConsultantActivityInterceptor> objectProvider;
 
   @BeforeEach
   void setupRequestContext() {
@@ -49,9 +60,28 @@ class ConsultantDtoMapperTest {
   }
 
   @Test
+  void consultantDtoOf_Should_ExposeDisabledLogin_WithoutChangingLifecycle() {
+    var mapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(mapper, "identityManager", identityManager);
+    ReflectionTestUtils.setField(mapper, "accountLoginStatusService", accountLoginStatusService);
+    when(accountLoginStatusService.activeOf("consultant-id")).thenReturn(false);
+    var source = consultantMap();
+    source.put("status", "CREATED");
+    source.put("isAbsent", true);
+
+    var dto = mapper.consultantDtoOf(source);
+
+    assertThat(dto.getActive()).isFalse();
+    assertThat(dto.getStatus()).isEqualTo("CREATED");
+    assertThat(dto.getAbsent()).isTrue();
+  }
+
+  @Test
   void consultantDtoOf_Should_MapMasterTableFields() {
     // given
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(
+        consultantDtoMapper, "accountLoginStatusService", accountLoginStatusService);
     ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
     when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
         .thenReturn(false);
@@ -71,6 +101,8 @@ class ConsultantDtoMapperTest {
   @Test
   void consultantDtoOf_Should_KeepInternalDisplayNameNull_When_AbsentFromMap() {
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(
+        consultantDtoMapper, "accountLoginStatusService", accountLoginStatusService);
     ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
     when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
         .thenReturn(false);
@@ -90,6 +122,8 @@ class ConsultantDtoMapperTest {
   void consultantDtoOf_Should_MapOtherIdentityFields_WhenPresentInMap() {
     // given
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(
+        consultantDtoMapper, "accountLoginStatusService", accountLoginStatusService);
     ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
     when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
         .thenReturn(false);
@@ -112,6 +146,8 @@ class ConsultantDtoMapperTest {
   void consultantDtoOf_Should_DefaultOtherIdentityFields_WhenAbsentFromMap() {
     // given
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(
+        consultantDtoMapper, "accountLoginStatusService", accountLoginStatusService);
     ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
     when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
         .thenReturn(false);
@@ -154,6 +190,8 @@ class ConsultantDtoMapperTest {
 
   private ConsultantDtoMapper givenAMapper() {
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(
+        consultantDtoMapper, "accountLoginStatusService", accountLoginStatusService);
     ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
     ReflectionTestUtils.setField(
         consultantDtoMapper, "consultantTopicRepository", consultantTopicRepository);
@@ -327,6 +365,68 @@ class ConsultantDtoMapperTest {
   }
 
   @Test
+  void consultantResponseDtoOf_Should_MapAbsence_When_ConsultantIsAbsent() {
+    ConsultantDtoMapper consultantDtoMapper = givenAMapper();
+    Consultant consultant =
+        Consultant.builder()
+            .id("consultantId")
+            .matrixUserId("rcId")
+            .username("username")
+            .firstName("Firstname")
+            .lastName("Lastname")
+            .email("mail@example.com")
+            .absent(true)
+            .absenceMessage("I am out of office")
+            .build();
+
+    var result = consultantDtoMapper.consultantResponseDtoOf(consultant, List.of(), false);
+
+    var json = serialize(result);
+    assertThat(json.path("absent").asBoolean()).isTrue();
+    assertThat(json.path("absenceMessage").asString()).isEqualTo("I am out of office");
+  }
+
+  @Test
+  void consultantResponseDtoOf_Should_NotExposeAbsenceMessage_When_ConsultantIsNotAbsent() {
+    ConsultantDtoMapper consultantDtoMapper = givenAMapper();
+    Consultant consultant =
+        Consultant.builder()
+            .id("consultantId")
+            .matrixUserId("rcId")
+            .username("username")
+            .firstName("Firstname")
+            .lastName("Lastname")
+            .email("mail@example.com")
+            .absent(false)
+            .absenceMessage("I am out of office")
+            .build();
+
+    var result = consultantDtoMapper.consultantResponseDtoOf(consultant, List.of(), false);
+
+    // isNull() rather than "the old text is gone": this fails both if the
+    // message were swapped for another counsellor's and if the property
+    // vanished from the payload altogether.
+    var json = serialize(result);
+    assertThat(json.path("absent").asBoolean()).isFalse();
+    assertThat(json.path("absenceMessage").isNull()).isTrue();
+  }
+
+  /**
+   * Serialises through the very converter the app answers HTTP with, rather than a bare mapper.
+   * {@link CustomWebMvcConfigurer} registers a JsonNullable serialiser on it, so a mapper built
+   * here by hand would render an optional property differently from the response the browser
+   * receives — exactly the mismatch this assertion exists to catch.
+   */
+  private JsonNode serialize(Object dto) {
+    List<HttpMessageConverter<?>> converters =
+        new ArrayList<>(List.of(new JacksonJsonHttpMessageConverter()));
+    new CustomWebMvcConfigurer(objectProvider).extendMessageConverters(converters);
+    var mapper = ((JacksonJsonHttpMessageConverter) converters.get(0)).getMapper();
+
+    return mapper.readTree(mapper.writeValueAsString(dto));
+  }
+
+  @Test
   void consultantLinkOf_Should_BuildGetLink_When_MethodIsDefault() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
 
@@ -395,7 +495,8 @@ class ConsultantDtoMapperTest {
   void pageLinkOf_Should_BuildSelfLink() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
 
-    var link = consultantDtoMapper.pageLinkOf("query", 1, 20, "LAST_NAME", "ASC");
+    var link =
+        consultantDtoMapper.pageLinkOf("query", 1, 20, "LAST_NAME", "ASC", SearchFilter.NONE);
 
     assertThat(link.getMethod()).isEqualTo(MethodEnum.GET);
     assertThat(link.getHref()).contains("query");
@@ -410,6 +511,35 @@ class ConsultantDtoMapperTest {
     resultMap.put("isFirstPage", isFirstPage);
     resultMap.put("isLastPage", isLastPage);
     return resultMap;
+  }
+
+  @Test
+  void consultantSearchResultOf_Should_PreserveBothRowsWhenIdentityProviderIsUnavailable() {
+    var lookup =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup.class);
+    when(lookup.findEnabledById("consultant-id"))
+        .thenThrow(new jakarta.ws.rs.ServiceUnavailableException());
+    var mapper = givenAMapper();
+    ReflectionTestUtils.setField(
+        mapper, "accountLoginStatusService", new AccountLoginStatusService(lookup));
+    when(consultantTopicRepository.findTopicIdsByConsultantIdIn(any())).thenReturn(List.of());
+    var second = new HashMap<>(consultantMap());
+    second.put("id", "second-consultant");
+    var source = givenAResultMap(true, true);
+    source.put("consultants", List.of(consultantMap(), second));
+    source.put("totalElements", 2);
+
+    var result = mapper.consultantSearchResultOf(source, "*", 1, 10, "LASTNAME", "ASC");
+
+    assertThat(result.getTotal()).isEqualTo(2);
+    assertThat(result.getEmbedded())
+        .extracting(row -> row.getEmbedded().getId())
+        .containsExactly("consultant-id", "second-consultant");
+    assertThat(result.getEmbedded())
+        .allSatisfy(row -> assertThat(row.getEmbedded().getActive()).isNull());
+    org.mockito.Mockito.verify(lookup).findEnabledById("consultant-id");
+    org.mockito.Mockito.verifyNoMoreInteractions(lookup);
   }
 
   @Test
@@ -461,5 +591,31 @@ class ConsultantDtoMapperTest {
 
     assertThat(result.getLinks().getPrevious()).isNotNull();
     assertThat(result.getLinks().getNext()).isNotNull();
+  }
+
+  @Test
+  void consultantSearchResultOf_Should_KeepFilters_In_PageLinks() {
+    ConsultantDtoMapper consultantDtoMapper = givenAMapper();
+    when(identityManager.hasRole(anyString(), any(UserRole.class))).thenReturn(false);
+    when(consultantTopicRepository.findTopicIdsByConsultantIdIn(any())).thenReturn(List.of());
+
+    var result =
+        consultantDtoMapper.consultantSearchResultOf(
+            givenAResultMap(false, false),
+            "query",
+            2,
+            20,
+            "LAST_NAME",
+            "ASC",
+            new SearchFilter(4L, List.of(3L, 5L)));
+
+    for (var link :
+        List.of(
+            result.getLinks().getSelf(),
+            result.getLinks().getPrevious(),
+            result.getLinks().getNext())) {
+      assertThat(link.getHref()).contains("tenantId=4").contains("agencyId=3").contains("5");
+      assertThat(link.getTemplated()).isFalse();
+    }
   }
 }

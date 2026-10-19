@@ -9,8 +9,6 @@ import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.HashSet;
-import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -98,7 +96,9 @@ public class SecurityConfig {
   @Bean
   @SuppressWarnings("java:S4502") // Disabling CSRF protections is security-sensitive
   public SecurityFilterChain filterChain(
-      HttpSecurity http, Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter)
+      HttpSecurity http,
+      Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter,
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService inactivity)
       throws Exception {
     http.csrf(AbstractHttpConfigurer::disable);
     http.addFilterBefore(new StatelessCsrfFilter(csrfSecurityProperties), CsrfFilter.class);
@@ -106,6 +106,16 @@ public class SecurityConfig {
       http.addFilterBefore(ipPrivacyHeaderFilter, StatelessCsrfFilter.class);
     }
     enableTenantFilterIfMultitenancyEnabled(http);
+    // account.inactivity.enabled controls scheduled execution only. Admission stays fail-closed
+    // during rollout so a human identity without its immutable lifecycle snapshot cannot enter.
+    http.addFilterAfter(
+        new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+            .AccountInactivityAccessFilter(inactivity),
+        SecurityContextHolderAwareRequestFilter.class);
+
+    http.addFilterAfter(
+        new de.caritas.cob.userservice.api.picture.PictureRequestFilter(),
+        org.springframework.security.web.access.intercept.AuthorizationFilter.class);
 
     http.sessionManagement(
         session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
@@ -113,6 +123,78 @@ public class SecurityConfig {
     http.authorizeHttpRequests(
         authorize ->
             authorize
+                .requestMatchers(
+                    "/users/account-inactivity/access", "/service/users/account-inactivity/access")
+                .permitAll()
+                .requestMatchers(
+                    "/users/account-inactivity",
+                    "/service/users/account-inactivity",
+                    "/users/account-inactivity/activity",
+                    "/service/users/account-inactivity/activity",
+                    "/useradmin/account-inactivity/**",
+                    "/service/useradmin/account-inactivity/**")
+                .authenticated()
+                // Private consultant-owned pictures: keep child routes above all useradmin
+                // catch-alls.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/consultants/{consultantId}/picture",
+                    "/service/useradmin/consultants/{consultantId}/picture")
+                .hasAnyAuthority(
+                    CONSULTANT_DEFAULT,
+                    USER_ADMIN,
+                    CONSULTANT_UPDATE,
+                    TENANT_ADMIN,
+                    SINGLE_TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN,
+                    TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/consultants/{consultantId}/picture",
+                    "/service/useradmin/consultants/{consultantId}/picture")
+                .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.DELETE,
+                    "/useradmin/consultants/{consultantId}/picture",
+                    "/service/useradmin/consultants/{consultantId}/picture")
+                .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Picture publish switch: reading the flag follows the internal read roles,
+                // changing it follows the write roles. Both stay above every useradmin catch-all.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/consultants/{consultantId}/picture/visibility",
+                    "/service/useradmin/consultants/{consultantId}/picture/visibility")
+                .hasAnyAuthority(
+                    CONSULTANT_DEFAULT,
+                    USER_ADMIN,
+                    CONSULTANT_UPDATE,
+                    TENANT_ADMIN,
+                    SINGLE_TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN,
+                    TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/consultants/{consultantId}/picture/visibility",
+                    "/service/useradmin/consultants/{consultantId}/picture/visibility")
+                .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Advice-seeker read of a published picture. Authentication is still required;
+                // the store refuses every internal-only picture with 404.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/consultants/{consultantId}/picture",
+                    "/service/users/consultants/{consultantId}/picture")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
+                // Onboarding picture step: the invitee has no session yet, so the raw
+                // invite token is the credential — the same arrangement the register and
+                // two-factor steps of this flow already use. The controller resolves the token to
+                // the consultant it created before any bytes are read.
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/users/account-invites/{token}/onboarding/picture",
+                    "/service/users/account-invites/{token}/onboarding/picture",
+                    "/users/account-invites/{token}/onboarding/picture/visibility",
+                    "/service/users/account-invites/{token}/onboarding/picture/visibility")
+                .permitAll()
                 .requestMatchers(
                     "/users/docs",
                     "/users/docs/**",
@@ -123,10 +205,19 @@ public class SecurityConfig {
                     "/swagger-ui.html",
                     "/webjars/**")
                 .permitAll()
+                .requestMatchers(HttpMethod.GET, "/users/invitelinks/*/context")
+                .permitAll()
+                .requestMatchers(HttpMethod.POST, "/users/identity-suggestions")
+                .permitAll()
                 // This cluster-internal endpoint authenticates with its own dedicated shared
                 // secret because the MatrixRTC gateway is not a Keycloak user. The controller
                 // rejects a missing or invalid secret in constant time.
-                .requestMatchers(HttpMethod.POST, "/internal/matrixrtc/call-policy")
+                .requestMatchers(HttpMethod.POST, "/internal/matrix/group-join-policy")
+                .permitAll()
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/internal/matrixrtc/call-policy",
+                    "/internal/matrixrtc/media-access")
                 .permitAll()
                 .requestMatchers(
                     "/users/askers/new",
@@ -136,6 +227,7 @@ public class SecurityConfig {
                     "/service/conversations/anonymous/availability",
                     "/users/consultants/{consultantId:" + PUBLIC_CONSULTANT_ID_PATTERN + "}",
                     "/users/consultants/languages",
+                    "/service/users/consultants/languages",
                     "/error-reports",
                     "/service/error-reports",
                     "/users/magic-link/request",
@@ -160,7 +252,9 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.POST,
                     "/users/account-invites/*/accept",
-                    "/service/users/account-invites/*/accept")
+                    "/service/users/account-invites/*/accept",
+                    "/users/account-invites/*/setup",
+                    "/service/users/account-invites/*/setup")
                 .permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**")
                 .permitAll()
@@ -168,22 +262,38 @@ public class SecurityConfig {
                     RegexRequestMatcher.regexMatcher(
                         HttpMethod.POST, ".*/users/magic-link/(request|consume)$"))
                 .permitAll()
-                // PUBLIC account-invite endpoints (#569 chain fix): the invitee has no account
+                // PUBLIC account-invite endpoints: the invitee has no account
                 // yet, the raw invite token in the path is the only credential. Both prefix
                 // variants because the API gateway forwards /service unchanged.
                 .requestMatchers(
                     HttpMethod.GET,
                     "/users/account-invites/{token}/onboarding",
-                    "/service/users/account-invites/{token}/onboarding")
+                    "/service/users/account-invites/{token}/onboarding",
+                    "/users/account-invites/{token}/onboarding/dpa-mail-preview",
+                    "/service/users/account-invites/{token}/onboarding/dpa-mail-preview")
                 .permitAll()
                 .requestMatchers(
                     HttpMethod.POST,
                     "/users/account-invites/{token}/accept",
                     "/service/users/account-invites/{token}/accept",
+                    "/users/account-invites/{token}/setup",
+                    "/service/users/account-invites/{token}/setup",
                     "/users/account-invites/{token}/onboarding/register",
                     "/service/users/account-invites/{token}/onboarding/register",
                     "/users/account-invites/{token}/onboarding/two-factor",
-                    "/service/users/account-invites/{token}/onboarding/two-factor")
+                    "/service/users/account-invites/{token}/onboarding/two-factor",
+                    "/users/account-invites/{token}/onboarding/two-factor/email",
+                    "/service/users/account-invites/{token}/onboarding/two-factor/email",
+                    "/users/account-invites/{token}/onboarding/dpa-forward",
+                    "/service/users/account-invites/{token}/onboarding/dpa-forward")
+                .permitAll()
+                // PUBLIC signed-notice hint from TenantService: carries
+                // no data and reveals nothing; all facts are re-read through the authenticated
+                // technical-user client and an exactly-once ledger absorbs spoofed hints.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/tenants/{tenantId}/dpa-signed-notices",
+                    "/service/users/tenants/{tenantId}/dpa-signed-notices")
                 .permitAll()
                 // Password-reset request/confirm are already permitted by the exact requestMatchers
                 // above (with and without the /service prefix); no broad regex needed.
@@ -216,7 +326,6 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/members",
                     "/users/chat/{chatId:[0-9]+}/leave",
                     "/users/chat/{matrixRoomId}/assign",
-                    "/users/consultants/toggleWalkThrough",
                     "/matrix/**",
                     "/service/matrix/**")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
@@ -233,8 +342,17 @@ public class SecurityConfig {
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
                     RESTRICTED_AGENCY_ADMIN)
+                // Uses the platform SMTP credentials: platform admin only.
+                .requestMatchers("/users/system-notification-emails/platform-settings")
+                .access(this::isPlatformAdmin)
                 .requestMatchers("/users/system-notification-emails/test")
-                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .access(this::isPlatformAdmin)
+                .requestMatchers(
+                    "/users/admin/service-notices/drafts",
+                    "/users/admin/service-notices/drafts/**",
+                    "/service/users/admin/service-notices/drafts",
+                    "/service/users/admin/service-notices/drafts/**")
+                .access(this::isPlatformAdmin)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/verify")
                 .hasAnyAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers("/users/password/change")
@@ -259,6 +377,14 @@ public class SecurityConfig {
                     "/service/users/statistics/consultant")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/sessions/{sessionId:[0-9]+}/contact-sheet-email",
+                    "/service/users/sessions/{sessionId:[0-9]+}/contact-sheet-email")
+                .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.GET, "/users/sessions/{sessionId:[0-9]+}/enquiry/permission")
+                .hasAuthority(USER_DEFAULT)
+                .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/users/askers/consultingType/new",
@@ -266,14 +392,30 @@ public class SecurityConfig {
                     "/users/account",
                     "/users/mobiletoken",
                     "/users/sessions/{sessionId:[0-9]+}/data",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/consent-preference",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/consent-preference",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
                     "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out")
                 .hasAuthority(USER_DEFAULT)
+                /* Gate 2 consent pointer (ADR-022 decision 2). Anonymous help-seekers are the
+                main case — they hold ANONYMOUS_DEFAULT, not USER_DEFAULT — but a registered
+                help-seeker passes the same gate in the room. Ownership of the session is
+                verified in SessionConsentService, not here. */
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/users/sessions/{sessionId:[0-9]+}/consent",
+                    "/service/users/sessions/{sessionId:[0-9]+}/consent")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers(
                     HttpMethod.GET, "/users/sessions/room", "/service/users/sessions/room")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}")
+                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers(HttpMethod.GET, "/users/sessions/askers")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers(
@@ -300,6 +442,12 @@ public class SecurityConfig {
                     "/service/users/case-handover/candidates",
                     "/users/case-handover/batch",
                     "/service/users/case-handover/batch",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/offers",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/offers",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/recipients",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/recipients",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
                     "/users/chat-series/**",
                     "/service/users/chat-series/**",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
@@ -369,6 +517,16 @@ public class SecurityConfig {
                     HttpMethod.PUT,
                     "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
                 .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Repairing a missing chat identity changes the consultant, so it follows the
+                // consultant-update authority rather than the /useradmin/** catch-all, which only
+                // a user admin passes.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/chat-identity",
+                    "/service/useradmin/consultants/{consultantId:"
+                        + UUID_PATTERN
+                        + "}/chat-identity")
+                .hasAnyAuthority(CONSULTANT_UPDATE, USER_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers(
                     HttpMethod.POST,
                     "/useradmin/askers/{askerId:" + UUID_PATTERN + "}/deletion/pause",
@@ -402,6 +560,11 @@ public class SecurityConfig {
                     "/useradmin/statistics/tutorials",
                     "/service/useradmin/statistics/tutorials")
                 .hasAnyAuthority(TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // An admin's own list sorts (#1263): every admin role that sees a user list keeps
+                // its own; the data is always the caller's, so no other access widens.
+                .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(
                     "/useradmin", "/useradmin/**", "/service/useradmin", "/service/useradmin/**")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
@@ -497,7 +660,7 @@ public class SecurityConfig {
     }
 
     Set<GrantedAuthority> roleAuthorities =
-        extractKeycloakRoles(jwt).stream()
+        KeycloakRoles.of(jwt.getClaims()).stream()
             .map(SimpleGrantedAuthority::new)
             .collect(Collectors.toSet());
     authorities.addAll(authorityMapper.mapAuthorities(roleAuthorities));
@@ -516,12 +679,18 @@ public class SecurityConfig {
       return new AuthorizationDecision(true);
     }
 
-    if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)) {
+    return isPlatformAdmin(authenticationSupplier, requestContext);
+  }
+
+  private AuthorizationDecision isPlatformAdmin(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    if (!(authenticationSupplier.get() instanceof JwtAuthenticationToken jwtAuthentication)) {
       return new AuthorizationDecision(false);
     }
 
     Jwt jwt = jwtAuthentication.getToken();
-    Set<String> roles = extractKeycloakRoles(jwt);
+    Set<String> roles = KeycloakRoles.of(jwt.getClaims());
     boolean hasPlatformAdminRoles =
         roles.contains(UserRole.AGENCY_ADMIN.getValue())
             && roles.contains(UserRole.TENANT_ADMIN.getValue());
@@ -539,30 +708,6 @@ public class SecurityConfig {
       }
     }
     return tenantId != null && "0".equals(tenantId.toString());
-  }
-
-  @SuppressWarnings("unchecked")
-  private Set<String> extractKeycloakRoles(Jwt jwt) {
-    var roles = new HashSet<String>();
-    Object realmAccess = jwt.getClaims().get("realm_access");
-    if (realmAccess instanceof Map<?, ?> realmAccessMap) {
-      addRoles(roles, realmAccessMap.get("roles"));
-    }
-
-    Object resourceAccess = jwt.getClaims().get("resource_access");
-    if (resourceAccess instanceof Map<?, ?> resourceAccessMap) {
-      resourceAccessMap.values().stream()
-          .filter(Map.class::isInstance)
-          .map(Map.class::cast)
-          .forEach(clientAccess -> addRoles(roles, clientAccess.get("roles")));
-    }
-    return roles;
-  }
-
-  private void addRoles(Set<String> roles, Object rolesClaim) {
-    if (rolesClaim instanceof Collection<?> roleCollection) {
-      roleCollection.stream().filter(Objects::nonNull).map(Object::toString).forEach(roles::add);
-    }
   }
 
   private String principalName(Jwt jwt) {

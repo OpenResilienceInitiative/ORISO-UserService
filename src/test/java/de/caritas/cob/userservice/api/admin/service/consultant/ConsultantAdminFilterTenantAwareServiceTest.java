@@ -24,6 +24,7 @@ class ConsultantAdminFilterTenantAwareServiceTest {
   @Mock ConsultantRepository consultantRepository;
 
   @InjectMocks ConsultantAdminFilterTenantAwareService consultantAdminFilterTenantAwareService;
+  @Mock private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
 
   @Mock(answer = Answers.RETURNS_DEEP_STUBS)
   Root<Consultant> root;

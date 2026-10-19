@@ -1,60 +1,64 @@
 package de.caritas.cob.userservice.api.service.notification;
 
-import static org.apache.commons.lang3.StringUtils.isBlank;
-
-import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
-import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.RenderedEmail;
+import java.time.Clock;
 import java.time.LocalDateTime;
-import java.util.Map;
+import java.time.ZoneOffset;
 import lombok.NonNull;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
+/**
+ * Renders the DPA signing mail from the design system and sends it like every other mail of the
+ * tenant onboarding: through the Träger's own mail server when it has one, else the platform's. It
+ * used to be rendered and sent by ConsultingTypeService from hand-written HTML; that endpoint is no
+ * longer called.
+ */
 @Service
 public class DefaultDpaSigningEmailDispatchService implements DpaSigningEmailDispatchService {
 
-  private final RestTemplate restTemplate;
-  private final SecurityHeaderSupplier securityHeaderSupplier;
-  private final TenantHeaderSupplier tenantHeaderSupplier;
-  private final String consultingTypeServiceApiUrl;
+  private final DpaSigningMailRenderer dpaSigningMailRenderer;
+  private final InviteMailDispatchService inviteMailDispatchService;
+  private final Clock clock;
 
   public DefaultDpaSigningEmailDispatchService(
-      @NonNull RestTemplate restTemplate,
-      @NonNull SecurityHeaderSupplier securityHeaderSupplier,
-      @NonNull TenantHeaderSupplier tenantHeaderSupplier,
-      @Value("${consulting.type.service.api.url:}") String consultingTypeServiceApiUrl) {
-    this.restTemplate = restTemplate;
-    this.securityHeaderSupplier = securityHeaderSupplier;
-    this.tenantHeaderSupplier = tenantHeaderSupplier;
-    this.consultingTypeServiceApiUrl = consultingTypeServiceApiUrl;
+      @NonNull DpaSigningMailRenderer dpaSigningMailRenderer,
+      @NonNull InviteMailDispatchService inviteMailDispatchService,
+      @NonNull Clock clock) {
+    this.dpaSigningMailRenderer = dpaSigningMailRenderer;
+    this.inviteMailDispatchService = inviteMailDispatchService;
+    this.clock = clock;
   }
 
   @Override
   public void send(
-      String recipientEmail, String tenantName, String signLink, LocalDateTime expiresAt) {
-    if (isBlank(consultingTypeServiceApiUrl)) {
-      throw new IllegalStateException("DPA email dispatch endpoint is not configured");
-    }
-    var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders();
-    tenantHeaderSupplier.addTenantHeader(headers);
-    Map<String, Object> payload =
-        Map.of(
-            "recipientEmail", recipientEmail,
-            "tenantName", tenantName,
-            "signLink", signLink,
-            "expiresAt", expiresAt.toString());
-    restTemplate.exchange(
-        normalizeBaseUrl(consultingTypeServiceApiUrl) + "/settingsadmin/dpa-signing-emails",
-        HttpMethod.POST,
-        new HttpEntity<>(payload, headers),
-        Void.class);
+      Long tenantId,
+      String recipientEmail,
+      String tenantName,
+      String signLink,
+      LocalDateTime expiresAt) {
+    inviteMailDispatchService.sendRendered(
+        recipientEmail,
+        render(tenantId, tenantName, signLink, expiresAt),
+        InviteMailOrigin.of(tenantId, TenantSystemEmailDelivery.Purpose.DPA_SIGNING_REQUEST));
   }
 
-  private static String normalizeBaseUrl(String value) {
-    String trimmed = value.trim();
-    return trimmed.endsWith("/") ? trimmed.substring(0, trimmed.length() - 1) : trimmed;
+  @Override
+  public DpaSigningEmailPreview preview(
+      Long tenantId,
+      String recipientEmail,
+      String tenantName,
+      String signLink,
+      LocalDateTime expiresAt) {
+    RenderedEmail mail = render(tenantId, tenantName, signLink, expiresAt);
+    return new DpaSigningEmailPreview(mail.subject(), mail.html());
+  }
+
+  // "Provided at" is the moment the link goes out; the mail is sent when it is provided.
+  private RenderedEmail render(
+      Long tenantId, String tenantName, String signLink, LocalDateTime expiresAt) {
+    return dpaSigningMailRenderer.render(
+        tenantId, tenantName, signLink, clock.instant(), expiresAt.toInstant(ZoneOffset.UTC));
   }
 }

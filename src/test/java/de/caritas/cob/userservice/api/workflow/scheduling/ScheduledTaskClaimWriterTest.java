@@ -103,4 +103,12 @@ class ScheduledTaskClaimWriterTest {
     activeClaim.setClaimedUntil(NOW);
     assertThat(claimWriter.hasActiveClaim(TASK_NAME)).isFalse();
   }
+
+  @Test
+  void releaseShouldDeleteOnlyTheAcquiredLeaseVersion() {
+    LocalDateTime claimedUntil = NOW.plusMinutes(30);
+    when(claimRepository.deleteByTaskNameAndClaimedUntil(TASK_NAME, claimedUntil)).thenReturn(1);
+
+    assertThat(claimWriter.release(TASK_NAME, claimedUntil)).isTrue();
+  }
 }

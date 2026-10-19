@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -28,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.List;
@@ -48,6 +50,7 @@ public class ConsultantAdminServiceTest {
   @InjectMocks private ConsultantAdminService consultantAdminService;
 
   @Mock private ConsultantRepository consultantRepository;
+  @Mock private de.caritas.cob.userservice.api.picture.ConsultantPictureStore pictureStore;
 
   @Mock private CreateConsultantSaga createConsultantSaga;
 
@@ -58,6 +61,7 @@ public class ConsultantAdminServiceTest {
   @Mock private AppointmentService appointmentService;
 
   @Mock private SessionRepository sessionRepository;
+  @Mock private SessionOwnershipService sessionOwnershipService;
 
   @Mock private CaseHandoverRequestRepository caseHandoverRequestRepository;
 
@@ -115,8 +119,8 @@ public class ConsultantAdminServiceTest {
     assertThrows(
         NotFoundException.class,
         () -> {
-          when(this.consultantRepository.findByIdAndDeleteDateIsNull(any()))
-              .thenReturn(Optional.empty());
+          when(pictureStore.lockActiveConsultant(any()))
+              .thenThrow(new NotFoundException("Missing"));
 
           this.consultantAdminService.markConsultantForDeletion("id", false);
         });
@@ -328,8 +332,7 @@ public class ConsultantAdminServiceTest {
     var consultant = new Consultant();
     consultant.setId("c-1");
     var session = new de.caritas.cob.userservice.api.model.Session();
-    when(consultantRepository.findByIdAndDeleteDateIsNull("c-1"))
-        .thenReturn(Optional.of(consultant));
+    when(pictureStore.lockActiveConsultant("c-1")).thenReturn(consultant);
     when(sessionRepository.findByConsultantAndStatusIn(any(Consultant.class), any(List.class)))
         .thenReturn(List.of(session))
         .thenReturn(List.of());
@@ -341,6 +344,7 @@ public class ConsultantAdminServiceTest {
     deletionOrder.verify(caseHandoverRequestRepository).deleteAllBySessionId(session.getId());
     deletionOrder.verify(sessionSupervisorRepository).deleteAllBySessionId(session.getId());
     deletionOrder.verify(sessionRepository).delete(session);
+    verify(sessionOwnershipService).clearOwnerFromSessions(any(), any());
     verify(deletionLifecycleService).beginConsultantDeletion(any(), any());
   }
 
@@ -380,13 +384,17 @@ public class ConsultantAdminServiceTest {
   public void
       markConsultantForDeletion_Should_executePreDeletionStepsAndMarkConsultantAsDeleted_When_consultantExists() {
     Consultant consultant = mock(Consultant.class);
-    when(this.consultantRepository.findByIdAndDeleteDateIsNull(any()))
-        .thenReturn(Optional.of(consultant));
+    when(pictureStore.lockActiveConsultant(any())).thenReturn(consultant);
 
     this.consultantAdminService.markConsultantForDeletion("id", false);
 
-    verify(this.consultantPreDeletionService, times(1)).performPreDeletionSteps(consultant, false);
+    var deletedAt = org.mockito.ArgumentCaptor.forClass(java.time.LocalDateTime.class);
+    verify(this.consultantPreDeletionService, times(1))
+        .performPreDeletionSteps(eq(consultant), eq(false), deletedAt.capture());
+    // The relations this deletion removes carry the counsellor's own delete date.
+    verify(consultant).setDeleteDate(deletedAt.getValue());
     verify(this.deletionLifecycleService, times(1)).beginConsultantDeletion(any(), any());
+    verify(pictureStore).removeForConsultantDeletion("id");
     verify(consultant, times(1)).setStatus(ConsultantStatus.IN_DELETION);
     verify(this.consultantRepository, times(1)).save(consultant);
   }

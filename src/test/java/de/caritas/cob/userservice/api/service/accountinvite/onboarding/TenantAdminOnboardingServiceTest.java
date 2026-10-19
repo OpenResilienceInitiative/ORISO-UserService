@@ -11,8 +11,12 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
@@ -32,12 +36,18 @@ import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpaLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import java.time.LocalDateTime;
@@ -70,6 +80,11 @@ class TenantAdminOnboardingServiceTest {
   @Mock private IdentityProfileLookup identityProfileLookup;
   @Mock private TenantCreationClient tenantCreationClient;
   @Mock private OperatorDpaContentClient operatorDpaContentClient;
+  @Mock private PublicDpaForwardClient publicDpaForwardClient;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService
+      dpaForwardEmailService;
 
   /**
    * The read paths drive their short database-only transactions through a {@link
@@ -78,6 +93,8 @@ class TenantAdminOnboardingServiceTest {
    * exceptions propagate.
    */
   @Mock private PlatformTransactionManager transactionManager;
+
+  @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
   private TenantAdminOnboardingService service;
 
@@ -94,8 +111,16 @@ class TenantAdminOnboardingServiceTest {
             identityProfileLookup,
             tenantCreationClient,
             operatorDpaContentClient,
+            publicDpaForwardClient,
+            dpaForwardEmailService,
             new UsernameTranscoder(),
+            eventPublisher,
             transactionManager);
+    // the real service resolves a path-only link against the configured App origin; the default
+    // here passes an already-absolute link straight through, as production does
+    lenient()
+        .when(dpaForwardEmailService.toAbsoluteSignLink(anyString()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   private static AccountInvite tenantAdminInvite(AccountInviteStatus status) {
@@ -165,6 +190,8 @@ class TenantAdminOnboardingServiceTest {
   void resolveOnboardingInvite_deliverableInvite_returnsPlainState() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(operatorDpaContentClient.lookupPublishedDpa())
+        .thenReturn(new OperatorDpaLookup(OPERATOR_DPA, null));
 
     var state = service.resolveOnboardingInvite(RAW_TOKEN);
 
@@ -173,26 +200,78 @@ class TenantAdminOnboardingServiceTest {
   }
 
   @Test
+  void resolveExistingAccountSetupWithUncertainClaimRequiresOperatorInsteadOfShowingWizard() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setPurpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+    invite.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
+    invite.setProvisioningFailureReason("SETUP_OUTCOME_INDETERMINATE");
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+
+    var failure =
+        assertThrows(
+            AccountInviteLinkException.class, () -> service.resolveOnboardingInvite(RAW_TOKEN));
+    assertEquals(
+        AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED, failure.getReason());
+    verify(operatorDpaContentClient, never()).lookupPublishedDpa();
+  }
+
+  @Test
+  void acceptedExistingAccountSetupCannotReusePublicInviteTwoFactorResume() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.ACCEPTED);
+    invite.setPurpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+    invite.setTwoFactorStatus(TwoFactorGateStatus.PENDING_SETUP);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+
+    var failure =
+        assertThrows(
+            AccountInviteLinkException.class, () -> service.resolveOnboardingInvite(RAW_TOKEN));
+    assertEquals(AccountInviteLinkException.Reason.CONSUMED, failure.getReason());
+  }
+
+  @Test
   void resolveOnboardingInvite_deliverableInvite_carriesTheOperatorDpaText() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
-    when(operatorDpaContentClient.fetchPublishedDpaContent()).thenReturn(OPERATOR_DPA_JSON);
+    when(operatorDpaContentClient.lookupPublishedDpa())
+        .thenReturn(new OperatorDpaLookup(OPERATOR_DPA, null));
 
     var state = service.resolveOnboardingInvite(RAW_TOKEN);
 
     assertEquals(OPERATOR_DPA_JSON, state.dpaContent());
+    // A rendered contract has no unavailability to explain.
+    assertNull(state.dpaUnavailableReason());
   }
 
   @Test
   void resolveOnboardingInvite_deliverableInviteWithoutPublishedDpa_resolvesWithoutText() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
-    when(operatorDpaContentClient.fetchPublishedDpaContent()).thenReturn(null);
+    when(operatorDpaContentClient.lookupPublishedDpa())
+        .thenReturn(new OperatorDpaLookup(null, DpaUnavailableReason.NOT_PUBLISHED));
 
     var state = service.resolveOnboardingInvite(RAW_TOKEN);
 
     assertEquals(invite, state.invite());
     assertNull(state.dpaContent());
+    assertEquals(DpaUnavailableReason.NOT_PUBLISHED, state.dpaUnavailableReason());
+  }
+
+  /**
+   * A broken upstream read must stay distinguishable from "nothing published" all the way to the
+   * client — and must still resolve, never 500.
+   */
+  @Test
+  void resolveOnboardingInvite_operatorDpaLookupFailed_resolvesWithUpstreamErrorReason() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(operatorDpaContentClient.lookupPublishedDpa())
+        .thenReturn(new OperatorDpaLookup(null, DpaUnavailableReason.UPSTREAM_ERROR));
+
+    var state = service.resolveOnboardingInvite(RAW_TOKEN);
+
+    assertEquals(invite, state.invite());
+    assertNull(state.dpaContent());
+    assertEquals(DpaUnavailableReason.UPSTREAM_ERROR, state.dpaUnavailableReason());
   }
 
   @Test
@@ -211,6 +290,24 @@ class TenantAdminOnboardingServiceTest {
   }
 
   @Test
+  void expiredExistingAccountSetupKeepsOnlyPrivateVerifierForScopedRecovery() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setPurpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+    invite.setActiveSetupIdentityKey("admin-11");
+    invite.setInitialPasswordVerifier("salted-verifier");
+    invite.setExpiresAt(LocalDateTime.now().minusMinutes(5));
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+
+    var failure =
+        assertThrows(
+            AccountInviteLinkException.class, () -> service.resolveOnboardingInvite(RAW_TOKEN));
+    assertEquals(AccountInviteLinkException.Reason.EXPIRED, failure.getReason());
+    assertEquals("admin-11", invite.getActiveSetupIdentityKey());
+    assertEquals("salted-verifier", invite.getInitialPasswordVerifier());
+    verify(accountInviteRepository).save(invite);
+  }
+
+  @Test
   void resolveOnboardingInvite_consumedWithPendingTwoFactor_returnsResumeState() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.ACCEPTED);
     invite.setTotpPendingSecret("STOREDSECRET");
@@ -222,7 +319,8 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("STOREDSECRET", state.invite().getTotpPendingSecret());
     // The resume path re-enters at the 2FA step, which shows no contract — no upstream lookup.
     assertNull(state.dpaContent());
-    verify(operatorDpaContentClient, never()).fetchPublishedDpaContent();
+    assertNull(state.dpaUnavailableReason());
+    verify(operatorDpaContentClient, never()).lookupPublishedDpa();
   }
 
   @Test
@@ -252,6 +350,83 @@ class TenantAdminOnboardingServiceTest {
 
   // --- register ---
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("registrationWithoutAppSetupCases")
+  void registerTenantAdmin_withoutAppSetup_stillAllowsEmailSetup(
+      boolean existingTenant, IdentityOtpCredential appSetup) {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    if (existingTenant) {
+      invite.setTenantIdAllocationMode(
+          de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode
+              .EXISTING);
+    } else {
+      givenPublishedOperatorDpa();
+      when(tenantCreationClient.createTenant(any()))
+          .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+    }
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any()))
+        .thenAnswer(
+            invocation -> {
+              invite.setStatus(AccountInviteStatus.ACCEPTED);
+              return 1;
+            });
+    Admin admin =
+        Admin.builder()
+            .id("kc-user-1")
+            .username("tenant.admin@example.org")
+            .email("tenant.admin@example.org")
+            .firstName("Erika")
+            .lastName("Beispiel")
+            .build();
+    // A new Träger has no tenant to read the inactivity policy from yet; a joined one has.
+    lenient()
+        .when(createAdminService.createNewTenantAdminForReservedTenant(any()))
+        .thenReturn(admin);
+    lenient().when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(admin);
+    when(identitySecondFactor.getOtpCredential(anyString())).thenReturn(appSetup);
+
+    var result = service.registerTenantAdmin(RAW_TOKEN, validCommand());
+
+    assertEquals(RESERVED_TENANT_ID, result.tenantId());
+    assertNull(result.totpSecret());
+    assertNull(result.totpQrCodeBase64());
+    assertEquals(AccountInviteStatus.ACCEPTED, invite.getStatus());
+    assertEquals("kc-user-1", invite.getAcceptedByUserId());
+    assertEquals(TwoFactorGateStatus.PENDING_SETUP, invite.getTwoFactorStatus());
+    assertNull(invite.getTotpPendingSecret());
+    verify(identityAccountRemover, never()).rollbackUser(anyString());
+    when(identityProfileLookup.findById("kc-user-1"))
+        .thenReturn(
+            Optional.of(
+                new IdentityProfile(
+                    "kc-user-1", "encoded.admin", null, null, "tenant.admin@example.org")));
+    when(identitySecondFactor.initiateEmailVerification(
+            "encoded.admin", "tenant.admin@example.org"))
+        .thenReturn(
+            de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart.success());
+    service.startEmailTwoFactor(RAW_TOKEN);
+    verify(identitySecondFactor)
+        .initiateEmailVerification("encoded.admin", "tenant.admin@example.org");
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+  }
+
+  private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      registrationWithoutAppSetupCases() {
+    return java.util.stream.Stream.of(false, true)
+        .flatMap(
+            existing ->
+                java.util.stream.Stream.<IdentityOtpCredential>of(
+                        null,
+                        IdentityOtpCredential.empty(),
+                        new IdentityOtpCredential(false, "", "orphan-qr", null),
+                        new IdentityOtpCredential(false, "   ", "orphan-qr", null))
+                    .map(
+                        material ->
+                            org.junit.jupiter.params.provider.Arguments.of(existing, material)));
+  }
+
   @Test
   void registerTenantAdmin_happyPath_createsAdminAndTenantAndReturnsTotpMaterial() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
@@ -267,7 +442,7 @@ class TenantAdminOnboardingServiceTest {
             .firstName("Erika")
             .lastName("Beispiel")
             .build();
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(admin);
+    when(createAdminService.createNewTenantAdminForReservedTenant(any())).thenReturn(admin);
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
     when(tenantCreationClient.createTenant(any()))
@@ -280,7 +455,7 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("QRBASE64", result.totpQrCodeBase64());
 
     ArgumentCaptor<CreateAdminDTO> adminCaptor = ArgumentCaptor.forClass(CreateAdminDTO.class);
-    verify(createAdminService).createNewTenantAdmin(adminCaptor.capture());
+    verify(createAdminService).createNewTenantAdminForReservedTenant(adminCaptor.capture());
     assertEquals("tenant.admin@example.org", adminCaptor.getValue().getUsername());
     assertEquals("tenant.admin@example.org", adminCaptor.getValue().getEmail());
     assertEquals("s3cretPassword", adminCaptor.getValue().getPassword());
@@ -298,6 +473,47 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("kc-user-1", invite.getAcceptedByUserId());
     assertEquals("TOTPSECRET", invite.getTotpPendingSecret());
     verify(accountInviteRepository).save(invite);
+    verify(eventPublisher)
+        .publishEvent(
+            new InviteUnitCreatedEvent(
+                InviteUnitType.TENANT, RESERVED_TENANT_ID, RESERVED_TENANT_ID));
+  }
+
+  /**
+   * The onboarding flow never sent a licensing block, so every tenant created through an invite
+   * link landed with a null consultant allowance: {@code Licensing.allowedNumberOfUsers} is a
+   * required property of the TenantService creation contract and {@code licensing_allowed_users} is
+   * a nullable column without a default, so the Admin tenant list showed an empty "Max. erlaubte
+   * Berater" column for those tenants. A tenant must never be created without an allowance.
+   */
+  @Test
+  void registerTenantAdmin_alwaysSendsANonNullConsultantAllowance() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdminForReservedTenant(any()))
+        .thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+
+    service.registerTenantAdmin(RAW_TOKEN, validCommand());
+
+    ArgumentCaptor<MultilingualTenantDTO> tenantCaptor =
+        ArgumentCaptor.forClass(MultilingualTenantDTO.class);
+    verify(tenantCreationClient).createTenant(tenantCaptor.capture());
+    var licensing = tenantCaptor.getValue().getLicensing();
+    assertNotNull(licensing, "the created tenant carries no licensing block");
+    assertNotNull(
+        licensing.getAllowedNumberOfUsers(),
+        "the created tenant carries no allowed number of consultants");
+    assertEquals(
+        9999,
+        licensing.getAllowedNumberOfUsers(),
+        "the provisional allowance must match the Admin panel's default of 9999");
   }
 
   /**
@@ -313,7 +529,8 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(createAdminService.createNewTenantAdminForReservedTenant(any()))
+        .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -364,7 +581,8 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(createAdminService.createNewTenantAdminForReservedTenant(any()))
+        .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -402,23 +620,672 @@ class TenantAdminOnboardingServiceTest {
         .build();
   }
 
+  private static RegisterTenantAdminCommand commandWithoutAcceptance() {
+    return new RegisterTenantAdminCommand(
+        "Beispiel gGmbH",
+        "beispiel",
+        null,
+        false,
+        null,
+        null,
+        null,
+        null,
+        "s3cretPassword",
+        RESERVED_TENANT_ID,
+        RESERVATION_TOKEN);
+  }
+
   @Test
-  void registerTenantAdmin_dpaNotAccepted_throwsBadRequest() {
-    var command =
-        new RegisterTenantAdminCommand(
-            "Beispiel gGmbH",
-            "beispiel",
-            null,
-            false,
-            null,
-            null,
-            null,
-            null,
-            "s3cretPassword",
-            RESERVED_TENANT_ID,
-            RESERVATION_TOKEN);
+  void registerTenantAdmin_dpaNeitherAcceptedNorForwarded_throwsBadRequest() {
+    // an invite that never forwarded cannot register without accepting — the client's word alone
+    // is not enough (ORISO-Admin#722)
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH))
+        .thenReturn(Optional.of(tenantAdminInvite(AccountInviteStatus.EMAIL_SENT)));
+
+    assertThrows(
+        BadRequestException.class,
+        () -> service.registerTenantAdmin(RAW_TOKEN, commandWithoutAcceptance()));
+    verify(tenantCreationClient, never()).createTenant(any());
+  }
+
+  /**
+   * ORISO-Admin#896 (epic #725): the invite progress board proves its final "Vertrag
+   * unterschrieben" phase from the invite's {@code dpaSignedAt}. An own acceptance at registration
+   * IS the signature (recorded as the tenant's U9 admin signature), so the registration must stamp
+   * the invite — otherwise every self-signed tenant waits for a signature forever.
+   */
+  @Test
+  void registerTenantAdmin_ownDpaAcceptance_stampsTheSignatureOnTheInvite() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdminForReservedTenant(any()))
+        .thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+
+    service.registerTenantAdmin(RAW_TOKEN, validCommand());
+
+    assertNotNull(
+        invite.getDpaSignedAt(),
+        "an own DPA acceptance is the signature and must be stamped on the invite");
+  }
+
+  @Test
+  void registerTenantAdmin_dpaForwardedEarlier_doesNotStampTheSignature() {
+    // The forwarded signature is pending with an external signer — only the DPA_SIGNED_NOTICE
+    // chain may stamp it once TenantService has verified the signature actually landed.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardedAt(LocalDateTime.now().minusMinutes(5));
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdminForReservedTenant(any(CreateAdminDTO.class)))
+        .thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+
+    service.registerTenantAdmin(RAW_TOKEN, commandWithoutAcceptance());
+
+    assertNull(invite.getDpaSignedAt(), "a pending forwarded signature must not be pre-stamped");
+  }
+
+  @Test
+  void registerTenantAdmin_dpaForwardedEarlier_createsTenantWithoutAcceptance() {
+    // given an invite that forwarded the DPA in wizard step 1
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardedAt(LocalDateTime.now().minusMinutes(5));
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdminForReservedTenant(any(CreateAdminDTO.class)))
+        .thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+
+    // when
+    var result = service.registerTenantAdmin(RAW_TOKEN, commandWithoutAcceptance());
+
+    // then: the tenant is created, but WITHOUT an acceptance signature — the DPA stays pending
+    assertEquals(RESERVED_TENANT_ID, result.tenantId());
+    var captor = ArgumentCaptor.forClass(MultilingualTenantDTO.class);
+    verify(tenantCreationClient).createTenant(captor.capture());
+    assertNull(captor.getValue().getOnboardingDpaAcceptance());
+    // no operator DPA lookup is needed when nothing is accepted
+    verify(operatorDpaContentClient, never()).fetchPublishedDpa();
+  }
+
+  // --- Registration after the representative confirmed (ORISO-Admin#1065) ---
+
+  private void givenRegistrationSucceeds(AccountInvite invite) {
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdminForReservedTenant(any(CreateAdminDTO.class)))
+        .thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+  }
+
+  @Test
+  void registerTenantAdmin_afterExternalConfirmation_createsTheTenantOnTheConfirmedReservation() {
+    // The confirmation is stored in TenantService against the reserved id + reservation token;
+    // creating the tenant on exactly that pair is what makes it count (DpaSignatureOwnership).
+    var confirmedAt = LocalDateTime.of(2026, 9, 25, 9, 30);
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardedAt(confirmedAt.minusDays(1));
+    invite.setDpaSignedAt(confirmedAt);
+    givenRegistrationSucceeds(invite);
+
+    var result = service.registerTenantAdmin(RAW_TOKEN, commandWithoutAcceptance());
+
+    assertEquals(RESERVED_TENANT_ID, result.tenantId());
+    var captor = ArgumentCaptor.forClass(MultilingualTenantDTO.class);
+    verify(tenantCreationClient).createTenant(captor.capture());
+    assertEquals(RESERVED_TENANT_ID, captor.getValue().getId());
+    assertEquals(RESERVATION_TOKEN, captor.getValue().getTenantIdReservationToken());
+    assertNull(captor.getValue().getOnboardingDpaAcceptance());
+    assertEquals(confirmedAt, invite.getDpaSignedAt());
+  }
+
+  @Test
+  void registerTenantAdmin_withoutOwnAcceptance_isAccepted_When_theSignatureAlreadyLanded() {
+    // A verified signature on the invite is stronger proof than the forward itself.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaSignedAt(LocalDateTime.now().minusHours(1));
+    givenRegistrationSucceeds(invite);
+
+    var result = service.registerTenantAdmin(RAW_TOKEN, commandWithoutAcceptance());
+
+    assertEquals(RESERVED_TENANT_ID, result.tenantId());
+    verify(operatorDpaContentClient, never()).fetchPublishedDpa();
+  }
+
+  @Test
+  void registerTenantAdmin_ownAcceptanceAfterConfirmation_keepsTheConfirmationTimestamp() {
+    var confirmedAt = LocalDateTime.of(2026, 9, 25, 9, 30);
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardedAt(confirmedAt.minusDays(1));
+    invite.setDpaSignedAt(confirmedAt);
+    givenPublishedOperatorDpa();
+    givenRegistrationSucceeds(invite);
+
+    service.registerTenantAdmin(RAW_TOKEN, validCommand());
+
+    assertEquals(confirmedAt, invite.getDpaSignedAt());
+  }
+
+  // --- DPA forward from the wizard (ORISO-Admin#722) ---
+
+  private static de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO
+      signInvite() {
+    return new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
+        .token("RAWSIGNTOKEN")
+        .signLink("https://app.example.org/dpa-sign/RAWSIGNTOKEN")
+        .expiresAt("2026-08-29T14:31:07");
+  }
+
+  @Test
+  void forwardDpa_recordsTheForwardAndSendsTheMail_When_aRecipientIsGiven() {
+    // given
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    // when
+    var result = service.forwardDpa(RAW_TOKEN, "legal@example.org");
+
+    // then
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
+    assertEquals("2026-08-29T14:31:07", result.expiresAt());
+    // the forward is proven server-side, which is what unlocks registration without acceptance
+    assertNotNull(invite.getDpaForwardedAt());
+    // two short transactions write: the attempt reservation before the mint, the proof after it
+    verify(accountInviteRepository, times(2)).save(invite);
+    var captor =
+        ArgumentCaptor.forClass(
+            de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService
+                .DpaForwardEmailCommand.class);
+    verify(dpaForwardEmailService).sendSigningLink(captor.capture());
+    assertEquals("legal@example.org", captor.getValue().recipientEmail());
+    assertEquals(RESERVED_TENANT_ID, captor.getValue().tenantId());
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", captor.getValue().signLink());
+  }
+
+  @Test
+  void forwardDpa_repaysTheReservedAttempt_When_theProviderAnswersWithoutAUsableExpiry() {
+    // A 200 that carries no usable link leaves the caller with nothing, exactly like an outage or
+    // a throttle — charging the attempt would let three malformed answers exhaust the invitation's
+    // five forwards for good.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
+                .token("RAWSIGNTOKEN")
+                .signLink("https://app.example.org/dpa-sign/RAWSIGNTOKEN")
+                .expiresAt(null));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    // reserved (+1) and repaid (-1) — the budget is untouched
+    assertEquals(0, invite.getDpaForwardCount());
+    assertNull(invite.getDpaForwardedAt());
+    // and no mail went out for a link that does not exist
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_repaysTheReservedAttempt_When_theProviderAnswersWithNoBodyAtAll() {
+    // A null DTO is the second way a 200 can carry no link; it must be compensated like the
+    // missing expiry, otherwise a provider fault still burns the invitation's budget.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(null);
+
+    assertThrows(RuntimeException.class, () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    assertEquals(0, invite.getDpaForwardCount());
+    assertNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_repaysTheReservedAttempt_When_theProviderLinkFailsTheOriginGuard() {
+    // The third way: a 200 with a link from a foreign origin. toAbsoluteSignLink rejects it, and
+    // the caller is left without a usable link — so the attempt is repaid like the other two.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
+                .token("RAWSIGNTOKEN")
+                .signLink("https://evil.example/dpa-sign/RAWSIGNTOKEN")
+                .expiresAt("2026-08-29T14:31:07"));
+    when(dpaForwardEmailService.toAbsoluteSignLink("https://evil.example/dpa-sign/RAWSIGNTOKEN"))
+        .thenThrow(new BadRequestException("signLink must use the configured ORISO App origin"));
+
+    assertThrows(
+        BadRequestException.class, () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    assertEquals(0, invite.getDpaForwardCount());
+    assertNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_returnsAnAbsoluteLink_When_theProviderEmitsAPathOnlyOne() {
+    // On Pre-Dev the TenantService base URL is unset, so the mint answers "/dpa-sign/<token>".
+    // Both the recipient-less and the mail-failed branch hand that link to the wizard for MANUAL
+    // sharing — a copied relative path carries no origin and never reaches the DPA frontend.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
+                .token("RAWSIGNTOKEN")
+                .signLink("/dpa-sign/RAWSIGNTOKEN")
+                .expiresAt("2026-08-29T14:31:07"));
+    when(dpaForwardEmailService.toAbsoluteSignLink("/dpa-sign/RAWSIGNTOKEN"))
+        .thenReturn("https://app.example.org/dpa-sign/RAWSIGNTOKEN");
+
+    var result = service.forwardDpa(RAW_TOKEN, null);
+
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
+  }
+
+  @Test
+  void forwardDpa_returnsTheLinkWithoutSendingMail_When_noRecipientIsGiven() {
+    // given
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    // when
+    var result = service.forwardDpa(RAW_TOKEN, null);
+
+    // then: the wizard shares the link manually
+    assertNotNull(result.signUrl());
+    assertNotNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  /**
+   * Option A: a mail that cannot be delivered must NOT fail the call. The sign link is already
+   * minted and live, and every burnt link is capped for 14 days — failing here is what locked the
+   * owner out with five unusable links and no mail.
+   */
+  @Test
+  void forwardDpa_returnsTheLinkAndFlagsIt_When_theMailCannotBeSent() {
+    // given the mail service rejects the send
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+    doThrow(new BadRequestException("signLink is invalid"))
+        .when(dpaForwardEmailService)
+        .sendSigningLink(any());
+
+    // when
+    var result = service.forwardDpa(RAW_TOKEN, "legal@example.org");
+
+    // then the caller still gets the link, marked as undelivered
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
+    assertFalse(result.mailSent());
+    // and the forward is RECORDED: the link is live, so the proof of it must survive the failure
+    assertNotNull(invite.getDpaForwardedAt());
+    verify(accountInviteRepository, times(2)).save(invite);
+    // exactly one link was minted - a failed send must never cost a second slot
+    verify(publicDpaForwardClient, times(1)).createForwardSignLink(any(), any());
+  }
+
+  @Test
+  void forwardDpa_flagsTheMailAsSent_When_deliverySucceeds() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    var result = service.forwardDpa(RAW_TOKEN, "legal@example.org");
+
+    assertTrue(result.mailSent());
+    verify(publicDpaForwardClient, times(1)).createForwardSignLink(any(), any());
+  }
+
+  /** No recipient means nothing was ever meant to be delivered, so the flag stays clear. */
+  @Test
+  void forwardDpa_reportsNoMail_When_noRecipientIsGiven() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    assertFalse(service.forwardDpa(RAW_TOKEN, null).mailSent());
+  }
+
+  /**
+   * The degradation is scoped to the mail alone. A throttled mint produced no link at all, so there
+   * is nothing to hand back and the throttle must still reach the caller as 429.
+   */
+  @Test
+  void forwardDpa_stillFails_When_theMintIsThrottled() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenThrow(
+            new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, "throttled"));
+
+    assertThrows(
+        org.springframework.web.server.ResponseStatusException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+    assertNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_refusesOnceTheInviteSpentItsForwardBudget() {
+    // the route is anonymous and each call mails a LIVE signing link to a caller-supplied address,
+    // so an unbounded endpoint is a mail relay for someone else's tenant
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardCount(TenantAdminOnboardingService.MAX_DPA_FORWARDS_PER_INVITE);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+
+    assertThrows(
+        BadRequestException.class, () -> service.forwardDpa(RAW_TOKEN, "attacker@example.org"));
+    // no link minted, and above all no mail sent
+    verify(publicDpaForwardClient, never()).createForwardSignLink(any(), any());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+    // a refused attempt must not cost anything either: the count is untouched and nothing is
+    // written, so a flood cannot push an already-exhausted invite further out of reach
+    assertEquals(
+        TenantAdminOnboardingService.MAX_DPA_FORWARDS_PER_INVITE, invite.getDpaForwardCount());
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void forwardDpa_refundsTheAttempt_When_theLinkCouldNotBeMinted() {
+    // an upstream failure must not burn one of the three forwards a Träger gets - otherwise a
+    // TenantService outage silently exhausts a legitimate invitation. Since the #1065 review the
+    // attempt is RESERVED before the mint (so the row lock is never held across the remote call)
+    // and REFUNDED when the mint produced no link - the net budget stays untouched.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardCount(1);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenThrow(new InternalServerErrorException("TenantService unavailable"));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    assertEquals(1, invite.getDpaForwardCount());
+    // reserve + refund are each persisted in their own short transaction
+    verify(accountInviteRepository, times(2)).save(invite);
+    assertNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  /**
+   * The provider broke its contract (see parseExpiry): a missing or unparseable expiry must surface
+   * as 500 instead of being swallowed as a "mail failure" while the call answers 200 with an expiry
+   * string no mail could state (CodeRabbit, #1065).
+   */
+  @Test
+  void forwardDpa_failsLoudly_When_theProviderReturnsNoExpiry() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite().expiresAt(null));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    // the broken contract is not a mail-delivery problem, so no send may have been attempted
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_failsLoudly_When_theProviderReturnsAnUnparseableExpiry() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite().expiresAt("29.08.2026 14:31"));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  /** A well-formed expiry still passes through verbatim when no mail states a validity window. */
+  @Test
+  void forwardDpa_returnsTheRawExpiry_When_noMailNeedsToStateIt() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    assertEquals("2026-08-29T14:31:07", service.forwardDpa(RAW_TOKEN, null).expiresAt());
+  }
+
+  /**
+   * The provider contract holds on the recipient-less path too: without this the broken value was
+   * simply handed back with a 200, because parseExpiry only ran when a mail had to state it
+   * (CodeRabbit, #1065).
+   */
+  @Test
+  void forwardDpa_failsLoudly_When_theProviderExpiryIsBroken_andNoRecipientIsGiven() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite().expiresAt(null));
+
+    assertThrows(InternalServerErrorException.class, () -> service.forwardDpa(RAW_TOKEN, null));
+
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  /**
+   * A broken provider answer must not leave a completed forward behind: the proof write happens
+   * only after the expiry parsed, so dpaForwardedAt stays null (CodeRabbit, #1065).
+   */
+  @Test
+  void forwardDpa_doesNotRecordTheForward_When_theProviderExpiryIsBroken() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite().expiresAt("29.08.2026 14:31"));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    assertNull(invite.getDpaForwardedAt());
+  }
+
+  @Test
+  void forwardDpa_countsEachForwardAgainstTheBudget() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardCount(1);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    service.forwardDpa(RAW_TOKEN, "legal@example.org");
+
+    assertEquals(2, invite.getDpaForwardCount());
+    verify(accountInviteRepository, times(2)).save(invite);
+  }
+
+  @Test
+  void forwardDpa_rejectsAConsumedInvite() {
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH))
+        .thenReturn(Optional.of(tenantAdminInvite(AccountInviteStatus.ACCEPTED)));
+
+    assertThrows(
+        AccountInviteLinkException.class, () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+    verify(publicDpaForwardClient, never()).createForwardSignLink(any(), any());
+  }
+
+  @Test
+  void forwardDpa_rejectsAnExpiredInvite_andPreservesTheExpiredState() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setExpiresAt(LocalDateTime.now().minusDays(1));
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+
+    assertThrows(AccountInviteLinkException.class, () -> service.forwardDpa(RAW_TOKEN, null));
+    verify(publicDpaForwardClient, never()).createForwardSignLink(any(), any());
+    // the persistence half is the whole reason forwardDpa carries noRollbackFor: without it the
+    // link-death exception rolls the EXPIRED transition back and the next call re-offers the
+    // forward. Asserting only the throw leaves that annotation untested.
+    assertEquals(AccountInviteStatus.EXPIRED, invite.getStatus());
+    verify(accountInviteRepository).save(invite);
+  }
+
+  @Test
+  void forwardDpa_doesNotRecordTheForward_When_theLinkCreationFails() {
+    // given TenantService rejects the reservation pair
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenThrow(new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED));
+
+    // when / then: no forward is claimed, so registration still requires an acceptance
+    assertThrows(AccountInviteLinkException.class, () -> service.forwardDpa(RAW_TOKEN, null));
+    assertNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  /**
+   * The controller test can only pin that no role dispatch happens; the rejection itself lives
+   * here. Without this case nothing proved that a counsellor token is refused — the controller stub
+   * answered for any token (CodeRabbit, #1065).
+   */
+  @Test
+  void forwardDpa_rejectsANonTenantAdminToken() {
+    var counsellorInvite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    counsellorInvite.setTargetRole(AccountInviteTargetRole.COUNSELLOR);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH))
+        .thenReturn(Optional.of(counsellorInvite));
+
+    assertThrows(NotFoundException.class, () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    // no link may be minted and no attempt may be spent for a token that does not belong here
+    verifyNoInteractions(publicDpaForwardClient);
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void forwardDpa_rejectsAnInviteWithoutAReservation() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setTenantIdReservationToken(null);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+
+    assertThrows(InternalServerErrorException.class, () -> service.forwardDpa(RAW_TOKEN, null));
+  }
+
+  // --- Träger sender block (Frank, 2026-09-23): legal name and contact entered at onboarding ---
+
+  private static RegisterTenantAdminCommand commandWithSenderBlock(
+      String legalName, String contactEmail, String contactPhone) {
+    return new RegisterTenantAdminCommand(
+        "Beispiel gGmbH",
+        "beispiel",
+        "Musterstrasse 1, 12345 Musterstadt",
+        true,
+        "Erika Beispiel",
+        "CEO",
+        "tenant.admin@example.org",
+        "Beispiel gGmbH",
+        "s3cretPassword",
+        RESERVED_TENANT_ID,
+        RESERVATION_TOKEN,
+        legalName,
+        contactEmail,
+        contactPhone);
+  }
+
+  private MultilingualTenantDTO registerAndCaptureTenant(RegisterTenantAdminCommand command) {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdminForReservedTenant(any()))
+        .thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+
+    service.registerTenantAdmin(RAW_TOKEN, command);
+
+    ArgumentCaptor<MultilingualTenantDTO> tenantCaptor =
+        ArgumentCaptor.forClass(MultilingualTenantDTO.class);
+    verify(tenantCreationClient).createTenant(tenantCaptor.capture());
+    return tenantCaptor.getValue();
+  }
+
+  @Test
+  void registerTenantAdmin_createsTheTenantWithTheLegalNameAndContactEntered() {
+    MultilingualTenantDTO tenant =
+        registerAndCaptureTenant(
+            commandWithSenderBlock(
+                "  Beispiel Verband e.V. ", " kontakt@beispiel.example ", " +49 30 123456 "));
+
+    assertEquals("Beispiel Verband e.V.", tenant.getLegalName());
+    assertEquals("kontakt@beispiel.example", tenant.getContactEmail());
+    assertEquals("+49 30 123456", tenant.getContactPhone());
+  }
+
+  @Test
+  void registerTenantAdmin_leavesTheSenderBlockOut_When_nothingWasEntered() {
+    MultilingualTenantDTO tenant = registerAndCaptureTenant(commandWithSenderBlock(null, " ", ""));
+
+    assertNull(tenant.getLegalName());
+    assertNull(tenant.getContactEmail());
+    assertNull(tenant.getContactPhone());
+  }
+
+  @Test
+  void registerTenantAdmin_rejectsAContactEmailThatIsNoEmailAddress_beforeCreatingAnything() {
+    var command = commandWithSenderBlock(null, "kontakt at beispiel", null);
 
     assertThrows(BadRequestException.class, () -> service.registerTenantAdmin(RAW_TOKEN, command));
+    verifyNoInteractions(tenantCreationClient, createAdminService);
+  }
+
+  @Test
+  void registerTenantAdmin_rejectsSenderValuesLongerThanTenantServiceStores() {
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            service.registerTenantAdmin(
+                RAW_TOKEN, commandWithSenderBlock("x".repeat(256), null, null)));
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            service.registerTenantAdmin(
+                RAW_TOKEN, commandWithSenderBlock(null, null, "1".repeat(65))));
+    verifyNoInteractions(tenantCreationClient, createAdminService);
   }
 
   @Test
@@ -520,7 +1387,7 @@ class TenantAdminOnboardingServiceTest {
             .firstName("Erika")
             .lastName("Beispiel")
             .build();
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(admin);
+    when(createAdminService.createNewTenantAdminForReservedTenant(any())).thenReturn(admin);
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -530,10 +1397,11 @@ class TenantAdminOnboardingServiceTest {
         ConflictException.class, () -> service.registerTenantAdmin(RAW_TOKEN, validCommand()));
 
     verify(identityAccountRemover).rollbackUser("kc-user-1");
+    verify(eventPublisher, never()).publishEvent(any(InviteUnitCreatedEvent.class));
   }
 
   @Test
-  void registerTenantAdmin_missingTotpMaterial_rollsBackKeycloakUser() {
+  void registerTenantAdmin_credentialProviderFails_rollsBackKeycloakUser() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     givenPublishedOperatorDpa();
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
@@ -546,9 +1414,9 @@ class TenantAdminOnboardingServiceTest {
             .firstName("Erika")
             .lastName("Beispiel")
             .build();
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(admin);
+    when(createAdminService.createNewTenantAdminForReservedTenant(any())).thenReturn(admin);
     when(identitySecondFactor.getOtpCredential(anyString()))
-        .thenReturn(IdentityOtpCredential.empty());
+        .thenThrow(new InternalServerErrorException("credential provider unavailable"));
 
     assertThrows(
         InternalServerErrorException.class,
@@ -559,6 +1427,27 @@ class TenantAdminOnboardingServiceTest {
   }
 
   // --- two-factor ---
+
+  @Test
+  void emailTwoFactor_withoutAppSecret_usesInviteRecipientAndActivates() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.ACCEPTED);
+    invite.setAcceptedByUserId("kc-user-1");
+    invite.setTotpPendingSecret(null);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(identityProfileLookup.findById("kc-user-1"))
+        .thenReturn(Optional.of(new IdentityProfile("kc-user-1", "enc.user", null, null, null)));
+    when(identitySecondFactor.initiateEmailVerification("enc.user", invite.getRecipientEmail()))
+        .thenReturn(
+            de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart.success());
+    when(identitySecondFactor.finishEmailVerification("enc.user", "123456"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
+                true, false, true, invite.getRecipientEmail()));
+    service.startEmailTwoFactor(RAW_TOKEN);
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+    service.activateEmailTwoFactor(RAW_TOKEN, "123456");
+    verify(accountInviteService).markTwoFactorActive("kc-user-1");
+  }
 
   @Test
   void activateTwoFactor_happyPath_activatesGateAndClearsSecret() {

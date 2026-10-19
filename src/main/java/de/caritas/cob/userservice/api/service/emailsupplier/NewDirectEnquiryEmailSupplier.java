@@ -143,6 +143,12 @@ public class NewDirectEnquiryEmailSupplier implements EmailSupplier {
     var templateAttributes = new ArrayList<TemplateDataDTO>();
     templateAttributes.add(new TemplateDataDTO().key("name").value(consultant.getFullName()));
     templateAttributes.add(new TemplateDataDTO().key("plz").value(postCode));
+    if (consultant.getTenantId() != null) {
+      templateAttributes.add(
+          new TemplateDataDTO()
+              .key("recipientTenantId")
+              .value(consultant.getTenantId().toString()));
+    }
 
     if (!multiTenancyEnabled) {
       templateAttributes.add(new TemplateDataDTO().key("url").value(applicationBaseUrl));

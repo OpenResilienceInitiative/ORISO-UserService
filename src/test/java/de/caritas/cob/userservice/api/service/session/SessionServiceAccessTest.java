@@ -47,6 +47,8 @@ class SessionServiceAccessTest {
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock private ConsultantSessionTopicEnrichmentService sessionTopicEnrichmentService;
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
+  @Mock private SessionSupervisionMarkerService supervisionMarkerService;
+  @Mock private SessionOwnershipService sessionOwnershipService;
 
   private SessionService sessionService;
 
@@ -62,7 +64,9 @@ class SessionServiceAccessTest {
             userService,
             consultingTypeManager,
             sessionTopicEnrichmentService,
-            sessionSupervisorRepository);
+            sessionSupervisorRepository,
+            supervisionMarkerService,
+            sessionOwnershipService);
 
     lenient()
         .when(
