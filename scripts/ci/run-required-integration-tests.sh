@@ -59,6 +59,7 @@ mariadb_owned_tests=(
   SupportRoomMigrationConvergenceIT
   SessionOwnershipMariaDbIT
   ChatMembersOnlyMariaDbIT
+  CaseHandoverStatusHttpMariaDbIT
   AccountInviteRevokeAcceptRaceMariaDbIT
 )
 required_test_pattern="**/*IT"
