@@ -46,6 +46,8 @@ public class ReassignmentConfirmationEmailSupplier implements EmailSupplier {
     } else {
       templateAttributes.addAll(tenantTemplateSupplier.getTemplateAttributes());
     }
+    UnsubscribeLink.forOccasion(templateAttributes, "uebergabe-bestaetigt")
+        .ifPresent(templateAttributes::add);
 
     return new MailDTO()
         .template(TEMPLATE_REASSIGN_CONFIRMATION_NOTIFICATION)
