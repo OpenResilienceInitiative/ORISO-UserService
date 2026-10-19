@@ -1434,7 +1434,13 @@ class TenantAdminOnboardingServiceTest {
     invite.setAcceptedByUserId("kc-user-1");
     invite.setTotpPendingSecret(null);
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
-    when(accountInviteRepository.findByIdForUpdate(invite.getId())).thenReturn(Optional.of(invite));
+    // A DISTINCT instance, as in the app-secret path below: handing back the snapshot would
+    // let the test pass even if the gate were activated on the stale row.
+    AccountInvite lockedRow = tenantAdminInvite(AccountInviteStatus.ACCEPTED);
+    lockedRow.setAcceptedByUserId("kc-user-1");
+    lockedRow.setTotpPendingSecret(null);
+    when(accountInviteRepository.findByIdForUpdate(lockedRow.getId()))
+        .thenReturn(Optional.of(lockedRow));
     when(identityProfileLookup.findById("kc-user-1"))
         .thenReturn(Optional.of(new IdentityProfile("kc-user-1", "enc.user", null, null, null)));
     when(identitySecondFactor.initiateEmailVerification("enc.user", invite.getRecipientEmail()))
@@ -1444,10 +1450,14 @@ class TenantAdminOnboardingServiceTest {
         .thenReturn(
             new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
                 true, false, true, invite.getRecipientEmail()));
+
     service.startEmailTwoFactor(RAW_TOKEN);
     verify(accountInviteService, never()).markTwoFactorActive(anyString());
     service.activateEmailTwoFactor(RAW_TOKEN, "123456");
+
     verify(accountInviteService).markTwoFactorActive("kc-user-1");
+    verify(accountInviteRepository).save(lockedRow);
+    verify(accountInviteRepository, never()).save(invite);
   }
 
   @Test

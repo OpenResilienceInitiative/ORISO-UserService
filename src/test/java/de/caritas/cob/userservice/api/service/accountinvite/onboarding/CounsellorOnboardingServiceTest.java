@@ -822,15 +822,23 @@ class CounsellorOnboardingServiceTest {
   @Test
   void activateEmailTwoFactor_correctCodeCompletesWithoutTotpSecret() {
     AccountInvite pending = pendingEmailInvite();
-    lockedRowIs(pending);
+    // A DISTINCT instance, as in the app-secret path above: handing back the snapshot would
+    // let the test pass even if the gate were activated on the stale row.
+    AccountInvite lockedRow = lockedRowIs(invite());
+    lockedRow.setStatus(AccountInviteStatus.ACCEPTED);
+    lockedRow.setAcceptedByUserId(CONSULTANT_ID);
     when(identitySecondFactor.finishEmailVerification("enc.lena.b", "123456"))
         .thenReturn(
             new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
                 true, false, true, "counsellor@example.org"));
+
     service.activateEmailTwoFactor(RAW_TOKEN, "123456");
+
     verify(accountInviteService).markTwoFactorActive(CONSULTANT_ID);
     verify(identitySecondFactor, never()).setUpOtpCredential(anyString(), anyString(), anyString());
-    assertNull(pending.getTotpPendingSecret());
+    assertNull(lockedRow.getTotpPendingSecret());
+    verify(accountInviteRepository).save(lockedRow);
+    verify(accountInviteRepository, never()).save(pending);
   }
 
   @Test
