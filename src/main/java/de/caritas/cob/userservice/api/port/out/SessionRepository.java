@@ -499,8 +499,23 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   List<AgencyConsultingTypeProjection> findLowestConsultingTypeIdsByAgencyIds(
       @Param("agencyIds") Set<Long> agencyIds);
 
-  /** Cases a counsellor currently owns, for counting what a move leaves behind. */
-  long countByConsultantIdAndStatusIn(String consultantId, Collection<SessionStatus> statuses);
+  /**
+   * Open cases a counsellor owns in one Träger, for counting what a move leaves behind (#1419). The
+   * owner stays on a case when its counsellor moves, so without the tenant a move back would count
+   * the cases of the Träger they return to as left behind. Same tenant predicate as the room
+   * queries: cases without a tenant belong to the technical tenant 1.
+   */
+  @Query(
+      """
+      SELECT COUNT(s) FROM Session s
+      WHERE s.consultant.id = :consultantId
+        AND s.status IN :statuses
+        AND (s.tenantId = :tenantId OR (s.tenantId IS NULL AND :tenantId = 1))
+      """)
+  long countOpenCasesOfTenant(
+      @Param("consultantId") String consultantId,
+      @Param("statuses") Collection<SessionStatus> statuses,
+      @Param("tenantId") Long tenantId);
 
   /**
    * The Matrix rooms through which a counsellor can read the cases of the Träger they are leaving

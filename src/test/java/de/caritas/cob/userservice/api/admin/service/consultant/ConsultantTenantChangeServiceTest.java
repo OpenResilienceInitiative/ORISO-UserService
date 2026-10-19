@@ -151,8 +151,7 @@ class ConsultantTenantChangeServiceTest {
 
   @Test
   void reportsAnUnknownConsultantAsNotFound() {
-    when(consultantRepository.findByIdAndDeleteDateIsNull(CONSULTANT_ID))
-        .thenReturn(Optional.empty());
+    when(consultantRepository.findActiveByIdForUpdate(CONSULTANT_ID)).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> move(NEW_TENANT, 800L)).isInstanceOf(NotFoundException.class);
 
@@ -225,8 +224,8 @@ class ConsultantTenantChangeServiceTest {
     when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(
             List.of(5L), List.of(800L, 801L), NEW_TENANT))
         .thenReturn(Map.of(800L, Set.of(5L)));
-    when(sessionRepository.countByConsultantIdAndStatusIn(
-            CONSULTANT_ID, List.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS)))
+    when(sessionRepository.countOpenCasesOfTenant(
+            CONSULTANT_ID, List.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS), OLD_TENANT))
         .thenReturn(3L);
     when(roomFinder.roomsToLeave(CONSULTANT_ID, "@mover:matrix", OLD_TENANT, List.of(700L, 701L)))
         .thenReturn(List.of(new RoomRef(1L, "!a:matrix"), new RoomRef(2L, "!b")));
@@ -321,7 +320,7 @@ class ConsultantTenantChangeServiceTest {
     oldAgencies(700L);
     when(topicAgencyValidator.validateGrantTopicsAgainstSelectedAgencies(any(), any(), anyLong()))
         .thenReturn(Map.of());
-    when(sessionRepository.countByConsultantIdAndStatusIn(anyString(), anyCollection()))
+    when(sessionRepository.countOpenCasesOfTenant(anyString(), anyCollection(), anyLong()))
         .thenReturn(4L);
     when(roomFinder.roomsToLeave(anyString(), anyString(), anyLong(), anyCollection()))
         .thenReturn(List.of(new RoomRef(1L, "!a:matrix")));
@@ -627,7 +626,7 @@ class ConsultantTenantChangeServiceTest {
   }
 
   private void found() {
-    when(consultantRepository.findByIdAndDeleteDateIsNull(CONSULTANT_ID))
+    when(consultantRepository.findActiveByIdForUpdate(CONSULTANT_ID))
         .thenReturn(Optional.of(consultant));
   }
 

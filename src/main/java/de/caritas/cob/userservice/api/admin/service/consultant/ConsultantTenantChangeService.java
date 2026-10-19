@@ -138,7 +138,8 @@ public class ConsultantTenantChangeService {
     }
     var consultant =
         consultantRepository
-            .findByIdAndDeleteDateIsNull(consultantId)
+            // Row lock: two concurrent moves of one counsellor run one after the other.
+            .findActiveByIdForUpdate(consultantId)
             .orElseThrow(
                 () -> new NotFoundException("Consultant with id %s not found", consultantId));
     var previousTenantId = consultant.getTenantId();
@@ -168,7 +169,8 @@ public class ConsultantTenantChangeService {
             .toList();
     int casesLeft =
         Math.toIntExact(
-            sessionRepository.countByConsultantIdAndStatusIn(consultantId, OPEN_CASE_STATES));
+            sessionRepository.countOpenCasesOfTenant(
+                consultantId, OPEN_CASE_STATES, previousTenantId));
     var matrixUserId = consultant.getMatrixUserId();
     var rooms =
         isNotBlank(matrixUserId)

@@ -35,6 +35,7 @@ import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
+import de.caritas.cob.userservice.api.model.ConsultantTenantChangeAudit;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
@@ -736,12 +737,19 @@ class ConsultantTenantChangeMariaDbIT {
 
     var result = moveBack();
 
+    // The two open cases belong to the Träger they return to: nothing is left behind (#1421).
+    assertThat(result.casesLeftWithPreviousTenant()).isZero();
     assertThat(result.matrixAccessRevocationsQueued()).isZero();
     assertThat(
             repairTaskRepository.findByActionAndMemberId(
                 CaseHandoverMatrixRepairAction.LEAVE, matrixId(MOVER_ID)))
         .isEmpty();
     assertThat(reload(MOVER_ID).getTenantId()).isEqualTo(OLD_TRAEGER);
+    assertThat(
+            auditRepository.findByConsultantIdOrderByCreateDateAsc(MOVER_ID).stream()
+                .map(ConsultantTenantChangeAudit::getCasesLeftWithPreviousTenant)
+                .toList())
+        .containsExactly(2, 0);
   }
 
   /**
@@ -753,6 +761,8 @@ class ConsultantTenantChangeMariaDbIT {
 
     var result = moveBack();
 
+    // The two open cases belong to the Träger they return to: nothing is left behind (#1421).
+    assertThat(result.casesLeftWithPreviousTenant()).isZero();
     assertThat(result.matrixAccessRevocationsQueued()).isZero();
     assertThat(
             repairTaskRepository.findByActionAndMemberId(
