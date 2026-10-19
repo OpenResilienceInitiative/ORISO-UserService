@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
@@ -52,7 +53,8 @@ class SessionSupervisorControllerTest {
             userAccountService,
             eventNotificationService,
             supervisorAddedEmailNotificationService,
-            sessionService);
+            sessionService,
+            new ConsultantDisplayNameResolver());
   }
 
   @Test
@@ -95,7 +97,7 @@ class SessionSupervisorControllerTest {
   }
 
   @Test
-  void addSupervisor_optionalDataMissing_noThrowAndUsesFullNameFallback() {
+  void addSupervisor_optionalDataMissing_noThrowAndNoAdviceSeekerNotification() {
     // Business reason: notification side effects must not crash when optional user/session data is
     // absent.
     var request = new SessionSupervisorController.AddSupervisorRequestDTO();
@@ -119,9 +121,13 @@ class SessionSupervisorControllerTest {
     assertEquals(HttpStatus.CREATED, response.getStatusCode());
     verify(eventNotificationService, never())
         .createSupervisorAddedNotification(any(), any(), any());
+    // #1201: this used to assert on notifySupervisorAdded's `supervisorDisplayName`, a parameter
+    // nothing ever read -- so it guarded nothing observable while looking like a privacy check.
+    // The parameter is gone; what this test is actually about is that a session without a user
+    // produces no advice-seeker notification and no crash. The real-name guarantee is pinned by
+    // the two tests below, on the sink that is actually observable.
     verify(supervisorAddedEmailNotificationService)
-        .notifySupervisorAdded(
-            eq(null), any(Consultant.class), eq("Fallback Name"), eq(77L), eq(null), eq("token"));
+        .notifySupervisorAdded(eq(null), any(Consultant.class), eq(77L), eq(null), eq("token"));
   }
 
   @Test
@@ -144,12 +150,52 @@ class SessionSupervisorControllerTest {
         .createSupervisorRemovedNotification(any(), eq("u-2"), eq("Supervisor Display"));
     verify(supervisorAddedEmailNotificationService)
         .notifySupervisorRemoved(
-            any(User.class),
-            any(Consultant.class),
-            eq("Supervisor Display"),
-            eq(77L),
-            eq(null),
-            eq("token"));
+            any(User.class), any(Consultant.class), eq(77L), eq(null), eq("token"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1201: both supervisor entries are addressed to the advice seeker
+  // (session.getUser()), so neither may name the colleague who joined or left their case.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void addSupervisor_Should_NotFallBackToTheRealName_When_TheSupervisorHasNoPseudonym() {
+    var request = new SessionSupervisorController.AddSupervisorRequestDTO();
+    request.setSupervisorConsultantId("sup-1");
+    var current = consultant("current-1", "Current");
+    var created = supervisorWithoutPseudonym(17L, user("u-1"));
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(authenticatedUser.getAccessToken()).thenReturn("token");
+    when(sessionSupervisorFacade.addSupervisor(57L, "sup-1", current, null, null))
+        .thenReturn(created);
+
+    controller.addSupervisor(57L, request);
+
+    verify(eventNotificationService)
+        .createSupervisorAddedNotification(any(), eq("u-1"), eq("beraterin1"));
+  }
+
+  @Test
+  void removeSupervisor_Should_NotFallBackToTheRealName_When_TheSupervisorHasNoPseudonym() {
+    var current = consultant("current-1", "Current");
+    var existing = supervisorWithoutPseudonym(21L, user("u-2"));
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(authenticatedUser.getAccessToken()).thenReturn("token");
+    when(sessionSupervisorFacade.getSupervisors(92L)).thenReturn(List.of(existing));
+    when(sessionService.getSession(92L)).thenReturn(Optional.of(existing.getSession()));
+
+    controller.removeSupervisor(92L, 21L);
+
+    verify(eventNotificationService)
+        .createSupervisorRemovedNotification(any(), eq("u-2"), eq("beraterin1"));
+  }
+
+  /** A supervisor with a real name and no stored pseudonym — the fallback case that leaked. */
+  private SessionSupervisor supervisorWithoutPseudonym(Long id, User sessionOwner) {
+    var supervisor = supervisor(id, "sup-1", "added-by", null, "unused", sessionOwner);
+    supervisor.getSupervisorConsultant().setDisplayName(null);
+    supervisor.getSupervisorConsultant().setUsername("beraterin1");
+    return supervisor;
   }
 
   @Test
@@ -167,7 +213,7 @@ class SessionSupervisorControllerTest {
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(sessionSupervisorFacade).removeSupervisor(91L, 999L, current);
     verify(supervisorAddedEmailNotificationService, never())
-        .notifySupervisorRemoved(any(), any(), any(), any(), any(), any());
+        .notifySupervisorRemoved(any(), any(), any(), any(), any());
   }
 
   @Test
@@ -175,7 +221,9 @@ class SessionSupervisorControllerTest {
     // Business reason: supervisor list response must preserve all DTO fields for frontend
     // rendering.
     var first = supervisor(30L, "sup-3", "added-by-3", "Display Three", "Full Three", user("u-3"));
-    when(sessionSupervisorFacade.getSupervisors(77L)).thenReturn(List.of(first));
+    var current = consultant("current-1", "Current");
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(sessionSupervisorFacade.getSupervisors(77L, current)).thenReturn(List.of(first));
 
     var response = controller.getSupervisors(77L);
 
@@ -186,21 +234,60 @@ class SessionSupervisorControllerTest {
     assertEquals(77L, dto.getSessionId());
     assertEquals("sup-3", dto.getSupervisorConsultantId());
     assertEquals("Display Three", dto.getSupervisorUsername());
+    assertEquals("rc-sup-3", dto.getSupervisorMatrixUserId());
     assertEquals("added-by-3", dto.getAddedByConsultantId());
     assertEquals("room-77", dto.getMatrixRoomId());
     assertEquals("note-30", dto.getNotes());
   }
 
   @Test
+  void getSupervisors_supervisorWithoutMatrixAccount_leavesMatrixUserIdNull() {
+    var first = supervisor(31L, "sup-4", "added-by-4", "Display Four", "Full Four", user("u-4"));
+    first.getSupervisorConsultant().setMatrixUserId(null);
+    var current = consultant("current-1", "Current");
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(sessionSupervisorFacade.getSupervisors(79L, current)).thenReturn(List.of(first));
+
+    var response = controller.getSupervisors(79L);
+
+    assertNull(response.getBody().get(0).getSupervisorMatrixUserId());
+  }
+
+  @Test
+  void getSupervisors_blankMatrixAccount_leavesMatrixUserIdNull() {
+    var first = supervisor(32L, "sup-5", "added-by-5", "Display Five", "Full Five", user("u-5"));
+    first.getSupervisorConsultant().setMatrixUserId("  ");
+    var current = consultant("current-1", "Current");
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(sessionSupervisorFacade.getSupervisors(80L, current)).thenReturn(List.of(first));
+
+    var response = controller.getSupervisors(80L);
+
+    assertNull(response.getBody().get(0).getSupervisorMatrixUserId());
+  }
+
+  @Test
   void getSupervisors_emptyList_returnsEmptyArrayNotNull() {
     // Business reason: frontend expects stable empty arrays instead of null for list endpoints.
-    when(sessionSupervisorFacade.getSupervisors(78L)).thenReturn(List.of());
+    var current = consultant("current-1", "Current");
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(sessionSupervisorFacade.getSupervisors(78L, current)).thenReturn(List.of());
 
     var response = controller.getSupervisors(78L);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertNotNull(response.getBody());
     assertEquals(0, response.getBody().size());
+  }
+
+  @Test
+  void getSupervisors_returnsForbidden_whenConsultantCannotBeResolved() {
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(null);
+
+    var response = controller.getSupervisors(81L);
+
+    assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+    verify(sessionSupervisorFacade, never()).getSupervisors(any(), any());
   }
 
   @Test
@@ -268,8 +355,10 @@ class SessionSupervisorControllerTest {
             .build();
     var supervisor = consultant(supervisorId, displayName != null ? displayName : fullName);
     supervisor.setDisplayName(displayName);
-    supervisor.setFirstName("Fallback");
-    supervisor.setLastName("Name");
+    // Unmistakably different from every pseudonym in this class, so an assertion that the real
+    // name is absent cannot pass by accident on a shared word.
+    supervisor.setFirstName("Angela");
+    supervisor.setLastName("Musterfrau");
     var addedBy = consultant(addedById, "Adder");
     return SessionSupervisor.builder()
         .id(id)

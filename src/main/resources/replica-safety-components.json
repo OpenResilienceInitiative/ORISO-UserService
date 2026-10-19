@@ -11,9 +11,13 @@
       "kind": "local-state",
       "owner": "identity-profile",
       "risk": "performance",
-      "components": ["accessTokenCache"],
+      "components": [
+        "accessTokenCache"
+      ],
       "decision": "Retain locally with the existing TTL; a miss re-authenticates without losing correctness.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -22,9 +26,13 @@
       "kind": "local-state",
       "owner": "identity-profile",
       "risk": "correctness",
-      "components": ["browserLoginLocks"],
+      "components": [
+        "browserLoginLocks"
+      ],
       "decision": "Externalize login coordination before more than one replica is supported.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -33,9 +41,13 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "correctness",
-      "components": ["syncTokenCache"],
+      "components": [
+        "syncTokenCache"
+      ],
       "decision": "Externalize the cursor and prove handoff without duplicate event side effects.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -44,9 +56,13 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "performance",
-      "components": ["presenceCache"],
+      "components": [
+        "presenceCache"
+      ],
       "decision": "Retain as a short-lived local optimization with deterministic TTL tests.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -55,9 +71,14 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "performance",
-      "components": ["cachedAdminToken", "adminTokenExpiry"],
+      "components": [
+        "cachedAdminToken",
+        "adminTokenExpiry"
+      ],
       "decision": "Retain locally with expiry; a miss or expiry re-authenticates.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -66,9 +87,13 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "performance",
-      "components": ["impersonationTokenCache"],
+      "components": [
+        "impersonationTokenCache"
+      ],
       "decision": "Retain locally with TTL; a miss requests a new bounded token.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -77,9 +102,13 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "performance",
-      "components": ["roomToSessionMap"],
+      "components": [
+        "roomToSessionMap"
+      ],
       "decision": "Retain only while the database fallback is covered and observable.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "safe"
     },
     {
@@ -88,9 +117,13 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "correctness",
-      "components": ["roomToUsersMap"],
+      "components": [
+        "roomToUsersMap"
+      ],
       "decision": "Externalize or deterministically rebuild recipients before multi-replica execution.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -99,9 +132,16 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "duplicate-side-effect",
-      "components": ["executorService", "adminAccessToken", "syncToken", "running"],
+      "components": [
+        "executorService",
+        "adminAccessToken",
+        "syncToken",
+        "running"
+      ],
       "decision": "Add shared leadership, cursor handoff and durable side-effect deduplication.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -110,9 +150,13 @@
       "kind": "local-state",
       "owner": "notifications",
       "risk": "correctness",
-      "components": ["activeViewByUserId"],
+      "components": [
+        "activeViewByUserId"
+      ],
       "decision": "Externalize with TTL before cross-replica notification suppression is claimed.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -130,7 +174,9 @@
         "topicsCache"
       ],
       "decision": "Keep the one-replica ceiling until every correctness cache has shared invalidation or a measured freshness bound.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -139,9 +185,13 @@
       "kind": "local-state",
       "owner": "agency-tenant",
       "risk": "performance",
-      "components": ["agencyCache"],
+      "components": [
+        "agencyCache"
+      ],
       "decision": "Retain only as a bounded read optimization and define freshness before scale-out.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -150,9 +200,13 @@
       "kind": "local-state",
       "owner": "consulting-configuration",
       "risk": "performance",
-      "components": ["consultingTypeCache"],
+      "components": [
+        "consultingTypeCache"
+      ],
       "decision": "Retain only as a bounded read optimization and define freshness before scale-out.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -161,9 +215,13 @@
       "kind": "local-state",
       "owner": "consulting-configuration",
       "risk": "correctness",
-      "components": ["applicationSettingsCache"],
+      "components": [
+        "applicationSettingsCache"
+      ],
       "decision": "Add shared invalidation or an explicit measured freshness contract.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -172,9 +230,13 @@
       "kind": "local-state",
       "owner": "agency-tenant",
       "risk": "correctness",
-      "components": ["tenantCache"],
+      "components": [
+        "tenantCache"
+      ],
       "decision": "Add shared invalidation for tenant changes before scale-out.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -183,9 +245,13 @@
       "kind": "local-state",
       "owner": "administration",
       "risk": "correctness",
-      "components": ["tenantAdminCache"],
+      "components": [
+        "tenantAdminCache"
+      ],
       "decision": "Add shared invalidation for administrator changes before scale-out.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -194,9 +260,13 @@
       "kind": "local-state",
       "owner": "consulting-configuration",
       "risk": "performance",
-      "components": ["topicsCache"],
+      "components": [
+        "topicsCache"
+      ],
       "decision": "Retain only as a bounded read optimization and define freshness before scale-out.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -205,9 +275,43 @@
       "kind": "local-state",
       "owner": "administration",
       "risk": "performance",
-      "components": ["cache"],
+      "components": [
+        "cache"
+      ],
       "decision": "Retain locally with the existing TTL; a miss re-reads TenantService without losing correctness.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "platform-operator-organisation-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/email/sender/PlatformOperatorOrganisationClient.java",
+      "kind": "local-state",
+      "owner": "administration",
+      "risk": "performance",
+      "components": [
+        "cache"
+      ],
+      "decision": "Retain locally with the five-minute TTL; a miss re-reads the operator master data from TenantService, and a replica with an older copy only shows a changed mail-footer sender for at most that TTL.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "traeger-organisation-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/email/sender/TraegerOrganisationClient.java",
+      "kind": "local-state",
+      "owner": "administration",
+      "risk": "performance",
+      "components": [
+        "cache"
+      ],
+      "decision": "Retain locally per tenant with the five-minute TTL; a miss re-reads the tenant from TenantService, and a replica with an older copy only shows a changed Traeger name or address in mail footers for at most that TTL.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -216,10 +320,47 @@
       "kind": "scheduler",
       "owner": "sessions-appointments",
       "risk": "duplicate-side-effect",
-      "components": ["deleteObsoleteAppointments"],
+      "components": [
+        "deleteObsoleteAppointments"
+      ],
       "decision": "Prove database-level idempotency under concurrent execution or add a lease.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
+    },
+    {
+      "id": "account-invite-reservation-release-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/allocation/IdReservationReleaseScheduler.java",
+      "kind": "scheduler",
+      "owner": "agency-tenant",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryPendingReleases"
+      ],
+      "decision": "Lease each batch and use idempotent release endpoints plus row locks for safe replay.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
+      "id": "account-invite-expiry-number-release-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/ExpiredInviteReservationSweep.java",
+      "kind": "scheduler",
+      "owner": "agency-tenant",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "expireElapsedInvites"
+      ],
+      "decision": "Lease each run via ScheduledTaskClaimService; expiry is a status transition and every number release is a durable release task, so a replayed batch cannot release a number twice.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
     },
     {
       "id": "enquiry-notification-scheduler",
@@ -227,9 +368,14 @@
       "kind": "scheduler",
       "owner": "notifications",
       "risk": "duplicate-side-effect",
-      "components": ["sendEmailNotificationsForOpenEnquiries"],
+      "components": [
+        "sendEmailNotificationsForOpenEnquiries"
+      ],
       "decision": "Lease execution and keep notification delivery idempotent.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -238,9 +384,14 @@
       "kind": "scheduler",
       "owner": "sessions-group-chat",
       "risk": "duplicate-side-effect",
-      "components": ["performDeactivationWorkflow"],
+      "components": [
+        "performDeactivationWorkflow"
+      ],
       "decision": "Prove Matrix and notification effects idempotent or add a lease.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -249,9 +400,14 @@
       "kind": "scheduler",
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
-      "components": ["performDeactivationWorkflow"],
+      "components": [
+        "performDeactivationWorkflow"
+      ],
       "decision": "Lease execution and make every external side effect idempotent.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -260,9 +416,14 @@
       "kind": "scheduler",
       "owner": "notifications",
       "risk": "duplicate-side-effect",
-      "components": ["publishUpcomingReminders"],
+      "components": [
+        "publishUpcomingReminders"
+      ],
       "decision": "Deduplicate by reminder identity and prove concurrent execution.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -271,9 +432,14 @@
       "kind": "scheduler",
       "owner": "notifications",
       "risk": "duplicate-side-effect",
-      "components": ["notifyInactiveAccounts"],
+      "components": [
+        "notifyInactiveAccounts"
+      ],
       "decision": "Claim each dispatch durably and deduplicate replay.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -282,9 +448,14 @@
       "kind": "scheduler",
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
-      "components": ["performDeletionWorkflow"],
+      "components": [
+        "performDeletionWorkflow"
+      ],
       "decision": "Lease execution and make provider cleanup idempotent.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -293,9 +464,14 @@
       "kind": "scheduler",
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
-      "components": ["performDeletionWorkflow"],
+      "components": [
+        "performDeletionWorkflow"
+      ],
       "decision": "Lease execution and make provider cleanup idempotent.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -304,10 +480,31 @@
       "kind": "scheduler",
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
-      "components": ["performDeletionWorkflow"],
+      "components": [
+        "performDeletionWorkflow"
+      ],
       "decision": "Lease execution and make provider cleanup idempotent.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
+    },
+    {
+      "id": "temporary-account-deletion-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeleteTemporaryAccountsScheduler.java",
+      "kind": "scheduler",
+      "owner": "identity-profile",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "performDeletionWorkflow"
+      ],
+      "decision": "A shared lease is claimed per run and each account is deleted under the locked lease row (runIfHeld), so a second replica skips the run; the lease is released in finally. Each deletion runs in its own transaction and treats an already deleted user as done.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
     },
     {
       "id": "handshake-expiry-scheduler",
@@ -315,9 +512,15 @@
       "kind": "scheduler",
       "owner": "support-access",
       "risk": "duplicate-side-effect",
-      "components": ["sweepExpired", "purgeOldAuditEvents"],
+      "components": [
+        "sweepExpired",
+        "purgeOldAuditEvents"
+      ],
       "decision": "Prove expiry/purge updates are idempotent under concurrent execution or add a lease.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -326,10 +529,109 @@
       "kind": "scheduler",
       "owner": "support-access",
       "risk": "duplicate-side-effect",
-      "components": ["sweepExpired"],
+      "components": [
+        "sweepExpired"
+      ],
       "decision": "Prove room close/leave effects are idempotent under concurrent execution or add a lease.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
+    },
+    {
+      "id": "email-template-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/email/OrisoEmailRenderer.java",
+      "kind": "local-state",
+      "owner": "identity-profile",
+      "risk": "performance",
+      "components": [
+        "templateCache"
+      ],
+      "decision": "Retain locally for the life of the process, with bounded cardinality. The cache holds the generated e-mail templates read from the classpath, so it is immutable for the life of the process and bounded by the number of occasions times tone variants (22 x 3 x 2 files). Replicas cannot disagree, because every replica reads the same artefact out of the same image; a cold replica costs one resource read per template.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "email-branding-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/email/layout/EmailBrandingResolver.java",
+      "kind": "local-state",
+      "owner": "agency-tenant",
+      "risk": "performance",
+      "components": [
+        "tenantCache"
+      ],
+      "decision": "Retain one process-local cache of fresh TenantService branding reads. Default TTL is ten seconds, larger configured values are clamped to a ten-second maximum, and cardinality is capped at 1000 tenant/mode keys. A cache miss re-reads TenantService; replica differences are bounded by the TTL and never select another tenant's URL.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "case-handover-policy-cache-refresh",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverPolicyCacheService.java",
+      "kind": "scheduler",
+      "owner": "agency-tenant",
+      "risk": "correctness",
+      "components": [
+        "refreshKnownTenants"
+      ],
+      "decision": "Each tenant refresh is serialized through ScheduledTaskClaimService and keeps enforcing the persisted last-known-good snapshot.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "case-handover-co-access-expiry",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverService.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": [
+        "expireCoAccessSchedule"
+      ],
+      "decision": "The sweep uses a shared lease, technical tenant context and pessimistic row locks; database expiry is saved only after Matrix membership is reconciled.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "case-handover-matrix-repair",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverMatrixRepairScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": [
+        "retryPendingRepairs"
+      ],
+      "decision": "A shared lease serializes retries; the durable task survives the rolled-back handover transaction, Matrix operations are idempotent, and successful reconciliation deletes the task.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "reply-email-delivery-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/ReplyEmailDeliveryScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "deliverPending"
+      ],
+      "decision": "A shared lease selects durable pending claims and a pessimistic row lock prevents concurrent claims if the lease expires mid-batch. Each claim becomes SENDING before SMTP; a stale or ambiguous outcome becomes UNCERTAIN for operator reconciliation rather than automatic replay.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
     },
     {
       "id": "event-notification-retention-scheduler",
@@ -337,9 +639,190 @@
       "kind": "scheduler",
       "owner": "notifications",
       "risk": "duplicate-side-effect",
-      "components": ["purgeExpiredNotifications"],
+      "components": [
+        "purgeExpiredNotifications"
+      ],
       "decision": "Leases the run through ScheduledTaskClaimService; the purge itself is an idempotent bulk delete of expired rows.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "team-discussion-orphan-cleanup-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/TeamDiscussionOrphanCleanupScheduler.java",
+      "kind": "scheduler",
+      "owner": "deletion",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "purgeOrphanedDiscussions"
+      ],
+      "decision": "Leases the run through ScheduledTaskClaimService; purging a Matrix room is idempotent (a 404 counts as purged), failed losing-room purges retain a durable retry row, and retries refuse to purge a room referenced by a persisted discussion.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "team-discussion-retention-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/teamdiscussionretention/scheduler/TeamDiscussionRetentionScheduler.java",
+      "kind": "scheduler",
+      "owner": "team-discussion",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "purgeExpiredDiscussions"
+      ],
+      "decision": "Leases the run through ScheduledTaskClaimService. Each expired discussion is purged from Synapse before its row and participants are deleted in one transaction, so a second replica or a retried run finds either the whole discussion or nothing; a room Synapse no longer knows is treated as already purged.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "account-inactivity-expiry",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/accountinactivity/AccountInactivityScheduler.java",
+      "kind": "scheduler",
+      "owner": "identity-profile",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "scan"
+      ],
+      "decision": "Disabled by default and dry-run by default when enabled. Each identity is rechecked and claimed under a database row lock, with durable pending status and serialized effect execution. Failed or unconfirmed external effects are retried; this is not exactly-once delivery. Concurrent-scan and rollback tests cover the lifecycle boundary.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "account-inactivity-bootstrap",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/accountinactivity/AccountInactivityBootstrap.java",
+      "kind": "scheduler",
+      "owner": "identity-profile",
+      "risk": "correctness",
+      "components": [
+        "scan"
+      ],
+      "decision": "Runs at startup and daily independently of destructive expiry. A transaction-scoped lock on the singleton rollout row serializes the complete inventory across replicas without an expiring lease. Enrollment, issue cleanup and report publication share that transaction; rollback or connection loss releases the lock. The identity primary key and immutable rollout cutoff preserve enrollment idempotency. Concurrent-scan and remote-failure recovery tests cover serialization and subsequent progress.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "team-discussion-access-repair",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/teamdiscussion/TeamDiscussionAccessRepairScheduler.java",
+      "kind": "scheduler",
+      "owner": "team-discussion",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "reconcileAccess"
+      ],
+      "decision": "Uses a database lease and persisted archive/participant rows to retry Matrix read-only enforcement and revoked agency access. Successful removals delete their retry footprint; failed operations remain queryable.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "group-appointment-mail-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/groupchatreminder/scheduler/GroupAppointmentMailScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "deliverDueMail"
+      ],
+      "decision": "Use a committed database claim for each recipient and occurrence revision before transport handoff; reconcile ambiguous outcomes instead of replaying them.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "service-notice-mail-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/servicenotice/ServiceNoticeMailScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "deliverDueMail"
+      ],
+      "decision": "Commit a PENDING-to-SENDING claim for each recipient row before transport handoff, so a second replica skips it; mark an ambiguous handoff UNCERTAIN and never replay it. Off by default.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "group-chat-admission-matrix-repair",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/chat/GroupChatAdmissionMatrixRepairScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-group-chat",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryRepairs"
+      ],
+      "decision": "A shared lease and request-row lock serialize reconciliation. A cleanup task is committed before a new Matrix join and removed only with a successful admission; failed removal is retried without revoking admitted members.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "group-chat-admission-retry",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/chat/GroupChatAdmissionScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-group-chat",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryPendingAdmissions"
+      ],
+      "decision": "A shared lease serializes retry batches; each ADMITTING row is durable, Matrix join is retried idempotently, and the participant row is committed only after Matrix confirms membership.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "inquiry-acceptance-notice-retry",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/InquiryAcceptanceNoticeScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryPending"
+      ],
+      "decision": "Retries only due PENDING notices; a pessimistic row lock and independently committed PENDING-to-UNCERTAIN claim precede Matrix transport, so competing replicas cannot send the same notice. PREPARING and ambiguous UNCERTAIN outcomes remain durable for operator reconciliation without automatic replay. Pre-transport failures receive a durable backoff so newer deliverable rows can progress.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "matrix-feed-signal-coalescer",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/FeedSignalCoalescer.java",
+      "kind": "local-state",
+      "owner": "notifications",
+      "risk": "performance",
+      "components": [
+        "windowEndByRecipient"
+      ],
+      "decision": "Keep the short coalescing window local. Separate replicas may send duplicate content-free refresh notices; authenticated REST and periodic polling remain authoritative. A restart drops only optional notices. Expired windows are removed after send and pruned under load.",
+      "signals": [
+        "userservice.replica.local_state",
+        "oriso.matrix.feed_signal"
+      ],
       "status": "bounded"
     }
   ]

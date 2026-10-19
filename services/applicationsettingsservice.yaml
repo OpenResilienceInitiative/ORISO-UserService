@@ -92,6 +92,9 @@ components:
         useConsultingTypesForAgencies:
           allOf:
             - $ref: '#/components/schemas/FeatureToggleDTO'
+        oneTopicPerAgencyEnabled:
+          allOf:
+            - $ref: '#/components/schemas/FeatureToggleDTO'
         enableWalkthrough:
           allOf:
             - $ref: '#/components/schemas/FeatureToggleDTO'
@@ -175,6 +178,20 @@ components:
     ApplicationSettingsSmtpCredentialsDTO:
       type: object
       properties:
+        globalFeatureSystemNotificationEmailsEnabled:
+          type: boolean
+        globalSmtpEnabled:
+          type: boolean
+        globalSmtpHost:
+          type: string
+        globalSmtpPort:
+          type: string
+        globalSmtpSecure:
+          type: boolean
+        globalSmtpFrom:
+          type: string
+        globalSmtpEmailThemeColor:
+          type: string
         globalSmtpUsername:
           type: string
         globalSmtpPassword:

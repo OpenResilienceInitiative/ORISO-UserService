@@ -16,6 +16,8 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
+import de.caritas.cob.userservice.api.service.session.AnonymousSessionRegistration;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.supervision.SupervisionConsent;
 import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
@@ -29,6 +31,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -127,6 +130,10 @@ public class SessionSupervisorFacade {
             .findById(sessionId)
             .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
 
+    if (AnonymousSessionRegistration.matches(session)) {
+      throw new BadRequestException("Anonymous sessions do not support supervision");
+    }
+
     // Client opt-out gate (grill 2026-07-13): the ratsuchende can switch supervision off for their
     // case; while it is off no supervisor may be attached and no Matrix access is provisioned.
     if (Boolean.TRUE.equals(session.getSupervisionOptedOut())) {
@@ -192,14 +199,16 @@ public class SessionSupervisorFacade {
 
     // Get supervisor's Matrix user ID
     String supervisorMatrixUserId = supervisorConsultant.getMatrixUserId();
-    if (supervisorMatrixUserId == null || supervisorMatrixUserId.isEmpty()) {
-      throw new BadRequestException("Supervisor consultant does not have a Matrix user ID");
+    if (!ConsultantChatIdentityService.hasChatIdentity(supervisorConsultant)) {
+      throw new BadRequestException(
+          ConsultantChatIdentityService.missingChatIdentityMessage(
+              "Supervisor consultant", supervisorConsultant.getId()));
     }
 
-    if (addedByConsultant.getMatrixUserId() == null
-        || addedByConsultant.getMatrixUserId().isEmpty()) {
+    if (!ConsultantChatIdentityService.hasChatIdentity(addedByConsultant)) {
       throw new InternalServerErrorException(
-          "Consultant adding supervisor does not have Matrix credentials");
+          ConsultantChatIdentityService.missingChatIdentityMessage(
+              "Consultant adding the supervisor", addedByConsultant.getId()));
     }
 
     SessionSupervisor.SessionSupervisorBuilder builder =
@@ -370,6 +379,29 @@ public class SessionSupervisorFacade {
   }
 
   /**
+   * Returns active supervisors only when the requester participates as the assigned counsellor or
+   * an active supervisor. The tenant-filtered session lookup fails closed for cross-tenant ids.
+   */
+  public List<SessionSupervisor> getSupervisors(Long sessionId, Consultant requestingConsultant) {
+    Session session =
+        sessionRepository
+            .findById(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+    boolean activeSupervisor =
+        sessionSupervisorRepository
+            .findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
+                sessionId, requestingConsultant.getId())
+            .isPresent();
+    if (!session.isAdvisedBy(requestingConsultant) && !activeSupervisor) {
+      throw new ForbiddenException("Consultant does not have access to this supervision session");
+    }
+    if (AnonymousSessionRegistration.matches(session)) {
+      return List.of();
+    }
+    return getSupervisors(sessionId);
+  }
+
+  /**
    * "Supervision (auto-assigned)" (grill 2026-07-13): attach the accepting counsellor's STANDING
    * supervisor to a case they just took, with no manual per-session step. Does nothing when the
    * counsellor has no standing supervisor ({@link Consultant#getAssignedSupervisorId()}
@@ -385,6 +417,26 @@ public class SessionSupervisorFacade {
    * @param sessionId the just-accepted session
    * @param acceptingConsultant the counsellor who accepted it (carries the standing assignment)
    */
+  /**
+   * Runs {@link #attachStandingSupervisorIfAssigned} inside a transaction of its own. For
+   * after-commit callers only.
+   *
+   * <p>During an {@code afterCommit} callback the just-committed transaction's resources are still
+   * bound to the thread. A repository write issued from there joins that transaction, which can no
+   * longer commit, so the {@code SessionSupervisor} row is silently lost — after {@code
+   * addSupervisor} has already provisioned Matrix access. {@code addSupervisor}'s own {@code
+   * &#64;Transactional} cannot save us either, because {@link #attachStandingSupervisorIfAssigned}
+   * self-invokes it and so never passes through the proxy.
+   *
+   * <p>REQUIRES_NEW on this externally proxied entry point gives the write a live transaction. The
+   * facade still swallows supervision failures, so this never undoes the caller's handover.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void attachStandingSupervisorInNewTransaction(
+      Long sessionId, Consultant acceptingConsultant) {
+    attachStandingSupervisorIfAssigned(sessionId, acceptingConsultant);
+  }
+
   public void attachStandingSupervisorIfAssigned(Long sessionId, Consultant acceptingConsultant) {
     String standingSupervisorId = acceptingConsultant.getAssignedSupervisorId();
     if (standingSupervisorId == null || standingSupervisorId.isBlank()) {

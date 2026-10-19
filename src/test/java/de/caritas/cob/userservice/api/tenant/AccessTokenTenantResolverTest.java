@@ -37,6 +37,15 @@ class AccessTokenTenantResolverTest {
   }
 
   @Test
+  void resolve_Should_ReturnEmpty_When_TenantIdClaimIsNull() {
+    HashMap<String, Object> claims = givenClaimMapContainingTenantId(null);
+    when(authenticatedRequest.getUserPrincipal()).thenReturn(givenJwtAuthenticationToken(claims));
+
+    assertThat(accessTokenTenantResolver.resolve(authenticatedRequest)).isEmpty();
+    assertThat(accessTokenTenantResolver.canResolve(authenticatedRequest)).isFalse();
+  }
+
+  @Test
   void resolve_Should_ReturnEmpty_When_PrincipalIsNull() {
     when(authenticatedRequest.getUserPrincipal()).thenReturn(null);
 

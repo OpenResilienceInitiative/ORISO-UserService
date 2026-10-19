@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResp
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsentDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
@@ -32,8 +34,10 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import jakarta.ws.rs.InternalServerErrorException;
@@ -66,8 +70,24 @@ class UserSessionControllerDelegateTest {
   @Mock private ConsultantDtoMapper consultantDtoMapper;
   @Mock private UserDtoMapper userDtoMapper;
   @Mock private ConsultantService consultantService;
+  @Mock private SessionConsentService sessionConsentService;
+  @Mock private ConsultantAgencyService consultantAgencyService;
 
   @InjectMocks private UserSessionControllerDelegate delegate;
+
+  @Test
+  void recordSessionConsent_Should_moveThePointerForTheAuthenticatedHelpSeeker() {
+    // ADR-022 Gate 2 write path: overwrite the pointer, record nothing about the person.
+    var adviceSeeker = new User();
+    adviceSeeker.setUserId("asker-1");
+    when(userAccountProvider.retrieveValidatedUser()).thenReturn(adviceSeeker);
+    var body = new SessionConsentDTO().legalVersionId(7L);
+
+    var response = delegate.recordSessionConsent(42L, body);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    verify(sessionConsentService).recordConsent(42L, adviceSeeker, 7L);
+  }
 
   @Test
   void getSessionsForAuthenticatedUserShouldReturnOk() {
@@ -344,6 +364,7 @@ class UserSessionControllerDelegateTest {
         .thenReturn(consultantToAssign);
     when(consultantService.getConsultant("consultant-id"))
         .thenReturn(Optional.of(consultantToKeep));
+    when(sessionService.isConsultantPermittedToSession(consultantToKeep, session)).thenReturn(true);
 
     var response = delegate.assignSession(1L, "assigned-consultant-id");
 
@@ -357,6 +378,7 @@ class UserSessionControllerDelegateTest {
     var consultantMap = Map.<String, Object>of("id", consultantId.toString());
     when(accountManager.findConsultant(consultantId.toString()))
         .thenReturn(Optional.of(consultantMap));
+    when(authenticatedUser.getUserId()).thenReturn(consultantId.toString());
     when(messenger.findSession(1L)).thenReturn(Optional.of(Map.of("id", 1L)));
     when(messenger.removeConsultantFromSession(1L, consultantId.toString())).thenReturn(true);
 
@@ -364,6 +386,26 @@ class UserSessionControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
     verify(messenger).removeConsultantFromSession(1L, consultantId.toString());
+  }
+
+  @Test
+  void removeFromSessionShouldRefuseWhenCallerWithoutAccessRemovesAnotherConsultant() {
+    var consultantId = UUID.randomUUID();
+    var consultantMap = Map.<String, Object>of("id", consultantId.toString());
+    var session = inProgressSession();
+    var caller = consultant("other-consultant");
+    when(accountManager.findConsultant(consultantId.toString()))
+        .thenReturn(Optional.of(consultantMap));
+    when(messenger.findSession(1L)).thenReturn(Optional.of(Map.of("id", 1L)));
+    when(authenticatedUser.getUserId()).thenReturn("other-consultant");
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(false);
+    when(sessionService.getSession(1L)).thenReturn(Optional.of(session));
+    when(consultantService.getConsultant("other-consultant")).thenReturn(Optional.of(caller));
+    when(sessionService.isConsultantPermittedToSession(caller, session)).thenReturn(false);
+
+    assertThatThrownBy(() -> delegate.removeFromSession(1L, consultantId))
+        .isInstanceOf(ForbiddenException.class);
+    verify(messenger, never()).removeConsultantFromSession(any(), any());
   }
 
   @Test
@@ -381,6 +423,7 @@ class UserSessionControllerDelegateTest {
     var consultantMap = Map.<String, Object>of("id", consultantId.toString());
     when(accountManager.findConsultant(consultantId.toString()))
         .thenReturn(Optional.of(consultantMap));
+    when(authenticatedUser.getUserId()).thenReturn(consultantId.toString());
     when(messenger.findSession(1L)).thenReturn(Optional.of(Map.of("id", 1L)));
     when(messenger.removeConsultantFromSession(1L, consultantId.toString())).thenReturn(false);
 
@@ -565,11 +608,14 @@ class UserSessionControllerDelegateTest {
         .thenReturn(Set.of(AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY));
     when(userAccountProvider.retrieveValidatedConsultantById("assigned-consultant-id"))
         .thenReturn(consultantToAssign);
+    var caller = consultant("consultant-id");
+    when(consultantService.getConsultant("consultant-id")).thenReturn(Optional.of(caller));
+    when(sessionService.isConsultantPermittedToSession(caller, session)).thenReturn(true);
     var response = delegate.assignSession(1L, "assigned-consultant-id");
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(assignEnquiryFacade).assignRegisteredEnquiry(session, consultantToAssign);
-    verifyNoInteractions(assignSessionFacade, consultantService);
+    verifyNoInteractions(assignSessionFacade);
   }
 
   @Test

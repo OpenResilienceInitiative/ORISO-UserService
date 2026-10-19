@@ -1,9 +1,9 @@
 package de.caritas.cob.userservice.api.service.auth;
 
-import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
@@ -11,29 +11,29 @@ import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.OrisoSmtpTransport;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.user.UserService;
-import jakarta.mail.Authenticator;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.mail.Message;
-import jakarta.mail.PasswordAuthentication;
-import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 @Slf4j
 @Service
@@ -45,33 +45,26 @@ public class MagicLinkLoginService {
 
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
-  private final @NonNull RestTemplate restTemplate;
   private final @NonNull IdentitySessionExchange identitySessionExchange;
   private final @NonNull OneTimeTokenStore oneTimeTokenStore;
   private final @NonNull ApplicationSettingsService applicationSettingsService;
+  private final @NonNull OrisoEmailRenderer emailRenderer;
+  private final @NonNull OrisoEmailBrand emailBrand;
 
   @Value("${identity.email-dummy-suffix:@beratungcaritas.de}")
   private String emailDummySuffix;
 
-  @Value("${magic.link.frontend.base-url:https://app.oriso.org}")
+  @Value("${magic.link.frontend.base-url}")
   private String magicLinkFrontendBaseUrl;
-
-  @Value("${consulting.type.service.api.url:}")
-  private String consultingTypeServiceApiUrl;
-
-  /** Operator-provided SMTP credentials; see {@link PasswordResetService}. */
-  @Value("${smtp.user:}")
-  private String configuredSmtpUsername;
-
-  @Value("${smtp.password:}")
-  private String configuredSmtpPassword;
 
   public MagicLinkRequestResult requestMagicLink(String usernameInput) {
     if (isBlank(usernameInput)) {
       return MagicLinkRequestResult.ACCEPTED;
     }
 
-    Optional<AccountLoginTarget> accountOptional = resolveAccount(usernameInput.trim());
+    // Public route without a tenant; usernames are unique across Träger.
+    Optional<AccountLoginTarget> accountOptional =
+        TenantContext.supplyAcrossTenants(() -> resolveAccount(usernameInput.trim()));
     if (accountOptional.isEmpty()) {
       return MagicLinkRequestResult.ACCEPTED;
     }
@@ -85,7 +78,8 @@ public class MagicLinkLoginService {
       return MagicLinkRequestResult.ACCEPTED;
     }
 
-    sendMagicLinkEmailSafely(account);
+    var smtpSettings = resolveGlobalSmtpSettings();
+    smtpSettings.ifPresent(settings -> sendMagicLinkEmailSafely(account, settings));
     return MagicLinkRequestResult.ACCEPTED;
   }
 
@@ -153,11 +147,12 @@ public class MagicLinkLoginService {
               user.getUserId(),
               user.getUsername(),
               user.getEmail(),
-              user.getMagicLinkLoginEnabled()));
+              user.getMagicLinkLoginEnabled(),
+              user.getTenantId(),
+              user.getLanguageCode()));
     }
 
-    Optional<Consultant> consultantOptional =
-        consultantService.findConsultantByUsernameOrEmail(username, username);
+    Optional<Consultant> consultantOptional = consultantService.findConsultantForSignIn(username);
     if (consultantOptional.isPresent()) {
       Consultant consultant = consultantOptional.get();
       return Optional.of(
@@ -165,7 +160,9 @@ public class MagicLinkLoginService {
               consultant.getId(),
               consultant.getUsername(),
               consultant.getEmail(),
-              consultant.getMagicLinkLoginEnabled()));
+              consultant.getMagicLinkLoginEnabled(),
+              consultant.getTenantId(),
+              consultant.getLanguageCode()));
     }
 
     return Optional.empty();
@@ -174,91 +171,66 @@ public class MagicLinkLoginService {
   private boolean isMagicLinkAllowedForAccount(AccountLoginTarget target) {
     return Boolean.TRUE.equals(target.getMagicLinkLoginEnabled())
         && isNotBlank(target.getEmail())
-        && (emailDummySuffix == null || !target.getEmail().endsWith(emailDummySuffix))
-        && resolveGlobalSmtpSettings().isPresent();
+        && (emailDummySuffix == null || !target.getEmail().endsWith(emailDummySuffix));
   }
 
-  private void sendMagicLinkEmailSafely(AccountLoginTarget target) {
+  private void sendMagicLinkEmailSafely(
+      AccountLoginTarget target, GlobalSmtpSettings smtpSettings) {
     try {
-      var smtpSettingsOptional = resolveGlobalSmtpSettings();
-      if (smtpSettingsOptional.isEmpty()) {
-        return;
-      }
-      var smtpSettings = smtpSettingsOptional.get();
       String decodedUsername = new UsernameTranscoder().decodeUsername(target.getUsername());
-      String oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
+      String oneTimeToken = generateToken();
       String magicUrl = buildMagicFrontendUrl(oneTimeToken);
 
-      Properties props = new Properties();
-      props.put("mail.smtp.auth", "true");
-      props.put("mail.smtp.host", smtpSettings.getHost());
-      props.put("mail.smtp.port", String.valueOf(smtpSettings.getPort()));
-      if (smtpSettings.isSecure()) {
-        props.put("mail.smtp.ssl.enable", "true");
-      } else {
-        props.put("mail.smtp.starttls.enable", "true");
-      }
-
       jakarta.mail.Session session =
-          jakarta.mail.Session.getInstance(
-              props,
-              new Authenticator() {
-                @Override
-                protected PasswordAuthentication getPasswordAuthentication() {
-                  return new PasswordAuthentication(
-                      smtpSettings.getUsername(), smtpSettings.getPassword());
-                }
-              });
+          OrisoSmtpTransport.session(
+              smtpSettings.getHost(),
+              smtpSettings.getPort(),
+              smtpSettings.isSecure(),
+              smtpSettings.getUsername(),
+              smtpSettings.getPassword());
 
-      Message message = new MimeMessage(session);
+      var email = renderMagicLink(magicUrl, target.getTenantId(), target.getLanguageCode());
+      oneTimeTokenStore.store(
+          TOKEN_SCOPE,
+          oneTimeToken,
+          target.getKeycloakUserId(),
+          Instant.now().plus(MAGIC_LINK_TOKEN_TTL),
+          false);
+      MimeMessage message = new MimeMessage(session);
       message.setFrom(new InternetAddress(smtpSettings.getFrom()));
       message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(target.getEmail()));
-      message.setSubject("Your ORISO magic login link");
-      message.setContent(
-          buildHtml(magicUrl, smtpSettings.getEmailThemeColor()), "text/html; charset=UTF-8");
-      Transport.send(message);
+      message.setSubject(email.subject(), "UTF-8");
+      message.setContent(OrisoEmailMime.alternative(email));
+      OrisoSmtpTransport.send(message);
     } catch (Exception ex) {
-      log.warn(
-          "Magic link email dispatch failed for account {}, reason: {}",
-          target.getUsername(),
-          ex.getMessage());
+      log.warn("Magic link email dispatch failed ({})", ex.getClass().getSimpleName());
     }
   }
 
-  private String buildHtml(String magicUrl, String emailThemeColor) {
-    String color =
-        isNotBlank(emailThemeColor) && emailThemeColor.matches("^#([A-Fa-f0-9]{6})$")
-            ? emailThemeColor
-            : "#0f3b8f";
-    String now = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-
-    return "<!doctype html><html><body style=\"margin:0;padding:0;background:#f6f7fb;font-family:Arial,sans-serif;\">"
-        + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"padding:24px 0;\">"
-        + "<tr><td align=\"center\">"
-        + "<table role=\"presentation\" width=\"620\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:620px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;\">"
-        + "<tr><td style=\"background:"
-        + color
-        + ";padding:18px 24px;color:#ffffff;font-size:20px;font-weight:700;\">ORISO</td></tr>"
-        + "<tr><td style=\"padding:28px 24px 8px 24px;color:#111827;font-size:24px;line-height:32px;font-weight:700;\">Login with magic link</td></tr>"
-        + "<tr><td style=\"padding:0 24px 14px 24px;color:#374151;font-size:16px;line-height:24px;\">Use this one-time link to continue your ORISO login flow.</td></tr>"
-        + "<tr><td style=\"padding:0 24px 18px 24px;\"><a href=\""
-        + magicUrl
-        + "\" style=\"display:inline-block;background:"
-        + color
-        + ";color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:600;\">Open Magic Link</a></td></tr>"
-        + "<tr><td style=\"padding:0 24px 24px 24px;color:#6b7280;font-size:14px;line-height:22px;\">This link expires in 15 minutes. Sent at: "
-        + now
-        + "</td></tr>"
-        + "</table></td></tr></table></body></html>";
+  /**
+   * Renders the sign-in link from the design system.
+   *
+   * <p>Replaces the 620px Arial card this class used to concatenate inline, which sat on {@code
+   * #f6f7fb} with an {@code #e5e7eb} border while the design system specifies a 600px card on
+   * {@code #f2efef} with {@code #e0dada} — three values that made every ORISO mail look like it
+   * came from a different sender.
+   *
+   * <p>The sign-in mail follows the recipient's stored language. A missing or unsupported language
+   * fails before a token is issued, so no one receives a sign-in link in the wrong language.
+   */
+  private OrisoEmailRenderer.RenderedEmail renderMagicLink(
+      String magicUrl, Long tenantId, LanguageCode languageCode) {
+    var tone = OrisoEmailRenderer.Tone.of(languageCode);
+    Map<String, String> values =
+        new LinkedHashMap<>(emailBrand.valuesForTenant(magicLinkFrontendBaseUrl, tenantId));
+    values.put("loginUrl", magicUrl);
+    values.put("expiryMinutes", String.valueOf(MAGIC_LINK_TOKEN_TTL.toMinutes()));
+    return emailRenderer.render("anmeldelink", tone, values);
   }
 
-  private String generateAndStoreToken(String keycloakUserId) {
-    String token =
-        UUID.randomUUID().toString().replace("-", "")
-            + UUID.randomUUID().toString().replace("-", "");
-    oneTimeTokenStore.store(
-        TOKEN_SCOPE, token, keycloakUserId, Instant.now().plus(MAGIC_LINK_TOKEN_TTL), false);
-    return token;
+  private String generateToken() {
+    return UUID.randomUUID().toString().replace("-", "")
+        + UUID.randomUUID().toString().replace("-", "");
   }
 
   private String buildMagicFrontendUrl(String oneTimeToken) {
@@ -267,94 +239,24 @@ public class MagicLinkLoginService {
         + URLEncoder.encode(oneTimeToken, StandardCharsets.UTF_8);
   }
 
-  @SuppressWarnings("unchecked")
   private Optional<GlobalSmtpSettings> resolveGlobalSmtpSettings() {
-    if (isBlank(consultingTypeServiceApiUrl)) {
-      return Optional.empty();
-    }
     try {
-      String settingsUrl = normalizeBaseUrl(consultingTypeServiceApiUrl) + "/settings";
-      Map<String, Object> settingsResponse = restTemplate.getForObject(settingsUrl, Map.class);
-      if (settingsResponse == null || settingsResponse.isEmpty()) {
-        return Optional.empty();
-      }
-
-      boolean systemEmailsEnabled =
-          asBooleanSettingValue(
-              settingsResponse.get("globalFeatureSystemNotificationEmailsEnabled"));
-      boolean smtpEnabled = asBooleanSettingValue(settingsResponse.get("globalSmtpEnabled"));
-      String host = asStringSettingValue(settingsResponse.get("globalSmtpHost"));
-      Integer port = asIntSettingValue(settingsResponse.get("globalSmtpPort"));
-      boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
-      String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
-      String emailThemeColor =
-          asStringSettingValue(settingsResponse.get("globalSmtpEmailThemeColor"));
-
-      if (!systemEmailsEnabled || !smtpEnabled || isBlank(host) || port == null || isBlank(from)) {
-        return Optional.empty();
-      }
-
-      // The public /settings payload deliberately omits the SMTP username and password since the
-      // CTS-C01 credential-leak fix, so they can never be read from there.
-      String username = configuredSmtpUsername;
-      String password = configuredSmtpPassword;
-      if (isBlank(username) || isBlank(password)) {
-        var credentials = applicationSettingsService.getGlobalSmtpCredentials();
-        if (credentials.isEmpty()) {
-          log.warn(
-              "Magic link email not sent: no SMTP credentials available. Set SMTP_USER and "
-                  + "SMTP_PASSWORD on UserService.");
-          return Optional.empty();
-        }
-        username = credentials.get().getGlobalSmtpUsername();
-        password = credentials.get().getGlobalSmtpPassword();
-      }
-
+      var settings = PlatformSmtpSettingsProvider.requireConfigured(applicationSettingsService);
       return Optional.of(
-          new GlobalSmtpSettings(host, port, secure, username, password, from, emailThemeColor));
-    } catch (Exception ex) {
-      log.debug("Could not resolve global SMTP settings for magic link mail: {}", ex.getMessage());
+          new GlobalSmtpSettings(
+              settings.host(),
+              settings.port(),
+              settings.secure(),
+              settings.username(),
+              settings.password(),
+              settings.from(),
+              settings.emailThemeColor()));
+    } catch (IllegalStateException exception) {
+      log.warn(
+          "Platform SMTP unavailable for magic link mail ({})",
+          exception.getClass().getSimpleName());
       return Optional.empty();
     }
-  }
-
-  private boolean asBooleanSettingValue(Object raw) {
-    Object value = unwrapSettingValue(raw);
-    if (value instanceof Boolean) {
-      return (Boolean) value;
-    }
-    if (value instanceof String) {
-      return "true".equalsIgnoreCase((String) value);
-    }
-    return false;
-  }
-
-  private String asStringSettingValue(Object raw) {
-    Object value = unwrapSettingValue(raw);
-    return nonNull(value) ? String.valueOf(value).trim() : null;
-  }
-
-  private Integer asIntSettingValue(Object raw) {
-    Object value = unwrapSettingValue(raw);
-    if (value instanceof Number) {
-      return ((Number) value).intValue();
-    }
-    if (value instanceof String && isNotBlank((String) value)) {
-      try {
-        return Integer.parseInt(((String) value).trim());
-      } catch (NumberFormatException ex) {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  @SuppressWarnings("unchecked")
-  private Object unwrapSettingValue(Object raw) {
-    if (raw instanceof Map<?, ?>) {
-      return ((Map<String, Object>) raw).get("value");
-    }
-    return raw;
   }
 
   private String normalizeBaseUrl(String value) {
@@ -370,6 +272,8 @@ public class MagicLinkLoginService {
     String username;
     String email;
     Boolean magicLinkLoginEnabled;
+    Long tenantId;
+    LanguageCode languageCode;
   }
 
   public enum MagicLinkRequestResult {

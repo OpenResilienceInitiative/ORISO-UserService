@@ -32,6 +32,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 @ExtendWith(MockitoExtension.class)
 public class ConsultantAgencyAdminUserServiceTest {
@@ -51,6 +52,12 @@ public class ConsultantAgencyAdminUserServiceTest {
   @Mock private AgencyAdminService agencyAdminService;
 
   @Mock private ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
+
+  @Mock private ApplicationEventPublisher eventPublisher;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository
+      consultantTopicRepository;
 
   @Test
   public void

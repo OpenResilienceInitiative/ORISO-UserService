@@ -61,10 +61,44 @@ public class RetrieveAdminService {
       Admin.AdminType adminType,
       Collection<Long> agencyIds,
       PageRequest pageRequest) {
-    if (agencyIds == null || agencyIds.isEmpty()) {
+    return findAllByInfixFiltered(
+        infix, adminType, null, agencyIds == null ? List.of() : agencyIds, pageRequest);
+  }
+
+  /**
+   * Infix search scoped to a single tenant. Used to prevent a tenant-bound admin from enumerating
+   * admins of other tenants through the /useradmin/tenantadmins/search and
+   * /useradmin/agencyadmins/search endpoints (#968). A null caller tenant means no visible admins,
+   * mirroring the empty-scope semantics of {@link #findAllByInfixScopedToAgencies}.
+   */
+  public Page<AdminBase> findAllByInfixScopedToTenant(
+      String infix, Admin.AdminType adminType, Long tenantId, PageRequest pageRequest) {
+    if (tenantId == null) {
       return Page.empty(pageRequest);
     }
-    return adminRepository.findAllByInfixAndAgencyIds(infix, adminType, agencyIds, pageRequest);
+    return adminRepository.findAllByInfixAndTenantId(infix, adminType, tenantId, pageRequest);
+  }
+
+  /**
+   * Infix search with the Träger/Beratungsstelle filter of the list (#1263). The caller has already
+   * resolved its scope into {@code tenantId} (null = every tenant) and {@code agencyIds} (null = no
+   * agency restriction); an empty agency set means nothing is visible.
+   */
+  public Page<AdminBase> findAllByInfixFiltered(
+      String infix,
+      Admin.AdminType adminType,
+      Long tenantId,
+      Collection<Long> agencyIds,
+      PageRequest pageRequest) {
+    if (agencyIds != null) {
+      return agencyIds.isEmpty()
+          ? Page.empty(pageRequest)
+          : adminRepository.findAllByInfixAndTenantIdAndAgencyIds(
+              infix, adminType, tenantId, agencyIds, pageRequest);
+    }
+    return tenantId == null
+        ? adminRepository.findAllByInfix(infix, adminType, pageRequest)
+        : adminRepository.findAllByInfixAndTenantId(infix, adminType, tenantId, pageRequest);
   }
 
   public List<Admin> findAllById(Set<String> adminIds) {

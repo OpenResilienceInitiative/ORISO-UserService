@@ -22,6 +22,9 @@ public abstract class DeleteKeycloakUserAction {
 
     try {
       identityAccountRemover.deleteUser(userId);
+    } catch (jakarta.ws.rs.NotFoundException alreadyDeleted) {
+      // The Keycloak admin client uses JAX-RS exceptions; a retry may find the identity gone.
+      log.info("Identity already absent; deletion can continue");
     } catch (HttpClientErrorException ex) {
       acceptDeletionIfUserNotFoundInKeycloak(userId, ex);
     }

@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -26,6 +27,7 @@ public class ChatPermissionVerifier {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull UserService userService;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull GroupChatConsultantAccess groupChatConsultantAccess;
 
   /**
    * Verifies if the {@link AuthenticatedUser} has access right on given {@link Chat}.
@@ -45,32 +47,43 @@ public class ChatPermissionVerifier {
   public void verifyCanModerateChat(Chat chat) {
     Set<String> roles = authenticatedUser.getRoles();
     if (roles.contains(UserRole.CONSULTANT.getValue())) {
-      this.verifyConsultantPermissionForChat(chat);
+      var consultant = retrieveConsultant();
+      if (!groupChatConsultantAccess.mayModerate(chat, consultant)) {
+        throw new ForbiddenException(
+            String.format(
+                "Consultant with id %s may not moderate chat with id %s",
+                consultant.getId(), chat.getId()));
+      }
     } else {
       throw new ForbiddenException("User is not a consultant");
     }
   }
 
   /**
-   * Check if the authenticated user has consultant permission on given chat.
+   * Check if the authenticated user has consultant permission on given chat: a member or moderator
+   * of the group, or a same-Träger colleague of the group's Beratungsstelle ({@link
+   * GroupChatConsultantAccess}).
    *
    * @param chat the {@link Chat}
    */
   private void verifyConsultantPermissionForChat(Chat chat) {
-    Consultant consultant =
-        consultantService
-            .getConsultantViaAuthenticatedUser(authenticatedUser)
-            .orElseThrow(
-                () ->
-                    new NotFoundException(
-                        "Consultant with id %s not found", authenticatedUser.getUserId()));
+    Consultant consultant = retrieveConsultant();
 
-    if (!hasSameAgencyAssigned(chat, consultant)) {
+    if (!groupChatConsultantAccess.mayAccess(chat, consultant)) {
       throw new ForbiddenException(
           String.format(
               "Consultant with id %s has no permission for chat with id %s",
               consultant.getId(), chat.getId()));
     }
+  }
+
+  private Consultant retrieveConsultant() {
+    return consultantService
+        .getConsultantViaAuthenticatedUser(authenticatedUser)
+        .orElseThrow(
+            () ->
+                new NotFoundException(
+                    "Consultant with id %s not found", authenticatedUser.getUserId()));
   }
 
   /**

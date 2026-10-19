@@ -1,0 +1,29 @@
+The contract documents are ready for confirmation
+=================================================
+
+Contract documents have been prepared for {{tenantName}}.
+
+Please review the documents and confirm them digitally.
+
+Organisation: {{tenantName}}
+Provided on: {{dpaProvidedAt}}
+To be confirmed by: {{dpaExpiresAt}}
+
+Open contract:
+{{dpaUrl}}
+
+Without confirmation of the contract documents, counselling stays blocked for this organisation.
+
+----------------------------------------------------------------
+This email is part of the contractual relationship between {{orgName}} and {{tenantNameDative}}.
+
+{{orgName}}
+{{orgAddress}}
+{{contactLine}}
+
+{{offeringName}} is a service provided by {{operatorName}}.
+
+Privacy: {{privacyUrl}}
+Imprint: {{imprintUrl}}
+
+This email is part of the contractual relationship and cannot be unsubscribed from. Please do not reply to it.

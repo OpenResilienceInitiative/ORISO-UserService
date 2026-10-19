@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.dto;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.ConversationType;
@@ -150,4 +151,12 @@ public class UserChatDTO {
   private String timezone;
 
   @ApiModelProperty private List<GroupChatParticipantDTO> participants;
+
+  /**
+   * Secret part of the invite link (#1237). Only filled for counsellors who may see the group; an
+   * advice seeker never receives it.
+   */
+  @ApiModelProperty
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  private String inviteToken;
 }

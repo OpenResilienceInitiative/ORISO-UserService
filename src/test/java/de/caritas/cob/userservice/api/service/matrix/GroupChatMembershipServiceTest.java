@@ -35,12 +35,12 @@ import org.slf4j.LoggerFactory;
 @ExtendWith(MockitoExtension.class)
 class GroupChatMembershipServiceTest {
 
-  private static final String MATRIX_ROOM_ID = "!room:matrix.oriso.org";
-  private static final String LEAVER_MATRIX_ID = "@leaver:matrix.oriso.org";
-  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.oriso.org";
-  private static final String ASKER_MATRIX_ID = "@asker:matrix.oriso.org";
-  private static final String AGENCY_BOT_MATRIX_ID = "@agency-1:matrix.oriso.org";
-  private static final String SYSTEM_USER_MATRIX_ID = "@group-chat-system-1:matrix.oriso.org";
+  private static final String MATRIX_ROOM_ID = "!room:matrix.example.org";
+  private static final String LEAVER_MATRIX_ID = "@leaver:matrix.example.org";
+  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.org";
+  private static final String ASKER_MATRIX_ID = "@asker:matrix.example.org";
+  private static final String AGENCY_BOT_MATRIX_ID = "@agency-1:matrix.example.org";
+  private static final String SYSTEM_USER_MATRIX_ID = "@group-chat-system-1:matrix.example.org";
 
   @InjectMocks private GroupChatMembershipService groupChatMembershipService;
 
@@ -81,6 +81,70 @@ class GroupChatMembershipServiceTest {
 
   private Chat chatWithMatrixRoom() {
     return chatBuilder().matrixRoomId(MATRIX_ROOM_ID).build();
+  }
+
+  @Test
+  void resolvedMembersShouldCarryTheStoredAvatarWithoutLoadingNonMembers() throws Exception {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(CONSULTANT_MATRIX_ID)));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultant));
+    when(consultant.getId()).thenReturn("consultant-id");
+    when(consultant.getAvatarKind())
+        .thenReturn(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON);
+    when(consultant.getAvatarId()).thenReturn("magpie");
+    var mapper = new de.caritas.cob.userservice.api.config.AppConfig().objectMapper();
+    var members = groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID);
+    var response = mapper.readTree(mapper.writeValueAsString(members));
+    assertEquals("magpie", response.get(0).path("avatarId").asText());
+    assertEquals("ICON", response.get(0).path("avatarKind").asText());
+    verifyNoInteractions(userRepository);
+  }
+
+  @Test
+  void resolvedAskerShouldCarryItsStoredAnimalAndDropTheClearedChoice() throws Exception {
+    var asker = new de.caritas.cob.userservice.api.model.User();
+    asker.setUserId("asker-id");
+    asker.setUsername("asker");
+    asker.setAvatarId("fox");
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of("@asker:example.org")));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull("@asker:example.org"))
+        .thenReturn(Optional.of(asker));
+    var mapper = new de.caritas.cob.userservice.api.config.AppConfig().objectMapper();
+    var response =
+        mapper.readTree(
+            mapper.writeValueAsString(
+                groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID)));
+    assertEquals("fox", response.get(0).path("avatarId").asText());
+    assertTrue(
+        response.get(0).path("avatarKind").isNull()
+            || response.get(0).path("avatarKind").isMissingNode());
+    asker.setAvatarId(null);
+    var cleared =
+        mapper.readTree(
+            mapper.writeValueAsString(
+                groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID)));
+    assertTrue(
+        cleared.get(0).path("avatarId").isNull()
+            || cleared.get(0).path("avatarId").isMissingNode());
+  }
+
+  @Test
+  void memberSnapshotDistinguishesExistingAbsentAndUnknown() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(
+            Optional.of(List.of(CONSULTANT_MATRIX_ID)), Optional.of(List.of()), Optional.empty());
+
+    assertEquals(
+        Optional.of(true),
+        groupChatMembershipService.isMemberInRoom(chatWithMatrixRoom(), CONSULTANT_MATRIX_ID));
+    assertEquals(
+        Optional.of(false),
+        groupChatMembershipService.isMemberInRoom(chatWithMatrixRoom(), CONSULTANT_MATRIX_ID));
+    assertEquals(
+        Optional.empty(),
+        groupChatMembershipService.isMemberInRoom(chatWithMatrixRoom(), CONSULTANT_MATRIX_ID));
   }
 
   @Test
@@ -466,12 +530,13 @@ class GroupChatMembershipServiceTest {
   @Test
   void hasRemainingHumanMembers_Should_FilterExactGroupChatSystemPrefix() {
     when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
-        .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID, "@group-chat-system:matrix.oriso.org")));
+        .thenReturn(
+            Optional.of(List.of(LEAVER_MATRIX_ID, "@group-chat-system:matrix.example.org")));
     when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(
-            "@group-chat-system:matrix.oriso.org"))
+            "@group-chat-system:matrix.example.org"))
         .thenReturn(Optional.empty());
     when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(
-            "@group-chat-system:matrix.oriso.org"))
+            "@group-chat-system:matrix.example.org"))
         .thenReturn(Optional.of(user));
     when(user.getUserId()).thenReturn("group-chat-system");
 

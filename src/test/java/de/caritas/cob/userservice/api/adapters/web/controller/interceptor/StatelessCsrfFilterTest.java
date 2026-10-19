@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller.interceptor;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -101,6 +102,44 @@ public class StatelessCsrfFilterTest {
   }
 
   @Test
+  void dpaSignedNoticeHintShouldNotRequireCsrf_ForTheMachineCallback()
+      throws IOException, ServletException {
+    // TenantService posts this hint with restTemplate.postForLocation(url, null) — no cookie, no
+    // header pair. Without the exemption the filter answers 403 before the controller runs, and
+    // TenantService swallows that, so the notice fails silently.
+    when(request.getRequestURI()).thenReturn("/users/tenants/42/dpa-signed-notices");
+    when(request.getMethod()).thenReturn("POST");
+
+    csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(filterChain).doFilter(request, response);
+    verifyNoMoreInteractions(accessDeniedHandler);
+  }
+
+  @Test
+  void dpaSignedNoticeHintShouldNotRequireCsrf_UnderTheServicePrefix()
+      throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn("/service/users/tenants/42/dpa-signed-notices");
+    when(request.getMethod()).thenReturn("POST");
+
+    csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(filterChain).doFilter(request, response);
+    verifyNoMoreInteractions(accessDeniedHandler);
+  }
+
+  @Test
+  void siblingTenantRoutesShouldStillRequireCsrf() throws IOException, ServletException {
+    // the exemption must stay exact — a neighbouring tenant route keeps the normal check
+    when(request.getRequestURI()).thenReturn("/users/tenants/42/dpa-signed-notices/extra");
+    when(request.getMethod()).thenReturn("POST");
+
+    csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(filterChain, never()).doFilter(request, response);
+  }
+
+  @Test
   public void doFilterInternal_Should_executeFilterChain_When_requestHasCsrfWhitelistHeader()
       throws IOException, ServletException {
     when(request.getRequestURI()).thenReturn("uri");
@@ -111,10 +150,12 @@ public class StatelessCsrfFilterTest {
     verify(this.filterChain, times(1)).doFilter(request, response);
   }
 
-  @Test
-  public void doFilterInternal_Should_executeFilterChain_ForExactInternalMatrixRtcPolicyEndpoint()
-      throws IOException, ServletException {
-    when(request.getRequestURI()).thenReturn("/internal/matrixrtc/call-policy");
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"/internal/matrixrtc/call-policy", "/internal/matrixrtc/media-access"})
+  public void doFilterInternal_Should_executeFilterChain_ForExactInternalMatrixRtcPolicyEndpoint(
+      String path) throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn(path);
     when(request.getMethod()).thenReturn("POST");
 
     this.csrfFilter.doFilterInternal(request, response, filterChain);

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="0095-case-handover-period-operations" author="frank">
+    <preConditions onFail="HALT">
+      <tableExists tableName="case_handover_request"/>
+      <columnExists tableName="session" columnName="ownership_revision"/>
+      <not><columnExists tableName="case_handover_request" columnName="direction"/></not>
+      <not><columnExists tableName="case_handover_request" columnName="initiator_consultant_id"/></not>
+      <not><columnExists tableName="case_handover_request" columnName="operation_id"/></not>
+    </preConditions>
+    <sqlFile
+      path="db/changelog/changeset/0095_case_handover_period_operations/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true"
+      endDelimiter=";" encoding="UTF-8"/>
+    <rollback>
+      <sqlFile
+        path="db/changelog/changeset/0095_case_handover_period_operations/rollback.sql"
+        relativeToChangelogFile="false" splitStatements="true" stripComments="true"
+        endDelimiter=";" encoding="UTF-8"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

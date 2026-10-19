@@ -6,9 +6,11 @@ import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -126,6 +128,45 @@ public class SecurityHeaderSupplierTest {
 
     assertThat(result.get("Authorization").get(0), is("Bearer technical-token"));
     assertNotNull(result.get(CSRF_TOKEN_HEADER_VALUE));
+  }
+
+  @Test
+  public void getCallerKeycloakAndCsrfHttpHeaders_Should_IgnoreAmbientTechnicalToken() {
+    when(authenticatedUser.getAccessToken()).thenReturn(BEARER_TOKEN);
+    TechnicalAccessTokenContext.set("technical-token");
+
+    try {
+      HttpHeaders result = securityHeaderSupplier.getCallerKeycloakAndCsrfHttpHeaders();
+
+      assertThat(result.get("Authorization").get(0), is("Bearer " + BEARER_TOKEN));
+      assertEquals(1, result.get("Authorization").size());
+      assertNotNull(result.get(CSRF_TOKEN_HEADER_VALUE));
+    } finally {
+      TechnicalAccessTokenContext.clear();
+    }
+  }
+
+  @Test
+  public void getCallerKeycloakAndCsrfHttpHeaders_Should_Refuse_WhenCallerHasNoToken() {
+    when(authenticatedUser.getAccessToken()).thenReturn(" ");
+    TechnicalAccessTokenContext.set("technical-token");
+
+    try {
+      assertThrows(
+          ForbiddenException.class,
+          () -> securityHeaderSupplier.getCallerKeycloakAndCsrfHttpHeaders());
+    } finally {
+      TechnicalAccessTokenContext.clear();
+    }
+  }
+
+  @Test
+  public void getCallerKeycloakAndCsrfHttpHeaders_Should_Refuse_OutsideARequest() {
+    when(authenticatedUser.getAccessToken()).thenThrow(scopeNotActiveException());
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> securityHeaderSupplier.getCallerKeycloakAndCsrfHttpHeaders());
   }
 
   private ScopeNotActiveException scopeNotActiveException() {

@@ -73,7 +73,13 @@ public class KeycloakTestConfig {
 
       @Override
       public IdentityLogin login(String userName, String password) {
-        return new IdentityLogin("", 0, 0, "");
+        // Human password sign-in remains separate from backend service authentication.
+        return new IdentityLogin("synthetic-human-token", 0, 0, "");
+      }
+
+      @Override
+      public IdentityLogin loginService(String clientId, String clientSecret) {
+        return new IdentityLogin("synthetic-service-token", 0, 0, "");
       }
 
       @Override
@@ -117,6 +123,9 @@ public class KeycloakTestConfig {
 
       @Override
       public void removeRoleIfPresent(String userId, String roleName) {}
+
+      @Override
+      public void assignRoles(String userId, java.util.Collection<String> roleNames) {}
 
       @Override
       public void updatePassword(String userId, String password) {}
