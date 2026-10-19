@@ -326,12 +326,13 @@ public class CaseHandoverMatrixRepairService {
           task.getAction() == CaseHandoverMatrixRepairAction.JOIN
               ? task.getMemberId()
               : task.getOperatorId();
-      if (isBlank(loginId)) {
-        return false;
-      }
-      String token = matrixSynapseService.loginAsUserAccessToken(loginId);
+      String token = isBlank(loginId) ? null : matrixSynapseService.loginAsUserAccessToken(loginId);
       if (isBlank(token)) {
-        return false;
+        // An operator who can no longer mint a token (e.g. a disabled consultant) must not block a
+        // supervision removal: the supervisor can still leave with their own token.
+        return task.getAction() == CaseHandoverMatrixRepairAction.REMOVE
+            && SUPERVISION_REMOVAL_REQUESTER.equals(task.getRequesterConsultantId())
+            && removeOrConfirmAbsent(task, null);
       }
       // Re-checked after the login round trip: never kick on the strength of a stale check.
       if (task.getAction() == CaseHandoverMatrixRepairAction.REMOVE
@@ -443,7 +444,8 @@ public class CaseHandoverMatrixRepairService {
   }
 
   private boolean removeOrConfirmAbsent(CaseHandoverMatrixRepairTask task, String token) {
-    if (matrixSynapseService.removeUserFromRoom(task.getRoomId(), task.getMemberId(), token)) {
+    if (!isBlank(token)
+        && matrixSynapseService.removeUserFromRoom(task.getRoomId(), task.getMemberId(), token)) {
       return true;
     }
     if (isAbsent(task)) {

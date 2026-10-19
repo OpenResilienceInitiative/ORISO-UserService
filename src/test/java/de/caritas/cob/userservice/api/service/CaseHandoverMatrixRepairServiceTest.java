@@ -324,6 +324,25 @@ class CaseHandoverMatrixRepairServiceTest {
   }
 
   @Test
+  void supervisionRemovalCompletesWithTheSupervisorsOwnTokenWhenTheOperatorTokenIsUnavailable() {
+    var task = supervisionRemoval();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    when(matrixSynapseService.loginAsUserAccessToken("@creator:matrix")).thenReturn(null);
+    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
+    when(matrixSynapseService.getRoomMembers("!side:matrix"))
+        .thenReturn(Optional.of(java.util.List.of("@sup:matrix")));
+    when(matrixSynapseService.leaveRoom("!side:matrix", "tok-sup")).thenReturn(true);
+
+    service.process(11L);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never())
+        .removeUserFromRoom(any(), any(), any());
+    verify(matrixSynapseService).leaveRoom("!side:matrix", "tok-sup");
+    verify(repository).delete(task);
+  }
+
+  @Test
   void joinRepairRemovesMembershipWhenAccessExpiresDuringJoin() {
     var task =
         CaseHandoverMatrixRepairTask.builder()
