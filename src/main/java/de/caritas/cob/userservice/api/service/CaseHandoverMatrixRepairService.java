@@ -41,6 +41,9 @@ public class CaseHandoverMatrixRepairService {
   private final @NonNull Clock clock;
   private final @NonNull PlatformTransactionManager transactionManager;
 
+  /** Not a consultant id: a supervision kick is never cancelled by a Case Handover grant. */
+  public static final String SUPERVISION_REMOVAL_REQUESTER = "supervision-removal";
+
   @Value("${case.handover.matrix-repair.max-attempts:100}")
   private int maxAttempts;
 
@@ -60,6 +63,39 @@ public class CaseHandoverMatrixRepairService {
         operatorId,
         sessionId,
         requesterConsultantId);
+  }
+
+  /**
+   * Queues the removal of a former supervisor from a Matrix room through the caller's own
+   * transaction (no new one): the kick is queued exactly when the supervision ends, and not at all
+   * when that transaction rolls back.
+   */
+  public void enqueueRemovalInCurrentTransaction(
+      String roomId, String memberId, String operatorId, Long sessionId) {
+    repository
+        .findExistingForUpdate(CaseHandoverMatrixRepairAction.REMOVE, roomId, memberId)
+        .ifPresentOrElse(
+            existing -> {
+              existing.setOperatorId(operatorId);
+              existing.setSessionId(sessionId);
+              existing.setRequesterConsultantId(SUPERVISION_REMOVAL_REQUESTER);
+              existing.setAttemptCount(0);
+              existing.setLastAttemptAt(null);
+              existing.setCreateDate(LocalDateTime.now(clock));
+              existing.setGeneration(existing.getGeneration() + 1);
+              repository.save(existing);
+            },
+            () ->
+                repository.save(
+                    CaseHandoverMatrixRepairTask.builder()
+                        .action(CaseHandoverMatrixRepairAction.REMOVE)
+                        .roomId(roomId)
+                        .memberId(memberId)
+                        .sessionId(sessionId)
+                        .requesterConsultantId(SUPERVISION_REMOVAL_REQUESTER)
+                        .operatorId(operatorId)
+                        .createDate(LocalDateTime.now(clock))
+                        .build()));
   }
 
   public void enqueueJoin(

@@ -192,8 +192,11 @@ public class CreateChatFacade {
       }
 
       var matrixResponse =
-          matrixSynapseService.createRoomAsMatrixUser(
-              roomName, roomAlias, consultant.getMatrixUserId());
+          membersOnly
+              ? matrixSynapseService.createMembersOnlyRoomAsMatrixUser(
+                  roomName, roomAlias, consultant.getMatrixUserId())
+              : matrixSynapseService.createRoomAsMatrixUser(
+                  roomName, roomAlias, consultant.getMatrixUserId());
 
       matrixRoomId = matrixResponse.getBody().getRoomId();
       log.info("Created Matrix room: {} for group chat session: {}", matrixRoomId, sessionId);

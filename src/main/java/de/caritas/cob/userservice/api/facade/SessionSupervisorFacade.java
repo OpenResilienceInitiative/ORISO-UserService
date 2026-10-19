@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService;
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.api.service.session.AnonymousSessionRegistration;
@@ -52,6 +53,7 @@ public class SessionSupervisorFacade {
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
+  private final @NonNull CaseHandoverMatrixRepairService matrixRepairService;
 
   /**
    * ADR-008 item 4: the current request's authenticated user, used to check the Berater-Admin
@@ -357,17 +359,29 @@ public class SessionSupervisorFacade {
     String sideRoomId = supervisor.getMatrixRoomId();
     String clientRoomId = observedRoomOf(session);
     String supervisorMatrixUserId = supervisor.getSupervisorConsultant().getMatrixUserId();
-    if (supervisorMatrixUserId != null
-        && !supervisorMatrixUserId.isEmpty()
-        && removedByConsultant.getMatrixUserId() != null) {
+    if (supervisorMatrixUserId != null && !supervisorMatrixUserId.isEmpty()) {
+      String operatorMatrixUserId =
+          removedByConsultant.getMatrixUserId() != null
+              ? removedByConsultant.getMatrixUserId()
+              : session.getConsultant() != null ? session.getConsultant().getMatrixUserId() : null;
       String consultantToken =
-          matrixSynapseService.loginAsUserAccessToken(removedByConsultant.getMatrixUserId());
-      if (consultantToken != null) {
-        removeFromRoomIfPresent(
-            sideRoomId, supervisorMatrixUserId, consultantToken, supervisor, "supervision side");
-        removeFromRoomIfPresent(
-            clientRoomId, supervisorMatrixUserId, consultantToken, supervisor, "client");
-      }
+          removedByConsultant.getMatrixUserId() != null
+              ? matrixSynapseService.loginAsUserAccessToken(removedByConsultant.getMatrixUserId())
+              : null;
+      removeFromRoomOrQueue(
+          sideRoomId,
+          supervisorMatrixUserId,
+          operatorMatrixUserId,
+          consultantToken,
+          supervisor,
+          "supervision side");
+      removeFromRoomOrQueue(
+          clientRoomId,
+          supervisorMatrixUserId,
+          operatorMatrixUserId,
+          consultantToken,
+          supervisor,
+          "client");
     }
 
     // Deactivate supervisor
@@ -523,9 +537,10 @@ public class SessionSupervisorFacade {
       return;
     }
     Consultant operator = session.getConsultant();
+    String operatorMatrixUserId = operator != null ? operator.getMatrixUserId() : null;
     String operatorToken =
-        operator != null && operator.getMatrixUserId() != null
-            ? matrixSynapseService.loginAsUserAccessToken(operator.getMatrixUserId())
+        operatorMatrixUserId != null
+            ? matrixSynapseService.loginAsUserAccessToken(operatorMatrixUserId)
             : null;
     String clientRoomId = observedRoomOf(session);
 
@@ -534,15 +549,21 @@ public class SessionSupervisorFacade {
           supervisor.getSupervisorConsultant() != null
               ? supervisor.getSupervisorConsultant().getMatrixUserId()
               : null;
-      if (operatorToken != null && supervisorMatrixUserId != null) {
-        removeFromRoomIfPresent(
+      if (supervisorMatrixUserId != null) {
+        removeFromRoomOrQueue(
             supervisor.getMatrixRoomId(),
             supervisorMatrixUserId,
+            operatorMatrixUserId,
             operatorToken,
             supervisor,
             "supervision side");
-        removeFromRoomIfPresent(
-            clientRoomId, supervisorMatrixUserId, operatorToken, supervisor, "client");
+        removeFromRoomOrQueue(
+            clientRoomId,
+            supervisorMatrixUserId,
+            operatorMatrixUserId,
+            operatorToken,
+            supervisor,
+            "client");
       }
       supervisor.setIsActive(false);
       supervisor.setRemovedDate(LocalDateTime.now());
@@ -691,31 +712,49 @@ public class SessionSupervisorFacade {
     return membersOnlyChatAccess.concerns(session) ? null : session.getMatrixRoomId();
   }
 
-  /** Remove a user from a room if a room id is present; log but never fail the removal flow. */
-  private void removeFromRoomIfPresent(
+  /**
+   * Takes a former supervisor out of a room. The supervision ends and the counsellor carries on
+   * whatever Matrix answers, but a kick that did not happen (no token, Matrix refused) is never
+   * silent: it is logged as an error and queued durably, in the caller's transaction, until it
+   * succeeds.
+   */
+  private void removeFromRoomOrQueue(
       String roomId,
       String supervisorMatrixUserId,
-      String consultantToken,
+      String operatorMatrixUserId,
+      String operatorToken,
       SessionSupervisor supervisor,
       String roomLabel) {
     if (roomId == null || roomId.isEmpty()) {
       return;
     }
     boolean removed =
-        matrixSynapseService.removeUserFromRoom(roomId, supervisorMatrixUserId, consultantToken);
+        operatorToken != null
+            && matrixSynapseService.removeUserFromRoom(
+                roomId, supervisorMatrixUserId, operatorToken);
     if (removed) {
       log.info(
           "Removed supervisor {} from {} room {}",
           supervisor.getSupervisorConsultant().getUsername(),
           roomLabel,
           roomId);
-    } else {
-      log.warn(
-          "Failed to remove supervisor {} from {} room {}, but continuing",
+      return;
+    }
+    if (operatorMatrixUserId == null || operatorMatrixUserId.isEmpty()) {
+      log.error(
+          "Could not remove supervisor {} from {} room {} and no operator is known to retry as",
           supervisor.getSupervisorConsultant().getUsername(),
           roomLabel,
           roomId);
+      return;
     }
+    log.error(
+        "Failed to remove supervisor {} from {} room {}; durable removal queued",
+        supervisor.getSupervisorConsultant().getUsername(),
+        roomLabel,
+        roomId);
+    matrixRepairService.enqueueRemovalInCurrentTransaction(
+        roomId, supervisorMatrixUserId, operatorMatrixUserId, supervisor.getSession().getId());
   }
 
   /**

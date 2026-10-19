@@ -432,7 +432,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   // ---------------------------------------------------------------------------
 
   private Consultant colleagueWhoseInviteIsRefused() throws Exception {
-    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
+    when(matrixSynapseService.createMembersOnlyRoomAsMatrixUser(any(), any(), any()))
         .thenReturn(matrixRoomResponse("!room:matrix.org"));
     when(matrixSynapseService.loginAsUserAccessToken("@creator:matrix.org"))
         .thenReturn("creator-token");
@@ -444,6 +444,24 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         .when(matrixSynapseService)
         .inviteUserToRoom(any(), eq("@colleague:matrix.org"), any());
     return colleague;
+  }
+
+  @Test
+  void createMembersOnlyChat_Should_CreateTheRoomWithInvitesLockedToTheTechnicalAdmin()
+      throws Exception {
+    var colleague = colleagueWhoseInviteIsRefused();
+    when(matrixSynapseService.purgeRoomOrConfirmGone("!room:matrix.org"))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.PURGED);
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () ->
+            createChatFacade.createMembersOnlyChat(
+                chatDtoWithConsultantIds(List.of()), consultant, List.of(colleague)));
+
+    verify(matrixSynapseService)
+        .createMembersOnlyRoomAsMatrixUser(any(), any(), eq("@creator:matrix.org"));
+    verify(matrixSynapseService, never()).createRoomAsMatrixUser(any(), any(), any());
   }
 
   @Test

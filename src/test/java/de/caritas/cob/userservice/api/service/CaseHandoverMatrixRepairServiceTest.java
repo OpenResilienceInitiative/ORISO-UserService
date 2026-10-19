@@ -42,7 +42,9 @@ class CaseHandoverMatrixRepairServiceTest {
 
   @BeforeEach
   void setUp() {
-    when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+    org.mockito.Mockito.lenient()
+        .when(transactionManager.getTransaction(any()))
+        .thenReturn(transactionStatus);
     service =
         new CaseHandoverMatrixRepairService(
             repository,
@@ -71,6 +73,55 @@ class CaseHandoverMatrixRepairServiceTest {
     assertThat(captor.getValue().getRequesterConsultantId()).isEqualTo("requester");
     assertThat(captor.getValue().getCreateDate())
         .isEqualTo(LocalDateTime.parse("2026-09-14T10:00:00"));
+  }
+
+  @Test
+  void enqueueRemovalInCurrentTransactionSavesThroughTheCallersTransactionOnly() {
+    when(repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.REMOVE, "!side:matrix", "@sup:matrix"))
+        .thenReturn(Optional.empty());
+
+    service.enqueueRemovalInCurrentTransaction(
+        "!side:matrix", "@sup:matrix", "@operator:matrix", 123L);
+
+    var captor = ArgumentCaptor.forClass(CaseHandoverMatrixRepairTask.class);
+    verify(repository).save(captor.capture());
+    verify(repository, org.mockito.Mockito.never()).saveAndFlush(any());
+    verify(transactionManager, org.mockito.Mockito.never()).getTransaction(any());
+    assertThat(captor.getValue().getAction()).isEqualTo(CaseHandoverMatrixRepairAction.REMOVE);
+    assertThat(captor.getValue().getRoomId()).isEqualTo("!side:matrix");
+    assertThat(captor.getValue().getMemberId()).isEqualTo("@sup:matrix");
+    assertThat(captor.getValue().getOperatorId()).isEqualTo("@operator:matrix");
+    assertThat(captor.getValue().getSessionId()).isEqualTo(123L);
+    assertThat(captor.getValue().getRequesterConsultantId())
+        .isEqualTo(CaseHandoverMatrixRepairService.SUPERVISION_REMOVAL_REQUESTER);
+  }
+
+  @Test
+  void enqueueRemovalInCurrentTransactionReactivatesAnExistingTask() {
+    var exhausted =
+        CaseHandoverMatrixRepairTask.builder()
+            .id(7L)
+            .action(CaseHandoverMatrixRepairAction.REMOVE)
+            .roomId("!side:matrix")
+            .memberId("@sup:matrix")
+            .sessionId(100L)
+            .requesterConsultantId("x")
+            .attemptCount(100)
+            .generation(4)
+            .createDate(LocalDateTime.parse("2026-09-14T08:00:00"))
+            .build();
+    when(repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.REMOVE, "!side:matrix", "@sup:matrix"))
+        .thenReturn(Optional.of(exhausted));
+
+    service.enqueueRemovalInCurrentTransaction(
+        "!side:matrix", "@sup:matrix", "@operator:matrix", 123L);
+
+    assertThat(exhausted.getAttemptCount()).isZero();
+    assertThat(exhausted.getGeneration()).isEqualTo(5);
+    assertThat(exhausted.getOperatorId()).isEqualTo("@operator:matrix");
+    verify(repository).save(exhausted);
   }
 
   @Test
