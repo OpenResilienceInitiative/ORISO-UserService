@@ -34,6 +34,8 @@ class IdentityObservationHttpTest {
   @Configuration
   @EnableWebMvc
   @Import({
+    de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+        .ApiResponseEntityExceptionHandler.class,
     SecurityConfig.class,
     RoleAuthorizationAuthorityMapper.class,
     IdentityObservationHttpAdapter.class,
@@ -154,7 +156,8 @@ class IdentityObservationHttpTest {
                 Set.of("technical", "agency-admin", "tenant-admin", "user-admin"),
                 Authority.AuthorityValue.USER_ADMIN,
                 Authority.AuthorityValue.TECHNICAL_DEFAULT))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(content().string(""));
     verifyNoInteractions(provider, reader);
   }
 
@@ -166,7 +169,8 @@ class IdentityObservationHttpTest {
                 "{\"username\":\"private\"}",
                 Set.of("user-admin"),
                 Authority.AuthorityValue.USER_ADMIN))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(content().string(""));
     verifyNoInteractions(provider, reader);
   }
 
@@ -178,19 +182,33 @@ class IdentityObservationHttpTest {
                 "{\"username\":\"private\"}",
                 caller.getRoles(),
                 Authority.AuthorityValue.TECHNICAL_DEFAULT))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(content().string(""));
     verifyNoInteractions(provider, reader);
   }
 
   @Test
   void malformedSelectorsReturn400BeforeReads() throws Exception {
-    mvc.perform(
-            request(
-                "/useradmin/identity-observations",
-                "{}",
-                caller.getRoles(),
-                Authority.AuthorityValue.USER_ADMIN))
-        .andExpect(status().isBadRequest());
+    for (String body :
+        List.of("{}", "{\"username\":\"PRIVATE*selector\"}", "{\"username\":\"enc.bad!\"}")) {
+      mvc.perform(
+              request(
+                  "/useradmin/identity-observations",
+                  body,
+                  caller.getRoles(),
+                  Authority.AuthorityValue.USER_ADMIN))
+          .andExpect(status().isBadRequest())
+          .andExpect(
+              header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")))
+          .andExpect(
+              jsonPath("$.message")
+                  .value(
+                      "Provide at least one valid exact identityId, username or email; blank, overlong, control, wildcard and malformed encoded values are not allowed."))
+          .andExpect(
+              content()
+                  .string(
+                      org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("PRIVATE"))));
+    }
     verifyNoInteractions(provider, reader);
   }
 
@@ -273,7 +291,8 @@ class IdentityObservationHttpTest {
                                     .claim("tenantId", 9L))
                         .authorities(
                             new SimpleGrantedAuthority(Authority.AuthorityValue.USER_ADMIN))))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(content().string(""));
     verifyNoInteractions(provider, reader);
   }
 }

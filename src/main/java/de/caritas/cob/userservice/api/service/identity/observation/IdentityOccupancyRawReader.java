@@ -79,32 +79,37 @@ public class IdentityOccupancyRawReader {
     for (var fact : rows)
       if (probe.matches(fact.identityId(), fact.username(), fact.email()))
         facts.putIfAbsent(fact.rowId(), fact);
-    if (!probe.usernames().isEmpty() && facts.size() <= 20) {
-      boolean exhausted = false;
-      for (int page = 0; page < MAX_PAGES; page++) {
-        var candidates =
-            jdbc.query(
-                select
-                    + "LOWER(username) LIKE 'enc.%' ORDER BY "
-                    + id
-                    + " LIMIT 100 OFFSET :offset",
-                new MapSqlParameterSource("offset", page * PAGE_SIZE),
-                mapper);
-        for (var fact : candidates) {
-          if (!IdentityUsername.decode(fact.username()).resolved()) limited = true;
-          if (probe.matches(fact.identityId(), fact.username(), fact.email()))
-            facts.putIfAbsent(fact.rowId(), fact);
+    try {
+      if (!probe.usernames().isEmpty() && facts.size() <= 20) {
+        boolean exhausted = false;
+        for (int page = 0; page < MAX_PAGES; page++) {
+          var candidates =
+              jdbc.query(
+                  select
+                      + "LOWER(username) LIKE 'enc.%' ORDER BY "
+                      + id
+                      + " LIMIT 100 OFFSET :offset",
+                  new MapSqlParameterSource("offset", page * PAGE_SIZE),
+                  mapper);
+          for (var fact : candidates) {
+            if (!IdentityUsername.decode(fact.username()).resolved()) limited = true;
+            if (probe.matches(fact.identityId(), fact.username(), fact.email()))
+              facts.putIfAbsent(fact.rowId(), fact);
+          }
+          if (facts.size() > 20) {
+            limited = true;
+            break;
+          }
+          if (candidates.size() < PAGE_SIZE) {
+            exhausted = true;
+            break;
+          }
         }
-        if (facts.size() > 20) {
-          limited = true;
-          break;
-        }
-        if (candidates.size() < PAGE_SIZE) {
-          exhausted = true;
-          break;
-        }
+        if (!exhausted) limited = true;
       }
-      if (!exhausted) limited = true;
+    } catch (org.springframework.dao.DataAccessException dependencyFailure) {
+      return new Layer(
+          source, Status.DEPENDENCY_FAILURE, facts.values().stream().limit(20).toList());
     }
     return new Layer(
         source,

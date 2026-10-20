@@ -73,7 +73,8 @@ public class IdentityObservationHttpAdapter {
     } catch (AccessDeniedException denied) {
       return ResponseEntity.status(403).header("Cache-Control", "no-store").build();
     } catch (IllegalArgumentException invalid) {
-      return ResponseEntity.badRequest().header("Cache-Control", "no-store").build();
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
+          "Provide at least one valid exact identityId, username or email; blank, overlong, control, wildcard and malformed encoded values are not allowed.");
     }
   }
 }

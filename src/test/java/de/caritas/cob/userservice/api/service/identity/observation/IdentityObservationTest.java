@@ -393,4 +393,69 @@ class IdentityObservationTest {
     assertThat(result.status()).isEqualTo(Status.LIMIT);
     assertThat(result.facts()).isEmpty();
   }
+
+  @Test
+  void candidateSqlFailureRetainsExactCollisionAndCallerContext() throws Exception {
+    JdbcDataSource ds = new JdbcDataSource();
+    ds.setURL(
+        "jdbc:h2:mem:identitycandidatefailure;MODE=MariaDB;DB_CLOSE_DELAY=-1;NON_KEYWORDS=USER");
+    JdbcTemplate jdbc = new JdbcTemplate(ds);
+    for (String table : List.of("admin", "consultant", "user"))
+      jdbc.execute(
+          "CREATE TABLE `"
+              + table
+              + "` ("
+              + table
+              + "_id VARCHAR(255), username VARCHAR(255), email VARCHAR(255), tenant_id BIGINT, "
+              + (table.equals("admin") ? "type VARCHAR(6)" : "delete_date TIMESTAMP")
+              + ")");
+    jdbc.update(
+        "INSERT INTO admin VALUES (?,?,?,?,?)",
+        "existing",
+        "alice",
+        "alice@example.org",
+        7L,
+        "TENANT");
+    var failureSource =
+        new org.springframework.jdbc.datasource.DelegatingDataSource(ds) {
+          @Override
+          public java.sql.Connection getConnection() throws java.sql.SQLException {
+            var connection = super.getConnection();
+            return (java.sql.Connection)
+                java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(),
+                    new Class<?>[] {java.sql.Connection.class},
+                    (proxy, method, args) -> {
+                      if (method.getName().equals("prepareStatement")
+                          && args[0] instanceof String sql
+                          && sql.contains("FROM `admin`")
+                          && sql.contains("LIKE 'enc.%'"))
+                        throw new java.sql.SQLException("PRIVATE candidate failure");
+                      try {
+                        return method.invoke(connection, args);
+                      } catch (java.lang.reflect.InvocationTargetException failure) {
+                        throw failure.getCause();
+                      }
+                    });
+          }
+        };
+    TenantContext.setCurrentTenant(12L);
+    var previous = TenantContext.getCurrentTenantData();
+    var result =
+        new IdentityObservationService(
+                user, provider, new IdentityOccupancyRawReader(failureSource))
+            .observe(probe(null, "alice", null));
+    assertThat(result.status()).isEqualTo(502);
+    assertThat(result.complete()).isFalse();
+    assertThat(result.occupancy()).isEqualTo("OCCUPIED");
+    assertThat(result.facts()).extracting(Fact::identityId).containsExactly("existing");
+    assertThat(
+            result.layers().stream()
+                .filter(layer -> layer.source() == Source.ADMIN)
+                .findFirst()
+                .orElseThrow()
+                .status())
+        .isEqualTo(Status.DEPENDENCY_FAILURE);
+    assertThat(TenantContext.getCurrentTenantData()).isSameAs(previous);
+  }
 }

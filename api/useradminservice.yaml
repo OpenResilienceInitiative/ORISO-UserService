@@ -32,7 +32,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/IdentityObservationResponseDTO'
         '400':
-          description: Invalid exact selectors
+          description: Invalid exact selectors; safe fixed validation message without selector values
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+                    description: Safe explanation of the selector requirements
         '403':
           description: Forbidden without existence details
         '409':
