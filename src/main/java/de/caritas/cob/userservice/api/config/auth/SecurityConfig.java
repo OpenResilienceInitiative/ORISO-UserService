@@ -488,6 +488,9 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/update",
                     "/users/{matrixUserId}/chat/{chatId:[0-9]+}/ban")
                 .hasAuthority(UPDATE_CHAT)
+                .requestMatchers(
+                    "/useradmin/identity-observations", "/service/useradmin/identity-observations")
+                .access(this::canObserveIdentityOccupancy)
                 .requestMatchers(HttpMethod.GET, "/useradmin/supportadmins/search")
                 .hasAnyAuthority(USER_ADMIN, GLOBAL_SUPPORT_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
@@ -669,6 +672,35 @@ public class SecurityConfig {
             .collect(Collectors.toSet());
     authorities.addAll(authorityMapper.mapAuthorities(roleAuthorities));
     return authorities;
+  }
+
+  private AuthorizationDecision canObserveIdentityOccupancy(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    Authentication authentication = authenticationSupplier.get();
+    if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)
+        || !authentication.isAuthenticated()) {
+      return new AuthorizationDecision(false);
+    }
+    Set<String> roles = KeycloakRoles.of(jwtAuthentication.getToken().getClaims());
+    boolean technical =
+        roles.contains(UserRole.TECHNICAL.getValue())
+            || roles.contains(UserRole.NOTIFICATIONS_TECHNICAL.getValue())
+            || authentication.getAuthorities().stream()
+                .anyMatch(
+                    authority ->
+                        TECHNICAL_DEFAULT.equals(authority.getAuthority())
+                            || de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue
+                                .NOTIFICATIONS_TECHNICAL
+                                .equals(authority.getAuthority()));
+    boolean userAdmin =
+        authentication.getAuthorities().stream()
+            .anyMatch(authority -> USER_ADMIN.equals(authority.getAuthority()));
+    return new AuthorizationDecision(
+        !technical
+            && userAdmin
+            && roles.contains(UserRole.USER_ADMIN.getValue())
+            && isPlatformAdmin(authenticationSupplier, requestContext).isGranted());
   }
 
   private AuthorizationDecision canAccessInactiveAccountAuditLogs(

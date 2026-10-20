@@ -77,6 +77,17 @@ import org.springframework.web.bind.annotation.RestController;
 @Api(tags = "admin-user-controller")
 public class UserAdminController implements UseradminApi {
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private IdentityObservationHttpAdapter identityObservationHttpAdapter;
+
+  @Override
+  public ResponseEntity<
+          de.caritas.cob.userservice.api.adapters.web.dto.IdentityObservationResponseDTO>
+      observeIdentityOccupancy(
+          de.caritas.cob.userservice.api.adapters.web.dto.IdentityObservationRequestDTO request) {
+    return identityObservationHttpAdapter.observeIdentityOccupancy(request);
+  }
+
   private final @NonNull SessionAdminService sessionAdminService;
   private final @NonNull ViolationReportGenerator violationReportGenerator;
   private final @NonNull ConsultantAdminFacade consultantAdminFacade;
