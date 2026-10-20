@@ -13,6 +13,8 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class IdentityObservationHttpAdapter {
+  static final String INVALID_SELECTOR_MESSAGE =
+      "Provide at least one valid exact identityId, username or email; blank, overlong, control, wildcard and malformed encoded values are not allowed.";
   private final IdentityObservationService service;
   private final UsernameTranscoder transcoder;
 
@@ -74,7 +76,7 @@ public class IdentityObservationHttpAdapter {
       return ResponseEntity.status(403).header("Cache-Control", "no-store").build();
     } catch (IllegalArgumentException invalid) {
       throw new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
-          "Provide at least one valid exact identityId, username or email; blank, overlong, control, wildcard and malformed encoded values are not allowed.");
+          INVALID_SELECTOR_MESSAGE);
     }
   }
 }

@@ -39,6 +39,7 @@ class IdentityObservationHttpTest {
     SecurityConfig.class,
     RoleAuthorizationAuthorityMapper.class,
     IdentityObservationHttpAdapter.class,
+    IdentityObservationInputExceptionResolver.class,
     IdentityObservationService.class,
     UsernameTranscoder.class
   })
@@ -294,5 +295,117 @@ class IdentityObservationHttpTest {
         .andExpect(status().isForbidden())
         .andExpect(content().string(""));
     verifyNoInteractions(provider, reader);
+  }
+
+  @Test
+  void frameworkInvalidInputUsesSafeBodyWithoutLoggingSelectorValues() throws Exception {
+    String marker = "PRIVATE_OBSERVATION_BOUNDARY_94d1";
+    String overlong = marker + "x".repeat(256);
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+    var logs =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    logs.start();
+    logger.addAppender(logs);
+    try {
+      for (String body :
+          List.of(
+              "",
+              "null",
+              "{\"identityId\":\"" + overlong + "\"}",
+              "{\"email\":\"" + overlong + "\"}",
+              "{\"username\":\"\"}",
+              "{\"username\":\"" + overlong + "\"}",
+              "{\"username\":\"" + marker,
+              "{\"username\":{\"value\":\"" + marker + "\"}}")) {
+        mvc.perform(
+                request(
+                    "/useradmin/identity-observations",
+                    body,
+                    caller.getRoles(),
+                    Authority.AuthorityValue.USER_ADMIN))
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")))
+            .andExpect(
+                jsonPath("$.message")
+                    .value(
+                        "Provide at least one valid exact identityId, username or email; blank, overlong, control, wildcard and malformed encoded values are not allowed."))
+            .andExpect(
+                content()
+                    .string(
+                        org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString(marker))));
+      }
+      assertThat(
+              logs.list.stream()
+                  .map(
+                      event ->
+                          event.getFormattedMessage()
+                              + (event.getThrowableProxy() == null
+                                  ? ""
+                                  : ch.qos.logback.classic.spi.ThrowableProxyUtil.asString(
+                                      event.getThrowableProxy())))
+                  .toList())
+          .allSatisfy(
+              message -> {
+                assertThat(message).doesNotContain(marker, overlong);
+              });
+      verifyNoInteractions(provider, reader);
+    } finally {
+      logger.detachAppender(logs);
+      logs.stop();
+    }
+  }
+
+  @Test
+  void deniedMalformedInputDoesNotReachBindingOrTargetObservation() throws Exception {
+    mvc.perform(
+            request(
+                "/useradmin/identity-observations",
+                "{\"username\":\"PRIVATE_DENIED_94d1",
+                Set.of("technical", "user-admin", "agency-admin", "tenant-admin"),
+                Authority.AuthorityValue.USER_ADMIN,
+                Authority.AuthorityValue.TECHNICAL_DEFAULT))
+        .andExpect(status().isForbidden())
+        .andExpect(content().string(""));
+    verifyNoInteractions(provider, reader);
+  }
+
+  @Test
+  void frameworkLengthValidationDoesNotLogRejectedPrivateSelector() throws Exception {
+    String marker = "PRIVATE_OBSERVATION_LOG_71a9";
+    String rejected = marker + "x".repeat(256);
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+    var logs =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    logs.start();
+    logger.addAppender(logs);
+    try {
+      mvc.perform(
+              request(
+                  "/useradmin/identity-observations",
+                  "{\"username\":\"" + rejected + "\"}",
+                  caller.getRoles(),
+                  Authority.AuthorityValue.USER_ADMIN))
+          .andExpect(status().isBadRequest());
+      assertThat(
+              logs.list.stream()
+                  .map(
+                      event ->
+                          event.getFormattedMessage()
+                              + (event.getThrowableProxy() == null
+                                  ? ""
+                                  : ch.qos.logback.classic.spi.ThrowableProxyUtil.asString(
+                                      event.getThrowableProxy())))
+                  .toList())
+          .allSatisfy(message -> assertThat(message).doesNotContain(marker, rejected));
+      verifyNoInteractions(provider, reader);
+    } finally {
+      logger.detachAppender(logs);
+      logs.stop();
+    }
   }
 }
