@@ -239,5 +239,6 @@
   <include file="db/changelog/changeset/20261007_user_avatar_1240/changeSet.xml"/>
   <include file="db/changelog/changeset/20261007_standing_access_preference_1657/changeSet.xml"/>
   <include file="db/changelog/changeset/20261009_inquiry_acceptance_notice/changeSet.xml" />
+  <include file="db/changelog/changeset/20261013_invite_template_delete_guard/changeSet.xml"/>
   <include file="db/changelog/changeset/20261014_co_access_power_rollback/changeSet.xml"/>
 </databaseChangeLog>
