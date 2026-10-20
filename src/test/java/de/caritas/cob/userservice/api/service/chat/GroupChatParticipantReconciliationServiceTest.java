@@ -179,6 +179,29 @@ class GroupChatParticipantReconciliationServiceTest {
   }
 
   @Test
+  void blankMatrixIdentityHasNoRoomAccessToRevokeSoTrackingIsDeleted() {
+    var removed = participant(7L, "removed", ParticipantRole.CO_MODERATOR);
+    var blankIdentity = consultant("removed", " ");
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
+    when(consultantRepository.findById("removed")).thenReturn(Optional.of(blankIdentity));
+    service.reconcile(series, List.of());
+    verify(membershipService, never())
+        .removeLeavingMemberFromRoomAndConfirm(Mockito.any(), Mockito.any());
+    verify(participantRepository).delete(removed);
+  }
+
+  @Test
+  void hardDeletedConsultantNoLongerBlocksReconciliation() {
+    var removed = participant(7L, "removed", ParticipantRole.CO_MODERATOR);
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
+    when(consultantRepository.findById("removed")).thenReturn(Optional.empty());
+    service.reconcile(series, List.of());
+    verify(membershipService, never())
+        .removeLeavingMemberFromRoomAndConfirm(Mockito.any(), Mockito.any());
+    verify(participantRepository).delete(removed);
+  }
+
+  @Test
   void reconcile_ShouldCheckNewActorAdmissionBeforeLazyProvisioningOrAnyMembershipChange() {
     var newcomer = consultant("newcomer", null);
     when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner));

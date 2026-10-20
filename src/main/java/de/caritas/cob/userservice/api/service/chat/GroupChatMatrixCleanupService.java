@@ -29,6 +29,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 @Slf4j
 public class GroupChatMatrixCleanupService {
+  // About an hour at the default one-minute backoff; repeats so a stuck task stays visible.
+  private static final int STUCK_ATTEMPT_WARNING_INTERVAL = 60;
+
   private final GroupChatMatrixCleanupTaskRepository tasks;
   private final ConsultantRepository consultants;
   private final ChatRepository chats;
@@ -187,6 +190,13 @@ public class GroupChatMatrixCleanupService {
 
   private void defer(GroupChatMatrixCleanupTask task) {
     task.setAttemptCount(task.getAttemptCount() + 1);
+    if (task.getAttemptCount() % STUCK_ATTEMPT_WARNING_INTERVAL == 0) {
+      log.warn(
+          "Group Matrix cleanup {} ({}) still pending after {} attempts",
+          task.getId(),
+          task.getAction(),
+          task.getAttemptCount());
+    }
     task.setLastAttemptAt(LocalDateTime.now(clock));
     tasks.save(task);
   }

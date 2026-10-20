@@ -9,6 +9,15 @@ import org.junit.jupiter.api.Test;
 
 class GroupSessionTenantMigrationTest {
   @Test
+  void declaresItsForwardOnlyRollbackExplicitly() throws Exception {
+    assertThat(
+            Files.readString(
+                Path.of(
+                    "src/main/resources/db/changelog/changeset/0091_group_session_tenant/0091_changeSet.xml")))
+        .contains("<rollback/>");
+  }
+
+  @Test
   void repairsOnlyUnambiguousGroupOwnershipAndIsIdempotent() throws Exception {
     try (var connection = DriverManager.getConnection("jdbc:h2:mem:group-backfill;MODE=MariaDB");
         var sql = connection.createStatement()) {

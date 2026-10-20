@@ -139,10 +139,17 @@ public class GroupChatParticipantReconciliationService {
       for (var existing : participants) {
         if (existing.getRole() == ParticipantRole.CO_MODERATOR
             && !desiredIds.contains(existing.getConsultantId())) {
-          var leaving = consultantRepository.findById(existing.getConsultantId());
-          if (leaving.isEmpty()
-              || !membershipService.removeLeavingMemberFromRoomAndConfirm(
-                  series, leaving.get().getMatrixUserId())) {
+          // A hard-deleted consultant's Matrix account is deactivated by the deletion workflow,
+          // and a blank identity was never a room member: neither has access left to revoke.
+          var leavingMatrixUserId =
+              consultantRepository
+                  .findById(existing.getConsultantId())
+                  .map(Consultant::getMatrixUserId)
+                  .orElse(null);
+          if (leavingMatrixUserId != null
+              && !leavingMatrixUserId.isBlank()
+              && !membershipService.removeLeavingMemberFromRoomAndConfirm(
+                  series, leavingMatrixUserId)) {
             throw new InternalServerErrorException(
                 "Matrix removal is unconfirmed; participant tracking retained");
           }

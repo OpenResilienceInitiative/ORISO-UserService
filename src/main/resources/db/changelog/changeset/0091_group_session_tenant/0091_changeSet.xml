@@ -5,6 +5,9 @@
  <changeSet id="0091-group-session-tenant" author="frank">
   <sqlFile path="db/changelog/changeset/0091_group_session_tenant/migrate.sql"
    relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
-  <!-- Forward-only data repair: resetting legitimate ownership would reintroduce denied calls. -->
+  <!-- Forward-only data repair: resetting legitimate ownership would reintroduce denied calls.
+   Repaired rows are indistinguishable from sessions stamped correctly later, so no rollback can
+   restore only this migration's rows. The empty rollback is the intentional no-op. -->
+  <rollback/>
  </changeSet>
 </databaseChangeLog>

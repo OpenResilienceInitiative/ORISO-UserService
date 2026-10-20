@@ -33,25 +33,7 @@ class GroupChatMatrixCleanupTransactionTest {
   @Test
   @Timeout(15)
   void committedIntentSurvivesOuterRollbackAndWorkerWaitsForWriterMutex() throws Exception {
-    var data =
-        new DriverManagerDataSource(
-            "jdbc:h2:mem:group_cleanup_"
-                + UUID.randomUUID()
-                + ";MODE=MySQL;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=5000",
-            "sa",
-            "");
-    try (var connection = data.getConnection()) {
-      var db =
-          DatabaseFactory.getInstance()
-              .findCorrectDatabaseImplementation(new JdbcConnection(connection));
-      try (var migration =
-          new Liquibase(
-              "db/changelog/changeset/20261008_group_matrix_cleanup/changeSet.xml",
-              new ClassLoaderResourceAccessor(),
-              db)) {
-        migration.update(new liquibase.Contexts());
-      }
-    }
+    var data = migratedDataSource();
     var registry =
         new StandardServiceRegistryBuilder()
             .applySetting("hibernate.connection.datasource", data)
@@ -150,5 +132,87 @@ class GroupChatMatrixCleanupTransactionTest {
     } finally {
       StandardServiceRegistryBuilder.destroy(registry);
     }
+  }
+
+  @Test
+  void repeatedlyDeferredOldTasksDoNotStarveNewerCleanup() throws Exception {
+    var data = migratedDataSource();
+    var registry =
+        new StandardServiceRegistryBuilder()
+            .applySetting("hibernate.connection.datasource", data)
+            .applySetting("hibernate.hbm2ddl.auto", "validate")
+            .build();
+    try (var factory =
+        new MetadataSources(registry)
+            .addAnnotatedClass(GroupChatMatrixCleanupTask.class)
+            .buildMetadata()
+            .buildSessionFactory()) {
+      var manager = new JpaTransactionManager(factory);
+      manager.setDataSource(data);
+      manager.afterPropertiesSet();
+      var repository =
+          new JpaRepositoryFactory(SharedEntityManagerCreator.createSharedEntityManager(factory))
+              .getRepository(GroupChatMatrixCleanupTaskRepository.class);
+      var now = java.time.LocalDateTime.of(2026, 10, 20, 12, 0);
+      new TransactionTemplate(manager)
+          .executeWithoutResult(
+              status -> {
+                repository.save(
+                    task("!old-deferred:matrix", now.minusDays(2), now.minusMinutes(2)));
+                repository.save(task("!new-never-tried:matrix", now.minusMinutes(5), null));
+                repository.save(
+                    task("!older-deferred:matrix", now.minusDays(3), now.minusMinutes(3)));
+              });
+      var ready =
+          new TransactionTemplate(manager)
+              .execute(
+                  status ->
+                      repository
+                          .findReady(
+                              now.minusMinutes(1),
+                              org.springframework.data.domain.PageRequest.of(0, 2))
+                          .stream()
+                          .map(GroupChatMatrixCleanupTask::getRoomId)
+                          .toList());
+      assertThat(ready).containsExactly("!new-never-tried:matrix", "!older-deferred:matrix");
+    } finally {
+      StandardServiceRegistryBuilder.destroy(registry);
+    }
+  }
+
+  private static GroupChatMatrixCleanupTask task(
+      String roomId, java.time.LocalDateTime createdAt, java.time.LocalDateTime lastAttemptAt) {
+    return GroupChatMatrixCleanupTask.builder()
+        .action(GroupChatMatrixCleanupTask.Action.PURGE_ROOM)
+        .ownerId("owner")
+        .tenantId(41L)
+        .seriesId(7L)
+        .roomId(roomId)
+        .createdAt(createdAt)
+        .lastAttemptAt(lastAttemptAt)
+        .build();
+  }
+
+  private static DriverManagerDataSource migratedDataSource() throws Exception {
+    var data =
+        new DriverManagerDataSource(
+            "jdbc:h2:mem:group_cleanup_"
+                + UUID.randomUUID()
+                + ";MODE=MySQL;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=5000",
+            "sa",
+            "");
+    try (var connection = data.getConnection()) {
+      var db =
+          DatabaseFactory.getInstance()
+              .findCorrectDatabaseImplementation(new JdbcConnection(connection));
+      try (var migration =
+          new Liquibase(
+              "db/changelog/changeset/20261008_group_matrix_cleanup/changeSet.xml",
+              new ClassLoaderResourceAccessor(),
+              db)) {
+        migration.update(new liquibase.Contexts());
+      }
+    }
+    return data;
   }
 }

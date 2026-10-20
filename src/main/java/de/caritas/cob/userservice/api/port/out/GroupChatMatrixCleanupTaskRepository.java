@@ -17,7 +17,9 @@ public interface GroupChatMatrixCleanupTaskRepository
   @Query("SELECT task FROM GroupChatMatrixCleanupTask task WHERE task.id=:id")
   Optional<GroupChatMatrixCleanupTask> findByIdForUpdate(@Param("id") Long id);
 
+  // Least recently attempted first: repeatedly deferred old tasks must not starve newer cleanup.
   @Query(
-      "SELECT task FROM GroupChatMatrixCleanupTask task WHERE task.lastAttemptAt IS NULL OR task.lastAttemptAt < :before ORDER BY task.createdAt,task.id")
+      "SELECT task FROM GroupChatMatrixCleanupTask task WHERE task.lastAttemptAt IS NULL OR task.lastAttemptAt < :before"
+          + " ORDER BY task.lastAttemptAt ASC NULLS FIRST, task.createdAt, task.id")
   List<GroupChatMatrixCleanupTask> findReady(@Param("before") LocalDateTime before, Pageable page);
 }
