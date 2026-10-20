@@ -28,7 +28,7 @@ public class IdentityObservationHttpAdapter {
               request.getIdentityId(), request.getUsername(), request.getEmail(), transcoder);
       var observation = service.observe(probe);
       var dto =
-          new IdentityObservationResponseDTO()
+          new SafeResponse()
               .scope(IdentityObservationResponseDTO.ScopeEnum.IDENTITY_OCCUPANCY_V1)
               .observedAt(observation.observedAt().atOffset(ZoneOffset.UTC))
               .normalizedSelectors(
@@ -77,6 +77,14 @@ public class IdentityObservationHttpAdapter {
     } catch (IllegalArgumentException invalid) {
       throw new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
           INVALID_SELECTOR_MESSAGE);
+    }
+  }
+
+  /** Framework TRACE body logging must not print selectors or nested source facts. */
+  private static final class SafeResponse extends IdentityObservationResponseDTO {
+    @Override
+    public String toString() {
+      return "IdentityObservationResponseDTO[redacted]";
     }
   }
 }

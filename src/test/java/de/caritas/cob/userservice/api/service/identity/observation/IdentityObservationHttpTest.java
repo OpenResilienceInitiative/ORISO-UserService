@@ -31,7 +31,6 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 @SpringJUnitWebConfig(IdentityObservationHttpTest.Config.class)
 @TestPropertySource(properties = "multitenancy.enabled=false")
 class IdentityObservationHttpTest {
-  @Configuration
   @EnableWebMvc
   @Import({
     de.caritas.cob.userservice.api.adapters.web.controller.interceptor
@@ -40,6 +39,7 @@ class IdentityObservationHttpTest {
     RoleAuthorizationAuthorityMapper.class,
     IdentityObservationHttpAdapter.class,
     IdentityObservationInputExceptionResolver.class,
+    IdentityObservationJsonBoundaryConfiguration.class,
     IdentityObservationService.class,
     UsernameTranscoder.class
   })
@@ -90,9 +90,21 @@ class IdentityObservationHttpTest {
   de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService lifecycle;
 
   MockMvc mvc;
+  ch.qos.logback.classic.Level previousWebLevel;
+  ch.qos.logback.classic.Level previousMethodLevel;
+  final ch.qos.logback.classic.Logger methodLogger =
+      (ch.qos.logback.classic.Logger)
+          org.slf4j.LoggerFactory.getLogger(
+              "org.springframework.web.servlet.mvc.method.annotation");
+  final ch.qos.logback.classic.Logger webLogger =
+      (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("org.springframework.web");
 
   @BeforeEach
   void setup() {
+    previousWebLevel = webLogger.getLevel();
+    previousMethodLevel = methodLogger.getLevel();
+    webLogger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+    methodLogger.setLevel(ch.qos.logback.classic.Level.DEBUG);
     mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
     when(lifecycle.admit(any(), any())).thenReturn(true);
     caller.setRoles(Set.of("agency-admin", "tenant-admin", "user-admin"));
@@ -317,6 +329,7 @@ class IdentityObservationHttpTest {
               "{\"email\":\"" + overlong + "\"}",
               "{\"username\":\"\"}",
               "{\"username\":\"" + overlong + "\"}",
+              "{\"username\":" + marker + "}",
               "{\"username\":\"" + marker,
               "{\"username\":{\"value\":\"" + marker + "\"}}")) {
         mvc.perform(
@@ -403,6 +416,110 @@ class IdentityObservationHttpTest {
                   .toList())
           .allSatisfy(message -> assertThat(message).doesNotContain(marker, rejected));
       verifyNoInteractions(provider, reader);
+    } finally {
+      logger.detachAppender(logs);
+      logs.stop();
+    }
+  }
+
+  @AfterEach
+  void restoreFrameworkLogging() {
+    webLogger.setLevel(previousWebLevel);
+    methodLogger.setLevel(previousMethodLevel);
+  }
+
+  @Test
+  void fixtureIsExcludedFromProductionComponentDiscovery() {
+    var scanner =
+        new org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider(
+            true);
+    var environment = new org.springframework.core.env.StandardEnvironment();
+    environment.setActiveProfiles("testing");
+    scanner.setEnvironment(environment);
+    assertThat(
+            scanner.findCandidateComponents(
+                "de.caritas.cob.userservice.api.service.identity.observation"))
+        .extracting(org.springframework.beans.factory.config.BeanDefinition::getBeanClassName)
+        .doesNotContain(Config.class.getName());
+  }
+
+  @Test
+  void successfulProbeDoesNotLogSelectorsAtDebug() throws Throwable {
+    empty();
+    String marker = "PrivateSuccessfulProbeR612";
+    var logs =
+        captureLogMessages(
+            () ->
+                mvc.perform(
+                        request(
+                            "/useradmin/identity-observations",
+                            "{\"username\":\"" + marker + "\"}",
+                            caller.getRoles(),
+                            Authority.AuthorityValue.USER_ADMIN))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.normalizedSelectors.usernames[0]").value(marker)));
+    assertThat(logs).allSatisfy(message -> assertThat(message).doesNotContain(marker));
+  }
+
+  @Test
+  void successfulObservationDoesNotLogNestedSourceFactsAtTrace() throws Throwable {
+    empty();
+    String marker = "PrivateSourceFactsC831";
+    webLogger.setLevel(ch.qos.logback.classic.Level.TRACE);
+    methodLogger.setLevel(ch.qos.logback.classic.Level.TRACE);
+    when(provider.read(any()))
+        .thenReturn(
+            new Layer(
+                Source.KEYCLOAK,
+                Status.COMPLETE,
+                List.of(
+                    new Fact(
+                        Source.KEYCLOAK,
+                        "owner",
+                        null,
+                        marker,
+                        marker + "@example.invalid",
+                        null,
+                        null,
+                        null,
+                        null,
+                        false))));
+    var logs =
+        captureLogMessages(
+            () ->
+                mvc.perform(
+                        request(
+                            "/useradmin/identity-observations",
+                            "{\"identityId\":\"owner\"}",
+                            caller.getRoles(),
+                            Authority.AuthorityValue.USER_ADMIN))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.occupancy").value("OCCUPIED"))
+                    .andExpect(jsonPath("$.facts[0].username").value(marker))
+                    .andExpect(jsonPath("$.facts[0].email").value(marker + "@example.invalid")));
+    assertThat(logs).allSatisfy(message -> assertThat(message).doesNotContain(marker));
+  }
+
+  private List<String> captureLogMessages(org.junit.jupiter.api.function.Executable action)
+      throws Throwable {
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+    var logs =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    logs.start();
+    logger.addAppender(logs);
+    try {
+      action.execute();
+      return logs.list.stream()
+          .map(
+              event ->
+                  event.getFormattedMessage()
+                      + (event.getThrowableProxy() == null
+                          ? ""
+                          : ch.qos.logback.classic.spi.ThrowableProxyUtil.asString(
+                              event.getThrowableProxy())))
+          .toList();
     } finally {
       logger.detachAppender(logs);
       logs.stop();
