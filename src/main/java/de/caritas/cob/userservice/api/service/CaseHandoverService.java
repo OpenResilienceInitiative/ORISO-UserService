@@ -9,10 +9,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsu
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
@@ -58,6 +60,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -69,6 +74,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -2601,12 +2607,30 @@ public class CaseHandoverService {
       throw new InternalServerErrorException(
           "Case handover requester does not have Matrix credentials");
     }
+
+    String roomId = session.getMatrixRoomId();
+    var membersBefore = matrixSynapseService.getRoomMembers(roomId);
+    if (membersBefore.isEmpty()) {
+      throw new ServiceUnavailableException(
+          "Case Handover Matrix membership could not be verified");
+    }
+
+    // After a Traeger change the previous owner has left the room (the LEAVE repair task), so
+    // there is nobody whose token could invite the new owner or raise their power level. Only a
+    // takeover can end up here: a co-access needs the owner in the room to be made read-only.
+    boolean previousOwnerInRoom =
+        previousConsultant != null
+            && !isBlank(previousConsultant.getMatrixUserId())
+            && membersBefore.get().contains(previousConsultant.getMatrixUserId());
+    if (accessType == AccessType.TAKEOVER && !previousOwnerInRoom) {
+      return ensureRequesterJoinedWithoutPreviousOwner(session, requester, membersBefore.get());
+    }
+
     if (previousConsultant == null || isBlank(previousConsultant.getMatrixUserId())) {
       throw new InternalServerErrorException(
           "Previous consultant does not have Matrix credentials for case handover");
     }
 
-    String roomId = session.getMatrixRoomId();
     String previousConsultantToken =
         matrixSynapseService.loginAsUserAccessToken(previousConsultant.getMatrixUserId());
     if (isBlank(previousConsultantToken)) {
@@ -2636,15 +2660,18 @@ public class CaseHandoverService {
           "Failed to create requester Matrix token for case handover");
     }
 
-    var membersBefore = matrixSynapseService.getRoomMembers(roomId);
-    if (membersBefore.isEmpty()) {
-      throw new ServiceUnavailableException(
-          "Case Handover Matrix membership could not be verified");
-    }
     boolean wasMemberBefore = membersBefore.get().contains(requester.getMatrixUserId());
 
     boolean joined = matrixSynapseService.joinRoom(roomId, requesterToken);
     if (!joined) {
+      // The owner may have left between the member snapshot and the invite: then the invite was
+      // refused and the join fails, although the force-join path could complete the takeover.
+      if (accessType == AccessType.TAKEOVER) {
+        var current = matrixSynapseService.getRoomMembers(roomId);
+        if (current.isPresent() && !current.get().contains(previousConsultant.getMatrixUserId())) {
+          return ensureRequesterJoinedWithoutPreviousOwner(session, requester, current.get());
+        }
+      }
       throw new InternalServerErrorException(
           "Failed to join case handover requester to Matrix room");
     }
@@ -2684,15 +2711,29 @@ public class CaseHandoverService {
     }
     // The new owner needs the owner's room rights: later co-access grants on this case lower and
     // restore levels and remove members with the owner's token. Never block an absence cover over
-    // this, though: at level 0 the new owner can still post.
-    if (accessType == AccessType.TAKEOVER
-        && !matrixSynapseService.setUserPowerLevel(
-            roomId, requester.getMatrixUserId(), OWNER_POWER_LEVEL, previousConsultantToken)) {
-      log.warn(
-          "Could not give the new owner {} of session {} the owner power level in room {}",
-          requester.getUsername(),
+    // this, though: at level 0 the new owner can still post. Raised only once the takeover is
+    // committed, like on the owner-left path: this level survives a rollback (and the join
+    // compensation never removes a standing department member), which would leave a colleague as
+    // room admin of a case they do not own.
+    if (accessType == AccessType.TAKEOVER) {
+      String requesterMatrixId = requester.getMatrixUserId();
+      // A colleague left at -1 by a failed co-access restore cannot post without this raise, so
+      // a failed raise goes to the persistent repair queue instead of staying a log line. Unknown
+      // power levels count as "relies on it": the queue is only used when the raise failed.
+      boolean reliesOnRaise = !requesterCanPostNow(roomId, requesterMatrixId, requesterToken);
+      raiseOwnerPowerOnceCommitted(
           session.getId(),
-          roomId);
+          requester.getId(),
+          roomId,
+          () ->
+              matrixSynapseService.setUserPowerLevel(
+                  roomId, requesterMatrixId, OWNER_POWER_LEVEL, previousConsultantToken),
+          "the previous owner's token is no longer accepted or lacks the power to raise it",
+          reliesOnRaise
+              ? () ->
+                  matrixRepairService.stagePowerRaise(
+                      roomId, requesterMatrixId, session.getId(), requester.getId())
+              : null);
     }
 
     // The previous counsellor deliberately keeps their membership. ADR-002's reveal lifecycle has
@@ -2700,6 +2741,249 @@ public class CaseHandoverService {
     // case when they return — and under Megolm a counsellor removed here could never be given the
     // history back. Hiding the conversation is the application curtain's job, not Matrix's.
     return !wasMemberBefore;
+  }
+
+  /**
+   * Takeover when the previous owner is no longer in the Matrix room, e.g. because the repair queue
+   * made them leave after a Traeger change. Their token can neither invite the new owner nor raise
+   * a power level any more, so the technical Matrix admin does both instead: a force-join (it
+   * invites as the admin, the pattern {@code ensureAdminInRoom} uses) and {@code make_room_admin}.
+   *
+   * <p>The join is mandatory - without it the case would stay with someone who is gone, so a
+   * failure ends the takeover and the surrounding transaction rolls back. The owner power level is
+   * best effort: Synapse hands it out through a joined member who still holds power, and in a room
+   * where nobody does the new owner stays at level 0, which still lets them answer the advice
+   * seeker.
+   *
+   * @return true when this call added the requester to the room
+   */
+  private boolean ensureRequesterJoinedWithoutPreviousOwner(
+      Session session, Consultant requester, List<String> membersBefore) {
+    String requesterMatrixId = requester.getMatrixUserId();
+    String requesterToken = matrixSynapseService.loginAsUserAccessToken(requesterMatrixId);
+    if (isBlank(requesterToken)) {
+      throw new InternalServerErrorException(
+          "Failed to create requester Matrix token for case handover");
+    }
+
+    String roomId = session.getMatrixRoomId();
+    boolean wasMemberBefore = membersBefore.contains(requesterMatrixId);
+    if (!wasMemberBefore) {
+      // Registered before the join: Synapse's admin join is an invite followed by a join, so a
+      // failure in between (or a lost answer) can leave the colleague invited or joined while the
+      // takeover ends in an error. The previous owner is gone, so the colleague removes
+      // themselves with their own token.
+      registerMatrixJoinRollbackCompensation(
+          roomId,
+          requesterMatrixId,
+          session.getId(),
+          requester.getId(),
+          requesterMatrixId,
+          requesterToken,
+          false);
+      if (!matrixSynapseService.forceJoinUserToRoom(
+          roomId,
+          requesterMatrixId,
+          staffMembersInRoom(session, requesterMatrixId, membersBefore))) {
+        throw new InternalServerErrorException(
+            "Failed to join case handover requester to Matrix room: the previous owner has left"
+                + " and the technical Matrix admin could not add the requester");
+      }
+    }
+
+    // Also after a force-join: Synapse keeps the power entry of someone who left, so a colleague
+    // who left at -1 comes back mute. A refusal rolls back, which removes a force-joined member.
+    boolean mutedWithoutRaise =
+        requireRequesterCanPost(roomId, requesterMatrixId, requesterToken, membersBefore);
+    raiseOwnerPowerOnceCommitted(
+        session.getId(),
+        requester.getId(),
+        roomId,
+        () -> matrixSynapseService.makeRoomAdmin(roomId, requesterMatrixId),
+        "no joined room member holds power to raise it",
+        // The takeover was only allowed because this raise restores writing, so a failure must
+        // not stay a log line: hand it to the persistent Matrix repair queue.
+        mutedWithoutRaise
+            ? () ->
+                matrixRepairService.stagePowerRaise(
+                    roomId, requesterMatrixId, session.getId(), requester.getId())
+            : null);
+    return !wasMemberBefore;
+  }
+
+  /** Whether the requester can write right now; false also when the levels cannot be read. */
+  private boolean requesterCanPostNow(String roomId, String requesterMatrixId, String token) {
+    return matrixSynapseService
+        .getPowerLevels(roomId, token)
+        .map(levels -> powerOfMember(levels, requesterMatrixId) >= eventsDefaultOf(levels))
+        .orElse(false);
+  }
+
+  private static int eventsDefaultOf(Map<String, Object> levels) {
+    return powerLevelOf(levels.get("events_default"), 0);
+  }
+
+  private static int powerOfMember(Map<String, Object> levels, String member) {
+    Map<?, ?> users = levels.get("users") instanceof Map<?, ?> map ? map : Map.of();
+    return powerLevelOf(users.get(member), powerLevelOf(levels.get("users_default"), 0));
+  }
+
+  /**
+   * A member who skips the join (or rejoins with a kept power entry) is not guaranteed to be able
+   * to answer the advice seeker: an expired read-only co-access leaves them at power -1 when the
+   * owner had already left (the owner's token can no longer restore level 0, the sweep keeps
+   * retrying). The after-commit {@code make_room_admin} is the only thing that could fix that, and
+   * it only works while a joined member still holds the power to change power levels. A takeover
+   * that would leave the new owner mute is refused before anything is committed instead.
+   */
+  private boolean requireRequesterCanPost(
+      String roomId, String requesterMatrixId, String requesterToken, List<String> members) {
+    var power = matrixSynapseService.getPowerLevels(roomId, requesterToken);
+    if (power.isEmpty()) {
+      throw new ServiceUnavailableException(
+          "Case Handover Matrix power levels could not be verified");
+    }
+    Map<String, Object> levels = power.get();
+    int usersDefault = powerLevelOf(levels.get("users_default"), 0);
+    int eventsDefault = powerLevelOf(levels.get("events_default"), 0);
+    Map<?, ?> users = levels.get("users") instanceof Map<?, ?> map ? map : Map.of();
+    java.util.function.ToIntFunction<String> powerOf =
+        member -> powerLevelOf(users.get(member), usersDefault);
+    if (powerOf.applyAsInt(requesterMatrixId) >= eventsDefault) {
+      return false;
+    }
+    int needed = powerLevelOf(levels.get("state_default"), 50);
+    if (levels.get("events") instanceof Map<?, ?> events) {
+      needed = powerLevelOf(events.get("m.room.power_levels"), needed);
+    }
+    final int powerLevelsEvent = needed;
+    boolean someoneCanRaise =
+        members.stream()
+            .filter(member -> !member.equals(requesterMatrixId))
+            .anyMatch(member -> powerOf.applyAsInt(member) >= powerLevelsEvent);
+    if (!someoneCanRaise) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.CASE_HANDOVER_REQUESTER_CANNOT_WRITE,
+          HttpStatus.CONFLICT,
+          "Case handover refused: the requester is read-only in the Matrix room and no room member"
+              + " can restore their right to write");
+    }
+    return true;
+  }
+
+  private static int powerLevelOf(Object value, int fallback) {
+    if (value instanceof Number number) {
+      return number.intValue();
+    }
+    try {
+      return value == null ? fallback : Integer.parseInt(String.valueOf(value));
+    } catch (NumberFormatException malformed) {
+      return fallback;
+    }
+  }
+
+  /**
+   * Synapse keeps a user's power-level entry after they leave, and a standing department member is
+   * never removed by the join compensation, so a raise must not happen before the takeover is
+   * committed: after a rollback the colleague would keep owner rights in a room of a case they do
+   * not own. Used by both takeover paths (previous owner left or still present). Best effort - a
+   * refused or failed raise only logs, the colleague then stays at level 0 and can still answer.
+   *
+   * @param ownerConsultantId the new owner; after the commit the raise only runs while they still
+   *     own the case (see {@link SessionOwnerLock})
+   * @param raise performs the raise and returns whether Synapse accepted it
+   * @param refusalReason why a refused raise is expected to happen, for the log line
+   * @param stageRepair persists the durable repair row (nullable). Runs synchronously inside the
+   *     takeover transaction, so the row commits atomically with it and a failure to persist it
+   *     fails the takeover instead of being swallowed. After a successful raise the row is removed.
+   */
+  private void raiseOwnerPowerOnceCommitted(
+      Long sessionId,
+      String ownerConsultantId,
+      String roomId,
+      BooleanSupplier raise,
+      String refusalReason,
+      Supplier<CaseHandoverMatrixRepairService.StagedRepair> stageRepair) {
+    var staged = stageRepair == null ? null : stageRepair.get();
+    Function<BooleanSupplier, Runnable> safely =
+        attempt ->
+            () -> {
+              boolean raised;
+              try {
+                raised = attempt.getAsBoolean();
+                if (!raised) {
+                  log.warn(
+                      "Could not give the new owner of session {} the owner power level in room {}: {}",
+                      sessionId,
+                      roomId,
+                      refusalReason);
+                }
+              } catch (RuntimeException exception) {
+                raised = false;
+                log.warn(
+                    "Could not give the new owner of session {} the owner power level in room {} ({})",
+                    sessionId,
+                    roomId,
+                    exception.getClass().getSimpleName());
+              }
+              if (raised && staged != null) {
+                try {
+                  matrixRepairService.completeStagedRepair(staged);
+                } catch (RuntimeException exception) {
+                  // Harmless: the retry is idempotent and removes the row itself.
+                  log.warn(
+                      "Could not remove the completed owner power repair of session {} ({})",
+                      sessionId,
+                      exception.getClass().getSimpleName());
+                }
+              }
+            };
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      safely.apply(raise).run();
+      return;
+    }
+    // After the commit the session row lock is gone: a back-to-back takeover may already own the
+    // case, so the raise only runs while the new owner still does, under the same lock.
+    Runnable afterCommitRaise =
+        safely.apply(
+            () ->
+                SessionOwnerLock.runWhileStillOwner(
+                    transactionManager, sessionRepository, sessionId, ownerConsultantId, raise));
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            afterCommitRaise.run();
+          }
+        });
+  }
+
+  /**
+   * Room members who may let the technical admin into the room: consultants of the session's centre
+   * (same tenant). An allow-list, not "anybody but the seeker": a bot or any other account must
+   * never be impersonated. Without a known Matrix id for the advice seeker nobody is offered,
+   * because then the seeker could not be told apart from a member we have no record of.
+   */
+  private List<String> staffMembersInRoom(
+      Session session, String requesterMatrixId, List<String> members) {
+    String askerMatrixId = session.getUser() == null ? null : session.getUser().getMatrixUserId();
+    if (isBlank(askerMatrixId) || session.getAgencyId() == null) {
+      return List.of();
+    }
+    Set<String> centreStaff =
+        consultantAgencyRepository
+            .findByAgencyIdAndDeleteDateIsNullOrderByConsultantFirstNameAsc(session.getAgencyId())
+            .stream()
+            .map(ConsultantAgency::getConsultant)
+            .filter(Objects::nonNull)
+            .filter(consultant -> Objects.equals(session.getTenantId(), consultant.getTenantId()))
+            .map(Consultant::getMatrixUserId)
+            .filter(matrixId -> !isBlank(matrixId))
+            .collect(Collectors.toSet());
+    return members.stream()
+        .filter(centreStaff::contains)
+        .filter(member -> !member.equals(requesterMatrixId) && !member.equals(askerMatrixId))
+        .toList();
   }
 
   /**

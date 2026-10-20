@@ -43,6 +43,9 @@ public class MatrixRoomClient {
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
   private static final String ENDPOINT_MEMBERSHIP =
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.member/{userId}";
+  private static final String ENDPOINT_ADMIN_JOIN = "/_synapse/admin/v1/join/{roomId}";
+  private static final String ENDPOINT_ADMIN_MAKE_ROOM_ADMIN =
+      "/_synapse/admin/v1/rooms/{roomId}/make_room_admin";
   private static final int INVITE_USER_MAX_ATTEMPTS = 3;
   private static final long DEFAULT_INVITE_RETRY_DELAY_MS = 1000L;
   private static final Pattern RETRY_AFTER_MS_PATTERN =
@@ -474,6 +477,22 @@ public class MatrixRoomClient {
     }
   }
 
+  /**
+   * Reads the room's {@code m.room.power_levels} content with the given member's token. Empty when
+   * Matrix refuses or cannot be reached, so a caller can tell "unknown" from a real answer.
+   */
+  public Optional<Map<String, Object>> getPowerLevels(String roomId, String accessToken) {
+    try {
+      return Optional.of(readPowerLevels(roomId, accessToken));
+    } catch (Exception failure) {
+      log.warn(
+          "Could not read the power levels of Matrix room {} ({})",
+          roomId,
+          failure.getClass().getSimpleName());
+      return Optional.empty();
+    }
+  }
+
   @SuppressWarnings("unchecked")
   private Map<String, Object> readPowerLevels(String roomId, String token) {
     var response =
@@ -615,6 +634,75 @@ public class MatrixRoomClient {
       return false;
     } catch (Exception e) {
       log.error("Failed to remove user {} from room {}: {}", userId, roomId, e.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * Joins a local user into a room without that user's or a room member's token ({@code POST
+   * /_synapse/admin/v1/join/{roomId}}, Synapse admin API). Synapse invites the user as the calling
+   * admin first when the room is not public, so the admin has to be a room member with permission
+   * to invite.
+   *
+   * <p>Best-effort: never throws. Logs the room ID and the Synapse status only, never the user ID.
+   *
+   * @param roomId the Matrix room ID
+   * @param userId the full Matrix user ID of the local user to join
+   * @param adminToken access token of the technical Matrix admin
+   * @return true when Synapse accepted the join, false otherwise
+   */
+  public boolean forceJoinUser(String roomId, String userId, String adminToken) {
+    return postAdminUserAction(ENDPOINT_ADMIN_JOIN, "force-join", roomId, userId, adminToken);
+  }
+
+  /**
+   * Grants a user the highest power level a local room member holds ({@code POST
+   * /_synapse/admin/v1/rooms/{roomId}/make_room_admin}, Synapse admin API). It acts through the
+   * local member with the most power, so it fails when none of them can still change power levels.
+   *
+   * <p>Best-effort: never throws. Logs the room ID and the Synapse status only, never the user ID.
+   *
+   * @param roomId the Matrix room ID
+   * @param userId the full Matrix user ID to raise
+   * @param adminToken access token of the technical Matrix admin
+   * @return true when Synapse accepted the request, false otherwise
+   */
+  public boolean makeRoomAdmin(String roomId, String userId, String adminToken) {
+    return postAdminUserAction(
+        ENDPOINT_ADMIN_MAKE_ROOM_ADMIN, "make-room-admin", roomId, userId, adminToken);
+  }
+
+  private boolean postAdminUserAction(
+      String endpoint, String action, String roomId, String userId, String adminToken) {
+    try {
+      var headers = getClientHttpHeaders(adminToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      HttpEntity<Map<String, Object>> request =
+          new HttpEntity<>(Map.of("user_id", userId), headers);
+
+      var response =
+          restTemplate.postForEntity(
+              buildUrl(endpoint, Map.of("roomId", roomId)), request, Map.class);
+      if (response.getStatusCode().is2xxSuccessful()) {
+        log.info("Matrix admin {} succeeded for room {}", action, roomId);
+        return true;
+      }
+      log.warn(
+          "Matrix admin {} for room {} answered status {}",
+          action,
+          roomId,
+          response.getStatusCode());
+      return false;
+    } catch (HttpClientErrorException ex) {
+      log.warn(
+          "Matrix admin {} for room {} was refused with status {}",
+          action,
+          roomId,
+          ex.getStatusCode());
+      return false;
+    } catch (Exception ex) {
+      log.warn(
+          "Matrix admin {} for room {} failed: {}", action, roomId, ex.getClass().getSimpleName());
       return false;
     }
   }

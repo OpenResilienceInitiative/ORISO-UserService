@@ -35,6 +35,7 @@ class CaseHandoverMatrixRepairServiceTest {
   @Mock private CaseHandoverMatrixRepairTaskRepository repository;
   @Mock private CaseHandoverRequestRepository handoverRequestRepository;
   @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessionRepository;
   @Mock private PlatformTransactionManager transactionManager;
   @Mock private TransactionStatus transactionStatus;
 
@@ -42,14 +43,15 @@ class CaseHandoverMatrixRepairServiceTest {
 
   @BeforeEach
   void setUp() {
-    when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+    org.mockito.Mockito.lenient()
+        .when(transactionManager.getTransaction(any()))
+        .thenReturn(transactionStatus);
     service =
         new CaseHandoverMatrixRepairService(
             repository,
             handoverRequestRepository,
             matrixSynapseService,
-            org.mockito.Mockito.mock(
-                de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            sessionRepository,
             Clock.fixed(Instant.parse("2026-09-14T10:00:00Z"), ZoneOffset.UTC),
             transactionManager);
     ReflectionTestUtils.setField(service, "maxAttempts", 100);
@@ -144,6 +146,110 @@ class CaseHandoverMatrixRepairServiceTest {
 
     service.process(9L);
 
+    verify(repository).delete(task);
+  }
+
+  private CaseHandoverMatrixRepairTask powerRaiseTask() {
+    return CaseHandoverMatrixRepairTask.builder()
+        .id(11L)
+        .action(CaseHandoverMatrixRepairAction.POWER_RAISE)
+        .roomId("!room:matrix")
+        .memberId("@requester:matrix")
+        .sessionId(123L)
+        .requesterConsultantId("requester")
+        .build();
+  }
+
+  private de.caritas.cob.userservice.api.model.Session sessionOwnedBy(String consultantId) {
+    var owner = new de.caritas.cob.userservice.api.model.Consultant();
+    owner.setId(consultantId);
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setConsultant(owner);
+    return session;
+  }
+
+  @Test
+  void stagePowerRaisePersistsATaskInTheCallersTransaction() {
+    when(repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.POWER_RAISE, "!room:matrix", "@requester:matrix"))
+        .thenReturn(java.util.Optional.empty());
+    when(repository.saveAndFlush(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              CaseHandoverMatrixRepairTask saved = invocation.getArgument(0);
+              saved.setId(42L);
+              return saved;
+            });
+
+    var staged = service.stagePowerRaise("!room:matrix", "@requester:matrix", 123L, "requester");
+
+    var captor = ArgumentCaptor.forClass(CaseHandoverMatrixRepairTask.class);
+    verify(repository).saveAndFlush(captor.capture());
+    assertThat(captor.getValue().getAction()).isEqualTo(CaseHandoverMatrixRepairAction.POWER_RAISE);
+    assertThat(captor.getValue().getMemberId()).isEqualTo("@requester:matrix");
+    assertThat(captor.getValue().getRequesterConsultantId()).isEqualTo("requester");
+    assertThat(staged.id()).isEqualTo(42L);
+    // No REQUIRES_NEW transaction: the row must share the takeover's fate.
+    verify(transactionManager, org.mockito.Mockito.never()).getTransaction(any());
+  }
+
+  @Test
+  void stagePowerRaiseReactivatesAnExistingTaskWithANewGeneration() {
+    var existing = powerRaiseTask();
+    existing.setAttemptCount(7);
+    when(repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.POWER_RAISE, "!room:matrix", "@requester:matrix"))
+        .thenReturn(java.util.Optional.of(existing));
+    when(repository.saveAndFlush(existing)).thenReturn(existing);
+
+    var staged = service.stagePowerRaise("!room:matrix", "@requester:matrix", 123L, "requester");
+
+    assertThat(existing.getAttemptCount()).isZero();
+    assertThat(staged.generation()).isEqualTo(existing.getGeneration());
+    assertThat(existing.getGeneration()).isEqualTo(1L);
+  }
+
+  @Test
+  void processPowerRaiseRetriesTheRaiseAndDeletesTheTaskOnSuccess() {
+    var task = powerRaiseTask();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    when(sessionRepository.findByIdForUpdate(123L))
+        .thenReturn(Optional.of(sessionOwnedBy("requester")));
+    when(matrixSynapseService.makeRoomAdmin("!room:matrix", "@requester:matrix")).thenReturn(true);
+
+    service.process(11L);
+
+    verify(matrixSynapseService).makeRoomAdmin("!room:matrix", "@requester:matrix");
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void processPowerRaiseKeepsTheTaskWhileTheRaiseStillFails() {
+    var task = powerRaiseTask();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    when(sessionRepository.findByIdForUpdate(123L))
+        .thenReturn(Optional.of(sessionOwnedBy("requester")));
+    when(matrixSynapseService.makeRoomAdmin("!room:matrix", "@requester:matrix")).thenReturn(false);
+
+    service.process(11L);
+
+    assertThat(task.getAttemptCount()).isEqualTo(1);
+    verify(repository, org.mockito.Mockito.never()).delete(task);
+  }
+
+  @Test
+  void processPowerRaiseDropsTheTaskWhenAnotherCounsellorOwnsTheCaseNow() {
+    var task = powerRaiseTask();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    when(sessionRepository.findByIdForUpdate(123L))
+        .thenReturn(Optional.of(sessionOwnedBy("someone-else")));
+
+    service.process(11L);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).makeRoomAdmin(any(), any());
     verify(repository).delete(task);
   }
 
