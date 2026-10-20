@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogEntry;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogsResult;
@@ -66,10 +67,13 @@ class CaseHandoverControllerTest {
     when(caseHandoverService.extendCoAccess(13L))
         .thenReturn(CaseHandoverStatus.builder().sessionId(13L).canExtend(true).build());
 
-    mockMvc
-        .perform(post("/users/sessions/13/case-handover/extend"))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.canExtend").value(true));
+    for (String prefix : List.of("", "/service")) {
+      mockMvc
+          .perform(post(prefix + "/users/sessions/13/case-handover/extend"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.canExtend").value(true))
+          .andExpect(jsonPath("$.canReclaim").value(false));
+    }
   }
 
   @Test
@@ -371,6 +375,44 @@ class CaseHandoverControllerTest {
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(status, response.getBody());
     verify(caseHandoverService).resolveClientConsent(12L, 21L, false);
+  }
+
+  @Test
+  void reclaim_happyPath_returnsTheActiveOwnerStatus() throws Exception {
+    var status =
+        CaseHandoverStatus.builder().sessionId(13L).status("GRANTED").canViewContent(true).build();
+    when(caseHandoverService.reclaim(13L)).thenReturn(status);
+
+    var response = controller.reclaim(13L);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(status, response.getBody());
+    for (String prefix : List.of("", "/service")) {
+      mockMvc
+          .perform(post(prefix + "/users/sessions/13/case-handover/reclaim"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.status").value("GRANTED"))
+          .andExpect(jsonPath("$.canExtend").value(false))
+          .andExpect(jsonPath("$.canReclaim").value(false));
+    }
+  }
+
+  @Test
+  void reclaim_byAnyoneButTheOriginalCounsellor_isForbidden() throws Exception {
+    when(caseHandoverService.reclaim(13L)).thenThrow(new ForbiddenException("not yours"));
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/reclaim"))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void reclaim_afterAPermanentHandover_isAConflict() throws Exception {
+    when(caseHandoverService.reclaim(13L)).thenThrow(new ConflictException("permanent"));
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/reclaim"))
+        .andExpect(status().isConflict());
   }
 
   @Test

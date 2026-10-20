@@ -193,6 +193,14 @@ public class CaseHandoverController {
     return ResponseEntity.ok(caseHandoverService.extendCoAccess(sessionId));
   }
 
+  @PostMapping({
+    "/users/sessions/{sessionId}/case-handover/reclaim",
+    "/service/users/sessions/{sessionId}/case-handover/reclaim"
+  })
+  public ResponseEntity<CaseHandoverStatus> reclaim(@PathVariable Long sessionId) {
+    return ResponseEntity.ok(caseHandoverService.reclaim(sessionId));
+  }
+
   @PostMapping({"/users/case-handover/batch", "/service/users/case-handover/batch"})
   public ResponseEntity<List<CaseHandoverBatchResultDTO>> requestBatchAccess(
       @Valid @RequestBody CaseHandoverBatchRequestDTO request) {
