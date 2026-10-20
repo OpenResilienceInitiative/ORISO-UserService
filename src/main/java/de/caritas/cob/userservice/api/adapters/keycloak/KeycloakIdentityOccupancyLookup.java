@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.keycloak;
 
 import static de.caritas.cob.userservice.api.service.identity.observation.IdentityObservation.*;
 
+import de.caritas.cob.userservice.api.port.out.IdentityOccupancyLookup;
 import de.caritas.cob.userservice.api.service.identity.observation.IdentityProbe;
 import de.caritas.cob.userservice.api.service.identity.observation.IdentityUsername;
 import jakarta.ws.rs.NotFoundException;
@@ -14,11 +15,12 @@ import org.springframework.stereotype.Component;
 /** Bounded exact reads against the configured realm only, including disabled identities. */
 @Component
 @RequiredArgsConstructor
-public class KeycloakIdentityOccupancyLookup {
+public class KeycloakIdentityOccupancyLookup implements IdentityOccupancyLookup {
   private static final int PAGE_SIZE = 100;
   private static final int MAX_PAGES = 20;
   private final KeycloakClient client;
 
+  @Override
   public Layer read(IdentityProbe probe) {
     var facts = new LinkedHashMap<String, Fact>();
     Status status = Status.COMPLETE;

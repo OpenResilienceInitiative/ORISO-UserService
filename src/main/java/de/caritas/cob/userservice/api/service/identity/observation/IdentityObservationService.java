@@ -3,8 +3,8 @@ package de.caritas.cob.userservice.api.service.identity.observation;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.*;
 import static de.caritas.cob.userservice.api.service.identity.observation.IdentityObservation.*;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakIdentityOccupancyLookup;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.IdentityOccupancyLookup;
 import java.time.Instant;
 import java.util.*;
 import java.util.function.Supplier;
@@ -16,7 +16,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class IdentityObservationService {
   private final AuthenticatedUser user;
-  private final KeycloakIdentityOccupancyLookup provider;
+  private final IdentityOccupancyLookup provider;
   private final IdentityOccupancyRawReader reader;
 
   public void requirePermission() {
