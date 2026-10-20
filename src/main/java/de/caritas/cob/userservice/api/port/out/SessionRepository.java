@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.port.out;
 
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -7,6 +8,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -496,4 +498,116 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "FROM Session s WHERE s.agencyId IN :agencyIds GROUP BY s.agencyId")
   List<AgencyConsultingTypeProjection> findLowestConsultingTypeIdsByAgencyIds(
       @Param("agencyIds") Set<Long> agencyIds);
+
+  /**
+   * Open cases a counsellor owns in one Träger, for counting what a move leaves behind (#1419). The
+   * owner stays on a case when its counsellor moves, so without the tenant a move back would count
+   * the cases of the Träger they return to as left behind. Same tenant predicate as the room
+   * queries: cases without a tenant belong to the technical tenant 1.
+   */
+  @Query(
+      """
+      SELECT COUNT(s) FROM Session s
+      WHERE s.consultant.id = :consultantId
+        AND s.status IN :statuses
+        AND (s.tenantId = :tenantId OR (s.tenantId IS NULL AND :tenantId = 1))
+      """)
+  long countOpenCasesOfTenant(
+      @Param("consultantId") String consultantId,
+      @Param("statuses") Collection<SessionStatus> statuses,
+      @Param("tenantId") Long tenantId);
+
+  /**
+   * The Matrix rooms through which a counsellor can read the cases of the Träger they are leaving
+   * (#1419): the rooms of cases they own, of team cases of the centres they leave, of cases they
+   * supervise and of cases a colleague granted them access to, all of the given Träger only: the
+   * owner stays on a case when its counsellor moves, so without the Träger a move back would pick
+   * up the cases of the Träger they are returning to. No case data leaves the query: a case id and
+   * a room id.
+   */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(s.id, s.matrixRoomId)
+      FROM Session s
+      WHERE s.matrixRoomId IS NOT NULL
+        AND (s.consultant.id = :consultantId
+          OR (s.teamSession = true AND s.agencyId IN :agencyIds)
+          OR s.id IN (SELECT sv.session.id FROM SessionSupervisor sv
+                      WHERE sv.supervisorConsultant.id = :consultantId AND sv.isActive = true)
+          OR s.id IN (SELECT r.session.id FROM CaseHandoverRequest r
+                      WHERE r.requesterConsultant.id = :consultantId
+                        AND r.status IN :grantedStatuses))
+        AND (s.tenantId = :tenantId OR (s.tenantId IS NULL AND :tenantId = 1))
+      """)
+  List<SessionRoomRow> findRoomsReadableBy(
+      @Param("tenantId") Long tenantId,
+      @Param("consultantId") String consultantId,
+      @Param("agencyIds") Collection<Long> agencyIds,
+      @Param("grantedStatuses") Collection<CaseHandoverRequest.Status> grantedStatuses);
+
+  /**
+   * The staff-only supervision side rooms (ADR-008) a counsellor sits in: those of cases they
+   * supervise and those of cases they own. Rows that were ended earlier count as well, because the
+   * member stays in the room until somebody removes them. Only those of cases of the given Träger.
+   */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(
+          ss.session.id, ss.matrixRoomId)
+      FROM SessionSupervisor ss
+      WHERE ss.matrixRoomId IS NOT NULL
+        AND (ss.supervisorConsultant.id = :consultantId
+          OR ss.session.consultant.id = :consultantId)
+        AND (ss.session.tenantId = :tenantId
+          OR (ss.session.tenantId IS NULL AND :tenantId = 1))
+      """)
+  List<SessionRoomRow> findSupervisionSideRoomsOf(
+      @Param("tenantId") Long tenantId, @Param("consultantId") String consultantId);
+
+  /**
+   * Of the given Matrix rooms, those that are the chat room of a case of the Träger (#1421). A
+   * counsellor is a silent member of the accepted cases of their department's other counsellors
+   * (ADR-002 §1); no ownership or grant points at them, only the room membership does.
+   */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(s.id, s.matrixRoomId)
+      FROM Session s
+      WHERE s.matrixRoomId IN :roomIds
+        AND (s.tenantId = :tenantId OR (s.tenantId IS NULL AND :tenantId = 1))
+      """)
+  List<SessionRoomRow> findSessionRoomsOfTenantIn(
+      @Param("tenantId") Long tenantId, @Param("roomIds") Collection<String> roomIds);
+
+  /** Of the given Matrix rooms, those that are a supervision side room of a case of the Träger. */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(
+          ss.session.id, ss.matrixRoomId)
+      FROM SessionSupervisor ss
+      WHERE ss.matrixRoomId IN :roomIds
+        AND (ss.session.tenantId = :tenantId
+          OR (ss.session.tenantId IS NULL AND :tenantId = 1))
+      """)
+  List<SessionRoomRow> findSideRoomsOfTenantIn(
+      @Param("tenantId") Long tenantId, @Param("roomIds") Collection<String> roomIds);
+
+  /** Every case room of the given centres: the fallback when membership cannot be asked. */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(s.id, s.matrixRoomId)
+      FROM Session s
+      WHERE s.matrixRoomId IS NOT NULL AND s.agencyId IN :agencyIds
+      """)
+  List<SessionRoomRow> findSessionRoomsOfAgencies(@Param("agencyIds") Collection<Long> agencyIds);
+
+  /** Every supervision side room of cases of the given centres: the fallback, as above. */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(
+          ss.session.id, ss.matrixRoomId)
+      FROM SessionSupervisor ss
+      WHERE ss.matrixRoomId IS NOT NULL AND ss.session.agencyId IN :agencyIds
+      """)
+  List<SessionRoomRow> findSideRoomsOfAgencies(@Param("agencyIds") Collection<Long> agencyIds);
 }

@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
+import de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -50,7 +51,7 @@ import org.springframework.web.util.UriUtils;
  */
 @Slf4j
 @Service
-public class MatrixSynapseService implements MatrixUserClient {
+public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembershipLookup {
 
   private static final long SERVER_OPERATION_TOKEN_TTL_MS = 10 * 60 * 1000L;
   private static final String ENDPOINT_REGISTER_USER = "/_synapse/admin/v1/register";
@@ -71,6 +72,7 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_SEND_TO_DEVICE =
       "/_matrix/client/v3/sendToDevice/{eventType}/{txnId}";
   private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
+  private static final int ROOM_OWNER_POWER_LEVEL = 100;
 
   // The closed-vocabulary error code in a Synapse error body; never the body's free text.
   private static final java.util.regex.Pattern MATRIX_ERRCODE =
@@ -1319,6 +1321,59 @@ public class MatrixSynapseService implements MatrixUserClient {
   }
 
   /**
+   * Makes sure the technical Matrix admin is a member of the room and holds the owner power level
+   * there, acting with the token of a member who still holds that level. Called before the room
+   * owner leaves for good (a counsellor who moved to another Träger, #1421): afterwards nobody else
+   * holds power, so neither a colleague who takes the case over nor {@code make_room_admin} could
+   * raise anybody any more.
+   *
+   * <p>Idempotent and retryable. An admin who is not in the room is invited by the member and
+   * joins; an admin who already holds the level is not written again. A member who holds less than
+   * the owner level has nothing to hand over (the room has its owner), which counts as done.
+   *
+   * <p>Never throws and logs no Matrix user ID (KDG).
+   *
+   * @param roomId the Matrix room ID
+   * @param memberMatrixUserId full Matrix ID of the member whose token is passed
+   * @param memberToken access token of that member
+   * @return true when nothing is left to hand over, false when the room could not be prepared and
+   *     the caller must not let the member leave yet
+   */
+  public boolean ensureAdminHoldsRoomPower(
+      String roomId, String memberMatrixUserId, String memberToken) {
+    if (roomId == null
+        || roomId.isBlank()
+        || memberMatrixUserId == null
+        || memberMatrixUserId.isBlank()
+        || memberToken == null
+        || memberToken.isBlank()) {
+      return false;
+    }
+    String adminToken = getAdminToken();
+    if (adminToken == null) {
+      log.warn("Could not get the Matrix admin token to hand room power to the technical admin");
+      return false;
+    }
+    String adminMatrixId =
+        "@" + matrixConfig.getAdminUsername() + ":" + matrixConfig.getServerName();
+
+    var members = getRoomMembers(roomId);
+    if (members.isEmpty()) {
+      return false;
+    }
+    if (!members.get().contains(adminMatrixId)) {
+      // The invite may fail because the admin is invited already; the join decides.
+      matrixRoomClient.inviteUserQuietly(roomId, adminMatrixId, memberToken);
+      if (!matrixRoomClient.joinRoom(roomId, adminToken)) {
+        return false;
+      }
+    }
+    return matrixRoomClient.raiseUserPowerLevel(
+            roomId, adminMatrixId, memberMatrixUserId, ROOM_OWNER_POWER_LEVEL, memberToken)
+        != MatrixRoomClient.PowerRaise.FAILED;
+  }
+
+  /**
    * Reads the current members of a Matrix room via the Synapse admin API ({@code GET
    * /_synapse/admin/v1/rooms/{roomId}/members}).
    *
@@ -1913,17 +1968,31 @@ public class MatrixSynapseService implements MatrixUserClient {
   }
 
   public java.util.List<String> getJoinedRoomsForMatrixUser(String matrixUserId) {
+    return findJoinedRoomsForMatrixUser(matrixUserId).orElse(java.util.Collections.emptyList());
+  }
+
+  /**
+   * Like {@link #getJoinedRoomsForMatrixUser}, but tells "in no room" (an empty list) from "could
+   * not ask" (empty result), for callers that must not mistake an outage for an empty membership.
+   *
+   * @param matrixUserId full local Matrix user ID
+   * @return the joined room ids, or empty when the server could not be asked or answered without
+   *     the list
+   */
+  @Override
+  public java.util.Optional<java.util.List<String>> findJoinedRoomsForMatrixUser(
+      String matrixUserId) {
     String accessToken = loginAsUserAccessToken(matrixUserId);
     if (accessToken == null) {
       log.warn(
           "Could not create Matrix token for {} to get joined rooms",
           redactor.pseudonym(matrixUserId));
-      return java.util.Collections.emptyList();
+      return java.util.Optional.empty();
     }
-    return getJoinedRoomsWithToken(accessToken, matrixUserId);
+    return findJoinedRoomsWithToken(accessToken, matrixUserId);
   }
 
-  private java.util.List<String> getJoinedRoomsWithToken(
+  private java.util.Optional<java.util.List<String>> findJoinedRoomsWithToken(
       String accessToken, String principalForLog) {
     try {
       var headers = new HttpHeaders();
@@ -1944,25 +2013,31 @@ public class MatrixSynapseService implements MatrixUserClient {
         @SuppressWarnings("unchecked")
         java.util.List<String> joinedRooms =
             (java.util.List<String>) response.getBody().get("joined_rooms");
+        if (joinedRooms == null) {
+          log.warn(
+              "Matrix answered the joined rooms of user {} without a room list",
+              redactor.pseudonym(principalForLog));
+          return java.util.Optional.empty();
+        }
         log.info(
             "✅ User {} has {} joined Matrix rooms",
             redactor.pseudonym(principalForLog),
-            joinedRooms != null ? joinedRooms.size() : 0);
-        return joinedRooms != null ? joinedRooms : java.util.Collections.emptyList();
+            joinedRooms.size());
+        return java.util.Optional.of(joinedRooms);
       }
 
       log.warn(
           "Failed to get joined rooms for user {}: {}",
           redactor.pseudonym(principalForLog),
           response.getStatusCode());
-      return java.util.Collections.emptyList();
+      return java.util.Optional.empty();
 
     } catch (Exception e) {
       log.error(
           "Error getting joined rooms for user {}: {}",
           redactor.pseudonym(principalForLog),
           redactor.scrub(e.getMessage()));
-      return java.util.Collections.emptyList();
+      return java.util.Optional.empty();
     }
   }
 
