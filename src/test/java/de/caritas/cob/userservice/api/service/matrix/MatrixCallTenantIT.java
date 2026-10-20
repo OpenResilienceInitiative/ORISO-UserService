@@ -81,6 +81,7 @@ class MatrixCallTenantIT {
   @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private IdentityTombstoneService tombstones;
+  @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
 
   private MatrixEmailSyncCursorStore freshEmailCursor() {
     var cursor = mock(MatrixEmailSyncCursorStore.class);

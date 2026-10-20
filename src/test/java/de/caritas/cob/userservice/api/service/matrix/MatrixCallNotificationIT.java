@@ -66,6 +66,7 @@ class MatrixCallNotificationIT {
   @MockitoBean private UserRepository users;
   @MockitoBean private ConsultantRepository consultants;
   @MockitoBean private IdentityTombstoneService tombstones;
+  @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
 
   @Test
   void currentInviteProducesAPersistedNotificationForTheOtherConversationMember() {
