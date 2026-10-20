@@ -63,6 +63,29 @@ class CaseHandoverControllerTest {
   }
 
   @Test
+  void extendCoAccess_returnsTheExtendedStatus() throws Exception {
+    when(caseHandoverService.extendCoAccess(13L))
+        .thenReturn(CaseHandoverStatus.builder().sessionId(13L).canExtend(true).build());
+
+    for (String prefix : List.of("", "/service")) {
+      mockMvc
+          .perform(post(prefix + "/users/sessions/13/case-handover/extend"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.canExtend").value(true))
+          .andExpect(jsonPath("$.canReclaim").value(false));
+    }
+  }
+
+  @Test
+  void extendCoAccess_withoutAnActiveCoAccess_isAConflict() throws Exception {
+    when(caseHandoverService.extendCoAccess(13L)).thenThrow(new ConflictException("none"));
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/extend"))
+        .andExpect(status().isConflict());
+  }
+
+  @Test
   void listEligibleRecipients_returnsTheConsultantsTheOfferWouldAccept() throws Exception {
     when(caseHandoverService.listEligibleRecipients(123L))
         .thenReturn(
@@ -355,7 +378,7 @@ class CaseHandoverControllerTest {
   }
 
   @Test
-  void reclaim_happyPath_returnsTheActiveOwnerStatus() {
+  void reclaim_happyPath_returnsTheActiveOwnerStatus() throws Exception {
     var status =
         CaseHandoverStatus.builder().sessionId(13L).status("GRANTED").canViewContent(true).build();
     when(caseHandoverService.reclaim(13L)).thenReturn(status);
@@ -364,6 +387,14 @@ class CaseHandoverControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(status, response.getBody());
+    for (String prefix : List.of("", "/service")) {
+      mockMvc
+          .perform(post(prefix + "/users/sessions/13/case-handover/reclaim"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.status").value("GRANTED"))
+          .andExpect(jsonPath("$.canExtend").value(false))
+          .andExpect(jsonPath("$.canReclaim").value(false));
+    }
   }
 
   @Test

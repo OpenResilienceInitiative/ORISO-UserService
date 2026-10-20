@@ -186,6 +186,14 @@ public class CaseHandoverController {
   }
 
   @PostMapping({
+    "/users/sessions/{sessionId}/case-handover/extend",
+    "/service/users/sessions/{sessionId}/case-handover/extend"
+  })
+  public ResponseEntity<CaseHandoverStatus> extendCoAccess(@PathVariable Long sessionId) {
+    return ResponseEntity.ok(caseHandoverService.extendCoAccess(sessionId));
+  }
+
+  @PostMapping({
     "/users/sessions/{sessionId}/case-handover/reclaim",
     "/service/users/sessions/{sessionId}/case-handover/reclaim"
   })
