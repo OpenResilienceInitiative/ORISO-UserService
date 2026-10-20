@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="20261013-invite-template-queued-delete-guard" author="oriso">
+    <!-- Do not repair a dangling queued template by turning the planned mail into a draft. -->
+    <preConditions onFail="HALT" onError="HALT"
+      onFailMessage="Queued invitation template references are orphaned. Run the preflight in docs/agent-tasks/2026-10-13_invite-template-delete/README.md and resolve explicitly before deployment.">
+      <sqlCheck expectedResult="0">SELECT COUNT(*) FROM account_invite i
+        LEFT JOIN invite_email_template t ON t.id = i.queued_template_id
+        WHERE i.queued_template_id IS NOT NULL AND t.id IS NULL</sqlCheck>
+    </preConditions>
+    <!-- Scalar template_id on invite_email_delivery deliberately remains an immutable history. -->
+    <addForeignKeyConstraint baseTableName="account_invite" baseColumnNames="queued_template_id"
+      referencedTableName="invite_email_template" referencedColumnNames="id"
+      constraintName="fk_account_invite_queued_template" onDelete="RESTRICT"/>
+    <rollback>
+      <dropForeignKeyConstraint baseTableName="account_invite"
+        constraintName="fk_account_invite_queued_template"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

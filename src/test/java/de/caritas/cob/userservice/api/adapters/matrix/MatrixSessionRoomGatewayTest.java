@@ -31,6 +31,23 @@ class MatrixSessionRoomGatewayTest {
   }
 
   @Test
+  void isJoinedMember_shouldAnswerFromTheRoomMemberList() {
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(java.util.Optional.of(java.util.List.of("@counsellor:matrix")));
+
+    assertThat(gateway.isJoinedMember("!room:matrix", "@counsellor:matrix")).isTrue();
+    assertThat(gateway.isJoinedMember("!room:matrix", "@colleague:matrix")).isFalse();
+  }
+
+  @Test
+  void isJoinedMember_shouldTreatAnUnknownMemberListAsNotJoined() {
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(java.util.Optional.empty());
+
+    assertThat(gateway.isJoinedMember("!room:matrix", "@counsellor:matrix")).isFalse();
+  }
+
+  @Test
   void shouldTranslateMissingRoomTransportBodyToNull() throws Exception {
     when(matrixSynapseService.createRoom("name", "alias", "token"))
         .thenReturn(ResponseEntity.ok(null));

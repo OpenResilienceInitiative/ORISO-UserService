@@ -43,5 +43,7 @@ public enum HttpStatusExceptionReason {
   /** Another request is changing this invite right now; try again. */
   INVITE_BUSY,
   /** The invite changed while the invitee filled in the wizard; reload the link. */
-  INVITE_CHANGED
+  INVITE_CHANGED,
+  /** The case owner changed after the case handover request or offer was created. */
+  CASE_OWNER_CHANGED
 }
