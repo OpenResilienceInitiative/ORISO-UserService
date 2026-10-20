@@ -246,7 +246,7 @@ public class CreateConsultantSaga {
     } else if (password == null || password.isEmpty()) {
       throw new BadRequestException("Password is required for consultant creation");
     } else {
-      log.info("Using provided password for consultant creation");
+      log.info("Using the password of the creation request");
     }
     updateKeycloakPasswordOrRollback(consultantCreationInput, keycloakUserId, password);
     updateKeyloakRolesOrRollback(roles, keycloakUserId, consultantCreationInput);

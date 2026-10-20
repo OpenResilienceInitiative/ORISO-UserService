@@ -57,7 +57,8 @@ class MatrixRtcPolicyContextResolver {
         || (conversationType == null
             && session.getRegistrationType() == Session.RegistrationType.ANONYMOUS)) {
       chatType = MatrixRtcPolicyContext.ChatType.ANONYMOUS;
-    } else if (conversationType == ConversationType.INTERNAL_GROUP) {
+    } else if (conversationType == ConversationType.INTERNAL_GROUP
+        || conversationType == ConversationType.SELF_HELP) {
       chatType = MatrixRtcPolicyContext.ChatType.GROUP;
     } else {
       chatType = MatrixRtcPolicyContext.ChatType.ONE_ON_ONE;

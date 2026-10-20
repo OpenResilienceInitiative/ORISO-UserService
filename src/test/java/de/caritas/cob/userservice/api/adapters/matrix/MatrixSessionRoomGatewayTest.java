@@ -8,6 +8,8 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRespon
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -28,6 +30,23 @@ class MatrixSessionRoomGatewayTest {
         .thenReturn(ResponseEntity.ok(body));
 
     assertThat(gateway.createRoom("name", "alias", "token")).isEqualTo("!room:matrix");
+  }
+
+  @Test
+  void isJoinedMember_shouldAnswerFromTheRoomMemberList() {
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(java.util.Optional.of(java.util.List.of("@counsellor:matrix")));
+
+    assertThat(gateway.isJoinedMember("!room:matrix", "@counsellor:matrix")).isTrue();
+    assertThat(gateway.isJoinedMember("!room:matrix", "@colleague:matrix")).isFalse();
+  }
+
+  @Test
+  void isJoinedMember_shouldTreatAnUnknownMemberListAsNotJoined() {
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(java.util.Optional.empty());
+
+    assertThat(gateway.isJoinedMember("!room:matrix", "@counsellor:matrix")).isFalse();
   }
 
   @Test
@@ -62,6 +81,27 @@ class MatrixSessionRoomGatewayTest {
     when(matrixConfig.getServerName()).thenReturn("matrix.example.org");
 
     assertThat(gateway.userIdFor("consultant")).isEqualTo("@consultant:matrix.example.org");
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "bart.simpson@dreambau.com,bart.simpson=40dreambau.com",
+    "Bart.Simpson@Dreambau.com,bart.simpson=40dreambau.com",
+    "bart.simpson=40dreambau.com,bart.simpson=3d40dreambau.com",
+    "jürgen@example.org,j=c3=bcrgen=40example.org",
+    "ordinary_user-1.2/+,ordinary_user-1.2/+"
+  })
+  void shouldUseTheSameSafeIdentityForProvisioningAndExistingAccountLookup(
+      String username, String expectedLocalpart) throws Exception {
+    when(matrixConfig.getServerName()).thenReturn("matrix.example.org");
+    var expectedId = "@" + expectedLocalpart + ":matrix.example.org";
+    var body = new MatrixCreateUserResponseDTO();
+    body.setUserId(expectedId);
+    when(matrixSynapseService.createUser(expectedLocalpart, "password", "Consultant"))
+        .thenReturn(ResponseEntity.ok(body));
+
+    assertThat(gateway.createUser(username, "password", "Consultant")).isEqualTo(expectedId);
+    assertThat(gateway.userIdFor(username)).isEqualTo(expectedId);
   }
 
   @Test
