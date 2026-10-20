@@ -1811,7 +1811,7 @@ components:
     IdentityObservationRequestDTO:
       type: object
       additionalProperties: false
-      description: At least one exact selector. Selectors form a union. No blank, control or wildcard characters.
+      description: At least one exact selector. Selectors form a union. Underscores are literal characters. Blank values, control characters and the wildcard characters %, * and ? are rejected.
       properties:
         identityId: {type: string, minLength: 1, maxLength: 255}
         username: {type: string, minLength: 1, maxLength: 255}

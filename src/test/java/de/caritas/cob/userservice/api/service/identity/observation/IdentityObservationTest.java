@@ -209,7 +209,7 @@ class IdentityObservationTest {
 
   @Test
   void validatesSelectorsAndNormalizesEncodedUsername() {
-    for (String invalid : List.of(" ", "a*", "a%", "a_", "a?", "a\nb", "a".repeat(256)))
+    for (String invalid : List.of(" ", "a*", "a%", "a?", "a\nb", "a".repeat(256)))
       assertThatThrownBy(() -> probe(null, invalid, null))
           .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> probe(null, null, null)).isInstanceOf(IllegalArgumentException.class);
@@ -457,5 +457,66 @@ class IdentityObservationTest {
                 .status())
         .isEqualTo(Status.DEPENDENCY_FAILURE);
     assertThat(TenantContext.getCurrentTenantData()).isSameAs(previous);
+  }
+
+  @Test
+  void canonicalUnderscoreSelectorsStayLiteralAcrossRealRawLayers() {
+    assertThatCode(
+            () -> {
+              String canonical = "marge_at_springfield.invalid";
+              String identity = "owner_1439";
+              String email = "marge_test@example.invalid";
+              JdbcDataSource ds = new JdbcDataSource();
+              ds.setURL(
+                  "jdbc:h2:mem:identityliteralunderscore;MODE=MariaDB;DB_CLOSE_DELAY=-1;NON_KEYWORDS=USER");
+              JdbcTemplate jdbc = new JdbcTemplate(ds);
+              for (String table : List.of("admin", "consultant", "user")) {
+                jdbc.execute(
+                    "CREATE TABLE `"
+                        + table
+                        + "` ("
+                        + table
+                        + "_id VARCHAR(255), username VARCHAR(255), email VARCHAR(255), tenant_id BIGINT, "
+                        + (table.equals("admin") ? "type VARCHAR(6)" : "delete_date TIMESTAMP")
+                        + ")");
+                Object state =
+                    table.equals("admin")
+                        ? "TENANT"
+                        : java.sql.Timestamp.valueOf("2026-01-01 00:00:00");
+                jdbc.update(
+                    "INSERT INTO `" + table + "` VALUES (?,?,?,?,?)",
+                    identity,
+                    table.equals("consultant") ? transcoder.encodeUsername(canonical) : canonical,
+                    email,
+                    9L,
+                    state);
+                jdbc.update(
+                    "INSERT INTO `" + table + "` VALUES (?,?,?,?,?)",
+                    "ownerX1439",
+                    canonical.replace('_', 'X'),
+                    email.replace('_', 'X'),
+                    9L,
+                    state);
+              }
+              var real = new IdentityOccupancyRawReader(ds);
+              for (var source : List.of(Source.ADMIN, Source.CONSULTANT, Source.ASKER)) {
+                for (var selector :
+                    List.of(
+                        probe(null, canonical, null),
+                        probe(null, transcoder.encodeUsername(canonical), null),
+                        probe(identity, null, null),
+                        probe(null, null, email))) {
+                  var result = real.read(source, selector);
+                  assertThat(result.status()).isEqualTo(Status.COMPLETE);
+                  assertThat(result.facts()).extracting(Fact::identityId).containsExactly(identity);
+                  assertThat(result.facts().getFirst().deleted())
+                      .isEqualTo(source == Source.ADMIN ? null : true);
+                }
+                var literal = real.read(source, probe(null, "x' OR '1'='1_at_", null));
+                assertThat(literal.status()).isEqualTo(Status.COMPLETE);
+                assertThat(literal.facts()).isEmpty();
+              }
+            })
+        .doesNotThrowAnyException();
   }
 }

@@ -212,4 +212,107 @@ class KeycloakIdentityOccupancyLookupTest {
         .thenReturn(List.of(user("invalid", "enc.bad!", true)));
     assertThat(lookup.read(probe(null, "empty", null)).status()).isEqualTo(Status.LIMIT);
   }
+
+  @Test
+  void canonicalUnderscoreNamesRemainExactAndIncludeDisabledProviderMatches() {
+    assertThatCode(
+            () -> {
+              String canonical = "marge_at_springfield.invalid";
+              String encoded = new UsernameTranscoder().encodeUsername(canonical);
+              var lookup = lookup();
+              when(users.search(
+                      eq(canonical),
+                      isNull(),
+                      isNull(),
+                      isNull(),
+                      eq(0),
+                      eq(100),
+                      isNull(),
+                      isNull(),
+                      eq(true)))
+                  .thenReturn(
+                      List.of(
+                          user("owner_1439", canonical, false),
+                          user("decoy", canonical.replace('_', 'X'), true)));
+              when(users.search(
+                      eq(encoded),
+                      isNull(),
+                      isNull(),
+                      isNull(),
+                      eq(0),
+                      eq(100),
+                      isNull(),
+                      isNull(),
+                      eq(true)))
+                  .thenReturn(List.of(user("owner_1439", encoded, false)));
+              for (String name : List.of(canonical, encoded)) {
+                var result = lookup.read(probe(null, name, null));
+                assertThat(result.status()).isEqualTo(Status.COMPLETE);
+                assertThat(result.facts())
+                    .extracting(Fact::identityId)
+                    .containsExactly("owner_1439");
+                assertThat(result.facts().getFirst().enabled()).isFalse();
+              }
+              verify(users, times(2))
+                  .search(
+                      eq(canonical),
+                      isNull(),
+                      isNull(),
+                      isNull(),
+                      eq(0),
+                      eq(100),
+                      isNull(),
+                      isNull(),
+                      eq(true));
+              verify(users, never())
+                  .search(
+                      eq(canonical),
+                      isNull(),
+                      isNull(),
+                      isNull(),
+                      anyInt(),
+                      anyInt(),
+                      isNull(),
+                      isNull(),
+                      eq(false));
+            })
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void underscoreIdentityAndEmailSelectorsRemainExact() {
+    assertThatCode(
+            () -> {
+              var lookup = lookup();
+              var resource = mock(UserResource.class);
+              var owner = user("owner_1439", "other", false);
+              owner.setEmail("marge_test@example.invalid");
+              var decoy = user("decoy", "other", true);
+              decoy.setEmail("margeXtest@example.invalid");
+              when(users.get("owner_1439")).thenReturn(resource);
+              when(resource.toRepresentation()).thenReturn(owner);
+              when(users.search(
+                      isNull(),
+                      isNull(),
+                      isNull(),
+                      eq("marge_test@example.invalid"),
+                      eq(0),
+                      eq(100),
+                      isNull(),
+                      isNull(),
+                      eq(true)))
+                  .thenReturn(List.of(owner, decoy));
+              for (var selector :
+                  List.of(
+                      probe("owner_1439", null, null),
+                      probe(null, null, "marge_test@example.invalid"))) {
+                var result = lookup.read(selector);
+                assertThat(result.status()).isEqualTo(Status.COMPLETE);
+                assertThat(result.facts())
+                    .extracting(Fact::identityId)
+                    .containsExactly("owner_1439");
+              }
+            })
+        .doesNotThrowAnyException();
+  }
 }

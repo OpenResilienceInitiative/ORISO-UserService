@@ -37,7 +37,7 @@ public record IdentityProbe(String identityId, List<String> usernames, String em
             || value.length() > maximum
             || value
                 .codePoints()
-                .anyMatch(c -> Character.isISOControl(c) || "*%_?".indexOf(c) >= 0)))
+                .anyMatch(c -> Character.isISOControl(c) || "*%?".indexOf(c) >= 0)))
       throw new IllegalArgumentException("Invalid exact selector");
   }
 

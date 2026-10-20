@@ -525,4 +525,78 @@ class IdentityObservationHttpTest {
       logs.stop();
     }
   }
+
+  @Test
+  void canonicalUnderscoreRawAndEncodedSelectorsCanBeCompletelyFree() throws Exception {
+    empty();
+    String canonical = "marge_at_springfield.invalid";
+    for (String name : List.of(canonical, new UsernameTranscoder().encodeUsername(canonical))) {
+      mvc.perform(
+              request(
+                  "/useradmin/identity-observations",
+                  "{\"username\":\""
+                      + name
+                      + "\",\"identityId\":\"owner_1439\",\"email\":\"marge_test@example.invalid\"}",
+                  caller.getRoles(),
+                  Authority.AuthorityValue.USER_ADMIN))
+          .andExpect(status().isOk())
+          .andExpect(header().string("Cache-Control", "no-store"))
+          .andExpect(jsonPath("$.occupancy").value("FREE"))
+          .andExpect(jsonPath("$.identityScanComplete").value(true))
+          .andExpect(jsonPath("$.normalizedSelectors.usernames[0]").value(canonical));
+    }
+  }
+
+  @Test
+  void canonicalUnderscoreSelectorsFindDisabledAndDeletedOccupancy() throws Exception {
+    empty();
+    String canonical = "marge_at_springfield.invalid";
+    when(provider.read(any()))
+        .thenReturn(
+            new Layer(
+                Source.KEYCLOAK,
+                Status.COMPLETE,
+                List.of(
+                    new Fact(
+                        Source.KEYCLOAK,
+                        "owner_1439",
+                        null,
+                        canonical,
+                        "marge_test@example.invalid",
+                        null,
+                        null,
+                        null,
+                        null,
+                        false))));
+    when(reader.read(eq(Source.ASKER), any()))
+        .thenReturn(
+            new Layer(
+                Source.ASKER,
+                Status.COMPLETE,
+                List.of(
+                    new Fact(
+                        Source.ASKER,
+                        "owner_1439",
+                        "owner_1439",
+                        canonical,
+                        "marge_test@example.invalid",
+                        9L,
+                        null,
+                        true,
+                        "2026-01-01",
+                        null))));
+    for (String name : List.of(canonical, new UsernameTranscoder().encodeUsername(canonical))) {
+      mvc.perform(
+              request(
+                  "/useradmin/identity-observations",
+                  "{\"username\":\"" + name + "\"}",
+                  caller.getRoles(),
+                  Authority.AuthorityValue.USER_ADMIN))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.occupancy").value("OCCUPIED"))
+          .andExpect(jsonPath("$.facts.length()").value(2))
+          .andExpect(jsonPath("$.facts[0].enabled").value(false))
+          .andExpect(jsonPath("$.facts[1].deleted").value(true));
+    }
+  }
 }
