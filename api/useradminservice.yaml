@@ -1892,7 +1892,6 @@ components:
       type: object
       required:
         - username
-        - password
         - firstname
         - lastname
         - email
@@ -1908,7 +1907,7 @@ components:
           type: string
           format: password
           example: "SecurePass123!"
-          description: "Password for the consultant"
+          description: "Optional. Left out, the consultant chooses their own password through the setup e-mail."
           minLength: 8
           maxLength: 255
         firstname:
