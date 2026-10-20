@@ -31,6 +31,9 @@ public interface ConsultantRepository
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
   Optional<Consultant> findByIdAndDeleteDateIsNull(String id);
 
+  /** Active selection only; scalar identity fields suffice, so no association fetch graph. */
+  List<Consultant> findByIdInAndDeleteDateIsNull(Collection<String> ids);
+
   Optional<Consultant> findByEmailAndDeleteDateIsNull(String email);
 
   List<Consultant> findAllByEmailAndDeleteDateIsNull(String email);
