@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -98,7 +99,8 @@ class UserAdminControllerTest {
             grantConsultantIdentityService,
             userIdentitiesService,
             adminListPreferenceService,
-            accountSetupIssuer);
+            accountSetupIssuer,
+            mock(de.caritas.cob.userservice.api.helper.UserHelper.class));
   }
 
   @Test

@@ -56,6 +56,14 @@ public class MatrixSessionRoomGateway implements SessionRoomGateway {
   }
 
   @Override
+  public boolean isJoinedMember(String roomId, String userId) {
+    return matrixSynapseService
+        .getRoomMembers(roomId)
+        .map(members -> members.contains(userId))
+        .orElse(false);
+  }
+
+  @Override
   public boolean joinRoom(String roomId, String accessToken) {
     return matrixSynapseService.joinRoom(roomId, accessToken);
   }
