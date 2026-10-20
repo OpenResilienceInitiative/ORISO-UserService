@@ -19,6 +19,10 @@ import org.springframework.web.client.RestTemplate;
 public abstract class AccountInactivityPolicyHttpFixture {
   private static final HttpServer SERVER = startServer();
 
+  /** Reserved tenant IDs whose tenant TenantService has not created yet: they answer 404. */
+  private static final java.util.Set<Long> NOT_YET_CREATED =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+
   @Autowired private TenantServiceApiControllerFactory tenantApiFactory;
 
   @Autowired private AccountInactivityService lifecycle;
@@ -28,6 +32,14 @@ public abstract class AccountInactivityPolicyHttpFixture {
     assertEquals(24, policy.assignedMonths());
     assertEquals(0, policy.revision());
     assertEquals(AccountInactivityService.Status.ACTIVE, policy.status());
+  }
+
+  protected static void tenantNotCreatedYet(long tenantId) {
+    NOT_YET_CREATED.add(tenantId);
+  }
+
+  protected static void tenantCreated(long tenantId) {
+    NOT_YET_CREATED.remove(tenantId);
   }
 
   @DynamicPropertySource
@@ -56,6 +68,13 @@ public abstract class AccountInactivityPolicyHttpFixture {
             if (!"GET".equals(exchange.getRequestMethod())
                 || !(path.equals("/tenant/public/single")
                     || path.matches("/tenant/public/id/-?\\d+"))) {
+              exchange.sendResponseHeaders(404, -1);
+              exchange.close();
+              return;
+            }
+            if (path.startsWith("/tenant/public/id/")
+                && NOT_YET_CREATED.contains(
+                    Long.valueOf(path.substring("/tenant/public/id/".length())))) {
               exchange.sendResponseHeaders(404, -1);
               exchange.close();
               return;

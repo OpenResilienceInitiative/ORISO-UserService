@@ -51,6 +51,8 @@ import org.springframework.transaction.support.TransactionTemplate;
   PictureIntake.class,
   ConsultantAdminService.class,
   SessionOwnershipService.class,
+  de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore.class,
+  de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class,
   DeletionLifecycleService.class,
   DeleteDatabaseConsultantAction.class
 })

@@ -44,6 +44,15 @@ public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandove
   Optional<CaseHandoverRequest> findByIdAndSessionId(
       @Param("id") Long id, @Param("sessionId") Long sessionId);
 
+  /**
+   * Lock-free lookup for status reads. Those run in read-only transactions, where MariaDB rejects
+   * {@code SELECT ... FOR UPDATE} (1792), so they must not use the locked consent-decision lookup.
+   */
+  @Query(
+      "select request from CaseHandoverRequest request where request.id = :id and request.session.id = :sessionId")
+  Optional<CaseHandoverRequest> findWithoutLockByIdAndSessionId(
+      @Param("id") Long id, @Param("sessionId") Long sessionId);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select request from CaseHandoverRequest request where request.id = :id")
   Optional<CaseHandoverRequest> findByIdForUpdate(@Param("id") Long id);
