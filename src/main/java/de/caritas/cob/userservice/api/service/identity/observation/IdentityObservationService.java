@@ -9,11 +9,13 @@ import java.time.Instant;
 import java.util.*;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class IdentityObservationService {
   private final AuthenticatedUser user;
   private final IdentityOccupancyLookup provider;
@@ -76,6 +78,8 @@ public class IdentityObservationService {
     try {
       return action.get();
     } catch (RuntimeException failure) {
+      // Fail closed while retaining other observed layers; never expose dependency error details.
+      log.warn("Identity occupancy source {} failed: {}", source, failure.getClass().getName());
       return Layer.failed(source);
     }
   }

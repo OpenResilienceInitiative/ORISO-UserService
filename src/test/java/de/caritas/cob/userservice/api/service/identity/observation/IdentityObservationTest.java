@@ -519,4 +519,29 @@ class IdentityObservationTest {
             })
         .doesNotThrowAnyException();
   }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "technical",
+        "notifications-technical",
+        "TECHNICAL_DEFAULT",
+        "NOTIFICATIONS_TECHNICAL"
+      })
+  void eachTechnicalVectorIndependentlyDeniesServiceObservation(String vector) {
+    if (vector.equals("technical") || vector.equals("notifications-technical")) {
+      var roles = new HashSet<>(user.getRoles());
+      roles.add(vector);
+      user.setRoles(roles);
+    } else
+      user.setGrantedAuthorities(
+          Set.of(
+              AuthorityValue.USER_ADMIN,
+              vector.equals("TECHNICAL_DEFAULT")
+                  ? AuthorityValue.TECHNICAL_DEFAULT
+                  : AuthorityValue.NOTIFICATIONS_TECHNICAL));
+    assertThatThrownBy(() -> observe(probe(null, "private", null)))
+        .isInstanceOf(AccessDeniedException.class);
+    verifyNoInteractions(provider, reader);
+  }
 }

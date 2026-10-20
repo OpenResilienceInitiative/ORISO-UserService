@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.service.identity.observation.Identi
 
 import java.util.*;
 import javax.sql.DataSource;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Component;
 
 /** Fixed raw projections include deleted rows and deliberately bypass tenant ORM filters. */
 @Component
+@Slf4j
 public class IdentityOccupancyRawReader {
   private static final int PAGE_SIZE = 100;
   private static final int MAX_PAGES = 20;
@@ -82,16 +84,22 @@ public class IdentityOccupancyRawReader {
     try {
       if (!probe.usernames().isEmpty() && facts.size() <= 20) {
         boolean exhausted = false;
+        Object after = null;
         for (int page = 0; page < MAX_PAGES; page++) {
           var candidates =
               jdbc.query(
                   select
-                      + "LOWER(username) LIKE 'enc.%' ORDER BY "
+                      + "LOWER(username) LIKE 'enc.%'"
+                      + (after == null ? "" : " AND " + id + " > :after")
+                      + " ORDER BY "
                       + id
-                      + " LIMIT 100 OFFSET :offset",
-                  new MapSqlParameterSource("offset", page * PAGE_SIZE),
-                  mapper);
-          for (var fact : candidates) {
+                      + " LIMIT "
+                      + PAGE_SIZE,
+                  new MapSqlParameterSource("after", after),
+                  (rs, row) -> new Candidate(rs.getObject("identity_id"), mapper.mapRow(rs, row)));
+          for (var candidate : candidates) {
+            after = candidate.cursor();
+            var fact = candidate.fact();
             if (!IdentityUsername.decode(fact.username()).resolved()) limited = true;
             if (probe.matches(fact.identityId(), fact.username(), fact.email()))
               facts.putIfAbsent(fact.rowId(), fact);
@@ -108,6 +116,11 @@ public class IdentityOccupancyRawReader {
         if (!exhausted) limited = true;
       }
     } catch (org.springframework.dao.DataAccessException dependencyFailure) {
+      // Retain observed facts but never certify absence after a failed candidate read.
+      log.warn(
+          "Identity occupancy source {} failed: {}",
+          source,
+          dependencyFailure.getClass().getName());
       return new Layer(
           source, Status.DEPENDENCY_FAILURE, facts.values().stream().limit(20).toList());
     }
@@ -116,4 +129,6 @@ public class IdentityOccupancyRawReader {
         limited ? Status.LIMIT : Status.COMPLETE,
         facts.values().stream().limit(20).toList());
   }
+
+  private record Candidate(Object cursor, Fact fact) {}
 }

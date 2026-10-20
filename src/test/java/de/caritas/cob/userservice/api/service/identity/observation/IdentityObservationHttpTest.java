@@ -21,6 +21,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.context.junit.jupiter.web.SpringJUnitWebConfig;
 import org.springframework.test.web.servlet.*;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -82,6 +83,7 @@ class IdentityObservationHttpTest {
 
   @Autowired WebApplicationContext context;
   @Autowired AuthenticatedUser caller;
+  @MockitoSpyBean IdentityObservationService observationService;
   @MockitoBean JwtDecoder decoder;
   @MockitoBean KeycloakIdentityOccupancyLookup provider;
   @MockitoBean IdentityOccupancyRawReader reader;
@@ -598,5 +600,82 @@ class IdentityObservationHttpTest {
           .andExpect(jsonPath("$.facts[0].enabled").value(false))
           .andExpect(jsonPath("$.facts[1].deleted").value(true));
     }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "technical",
+        "notifications-technical",
+        "TECHNICAL_DEFAULT",
+        "NOTIFICATIONS_TECHNICAL"
+      })
+  void eachTechnicalVectorIndependentlyDeniesBeforeTargetReads(String vector) throws Throwable {
+    var roles = new HashSet<>(caller.getRoles());
+    var authorities = new ArrayList<String>();
+    authorities.add(Authority.AuthorityValue.USER_ADMIN);
+    if (vector.equals("technical") || vector.equals("notifications-technical")) roles.add(vector);
+    else
+      authorities.add(
+          vector.equals("TECHNICAL_DEFAULT")
+              ? Authority.AuthorityValue.TECHNICAL_DEFAULT
+              : Authority.AuthorityValue.NOTIFICATIONS_TECHNICAL);
+    String marker = "PrivateIndependentDenialX811";
+    var logs =
+        captureLogMessages(
+            () ->
+                mvc.perform(
+                        request(
+                            "/service/useradmin/identity-observations",
+                            "{\"username\":\"" + marker + "\"}",
+                            roles,
+                            authorities.toArray(String[]::new)))
+                    .andExpect(status().isForbidden())
+                    .andExpect(content().string(""))
+                    .andExpect(
+                        header()
+                            .string(
+                                "Cache-Control",
+                                org.hamcrest.Matchers.containsString("no-store"))));
+    assertThat(logs).allSatisfy(message -> assertThat(message).doesNotContain(marker));
+    verifyNoInteractions(provider, reader);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void postParsingServiceAndMappingFaultsAreSanitized500AtTrace(boolean mapping) throws Throwable {
+    String marker = "PrivatePostParseFailureV177";
+    webLogger.setLevel(ch.qos.logback.classic.Level.TRACE);
+    methodLogger.setLevel(ch.qos.logback.classic.Level.TRACE);
+    if (mapping) {
+      var probe = IdentityProbe.of(null, marker, null, new UsernameTranscoder());
+      doReturn(
+              new IdentityObservation(
+                  java.time.Instant.now(), probe, true, marker, List.of(), List.of(), 200))
+          .when(observationService)
+          .observe(any());
+    } else {
+      doThrow(new IllegalArgumentException(marker)).when(observationService).observe(any());
+    }
+    var logs =
+        captureLogMessages(
+            () ->
+                mvc.perform(
+                        request(
+                            "/useradmin/identity-observations",
+                            "{\"username\":\"" + marker + "\"}",
+                            caller.getRoles(),
+                            Authority.AuthorityValue.USER_ADMIN))
+                    .andExpect(status().isInternalServerError())
+                    .andExpect(content().string(""))
+                    .andExpect(header().string("Cache-Control", "no-store")));
+    assertThat(logs).allSatisfy(message -> assertThat(message).doesNotContain(marker));
+    assertThat(logs)
+        .anySatisfy(
+            message ->
+                assertThat(message)
+                    .contains(
+                        "Identity occupancy HTTP translation failed: java.lang.IllegalArgumentException"));
+    verifyNoInteractions(provider, reader);
   }
 }

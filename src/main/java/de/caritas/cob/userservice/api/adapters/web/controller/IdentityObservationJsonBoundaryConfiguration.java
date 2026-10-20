@@ -29,6 +29,8 @@ public class IdentityObservationJsonBoundaryConfiguration implements WebMvcConfi
         return;
       }
     }
+    throw new IllegalStateException(
+        "Identity observation request boundary requires a JacksonJsonHttpMessageConverter");
   }
 
   private static final class SafeRequestConverter

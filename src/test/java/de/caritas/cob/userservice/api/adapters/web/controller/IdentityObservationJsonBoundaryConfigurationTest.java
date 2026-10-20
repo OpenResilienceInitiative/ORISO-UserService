@@ -91,4 +91,21 @@ class IdentityObservationJsonBoundaryConfigurationTest {
           .containsExactly("username");
     }
   }
+
+  @Test
+  void missingRequiredJacksonConverterFailsConfigurationClosed() {
+    for (var converters :
+        List.of(
+            new ArrayList<HttpMessageConverter<?>>(),
+            new ArrayList<HttpMessageConverter<?>>(
+                List.of(new org.springframework.http.converter.StringHttpMessageConverter())))) {
+      assertThatThrownBy(
+              () ->
+                  new IdentityObservationJsonBoundaryConfiguration()
+                      .extendMessageConverters(converters))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Identity observation request boundary requires a JacksonJsonHttpMessageConverter");
+    }
+  }
 }

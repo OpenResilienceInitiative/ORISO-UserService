@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.service.identity.observation.*;
 import java.time.ZoneOffset;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Component;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Component;
 /** HTTP translation only; the generated route is registered once by UserAdminController. */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class IdentityObservationHttpAdapter {
   static final String INVALID_SELECTOR_MESSAGE =
       "Provide at least one valid exact identityId, username or email; blank, overlong, control, wildcard and malformed encoded values are not allowed.";
@@ -22,10 +24,7 @@ public class IdentityObservationHttpAdapter {
       IdentityObservationRequestDTO request) {
     try {
       service.requirePermission();
-      if (request == null) throw new IllegalArgumentException("Missing exact selectors");
-      var probe =
-          IdentityProbe.of(
-              request.getIdentityId(), request.getUsername(), request.getEmail(), transcoder);
+      var probe = parseSelectors(request);
       var observation = service.observe(probe);
       var dto =
           new SafeResponse()
@@ -74,6 +73,18 @@ public class IdentityObservationHttpAdapter {
           .body(dto);
     } catch (AccessDeniedException denied) {
       return ResponseEntity.status(403).header("Cache-Control", "no-store").build();
+    } catch (IllegalArgumentException serverFault) {
+      // Mapping/service faults are server errors; raw exception text may contain private selectors.
+      log.error("Identity occupancy HTTP translation failed: {}", serverFault.getClass().getName());
+      return ResponseEntity.status(500).header("Cache-Control", "no-store").build();
+    }
+  }
+
+  private IdentityProbe parseSelectors(IdentityObservationRequestDTO request) {
+    try {
+      if (request == null) throw new IllegalArgumentException("Missing exact selectors");
+      return IdentityProbe.of(
+          request.getIdentityId(), request.getUsername(), request.getEmail(), transcoder);
     } catch (IllegalArgumentException invalid) {
       throw new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
           INVALID_SELECTOR_MESSAGE);
