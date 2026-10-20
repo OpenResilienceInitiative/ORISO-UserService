@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -12,9 +13,15 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.AvailabilityEndpoint;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,7 +32,11 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class TopicConsultantAvailabilityControllerTest {
@@ -128,6 +139,60 @@ class TopicConsultantAvailabilityControllerTest {
             });
     verify(liveChatDiagnosticMetrics)
         .recordAvailabilityLookupFailure(AvailabilityEndpoint.ANONYMOUS_DOOR);
+  }
+
+  @Test
+  void getTopicConsultantAvailability_redisReadFails_countsActualRegistryFailure() {
+    var redis = mock(StringRedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ValueOperations<String, String> values = mock(ValueOperations.class);
+    when(redis.opsForValue()).thenReturn(values);
+    when(values.multiGet(List.of("availability:c-1")))
+        .thenThrow(new RedisConnectionFailureException("private connection detail"));
+    var topics = mock(ConsultantTopicRepository.class);
+    var consultants = mock(ConsultantRepository.class);
+    when(topics.findConsultantIdsByTopicId(TOPIC_ID)).thenReturn(List.of("c-1"));
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setAbsent(false);
+    when(consultants.findAllByIdIn(List.of("c-1"))).thenReturn(List.of(consultant));
+    var meters = new SimpleMeterRegistry();
+    var registry = new ConsultantActivityRegistry(redis, meters, 120, "availability:");
+    var routing =
+        new TopicConsultantRoutingService(
+            topics,
+            consultants,
+            mock(MatrixSynapseService.class),
+            registry,
+            liveChatDiagnosticMetrics);
+    ReflectionTestUtils.setField(routing, "activeWindowMs", 120_000L);
+    var actualController =
+        new TopicConsultantAvailabilityController(routing, liveChatDiagnosticMetrics);
+
+    var response = actualController.getTopicConsultantAvailability(TOPIC_ID, null);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertFalse(response.getBody().isAvailable());
+    assertEquals(0, response.getBody().getNumAvailableConsultants());
+    verify(liveChatDiagnosticMetrics)
+        .recordAvailabilityLookupFailure(AvailabilityEndpoint.ANONYMOUS_DOOR);
+    assertThat(logAppender.list)
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.getFormattedMessage())
+                  .contains("AvailabilityStoreException")
+                  .doesNotContain("private connection detail");
+              assertThat(event.getThrowableProxy()).isNull();
+            });
+    assertThat(
+            meters
+                .get("oriso.live_chat.availability.store.operations")
+                .tag("operation", "read")
+                .tag("outcome", "failure")
+                .counter()
+                .count())
+        .isEqualTo(1);
   }
 
   @Test
