@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
@@ -609,14 +610,49 @@ public class CaseHandoverService {
       verifyUserTenant(user, session);
       if (session.getUser() == null
           || !Objects.equals(session.getUser().getUserId(), user.getUserId())
-          || (request.getStatus() != Status.PENDING_CLIENT_CONSENT
-              && request.getStatus() != Status.GRANTED_PENDING_CLIENT_OPTOUT)) {
+          || !isReadableBySessionAsker(request)) {
         throw new NotFoundException("Case handover request not found");
       }
       verifyRequestTenant(request, session);
       return toClientStatus(request);
     }
     throw new ForbiddenException("Current user is not allowed to read this request");
+  }
+
+  /**
+   * Whether the session's own advice seeker may read this request (#1705). A consent card that went
+   * stale must be able to settle on the request's real final status, so closed requests are
+   * readable too, but only those the advice seeker was actually asked about. The stored consent
+   * mode is no proof of that (a request denied at once stores it as well), so it is read from how
+   * the request got where it is:
+   *
+   * <ul>
+   *   <li>colleague offers (PENDING_RECIPIENT_ACCEPTANCE, RECIPIENT_DECLINED) are never shown;
+   *   <li>DENIED is never shown: it arises either before the advice seeker is asked or from their
+   *       own just-returned decision, which the decision response already carries;
+   *   <li>GRANTED, CLIENT_CONSENT_DECLINED and EXPIRED are reached only through the consent prompt
+   *       (opt-in decision, or opt-out notice), unless no consent applies at all.
+   * </ul>
+   */
+  private boolean isReadableBySessionAsker(CaseHandoverRequest request) {
+    Status status = request.getStatus();
+    if (status == Status.PENDING
+        || status == Status.PENDING_CLIENT_CONSENT
+        || status == Status.GRANTED_PENDING_CLIENT_OPTOUT) {
+      return true;
+    }
+    if (status != Status.GRANTED
+        && status != Status.CLIENT_CONSENT_DECLINED
+        && status != Status.EXPIRED) {
+      return false;
+    }
+    CaseHandoverConsentMode consent =
+        request.getClientConsent() != null
+            ? request.getClientConsent()
+            : (Boolean.TRUE.equals(request.getClientConsentRequired())
+                ? CaseHandoverConsentMode.OPT_IN
+                : CaseHandoverConsentMode.NONE);
+    return consent != CaseHandoverConsentMode.NONE;
   }
 
   @Transactional(readOnly = true)
@@ -1057,7 +1093,9 @@ public class CaseHandoverService {
     verifyOwnershipRevision(session, request.getExpectedOwnershipRevision());
     if (request.getInitiatorConsultant() == null
         || !isActiveOwner(session, request.getInitiatorConsultant())) {
-      throw new ConflictException("The case owner changed after this offer was created");
+      throw new ConflictException(
+          "The case owner changed after this offer was created",
+          HttpStatusExceptionReason.CASE_OWNER_CHANGED);
     }
     if (recipient.isAbsent() || !isInRequesterDepartment(session, recipient)) {
       throw new ForbiddenException("Recipient is no longer eligible for this case");
@@ -1154,7 +1192,9 @@ public class CaseHandoverService {
         && request.getDirection() == Direction.PUSH
         && (request.getInitiatorConsultant() == null
             || !isActiveOwner(session, request.getInitiatorConsultant()))) {
-      throw new ConflictException("The case owner changed after this request was created");
+      throw new ConflictException(
+          "The case owner changed after this request was created",
+          HttpStatusExceptionReason.CASE_OWNER_CHANGED);
     }
 
     LocalDateTime now = LocalDateTime.now(clock);
@@ -1531,7 +1571,9 @@ public class CaseHandoverService {
     if (expectedOwnershipRevision == null
         || expectedOwnershipRevision < 0
         || session.getOwnershipRevision() != expectedOwnershipRevision) {
-      throw new ConflictException("Case ownership changed; refresh before handover");
+      throw new ConflictException(
+          "Case ownership changed; refresh before handover",
+          HttpStatusExceptionReason.CASE_OWNER_CHANGED);
     }
   }
 
