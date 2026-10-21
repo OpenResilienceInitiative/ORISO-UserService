@@ -1,4 +1,6 @@
 import os
+import copy
+import yaml
 from pathlib import Path
 import re
 import subprocess
@@ -15,6 +17,56 @@ def job_block(workflow: str, job_name: str) -> str:
     remainder = workflow[start + len(marker) :]
     next_job = re.search(r"\n  [a-zA-Z0-9_-]+:\n", remainder)
     return remainder if next_job is None else remainder[: next_job.start()]
+
+
+def assert_native_ownership(excluded, mariadb_workflow, caller_workflow):
+    """Every H2 exclusion retains an actual required native owner."""
+    owners = set()
+    for match in re.finditer(r"-Dtest=([^\s]+)", mariadb_workflow):
+        owners.update(match.group(1).split(","))
+    document = yaml.safe_load(caller_workflow)
+    events = document.get("on", document.get(True, {}))
+    if events.get("pull_request") != {"branches": ["dev"]}:
+        raise AssertionError("Dedicated native owner must run for PRs to dev")
+    jobs = document.get("jobs", {})
+    native = jobs.get("native-fairness", {})
+    if not native or native.get("needs") != "caller-proof" or "caller-proof" not in jobs:
+        raise AssertionError("Missing required native fairness gate")
+    if (
+        "if" in native or "if" in jobs["caller-proof"]
+        or native.get("continue-on-error") or jobs["caller-proof"].get("continue-on-error")
+    ):
+        raise AssertionError("Native owner cannot be optional or suppressed")
+    expected_engines = [
+        {"version": "11.0.6", "image": "mariadb@sha256:082554e82eb0e333cddd152d474bb55b8155c8f6585d4c5b0fb47ce2f740cb08"},
+        {"version": "11.4.13", "image": "mariadb@sha256:33a6653ab666774f48818120045f9367a81cd4c54c027412fe294a7d1274e2dc"},
+    ]
+    if (
+        native.get("strategy", {}).get("matrix", {}).get("include", []) != expected_engines
+        or native.get("strategy", {}).get("fail-fast") is not False
+        or native.get("services", {}).get("mariadb", {}).get("image") != "${{ matrix.image }}"
+    ):
+        raise AssertionError("Both exact pinned Maria engines are required")
+    selector = "-Dtest=de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleRetryFairnessMariaDbIT"
+    steps = native.get("steps", [])
+    critical = [step for step in steps if selector in step.get("run", "")]
+    if (
+        len(critical) != 1 or "if" in critical[0]
+        or any(step.get("continue-on-error") for step in steps)
+    ):
+        raise AssertionError("Native owner execution cannot be optional or suppressed")
+    source = "\n".join(step.get("run", "") for step in steps)
+    required = [
+        selector, "names == expected",
+        "and totals == {'tests': 9, 'failures': 0, 'errors': 0, 'skipped': 0}",
+        "status == 0 and before == after", "source-before.json", "source-after.json",
+        "if not accepted:", "raise SystemExit(status or 1)",
+    ]
+    if not all(fragment in source for fragment in required):
+        raise AssertionError("Native owner must enforce exact cases, no skips and source binding")
+    owners.add("AccountLifecycleRetryFairnessMariaDbIT")
+    if excluded - owners:
+        raise AssertionError("H2 exclusions without an actual native owner: " + str(sorted(excluded - owners)))
 
 
 class RequiredCiContractTest(unittest.TestCase):
@@ -247,11 +299,45 @@ class RequiredCiContractTest(unittest.TestCase):
             mariadb_selectors.update(match.group(1).split(","))
 
         self.assertIn("GroupChatMatrixCleanupAdoptionMariaDbIT", mariadb_selectors)
-        self.assertEqual(
-            set(),
-            excluded - mariadb_selectors,
-            "excluded from the required runner but not run by the mariadb-contract job",
+        caller_workflow = (ROOT / ".github/workflows/scenario-c-caller-proof.yml").read_text()
+        assert_native_ownership(excluded, mariadb_workflow, caller_workflow)
+
+    def test_fairness_owner_requires_the_actual_pr_trigger(self):
+        self.assert_invalid_fairness_owner(
+            lambda document: document.get("on", document.get(True)).pop("pull_request", None)
         )
+
+    def test_fairness_owner_requires_both_pinned_engines(self):
+        self.assert_invalid_fairness_owner(
+            lambda document: document["jobs"]["native-fairness"]["strategy"]["matrix"]["include"].pop()
+        )
+
+    def test_fairness_owner_requires_the_exact_nine_case_gate(self):
+        self.assert_invalid_fairness_owner(
+            lambda document: self.replace_native_source(document, "'tests': 9", "'tests': 8")
+        )
+
+    def test_fairness_owner_cannot_be_a_missing_native_job(self):
+        self.assert_invalid_fairness_owner(
+            lambda document: document["jobs"].pop("native-fairness")
+        )
+
+    def test_any_other_unassigned_suite_still_rejects_the_registry(self):
+        caller = (ROOT / ".github/workflows/scenario-c-caller-proof.yml").read_text()
+        mariadb = (ROOT / ".github/workflows/mariadb-contract.yml").read_text()
+        with self.assertRaises(AssertionError):
+            assert_native_ownership({"UnassignedMariaDbIT"}, mariadb, caller)
+
+    def assert_invalid_fairness_owner(self, mutate):
+        document = copy.deepcopy(yaml.safe_load((ROOT / ".github/workflows/scenario-c-caller-proof.yml").read_text()))
+        mutate(document)
+        with self.assertRaises(AssertionError):
+            assert_native_ownership({"AccountLifecycleRetryFairnessMariaDbIT"}, "", yaml.safe_dump(document))
+
+    def replace_native_source(self, document, before, after):
+        for step in document["jobs"]["native-fairness"]["steps"]:
+            if "run" in step:
+                step["run"] = step["run"].replace(before, after)
 
     def test_pull_request_has_one_truthful_required_conclusion(self):
         workflow = (ROOT / ".github/workflows/ci-pull-request.yml").read_text()
