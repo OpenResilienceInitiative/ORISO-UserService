@@ -293,7 +293,10 @@ class AgencyAdminOnboardingWizardIT
     Admin admin = Tenants.in(TENANT, () -> adminRepository.findById(CONSULTANT_ID).orElseThrow());
     assertThat(admin.getType()).isEqualTo(Admin.AdminType.AGENCY);
     assertThat(adminAgencyRepository.findByAdminIdAndAgencyId(CONSULTANT_ID, AGENCY)).hasSize(1);
-    verify(keycloakService).updateRole(CONSULTANT_ID, UserRole.RESTRICTED_AGENCY_ADMIN);
+    verify(keycloakService)
+        .assignRoles(
+            CONSULTANT_ID,
+            List.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue(), UserRole.USER_ADMIN.getValue()));
   }
 
   @Test

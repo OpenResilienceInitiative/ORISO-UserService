@@ -290,8 +290,10 @@ class AccountInviteRoleChangeIT {
         .andExpect(jsonPath("$.role").value("AGENCY_ADMIN"))
         .andExpect(jsonPath("$.agencyIds[0]").value(AGENCY));
 
-    verify(keycloakService).updateRole(counsellor.getId(), UserRole.RESTRICTED_AGENCY_ADMIN);
-    verify(keycloakService).updateRole(counsellor.getId(), UserRole.USER_ADMIN);
+    verify(keycloakService)
+        .assignRoles(
+            counsellor.getId(),
+            List.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue(), UserRole.USER_ADMIN.getValue()));
     Admin admin =
         Tenants.acrossAll(() -> adminRepository.findById(counsellor.getId())).orElseThrow();
     assertThat(admin.getType()).isEqualTo(AdminType.AGENCY);
@@ -336,7 +338,7 @@ class AccountInviteRoleChangeIT {
     addRole(counsellor, "{\"role\":\"AGENCY_ADMIN\",\"agencyId\":" + AGENCY + "}")
         .andExpect(status().isForbidden());
 
-    verify(keycloakService, never()).updateRole(eq(counsellor.getId()), any(UserRole.class));
+    verify(keycloakService, never()).assignRoles(eq(counsellor.getId()), any());
     assertThat(Tenants.acrossAll(() -> adminRepository.findById(counsellor.getId()))).isEmpty();
   }
 
@@ -348,7 +350,7 @@ class AccountInviteRoleChangeIT {
     addRole(counsellor, "{\"role\":\"AGENCY_ADMIN\",\"agencyId\":" + AGENCY + "}")
         .andExpect(status().isForbidden());
 
-    verify(keycloakService, never()).updateRole(eq(counsellor.getId()), any(UserRole.class));
+    verify(keycloakService, never()).assignRoles(eq(counsellor.getId()), any());
   }
 
   @Test
@@ -378,7 +380,9 @@ class AccountInviteRoleChangeIT {
     Consultant counsellor = fixtures.consultant(OWN_TENANT, AGENCY);
     doThrow(new IllegalStateException("keycloak down"))
         .when(keycloakService)
-        .updateRole(counsellor.getId(), UserRole.RESTRICTED_AGENCY_ADMIN);
+        .assignRoles(
+            counsellor.getId(),
+            List.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue(), UserRole.USER_ADMIN.getValue()));
 
     addRole(counsellor, "{\"role\":\"AGENCY_ADMIN\",\"agencyId\":" + AGENCY + "}")
         .andExpect(status().is5xxServerError());

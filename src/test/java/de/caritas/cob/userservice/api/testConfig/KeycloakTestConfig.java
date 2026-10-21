@@ -122,16 +122,10 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public void updateUserRole(String userId) {}
-
-      @Override
-      public void updateRole(String userId, UserRole role) {}
-
-      @Override
-      public void updateRole(String userId, String roleName) {}
-
-      @Override
       public void removeRoleIfPresent(String userId, String roleName) {}
+
+      @Override
+      public void assignRoles(String userId, java.util.Collection<String> roleNames) {}
 
       @Override
       public void updatePassword(String userId, String password) {}

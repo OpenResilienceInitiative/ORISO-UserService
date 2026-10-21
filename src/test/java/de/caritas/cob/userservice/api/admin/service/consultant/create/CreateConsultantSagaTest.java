@@ -12,6 +12,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -40,6 +41,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
@@ -100,6 +102,7 @@ class CreateConsultantSagaTest {
   @InjectMocks private CreateConsultantSaga createConsultantSaga;
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private ConsultantPublicSlugService consultantPublicSlugService;
   @Mock private ConsultantService consultantService;
@@ -175,7 +178,7 @@ class CreateConsultantSagaTest {
     assertThat(response, notNullValue());
     assertThat(response.getEmbedded(), notNullValue());
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
-    verify(identityClient).updateRole(KEYCLOAK_USER_ID, CONSULTANT.getValue());
+    verify(identityRoleUpdater).assignRoles(KEYCLOAK_USER_ID, Set.of(CONSULTANT.getValue()));
     verify(appointmentService, never()).createConsultant(any());
   }
 
@@ -411,7 +414,7 @@ class CreateConsultantSagaTest {
         () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
 
     verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
-    verify(identityClient, never()).updateRole(anyString(), anyString());
+    verify(identityRoleUpdater, never()).assignRoles(anyString(), anyCollection());
   }
 
   @Test
@@ -419,8 +422,8 @@ class CreateConsultantSagaTest {
       throws Exception {
     stubKeycloakUserCreation();
     doThrow(new RuntimeException("role update failed"))
-        .when(identityClient)
-        .updateRole(anyString(), anyString());
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), anyCollection());
 
     assertThrows(
         DistributedTransactionException.class,
@@ -491,8 +494,9 @@ class CreateConsultantSagaTest {
 
     createConsultantSaga.createNewConsultant(dto);
 
-    verify(identityClient).updateRole(KEYCLOAK_USER_ID, CONSULTANT.getValue());
-    verify(identityClient).updateRole(KEYCLOAK_USER_ID, GROUP_CHAT_CONSULTANT.getValue());
+    verify(identityRoleUpdater)
+        .assignRoles(
+            KEYCLOAK_USER_ID, Set.of(CONSULTANT.getValue(), GROUP_CHAT_CONSULTANT.getValue()));
   }
 
   @Test

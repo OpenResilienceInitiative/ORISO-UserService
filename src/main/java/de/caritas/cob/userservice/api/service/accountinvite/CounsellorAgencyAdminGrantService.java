@@ -11,7 +11,7 @@ import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import java.util.List;
 import java.util.function.Supplier;
 import lombok.NonNull;
@@ -37,10 +37,11 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class CounsellorAgencyAdminGrantService {
 
-  private static final List<UserRole> AGENCY_ADMIN_ROLES =
-      Lists.newArrayList(UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+  private static final List<String> AGENCY_ADMIN_ROLES =
+      Lists.newArrayList(
+          UserRole.RESTRICTED_AGENCY_ADMIN.getValue(), UserRole.USER_ADMIN.getValue());
 
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
@@ -53,7 +54,7 @@ public class CounsellorAgencyAdminGrantService {
    * @param invite the invite carrying the person's name, email and tenant
    */
   public void grantAgencyAdmin(String userId, Long agencyId, AccountInvite invite) {
-    AGENCY_ADMIN_ROLES.forEach(role -> identityClient.updateRole(userId, role));
+    identityRoleUpdater.assignRoles(userId, AGENCY_ADMIN_ROLES);
     bindAdmin(
         userId,
         agencyId,
@@ -98,7 +99,7 @@ public class CounsellorAgencyAdminGrantService {
                 .build());
     // Flushes both rows, so a constraint failure stops us before Keycloak changes.
     adminRepository.flush();
-    AGENCY_ADMIN_ROLES.forEach(role -> identityClient.updateRole(consultant.getId(), role));
+    identityRoleUpdater.assignRoles(consultant.getId(), AGENCY_ADMIN_ROLES);
   }
 
   private void bindAdmin(String userId, Long agencyId, Supplier<Admin> newAdmin) {

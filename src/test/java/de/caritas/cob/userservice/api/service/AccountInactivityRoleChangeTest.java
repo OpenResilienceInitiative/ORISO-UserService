@@ -40,7 +40,18 @@ class AccountInactivityRoleChangeTest {
             new AccountInactivityEnrollmentTest.ExternalEffects());
     lifecycle.assignAtCreation("person", 1L, 24, 0, clock.instant());
     var remoteWrites = new AtomicInteger();
-    IdentityRoleUpdater remote = (id, roles) -> remoteWrites.incrementAndGet();
+    IdentityRoleUpdater remote =
+        new IdentityRoleUpdater() {
+          @Override
+          public void assignRoles(String userId, java.util.Collection<String> roleNames) {
+            remoteWrites.incrementAndGet();
+          }
+
+          @Override
+          public void ensureRoles(String userId, java.util.Collection<String> roleNames) {
+            remoteWrites.incrementAndGet();
+          }
+        };
     var proxyFactory = new AspectJProxyFactory(remote);
     proxyFactory.addAspect(new AccountInactivityRoleMutationAspect(lifecycle));
     IdentityRoleUpdater gateway = proxyFactory.getProxy();

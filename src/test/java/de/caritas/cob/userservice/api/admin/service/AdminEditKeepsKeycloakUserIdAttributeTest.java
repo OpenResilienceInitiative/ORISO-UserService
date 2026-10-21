@@ -112,6 +112,7 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
         new ConsultantUpdateService(
             keycloakService,
             keycloakService,
+            keycloakService,
             consultantService,
             consultantPublicSlugService,
             userAccountInputValidator,

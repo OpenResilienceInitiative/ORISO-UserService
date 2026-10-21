@@ -10,7 +10,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,7 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class CounsellorAgencyAdminGrantServiceTest {
 
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private AdminRepository adminRepository;
   @Mock private AdminAgencyRepository adminAgencyRepository;
 

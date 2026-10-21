@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
@@ -48,6 +49,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class ConsultantUpdateService {
 
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull IdentityProfileUpdater identityProfileUpdater;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
@@ -114,7 +116,8 @@ public class ConsultantUpdateService {
 
     if (updateConsultantDTO.getIsGroupchatConsultant() != null
         && updateConsultantDTO.getIsGroupchatConsultant()) {
-      identityClient.updateRole(consultant.getId(), GROUP_CHAT_CONSULTANT.getValue());
+      identityRoleUpdater.ensureRoles(
+          consultant.getId(), java.util.Set.of(GROUP_CHAT_CONSULTANT.getValue()));
     }
     if (updateConsultantDTO.getIsGroupchatConsultant() != null
         && !updateConsultantDTO.getIsGroupchatConsultant()) {

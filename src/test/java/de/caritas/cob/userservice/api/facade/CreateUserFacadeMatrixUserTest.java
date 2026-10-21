@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -71,6 +72,7 @@ class CreateUserFacadeMatrixUserTest {
             de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
             userVerifier,
             identityClient,
+            identityRoleUpdater,
             identityAccountRemover,
             identityPasswordUpdater,
             identityDummyEmailUpdater,
@@ -110,6 +112,7 @@ class CreateUserFacadeMatrixUserTest {
 
   @Mock private UserVerifier userVerifier;
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private IdentityAccountRemover identityAccountRemover;
   @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private IdentityDummyEmailUpdater identityDummyEmailUpdater;

@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
@@ -70,6 +71,7 @@ class ConsultantSelfServiceMatrixDisplayNameTest {
     var updateService =
         new ConsultantUpdateService(
             mock(IdentityClient.class),
+            mock(IdentityRoleUpdater.class),
             mock(IdentityProfileUpdater.class),
             consultantService,
             mock(ConsultantPublicSlugService.class),

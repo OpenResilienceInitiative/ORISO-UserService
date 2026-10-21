@@ -18,6 +18,7 @@ public class AccountInactivityRoleMutationAspect {
 
   @Around(
       "execution(* de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater+.ensureRoles(..))"
+          + " || execution(* de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater+.assignRoles(..))"
           + " || execution(* de.caritas.cob.userservice.api.port.out.IdentityClient+.updateRole(..))"
           + " || execution(* de.caritas.cob.userservice.api.port.out.IdentityClient+.updateUserRole(..))"
           + " || execution(* de.caritas.cob.userservice.api.port.out.IdentityClient+.removeRoleIfPresent(..))")

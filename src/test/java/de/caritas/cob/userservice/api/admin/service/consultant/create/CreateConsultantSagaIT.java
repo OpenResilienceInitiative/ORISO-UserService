@@ -11,10 +11,10 @@ import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -35,6 +35,7 @@ import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Settings;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
+import java.util.Set;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -99,7 +100,7 @@ public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
         this.createConsultantSaga.createNewConsultant(createConsultantDTO);
 
     ConsultantDTO consultant = consultantAdminResponseDTO.getEmbedded();
-    verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
+    verify(keycloakService).assignRoles(anyString(), eq(Set.of(CONSULTANT.getValue())));
 
     assertThat(consultant, notNullValue());
     assertThat(consultant.getId(), notNullValue());
@@ -133,8 +134,7 @@ public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
           ex.getCustomHttpHeaders().get("X-Reason").get(0),
           is(
               "DISTRIBUTED_TRANSACTION_FAILED_ON_STEP_CREATE_ACCOUNT_IN_CALCOM_OR_APPOINTMENTSERVICE"));
-      verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
-      verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
+      verify(keycloakService).assignRoles(anyString(), eq(Set.of(CONSULTANT.getValue())));
       verify(rollbackFacade).rollbackConsultantAccount(Mockito.any(Consultant.class));
     }
   }
@@ -157,7 +157,7 @@ public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
       fail("Exception should be thrown");
     } catch (CustomValidationHttpStatusException ex) {
       assertThat(ex.getCustomHttpHeaders().get("X-Reason").get(0), is("PASSWORD_NOT_VALID"));
-      verify(keycloakService, Mockito.never()).updateRole(anyString(), eq(CONSULTANT.getValue()));
+      verify(keycloakService, Mockito.never()).assignRoles(anyString(), anyCollection());
       verify(rollbackFacade).rollbackConsultantAccount(Mockito.any(Consultant.class));
     }
   }
@@ -166,7 +166,9 @@ public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
   public void createNewConsultant_Should_callRollback_When_KeycloakUpdateRoleThrowsException() {
     when(keycloakService.createUser(any(), anyString(), any()))
         .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
-    doThrow(BadRequestException.class).when(keycloakService).updateRole(anyString(), anyString());
+    doThrow(BadRequestException.class)
+        .when(keycloakService)
+        .assignRoles(anyString(), anyCollection());
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setTenantId(TENANT_ID);
     createConsultantDTO.setUsername(VALID_USERNAME);
@@ -204,9 +206,9 @@ public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
     var consultantAdminResponseDTO = createConsultantSaga.createNewConsultant(createConsultantDTO);
 
     // then
-    verify(keycloakService, times(2)).updateRole(anyString(), anyString());
-    verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
-    verify(keycloakService).updateRole(anyString(), eq(GROUP_CHAT_CONSULTANT.getValue()));
+    verify(keycloakService)
+        .assignRoles(
+            anyString(), eq(Set.of(CONSULTANT.getValue(), GROUP_CHAT_CONSULTANT.getValue())));
 
     assertThat(consultantAdminResponseDTO.getEmbedded(), notNullValue());
     assertThat(consultantAdminResponseDTO.getEmbedded().getId(), notNullValue());

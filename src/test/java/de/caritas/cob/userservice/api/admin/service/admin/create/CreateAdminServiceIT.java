@@ -223,8 +223,9 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
 
     verify((IdentityPasswordUpdater) identityClient)
         .updateTemporaryPassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    verify((IdentityRoleUpdater) identityClient)
+        .assignRoles(
+            anyString(), eq(List.of(RESTRICTED_AGENCY_ADMIN.getValue(), USER_ADMIN.getValue())));
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isNull();
@@ -264,8 +265,9 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
 
     verify((IdentityPasswordUpdater) identityClient)
         .updateTemporaryPassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    verify((IdentityRoleUpdater) identityClient)
+        .assignRoles(
+            anyString(), eq(List.of(RESTRICTED_AGENCY_ADMIN.getValue(), USER_ADMIN.getValue())));
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isEqualTo(1L);
@@ -304,8 +306,9 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
 
     verify((IdentityPasswordUpdater) identityClient)
         .updateTemporaryPassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    verify((IdentityRoleUpdater) identityClient)
+        .assignRoles(
+            anyString(), eq(List.of(RESTRICTED_AGENCY_ADMIN.getValue(), USER_ADMIN.getValue())));
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isEqualTo(1L);
@@ -336,8 +339,9 @@ class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
 
     verify((IdentityPasswordUpdater) identityClient)
         .updateTemporaryPassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    verify((IdentityRoleUpdater) identityClient)
+        .assignRoles(
+            anyString(), eq(List.of(RESTRICTED_AGENCY_ADMIN.getValue(), USER_ADMIN.getValue())));
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isNull();
