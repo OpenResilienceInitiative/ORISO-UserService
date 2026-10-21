@@ -17,6 +17,7 @@ class ReplicaSafetyInventoryContractTest {
           "email-template-cache",
           "matrix-access-token-cache",
           "matrix-feed-signal-coalescer",
+          "internal-group-chat-recipient-scope-cache",
           "matrix-browser-login-locks",
           "matrix-sync-token-cache",
           "matrix-presence-cache",

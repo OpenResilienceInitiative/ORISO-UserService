@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -22,6 +23,7 @@ import de.caritas.cob.userservice.api.facade.AssignChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateChatFacade;
 import de.caritas.cob.userservice.api.facade.GetChatFacade;
 import de.caritas.cob.userservice.api.facade.GetChatMembersFacade;
+import de.caritas.cob.userservice.api.facade.InternalSubsetChatFacade;
 import de.caritas.cob.userservice.api.facade.JoinAndLeaveChatFacade;
 import de.caritas.cob.userservice.api.facade.StartChatFacade;
 import de.caritas.cob.userservice.api.facade.StopChatFacade;
@@ -54,6 +56,7 @@ class UserChatControllerDelegateTest {
   @Mock private JoinAndLeaveChatFacade joinAndLeaveChatFacade;
   @Mock private AssignChatFacade assignChatFacade;
   @Mock private CreateChatFacade createChatFacade;
+  @Mock private InternalSubsetChatFacade internalSubsetChatFacade;
   @Mock private StopChatFacade stopChatFacade;
   @Mock private GetChatMembersFacade getChatMembersFacade;
   @Mock private AccountManaging accountManager;
@@ -92,6 +95,25 @@ class UserChatControllerDelegateTest {
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
     assertThat(response.getBody()).isSameAs(createChatResponseDTO);
     verify(groupChatFeatureGate).requireEnabled(consultant, chatDTO);
+  }
+
+  @Test
+  void openInternalSubsetChatShouldAnswerCreatedForANewRoomAndOkForAReusedOne() {
+    var consultant = consultant();
+    var request = new InternalSubsetChatDTO().consultantIds(java.util.List.of("colleague"));
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    when(internalSubsetChatFacade.open(request, consultant))
+        .thenReturn(new InternalSubsetChatFacade.OpenedRoom("!new:server", 7L, true))
+        .thenReturn(new InternalSubsetChatFacade.OpenedRoom("!new:server", 7L, false));
+
+    var created = delegate.openInternalSubsetChat(request);
+    var reused = delegate.openInternalSubsetChat(request);
+
+    assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    assertThat(reused.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(created.getBody().getMatrixRoomId()).isEqualTo("!new:server");
+    assertThat(created.getBody().getChatId()).isEqualTo(7L);
+    assertThat(reused.getBody()).isEqualTo(created.getBody());
   }
 
   @Test

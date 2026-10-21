@@ -150,7 +150,8 @@ class CaseHandoverPolicyHttpContractTest {
             clock,
             transactionManager,
             mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
-            adminScope);
+            adminScope,
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class));
 
     TenantContext.setCurrentTenant(7L);
   }

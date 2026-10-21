@@ -735,6 +735,7 @@ class SessionOwnershipMariaDbIT {
         java.time.Clock.systemUTC(),
         transactionManager,
         mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
-        mock(de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class));
+        mock(de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class),
+        mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class));
   }
 }

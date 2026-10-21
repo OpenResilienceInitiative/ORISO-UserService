@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ public class FinishAnonymousConversationFacade {
   private final @NonNull SessionService sessionService;
   private final @NonNull ActionsRegistry actionsRegistry;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * Finishes the anonymous session with given id.
@@ -60,6 +62,10 @@ public class FinishAnonymousConversationFacade {
   }
 
   private void verifyPermissionToFinish(Session session) {
+    // The technical session of a members-only chat looks like an anonymous one; finishing it would
+    // deactivate the shared system account of the whole tenant.
+    membersOnlyChatAccess.requireOrdinary(
+        session, "The session of a members-only chat is not an anonymous conversation.");
     if (session.getRegistrationType() != ANONYMOUS
         && !sessionService.isAnonymousStyleRegistration(session)) {
       throw new ForbiddenException(

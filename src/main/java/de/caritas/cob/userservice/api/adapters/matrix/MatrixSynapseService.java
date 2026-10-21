@@ -1246,6 +1246,19 @@ public class MatrixSynapseService implements MatrixUserClient {
     return createRoom(roomName, roomAlias, accessToken);
   }
 
+  /** Same as {@link #createRoomAsMatrixUser}, for a members-only chat: only the admin invites. */
+  public ResponseEntity<MatrixCreateRoomResponseDTO> createMembersOnlyRoomAsMatrixUser(
+      String roomName, String roomAlias, String matrixUserId) throws MatrixCreateRoomException {
+
+    String accessToken = loginAsUserAccessToken(matrixUserId);
+    if (accessToken == null) {
+      throw new MatrixCreateRoomException("Could not obtain access token for Matrix user");
+    }
+
+    return matrixRoomClient.createMembersOnlyRoom(
+        roomName, roomAlias, accessToken, matrixConfig.isEncryptionEnabled());
+  }
+
   /**
    * Creates a new room in Matrix Synapse.
    *
