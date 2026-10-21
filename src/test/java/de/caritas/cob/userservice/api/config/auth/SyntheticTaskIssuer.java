@@ -95,8 +95,7 @@ final class SyntheticTaskIssuer implements AutoCloseable {
       }
       case "backend-account-admin" -> {
         roles =
-            List.of(
-                "account-maintenance", "account-read", "otp-config-admin", "session-exchange");
+            List.of("account-maintenance", "account-read", "otp-config-admin", "session-exchange");
         audiences = List.of("userservice", "oriso-account-lifecycle", "oriso-otp");
         subject = "native-account-admin-subject";
       }

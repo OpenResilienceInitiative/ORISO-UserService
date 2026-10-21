@@ -26,8 +26,7 @@ class FiveActorTokenBoundaryTest {
     issuer = new SyntheticTaskIssuer();
     var identity = new IdentityConfig();
     identity.setOpenidConnectUrl(issuer.base());
-    authentication =
-        new KeycloakAuthClient(new RestTemplate(), new AuthenticatedUser(), identity);
+    authentication = new KeycloakAuthClient(new RestTemplate(), new AuthenticatedUser(), identity);
     ReflectionTestUtils.setField(authentication, "keycloakClientId", "app");
     var keycloak = new KeycloakConfig();
     keycloak.setAuthServerUrl(issuer.base());
@@ -147,7 +146,9 @@ class FiveActorTokenBoundaryTest {
   }
 
   @ParameterizedTest
-  @EnumSource(value = TaskPurpose.class, names = {"ACCOUNT_MAINTENANCE", "OTP"})
+  @EnumSource(
+      value = TaskPurpose.class,
+      names = {"ACCOUNT_MAINTENANCE", "OTP"})
   void finiteCheckedMaintenanceReturnsOnlyItsNativeVerifiedOriginalBounds(TaskPurpose purpose) {
     // Prove the independent signed HTTP/JWKS fixture before exercising the compiling stub.
     var nativeGrant =
