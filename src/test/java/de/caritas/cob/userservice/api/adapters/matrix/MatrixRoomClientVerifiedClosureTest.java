@@ -195,6 +195,31 @@ class MatrixRoomClientVerifiedClosureTest {
   }
 
   @Test
+  void explicitLowOverrideOfAnUnlistedContentTypeIsRaisedAndCertified() {
+    identity(OPERATOR);
+    server
+        .expect(requestTo(STATE))
+        .andRespond(
+            withSuccess(
+                state(false).replace("\"m.room.name\":50,", "\"m.room.name\":50,\"m.sticker\":0,"),
+                MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(POWER))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(jsonPath("$.events['m.sticker']").value(61))
+        .andExpect(jsonPath("$.events['m.room.name']").value(50))
+        .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(STATE))
+        .andRespond(
+            withSuccess(
+                state(true).replace("\"m.room.name\":50,", "\"m.room.name\":50,\"m.sticker\":0,"),
+                MediaType.APPLICATION_JSON));
+    assertThat(rooms.closeRoomForMessagesVerified(ROOM, OPERATOR, "synthetic-token")).isFalse();
+    server.verify();
+  }
+
+  @Test
   void memberAbleToRewritePowerLevelsAfterClosureCannotProduceConfirmation() {
     identity(OPERATOR);
     server

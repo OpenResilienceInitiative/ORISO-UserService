@@ -233,6 +233,31 @@ class MatrixRoomClientTest {
   }
 
   @Test
+  void inviteUserToRoom_ShouldCapAServerChosenRetryDelay() throws Exception {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                null,
+                "{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":600000}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .thenReturn(ResponseEntity.ok(new MatrixInviteUserResponseDTO()));
+
+    long started = System.nanoTime();
+    matrixRoomClient.inviteUserToRoom(ROOM_ID, USER_ID, ACCESS_TOKEN);
+    long waitedMs = java.time.Duration.ofNanos(System.nanoTime() - started).toMillis();
+
+    assertThat(waitedMs)
+        .isGreaterThanOrEqualTo(MatrixRoomClient.MAX_INVITE_RETRY_DELAY_MS)
+        .isLessThan(MatrixRoomClient.MAX_INVITE_RETRY_DELAY_MS + 3000);
+  }
+
+  @Test
   void inviteUserToRoom_ShouldRetry_WhenMatrixRateLimitsInvite() throws Exception {
     var responseBody = new MatrixInviteUserResponseDTO();
     when(restTemplate.postForEntity(

@@ -47,6 +47,8 @@ public class MatrixRoomClient {
   private static final int MEMBERS_ONLY_INVITE_LEVEL = 100;
   private static final int INVITE_USER_MAX_ATTEMPTS = 3;
   private static final long DEFAULT_INVITE_RETRY_DELAY_MS = 1000L;
+  // Invites can run under a session row lock; a server-chosen delay must not hold it for long.
+  static final long MAX_INVITE_RETRY_DELAY_MS = 2000L;
   private static final Pattern RETRY_AFTER_MS_PATTERN =
       Pattern.compile("\"retry_after_ms\"\\s*:\\s*(\\d+)");
 
@@ -109,6 +111,13 @@ public class MatrixRoomClient {
       events.keySet().stream()
           .filter(MatrixRoomClient::isCallContent)
           .forEach(protectedEvents::add);
+      // Any other explicit override another member can still use (m.sticker, polls, ...) would
+      // bypass events_default. Room state (m.room.*) keeps its own moderation levels.
+      for (var entry : events.entrySet()) {
+        if (!entry.getKey().startsWith("m.room.")
+            && power(events, entry.getKey(), 0, before.version()) <= before.highestOtherPower())
+          protectedEvents.add(entry.getKey());
+      }
       long defaultRequired = power(updated, "events_default", 0, before.version());
       threshold = Math.max(threshold, defaultRequired);
       for (String type : protectedEvents) {
@@ -146,7 +155,9 @@ public class MatrixRoomClient {
       if (power(after.power(), "events_default", 0, after.version()) <= blockedAbove) return false;
       var actualEvents = objectMap(after.power().get("events"));
       protectedEvents.addAll(
-          actualEvents.keySet().stream().filter(MatrixRoomClient::isCallContent).toList());
+          actualEvents.keySet().stream()
+              .filter(type -> isCallContent(type) || !type.startsWith("m.room."))
+              .toList());
       for (String type : protectedEvents) {
         long fallback =
             type.equals("m.call.member") || type.equals("org.matrix.msc3401.call.member")
@@ -443,7 +454,7 @@ public class MatrixRoomClient {
     var matcher = RETRY_AFTER_MS_PATTERN.matcher(ex.getResponseBodyAsString());
     if (matcher.find()) {
       try {
-        return Long.parseLong(matcher.group(1));
+        return Math.min(Long.parseLong(matcher.group(1)), MAX_INVITE_RETRY_DELAY_MS);
       } catch (NumberFormatException ignored) {
         return DEFAULT_INVITE_RETRY_DELAY_MS;
       }
