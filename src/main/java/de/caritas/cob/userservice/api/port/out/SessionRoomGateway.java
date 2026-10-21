@@ -28,6 +28,9 @@ public interface SessionRoomGateway {
   void inviteUser(String roomId, String userId, String accessToken)
       throws MatrixInviteUserException;
 
+  /** True only when Matrix confirms the user is joined; an unknown state answers false. */
+  boolean isJoinedMember(String roomId, String userId);
+
   boolean joinRoom(String roomId, String accessToken);
 
   boolean ensureAdminInRoom(String roomId, String memberMatrixUserId);

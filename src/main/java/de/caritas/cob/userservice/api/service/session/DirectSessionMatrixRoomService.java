@@ -28,6 +28,8 @@ public class DirectSessionMatrixRoomService {
   private final @NonNull SessionService sessionService;
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
+  private final @NonNull de.caritas.cob.userservice.api.helper.UsernameTranscoder
+      usernameTranscoder;
 
   /**
    * Creates a Matrix room between {@code consultant} and the session's user, invites both parties,
@@ -157,7 +159,7 @@ public class DirectSessionMatrixRoomService {
     try {
       var matrixUserId =
           sessionRoomGateway.createUser(
-              consultant.getUsername(),
+              usernameTranscoder.decodeUsername(consultant.getUsername()),
               generatedMatrixPassword,
               consultantDisplayNameResolver.resolveMatrixDisplayName(consultant));
       if (matrixUserId != null) {

@@ -40,6 +40,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 public class SessionArchiveServiceTest {
 
   @InjectMocks SessionArchiveService sessionArchiveService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock SessionRepository sessionRepository;
 
   @Mock
@@ -112,6 +116,42 @@ public class SessionArchiveServiceTest {
 
           verify(session, times(0)).setStatus(SessionStatus.IN_ARCHIVE);
         });
+  }
+
+  @Test
+  public void archiveAndDearchive_Should_AskToStopTheChat_ForTheSessionOfAMembersOnlyChat() {
+    Session session = Mockito.mock(Session.class);
+    when(session.isAdvised(any())).thenReturn(true);
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+
+    for (Runnable change :
+        java.util.List.<Runnable>of(
+            () -> sessionArchiveService.archiveSession(SESSION_ID),
+            () -> sessionArchiveService.dearchiveSession(SESSION_ID))) {
+      var refused =
+          assertThrows(
+              de.caritas.cob.userservice.api.exception.httpresponses
+                  .CustomValidationHttpStatusException.class,
+              change::run);
+      org.junit.jupiter.api.Assertions.assertEquals(
+          org.springframework.http.HttpStatus.CONFLICT, refused.getHttpStatus());
+      org.junit.jupiter.api.Assertions.assertEquals(
+          "MEMBERS_ONLY_CHAT_STOP_REQUIRED", refused.getCustomHttpHeaders().getFirst("X-Reason"));
+    }
+    verify(session, times(0)).setStatus(any());
+    verify(sessionRepository, times(0)).save(any());
+  }
+
+  @Test
+  public void archiveSession_Should_RefuseANonParticipantOfAMembersOnlyChatWith403() {
+    Session session = Mockito.mock(Session.class);
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(membersOnlyChatAccess.excludes(
+            any(Session.class), org.mockito.ArgumentMatchers.<String>any()))
+        .thenReturn(true);
+
+    assertThrows(ForbiddenException.class, () -> sessionArchiveService.archiveSession(SESSION_ID));
   }
 
   @Test

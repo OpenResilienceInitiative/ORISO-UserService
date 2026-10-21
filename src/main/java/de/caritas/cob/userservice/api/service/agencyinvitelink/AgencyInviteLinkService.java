@@ -57,6 +57,8 @@ public class AgencyInviteLinkService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
   private final @NonNull AdminScope adminScope;
+  private final @NonNull de.caritas.cob.userservice.api.admin.service.tenant.TenantService
+      tenantService;
 
   /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
@@ -243,6 +245,8 @@ public class AgencyInviteLinkService {
       repository.save(link);
       throw new BadRequestException("Invite link expired");
     }
+
+    tenantService.requireOperationalTenant(link.getTenantId());
 
     Long previousTenant = TenantContext.getCurrentTenant();
     try {

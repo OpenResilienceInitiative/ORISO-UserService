@@ -86,7 +86,8 @@ class HttpTenantFilterTest {
   void siblingTenantRouteStillRequiresTenantContext() throws ServletException, IOException {
     Mockito.when(request.getRequestURI()).thenReturn("/users/tenants/42/dpa-signed-notices/extra");
     Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
-    Mockito.when(tenantService.getRestrictedTenantData(1L)).thenReturn(new RestrictedTenantDTO());
+    Mockito.when(tenantService.getRestrictedTenantDataFresh(1L))
+        .thenReturn(new RestrictedTenantDTO());
 
     httpTenantFilter.doFilterInternal(request, response, filterChain);
 
@@ -98,7 +99,8 @@ class HttpTenantFilterTest {
   void siblingMatrixRtcEndpointStillRequiresTenantContext() throws ServletException, IOException {
     Mockito.when(request.getRequestURI()).thenReturn("/internal/matrixrtc/future-endpoint");
     Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
-    Mockito.when(tenantService.getRestrictedTenantData(1L)).thenReturn(new RestrictedTenantDTO());
+    Mockito.when(tenantService.getRestrictedTenantDataFresh(1L))
+        .thenReturn(new RestrictedTenantDTO());
 
     httpTenantFilter.doFilterInternal(request, response, filterChain);
 
@@ -113,7 +115,8 @@ class HttpTenantFilterTest {
     // given
     Mockito.when(request.getRequestURI()).thenReturn("/users/1");
     Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
-    Mockito.when(tenantService.getRestrictedTenantData(1L)).thenReturn(new RestrictedTenantDTO());
+    Mockito.when(tenantService.getRestrictedTenantDataFresh(1L))
+        .thenReturn(new RestrictedTenantDTO());
 
     // when
     httpTenantFilter.doFilterInternal(request, response, filterChain);
@@ -127,7 +130,8 @@ class HttpTenantFilterTest {
       throws ServletException, IOException {
     Mockito.when(request.getRequestURI()).thenReturn("/useradmin/users/askers/new");
     Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
-    Mockito.when(tenantService.getRestrictedTenantData(1L)).thenReturn(new RestrictedTenantDTO());
+    Mockito.when(tenantService.getRestrictedTenantDataFresh(1L))
+        .thenReturn(new RestrictedTenantDTO());
 
     httpTenantFilter.doFilterInternal(request, response, filterChain);
 
@@ -143,7 +147,8 @@ class HttpTenantFilterTest {
   void anonymousEnquiryRunsInTheResolvedTenant(String uri) throws ServletException, IOException {
     Mockito.when(request.getRequestURI()).thenReturn(uri);
     Mockito.when(tenantResolverService.resolve(request)).thenReturn(7L);
-    Mockito.when(tenantService.getRestrictedTenantData(7L)).thenReturn(new RestrictedTenantDTO());
+    Mockito.when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenReturn(new RestrictedTenantDTO());
     var tenantInChain = new java.util.concurrent.atomic.AtomicReference<Long>();
     Mockito.doAnswer(
             invocation -> {
@@ -173,7 +178,8 @@ class HttpTenantFilterTest {
   void tenantIsClearedWhenTheRequestFails() throws ServletException, IOException {
     Mockito.when(request.getRequestURI()).thenReturn("/users/1");
     Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
-    Mockito.when(tenantService.getRestrictedTenantData(1L)).thenReturn(new RestrictedTenantDTO());
+    Mockito.when(tenantService.getRestrictedTenantDataFresh(1L))
+        .thenReturn(new RestrictedTenantDTO());
     Mockito.doThrow(new ServletException("boom")).when(filterChain).doFilter(request, response);
 
     org.assertj.core.api.Assertions.assertThatThrownBy(
@@ -246,7 +252,7 @@ class HttpTenantFilterTest {
     de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(99L);
     Mockito.when(request.getRequestURI()).thenReturn("/users/1");
     Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
-    Mockito.when(tenantService.getRestrictedTenantData(1L))
+    Mockito.when(tenantService.getRestrictedTenantDataFresh(1L))
         .thenThrow(new IllegalStateException("TenantService unavailable"));
 
     org.assertj.core.api.Assertions.assertThatThrownBy(

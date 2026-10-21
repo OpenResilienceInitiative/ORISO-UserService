@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
@@ -59,6 +60,7 @@ public class TeamDiscussionFacade {
   private final @NonNull TeamDiscussionCreationWriter creationWriter;
   private final @NonNull TeamDiscussionParticipantWriter participantWriter;
   private final @NonNull TeamDiscussionRoomCleanupService roomCleanupService;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /** Read model returned to the controller. */
   public record TeamDiscussionView(
@@ -194,9 +196,14 @@ public class TeamDiscussionFacade {
   }
 
   private Session loadSession(Long sessionId) {
-    return sessionRepository
-        .findById(sessionId)
-        .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
+    var session =
+        sessionRepository
+            .findById(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
+    // A team discussion belongs to an open enquiry; a members-only chat's case is none.
+    membersOnlyChatAccess.requireOrdinary(
+        session, "The session of a members-only chat has no team discussion.");
+    return session;
   }
 
   private Consultant requireEligibleConsultant(Session session, String consultantId) {
@@ -267,6 +274,13 @@ public class TeamDiscussionFacade {
           ConsultantChatIdentityService.missingChatIdentityMessage(
               "Consultant", consultant.getId()));
     }
+    // Every open of a request lands here. Inviting a counsellor who is already in the room changes
+    // nothing but spends their Matrix invite allowance (rc_invites per_user), and once that runs
+    // out every invite waits minutes and the request times out (FE#1799).
+    if (isJoinedMember(discussion.getMatrixRoomId(), consultant.getMatrixUserId())) {
+      recordParticipant(discussion, consultant.getId());
+      return;
+    }
     String agencyToken = loginAgencyOperator(session);
     try {
       try {
@@ -295,6 +309,14 @@ public class TeamDiscussionFacade {
           HttpStatus.BAD_GATEWAY, "Could not join the team discussion", ex);
     }
     recordParticipant(discussion, consultant.getId());
+  }
+
+  /** Unknown membership counts as not joined, so the invite-and-join path still runs. */
+  private boolean isJoinedMember(String roomId, String matrixUserId) {
+    return matrixSynapseService
+        .getRoomMembers(roomId)
+        .map(members -> members.contains(matrixUserId))
+        .orElse(false);
   }
 
   private void recordParticipant(TeamDiscussion discussion, String consultantId) {
