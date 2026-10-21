@@ -45,8 +45,7 @@ public final class KeycloakUsernameAvailability implements ScopedUsernameAvailab
       headers.setCacheControl("no-store");
       headers.setBearerAuth(token.accessToken());
       headers.set(
-          "X-ORISO-Task-Context",
-          codec.usernameAvailabilityProof(realmName, realmId, actor, body));
+          "X-ORISO-Task-Context", codec.usernameAvailabilityProof(realmName, realmId, actor, body));
       var uri =
           UriComponentsBuilder.fromUriString(authServer)
               .pathSegment("realms", realmName, "oriso-account-maintenance", "v1", "availability")
