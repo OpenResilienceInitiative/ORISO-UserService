@@ -192,10 +192,14 @@ public final class ScheduledAskerMaintenance {
     String body =
         codec.canonical(
             Map.of(
-                "target", target(claim),
-                "operationId", intent.operation,
-                "expectedState", state,
-                "change", Map.of()));
+                "target",
+                target(claim),
+                "operationId",
+                intent.operation,
+                "expectedState",
+                state,
+                "change",
+                Map.of()));
     jdbc.update(
         "update identity_maintenance_intent set expected_state=?,frozen_body=?,status='FROZEN'"
             + " where operation_id=? and claim_token=?",
@@ -363,8 +367,7 @@ public final class ScheduledAskerMaintenance {
             .encode()
             .toUri();
     try {
-      return http
-          .exchange(endpoint, HttpMethod.POST, new HttpEntity<>(body, headers), String.class)
+      return http.exchange(endpoint, HttpMethod.POST, new HttpEntity<>(body, headers), String.class)
           .getBody();
     } catch (RuntimeException failure) {
       // Never propagate provider bodies, headers, bearer or native diagnostics into scheduler logs.
