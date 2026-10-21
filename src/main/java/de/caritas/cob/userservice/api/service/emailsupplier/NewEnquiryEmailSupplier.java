@@ -79,10 +79,23 @@ public class NewEnquiryEmailSupplier implements EmailSupplier {
     log.info("Retrieved agency {}", agency);
     return consultantAgencyList.stream()
         .filter(this::validConsultantAgency)
-        .filter(relation -> accountEligibility.allows(relation.getConsultant()))
+        .filter(this::currentlyEligible)
         .filter(this::shouldSendNewEnquiryNotificationForConsultant)
         .map(toEnquiryMailDTO(agency))
         .collect(Collectors.toList());
+  }
+
+  private boolean currentlyEligible(ConsultantAgency relation) {
+    try {
+      return accountEligibility.allows(relation.getConsultant());
+    } catch (RuntimeException unavailable) {
+      // One unavailable lookup skips only this recipient, never the agency's whole batch.
+      log.warn(
+          "Skipping new enquiry email for consultant {}: eligibility unavailable ({})",
+          relation.getConsultant().getId(),
+          unavailable.getClass().getSimpleName());
+      return false;
+    }
   }
 
   private boolean validConsultantAgency(ConsultantAgency consultantAgency) {

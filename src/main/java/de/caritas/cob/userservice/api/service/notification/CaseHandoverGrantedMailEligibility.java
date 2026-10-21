@@ -7,7 +7,6 @@ import de.caritas.cob.userservice.api.model.CaseHandoverRequest.Status;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
-import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -20,7 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class CaseHandoverGrantedMailEligibility {
   private final @NonNull CaseHandoverRequestRepository requests;
   private final @NonNull ReleaseToggleService releaseToggles;
-  private final @NonNull AccountInactivityService lifecycle;
+  private final @NonNull NotificationAccountEligibility accounts;
 
   @Transactional(readOnly = true)
   public boolean isEligible(CaseHandoverEmailNotification.Mail mail) {
@@ -44,11 +43,8 @@ public class CaseHandoverGrantedMailEligibility {
         || mail.recipient().isBlank()
         || !Objects.equals(recipient.getEmail(), mail.recipient())
         || !session.isAdvisedBy(recipient.getId())) return false;
-    // Legacy accounts without a lifecycle row retain their established eligibility behavior.
-    if (lifecycle
-        .snapshot(recipient.getId())
-        .map(account -> account.status() != AccountInactivityService.Status.ACTIVE)
-        .orElse(false)) return false;
+    // Same lifecycle, status and identity rule as every other notification recipient.
+    if (!accounts.allows(recipient)) return false;
     return !releaseToggles.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)
         || (recipient.isNotificationsEnabled()
             && Boolean.TRUE.equals(

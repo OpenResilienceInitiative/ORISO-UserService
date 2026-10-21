@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.service.notification;
 import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
-import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -15,7 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class CaseHandoverRequiredConsentMailEligibility {
   private final @NonNull CaseHandoverRequestRepository requests;
-  private final @NonNull AccountInactivityService lifecycle;
+  private final @NonNull NotificationAccountEligibility accounts;
 
   @Transactional(readOnly = true)
   public boolean isEligible(CaseHandoverEmailNotification.Mail mail) {
@@ -46,11 +45,8 @@ public class CaseHandoverRequiredConsentMailEligibility {
     if (!Objects.equals(
         currentOwner == null ? null : currentOwner.getId(),
         originalOwner == null ? null : originalOwner.getId())) return false;
-    // A missing lifecycle row retains compatibility only for the current domain recipient.
-    return lifecycle
-        .snapshot(recipient.getUserId())
-        .map(account -> account.status() == AccountInactivityService.Status.ACTIVE)
-        .orElse(true);
+    // Same lifecycle and identity rule as every other notification recipient.
+    return accounts.allows(recipient.getUserId());
   }
 
   static boolean requiresPersonalConsent(CaseHandoverRequest request) {

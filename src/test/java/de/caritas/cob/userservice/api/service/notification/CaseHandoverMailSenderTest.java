@@ -40,6 +40,10 @@ class CaseHandoverMailSenderTest {
   private final ReleaseToggleService toggles = mock(ReleaseToggleService.class);
   private final AccountInactivityService lifecycle = mock(AccountInactivityService.class);
   private final SessionRepository sessions = mock(SessionRepository.class);
+  private final de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup identities =
+      mock(de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup.class);
+  private final NotificationAccountEligibility accounts =
+      new NotificationAccountEligibility(lifecycle, identities);
   private CaseHandoverRequest currentRequest;
   private final CaseHandoverMailSender sender =
       new CaseHandoverMailSender(
@@ -48,8 +52,8 @@ class CaseHandoverMailSenderTest {
           tenants,
           urls,
           composer,
-          new CaseHandoverGrantedMailEligibility(requests, toggles, lifecycle),
-          new CaseHandoverRequiredConsentMailEligibility(requests, lifecycle),
+          new CaseHandoverGrantedMailEligibility(requests, toggles, accounts),
+          new CaseHandoverRequiredConsentMailEligibility(requests, accounts),
           sessions,
           toggles);
 
@@ -63,6 +67,7 @@ class CaseHandoverMailSenderTest {
             .lastName("Counsellor")
             .email("incoming@example.test")
             .tenantId(40L)
+            .status(de.caritas.cob.userservice.api.model.ConsultantStatus.IN_PROGRESS)
             .build();
     recipient.setNotificationsEnabled(true);
     recipient.setNotificationsSettings("{\"reassignmentNotificationEnabled\":true}");
@@ -87,6 +92,7 @@ class CaseHandoverMailSenderTest {
             .build();
     when(requests.findById(12L)).thenReturn(Optional.of(currentRequest));
     when(lifecycle.snapshot("incoming-id")).thenReturn(Optional.empty());
+    when(identities.findEnabledById(any())).thenReturn(Optional.of(true));
   }
 
   private final Session session = new Session();
@@ -344,6 +350,60 @@ class CaseHandoverMailSenderTest {
         .thenThrow(new IllegalStateException("sensitive lifecycle details"));
     org.assertj.core.api.Assertions.assertThatCode(() -> sender.send(mail))
         .doesNotThrowAnyException();
+    verifyNoInteractions(composer, delivery);
+  }
+
+  @Test
+  void disabledIdentityOrUnusableStatusCannotReceiveTheQueuedGrant() {
+    var mail = grantReadyForDelivery();
+    sender.send(mail);
+    verify(delivery)
+        .sendConfirmed(
+            eq(40L),
+            any(),
+            eq(TenantSystemEmailDelivery.Purpose.HANDOVER_CONFIRMED),
+            eq(mail.recipient()),
+            any());
+    org.mockito.Mockito.clearInvocations(composer, delivery);
+    when(identities.findEnabledById("incoming-id")).thenReturn(Optional.of(false));
+    sender.send(mail);
+    verifyNoInteractions(composer, delivery);
+    when(identities.findEnabledById("incoming-id")).thenReturn(Optional.of(true));
+    currentRequest
+        .getRequesterConsultant()
+        .setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.IN_DELETION);
+    sender.send(mail);
+    verifyNoInteractions(composer, delivery);
+  }
+
+  @Test
+  void disabledSeekerIdentityCannotReceiveTheRequiredConsentRequest() {
+    currentRequest.setStatus(CaseHandoverRequest.Status.PENDING_CLIENT_CONSENT);
+    currentRequest.setClientConsent(
+        de.caritas.cob.userservice.api.model.CaseHandoverConsentMode.OPT_IN);
+    currentRequest.setPreviousConsultant(currentRequest.getSession().getConsultant());
+    var seeker = new User();
+    seeker.setUserId("asker-id");
+    seeker.setTenantId(40L);
+    seeker.setEmail("asker@example.test");
+    currentRequest.getSession().setUser(seeker);
+    var mail =
+        mail(40L, CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED, "asker@example.test");
+    var tenant = new RestrictedTenantDTO().id(40L);
+    when(routes.resolve(40L))
+        .thenReturn(
+            Optional.of(
+                new TenantSystemEmailRouteService.Route(
+                    TenantSystemEmailRouteService.Mode.PLATFORM, null)));
+    when(tenants.getRestrictedTenantDataFresh(40L)).thenReturn(tenant);
+    when(urls.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.test");
+    when(composer.compose(mail, "https://tenant.example.test"))
+        .thenReturn(new OrisoEmailRenderer.RenderedEmail("Notice", "<p>Sign in</p>", "Sign in"));
+    sender.send(mail);
+    verify(composer).compose(mail, "https://tenant.example.test");
+    org.mockito.Mockito.clearInvocations(composer, delivery);
+    when(identities.findEnabledById("asker-id")).thenReturn(Optional.of(false));
+    sender.send(mail);
     verifyNoInteractions(composer, delivery);
   }
 

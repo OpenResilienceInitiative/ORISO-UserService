@@ -63,7 +63,7 @@ class NewDirectEnquiryEmailSupplierTest {
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(
       de.caritas.cob.userservice.api.model.ConsultantStatus.class)
-  void onlyCreatedOrActiveConsultantsReceiveNewEnquiries(
+  void onlyCreatedOrInProgressConsultantsReceiveNewEnquiries(
       de.caritas.cob.userservice.api.model.ConsultantStatus status) {
     var recipient = currentRecipient();
     org.assertj.core.api.Assertions.assertThat(newDirectEnquiryEmailSupplier.generateEmails())
@@ -115,7 +115,7 @@ class NewDirectEnquiryEmailSupplierTest {
 
   @Test
   void disabledIdentityBehindALiveAgencyRelationCannotReceiveANewEnquiry() {
-    var recipient = currentRecipient();
+    currentRecipient();
     org.assertj.core.api.Assertions.assertThat(newDirectEnquiryEmailSupplier.generateEmails())
         .hasSize(1);
     org.mockito.Mockito.lenient()

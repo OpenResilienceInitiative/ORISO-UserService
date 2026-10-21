@@ -96,7 +96,7 @@ class NewEnquiryEmailSupplierTest {
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(
       de.caritas.cob.userservice.api.model.ConsultantStatus.class)
-  void onlyCreatedOrActiveConsultantsReceiveNewEnquiries(
+  void onlyCreatedOrInProgressConsultantsReceiveNewEnquiries(
       de.caritas.cob.userservice.api.model.ConsultantStatus status) {
     var recipient = currentRecipient();
     org.assertj.core.api.Assertions.assertThat(newEnquiryEmailSupplier.generateEmails()).hasSize(1);
@@ -144,12 +144,34 @@ class NewEnquiryEmailSupplierTest {
 
   @Test
   void disabledIdentityBehindALiveAgencyRelationCannotReceiveANewEnquiry() {
-    var recipient = currentRecipient();
+    currentRecipient();
     org.assertj.core.api.Assertions.assertThat(newEnquiryEmailSupplier.generateEmails()).hasSize(1);
     org.mockito.Mockito.lenient()
         .when(identities.findEnabledById("guard-recipient"))
         .thenReturn(java.util.Optional.of(false));
     org.assertj.core.api.Assertions.assertThat(newEnquiryEmailSupplier.generateEmails()).isEmpty();
+  }
+
+  @Test
+  void unavailableIdentityLookupForOneConsultantStillNotifiesTheRestOfTheAgency() {
+    var unavailable = currentRecipient();
+    var reachable = new Consultant();
+    reachable.setId("reachable-recipient");
+    reachable.setTenantId(7L);
+    reachable.setEmail("reachable@synthetic.oriso.test");
+    reachable.setLanguageCode(com.neovisionaries.i18n.LanguageCode.de);
+    reachable.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.CREATED);
+    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(anyLong()))
+        .thenReturn(
+            List.of(
+                ConsultantAgency.builder().consultant(unavailable).agencyId(70L).build(),
+                ConsultantAgency.builder().consultant(reachable).agencyId(70L).build()));
+    when(identities.findEnabledById(unavailable.getId()))
+        .thenThrow(new IllegalStateException("identity provider down"));
+
+    assertThat(newEnquiryEmailSupplier.generateEmails())
+        .extracting(MailDTO::getEmail)
+        .containsExactly("reachable@synthetic.oriso.test");
   }
 
   @Test

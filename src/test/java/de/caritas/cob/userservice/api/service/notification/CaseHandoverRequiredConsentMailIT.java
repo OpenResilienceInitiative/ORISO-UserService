@@ -89,6 +89,7 @@ class CaseHandoverRequiredConsentMailIT {
   @MockitoBean private UserAccountService actor;
   @MockitoBean private ReleaseToggleService toggles;
   @MockitoBean private MatrixFeedUpdateSignalService feedSignal;
+  @MockitoBean private de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService identities;
 
   private User seeker;
   private Consultant previous;
@@ -100,6 +101,8 @@ class CaseHandoverRequiredConsentMailIT {
   @BeforeEach
   void currentAuthorizedCase() {
     TenantContext.setCurrentTenant(7L);
+    when(identities.findEnabledById(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(java.util.Optional.of(true));
     seeker =
         users.save(
             User.builder()

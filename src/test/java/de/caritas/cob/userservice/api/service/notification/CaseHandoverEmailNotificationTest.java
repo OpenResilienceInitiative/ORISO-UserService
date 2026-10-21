@@ -220,6 +220,11 @@ class CaseHandoverEmailNotificationTest {
     when(requests.findById(12L)).thenReturn(Optional.of(request));
     var sessions = mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class);
     when(sessions.findById(77L)).thenReturn(Optional.of(request.getSession()));
+    var identities =
+        mock(de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup.class);
+    when(identities.findEnabledById("incoming-id")).thenReturn(Optional.of(true));
+    var accounts =
+        new NotificationAccountEligibility(mock(AccountInactivityService.class), identities);
     var delayedSender =
         new CaseHandoverMailSender(
             routes,
@@ -227,10 +232,8 @@ class CaseHandoverEmailNotificationTest {
             tenants,
             urls,
             composer,
-            new CaseHandoverGrantedMailEligibility(
-                requests, toggles, mock(AccountInactivityService.class)),
-            new CaseHandoverRequiredConsentMailEligibility(
-                requests, mock(AccountInactivityService.class)),
+            new CaseHandoverGrantedMailEligibility(requests, toggles, accounts),
+            new CaseHandoverRequiredConsentMailEligibility(requests, accounts),
             sessions,
             toggles);
 
@@ -273,6 +276,7 @@ class CaseHandoverEmailNotificationTest {
             .lastName("Counsellor")
             .email("incoming@example.test")
             .languageCode(LanguageCode.de)
+            .status(de.caritas.cob.userservice.api.model.ConsultantStatus.IN_PROGRESS)
             .build();
     Session session =
         Session.builder()
