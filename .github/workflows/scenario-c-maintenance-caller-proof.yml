@@ -69,7 +69,7 @@ jobs:
           echo "$RUNNER_TEMP/apache-maven-3.9.14/bin" >> "$GITHUB_PATH"
       - name: Verify nonsecret evidence gates without JVM or native fixtures
         run: python -m unittest discover -s tests/ci -p test_maintenance_boundary_proof.py -v
-      - name: Require committed formatting for the thirteen owned maintenance sources
+      - name: Require committed formatting for the fourteen owned maintenance sources
         if: matrix.slice == 'locale' || matrix.slice == 'jpa' || matrix.slice == 'availability' || matrix.slice == 'deletion'
         shell: bash
         env:
@@ -77,7 +77,7 @@ jobs:
         run: |
           set -euo pipefail
           mvn -B -ntp -q spotless:apply \
-            "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/DeleteUserAccountScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/UsernameAvailabilityConfiguration.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/KeycloakUsernameAvailability.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserUsernameAvailabilityScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/ScopedUsernameAvailability.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/port/out/ScopedAvailabilityUnavailableException.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakService.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserController.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenanceJpaTest.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfLocaleScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec.java"
+            "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/DeleteUserAccountScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/UsernameAvailabilityConfiguration.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/KeycloakUsernameAvailability.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserUsernameAvailabilityScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/ScopedUsernameAvailability.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/port/out/ScopedAvailabilityUnavailableException.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakService.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserController.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenanceJpaTest.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfLocaleScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/UserMaintenanceSecretIntentCodecTest.java"
           mkdir -p target/scenario-c-maintenance-caller
           git diff --binary -- \
             src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/DeleteUserAccountScenarioCBoundaryTest.java \
@@ -93,6 +93,7 @@ jobs:
             src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance.java \
             src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate.java \
             src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/UserMaintenanceSecretIntentCodecTest.java \
             > target/scenario-c-maintenance-caller/locale-format.patch
           git diff --exit-code -- \
             src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/DeleteUserAccountScenarioCBoundaryTest.java \
@@ -107,7 +108,8 @@ jobs:
             src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfLocaleScenarioCBoundaryTest.java \
             src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance.java \
             src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate.java \
-            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec.java
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/UserMaintenanceSecretIntentCodecTest.java
       - name: Bind the actual checkout and required normal Dev ancestor
         run: python scripts/ci/maintenance-boundary-proof.py snapshot --report target/scenario-c-maintenance-caller/maintenance-caller-before.json --slice ${{ matrix.slice }}
       - name: Compile actual User source and execute each actual public boundary case once
