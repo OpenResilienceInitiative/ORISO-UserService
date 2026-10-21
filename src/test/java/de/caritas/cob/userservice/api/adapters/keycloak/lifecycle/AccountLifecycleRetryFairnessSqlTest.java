@@ -287,7 +287,8 @@ class AccountLifecycleRetryFairnessSqlTest {
     assertEquals(
         3,
         jdbc.queryForObject(
-            "SELECT COUNT(*) FROM identity_lifecycle_outbox WHERE status='PENDING'", Integer.class));
+            "SELECT COUNT(*) FROM identity_lifecycle_outbox WHERE status='PENDING'",
+            Integer.class));
     verifyNoInteractions(remote, downstream);
   }
 
