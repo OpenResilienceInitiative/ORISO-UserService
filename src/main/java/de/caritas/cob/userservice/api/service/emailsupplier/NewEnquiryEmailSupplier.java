@@ -38,6 +38,9 @@ import org.springframework.stereotype.Service;
 public class NewEnquiryEmailSupplier implements EmailSupplier {
 
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
+  private final @NonNull de.caritas.cob.userservice.api.service.notification
+          .NotificationAccountEligibility
+      accountEligibility;
   private final @NonNull AgencyService agencyService;
 
   private final @NonNull ReleaseToggleService releaseToggleService;
@@ -76,6 +79,7 @@ public class NewEnquiryEmailSupplier implements EmailSupplier {
     log.info("Retrieved agency {}", agency);
     return consultantAgencyList.stream()
         .filter(this::validConsultantAgency)
+        .filter(relation -> accountEligibility.allows(relation.getConsultant()))
         .filter(this::shouldSendNewEnquiryNotificationForConsultant)
         .map(toEnquiryMailDTO(agency))
         .collect(Collectors.toList());

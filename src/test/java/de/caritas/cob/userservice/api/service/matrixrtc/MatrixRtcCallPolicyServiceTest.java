@@ -368,6 +368,7 @@ class MatrixRtcCallPolicyServiceTest {
         .when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
         .thenReturn(tenant(enabledSettings()));
     assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
+    verifyNoInteractions(tenantService);
   }
 
   private MatrixRtcCorrelationIdHasher correlationIdHasher() {

@@ -321,12 +321,6 @@ public class SessionService {
     return consultingTypeId;
   }
 
-  /**
-   * Save a {@link Session} to the database.
-   *
-   * @param session the session
-   * @return the {@link Session}
-   */
   /** Finalizes only the still-current enquiry after encrypted Matrix event readback. */
   @Transactional
   public Session finalizeEnquiry(Session expected, String language, String matrixRoomId) {
@@ -351,6 +345,12 @@ public class SessionService {
     return saveSession(current);
   }
 
+  /**
+   * Save a {@link Session} to the database.
+   *
+   * @param session the session
+   * @return the {@link Session}
+   */
   public Session saveSession(Session session) {
     stampConversationTypeIfAbsent(session);
     return sessionRepository.save(session);

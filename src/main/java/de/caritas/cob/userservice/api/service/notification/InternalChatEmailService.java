@@ -17,7 +17,6 @@ import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.Status;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.donotdisturb.DoNotDisturbService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
@@ -54,7 +53,7 @@ public class InternalChatEmailService {
   private final @NonNull SessionRepository sessions;
   private final @NonNull GroupChatParticipantRepository participants;
   private final @NonNull ConsultantRepository consultants;
-  private final @NonNull IdentityAccountStatusLookup identities;
+  private final @NonNull NotificationAccountEligibility accountEligibility;
   private final @NonNull MatrixSynapseService matrix;
   private final @NonNull ReplyEmailDeliveryWriter writer;
   private final @NonNull DoNotDisturbService doNotDisturb;
@@ -305,7 +304,7 @@ public class InternalChatEmailService {
   private boolean matches(
       Session session, ReplyEmailDelivery claim, Consultant actor, Set<String> participantIds) {
     return currentParticipant(session, actor, participantIds)
-        && identityEnabled(actor.getId())
+        && accountEligibility.allows(actor.getId())
         && Objects.equals(session.getId(), claim.getSessionId())
         && Objects.equals(session.getTenantId(), claim.getTenantId())
         && Objects.equals(actor.getMatrixUserId(), claim.getSourceMatrixUserId())
@@ -323,14 +322,10 @@ public class InternalChatEmailService {
             || !Boolean.FALSE.equals(
                 deserializeNotificationSettingsDTOOrDefaultIfNull(recipient)
                     .getInternalChatNotificationEnabled()))
-        && identityEnabled(recipient.getId())
+        && accountEligibility.allows(recipient.getId())
         && !doNotDisturb.isInDoNotDisturb(recipient.getId())
         && !isBlank(recipient.getEmail())
         && (isBlank(emailDummySuffix) || !recipient.getEmail().endsWith(emailDummySuffix));
-  }
-
-  private boolean identityEnabled(String userId) {
-    return at(Stage.IDENTITY, () -> identities.findEnabledById(userId).orElse(false));
   }
 
   private Set<String> participantIds(Session session) {

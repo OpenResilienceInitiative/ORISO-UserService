@@ -84,6 +84,7 @@ public class MatrixRoomClient {
         || operatorUserId.isBlank()
         || accessToken == null
         || accessToken.isBlank()) return false;
+    String stage = "identity";
     try {
       var headers = getClientHttpHeaders(accessToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -96,6 +97,7 @@ public class MatrixRoomClient {
                   Map.class)
               .getBody();
       if (identity == null || !operatorUserId.equals(identity.get("user_id"))) return false;
+      stage = "initial-state";
       var before = closureState(roomId, operatorUserId, headers);
       long threshold = Math.addExact(before.highestOtherPower(), 1L);
       if (threshold > MAX_SAFE_POWER) return false;
@@ -121,11 +123,13 @@ public class MatrixRoomClient {
       updated.put("events_default", threshold);
       for (String type : protectedEvents) events.put(type, threshold);
       updated.put("events", events);
+      stage = "write";
       restTemplate.exchange(
           buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId)),
           HttpMethod.PUT,
           new HttpEntity<>(updated, headers),
           Map.class);
+      stage = "readback";
       var after = closureState(roomId, operatorUserId, headers);
       // Independent state readback must preserve identity/power facts and certify every write kind.
       if (before.version() != after.version()
@@ -149,7 +153,10 @@ public class MatrixRoomClient {
       return true;
     } catch (RuntimeException ex) {
       // Provider bodies and credentials are deliberately excluded from diagnostic logging.
-      log.warn("Matrix enquiry closure could not be verified");
+      log.warn(
+          "Matrix enquiry closure could not be verified: stage={}, failure={}",
+          stage,
+          ex.getClass().getSimpleName());
       return false;
     }
   }

@@ -62,3 +62,6 @@ jobs:
 
   mariadb-contract:
     uses: ./.github/workflows/mariadb-contract.yml
+
+  notification-smtp-contract:
+    uses: ./.github/workflows/notification-smtp-contract.yml

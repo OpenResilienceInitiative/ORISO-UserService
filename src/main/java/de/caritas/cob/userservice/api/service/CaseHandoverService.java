@@ -1552,10 +1552,9 @@ public class CaseHandoverService {
             .findByIdForUpdate(sessionId)
             .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
     if (current.getStatus() == Session.SessionStatus.REJECTED) {
-      throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
-          "Rejected enquiry cannot grant case access");
+      throw new ConflictException("Rejected enquiry cannot grant case access");
     }
-    return current;
+    return requireHandable(current);
   }
 
   private Session getSession(Long sessionId) {

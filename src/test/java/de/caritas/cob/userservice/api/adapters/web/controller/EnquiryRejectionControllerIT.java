@@ -971,6 +971,140 @@ class EnquiryRejectionControllerIT {
   }
 
   @Test
+  void finalizationCannotRecreateAnEnquiryThatNoLongerExists() {
+    var expected = finalizationSnapshot(sessions.findById(sessionId).orElseThrow());
+    sessions.deleteById(sessionId);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                sessionService.finalizeEnquiry(
+                    expected, "en", "!finalized-enquiry:synthetic.oriso.test"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class);
+    assertThat(sessions.findById(sessionId)).isEmpty();
+    assertThat(feed()).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void finalizationCommitsTheCurrentEnquiryWithTheAssignedOrUnassignedStatus(boolean assigned) {
+    var current = sessions.findById(sessionId).orElseThrow();
+    current.setStatus(Session.SessionStatus.INITIAL);
+    current.setEnquiryMessageDate(null);
+    current.setConsultant(assigned ? consultants.findById(actorId).orElseThrow() : null);
+    sessions.save(current);
+    var expected = finalizationSnapshot(current);
+
+    sessionService.finalizeEnquiry(expected, "en", "!finalized-enquiry:synthetic.oriso.test");
+
+    var stored = sessions.findById(sessionId).orElseThrow();
+    assertThat(stored.getStatus())
+        .isEqualTo(assigned ? Session.SessionStatus.IN_PROGRESS : Session.SessionStatus.NEW);
+    assertThat(stored.getMatrixRoomId()).isEqualTo("!finalized-enquiry:synthetic.oriso.test");
+    assertThat(stored.getEnquiryMessageDate()).isNotNull();
+    assertThat(stored.getLanguageCode()).isEqualTo(LanguageCode.en);
+    assertThat(stored.getUser().getUserId()).isEqualTo(seekerId);
+    assertThat(stored.getTenantId()).isEqualTo(7L);
+    assertThat(stored.getAgencyId()).isEqualTo(70L);
+    if (assigned) assertThat(stored.getConsultant().getId()).isEqualTo(actorId);
+    else assertThat(stored.getConsultant()).isNull();
+    assertThat(feed()).isEmpty();
+  }
+
+  @Test
+  void aSecondFinalizationCannotChangeAnAlreadySubmittedEnquiryEvenWithAFreshBinding() {
+    var current = sessions.findById(sessionId).orElseThrow();
+    current.setStatus(Session.SessionStatus.INITIAL);
+    current.setEnquiryMessageDate(null);
+    sessions.save(current);
+    sessionService.finalizeEnquiry(
+        finalizationSnapshot(current), "en", "!finalized-enquiry:synthetic.oriso.test");
+    var submitted = sessions.findById(sessionId).orElseThrow();
+    var expected = finalizationSnapshot(submitted);
+    var submittedAt = submitted.getEnquiryMessageDate();
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                sessionService.finalizeEnquiry(
+                    expected, "de", "!second-finalization:synthetic.oriso.test"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+
+    var stored = sessions.findById(sessionId).orElseThrow();
+    assertThat(stored.getStatus()).isEqualTo(Session.SessionStatus.NEW);
+    assertThat(stored.getMatrixRoomId()).isEqualTo(submitted.getMatrixRoomId());
+    assertThat(stored.getEnquiryMessageDate()).isEqualTo(submittedAt);
+    assertThat(stored.getLanguageCode()).isEqualTo(LanguageCode.en);
+    assertThat(stored.getUser().getUserId()).isEqualTo(seekerId);
+    assertThat(stored.getTenantId()).isEqualTo(7L);
+    assertThat(stored.getAgencyId()).isEqualTo(70L);
+    assertThat(stored.getConsultant()).isNull();
+    assertThat(feed()).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(FinalizationBindingMismatch.class)
+  void staleFinalizationBindingCannotMutateTheCurrentUnsubmittedEnquiry(
+      FinalizationBindingMismatch mismatch) {
+    var current = sessions.findById(sessionId).orElseThrow();
+    current.setStatus(Session.SessionStatus.INITIAL);
+    current.setEnquiryMessageDate(null);
+    sessions.save(current);
+    var expected = finalizationSnapshot(current);
+    switch (mismatch) {
+      case TENANT -> expected.setTenantId(8L);
+      case AGENCY -> expected.setAgencyId(71L);
+      case USER ->
+          expected.setUser(
+              new User(
+                  UUID.randomUUID().toString(),
+                  null,
+                  "stale-snapshot",
+                  "stale@synthetic.oriso.test",
+                  false));
+      case ROOM -> expected.setMatrixRoomId("!stale-enquiry:synthetic.oriso.test");
+    }
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                sessionService.finalizeEnquiry(
+                    expected, "en", "!finalized-enquiry:synthetic.oriso.test"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+
+    var stored = sessions.findById(sessionId).orElseThrow();
+    assertThat(stored.getStatus()).isEqualTo(Session.SessionStatus.INITIAL);
+    assertThat(stored.getEnquiryMessageDate()).isNull();
+    assertThat(stored.getLanguageCode()).isEqualTo(LanguageCode.de);
+    assertThat(stored.getMatrixRoomId()).isEqualTo(current.getMatrixRoomId());
+    assertThat(stored.getUser().getUserId()).isEqualTo(seekerId);
+    assertThat(stored.getTenantId()).isEqualTo(7L);
+    assertThat(stored.getAgencyId()).isEqualTo(70L);
+    assertThat(stored.getConsultant()).isNull();
+    assertThat(feed()).isEmpty();
+  }
+
+  private Session finalizationSnapshot(Session current) {
+    return Session.builder()
+        .registrationType(current.getRegistrationType())
+        .status(current.getStatus())
+        .postcode(current.getPostcode())
+        .id(current.getId())
+        .tenantId(current.getTenantId())
+        .agencyId(current.getAgencyId())
+        .user(current.getUser())
+        .matrixRoomId(current.getMatrixRoomId())
+        .build();
+  }
+
+  private enum FinalizationBindingMismatch {
+    TENANT,
+    AGENCY,
+    USER,
+    ROOM
+  }
+
+  @Test
   void staleEncryptedEnquiryFinalizationCannotReopenARejectionCommittedDuringEventReadback() {
     var stale = sessions.findById(sessionId).orElseThrow();
     stale.setStatus(Session.SessionStatus.INITIAL);

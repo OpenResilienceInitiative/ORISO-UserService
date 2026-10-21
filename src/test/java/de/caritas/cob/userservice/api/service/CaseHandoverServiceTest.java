@@ -233,6 +233,14 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void aMembersOnlyCaseCannotCreateAHandoverForAnAgencyColleague() {
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Advice"));
+  }
+
+  @Test
   void requestAccess_standingOffDoesNotWeakenBaselineOptIn() {
     var status = caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "support");
     assertEquals("PENDING_CLIENT_CONSENT", status.getStatus());

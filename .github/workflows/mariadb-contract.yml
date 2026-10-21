@@ -3,6 +3,9 @@ name: Reusable UserService MariaDB contract
 on:
   workflow_call:
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     name: MariaDB schema, statistics, scheduler lease and replica contracts

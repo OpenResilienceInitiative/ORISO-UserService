@@ -101,6 +101,9 @@ public class TeamDiscussionFacade {
       var outcome = matrixSynapseService.purgeRoomOrConfirmGone(roomId);
       if (outcome == MatrixSynapseService.RoomPurgeOutcome.FAILED) {
         roomCleanupService.recordFailedCleanup(sessionId, roomId);
+        log.error(
+            "Unused team discussion room for session {} needs cleanup after rejected creation",
+            sessionId);
         throw new ResponseStatusException(
             HttpStatus.BAD_GATEWAY, "Team discussion cleanup failed", rejected);
       }

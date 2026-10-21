@@ -163,7 +163,10 @@ public class TenantTemplateSupplier {
   }
 
   private TemplateDataDTO getTenantClaim(RestrictedTenantDTO tenantData) {
-    return new TemplateDataDTO().key("tenant_claim").value(tenantData.getContent().getClaim());
+    // The API permits missing content and claim; optional copy must not block a notification.
+    var content = tenantData.getContent();
+    String claim = content == null || content.getClaim() == null ? "" : content.getClaim();
+    return new TemplateDataDTO().key("tenant_claim").value(claim);
   }
 
   private TemplateDataDTO getTenantName(RestrictedTenantDTO tenantData) {

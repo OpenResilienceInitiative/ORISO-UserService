@@ -50,6 +50,8 @@ public class AdviceSeekerReplyEmailService {
   private final @NonNull ReplyEmailDeliveryWriter writer;
   private final @NonNull DoNotDisturbService doNotDisturb;
   private final @NonNull MatrixCaseReplyActorAuthorizer replyActors;
+  private final @NonNull de.caritas.cob.userservice.api.port.out.ConsultantRepository consultants;
+  private final @NonNull NotificationAccountEligibility accountEligibility;
 
   @Value("${identity.email-dummy-suffix:}")
   private String emailDummySuffix;
@@ -238,6 +240,16 @@ public class AdviceSeekerReplyEmailService {
       actionPath = "/sessions/user/view/session/" + session.getId();
     }
 
+    try {
+      if (!accountsStillEligible(session, claim)) {
+        writer.finish(deliveryId, Status.REJECTED);
+        return;
+      }
+    } catch (RuntimeException unavailable) {
+      retryUnavailablePreflight(deliveryId, unavailable);
+      return;
+    }
+
     TenantSystemEmailRouteService.Route route;
     OrisoEmailRenderer.RenderedEmail email;
     Stage setupStage = Stage.TENANT_POLICY;
@@ -299,6 +311,20 @@ public class AdviceSeekerReplyEmailService {
       writer.finish(deliveryId, Status.UNCERTAIN);
       throw sendFailure;
     }
+  }
+
+  private boolean accountsStillEligible(Session session, ReplyEmailDelivery claim) {
+    if (!accountEligibility.allows(session.getUser().getUserId())) return false;
+    // The incoming writer may be a current team colleague, rather than the assigned counsellor.
+    var consultant =
+        claim.getRecipientKind() == RecipientKind.CONSULTANT
+            ? session.getConsultant()
+            : consultants
+                .findByMatrixUserIdAndDeleteDateIsNull(claim.getSourceMatrixUserId())
+                .orElse(null);
+    return consultant != null
+        && Objects.equals(consultant.getTenantId(), claim.getTenantId())
+        && accountEligibility.allows(consultant);
   }
 
   private boolean hasUsableAddress(User user) {

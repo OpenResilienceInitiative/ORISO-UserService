@@ -131,6 +131,27 @@ class SessionServiceAccessTest {
   }
 
   @Test
+  void isConsultantPermittedToSession_ShouldAllowRejectedRead_ForUnassignedConsultantWithGrant() {
+    var consultant = consultant(UNASSIGNED_CONSULTANT_ID);
+    var session = sessionOwnedBy(OWNER_ID);
+    session.setStatus(Session.SessionStatus.REJECTED);
+    when(rejectionReadAccess.canRead(session, consultant)).thenReturn(true);
+
+    assertEquals(true, sessionService.isConsultantPermittedToSession(consultant, session));
+  }
+
+  @Test
+  void isConsultantPermittedToSession_ShouldDenyRejectedRead_ForAssignedConsultantWithoutGrant() {
+    var consultant = consultant(CONSULTANT_ID);
+    var session = sessionOwnedBy(OWNER_ID);
+    session.setStatus(Session.SessionStatus.REJECTED);
+    session.setConsultant(consultant);
+    when(rejectionReadAccess.canRead(session, consultant)).thenReturn(false);
+
+    assertEquals(false, sessionService.isConsultantPermittedToSession(consultant, session));
+  }
+
+  @Test
   void
       assertUserHasAccess_ShouldThrowForbiddenException_WhenAssignedConsultantLeftTheMembersOnlyChat() {
     var former = consultant(CONSULTANT_ID);

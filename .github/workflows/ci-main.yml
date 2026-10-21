@@ -42,7 +42,7 @@ jobs:
 
   publish:
     name: test, build and publish image
-    needs: [required-integration-tests, mariadb-contract]
+    needs: [required-integration-tests, mariadb-contract, notification-smtp-contract]
     runs-on: ubuntu-latest
 
     permissions:
@@ -78,3 +78,6 @@ jobs:
 
     - name: Record immutable release digest
       run: echo '${{ env.REGISTRY }}/${{ env.ORG }}/oriso-userservice@${{ steps.image.outputs.digest }}' >> "$GITHUB_STEP_SUMMARY"
+
+  notification-smtp-contract:
+    uses: ./.github/workflows/notification-smtp-contract.yml

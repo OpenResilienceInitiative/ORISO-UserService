@@ -34,6 +34,9 @@ import org.springframework.stereotype.Service;
 public class NewDirectEnquiryEmailSupplier implements EmailSupplier {
 
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
+  private final @NonNull de.caritas.cob.userservice.api.service.notification
+          .NotificationAccountEligibility
+      accountEligibility;
   private final TenantTemplateSupplier tenantTemplateSupplier;
 
   @Value("${app.base.url}")
@@ -71,6 +74,7 @@ public class NewDirectEnquiryEmailSupplier implements EmailSupplier {
 
     return consultantAgencyList.stream()
         .filter(this::validConsultantAgency)
+        .filter(relation -> accountEligibility.allows(relation.getConsultant()))
         .filter(this::shouldSendNewEnquiryNotificationForConsultant)
         .map(
             consultantAgency -> {

@@ -31,6 +31,11 @@ class InternalChatEmailServiceTest {
   static final String ROOM = "!internal:matrix.example";
   static final String EVENT = "$internal-event";
   private final SessionRepository sessions = mock(SessionRepository.class);
+  private final de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+      accountLifecycle =
+          mock(
+              de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                  .class);
   private final GroupChatParticipantRepository participants =
       mock(GroupChatParticipantRepository.class);
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
@@ -202,7 +207,7 @@ class InternalChatEmailServiceTest {
             sessions,
             participants,
             consultants,
-            identities,
+            new NotificationAccountEligibility(accountLifecycle, identities),
             matrix,
             writer,
             new DoNotDisturbService(dnd),
@@ -214,6 +219,42 @@ class InternalChatEmailServiceTest {
             route,
             delivery);
     ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.net");
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("internalLifecycleStates")
+  void suspendedLifecycleAfterFanOutCannotSendOrReceiveInternalMail(
+      String identityId,
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
+          status) {
+    service.onMessageIntent(ROOM, EVENT, caller);
+    writer.pendingIds().forEach(service::resolveIntent);
+    var now = java.time.Instant.now();
+    when(accountLifecycle.snapshot(identityId))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityService.Snapshot(
+                    identityId, 7L, 12, 0, now, now, status, 0, null)));
+    drain();
+    assertThat(received)
+        .hasSize(
+            status
+                    == de.caritas.cob.userservice.api.workflow.accountinactivity
+                        .AccountInactivityService.Status.ACTIVE
+                ? 1
+                : 0);
+  }
+
+  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      internalLifecycleStates() {
+    return java.util.stream.Stream.of("actor", "recipient")
+        .flatMap(
+            id ->
+                java.util.Arrays.stream(
+                        de.caritas.cob.userservice.api.workflow.accountinactivity
+                            .AccountInactivityService.Status.values())
+                    .map(status -> org.junit.jupiter.params.provider.Arguments.of(id, status)));
   }
 
   @Test
@@ -655,6 +696,7 @@ class InternalChatEmailServiceTest {
     assertThat(UUID.fromString(message.getHeader("X-ORISO-Delivery-ID", null))).isNotNull();
     var multipart = (jakarta.mail.internet.MimeMultipart) message.getContent();
     assertThat(multipart.getContentType()).startsWith("multipart/alternative");
+    assertThat(multipart.getCount()).isEqualTo(2);
     for (int part = 0; part < 2; part++) {
       String content = (String) multipart.getBodyPart(part).getContent();
       assertThat(content).contains("mail=interne-nachricht").doesNotContain("PRIVATE_", "{{");

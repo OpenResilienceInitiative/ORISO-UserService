@@ -1328,13 +1328,16 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
         "{\"emailNotifications\":{\"emailNotificationsEnabled\":true,\"settings\":{\"internalChatNotificationEnabled\":false}}}");
     patchUserData(
         "{\"emailNotifications\":{\"emailNotificationsEnabled\":true,\"settings\":{\"initialEnquiryNotificationEnabled\":false}}}");
+    entityManager.flush();
+    entityManager.clear();
     var saved = consultantRepository.findById(consultant.getId()).orElseThrow();
-    assertThat(
-            objectMapper
-                .readTree(saved.getNotificationsSettings())
-                .get("internalChatNotificationEnabled")
-                .asBoolean())
-        .isFalse();
+    var internalChatSetting =
+        objectMapper
+            .readTree(saved.getNotificationsSettings())
+            .get("internalChatNotificationEnabled");
+    assertThat(internalChatSetting).isNotNull();
+    assertThat(internalChatSetting.isBoolean()).isTrue();
+    assertThat(internalChatSetting.booleanValue()).isFalse();
     mockMvc
         .perform(
             get("/users/data")
