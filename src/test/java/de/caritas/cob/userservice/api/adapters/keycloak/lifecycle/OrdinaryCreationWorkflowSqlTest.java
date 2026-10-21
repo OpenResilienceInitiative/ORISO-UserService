@@ -274,7 +274,8 @@ class OrdinaryCreationWorkflowSqlTest {
           () ->
               assertEquals(
                   "COMPENSATED",
-                  jdbc.queryForObject("SELECT status FROM identity_lifecycle_attempt", String.class)),
+                  jdbc.queryForObject(
+                      "SELECT status FROM identity_lifecycle_attempt", String.class)),
           () -> assertTrue(recoveryFailures.isEmpty()));
       verify(remote).compensate(eq(id), any());
     } else {
