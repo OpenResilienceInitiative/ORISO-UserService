@@ -137,10 +137,20 @@ class UserSelfLocaleScenarioCBoundaryTest {
     fixture.expectRead();
     assertThrows(RuntimeException.class, () -> fixture.controller.patchUser(fixture.patch(true)));
     assertEquals(0, fixture.domainCalls());
-    assertEquals("en", fixture.jdbc.queryForObject("select language_code from user where user_id=?", String.class, ACCOUNT));
-    assertFalse(fixture.jdbc.queryForObject("select encourage2fa from user where user_id=?", Boolean.class, ACCOUNT));
+    assertEquals(
+        "en",
+        fixture.jdbc.queryForObject(
+            "select language_code from user where user_id=?", String.class, ACCOUNT));
+    assertFalse(
+        fixture.jdbc.queryForObject(
+            "select encourage2fa from user where user_id=?", Boolean.class, ACCOUNT));
     assertEquals("PREPARED", fixture.status());
-    assertEquals(1, fixture.jdbc.queryForObject("select count(*) from identity_account_operation_intent where operation_id=? and status='PREPARED' and domain_applied=false and intent_body is null and receipt is null", Integer.class, fixture.operation));
+    assertEquals(
+        1,
+        fixture.jdbc.queryForObject(
+            "select count(*) from identity_account_operation_intent where operation_id=? and status='PREPARED' and domain_applied=false and intent_body is null and receipt is null",
+            Integer.class,
+            fixture.operation));
     assertEquals(0, fixture.nativeEffects.get());
     fixture.server.verify();
   }
@@ -154,7 +164,11 @@ class UserSelfLocaleScenarioCBoundaryTest {
     assertEquals(1, fixture.domainCalls());
     assertEquals(1, fixture.nativeEffects.get());
     assertEquals("FROZEN", fixture.status());
-    assertNull(fixture.jdbc.queryForObject("select receipt from identity_account_operation_intent where operation_id=?", String.class, fixture.operation));
+    assertNull(
+        fixture.jdbc.queryForObject(
+            "select receipt from identity_account_operation_intent where operation_id=?",
+            String.class,
+            fixture.operation));
     fixture.server.verify();
   }
 
@@ -162,9 +176,13 @@ class UserSelfLocaleScenarioCBoundaryTest {
   void publicPatchCurrentDomainTenantMismatchRefusesBeforeIntentOrRpc() {
     var fixture = new Fixture(true);
     fixture.jdbc.update("update user set tenant_id=8 where user_id=?", ACCOUNT);
-    assertThrows(ForbiddenException.class, () -> fixture.controller.patchUser(fixture.patch(false)));
+    assertThrows(
+        ForbiddenException.class, () -> fixture.controller.patchUser(fixture.patch(false)));
     assertEquals(0, fixture.domainCalls());
-    assertEquals(0, fixture.jdbc.queryForObject("select count(*) from identity_account_operation_intent", Integer.class));
+    assertEquals(
+        0,
+        fixture.jdbc.queryForObject(
+            "select count(*) from identity_account_operation_intent", Integer.class));
     assertEquals(0, fixture.nativeEffects.get());
     fixture.server.verify();
   }
@@ -303,7 +321,8 @@ class UserSelfLocaleScenarioCBoundaryTest {
                     saved.getLanguageCode().toString(),
                     saved.getEncourage2fa(),
                     ACCOUNT);
-                if (failDomainAfterWrite) throw new IllegalStateException("Fixture domain write failed");
+                if (failDomainAfterWrite)
+                  throw new IllegalStateException("Fixture domain write failed");
                 return saved;
               });
       var transcoder = new UsernameTranscoder();
@@ -490,12 +509,12 @@ class UserSelfLocaleScenarioCBoundaryTest {
                 } else assertEquals(frozen.get(), wire);
                 String response = reply.get();
                 if (tamperReceipt) {
-                  var changed = codec.read(response, com.fasterxml.jackson.databind.node.ObjectNode.class);
+                  var changed =
+                      codec.read(response, com.fasterxml.jackson.databind.node.ObjectNode.class);
                   changed.put("receipt", changed.path("receipt").asText() + "x");
                   response = codec.canonical(changed);
                 }
-                return withSuccess(response, MediaType.APPLICATION_JSON)
-                    .createResponse(outbound);
+                return withSuccess(response, MediaType.APPLICATION_JSON).createResponse(outbound);
               });
     }
   }
