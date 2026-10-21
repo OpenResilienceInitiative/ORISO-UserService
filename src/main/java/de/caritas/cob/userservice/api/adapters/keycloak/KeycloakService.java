@@ -143,7 +143,8 @@ public class KeycloakService
 
   @Autowired(required = false)
   public void setScopedUsernameAvailability(
-      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedUsernameAvailability availability) {
+      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedUsernameAvailability
+          availability) {
     this.scopedUsernameAvailability = availability;
   }
 

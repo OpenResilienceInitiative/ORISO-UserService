@@ -7,7 +7,9 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.client.RestTemplate;
 
-/** Compiling diagnostic signature only, unregistered until actual public wire assertions reach RED. */
+/**
+ * Compiling diagnostic signature only, unregistered until actual public wire assertions reach RED.
+ */
 @RequiredArgsConstructor
 public final class KeycloakUsernameAvailability implements ScopedUsernameAvailability {
   private final @NonNull RestTemplate http;
