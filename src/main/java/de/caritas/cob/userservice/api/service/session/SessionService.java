@@ -1024,6 +1024,10 @@ public class SessionService {
 
   private void checkPermissionForConsultantSession(Session session, Consultant consultant) {
     membersOnlyChatAccess.requireAccess(session, consultant);
+    if (session.getStatus() == SessionStatus.REJECTED) {
+      checkConsultantAssignment(consultant, session);
+      return;
+    }
     if (!session.isAdvisedBy(consultant)
         && !isSupervisor(consultant, session)
         && !(session.isTeamSession() && consultant.isInAgency(session.getAgencyId()))

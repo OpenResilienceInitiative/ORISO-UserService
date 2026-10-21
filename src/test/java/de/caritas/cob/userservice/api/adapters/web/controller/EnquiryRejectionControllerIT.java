@@ -438,7 +438,26 @@ class EnquiryRejectionControllerIT {
   }
 
   @Test
+  void confirmedRejectedTeamEnquiryDoesNotExposeMessagesThroughAgencyCredentials()
+      throws Exception {
+    var current = sessions.findById(sessionId).orElseThrow();
+    current.setTeamSession(true);
+    sessions.save(current);
+    mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
+        .andExpect(status().isNoContent());
+    org.mockito.Mockito.clearInvocations(credentials, matrix);
+    mvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                "/matrix/sessions/{sessionId}/messages", sessionId))
+        .andExpect(status().isForbidden());
+    org.mockito.Mockito.verifyNoInteractions(credentials, matrix);
+  }
+
+  @Test
   void originalRejectorCanReadOwnPendingCaseToRetryClosure() throws Exception {
+    var current = sessions.findById(sessionId).orElseThrow();
+    current.setTeamSession(true);
+    sessions.save(current);
     // The exact existing projection works for the valid submitted NEW control.
     mvc.perform(
             org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
@@ -457,6 +476,10 @@ class EnquiryRejectionControllerIT {
             org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
                     "$.sessions[0].session.status")
                 .value(5));
+    mvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                "/matrix/sessions/{sessionId}/messages", sessionId))
+        .andExpect(status().isOk());
   }
 
   @Autowired
