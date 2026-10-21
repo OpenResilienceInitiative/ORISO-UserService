@@ -13,6 +13,7 @@ SUITE = (
     "de.caritas.cob.userservice.api.adapters.keycloak.KeycloakServiceScenarioCModeTest"
 )
 LEGACY = "legacyModeRetainsExistingProfileProjection"
+CONTROLS = {LEGACY}
 CASES = {
     LEGACY,
     "fiveActorsRequiresTheScopedAdapterBeforeRead",
@@ -35,8 +36,28 @@ TEST_CLASS = (
 
 
 def select_slice(name):
-    global SUITE, LEGACY, CASES, SLICE, COMPILED_CLASSES, TEST_CLASS
-    if name == "deletion":
+    global SUITE, LEGACY, CASES, SLICE, COMPILED_CLASSES, TEST_CLASS, CONTROLS
+    if name == "locale":
+        SLICE = name
+        SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserSelfLocaleScenarioCBoundaryTest"
+        LEGACY = "legacyLocalePublicPatchKeepsTheExistingNoHeaderIdentityCall"
+        CASES = {
+            LEGACY,
+            "publicPatchCapturesIntentAndDomainCommitBeforeScopedLocaleRpc",
+            "publicPatchNewOwnerReplaysFrozenLocaleAfterLostReplyWithoutDomainReapply",
+            "publicPatchSameIdCannotSubstituteTheCompleteMixedRequest",
+            "publicPatchMissingIntentRefusesBeforeAnyDomainMutation",
+            "domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract",
+        }
+        COMPILED_CLASSES += [
+            "de/caritas/cob/userservice/api/adapters/web/controller/UserController",
+            "de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate",
+            "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance",
+            "de/caritas/cob/userservice/api/AccountManager",
+            "de/caritas/cob/userservice/api/UserServiceMapper",
+        ]
+        TEST_CLASS = SUITE.replace(".", "/")
+    elif name == "deletion":
         SLICE = name
         SUITE = "de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountScenarioCBoundaryTest"
         LEGACY = "legacyModeRetainsItsExistingDeletionWorkflow"
@@ -56,6 +77,10 @@ def select_slice(name):
             "de/caritas/cob/userservice/api/workflow/delete/action/asker/DeleteKeycloakAskerAction",
         ]
         TEST_CLASS = SUITE.replace(".", "/")
+
+    CONTROLS = {LEGACY}
+    if name == "locale":
+        CONTROLS.add("domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract")
 
 
 def sha(path):
@@ -86,6 +111,7 @@ def sanitize(reports, destination):
     output = ET.Element("testsuite", name=SUITE)
     names, failures, errors, skipped = [], [], [], []
     legacy_passed = False
+    passed_methods = set()
     consistent = True
     assertion_failure = False
     found = list(reports.glob("TEST-*.xml"))
@@ -127,6 +153,8 @@ def sanitize(reports, destination):
                             "org.mockito.exceptions.verification.NoInteractionsWanted",
                         }
             legacy_passed |= name == LEGACY and passed
+            if passed:
+                passed_methods.add(name)
         for key, value in local.items():
             consistent &= suite.get(key) is None or int(suite.get(key)) == value
     for key, value in counts.items():
@@ -147,9 +175,10 @@ def sanitize(reports, destination):
         "error_methods": errors,
         "skipped_methods": skipped,
         "legacy_control_passed": legacy_passed,
+        "all_required_controls_passed": CONTROLS <= passed_methods,
         "adapter_behavior_red": bool(
             inventory
-            and legacy_passed
+            and CONTROLS <= passed_methods
             and assertion_failure
             and not errors
             and not skipped
@@ -275,7 +304,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["snapshot", "collect"])
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--slice", choices=["adapter", "deletion"], default="adapter")
+    parser.add_argument("--slice", choices=["adapter", "deletion", "locale"], default="adapter")
     args = parser.parse_args()
     select_slice(args.slice)
     root = Path(__file__).resolve().parents[2]

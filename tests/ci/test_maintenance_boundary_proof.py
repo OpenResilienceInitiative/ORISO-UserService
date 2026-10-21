@@ -139,3 +139,41 @@ class DeletionBoundaryEvidenceTest(unittest.TestCase):
             MaintenanceBoundaryEvidenceTest().reports(root)
             result = proof.sanitize(root, root / "clean.xml")
             self.assertFalse(result["adapter_behavior_red"] or result["all_passed"])
+
+
+class LocaleBoundaryEvidenceTest(unittest.TestCase):
+    def proof(self):
+        proof = importlib.util.module_from_spec(SPEC)
+        SPEC.loader.exec_module(proof)
+        proof.select_slice("locale")
+        return proof
+
+    def result(self, failed_controls=()):
+        proof = self.proof()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            suite = ET.Element("testsuite", name=proof.SUITE)
+            for name in proof.CASES:
+                case = ET.SubElement(suite, "testcase", classname=proof.SUITE, name=name)
+                if name not in proof.CONTROLS or name in failed_controls:
+                    ET.SubElement(case, "failure", type="org.opentest4j.AssertionFailedError")
+            ET.ElementTree(suite).write(root / "TEST-locale.xml")
+            return proof.sanitize(root, root / "clean.xml")
+
+    def test_six_public_cases_require_both_domain_and_legacy_controls(self):
+        result = self.result()
+        self.assertEqual(6, result["floor"])
+        self.assertTrue(result["adapter_behavior_red"])
+        self.assertTrue(result["all_required_controls_passed"])
+        self.assertEqual(4, result["failures"])
+
+    def test_failing_domain_only_control_cannot_be_locale_red(self):
+        result = self.result({"domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract"})
+        self.assertTrue(result["legacy_control_passed"])
+        self.assertFalse(result["adapter_behavior_red"])
+
+    def test_missing_locale_reports_never_qualify(self):
+        proof = self.proof()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = proof.sanitize(Path(tmp), Path(tmp) / "clean.xml")
+            self.assertFalse(result["adapter_behavior_red"] or result["all_passed"])
