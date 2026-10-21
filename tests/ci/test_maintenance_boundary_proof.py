@@ -203,3 +203,28 @@ class JpaBoundaryEvidenceTest(unittest.TestCase):
             ET.SubElement(control, "failure", type="org.opentest4j.AssertionFailedError")
             ET.ElementTree(suite).write(path)
             self.assertFalse(proof.sanitize(root, root / "clean.xml")["adapter_behavior_red"])
+
+
+class AvailabilityBoundaryEvidenceTest(unittest.TestCase):
+    def test_both_legacy_outcomes_are_controls_for_the_seven_public_cases(self):
+        proof = importlib.util.module_from_spec(SPEC)
+        SPEC.loader.exec_module(proof)
+        proof.select_slice("availability")
+        self.assertEqual(7, len(proof.CASES))
+        self.assertEqual(2, len(proof.CONTROLS))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            suite = ET.Element("testsuite", name=proof.SUITE)
+            for name in proof.CASES:
+                row = ET.SubElement(suite, "testcase", classname=proof.SUITE, name=name)
+                if name not in proof.CONTROLS:
+                    ET.SubElement(row, "failure", type="org.opentest4j.AssertionFailedError")
+            path = root / "TEST-availability.xml"
+            ET.ElementTree(suite).write(path)
+            result = proof.sanitize(root, root / "clean.xml")
+            self.assertEqual(5, result["failures"])
+            self.assertTrue(result["adapter_behavior_red"])
+            row = next(x for x in suite.findall("testcase") if x.get("name") == "legacyUnknownAvailabilityKeepsItsExistingHintResponse")
+            ET.SubElement(row, "failure", type="org.opentest4j.AssertionFailedError")
+            ET.ElementTree(suite).write(path)
+            self.assertFalse(proof.sanitize(root, root / "clean.xml")["adapter_behavior_red"])

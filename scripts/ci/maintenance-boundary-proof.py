@@ -60,6 +60,27 @@ def select_slice(name):
             "de/caritas/cob/userservice/api/UserServiceMapper",
         ]
         TEST_CLASS = SUITE.replace(".", "/")
+    elif name == "availability":
+        SLICE = name
+        SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserUsernameAvailabilityScenarioCBoundaryTest"
+        LEGACY = "legacyExistingUsernameKeepsItsConflictResponse"
+        CASES = {
+            LEGACY,
+            "legacyUnknownAvailabilityKeepsItsExistingHintResponse",
+            "publicCReportsOccupiedRawUsernameThroughBothExactSelectors",
+            "publicCReportsOccupiedEncodedUsernameThroughBothExactSelectors",
+            "publicCReportsAvailableOnlyAfterBothExactSelectorsConfirm",
+            "publicCUnknownReadCannotBecomeAnAvailableUsername",
+            "publicCMissingBoundedAdapterRefusesBeforeRawNativeSearch",
+        }
+        COMPILED_CLASSES += [
+            "de/caritas/cob/userservice/api/adapters/web/controller/UserController",
+            "de/caritas/cob/userservice/api/IdentityManager",
+            "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/ScopedUsernameAvailability",
+            "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/KeycloakUsernameAvailability",
+            "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/ScopedAvailabilityUnavailableException",
+        ]
+        TEST_CLASS = SUITE.replace(".", "/")
     elif name == "jpa":
         SLICE = name
         SUITE = "de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenanceJpaTest"
@@ -99,6 +120,8 @@ def select_slice(name):
     CONTROLS = {LEGACY}
     if name == "locale":
         CONTROLS.add("domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract")
+    elif name == "availability":
+        CONTROLS.add("legacyUnknownAvailabilityKeepsItsExistingHintResponse")
     elif name == "jpa":
         CONTROLS = {"actualJpaCommitPrecedesNativeDispatchEvenWhenReplyIsUnknown"}
 
@@ -324,7 +347,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["snapshot", "collect"])
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--slice", choices=["adapter", "deletion", "locale", "jpa"], default="adapter")
+    parser.add_argument("--slice", choices=["adapter", "deletion", "locale", "jpa", "availability"], default="adapter")
     args = parser.parse_args()
     select_slice(args.slice)
     root = Path(__file__).resolve().parents[2]

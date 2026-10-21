@@ -138,6 +138,15 @@ public class KeycloakService
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
+  private de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedUsernameAvailability
+      scopedUsernameAvailability;
+
+  @Autowired(required = false)
+  public void setScopedUsernameAvailability(
+      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedUsernameAvailability availability) {
+    this.scopedUsernameAvailability = availability;
+  }
+
   private OutboundHttpMetrics outboundHttpMetrics;
 
   @Value("${api.error.keycloakError}")
