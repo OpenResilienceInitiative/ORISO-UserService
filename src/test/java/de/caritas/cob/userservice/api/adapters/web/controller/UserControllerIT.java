@@ -465,6 +465,16 @@ class UserControllerIT {
   }
 
   @Test
+  void rejectEnquiryReturnsNoContentOnlyForAVerifiedClosure() throws Exception {
+    when(enquiryRejectionService.rejectEnquiry(5L)).thenReturn(true);
+    mvc.perform(post("/users/sessions/{sessionId}/rejection", 5L))
+        .andExpect(status().isNoContent());
+    when(enquiryRejectionService.rejectEnquiry(5L)).thenReturn(false);
+    mvc.perform(post("/users/sessions/{sessionId}/rejection", 5L))
+        .andExpect(status().isServiceUnavailable());
+  }
+
+  @Test
   void userExists_Should_Return200_When_UserDoesExist() throws Exception {
     /* given */
     var username = "john@doe.com";

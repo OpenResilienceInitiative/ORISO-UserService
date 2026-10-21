@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 /** No transaction encloses the external verified protocol closure. */
+@lombok.extern.slf4j.Slf4j
 @Service
 @RequiredArgsConstructor
 public class EnquiryRejectionService {
@@ -52,7 +53,12 @@ public class EnquiryRejectionService {
         }
       }
     } catch (RuntimeException failure) {
-      /* bounded stage only; no raw Matrix/provider/credential logs */
+      // Stage and class only; no raw Matrix/provider/credential text.
+      log.warn(
+          "Enquiry rejection closure failed for session {}: stage={}, failure={}",
+          decision.getSessionId(),
+          stage,
+          failure.getClass().getSimpleName());
     }
     return transactions.finish(
         decision.getSessionId(), decision.getGeneration(), attempt.token(), verified, stage);

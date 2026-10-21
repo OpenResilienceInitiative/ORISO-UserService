@@ -893,8 +893,8 @@ class EnquiryRejectionControllerIT {
       if (lateStart) {
         callLifecycle.handleRoom(media, syntheticCallState(phase == CallPhase.EXISTING_END));
         var retained = callBindings.findByMediaRoomId(media).orElseThrow();
-        if (phase == CallPhase.EXISTING_END) assertThat(retained.getEndedAt()).isNotNull();
-        else assertThat(retained.getStartedAt()).isNull();
+        assertThat(retained.getEndedAt()).isNotNull();
+        if (phase == CallPhase.LATE_START) assertThat(retained.getStartedAt()).isNull();
         when(caller.isConsultant()).thenReturn(false);
         when(caller.getUserId()).thenReturn(seekerId);
         assertThat(callHistory.read(caller, source, callId)).isPresent();

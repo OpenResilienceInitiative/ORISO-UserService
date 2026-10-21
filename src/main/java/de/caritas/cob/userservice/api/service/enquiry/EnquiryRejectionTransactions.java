@@ -13,6 +13,7 @@ import java.util.Objects;
 import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,15 +32,18 @@ public class EnquiryRejectionTransactions {
   private final @NonNull AuthenticatedUser caller;
   private final @NonNull MatrixFeedUpdateSignalService signal;
   private final @NonNull Clock clock;
+  private final @NonNull de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenants;
+
+  @Value("${multitenancy.enabled}")
+  private boolean multitenancyEnabled;
 
   public record Attempt(EnquiryRejection decision, String token) {}
 
   @Transactional
   public Attempt begin(Long id) {
     if (!caller.isConsultant()) throw new ForbiddenException("Consultant authority required");
-    var tenant = TenantContext.getCurrentTenant();
-    if (tenant == null || tenant <= 0 || !Objects.equals(tenant, caller.getTenantId()))
-      throw new ForbiddenException("Current tenant required");
+    var tenant = currentCallerTenant();
+    if (tenant == null || tenant <= 0) throw new ForbiddenException("Current tenant required");
     var session = lockedSession(id);
     if (!matchesTenant(session.getTenantId(), tenant))
       throw new NotFoundException("Session unavailable");
@@ -210,6 +214,20 @@ public class EnquiryRejectionTransactions {
         || !Objects.equals(team == null ? null : team.getMatrixRoomId(), decision.getTeamRoomId())
         || (team != null && team.getStatus() != TeamDiscussion.Status.ARCHIVED))
       throw new ConflictException("Rejected enquiry decision binding changed");
+  }
+
+  private Long currentCallerTenant() {
+    if (caller.getTenantId() != null || multitenancyEnabled) {
+      var tenant = TenantContext.getCurrentTenant();
+      return Objects.equals(tenant, caller.getTenantId()) ? tenant : null;
+    }
+    try {
+      // The server resolves exactly one configured tenant; the target case grants no authority.
+      var tenant = tenants.getSingleTenancyTenantDataFresh();
+      return tenant != null ? tenant.getId() : null;
+    } catch (RuntimeException unavailable) {
+      return null;
+    }
   }
 
   private Session lockedSession(Long id) {

@@ -82,7 +82,11 @@ public class MatrixCallLifecycleService {
     var members = matrix.getCallRoomMembers(binding.getSourceRoomId()).orElse(null);
     if (members == null) return true;
     boolean retainedClosure = !conversations.lockCurrentForWriting(session);
-    if (retainedClosure && !startedBeforeRejection(binding)) return true;
+    if (retainedClosure && !startedBeforeRejection(binding)) {
+      // No call history is retained here; close silently so expiry stops reselecting the row.
+      binding.finish(System.currentTimeMillis());
+      return true;
+    }
     long now = System.currentTimeMillis();
     if (roomData.get("state") instanceof Map<?, ?>
         || roomData.get("timeline") instanceof Map<?, ?>) {
