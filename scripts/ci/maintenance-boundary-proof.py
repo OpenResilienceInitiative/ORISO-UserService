@@ -107,6 +107,10 @@ def select_slice(name):
         CASES = {
             LEGACY,
             "fiveActorsMissingScopedDeletionStopsBeforeOwnedDownstreamCleanup",
+            "fiveActorsMissingScopedConsultantDeletionStopsBeforeOwnedDownstreamCleanup",
+            "legacyModeRetainsItsExistingConsultantDeletionWorkflow",
+            "fiveActorsMissingScopedSchedulerDelegateRefusesActualStartup",
+            "legacyMissingScopedSchedulerDelegateKeepsActualStartup",
             "publicSchedulerFreezesOwnedDeletionBeforeRpcAndAcknowledgesOnlyVerifiedReceipt",
             "publicSchedulerRejectsInvalidReceiptAndRetainsTheExactFrozenIntent",
             "publicSchedulerLosingLeaseBeforeFreezeCannotSendTheNativeDelete",
@@ -118,6 +122,8 @@ def select_slice(name):
             "de/caritas/cob/userservice/api/workflow/delete/service/ScheduledAskerMaintenance",
             "de/caritas/cob/userservice/api/workflow/delete/service/UserHardDeleteClaimService",
             "de/caritas/cob/userservice/api/workflow/delete/action/asker/DeleteKeycloakAskerAction",
+            "de/caritas/cob/userservice/api/workflow/delete/action/consultant/DeleteKeycloakConsultantAction",
+            "de/caritas/cob/userservice/api/workflow/delete/action/consultant/DeleteDatabaseConsultantAction",
         ]
         TEST_CLASS = SUITE.replace(".", "/")
 
@@ -127,6 +133,8 @@ def select_slice(name):
     elif name == "availability":
         CONTROLS.add("legacyUnknownAvailabilityKeepsItsExistingHintResponse")
         CONTROLS.add("defaultOffRuntimeConfigurationCreatesNoSelectorWithoutBindings")
+    elif name == "deletion":
+        CONTROLS.update({"legacyModeRetainsItsExistingConsultantDeletionWorkflow", "legacyMissingScopedSchedulerDelegateKeepsActualStartup"})
     elif name == "jpa":
         CONTROLS = {"actualJpaCommitPrecedesNativeDispatchEvenWhenReplyIsUnknown"}
 

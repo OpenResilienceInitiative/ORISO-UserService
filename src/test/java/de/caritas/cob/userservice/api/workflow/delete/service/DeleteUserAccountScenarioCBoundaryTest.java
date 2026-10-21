@@ -16,11 +16,15 @@ import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAc
 import de.caritas.cob.userservice.api.config.auth.*;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.*;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.*;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.*;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
+import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.scheduler.DeleteUserAccountScheduler;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
@@ -43,6 +47,8 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
+import org.springframework.boot.convert.ApplicationConversionService;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -119,6 +125,125 @@ class DeleteUserAccountScenarioCBoundaryTest {
     verify(nativeUser).remove();
     verify(actions.getActionMock(DeleteDatabaseAskerAction.class)).execute(any());
     verifyNoInteractions(mail);
+  }
+
+  @Test
+  void fiveActorsMissingScopedConsultantDeletionStopsBeforeOwnedDownstreamCleanup() {
+    consultantDeletion(true);
+  }
+
+  @Test
+  void legacyModeRetainsItsExistingConsultantDeletionWorkflow() {
+    consultantDeletion(false);
+  }
+
+  @Test
+  void fiveActorsMissingScopedSchedulerDelegateRefusesActualStartup() {
+    schedulerContext("FIVE_ACTORS").run(context -> assertNotNull(context.getStartupFailure()));
+  }
+
+  @Test
+  void legacyMissingScopedSchedulerDelegateKeepsActualStartup() {
+    schedulerContext("LEGACY").run(context -> assertNull(context.getStartupFailure()));
+  }
+
+  private ApplicationContextRunner schedulerContext(String model) {
+    return new ApplicationContextRunner()
+        .withInitializer(
+            context ->
+                context
+                    .getBeanFactory()
+                    .setConversionService(ApplicationConversionService.getSharedInstance()))
+        .withPropertyValues("TASK_IDENTITY_MODEL=" + model)
+        .withBean(
+            DeleteUserAccountScheduler.class,
+            () ->
+                new DeleteUserAccountScheduler(
+                    service,
+                    mock(TenantContextProvider.class),
+                    mock(ScheduledTaskClaimService.class),
+                    claim,
+                    mock(IdentityReactivationRepairService.class)));
+  }
+
+  private void consultantDeletion(boolean fiveActors) {
+    String account = "11111111-1111-4111-8111-111111111111";
+    var source =
+        new DriverManagerDataSource(
+            "jdbc:h2:mem:consultant-refusal-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1",
+            "sa",
+            "");
+    var jdbc = new JdbcTemplate(source);
+    jdbc.execute("create table consultant(consultant_id varchar(36) primary key)");
+    jdbc.update("insert into consultant values(?)", account);
+    var consultant = new Consultant();
+    consultant.setId(account);
+    consultant.setTenantId(7L);
+    consultant.setDeleteDate(LocalDateTime.now(ZoneOffset.UTC).minusDays(4));
+    consultant.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+    consultant.setDeletionReadOnlyUntil(LocalDateTime.now(ZoneOffset.UTC).minusDays(1));
+    when(users.findAllByDeleteDateNotNull()).thenReturn(List.of());
+    when(consultants.findAllByDeleteDateNotNull()).thenReturn(List.of(consultant));
+    when(consultants.save(any(Consultant.class))).thenAnswer(call -> call.getArgument(0));
+    doAnswer(
+            call -> {
+              jdbc.update(
+                  "delete from consultant where consultant_id=?",
+                  ((Consultant) call.getArgument(0)).getId());
+              return null;
+            })
+        .when(consultants)
+        .delete(any(Consultant.class));
+    when(config.isFiveActorMode()).thenReturn(fiveActors);
+    var nativeUsers = mock(UsersResource.class);
+    when(nativeClient.getUsersResource()).thenReturn(nativeUsers);
+    when(nativeUsers.get(account)).thenReturn(nativeUser);
+    var identity =
+        new KeycloakService(
+            new AuthenticatedUser(),
+            mock(UserAccountInputValidator.class),
+            config,
+            nativeClient,
+            mock(KeycloakMapper.class),
+            mock(UserHelper.class),
+            mock(KeycloakAuthClient.class));
+    var sessions = mock(SessionOwnershipService.class);
+    var supervisors = mock(SessionSupervisorRepository.class);
+    var mobileTokens = mock(ConsultantMobileTokenRepository.class);
+    var tombstones = mock(IdentityTombstoneService.class);
+    var database =
+        spy(
+            new DeleteDatabaseConsultantAction(
+                consultants, sessions, supervisors, mobileTokens, tombstones));
+    actions.setCustomClassForAction(
+        DeleteKeycloakConsultantAction.class, new DeleteKeycloakConsultantAction(identity));
+    actions.setCustomClassForAction(DeleteDatabaseConsultantAction.class, database);
+    when(registry.buildContainerForType(ConsultantDeletionWorkflowDTO.class))
+        .thenAnswer(ignored -> actions.getActionContainer(ConsultantDeletionWorkflowDTO.class));
+    assertEquals(1, jdbc.queryForObject("select count(*) from consultant", Integer.class));
+
+    service.deleteUserAccounts();
+
+    if (fiveActors) {
+      assertEquals(1, jdbc.queryForObject("select count(*) from consultant", Integer.class));
+      verifyNoInteractions(nativeClient);
+      verifyNoInteractions(
+          actions.getActionMock(DeleteMatrixConsultantAction.class),
+          database,
+          sessions,
+          supervisors,
+          mobileTokens,
+          tombstones);
+      verify(consultants, never()).delete(any(Consultant.class));
+      verify(mail).buildAndSendErrorMail(argThat(errors -> errors.size() == 1));
+    } else {
+      assertEquals(0, jdbc.queryForObject("select count(*) from consultant", Integer.class));
+      verify(nativeUser).remove();
+      verify(actions.getActionMock(DeleteMatrixConsultantAction.class)).execute(any());
+      verify(database).execute(any());
+      verify(consultants).delete(consultant);
+      verifyNoInteractions(mail);
+    }
   }
 
   @Test

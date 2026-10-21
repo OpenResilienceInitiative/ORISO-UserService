@@ -85,14 +85,14 @@ class DeletionBoundaryEvidenceTest(unittest.TestCase):
         proof.select_slice("deletion")
         return proof
 
-    def test_actual_six_method_deletion_inventory_qualifies_only_assertion_red(self):
+    def test_actual_ten_method_deletion_inventory_qualifies_only_assertion_red(self):
         proof = self.proof()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             suite = ET.Element(
                 "testsuite",
                 name=proof.SUITE,
-                tests="6",
+                tests="10",
                 failures="1",
                 errors="0",
                 skipped="0",
@@ -124,13 +124,32 @@ class DeletionBoundaryEvidenceTest(unittest.TestCase):
                 "publicSchedulerRejectsInvalidReceiptAndRetainsTheExactFrozenIntent",
                 "publicSchedulerLosingLeaseBeforeFreezeCannotSendTheNativeDelete",
                 "publicSchedulerNewOwnerReplaysFrozenDeleteAfterLostReplyAndAckNeverCallsNativeAgain",
+                "fiveActorsMissingScopedConsultantDeletionStopsBeforeOwnedDownstreamCleanup",
+                "legacyModeRetainsItsExistingConsultantDeletionWorkflow",
+                "fiveActorsMissingScopedSchedulerDelegateRefusesActualStartup",
+                "legacyMissingScopedSchedulerDelegateKeepsActualStartup",
             ]:
                 ET.SubElement(suite, "testcase", classname=proof.SUITE, name=name)
             ET.ElementTree(suite).write(root / "TEST-deletion.xml")
             result = proof.sanitize(root, root / "clean.xml")
-            self.assertEqual(6, result["floor"])
+            self.assertEqual(10, result["floor"])
             self.assertTrue(result["adapter_behavior_red"])
             self.assertFalse(result["all_passed"])
+
+    def test_consultant_and_scheduler_legacy_controls_cannot_be_silently_failed(self):
+        proof = self.proof()
+        self.assertEqual(3, len(proof.CONTROLS))
+        for control in proof.CONTROLS:
+            with self.subTest(control=control), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                suite = ET.Element("testsuite", name=proof.SUITE)
+                for name in proof.CASES:
+                    row = ET.SubElement(suite, "testcase", classname=proof.SUITE, name=name)
+                    if name == control:
+                        ET.SubElement(row, "failure", type="org.opentest4j.AssertionFailedError")
+                ET.ElementTree(suite).write(root / "TEST-deletion.xml")
+                result = proof.sanitize(root, root / "clean.xml")
+                self.assertFalse(result["adapter_behavior_red"] or result["all_passed"])
 
     def test_old_adapter_inventory_cannot_qualify_deletion(self):
         proof = self.proof()
