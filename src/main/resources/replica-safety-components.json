@@ -856,6 +856,22 @@
         "oriso.matrix.feed_signal"
       ],
       "status": "bounded"
+    },
+    {
+      "id": "internal-group-chat-recipient-scope-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/chat/InternalGroupChatRecipientScopeResolver.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": [
+        "remembered",
+        "reading"
+      ],
+      "decision": "Retain locally per Traeger with a one-minute TTL on the hot path that decides who may open or join an internal group chat; a miss re-reads the setting from TenantService. A replica with an older copy applies a changed Traeger recipient scope up to one minute late (a widening and a narrowing alike). A failed read is kept for ten seconds only and is always the narrowest scope (counselling centre), so an outage never widens access. Cardinality is the number of Traeger that have a counsellor, and the per-Traeger read lock objects are bounded the same way.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
     }
   ]
 }

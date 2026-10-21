@@ -51,7 +51,17 @@ class AssignChatFacadeTest {
     var groupPolicy =
         de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy();
     assignChatFacade =
-        new AssignChatFacade(chatService, userService, userChats, groupPolicy, appointmentEvents);
+        new AssignChatFacade(
+            chatService,
+            userService,
+            userChats,
+            groupPolicy,
+            appointmentEvents,
+            new de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess(
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.port.out.ChatRepository.class),
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository.class)));
   }
 
   @Test

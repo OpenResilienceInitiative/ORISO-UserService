@@ -80,6 +80,9 @@ class TeamDiscussionFacadeTest {
   private static final String ROOM_ID = "!discussion:oriso";
 
   private TeamDiscussionFacade facade;
+  private final de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnly =
+      org.mockito.Mockito.mock(
+          de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class);
 
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantRepository consultantRepository;
@@ -108,7 +111,8 @@ class TeamDiscussionFacadeTest {
             featureGate,
             new TeamDiscussionCreationWriter(teamDiscussionRepository, sessionRepository),
             new TeamDiscussionParticipantWriter(participantRepository),
-            roomCleanupService);
+            roomCleanupService,
+            membersOnly);
     session = new Session();
     session.setId(SESSION_ID);
     session.setAgencyId(AGENCY_ID);
@@ -153,6 +157,21 @@ class TeamDiscussionFacadeTest {
     body.setRoomId(ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), anyString(), eq("agency-token")))
         .thenReturn(ResponseEntity.ok(body));
+  }
+
+  @Test
+  void aMembersOnlyChatsSessionHasNoTeamDiscussion() {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("no"))
+        .when(membersOnly)
+        .requireOrdinary(session, "The session of a members-only chat has no team discussion.");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> facade.getDiscussion(SESSION_ID, CONSULTANT_ID));
   }
 
   @Test

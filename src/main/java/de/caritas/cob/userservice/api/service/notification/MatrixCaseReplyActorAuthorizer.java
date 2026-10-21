@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverReasonCodes;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -30,6 +31,7 @@ public class MatrixCaseReplyActorAuthorizer {
   private final @NonNull CaseHandoverRequestRepository handovers;
   private final @NonNull SessionSupervisorRepository supervisors;
   private final @NonNull MatrixSynapseService matrix;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   public boolean isCurrentWriter(
       Session session, String senderMatrixUserId, boolean requireCurrentRoomMembership) {
@@ -47,6 +49,9 @@ public class MatrixCaseReplyActorAuthorizer {
     if (actor == null
         || !Objects.equals(actor.getTenantId(), session.getTenantId())
         || Objects.equals(actor.getId(), session.getUser().getUserId())) {
+      return false;
+    }
+    if (membersOnlyChatAccess.excludes(session, actor)) {
       return false;
     }
     if (!isCurrentAssignedOrTeamWriter(session, actor)) {

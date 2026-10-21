@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Optional;
 import java.util.Set;
@@ -49,6 +50,7 @@ class SessionServiceAccessTest {
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionSupervisionMarkerService supervisionMarkerService;
   @Mock private SessionOwnershipService sessionOwnershipService;
+  @Mock private MembersOnlyChatAccess membersOnlyChatAccess;
 
   @Mock
   private de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionPendingReadAccess
@@ -71,7 +73,8 @@ class SessionServiceAccessTest {
             sessionSupervisorRepository,
             supervisionMarkerService,
             rejectionReadAccess,
-            sessionOwnershipService);
+            sessionOwnershipService,
+            membersOnlyChatAccess);
 
     lenient()
         .when(
@@ -125,6 +128,23 @@ class SessionServiceAccessTest {
         () ->
             sessionService.assertUserHasAccess(
                 SESSION_ID, consultantUser(UNASSIGNED_CONSULTANT_ID)));
+  }
+
+  @Test
+  void
+      assertUserHasAccess_ShouldThrowForbiddenException_WhenAssignedConsultantLeftTheMembersOnlyChat() {
+    var former = consultant(CONSULTANT_ID);
+    var session = sessionOwnedBy(OWNER_ID);
+    session.setConsultant(former);
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(former));
+    org.mockito.Mockito.doThrow(new ForbiddenException("not a participant"))
+        .when(membersOnlyChatAccess)
+        .requireAccess(session, former);
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> sessionService.assertUserHasAccess(SESSION_ID, consultantUser(CONSULTANT_ID)));
   }
 
   private AuthenticatedUser user(String userId) {

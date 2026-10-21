@@ -131,7 +131,8 @@ class TeamDiscussionConcurrencyIT {
             gate,
             writer,
             participantWriter,
-            mock(TeamDiscussionRoomCleanupService.class));
+            mock(TeamDiscussionRoomCleanupService.class),
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class));
     var alice = controller(facade, "alice");
     var bob = controller(facade, samePerson ? "alice" : "bob");
     try (var executor = Executors.newFixedThreadPool(2)) {

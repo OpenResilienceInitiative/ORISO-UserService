@@ -3,10 +3,13 @@ package de.caritas.cob.userservice.api.service;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -36,6 +39,8 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepositor
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
 import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
@@ -349,6 +354,9 @@ public class CaseHandoverService {
   private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
   private final @NonNull Clock clock;
   private final @NonNull PlatformTransactionManager transactionManager;
+  private final @NonNull AgencyService agencyService;
+  private final @NonNull AdminScope adminScope;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * When topics are off, a department degenerates to the agency. When they are on, an empty topic
@@ -428,17 +436,22 @@ public class CaseHandoverService {
         : legacy;
   }
 
+  /** Reads the rules of {@code tenantId} (the Träger), checked against the caller (FE#1725). */
   @Transactional(readOnly = true)
-  public List<CaseHandoverReason> listReasonPolicies() {
-    return listReasons(TenantContext.getCurrentTenant(), "de", true, true);
+  public List<CaseHandoverReason> listReasonPolicies(Long tenantId) {
+    return listReasons(resolvePolicyTenant(tenantId, false), "de", true, true);
   }
 
-  /** Compatibility bridge until ORISO-Admin writes tenant-owned policy settings directly. */
-  public List<CaseHandoverReason> updateReasonPolicies(List<CaseHandoverReason> requestedReasons) {
+  /**
+   * Compatibility bridge until ORISO-Admin writes tenant-owned policy settings directly. Writes the
+   * rules of {@code requestedTenantId} (the Träger), checked against the caller (FE#1725).
+   */
+  public List<CaseHandoverReason> updateReasonPolicies(
+      Long requestedTenantId, List<CaseHandoverReason> requestedReasons) {
+    Long tenantId = resolvePolicyTenant(requestedTenantId, true);
     if (requestedReasons == null || requestedReasons.isEmpty()) {
       throw new BadRequestException("At least one handover reason policy is required");
     }
-    Long tenantId = TenantContext.getCurrentTenant();
     if (tenantId == null || tenantId <= 0) {
       throw new BadRequestException("A tenant is required to update handover policies");
     }
@@ -478,6 +491,45 @@ public class CaseHandoverService {
                     java.util.Comparator.nullsLast(Integer::compareTo))
                 .thenComparing(CaseHandoverReason::getCode))
         .toList();
+  }
+
+  /**
+   * The Träger whose rules are meant, within the caller's {@link AdminScope}. Platform reach: the
+   * Träger must be named (tenant 0 has no rules of its own). Träger admins: their own only; omitted
+   * means it. Agency (BST) admins: read their own Träger, never write. The technical user gets no
+   * access although AdminScope gives it platform reach: these rules are for humans
+   * (ORISO-Helm#367).
+   */
+  private Long resolvePolicyTenant(Long requestedTenantId, boolean write) {
+    AdminScope.Reach reach = adminScope.current();
+    if (reach instanceof AdminScope.Platform && isTechnicalWithoutPlatformAdmin()) {
+      throw new ForbiddenException("The technical user may not access handover rules");
+    }
+    if (reach instanceof AdminScope.Platform) {
+      if (requestedTenantId != null && requestedTenantId > 0) {
+        return requestedTenantId;
+      }
+      if (requestedTenantId != null || TenantContext.isTechnicalOrSuperAdminContext()) {
+        throw new BadRequestException(
+            "tenantId is required: name the Träger whose handover rules are meant");
+      }
+      // Single-tenant deployment: no Träger to name.
+      return TenantContext.getCurrentTenant();
+    }
+    Long tenantId = requestedTenantId != null ? requestedTenantId : reach.tenantId();
+    if (write) {
+      adminScope.assertMay(AdminScope.Target.tenant(tenantId));
+    } else if (!Objects.equals(tenantId, reach.tenantId())) {
+      throw new ForbiddenException("Handover rules of another Träger are not accessible");
+    }
+    return tenantId;
+  }
+
+  private boolean isTechnicalWithoutPlatformAdmin() {
+    var roles = authenticatedUser.getRoles();
+    return roles != null
+        && roles.contains(UserRole.TECHNICAL.getValue())
+        && !authenticatedUser.isPlatformAdmin();
   }
 
   private void applyPolicyUpdate(
@@ -740,16 +792,19 @@ public class CaseHandoverService {
         sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
             agencyIds, requester, statuses);
 
+    var membersOnlyCases = membersOnlyChatAccess.membersOnlySessionIds(candidates);
     List<Session> matchingCandidates =
         candidates.stream()
+            .filter(session -> !membersOnlyCases.contains(session.getId()))
             .filter(session -> isInRequesterDepartment(session, requester))
             .filter(session -> matchesCandidateQuery(session, query))
             .collect(Collectors.toList());
+    List<Session> pageSessions =
+        matchingCandidates.stream().skip(safeOffset).limit(safeCount).toList();
+    Map<Long, String> agencyNames = candidateAgencyNames(pageSessions);
     List<ConsultantSessionResponseDTO> page =
-        matchingCandidates.stream()
-            .skip(safeOffset)
-            .limit(safeCount)
-            .map(this::toCandidateDto)
+        pageSessions.stream()
+            .map(candidate -> toCandidateDto(candidate, agencyNames))
             .collect(Collectors.toList());
 
     return new ConsultantSessionListResponseDTO()
@@ -808,9 +863,21 @@ public class CaseHandoverService {
   }
 
   private Session getSessionForUpdate(Long sessionId) {
-    return sessionRepository
-        .findByIdForUpdate(sessionId)
-        .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+    return requireHandable(
+        sessionRepository
+            .findByIdForUpdate(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId)));
+  }
+
+  /**
+   * The case of a members-only chat belongs to the participants of the chat. It is never handed
+   * over, never offered and never open to a request for access, whoever asks.
+   */
+  private Session requireHandable(Session session) {
+    if (membersOnlyChatAccess.concerns(session)) {
+      throw new NotFoundException("Session not found: " + session.getId());
+    }
+    return session;
   }
 
   @Transactional
@@ -1492,9 +1559,10 @@ public class CaseHandoverService {
   }
 
   private Session getSession(Long sessionId) {
-    return sessionRepository
-        .findById(sessionId)
-        .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+    return requireHandable(
+        sessionRepository
+            .findById(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId)));
   }
 
   private ConsultantSessionListResponseDTO emptyCandidateResponse(int offset) {
@@ -1530,9 +1598,7 @@ public class CaseHandoverService {
                 session.getConsultant() != null
                     ? decodeUsername(session.getConsultant().getDisplayName())
                     : null),
-            // The candidate list renders the internal name with fallback (#996), so the search
-            // must cover it too — otherwise an internal-name-only query filters the session out
-            // before it is rendered. The public display name above stays a valid search term.
+            // Colleagues search by internal name too (#996, #1725); public name stays searchable.
             nullable(
                 session.getConsultant() != null
                     ? decodeUsername(session.getConsultant().getInternalDisplayNameOrFallback())
@@ -1540,7 +1606,11 @@ public class CaseHandoverService {
             nullable(
                 session.getConsultant() != null ? session.getConsultant().getFirstName() : null),
             nullable(
-                session.getConsultant() != null ? session.getConsultant().getLastName() : null));
+                session.getConsultant() != null ? session.getConsultant().getLastName() : null),
+            nullable(
+                session.getConsultant() != null
+                    ? decodeUsername(session.getConsultant().getInternalDisplayNameOrRealName())
+                    : null));
 
     return haystack.stream()
         .map(this::normalizeSearchText)
@@ -1609,10 +1679,41 @@ public class CaseHandoverService {
     return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
   }
 
-  private ConsultantSessionResponseDTO toCandidateDto(Session session) {
+  /** Agency names for one candidate page; a failing lookup degrades to id-only agencies. */
+  private Map<Long, String> candidateAgencyNames(List<Session> sessions) {
+    List<Long> agencyIds =
+        sessions.stream().map(Session::getAgencyId).filter(Objects::nonNull).distinct().toList();
+    if (agencyIds.isEmpty()) {
+      return Map.of();
+    }
+    try {
+      List<AgencyDTO> agencies = agencyService.getAgencies(agencyIds);
+      return agencies == null
+          ? Map.of()
+          : agencies.stream()
+              .filter(
+                  agency -> agency != null && agency.getId() != null && agency.getName() != null)
+              .collect(
+                  Collectors.toMap(AgencyDTO::getId, AgencyDTO::getName, (first, second) -> first));
+    } catch (RuntimeException e) {
+      log.warn(
+          "Case-handover candidates: agency lookup failed for {} ({})",
+          agencyIds,
+          e.getClass().getSimpleName());
+      return Map.of();
+    }
+  }
+
+  private ConsultantSessionResponseDTO toCandidateDto(
+      Session session, Map<Long, String> agencyNames) {
     ConsultantSessionResponseDTO dto =
         new ConsultantSessionResponseDTO()
             .session(new SessionMapper().convertToSessionDTO(session));
+    if (session.getAgencyId() != null) {
+      // id + name only: candidates are metadata, not the full agency record
+      dto.agency(
+          new AgencyDTO().id(session.getAgencyId()).name(agencyNames.get(session.getAgencyId())));
+    }
 
     User user = session.getUser();
     if (user != null) {
@@ -1632,8 +1733,9 @@ public class CaseHandoverService {
               .firstName(consultant.getFirstName())
               .lastName(consultant.getLastName())
               .username(decodeUsername(consultant.getUsername()))
-              // Handover candidates are shown to colleagues (internal surface, #996).
-              .displayName(decodeUsername(consultant.getInternalDisplayNameOrFallback()))
+              // #1725: public profile name; colleagues read internalName (#996)
+              .displayName(decodeUsername(consultant.getDisplayName()))
+              .internalName(decodeUsername(consultant.getInternalDisplayNameOrRealName()))
               .avatarKind(
                   consultant.getAvatarKind() == null ? null : consultant.getAvatarKind().name())
               .avatarId(consultant.getAvatarId()));

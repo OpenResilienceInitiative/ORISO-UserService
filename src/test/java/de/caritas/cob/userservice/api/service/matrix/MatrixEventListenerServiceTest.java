@@ -85,11 +85,12 @@ class MatrixEventListenerServiceTest {
   @Mock private ConsultantMessageStatService consultantMessageStatService;
   @Mock private AdviceSeekerReplyEmailService replyEmailService;
 
+  @Mock private MatrixEmailSyncCursorStore emailSyncCursorStore;
+
   @Mock
   private de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
       internalChatEmailService;
 
-  @Mock private MatrixEmailSyncCursorStore emailSyncCursorStore;
   @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
   @Mock private MatrixCallInviteNotificationService callInviteNotifications;
 
@@ -1170,6 +1171,9 @@ class MatrixEventListenerServiceTest {
             anyString(), any(), anyString(), any(PrivacyEnvelope.class));
     verify(replyEmailService)
         .onConsultantReply(MATRIX_ROOM_ID, "$evt-direct", CONSULTANT_MATRIX_ID);
+    // FE#1725 story 40: the service itself ignores rooms that are not internal groups.
+    verify(internalChatEmailService)
+        .onMatrixMessage(MATRIX_ROOM_ID, "$evt-direct", CONSULTANT_MATRIX_ID);
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
   }
 

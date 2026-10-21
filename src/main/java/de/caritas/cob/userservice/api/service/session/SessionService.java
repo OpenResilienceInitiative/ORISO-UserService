@@ -39,6 +39,7 @@ import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
@@ -85,6 +86,7 @@ public class SessionService {
           .EnquiryRejectionPendingReadAccess
       rejectionReadAccess;
   private final @NonNull SessionOwnershipService sessionOwnershipService;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   @Value("${feature.topics.enabled}")
   private boolean topicsFeatureEnabled;
@@ -121,13 +123,38 @@ public class SessionService {
    * @return the authorized {@link Session}
    */
   public Session assertUserHasAccess(Long sessionId, AuthenticatedUser authenticatedUser) {
-    var session =
-        getSession(sessionId)
-            .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
     var roles = Optional.ofNullable(authenticatedUser.getRoles()).orElse(emptySet());
+    var visible = getSession(sessionId);
+    if (visible.isEmpty()) {
+      // A colleague admitted from another Träger is a participant of a members-only chat whose
+      // session stays in the creator's tenant: participation alone opens it. Fail closed for
+      // everyone else.
+      return participantSessionAcrossTenants(sessionId, authenticatedUser.getUserId(), roles)
+          .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
+    }
+    var session = visible.get();
 
     checkUserPermissionForSession(session, authenticatedUser.getUserId(), roles);
     return session;
+  }
+
+  private Optional<Session> participantSessionAcrossTenants(
+      Long sessionId, String userId, Set<String> roles) {
+    if (!roles.contains(UserRole.CONSULTANT.getValue()) || userId == null) {
+      return Optional.empty();
+    }
+    return consultantService
+        .getConsultant(userId)
+        .flatMap(consultant -> participantSessionAcrossTenants(sessionId, consultant));
+  }
+
+  /**
+   * The session of a members-only chat, loaded across Träger, when the consultant is one of its
+   * participants. Fail closed: everyone else gets nothing.
+   */
+  private Optional<Session> participantSessionAcrossTenants(Long sessionId, Consultant consultant) {
+    return TenantContext.supplyAcrossTenants(() -> sessionRepository.findById(sessionId))
+        .filter(session -> membersOnlyChatAccess.admits(session, consultant));
   }
 
   /**
@@ -411,7 +438,7 @@ public class SessionService {
       }
     }
 
-    return mapSessionsToConsultantSessionDto(sessions);
+    return mapSessionsToConsultantSessionDto(withoutExcluded(sessions, consultant));
   }
 
   /**
@@ -537,7 +564,20 @@ public class SessionService {
       }
     }
 
-    return allSessions;
+    return withoutExcluded(allSessions, consultant);
+  }
+
+  /**
+   * Leaves out the sessions of members-only chats the consultant does not take part in, whatever
+   * else lists them (assignment, supervision row).
+   */
+  private List<Session> withoutExcluded(List<Session> sessions, Consultant consultant) {
+    var excluded = membersOnlyChatAccess.excludedSessionIds(sessions, consultant);
+    return excluded.isEmpty()
+        ? sessions
+        : sessions.stream()
+            .filter(session -> !excluded.contains(session.getId()))
+            .collect(Collectors.toList());
   }
 
   private List<UserSessionResponseDTO> convertToUserSessionResponseDTO(
@@ -723,9 +763,9 @@ public class SessionService {
    * to the accepted conversation, but {@link #getSessionsByIds} is tenant-filtered and no longer
    * matches the anonymous-NEW fallback above, so the post-accept read returns 204 and the accepted
    * chat never opens. This scoped fallback resolves such a session across tenants, but only when
-   * the consultant is its directly assigned advisor ({@link Session#isAdvisedBy(Consultant)}) — it
-   * never widens access by agency or topic, and it does not change the session's tenant ownership
-   * (the asker keeps seeing their own chat).
+   * the consultant is its directly assigned advisor ({@link Session#isAdvisedBy(Consultant)}) or a
+   * participant of the members-only chat it belongs to — it never widens access by agency or topic,
+   * and it does not change the session's tenant ownership (the asker keeps seeing their own chat).
    */
   @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getDirectlyAssignedSessionsByIdsCrossTenant(
@@ -737,7 +777,11 @@ public class SessionService {
         TenantContext.supplyAcrossTenants(
             () ->
                 StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
-                    .filter(session -> session.isAdvisedBy(consultant))
+                    .filter(
+                        session ->
+                            session.isAdvisedBy(consultant)
+                                || membersOnlyChatAccess.admits(session, consultant))
+                    .filter(session -> !membersOnlyChatAccess.excludes(session, consultant))
                     .collect(Collectors.toList()));
     return mapSessionsToConsultantSessionDto(sessions);
   }
@@ -828,6 +872,7 @@ public class SessionService {
   }
 
   private void checkConsultantAssignment(Consultant consultant, Session session) {
+    membersOnlyChatAccess.requireAccess(session, consultant);
     if (session.getStatus() == SessionStatus.REJECTED) {
       if (rejectionReadAccess.canRead(session, consultant)) return;
       throw new ForbiddenException("No current access to rejected enquiry");
@@ -835,6 +880,7 @@ public class SessionService {
     if (session.isAdvisedBy(consultant)
         || isSupervisor(consultant, session)
         || isAllowedToAdvise(consultant, session)
+        || isMemberOfGroupChat(consultant, session)
         || isAllowedToAdviseByTopic(consultant, session)
         || isAnonymousEnquiryAndAllowedToAdviseConsultingType(consultant, session)) {
       return;
@@ -849,6 +895,17 @@ public class SessionService {
         .findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
             session.getId(), consultant.getId())
         .isPresent();
+  }
+
+  /**
+   * A member of the group chat of this session. A members-only chat's session is no team session,
+   * so membership is what opens it to a colleague who is not its creator; {@link
+   * MembersOnlyChatAccess} has already refused everyone who is not a member.
+   */
+  private boolean isMemberOfGroupChat(Consultant consultant, Session session) {
+    return session.getId() != null
+        && groupChatParticipantRepository.existsByChatIdAndConsultantId(
+            session.getId(), consultant.getId());
   }
 
   private boolean isAllowedToAdvise(Consultant consultant, Session session) {
@@ -897,9 +954,17 @@ public class SessionService {
   public ConsultantSessionDTO fetchSessionForConsultant(
       @NonNull Long sessionId, @NonNull Consultant consultant) {
 
-    var session =
-        getSession(sessionId)
-            .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
+    var visible = getSession(sessionId);
+    if (visible.isEmpty()) {
+      // A participant admitted from another Traeger: participation alone opens the case.
+      var admitted = participantSessionAcrossTenants(sessionId, consultant);
+      if (admitted.isPresent()) {
+        return TenantContext.supplyAcrossTenants(
+            () -> toConsultantSessionDTO(admitted.get(), consultant));
+      }
+      throw new NotFoundException("Session with id %s not found.", sessionId);
+    }
+    var session = visible.get();
 
     checkPermissionForConsultantSession(session, consultant);
     return toConsultantSessionDTO(session, consultant);
@@ -958,9 +1023,11 @@ public class SessionService {
   }
 
   private void checkPermissionForConsultantSession(Session session, Consultant consultant) {
+    membersOnlyChatAccess.requireAccess(session, consultant);
     if (!session.isAdvisedBy(consultant)
         && !isSupervisor(consultant, session)
         && !(session.isTeamSession() && consultant.isInAgency(session.getAgencyId()))
+        && !isMemberOfGroupChat(consultant, session)
         && !isAllowedToAdviseByTopic(consultant, session)) {
       throw new ForbiddenException(
           String.format(
@@ -980,7 +1047,7 @@ public class SessionService {
       Consultant consultant) {
     final List<Session> sessions = retrieveArchivedSessions(consultant);
 
-    return mapSessionsToConsultantSessionDto(sessions);
+    return mapSessionsToConsultantSessionDto(withoutExcluded(sessions, consultant));
   }
 
   private List<Session> retrieveArchivedSessions(Consultant consultant) {

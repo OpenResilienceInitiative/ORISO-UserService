@@ -5,7 +5,9 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_ID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -17,6 +19,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRespon
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -206,7 +209,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
             org.mockito.ArgumentMatchers.eq("!created:matrix"));
     order.verify(matrixCleanup).compensate(101L);
     order.verify(sessionService).deleteSession(any());
-    order.verify(chatService).deleteChat(any());
+    order.verify(chatService).deleteChatRecords(any());
   }
 
   @Test
@@ -416,7 +419,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         () -> createChatFacade.createChatV1(chatDto, consultant));
 
     verify(sessionService).deleteSession(any());
-    verify(chatService).deleteChat(any());
+    verify(chatService).deleteChatRecords(any());
   }
 
   @Test
@@ -432,7 +435,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         () -> createChatFacade.createChatV1(chatDto, consultant));
 
     verify(sessionService).deleteSession(any());
-    verify(chatService).deleteChat(any());
+    verify(chatService).deleteChatRecords(any());
   }
 
   @Test
@@ -448,7 +451,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         () -> createChatFacade.createChatV1(chatDto, consultant));
 
     verify(sessionService).deleteSession(any());
-    verify(chatService).deleteChat(any());
+    verify(chatService).deleteChatRecords(any());
   }
 
   @Test
@@ -465,7 +468,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         () -> createChatFacade.createChatV1(chatDto, consultant));
 
     verify(sessionService).deleteSession(any());
-    verify(chatService).deleteChat(any());
+    verify(chatService).deleteChatRecords(any());
   }
 
   // ---------------------------------------------------------------------------
@@ -586,7 +589,111 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         InternalServerErrorException.class,
         () -> createChatFacade.createChatV1(chatDto, consultant));
     verify(sessionService).deleteSession(savedSession);
-    verify(chatService).deleteChat(savedChat);
+    verify(chatService).deleteChatRecords(savedChat);
+  }
+
+  // ---------------------------------------------------------------------------
+  // createMembersOnlyChat — a failed strict creation must not claim "nothing was left behind"
+  // ---------------------------------------------------------------------------
+
+  private Consultant colleagueWhoseInviteIsRefused() throws Exception {
+    when(matrixSynapseService.createMembersOnlyRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!room:matrix.org"));
+    when(matrixSynapseService.loginAsUserAccessToken("@creator:matrix.org"))
+        .thenReturn("creator-token");
+    doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
+    Consultant colleague = mock(Consultant.class);
+    when(colleague.getId()).thenReturn("colleague-id");
+    when(colleague.getMatrixUserId()).thenReturn("@colleague:matrix.org");
+    doThrow(new RuntimeException("invite refused"))
+        .when(matrixSynapseService)
+        .inviteUserToRoom(any(), eq("@colleague:matrix.org"), any());
+    return colleague;
+  }
+
+  @Test
+  void createMembersOnlyChat_Should_CreateTheRoomWithInvitesLockedToTheTechnicalAdmin()
+      throws Exception {
+    var colleague = colleagueWhoseInviteIsRefused();
+    when(matrixSynapseService.purgeRoomOrConfirmGone("!room:matrix.org"))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.PURGED);
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () ->
+            createChatFacade.createMembersOnlyChat(
+                chatDtoWithConsultantIds(List.of()), consultant, List.of(colleague)));
+
+    verify(matrixSynapseService)
+        .createMembersOnlyRoomAsMatrixUser(any(), any(), eq("@creator:matrix.org"));
+    verify(matrixSynapseService, never()).createRoomAsMatrixUser(any(), any(), any());
+  }
+
+  @Test
+  void createMembersOnlyChat_Should_ReportMembershipFailure_When_RollbackSucceeded()
+      throws Exception {
+    var colleague = colleagueWhoseInviteIsRefused();
+    when(matrixSynapseService.purgeRoomOrConfirmGone("!room:matrix.org"))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.PURGED);
+
+    var failure =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () ->
+                createChatFacade.createMembersOnlyChat(
+                    chatDtoWithConsultantIds(List.of()), consultant, List.of(colleague)));
+
+    assertThat(failure.getHttpStatus().value()).isEqualTo(502);
+    verify(matrixSynapseService).purgeRoomOrConfirmGone("!room:matrix.org");
+    verify(sessionService).deleteSession(any());
+    verify(chatService).deleteChatRecords(any());
+  }
+
+  @Test
+  void createMembersOnlyChat_Should_NotClaimACleanRollback_When_TheSessionCannotBeDeleted()
+      throws Exception {
+    var colleague = colleagueWhoseInviteIsRefused();
+    doThrow(new RuntimeException("database down")).when(sessionService).deleteSession(any());
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () ->
+            createChatFacade.createMembersOnlyChat(
+                chatDtoWithConsultantIds(List.of()), consultant, List.of(colleague)));
+
+    // The chat is still removed: one failed cleanup step does not skip the other.
+    verify(chatService).deleteChatRecords(any());
+  }
+
+  @Test
+  void createMembersOnlyChat_Should_NotClaimACleanRollback_When_TheChatCannotBeDeleted()
+      throws Exception {
+    var colleague = colleagueWhoseInviteIsRefused();
+    doThrow(new RuntimeException("database down")).when(chatService).deleteChatRecords(any());
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () ->
+            createChatFacade.createMembersOnlyChat(
+                chatDtoWithConsultantIds(List.of()), consultant, List.of(colleague)));
+
+    verify(sessionService).deleteSession(any());
+  }
+
+  @Test
+  void createMembersOnlyChat_Should_RemoveTheSession_When_TheChatCannotBeSaved() throws Exception {
+    var colleague = colleagueWhoseInviteIsRefused();
+    when(chatService.saveChat(any())).thenThrow(new RuntimeException("database down"));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () ->
+            createChatFacade.createMembersOnlyChat(
+                chatDtoWithConsultantIds(List.of()), consultant, List.of(colleague)));
+
+    // Nothing may be left behind: the session was saved first and must go again.
+    verify(sessionService).deleteSession(any());
+    verify(matrixSynapseService, never()).createRoomAsMatrixUser(any(), any(), any());
   }
 
   // ---------------------------------------------------------------------------

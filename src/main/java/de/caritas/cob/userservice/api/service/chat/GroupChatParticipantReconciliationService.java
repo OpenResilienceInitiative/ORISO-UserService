@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -32,6 +33,7 @@ public class GroupChatParticipantReconciliationService {
   private final AgencySilentMembershipService consultantMembership;
   private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
   private final GroupChatMatrixCleanupService matrixCleanup;
+  private final MembersOnlyRevocation revocation;
 
   /**
    * Reconciles co-moderators only when the client explicitly supplies {@code consultantIds}. A null
@@ -139,11 +141,17 @@ public class GroupChatParticipantReconciliationService {
       for (var existing : participants) {
         if (existing.getRole() == ParticipantRole.CO_MODERATOR
             && !desiredIds.contains(existing.getConsultantId())) {
+          // The side room of a supervision is left first, the main room last: when a leave fails
+          // everything rolls back, and the room that is already gone is then the harmless one.
+          revocation.revokeAccessOf(series, existing);
           // A hard-deleted consultant's Matrix account is deactivated by the deletion workflow,
           // and a blank identity was never a room member: neither has access left to revoke.
+          // An existing participant may come from another Träger (recipient scope PLATFORM) or may
+          // have been soft-deleted since: the owner's own Träger and an active-only lookup would
+          // not find them. They are resolved by participation.
           var leavingMatrixUserId =
-              consultantRepository
-                  .findById(existing.getConsultantId())
+              TenantContext.supplyAcrossTenants(
+                      () -> consultantRepository.findById(existing.getConsultantId()))
                   .map(Consultant::getMatrixUserId)
                   .orElse(null);
           if (leavingMatrixUserId != null

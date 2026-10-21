@@ -67,6 +67,37 @@ class GroupChatFeatureGateTest {
         .isInstanceOf(ForbiddenException.class);
   }
 
+  // --- no multitenancy: the consultant has no tenant, the single tenant decides ----------------
+
+  @Test
+  void withoutMultitenancyATenantlessConsultantFollowsTheSingleTenantsSetting() {
+    when(consultant.getTenantId()).thenReturn(null);
+    givenSingleTenantGroupChatV2(true);
+    givenAgencySettings(agencySettings(true, true, true));
+
+    assertThatCode(() -> gate.requireEnabled(consultant, circleRequest()))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void withoutMultitenancyATenantlessConsultantIsRefusedWhenTheSingleTenantSwitchedItOff() {
+    when(consultant.getTenantId()).thenReturn(null);
+    givenSingleTenantGroupChatV2(false);
+
+    assertThatThrownBy(() -> gate.requireEnabled(consultant, circleRequest()))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void withMultitenancyATenantlessConsultantStaysRefusedAndNoSingleTenantIsAsked() {
+    org.springframework.test.util.ReflectionTestUtils.setField(gate, "multitenancy", true);
+    when(consultant.getTenantId()).thenReturn(null);
+
+    assertThatThrownBy(() -> gate.requireEnabled(consultant, circleRequest()))
+        .isInstanceOf(ForbiddenException.class);
+    verify(tenantService, never()).getSingleTenancyTenantDataFresh();
+  }
+
   // --- Beratungsstelle (agency) level, effective values from the AgencyService ---------------
 
   @Test
@@ -198,6 +229,15 @@ class GroupChatFeatureGateTest {
   private void givenTenantGroupChatV2(boolean enabled) {
     when(consultant.getTenantId()).thenReturn(TENANT_ID);
     when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(TENANT_ID)
+                .name("Tenant")
+                .settings(new Settings().featureGroupChatV2Enabled(enabled)));
+  }
+
+  private void givenSingleTenantGroupChatV2(boolean enabled) {
+    when(tenantService.getSingleTenancyTenantDataFresh())
         .thenReturn(
             new RestrictedTenantDTO()
                 .id(TENANT_ID)
