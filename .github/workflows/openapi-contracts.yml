@@ -56,8 +56,9 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
-        # TenantService PR304 supplies the six conversation notification channel fields consumed here.
-        ref: ${{ github.event_name == 'pull_request' && '5705be45ce94a3c777132c719c826975323c3ccb' || 'dev' }}
+        # TenantService dev after PR315 merge: PR304 notification channel fields plus the
+        # featureConsultant{Browser,Email}InternalGroupEnabled settings consumed here.
+        ref: ${{ github.event_name == 'pull_request' && 'ec6d1484b8119fb5931d09a5b3599baccc19a400' || 'dev' }}
         path: .providers/tenant
         persist-credentials: false
 
