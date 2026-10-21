@@ -2,11 +2,12 @@ package de.caritas.cob.userservice.api.facade;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CreateEnquiryMessageException;
@@ -111,11 +112,8 @@ class CreateEnquiryMessageFacadeTest {
     assertThat(response.getMatrixRoomId()).isEqualTo(MATRIX_ROOM_ID);
     assertThat(response.getSessionId()).isEqualTo(SESSION_ID);
     assertThat(response.getT()).isEqualTo(MATRIX_EVENT_ID);
-    assertThat(session.getMatrixRoomId()).isEqualTo(MATRIX_ROOM_ID);
-    assertThat(session.getStatus()).isEqualTo(SessionStatus.NEW);
-    assertThat(session.getEnquiryMessageDate()).isNotNull();
-    assertThat(session.getLanguageCode()).isEqualTo(LanguageCode.de);
     verify(sessionService).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
+    verify(emailNotificationFacade).sendNewEnquiryEmailNotification(same(finalized), any());
     verify(agencyPreAssignmentRoomService, never()).ensureHoldingRoom(session, user);
     verify(matrixSynapseService, never()).sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN);
   }
@@ -307,17 +305,24 @@ class CreateEnquiryMessageFacadeTest {
     verify(sessionService).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
   }
 
+  private Session finalized;
+
   private void givenExistingSession() {
     when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
     org.mockito.Mockito.lenient()
         .when(sessionService.finalizeEnquiry(session, "de", MATRIX_ROOM_ID))
         .thenAnswer(
             invocation -> {
-              session.setStatus(
-                  session.getConsultant() == null ? SessionStatus.NEW : SessionStatus.IN_PROGRESS);
-              session.setEnquiryMessageDate(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
-              session.setLanguageCode(LanguageCode.de);
-              return session;
+              // A distinct row proves the facade continues with the finalized session.
+              finalized = new Session();
+              finalized.setId(session.getId());
+              finalized.setAgencyId(session.getAgencyId());
+              finalized.setUser(session.getUser());
+              finalized.setRegistrationType(session.getRegistrationType());
+              finalized.setIsConsultantDirectlySet(session.getIsConsultantDirectlySet());
+              finalized.setMatrixRoomId(invocation.getArgument(2));
+              finalized.setStatus(SessionStatus.NEW);
+              return finalized;
             });
   }
 }
