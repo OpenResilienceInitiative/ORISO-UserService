@@ -57,6 +57,19 @@ public class GroupChatMembershipService {
     removeMemberFromRoom(matrixRoomId, leavingMatrixUserId);
   }
 
+  /** Removal is successful only when Matrix confirms that no membership remains. */
+  public boolean removeLeavingMemberFromRoomAndConfirm(Chat chat, String memberId) {
+    var roomId = resolveMatrixRoomId(chat);
+    return removeMemberFromRoomAndConfirm(roomId, memberId);
+  }
+
+  public boolean removeMemberFromRoomAndConfirm(String roomId, String memberId) {
+    var membership = isMemberInRoom(roomId, memberId);
+    if (membership.isPresent() && !membership.get()) return true;
+    removeMemberFromRoom(roomId, memberId);
+    return isMemberInRoom(roomId, memberId).map(present -> !present).orElse(false);
+  }
+
   /**
    * Invites a member to a group chat's Matrix room and accepts the invitation on their behalf.
    *

@@ -245,8 +245,12 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
   protected ResponseEntity<Object> handleCustomConflict(
       final ConflictException ex, final WebRequest request) {
     ex.executeLogging();
+    HttpHeaders headers =
+        ex.getReason()
+            .map(reason -> new CustomHttpHeader(reason).buildHeader())
+            .orElseGet(HttpHeaders::new);
 
-    return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.CONFLICT, request);
+    return handleExceptionInternal(null, null, headers, HttpStatus.CONFLICT, request);
   }
 
   /**

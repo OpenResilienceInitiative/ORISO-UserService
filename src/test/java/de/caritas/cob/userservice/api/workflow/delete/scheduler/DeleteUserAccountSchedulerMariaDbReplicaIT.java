@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountS
 import de.caritas.cob.userservice.api.workflow.delete.service.UserHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimWriter;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -25,6 +26,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
+import org.springframework.aop.framework.Advised;
+import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
@@ -32,7 +35,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.MariaDBContainer;
 
@@ -95,6 +97,7 @@ class DeleteUserAccountSchedulerMariaDbReplicaIT {
   @Autowired private ScheduledTaskClaimRepository claimRepository;
   @Autowired private ScheduledTaskClaimService taskClaimService;
   @Autowired private ScheduledTaskClaimWriter claimWriter;
+  @Autowired private Clock clock;
 
   @BeforeEach
   @AfterEach
@@ -149,26 +152,31 @@ class DeleteUserAccountSchedulerMariaDbReplicaIT {
         .findByTaskNameForUpdate(TASK_NAME);
     doAnswer(
             invocation -> {
+              Object inserted;
               try {
-                Object inserted = claimRepository.saveAndFlush(invocation.getArgument(0));
-                await(releaseWinner);
-                return inserted;
+                inserted = claimRepository.saveAndFlush(invocation.getArgument(0));
               } catch (RuntimeException failure) {
-                databaseFailure.set(failure);
+                databaseFailure.compareAndSet(null, failure);
                 deadlockSeen.countDown();
                 throw failure;
               }
+              await(releaseWinner);
+              return inserted;
             })
         .when(pausedRepository)
         .saveAndFlush(any(ScheduledTaskClaim.class));
 
-    var writerTarget = AopTestUtils.getUltimateTargetObject(claimWriter);
-    ReflectionTestUtils.setField(writerTarget, "claimRepository", pausedRepository);
+    // Keep real transaction advice, but never replace the repository on the shared bean:
+    // background schedulers also use it and must not enter this test's latch protocol.
+    var writerProxy = new ProxyFactory(new ScheduledTaskClaimWriter(pausedRepository, clock));
+    writerProxy.setProxyTargetClass(true);
+    writerProxy.addAdvisors(((Advised) claimWriter).getAdvisors());
+    var isolatedClaims =
+        new ScheduledTaskClaimService((ScheduledTaskClaimWriter) writerProxy.getProxy());
     var executor = Executors.newFixedThreadPool(2);
     try {
-      var first = executor.submit(() -> taskClaimService.tryClaim(TASK_NAME, Duration.ofHours(12)));
-      var second =
-          executor.submit(() -> taskClaimService.tryClaim(TASK_NAME, Duration.ofHours(12)));
+      var first = executor.submit(() -> isolatedClaims.tryClaim(TASK_NAME, Duration.ofHours(12)));
+      var second = executor.submit(() -> isolatedClaims.tryClaim(TASK_NAME, Duration.ofHours(12)));
       if (!bothReadAbsent.await(5, TimeUnit.SECONDS)) {
         releaseWinner.countDown();
         first.get(5, TimeUnit.SECONDS);
@@ -177,6 +185,8 @@ class DeleteUserAccountSchedulerMariaDbReplicaIT {
       }
       assertThat(deadlockSeen.await(10, TimeUnit.SECONDS)).isTrue();
       assertThat(databaseFailure.get()).hasMessageContaining("Deadlock");
+      assertThat(first.isDone()).isFalse();
+      assertThat(second.isDone()).isFalse();
       releaseWinner.countDown();
       assertThat(
               java.util.List.of(first.get(15, TimeUnit.SECONDS), second.get(15, TimeUnit.SECONDS)))
@@ -184,7 +194,6 @@ class DeleteUserAccountSchedulerMariaDbReplicaIT {
     } finally {
       releaseWinner.countDown();
       executor.shutdownNow();
-      ReflectionTestUtils.setField(writerTarget, "claimRepository", claimRepository);
     }
   }
 

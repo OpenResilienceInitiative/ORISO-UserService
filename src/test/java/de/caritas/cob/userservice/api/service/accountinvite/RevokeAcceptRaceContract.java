@@ -1108,6 +1108,8 @@ abstract class RevokeAcceptRaceContract {
                 InviteEmailTemplate.builder()
                     .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
                     .name("revoke-race")
+                    // Scoped admins may share built-in defaults; platform custom text is private.
+                    .systemDefault(true)
                     .language("de")
                     .subject("Einladung")
                     .body("Hallo {{firstName}}")
