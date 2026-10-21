@@ -135,7 +135,7 @@ public final class AccountLifecycleCodec {
       String accountId,
       TaskActorCredentials actor,
       Object body) {
-    if (!java.util.Set.of("read", "delete").contains(command)
+    if (!java.util.Set.of("read", "delete", "locale").contains(command)
         || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
       throw new IllegalArgumentException("Invalid maintenance proof binding");
     long now = clock.instant().getEpochSecond();
@@ -180,6 +180,16 @@ public final class AccountLifecycleCodec {
    */
   public String verifyMaintenanceDeleteReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "delete", "DELETED");
+  }
+
+  public String verifyMaintenanceLocaleReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "locale", "UPDATED");
+  }
+
+  private String verifyMaintenanceReceipt(String reply, String realmId,
+      TaskActorCredentials actor, JsonNode frozen, String command, String expectedResult) {
     try {
       var result = read(reply, MaintenanceReply.class);
       UUID operation = UUID.fromString(frozen.path("operationId").asText());
@@ -187,7 +197,7 @@ public final class AccountLifecycleCodec {
       if (actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN
           || !operation.equals(result.operationId())
           || !account.equals(result.accountId())
-          || !"DELETED".equals(result.result())
+          || !expectedResult.equals(result.result())
           || result.receipt() == null
           || result.receipt().length() > 16384) throw new IllegalArgumentException();
       String[] parts = result.receipt().split("\\.", -1);
@@ -207,7 +217,7 @@ public final class AccountLifecycleCodec {
           || !realmId.equals(outcome.realmId())
           || !account.equals(outcome.accountId())
           || !operation.equals(outcome.operationId())
-          || !"delete".equals(outcome.command())
+          || !command.equals(outcome.command())
           || !actor.clientId().equals(outcome.ownerClient())
           || !actor.serviceSubject().equals(outcome.ownerSubject())
           || !digest("maintenance-intent", frozen).equals(outcome.intentDigest())
@@ -215,7 +225,7 @@ public final class AccountLifecycleCodec {
           || !java.util.Objects.equals(expectedTenant, outcome.tenantId())
           || !digest("maintenance-origin", frozen.path("target").path("origin"))
               .equals(outcome.originDigest())
-          || !"DELETED".equals(outcome.result())) throw new IllegalArgumentException();
+          || !expectedResult.equals(outcome.result())) throw new IllegalArgumentException();
       return canonical(result);
     } catch (RuntimeException failure) {
       throw new IllegalArgumentException("Invalid native maintenance receipt");

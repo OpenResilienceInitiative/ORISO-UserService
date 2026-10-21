@@ -225,8 +225,10 @@ class UserSelfLocaleScenarioCBoundaryTest {
       jdbc.execute(
           "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,language_code varchar(8),encourage2fa boolean,patch_count int)");
       jdbc.update("insert into user values(?,?,null,'en',false,0)", ACCOUNT, 7L);
-      jdbc.execute(
-          "create table identity_account_operation_intent(operation_id varchar(36) primary key,realm_id varchar(255),realm_name varchar(255),account_id varchar(36),tenant_id bigint,owner_client varchar(255),owner_subject varchar(36),request_digest varchar(64),target_json text,intent_body text,status varchar(24),domain_applied boolean,receipt text,updated_at timestamp)");
+      new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
+              new org.springframework.core.io.ClassPathResource(
+                  "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"))
+          .execute(source);
       when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(actor);
       when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))
           .thenReturn(
