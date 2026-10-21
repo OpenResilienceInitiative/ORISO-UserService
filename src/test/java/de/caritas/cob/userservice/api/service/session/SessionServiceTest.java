@@ -197,6 +197,10 @@ class SessionServiceTest {
           null);
 
   @InjectMocks private SessionService sessionService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;

@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -38,11 +39,24 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
-/** Durable, content-free email for ordinary counsellor internal-group messages. */
+/**
+ * Durable, content-free email for ordinary counsellor internal-group messages (ADR-024 addendum,
+ * ported from US#1376 for FE#1725 story 40).
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class InternalChatEmailService {
+  /** About one hour of five-minute retries before a preflight that never succeeds is rejected. */
+  static final int MAX_PREFLIGHT_ATTEMPTS = 12;
+
+  // CREATED once provisioned; IN_PROGRESS while an existing counsellor gets another agency.
+  private static final Set<ConsultantStatus> ACTIVE_CONSULTANT_STATUSES =
+      Set.of(ConsultantStatus.CREATED, ConsultantStatus.IN_PROGRESS);
+
+  private static final Set<String> USER_MESSAGE_TYPES =
+      Set.of("m.text", "m.emote", "m.image", "m.file", "m.audio", "m.video");
+
   private final @NonNull SessionRepository sessions;
   private final @NonNull GroupChatParticipantRepository participants;
   private final @NonNull ConsultantRepository consultants;
@@ -89,17 +103,19 @@ public class InternalChatEmailService {
     if (isBlank(roomId) || isBlank(eventId)) return;
     Session session = resolveGroup(roomId);
     if (!currentParticipant(session, actor, participantIds(session))) return;
+    String eventKey = AdviceSeekerReplyEmailService.eventKey(roomId, eventId);
     try {
       writer.reserveInternalIntent(
           actor.getId(),
           actor.getMatrixUserId(),
           roomId,
           eventId,
-          AdviceSeekerReplyEmailService.eventKey(roomId, eventId),
+          eventKey,
           session.getTenantId(),
           session.getId());
-    } catch (DataIntegrityViolationException replay) {
-      // Both producers and HTTP retries converge on one durable intent.
+    } catch (DataIntegrityViolationException failure) {
+      // Both producers and HTTP retries converge on one durable intent; anything else is a fault.
+      if (!writer.hasInternalIntent(actor.getId(), eventKey)) throw failure;
     }
   }
 
@@ -112,6 +128,11 @@ public class InternalChatEmailService {
       return;
     }
     try {
+      if (!tenantAllowsMail(
+          id, intent.getTenantId(), tenants.getRestrictedTenantDataFresh(intent.getTenantId()))) {
+        writer.finish(id, Status.REJECTED);
+        return;
+      }
       Session session = resolveGroup(intent.getSourceRoomId());
       Consultant actor =
           consultants.findByIdAndDeleteDateIsNull(intent.getRecipientUserId()).orElse(null);
@@ -132,12 +153,13 @@ public class InternalChatEmailService {
         try {
           writer.reserveInternalRecipient(recipient.getId(), intent);
         } catch (DataIntegrityViolationException replay) {
-          // A partial fan-out is safe to resolve again without duplicate mail claims.
+          // A partial fan-out is safe to resolve again; any other constraint is a fault to retry.
+          if (!writer.hasInternalRecipient(recipient.getId(), intent.getEventKey())) throw replay;
         }
       }
       writer.finish(id, Status.RESOLVED);
     } catch (RuntimeException unavailable) {
-      retryPreflight(id, unavailable);
+      retryPreflight(intent, unavailable);
     }
   }
 
@@ -173,7 +195,7 @@ public class InternalChatEmailService {
         return;
       }
     } catch (RuntimeException unavailable) {
-      retryPreflight(id, unavailable);
+      retryPreflight(claim, unavailable);
       return;
     }
 
@@ -192,16 +214,17 @@ public class InternalChatEmailService {
       delivery.requireConfigured(route);
       setupStage = Stage.TENANT_CONTEXT;
       var tenant = tenants.getRestrictedTenantDataFresh(claim.getTenantId());
-      if (tenant == null || !Objects.equals(tenant.getId(), claim.getTenantId())) {
-        throw failure(Stage.TENANT_CONTEXT, Reason.TENANT_UNAVAILABLE);
+      if (!tenantAllowsMail(id, claim.getTenantId(), tenant)) {
+        writer.finish(id, Status.REJECTED);
+        return;
       }
       if (multitenancyEnabled && !singleDomainMultitenancy && isBlank(tenant.getSubdomain())) {
         throw failure(Stage.TENANT_CONTEXT, Reason.TENANT_SUBDOMAIN_MISSING);
       }
+      setupStage = Stage.TEMPLATE;
       String baseUrl =
           AdviceSeekerReplyEmailService.requireBaseUrl(
               multitenancyEnabled ? tenantTemplates.getTenantBaseUrl(tenant) : applicationBaseUrl);
-      setupStage = Stage.TEMPLATE;
       var tenantBrand = branding.resolveNotification(claim.getTenantId(), baseUrl);
       var values = emailBrand.valuesForResolvedBrand(baseUrl, tenantBrand);
       values.put("platformName", values.get("offeringName"));
@@ -217,7 +240,7 @@ public class InternalChatEmailService {
         tone = OrisoEmailRenderer.Tone.DE_INFORMAL;
       email = renderer.render("neue-nachricht-beratung", tone, values);
     } catch (RuntimeException unavailable) {
-      retryPreflight(id, setupStage, unavailable);
+      retryPreflight(claim, setupStage, unavailable);
       return;
     }
     try {
@@ -229,11 +252,30 @@ public class InternalChatEmailService {
           java.util.UUID.fromString(claim.getCorrelationId()));
       writer.finish(id, Status.SENT);
     } catch (TenantSystemEmailRouteService.ConfigurationException unavailable) {
-      retryPreflight(id, unavailable);
+      retryPreflight(claim, Stage.SMTP_HANDOFF, unavailable);
     } catch (RuntimeException uncertain) {
       writer.finish(id, Status.UNCERTAIN);
       throw uncertain;
     }
+  }
+
+  /**
+   * FE#1725 story 40: the internal group chats tile switch; an absent switch means on. A missing
+   * Träger fails closed: no mail, never retried.
+   */
+  private static boolean tenantAllowsMail(long id, Long tenantId, RestrictedTenantDTO tenant) {
+    if (tenant == null || !Objects.equals(tenant.getId(), tenantId)) {
+      log.warn("Internal-chat email {} rejected: Träger {} is unavailable", id, tenantId);
+      return false;
+    }
+    boolean allowed =
+        tenant.getSettings() == null
+            || !Boolean.FALSE.equals(
+                tenant.getSettings().getFeatureConsultantEmailInternalGroupEnabled());
+    if (!allowed) {
+      log.info("Internal-chat email {} suppressed by the Träger's internal group switch", id);
+    }
+    return allowed;
   }
 
   private Session resolveGroup(String roomId) {
@@ -256,7 +298,7 @@ public class InternalChatEmailService {
         && consultant != null
         && consultant.getId() != null
         && consultant.getDeleteDate() == null
-        && consultant.getStatus() == ConsultantStatus.IN_PROGRESS
+        && ACTIVE_CONSULTANT_STATUSES.contains(consultant.getStatus())
         && !isBlank(consultant.getMatrixUserId())
         && Objects.equals(consultant.getTenantId(), session.getTenantId())
         && participantIds.contains(consultant.getId());
@@ -326,10 +368,11 @@ public class InternalChatEmailService {
                     .orElseThrow(() -> failure(Stage.MATRIX_EVENT, Reason.DEPENDENCY_UNAVAILABLE)));
     if (!Objects.equals(claim.getSourceEventId(), event.get("event_id"))
         || !Objects.equals(actor.getMatrixUserId(), event.get("sender"))
-        || !Objects.equals("m.room.encrypted", event.get("type"))) return false;
-    if (!(event.get("content") instanceof Map<?, ?> content)
-        || !(content.get("ciphertext") instanceof String ciphertext)
-        || isBlank(ciphertext)) return false;
+        || !(event.get("content") instanceof Map<?, ?> content)) return false;
+    if (!(Objects.equals("m.room.encrypted", event.get("type"))
+        ? content.get("ciphertext") instanceof String ciphertext && !isBlank(ciphertext)
+        : Objects.equals("m.room.message", event.get("type")) && isUserMessage(content)))
+      return false;
     if (content.get("m.relates_to") instanceof Map<?, ?> relation) {
       Object type = relation.get("rel_type");
       return !"m.replace".equals(type) && !"m.annotation".equals(type);
@@ -337,12 +380,31 @@ public class InternalChatEmailService {
     return true;
   }
 
-  private void retryPreflight(long id, RuntimeException unavailable) {
-    retryPreflight(id, Stage.ELIGIBILITY, unavailable);
+  /** Rooms created without encryption carry plaintext; notices and empty bodies are no message. */
+  private static boolean isUserMessage(Map<?, ?> content) {
+    if (!(content.get("msgtype") instanceof String msgtype)
+        || !USER_MESSAGE_TYPES.contains(msgtype)) return false;
+    return (content.get("body") instanceof String body && !isBlank(body))
+        || content.containsKey("url")
+        || content.containsKey("file");
   }
 
-  private void retryPreflight(long id, Stage stage, RuntimeException unavailable) {
-    writer.retryLater(id);
-    NotificationEmailDiagnostics.retry(log, "internal-chat", id, stage, unavailable);
+  private void retryPreflight(ReplyEmailDelivery row, RuntimeException unavailable) {
+    retryPreflight(row, Stage.ELIGIBILITY, unavailable);
+  }
+
+  private void retryPreflight(ReplyEmailDelivery row, Stage stage, RuntimeException unavailable) {
+    // Matrix answers a missing event and an outage alike, so only the attempt count ends a retry.
+    if (row.getAttemptCount() >= MAX_PREFLIGHT_ATTEMPTS) {
+      writer.finish(row.getId(), Status.REJECTED);
+      log.warn(
+          "Internal-chat email {} rejected after {} unavailable preflights ({})",
+          row.getId(),
+          row.getAttemptCount(),
+          unavailable.getClass().getSimpleName());
+      return;
+    }
+    writer.retryLater(row.getId());
+    NotificationEmailDiagnostics.retry(log, "internal-chat", row.getId(), stage, unavailable);
   }
 }

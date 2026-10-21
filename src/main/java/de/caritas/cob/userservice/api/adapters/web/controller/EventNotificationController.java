@@ -191,6 +191,7 @@ public class EventNotificationController {
       return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
 
+    // FE#1725 story 40: the service ignores rooms that are not internal groups.
     if (!Boolean.TRUE.equals(request.getFeedbackMailIntent())
         && request.getMatrixEventId() != null
         && !request.getMatrixEventId().isBlank()) {

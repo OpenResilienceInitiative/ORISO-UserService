@@ -41,6 +41,10 @@ class SessionDeleteServiceTest {
 
   @Mock MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
+  @Mock de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
+  @Mock de.caritas.cob.userservice.api.helper.AuthenticatedUser authenticatedUser;
+
   @Test
   void deleteSessionAndInactiveUser_Should_ReturnOK_When_SessionIdIsKnown() {
     var sessionId = givenAPresentSession(false);
@@ -70,6 +74,40 @@ class SessionDeleteServiceTest {
     verify(actionsRegistry).buildContainerForType(SessionDeletionWorkflowDTO.class);
     verify(actionsRegistry).buildContainerForType(User.class);
     verify(statisticsService).fireEvent(any(ArchiveOrDeleteSessionStatisticsEvent.class));
+  }
+
+  @Test
+  void deleteSession_Should_refuseAConsultantWhoIsNoParticipantOfAMembersOnlyChat() {
+    var sessionId = givenAPresentSession(false);
+    when(authenticatedUser.getUserId()).thenReturn("outsider");
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("no"))
+        .when(membersOnlyChatAccess)
+        .requireAccess(any(Session.class), org.mockito.ArgumentMatchers.eq("outsider"));
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> sessionDeleteService.deleteSession(sessionId));
+
+    org.mockito.Mockito.verifyNoInteractions(actionsRegistry);
+  }
+
+  @Test
+  void deleteSession_Should_answerAParticipantWithConflictAndTheReason() {
+    var sessionId = givenAPresentSession(false);
+    when(membersOnlyChatAccess.concerns(any(Session.class))).thenReturn(true);
+
+    var refused =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> sessionDeleteService.deleteSession(sessionId));
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        org.springframework.http.HttpStatus.CONFLICT, refused.getHttpStatus());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "MEMBERS_ONLY_CHAT_STOP_REQUIRED", refused.getCustomHttpHeaders().getFirst("X-Reason"));
+    org.mockito.Mockito.verifyNoInteractions(actionsRegistry);
   }
 
   private long givenAPresentSession(boolean isOnlySession) {

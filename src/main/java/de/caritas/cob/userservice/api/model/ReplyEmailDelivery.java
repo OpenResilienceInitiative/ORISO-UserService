@@ -25,6 +25,7 @@ public class ReplyEmailDelivery {
     CONSULTANT,
     FEEDBACK_INTENT,
     FEEDBACK,
+    // Fits recipient_kind VARCHAR(16); no migration needed.
     INTERNAL_INTENT,
     INTERNAL
   }

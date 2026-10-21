@@ -196,6 +196,7 @@ public class RegisteredEnquiryConversationListProviderIT {
           session.setConsultant(null);
           session.setUser(user);
           session.setId(null);
+          session.setConversationType(null);
           session.setSessionData(null);
           session.setPostcode("12345");
           session.setAgencyId(1L);
@@ -218,6 +219,7 @@ public class RegisteredEnquiryConversationListProviderIT {
     User user = this.userRepository.findAll().iterator().next();
     Session session = new Session(user, 1, "12345", 1L, SessionStatus.NEW, false);
     session.setId(null);
+    session.setConversationType(null);
     session.setLanguageCode(LanguageCode.de);
     session.setEnquiryMessageDate(LocalDateTime.now());
     session.setCreateDate(LocalDateTime.now());

@@ -11,7 +11,6 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -142,6 +141,17 @@ class CounsellorOnboardingServiceTest {
 
   private void inviteResolves(AccountInvite invite) {
     when(accountInviteService.findInviteByToken(RAW_TOKEN)).thenReturn(invite);
+  }
+
+  /**
+   * Every write of this service re-reads the invite row under its lock instead of merging the
+   * snapshot it carried across the preceding remote call (#1008 review). The stub therefore hands
+   * out a DISTINCT instance — the row as the database currently holds it — so the assertions below
+   * state which of the two the service actually wrote.
+   */
+  private AccountInvite lockedRowIs(AccountInvite row) {
+    when(accountInviteRepository.findByIdForUpdate(row.getId())).thenReturn(Optional.of(row));
+    return row;
   }
 
   private void agencyCoverageResolves() {
@@ -327,6 +337,12 @@ class CounsellorOnboardingServiceTest {
     when(identitySecondFactor.getOtpCredential("enc.lena.b"))
         .thenReturn(
             new IdentityOtpCredential(false, "TOTPSECRET", "QRBASE64", IdentityOtpType.APP));
+    // The row as it looks AFTER the Keycloak round trip — another writer changed an unrelated
+    // field meanwhile; the secret must land here, not in the snapshot `accepted`.
+    AccountInvite lockedRow = lockedRowIs(invite());
+    lockedRow.setStatus(AccountInviteStatus.ACCEPTED);
+    lockedRow.setProvisionedUserId(CONSULTANT_ID);
+    lockedRow.setFirstName("Concurrently renamed");
 
     var result = service.registerCounsellor(RAW_TOKEN, command());
 
@@ -334,8 +350,10 @@ class CounsellorOnboardingServiceTest {
     assertEquals("TOTPSECRET", result.totpSecret());
     assertEquals("QRBASE64", result.totpQrCodeBase64());
     assertTrue(result.twoFactorRequired());
-    assertEquals("TOTPSECRET", accepted.getTotpPendingSecret());
-    verify(accountInviteRepository).save(accepted);
+    assertEquals("TOTPSECRET", lockedRow.getTotpPendingSecret());
+    assertEquals("Concurrently renamed", lockedRow.getFirstName());
+    verify(accountInviteRepository).save(lockedRow);
+    verify(accountInviteRepository, never()).save(accepted);
 
     ArgumentCaptor<ProvisionCounsellorCommand> captor =
         ArgumentCaptor.forClass(ProvisionCounsellorCommand.class);
@@ -371,6 +389,8 @@ class CounsellorOnboardingServiceTest {
     when(identitySecondFactor.getOtpCredential("enc.lena.b"))
         .thenReturn(
             new IdentityOtpCredential(false, "TOTPSECRET", "QRBASE64", IdentityOtpType.APP));
+    // The pending secret is written into a re-read row, not into the returned snapshot (#1030).
+    lockedRowIs(accepted);
 
     service.registerCounsellor(
         RAW_TOKEN,
@@ -800,16 +820,30 @@ class CounsellorOnboardingServiceTest {
   }
 
   @Test
-  void activateEmailTwoFactor_correctCodeCompletesWithoutTotpSecret() {
+  void activateEmailTwoFactor_correctCodeClearsThePendingSecretOnTheLockedRow() {
     AccountInvite pending = pendingEmailInvite();
+    // Seeded on BOTH rows: with the secret null everywhere, the assertion below would hold
+    // even if the gate never cleared it. The e-mail path does not require a blank secret,
+    // it pins whatever the row carries and revalidates against it.
+    pending.setTotpPendingSecret("TOTPSECRET");
+    // A DISTINCT instance, as in the app-secret path above: handing back the snapshot would
+    // let the test pass even if the gate were activated on the stale row.
+    AccountInvite lockedRow = lockedRowIs(invite());
+    lockedRow.setStatus(AccountInviteStatus.ACCEPTED);
+    lockedRow.setAcceptedByUserId(CONSULTANT_ID);
+    lockedRow.setTotpPendingSecret("TOTPSECRET");
     when(identitySecondFactor.finishEmailVerification("enc.lena.b", "123456"))
         .thenReturn(
             new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
                 true, false, true, "counsellor@example.org"));
+
     service.activateEmailTwoFactor(RAW_TOKEN, "123456");
+
     verify(accountInviteService).markTwoFactorActive(CONSULTANT_ID);
     verify(identitySecondFactor, never()).setUpOtpCredential(anyString(), anyString(), anyString());
-    assertNull(pending.getTotpPendingSecret());
+    assertNull(lockedRow.getTotpPendingSecret());
+    verify(accountInviteRepository).save(lockedRow);
+    verify(accountInviteRepository, never()).save(pending);
   }
 
   @Test
@@ -842,7 +876,8 @@ class CounsellorOnboardingServiceTest {
     expired.setStatus(AccountInviteStatus.ACCEPTED);
     expired.setAcceptedByUserId(CONSULTANT_ID);
     expired.setExpiresAt(LocalDateTime.now().minusSeconds(1));
-    when(accountInviteService.findInviteByToken(RAW_TOKEN)).thenReturn(pending, expired);
+    // The row as the gate write finds it when it re-reads it under the lock.
+    lockedRowIs(expired);
     when(identitySecondFactor.finishEmailVerification("enc.lena.b", "123456"))
         .thenReturn(
             new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
@@ -851,7 +886,7 @@ class CounsellorOnboardingServiceTest {
         AccountInviteLinkException.class,
         () -> service.activateEmailTwoFactor(RAW_TOKEN, "123456"));
     assertTrue(pending.getExpiresAt().isAfter(LocalDateTime.now()));
-    verify(accountInviteService, times(2)).findInviteByToken(RAW_TOKEN);
+    verify(accountInviteRepository, never()).save(expired);
     verify(accountInviteService, never()).markTwoFactorActive(anyString());
   }
 
@@ -886,12 +921,17 @@ class CounsellorOnboardingServiceTest {
                 new IdentityProfile(CONSULTANT_ID, "enc.lena.b", "Lena", "Beraterin", "mail")));
     when(identitySecondFactor.setUpOtpCredential("enc.lena.b", "123456", "TOTPSECRET"))
         .thenReturn(true);
+    AccountInvite lockedRow = lockedRowIs(invite());
+    lockedRow.setStatus(AccountInviteStatus.ACCEPTED);
+    lockedRow.setAcceptedByUserId(CONSULTANT_ID);
+    lockedRow.setTotpPendingSecret("TOTPSECRET");
 
     service.activateTwoFactor(RAW_TOKEN, "123456");
 
     verify(accountInviteService).markTwoFactorActive(CONSULTANT_ID);
-    assertNull(resumable.getTotpPendingSecret());
-    verify(accountInviteRepository).save(resumable);
+    assertNull(lockedRow.getTotpPendingSecret());
+    verify(accountInviteRepository).save(lockedRow);
+    verify(accountInviteRepository, never()).save(resumable);
   }
 
   @Test
@@ -992,12 +1032,16 @@ class CounsellorOnboardingServiceTest {
     profileResolves();
     when(identitySecondFactor.getOtpCredential("enc.lena.b"))
         .thenReturn(new IdentityOtpCredential(false, "REPAIREDSECRET", "QR", IdentityOtpType.APP));
+    AccountInvite lockedRow = lockedRowIs(resumableWithoutStoredSecret());
 
     var state = service.resolveOnboardingInvite(RAW_TOKEN);
 
     assertTrue(state.pendingTwoFactorResume());
+    // Persisted into the re-read row; the resume response is answered from the in-memory copy.
+    assertEquals("REPAIREDSECRET", lockedRow.getTotpPendingSecret());
     assertEquals("REPAIREDSECRET", resumable.getTotpPendingSecret());
-    verify(accountInviteRepository).save(resumable);
+    verify(accountInviteRepository).save(lockedRow);
+    verify(accountInviteRepository, never()).save(resumable);
   }
 
   @Test
@@ -1023,11 +1067,12 @@ class CounsellorOnboardingServiceTest {
         .thenReturn(new IdentityOtpCredential(false, "REPAIREDSECRET", "QR", IdentityOtpType.APP));
     when(identitySecondFactor.setUpOtpCredential("enc.lena.b", "123456", "REPAIREDSECRET"))
         .thenReturn(true);
+    AccountInvite lockedRow = lockedRowIs(resumableWithoutStoredSecret());
 
     service.activateTwoFactor(RAW_TOKEN, "123456");
 
     verify(accountInviteService).markTwoFactorActive(CONSULTANT_ID);
-    assertNull(resumable.getTotpPendingSecret());
+    assertNull(lockedRow.getTotpPendingSecret());
   }
 
   @Test

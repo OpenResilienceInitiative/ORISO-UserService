@@ -4,16 +4,21 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogEntry;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogsResult;
@@ -53,7 +58,33 @@ class CaseHandoverControllerTest {
 
   @BeforeEach
   void setUpMockMvc() {
-    mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+    mockMvc =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
+  }
+
+  @Test
+  void extendCoAccess_returnsTheExtendedStatus() throws Exception {
+    when(caseHandoverService.extendCoAccess(13L))
+        .thenReturn(CaseHandoverStatus.builder().sessionId(13L).canExtend(true).build());
+
+    for (String prefix : List.of("", "/service")) {
+      mockMvc
+          .perform(post(prefix + "/users/sessions/13/case-handover/extend"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.canExtend").value(true))
+          .andExpect(jsonPath("$.canReclaim").value(false));
+    }
+  }
+
+  @Test
+  void extendCoAccess_withoutAnActiveCoAccess_isAConflict() throws Exception {
+    when(caseHandoverService.extendCoAccess(13L)).thenThrow(new ConflictException("none"));
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/extend"))
+        .andExpect(status().isConflict());
   }
 
   @Test
@@ -129,9 +160,9 @@ class CaseHandoverControllerTest {
   void listReasonPolicies_happyPath_returnsPolicies() {
     // Business reason: policy administration view depends on returning configured reason policies.
     var policies = List.of(CaseHandoverReason.builder().code("P1").label("Policy").build());
-    when(caseHandoverService.listReasonPolicies()).thenReturn(policies);
+    when(caseHandoverService.listReasonPolicies(null)).thenReturn(policies);
 
-    var response = controller.listReasonPolicies();
+    var response = controller.listReasonPolicies(null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(policies, response.getBody());
@@ -142,13 +173,43 @@ class CaseHandoverControllerTest {
     var input = List.of(CaseHandoverReason.builder().code("P2").label("Policy 2").build());
     var output =
         List.of(CaseHandoverReason.builder().code("P2").label("Policy 2").enabled(true).build());
-    when(caseHandoverService.updateReasonPolicies(input)).thenReturn(output);
+    when(caseHandoverService.updateReasonPolicies(null, input)).thenReturn(output);
 
-    var response = controller.updateReasonPolicies(input);
+    var response = controller.updateReasonPolicies(null, input);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(output, response.getBody());
-    verify(caseHandoverService).updateReasonPolicies(input);
+    verify(caseHandoverService).updateReasonPolicies(null, input);
+  }
+
+  @Test
+  void reasonPolicies_passTheNamedTraegerToTheService() throws Exception {
+    // FE#1725: the Admin names the Träger of the centre being edited.
+    var policies = List.of(CaseHandoverReason.builder().code("P1").label("Policy").build());
+    when(caseHandoverService.listReasonPolicies(7L)).thenReturn(policies);
+    when(caseHandoverService.updateReasonPolicies(org.mockito.ArgumentMatchers.eq(7L), any()))
+        .thenReturn(policies);
+
+    mockMvc
+        .perform(get("/service/users/case-handover/reason-policies").param("tenantId", "7"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].code").value("P1"));
+    mockMvc
+        .perform(
+            put("/service/users/case-handover/reason-policies")
+                .param("tenantId", "7")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("[{\"code\":\"P1\",\"label\":\"Policy\",\"enabled\":true}]"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].code").value("P1"));
+  }
+
+  @Test
+  void reasonPolicies_withoutTenantIdKeepTheTokenTenantPath() throws Exception {
+    when(caseHandoverService.listReasonPolicies(null)).thenReturn(List.of());
+
+    mockMvc.perform(get("/users/case-handover/reason-policies")).andExpect(status().isOk());
+    verify(caseHandoverService).listReasonPolicies(null);
   }
 
   @Test
@@ -346,6 +407,44 @@ class CaseHandoverControllerTest {
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(status, response.getBody());
     verify(caseHandoverService).resolveClientConsent(12L, 21L, false);
+  }
+
+  @Test
+  void reclaim_happyPath_returnsTheActiveOwnerStatus() throws Exception {
+    var status =
+        CaseHandoverStatus.builder().sessionId(13L).status("GRANTED").canViewContent(true).build();
+    when(caseHandoverService.reclaim(13L)).thenReturn(status);
+
+    var response = controller.reclaim(13L);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(status, response.getBody());
+    for (String prefix : List.of("", "/service")) {
+      mockMvc
+          .perform(post(prefix + "/users/sessions/13/case-handover/reclaim"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.status").value("GRANTED"))
+          .andExpect(jsonPath("$.canExtend").value(false))
+          .andExpect(jsonPath("$.canReclaim").value(false));
+    }
+  }
+
+  @Test
+  void reclaim_byAnyoneButTheOriginalCounsellor_isForbidden() throws Exception {
+    when(caseHandoverService.reclaim(13L)).thenThrow(new ForbiddenException("not yours"));
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/reclaim"))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void reclaim_afterAPermanentHandover_isAConflict() throws Exception {
+    when(caseHandoverService.reclaim(13L)).thenThrow(new ConflictException("permanent"));
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/reclaim"))
+        .andExpect(status().isConflict());
   }
 
   @Test

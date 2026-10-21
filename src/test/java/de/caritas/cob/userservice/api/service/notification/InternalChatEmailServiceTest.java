@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver
 import de.caritas.cob.userservice.api.service.email.sender.*;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
@@ -25,7 +26,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/** Event acknowledgement through real durable fan-out/rendering to the external mail boundary. */
+/**
+ * Event acknowledgement through real durable fan-out/rendering to the external mail boundary.
+ * Ported from US#1376; FE#1725 story 40 adds the tenant switch tests.
+ */
 class InternalChatEmailServiceTest {
   static final String ROOM = "!internal:matrix.example";
   static final String EVENT = "$internal-event";
@@ -42,6 +46,8 @@ class InternalChatEmailServiceTest {
   private final TenantSystemEmailClient mailClient = mock(TenantSystemEmailClient.class);
   private final AuthenticatedUser caller = mock(AuthenticatedUser.class);
   private final Map<Long, ReplyEmailDelivery> stored = new LinkedHashMap<>();
+  private final java.util.concurrent.atomic.AtomicBoolean failNextRecipientInsert =
+      new java.util.concurrent.atomic.AtomicBoolean();
   private final List<Delivered> received = new ArrayList<>();
   private final ReplyEmailDeliveryWriter writer = new ReplyEmailDeliveryWriter(repository);
   private InternalChatEmailService service;
@@ -51,6 +57,7 @@ class InternalChatEmailServiceTest {
   private List<GroupChatParticipant> membership;
   private Map<String, Object> event;
   private Map<String, Object> tenantSettings;
+  private RestrictedTenantDTO tenant;
 
   @BeforeEach
   void setup() {
@@ -59,6 +66,11 @@ class InternalChatEmailServiceTest {
         .thenAnswer(
             invocation -> {
               ReplyEmailDelivery row = invocation.getArgument(0);
+              if (row.getId() == null
+                  && row.getRecipientKind() == ReplyEmailDelivery.RecipientKind.INTERNAL
+                  && failNextRecipientInsert.getAndSet(false)) {
+                throw new DataIntegrityViolationException("other constraint");
+              }
               if (row.getId() == null) {
                 if (stored.values().stream()
                     .anyMatch(
@@ -73,6 +85,15 @@ class InternalChatEmailServiceTest {
               stored.put(row.getId(), row);
               return row;
             });
+    when(repository.existsByRecipientKindAndRecipientUserIdAndEventKey(any(), any(), any()))
+        .thenAnswer(
+            i ->
+                stored.values().stream()
+                    .anyMatch(
+                        row ->
+                            row.getRecipientKind() == i.getArgument(0)
+                                && row.getRecipientUserId().equals(i.getArgument(1))
+                                && row.getEventKey().equals(i.getArgument(2))));
     when(repository.findById(anyLong()))
         .thenAnswer(i -> Optional.ofNullable(stored.get(i.getArgument(0))));
     when(repository.findByIdForUpdate(anyLong()))
@@ -160,7 +181,7 @@ class InternalChatEmailServiceTest {
             })
         .when(mailClient)
         .deliver(eq(7L), eq("NEW_MESSAGE"), anyString(), any(), any());
-    var tenant = new RestrictedTenantDTO().id(7L).name("PRIVATE_TENANT_MARKER").subdomain("tenant");
+    tenant = new RestrictedTenantDTO().id(7L).name("PRIVATE_TENANT_MARKER").subdomain("tenant");
     when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
     when(tenants.getRestrictedTenantData(7L)).thenReturn(tenant);
     var templates = new TenantTemplateSupplier(tenants, settings);
@@ -309,8 +330,82 @@ class InternalChatEmailServiceTest {
   }
 
   @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"m.text", "m.emote", "m.file"})
+  void unencryptedInternalRoomMessageDeliversMail(String msgtype) {
+    event.put("type", "m.room.message");
+    event.put(
+        "content",
+        msgtype.equals("m.file")
+            ? Map.of("msgtype", msgtype, "body", "plan.pdf", "url", "mxc://matrix.example/f")
+            : Map.of("msgtype", msgtype, "body", "PRIVATE_PLAINTEXT_MARKER"));
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).hasSize(1);
+    assertThat(received.get(0).toString()).doesNotContain("PRIVATE_PLAINTEXT_MARKER");
+  }
+
+  @Test
+  void nonDuplicateFanOutFailureKeepsTheIntentForRetry() {
+    failNextRecipientInsert.set(true);
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).isEmpty();
+    makeRetryDue();
+    drain();
+    assertThat(received).hasSize(1);
+  }
+
+  @Test
+  void counsellorBeingLinkedToAnotherAgencyStillReceivesMail() {
+    recipient.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.IN_PROGRESS);
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).hasSize(1);
+  }
+
+  @Test
+  void missingMatrixEventStopsRetryingAfterTheAttemptCap() {
+    when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token")).thenReturn(Optional.empty());
+    service.onMessageIntent(ROOM, EVENT, caller);
+    for (int round = 0; round < 40; round++) {
+      drain();
+      makeRetryDue();
+    }
+    assertThat(writer.pendingIds()).isEmpty();
+    assertThat(stored.values())
+        .extracting(ReplyEmailDelivery::getStatus)
+        .containsOnly(ReplyEmailDelivery.Status.REJECTED);
+    verify(matrix, atMost(InternalChatEmailService.MAX_PREFLIGHT_ATTEMPTS))
+        .getRoomEvent(ROOM, EVENT, "matrix-token");
+    assertThat(received).isEmpty();
+  }
+
+  @Test
+  void briefMatrixOutageStillDeliversOnceTheEventIsReadable() {
+    when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token"))
+        .thenReturn(Optional.empty())
+        .thenReturn(Optional.empty())
+        .thenAnswer(i -> Optional.of(event));
+    service.onMessageIntent(ROOM, EVENT, caller);
+    for (int round = 0; round < 4; round++) {
+      drain();
+      makeRetryDue();
+    }
+    assertThat(received).hasSize(1);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(
-      strings = {"sender", "event-id", "plaintext", "empty", "edit", "reaction"})
+      strings = {
+        "sender",
+        "event-id",
+        "plaintext",
+        "empty",
+        "edit",
+        "reaction",
+        "notice",
+        "blank-text"
+      })
   void forgedOrNonMessageMatrixEventsCannotGenerateMail(String invalid) {
     switch (invalid) {
       case "sender" -> event.put("sender", recipient.getMatrixUserId());
@@ -321,6 +416,14 @@ class InternalChatEmailServiceTest {
           event.put(
               "content",
               Map.of("ciphertext", "opaque", "m.relates_to", Map.of("rel_type", "m.replace")));
+      case "notice" -> {
+        event.put("type", "m.room.message");
+        event.put("content", Map.of("msgtype", "m.notice", "body", "system notice"));
+      }
+      case "blank-text" -> {
+        event.put("type", "m.room.message");
+        event.put("content", Map.of("msgtype", "m.text", "body", " "));
+      }
       case "reaction" ->
           event.put(
               "content",
@@ -344,14 +447,6 @@ class InternalChatEmailServiceTest {
   }
 
   @Test
-  void confidentialAsideRoomCannotBorrowItsCaseGroupLabel() {
-    session.setMatrixRoomId("!primary:matrix.example");
-    service.onMessageIntent(ROOM, EVENT, caller);
-    drain();
-    assertThat(received).isEmpty();
-  }
-
-  @Test
   void authenticatedCallerFromOtherTenantCannotReserveInternalMail() {
     when(caller.getTenantId()).thenReturn(8L);
     service.onMessageIntent(ROOM, EVENT, caller);
@@ -368,6 +463,74 @@ class InternalChatEmailServiceTest {
     assertThat(received).isEmpty();
   }
 
+  @Test
+  void tenantSwitchOffSuppressesInternalGroupMail() {
+    tenant.setSettings(new Settings().featureConsultantEmailInternalGroupEnabled(false));
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  @Test
+  void tenantSwitchOnDeliversInternalGroupMail() {
+    tenant.setSettings(new Settings().featureConsultantEmailInternalGroupEnabled(true));
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).hasSize(1);
+  }
+
+  @Test
+  void tenantSwitchTurnedOffAfterFanOutStopsPendingMail() {
+    service.onMessageIntent(ROOM, EVENT, caller);
+    writer.pendingIds().forEach(service::resolveIntent);
+    tenant.setSettings(new Settings().featureConsultantEmailInternalGroupEnabled(false));
+    writer.pendingIds().forEach(service::deliverPending);
+    assertThat(received).isEmpty();
+  }
+
+  @Test
+  void browserSwitchOffDoesNotSuppressInternalGroupMail() {
+    tenant.setSettings(new Settings().featureConsultantBrowserInternalGroupEnabled(false));
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).hasSize(1);
+  }
+
+  /** FE#1725 review: a missing Träger fails closed in both checks, also once it is back. */
+  @Test
+  void missingTenantAtFanOutSendsNoMailEvenAfterItReturns() {
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(null);
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
+    makeRetryDue();
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  @Test
+  void missingTenantAtDispatchSendsNoMailEvenAfterItReturns() {
+    service.onMessageIntent(ROOM, EVENT, caller);
+    writer.pendingIds().forEach(service::resolveIntent);
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(null);
+    writer.pendingIds().forEach(service::deliverPending);
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
+    makeRetryDue();
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  /** Only a replayed intent is swallowed; any other integrity failure reaches the caller. */
+  @Test
+  void integrityFailureThatIsNoReplayIsNotSwallowed() {
+    doThrow(new DataIntegrityViolationException("column cannot be null"))
+        .when(repository)
+        .saveAndFlush(any());
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> service.onMessageIntent(ROOM, EVENT, caller))
+        .isInstanceOf(DataIntegrityViolationException.class);
+  }
+
   private void makeRetryDue() {
     // Advance the simulated database clock without inspecting delivery outcomes.
     stored.values().forEach(row -> row.setNextAttemptAt(LocalDateTime.now().minusSeconds(1)));
@@ -382,7 +545,9 @@ class InternalChatEmailServiceTest {
             mock(FeedbackMessageEmailService.class),
             service,
             caller,
-            mock(MessageEventCurrentAccessService.class),
+            mock(
+                de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                    .class),
             Optional.empty());
     var request =
         new de.caritas.cob.userservice.api.adapters.web.controller.EventNotificationController
@@ -409,6 +574,74 @@ class InternalChatEmailServiceTest {
     service.onMessageIntent(ROOM, EVENT, caller);
     drain();
     assertThat(received).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = ConsultantStatus.class,
+      names = {"ERROR", "IN_DELETION"})
+  void brokenOrDeletingRecipientCannotReceiveInternalMail(ConsultantStatus status) {
+    recipient.setStatus(status);
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = ConsultantStatus.class,
+      names = {"ERROR", "IN_DELETION"})
+  void brokenOrDeletingSenderCannotGenerateInternalMail(ConsultantStatus status) {
+    actor.setStatus(status);
+    service.onMessageIntent(ROOM, EVENT, caller);
+    service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"actor", "recipient"})
+  void suspendedIdentityCannotGenerateOrReceiveMail(String userId) {
+    when(identities.findEnabledById(userId)).thenReturn(Optional.of(false));
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).isEmpty();
+    doReturn(Optional.of(true)).when(identities).findEnabledById(userId);
+    makeRetryDue();
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"actor", "recipient"})
+  void suspensionAfterFanOutPreventsPendingDelivery(String userId) {
+    service.onMessageIntent(ROOM, EVENT, caller);
+    writer.pendingIds().forEach(service::resolveIntent);
+    when(identities.findEnabledById(userId)).thenReturn(Optional.of(false));
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  @Test
+  void confidentialAsideRoomCannotBorrowItsCaseGroupLabel() {
+    session.setMatrixRoomId("!primary:matrix.example");
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"actor", "recipient"})
+  void identityOutageRetriesWithoutLosingTheMessage(String userId) {
+    when(identities.findEnabledById(userId))
+        .thenThrow(new IllegalStateException("fixture-secret-not-for-logs"));
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).isEmpty();
+    doReturn(Optional.of(true)).when(identities).findEnabledById(userId);
+    makeRetryDue();
+    drain();
+    assertThat(received).hasSize(1);
   }
 
   @org.junit.jupiter.params.ParameterizedTest
@@ -457,74 +690,13 @@ class InternalChatEmailServiceTest {
   }
 
   @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.EnumSource(
-      value = ConsultantStatus.class,
-      names = {"CREATED", "ERROR", "IN_DELETION"})
-  void incompleteOrDeletingRecipientCannotReceiveInternalMail(ConsultantStatus status) {
-    recipient.setStatus(status);
-    service.onMessageIntent(ROOM, EVENT, caller);
-    drain();
-    assertThat(received).isEmpty();
-  }
-
-  @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.EnumSource(
-      value = ConsultantStatus.class,
-      names = {"CREATED", "ERROR", "IN_DELETION"})
-  void incompleteOrDeletingSenderCannotGenerateInternalMail(ConsultantStatus status) {
-    actor.setStatus(status);
-    service.onMessageIntent(ROOM, EVENT, caller);
-    service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());
-    drain();
-    assertThat(received).isEmpty();
-  }
-
-  @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.ValueSource(strings = {"actor", "recipient"})
-  void suspendedIdentityCannotGenerateOrReceiveMail(String userId) {
-    when(identities.findEnabledById(userId)).thenReturn(Optional.of(false));
-    service.onMessageIntent(ROOM, EVENT, caller);
-    drain();
-    assertThat(received).isEmpty();
-    doReturn(Optional.of(true)).when(identities).findEnabledById(userId);
-    makeRetryDue();
-    drain();
-    assertThat(received).isEmpty();
-  }
-
-  @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.ValueSource(strings = {"actor", "recipient"})
-  void identityOutageRetriesWithoutLosingTheMessage(String userId) {
-    when(identities.findEnabledById(userId))
-        .thenThrow(new IllegalStateException("fixture-secret-not-for-logs"));
-    service.onMessageIntent(ROOM, EVENT, caller);
-    drain();
-    assertThat(received).isEmpty();
-    doReturn(Optional.of(true)).when(identities).findEnabledById(userId);
-    makeRetryDue();
-    drain();
-    assertThat(received).hasSize(1);
-  }
-
-  @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.ValueSource(strings = {"actor", "recipient"})
-  void suspensionAfterFanOutPreventsPendingDelivery(String userId) {
-    service.onMessageIntent(ROOM, EVENT, caller);
-    writer.pendingIds().forEach(service::resolveIntent);
-    when(identities.findEnabledById(userId)).thenReturn(Optional.of(false));
-    drain();
-    assertThat(received).isEmpty();
-  }
-
-  @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.CsvSource({
     "policy,TENANT_POLICY,NOTIFICATION_POLICY_INVALID",
     "mode,TENANT_SMTP,SMTP_MODE_INVALID",
     "own,TENANT_SMTP,OWN_SMTP_INCOMPLETE",
     "membership,MATRIX_MEMBERSHIP,DEPENDENCY_UNAVAILABLE",
     "event,MATRIX_EVENT,DEPENDENCY_UNAVAILABLE",
-    "identity,IDENTITY,DEPENDENCY_UNAVAILABLE",
-    "context,TENANT_CONTEXT,TENANT_UNAVAILABLE"
+    "identity,IDENTITY,DEPENDENCY_UNAVAILABLE"
   })
   void retryDiagnosticsIdentifySafeActionableStageAndReason(
       String failure, String stage, String reason) {
@@ -546,7 +718,6 @@ class InternalChatEmailServiceTest {
         case "identity" ->
             when(identities.findEnabledById("actor"))
                 .thenThrow(new IllegalStateException("fixture-secret-not-for-logs"));
-        case "context" -> when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(null);
       }
       service.onMessageIntent(ROOM, EVENT, caller);
       drain();
@@ -591,6 +762,8 @@ class InternalChatEmailServiceTest {
     consultant.setId(id);
     consultant.setTenantId(tenantId);
     consultant.setMatrixUserId("@" + id + ":matrix.example");
+    // ConsultantAgencyRelationFinalizer leaves every provisioned counsellor CREATED.
+    consultant.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.CREATED);
     consultant.setEmail(id + "@example.org");
     consultant.setNotificationsEnabled(true);
     consultant.setLanguageCode(LanguageCode.de);
