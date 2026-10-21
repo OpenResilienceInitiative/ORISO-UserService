@@ -10,6 +10,7 @@ import java.sql.Timestamp;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
+import javax.sql.DataSource;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,10 +18,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** H2 SQL ownership/queue evidence; MariaDB syntax and locking require the separate native gate. */
+/** The same journal/dispatcher contracts run on H2 and the separate native MariaDB gate. */
 class AccountLifecycleRetryFairnessSqlTest {
   private static final Instant NOW = Instant.parse("2026-10-21T12:00:00Z");
-  private final JdbcDataSource source = new JdbcDataSource();
+  private DataSource source;
   private final AccountLifecycleCodec codec = new AccountLifecycleCodec(new byte[32]);
   private final IdentityProvisioningCommands remote = mock(IdentityProvisioningCommands.class);
   private final JdbcOwnedLifecycleEffects.CleanupOperations downstream =
@@ -30,7 +31,7 @@ class AccountLifecycleRetryFairnessSqlTest {
 
   @BeforeEach
   void database() throws Exception {
-    source.setURL("jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1");
+    source = newDatabase();
     jdbc = new JdbcTemplate(source);
     manager = new DataSourceTransactionManager(source);
     for (String sql :
@@ -71,6 +72,12 @@ class AccountLifecycleRetryFairnessSqlTest {
                   null,
                   "terminal:" + id);
             });
+  }
+
+  DataSource newDatabase() {
+    var database = new JdbcDataSource();
+    database.setURL("jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1");
+    return database;
   }
 
   private JdbcAccountLifecycleJournal journal(Instant now) {
@@ -219,6 +226,14 @@ class AccountLifecycleRetryFairnessSqlTest {
       assertTrue(pageA.size() <= 60 && pageB.size() <= 60);
       var all = new HashSet<>(pageA);
       all.addAll(pageB);
+      assertTrue(expected.containsAll(all));
+      // A scan may transiently lock rows outside its returned LIMIT page. SKIP LOCKED promises
+      // neither a full page nor an exhaustive union of simultaneous polls. After both physical
+      // transactions finish, one bounded tick must claim every omitted, still-due intent.
+      var nextTick = journal(NOW).pending(100);
+      assertTrue(Collections.disjoint(all, nextTick));
+      assertTrue(nextTick.size() <= 100);
+      all.addAll(nextTick);
       assertEquals(expected, all);
       assertEquals(List.of(), journal(NOW).pending(100));
       var restarted = journal(NOW.plusSeconds(31));
@@ -234,6 +249,46 @@ class AccountLifecycleRetryFairnessSqlTest {
       pool.shutdownNow();
       assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS));
     }
+  }
+
+  @Test
+  void aTemporarilyLockedIntentRemainsDueAndIsClaimedByTheNextTickAfterRelease() throws Exception {
+    var creator = journal(NOW);
+    UUID heldId = commitReady(creator), a = commitReady(creator), b = commitReady(creator);
+    var immutable =
+        jdbc.queryForList(
+            "SELECT id,body_json,created_at FROM identity_lifecycle_outbox ORDER BY id");
+    try (var held = source.getConnection()) {
+      held.setAutoCommit(false);
+      try (var lock =
+          held.prepareStatement(
+              "SELECT id FROM identity_lifecycle_outbox WHERE attempt_id=? FOR UPDATE")) {
+        lock.setString(1, heldId.toString());
+        try (var result = lock.executeQuery()) {
+          assertTrue(result.next());
+        }
+        assertEquals(Set.of(a, b), new HashSet<>(journal(NOW).pending(100)));
+        assertEquals(List.of(), journal(NOW).pending(100));
+        assertEquals(
+            List.of(heldId.toString()),
+            jdbc.queryForList(
+                "SELECT attempt_id FROM identity_lifecycle_outbox WHERE status='PENDING' AND next_attempt_at<=?",
+                String.class,
+                Timestamp.from(NOW)));
+        held.rollback();
+      }
+    }
+    assertEquals(List.of(heldId), journal(NOW).pending(100));
+    assertEquals(List.of(), journal(NOW).pending(100));
+    assertEquals(
+        immutable,
+        jdbc.queryForList(
+            "SELECT id,body_json,created_at FROM identity_lifecycle_outbox ORDER BY id"));
+    assertEquals(
+        3,
+        jdbc.queryForObject(
+            "SELECT COUNT(*) FROM identity_lifecycle_outbox WHERE status='PENDING'", Integer.class));
+    verifyNoInteractions(remote, downstream);
   }
 
   @Test
@@ -257,8 +312,7 @@ class AccountLifecycleRetryFairnessSqlTest {
 
   @Test
   void migrationBackfillsAnExistingPendingIntentWithoutChangingItsImmutableBody() throws Exception {
-    var upgraded = new JdbcDataSource();
-    upgraded.setURL("jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1");
+    var upgraded = newDatabase();
     var legacy = new JdbcTemplate(upgraded);
     var directory =
         Path.of("src/main/resources/db/changelog/changeset/20261021_identity_lifecycle_367");
