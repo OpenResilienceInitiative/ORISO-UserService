@@ -69,6 +69,7 @@ public class AgencyAdminInviteProvisioningService {
     if (isBlank(username) || isBlank(password)) {
       throw new BadRequestException("username and password are required");
     }
+    acceptTimeAgencyCheck.requireOperationalTenant(invite);
     InviteRowHold.hold(accountInviteRepository, invite, LocalDateTime.now());
     wizard.createUnit().run();
 

@@ -1398,6 +1398,10 @@ components:
         - id
         - name
       properties:
+        active:
+          type: boolean
+          nullable: true
+          description: Operational status. Missing values retain compatibility with operating tenants.
         id:
           type: integer
           format: int64

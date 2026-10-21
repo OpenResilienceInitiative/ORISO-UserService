@@ -15,7 +15,9 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
 import jakarta.annotation.PostConstruct;
@@ -47,6 +49,7 @@ public class MatrixEventListenerService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
+  private final @NonNull MatrixCallInviteNotificationService callInviteNotifications;
   private final @NonNull AdviceSeekerReplyEmailService replyEmailService;
   private final @NonNull MatrixEmailSyncCursorStore emailSyncCursorStore;
 
@@ -281,6 +284,10 @@ public class MatrixEventListenerService {
     Observation observation =
         Observation.createNotStarted("userservice.matrix.sync", observationRegistry).start();
     String result = "exception";
+    var previousTenant = TenantContext.getCurrentTenantData();
+    // The dedicated sync worker observes multiple tenants, without an HTTP tenant context.
+    // Producers must still validate source-room membership and each recipient's domain tenant.
+    TenantContext.setCurrentTenantData(new TenantData(TenantContext.TECHNICAL_TENANT_ID, null));
 
     try (Observation.Scope ignored = observation.openScope()) {
       Map<String, Object> syncResult = performMatrixSync();
@@ -290,6 +297,8 @@ public class MatrixEventListenerService {
       }
 
       processMatrixSyncEvents(syncResult);
+      callInviteNotifications.reconcileMediaRooms();
+      // Acknowledge only after every producer has completed successfully.
       Object nextBatch = syncResult.get("next_batch");
       if (nextBatch instanceof String token && !token.isBlank()) {
         emailSyncCursorStore.write(token);
@@ -302,6 +311,8 @@ public class MatrixEventListenerService {
       observation.error(exception);
       throw exception;
     } finally {
+      if (previousTenant == null) TenantContext.clear();
+      else TenantContext.setCurrentTenantData(previousTenant);
       observation.lowCardinalityKeyValue("result", result);
       observation.stop();
     }
@@ -414,7 +425,13 @@ public class MatrixEventListenerService {
     }
 
     Map<String, Object> rooms = (Map<String, Object>) syncResult.get("rooms");
-    if (rooms == null || !rooms.containsKey("join")) {
+    if (rooms == null) return;
+    if (rooms.get("leave") instanceof Map<?, ?> leftRooms) {
+      for (Object room : leftRooms.keySet()) {
+        if (room instanceof String roomId) callInviteNotifications.handleMediaRoomLeft(roomId);
+      }
+    }
+    if (!rooms.containsKey("join")) {
       return;
     }
 
@@ -428,18 +445,18 @@ public class MatrixEventListenerService {
       log.debug("🔷 Registered rooms: {}", roomToSessionMap.keySet());
     }
 
-    // Process each room
+    // Resolve source-room invitations before consuming media state. JSON room order is arbitrary;
+    // the media room may precede the event that establishes its trusted binding in this batch.
     for (Map.Entry<String, Object> roomEntry : joinedRooms.entrySet()) {
       String roomId = roomEntry.getKey();
       Map<String, Object> roomData = (Map<String, Object>) roomEntry.getValue();
 
       // Resolve session context even if room wasn't explicitly registered by UI.
       Optional<Long> sessionIdOpt = resolveSessionIdForRoom(roomId);
-      if (sessionIdOpt.isEmpty()) {
-        continue;
-      }
 
-      log.info("🔷 Processing events for registered room: {}", roomId);
+      if (sessionIdOpt.isPresent()) {
+        log.info("🔷 Processing events for registered room: {}", roomId);
+      }
 
       // Process timeline events
       if (roomData.containsKey("timeline")) {
@@ -448,10 +465,16 @@ public class MatrixEventListenerService {
           List<Map<String, Object>> events = (List<Map<String, Object>>) timeline.get("events");
 
           for (Map<String, Object> event : events) {
-            processMatrixEvent(roomId, event);
+            if (sessionIdOpt.isPresent() || "org.oriso.call.invite".equals(event.get("type"))) {
+              processMatrixEvent(roomId, event);
+            }
           }
         }
       }
+    }
+    for (Map.Entry<String, Object> roomEntry : joinedRooms.entrySet()) {
+      callInviteNotifications.handleMediaRoom(
+          roomEntry.getKey(), (Map<String, Object>) roomEntry.getValue());
     }
   }
 
@@ -483,6 +506,11 @@ public class MatrixEventListenerService {
           // metadata-only notification pipeline needs (preview mode NONE).
         case "m.room.encrypted":
           outcome = handleRoomMessage(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
+          break;
+
+        case "org.oriso.call.invite":
+          outcome =
+              callInviteNotifications.handle(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
           break;
 
         case "m.call.invite":

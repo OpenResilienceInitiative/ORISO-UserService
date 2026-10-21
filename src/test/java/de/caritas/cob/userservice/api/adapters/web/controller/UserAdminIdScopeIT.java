@@ -108,6 +108,9 @@ class UserAdminIdScopeIT {
 
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
+  @MockitoBean
+  de.caritas.cob.userservice.api.admin.service.agency.AgencyAdminService adminAgencyMetadata;
+
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
@@ -151,6 +154,8 @@ class UserAdminIdScopeIT {
   void seedAdminsOfTwoTenants() {
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().subdomain("synthetic"));
+    when(tenantService.getRestrictedTenantDataFresh(anyLong()))
+        .thenReturn(new RestrictedTenantDTO().active(true).subdomain("synthetic"));
     when(((IdentityRoleLookup) identityClient).findAllByUserId(anyString()))
         .thenReturn(List.of("tenant-admin", "user-admin"));
     givenAgency(OWN_AGENCY, OWN_TENANT);
@@ -637,5 +642,37 @@ class UserAdminIdScopeIT {
     when(agencyService.getAgency(agencyId)).thenReturn(agency);
     when(agencyService.getAgencyWithoutCaching(agencyId)).thenReturn(agency);
     agencies.put(agencyId, agency);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN, AuthorityValue.TENANT_ADMIN})
+  void tenantPauseShowsTheSameInactiveStateInSearchFilteredListAndAccountDetail() throws Exception {
+    actAsTenantAdmin();
+    when(adminAgencyMetadata.retrieveAllAgencies()).thenReturn(List.of());
+    when(caller.getGrantedAuthorities())
+        .thenReturn(Set.of(AuthorityValue.USER_ADMIN, AuthorityValue.TENANT_ADMIN));
+    when(tenantService.getRestrictedTenantDataFresh(OWN_TENANT))
+        .thenReturn(new RestrictedTenantDTO().id(OWN_TENANT).active(false).subdomain("synthetic"));
+    when(((IdentityAccountStatusLookup) identityClient).findEnabledById(anyString()))
+        .thenReturn(java.util.Optional.of(true));
+    mockMvc
+        .perform(withCsrf(get("/service/useradmin/accounts/" + ownAgencyAdmin.getId() + "/status")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.active").value(false))
+        .andExpect(jsonPath("$.paused").value(false))
+        .andExpect(jsonPath("$.loginEnabled").value(true));
+    String ownRow =
+        "$._embedded[?(@._embedded.id == '" + ownAgencyAdmin.getId() + "')]._embedded.active";
+    mockMvc
+        .perform(
+            withCsrf(
+                get(
+                    "/useradmin/agencyadmins/search?query=*&page=1&perPage=100&field=FIRSTNAME&order=ASC")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath(ownRow).value(org.hamcrest.Matchers.contains(false)));
+    mockMvc
+        .perform(withCsrf(get("/useradmin/agencyadmins?page=1&perPage=100")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath(ownRow).value(org.hamcrest.Matchers.contains(false)));
   }
 }

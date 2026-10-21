@@ -45,6 +45,7 @@ import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatu
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionRoomCleanupService;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -73,7 +74,6 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class TeamDiscussionFacadeTest {
-
   private static final Long SESSION_ID = 42L;
   private static final Long AGENCY_ID = 7L;
   private static final String CONSULTANT_ID = "consultant-1";
@@ -236,6 +236,13 @@ class TeamDiscussionFacadeTest {
   @EnableWebMvc
   @Import({SecurityConfig.class, ApiResponseEntityExceptionHandler.class})
   static class TeamHttpSecurityFixture {
+    @org.springframework.context.annotation.Bean
+    de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService
+        accountOperationalStatus() {
+      return org.mockito.Mockito.mock(
+          de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService.class);
+    }
+
     @Bean
     de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
         accountInactivityService() {
@@ -468,6 +475,48 @@ class TeamDiscussionFacadeTest {
 
     assertThat(view.matrixRoomId()).isEqualTo(ROOM_ID);
     verify(matrixSynapseService, never()).createRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void openingDiscussion_shouldNotInviteACounsellorWhoIsAlreadyInTheRoom() throws Exception {
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+    when(matrixSynapseService.getRoomMembers(ROOM_ID))
+        .thenReturn(Optional.of(List.of("@agency7:oriso", "@consultant1:oriso")));
+
+    var view = facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    assertThat(view.matrixRoomId()).isEqualTo(ROOM_ID);
+    verify(matrixSynapseService, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+    verify(matrixSynapseService, never()).loginAsUserAccessToken(anyString());
+    verify(matrixSynapseService, never()).joinRoom(anyString(), anyString());
+    verify(participantRepository).saveAndFlush(any());
+  }
+
+  @Test
+  void openingDiscussion_shouldStillInviteWhenMembershipCannotBeRead() throws Exception {
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+    when(matrixSynapseService.getRoomMembers(ROOM_ID)).thenReturn(Optional.empty());
+
+    facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    verify(matrixSynapseService).inviteUserToRoom(ROOM_ID, "@consultant1:oriso", "agency-token");
+    verify(matrixSynapseService).joinRoom(ROOM_ID, "consultant-token");
   }
 
   @Test
