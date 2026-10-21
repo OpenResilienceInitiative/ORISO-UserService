@@ -28,6 +28,7 @@ final class SyntheticTaskIssuer implements AutoCloseable {
   final HttpServer server;
   final KeyPair keys;
   String variant = "valid";
+  String adminSubject = "native-account-admin-subject";
   Map<String, String> lastForm = Map.of();
 
   SyntheticTaskIssuer() throws Exception {
@@ -97,7 +98,7 @@ final class SyntheticTaskIssuer implements AutoCloseable {
         roles =
             List.of("account-maintenance", "account-read", "otp-config-admin", "session-exchange");
         audiences = List.of("userservice", "oriso-account-lifecycle", "oriso-otp");
-        subject = "native-account-admin-subject";
+        subject = adminSubject;
       }
       case "backend-mail" -> {
         roles =

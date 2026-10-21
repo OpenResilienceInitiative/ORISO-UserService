@@ -247,3 +247,52 @@ class AvailabilityBoundaryEvidenceTest(unittest.TestCase):
             ET.SubElement(row, "failure", type="org.opentest4j.AssertionFailedError")
             ET.ElementTree(suite).write(path)
             self.assertFalse(proof.sanitize(root, root / "clean.xml")["adapter_behavior_red"])
+
+
+class SelfAppBoundaryEvidenceTest(unittest.TestCase):
+    def proof(self):
+        proof = importlib.util.module_from_spec(SPEC)
+        SPEC.loader.exec_module(proof)
+        proof.select_slice("app")
+        return proof
+
+    def test_six_public_assertions_require_actual_missing_service_and_legacy_control(self):
+        proof = self.proof()
+        self.assertEqual(7, len(proof.CASES))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            suite = ET.Element("testsuite", name=proof.SUITE)
+            for name in proof.CASES:
+                row = ET.SubElement(suite, "testcase", classname=proof.SUITE, name=name)
+                if name not in proof.CONTROLS:
+                    ET.SubElement(row, "failure", type="org.opentest4j.AssertionFailedError")
+                else:
+                    control = row
+            path = root / "TEST-app.xml"
+            ET.ElementTree(suite).write(path)
+            result = proof.sanitize(root, root / "clean.xml")
+            self.assertEqual(6, result["failures"])
+            self.assertTrue(result["adapter_behavior_red"])
+            self.assertFalse(result["all_passed"])
+            ET.SubElement(control, "failure", type="org.opentest4j.AssertionFailedError")
+            ET.ElementTree(suite).write(path)
+            self.assertFalse(proof.sanitize(root, root / "clean.xml")["adapter_behavior_red"])
+
+    def test_missing_skipped_or_fixture_error_app_methods_never_qualify(self):
+        proof = self.proof()
+        for kind in ("missing", "skipped", "error"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                suite = ET.Element("testsuite", name=proof.SUITE)
+                names = sorted(proof.CASES - proof.CONTROLS)
+                for name in proof.CASES:
+                    if kind == "missing" and name == names[0]:
+                        continue
+                    row = ET.SubElement(suite, "testcase", classname=proof.SUITE, name=name)
+                    if name == names[0]:
+                        ET.SubElement(row, kind, type="java.lang.IllegalStateException")
+                    elif name == names[1]:
+                        ET.SubElement(row, "failure", type="org.opentest4j.AssertionFailedError")
+                ET.ElementTree(suite).write(root / "TEST-app.xml")
+                result = proof.sanitize(root, root / "clean.xml")
+                self.assertFalse(result["all_passed"] or result["adapter_behavior_red"])

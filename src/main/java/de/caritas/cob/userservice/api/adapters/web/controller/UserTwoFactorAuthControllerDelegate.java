@@ -30,6 +30,15 @@ class UserTwoFactorAuthControllerDelegate {
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance
+      selfAppOtpMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSelfAppOtpMaintenance(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance maintenance) {
+    this.selfAppOtpMaintenance = maintenance;
+  }
+
   ResponseEntity<Void> startTwoFactorAuthByEmailSetup(EmailDTO emailDTO) {
     assertTwoFactorAuthAllowed();
 
@@ -72,6 +81,15 @@ class UserTwoFactorAuthControllerDelegate {
 
   ResponseEntity<Void> activateTwoFactorAuthByApp(OneTimePasswordDTO oneTimePasswordDTO) {
     assertTwoFactorAuthAllowed();
+
+    if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
+      boolean valid =
+          selfAppOtpMaintenance.setup(
+              oneTimePasswordDTO.getOtp(),
+              oneTimePasswordDTO.getSecret(),
+              () -> accountInviteService.markTwoFactorActive(authenticatedUser.getUserId()));
+      return valid ? ResponseEntity.ok().build() : ResponseEntity.badRequest().build();
+    }
 
     var isValid =
         identityManager.setUpOneTimePassword(

@@ -60,6 +60,28 @@ def select_slice(name):
             "de/caritas/cob/userservice/api/UserServiceMapper",
         ]
         TEST_CLASS = SUITE.replace(".", "/")
+    elif name == "app":
+        SLICE = name
+        SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserSelfAppOtpScenarioCBoundaryTest"
+        LEGACY = "missingScopedServiceKeepsActualCGuardAndLegacyAppSetupStillWorks"
+        CASES = {
+            LEGACY,
+            "publicAppSetupFreezesEncryptedOwnedIntentAndMarksInviteOnlyAfterVerifiedReceipt",
+            "publicAppSetupLostReplyNewOwnerReplaysExactFrozenBytesWithoutSecondActivation",
+            "publicAppSetupSameIdChangedCompleteSecretRequestRefusesBeforeAnotherRpc",
+            "publicAppSetupInvalidNativeCodeCommitsTerminalRefusalBeforeReturningPublic400",
+            "publicAppSetupInvalidMacKeepsFrozenOwnershipAndCannotActivateInvite",
+            "publicAppSetupMissingIntentAndForeignCurrentDomainRefuseBeforePrivateRowOrRpc",
+        }
+        COMPILED_CLASSES += [
+            "de/caritas/cob/userservice/api/adapters/web/controller/UserController",
+            "de/caritas/cob/userservice/api/adapters/web/controller/UserTwoFactorAuthControllerDelegate",
+            "de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfAppOtpMaintenance",
+            "de/caritas/cob/userservice/api/config/auth/TaskActorTokenBroker",
+            "de/caritas/cob/userservice/api/IdentityManager",
+            "de/caritas/cob/userservice/api/service/accountinvite/AccountInviteService",
+        ]
+        TEST_CLASS = SUITE.replace(".", "/")
     elif name == "availability":
         SLICE = name
         SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserUsernameAvailabilityScenarioCBoundaryTest"
@@ -360,7 +382,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["snapshot", "collect"])
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--slice", choices=["adapter", "deletion", "locale", "jpa", "availability"], default="adapter")
+    parser.add_argument("--slice", choices=["adapter", "deletion", "locale", "jpa", "availability", "app"], default="adapter")
     args = parser.parse_args()
     select_slice(args.slice)
     root = Path(__file__).resolve().parents[2]
