@@ -49,6 +49,9 @@ public class InternalChatEmailService {
   /** About one hour of five-minute retries before a preflight that never succeeds is rejected. */
   static final int MAX_PREFLIGHT_ATTEMPTS = 12;
 
+  private static final Set<String> USER_MESSAGE_TYPES =
+      Set.of("m.text", "m.emote", "m.image", "m.file", "m.audio", "m.video");
+
   private final @NonNull SessionRepository sessions;
   private final @NonNull GroupChatParticipantRepository participants;
   private final @NonNull ConsultantRepository consultants;
@@ -345,15 +348,25 @@ public class InternalChatEmailService {
             .orElseThrow(() -> new IllegalStateException("Internal Matrix event is unavailable"));
     if (!Objects.equals(claim.getSourceEventId(), event.get("event_id"))
         || !Objects.equals(actor.getMatrixUserId(), event.get("sender"))
-        || !Objects.equals("m.room.encrypted", event.get("type"))) return false;
-    if (!(event.get("content") instanceof Map<?, ?> content)
-        || !(content.get("ciphertext") instanceof String ciphertext)
-        || isBlank(ciphertext)) return false;
+        || !(event.get("content") instanceof Map<?, ?> content)) return false;
+    if (!(Objects.equals("m.room.encrypted", event.get("type"))
+        ? content.get("ciphertext") instanceof String ciphertext && !isBlank(ciphertext)
+        : Objects.equals("m.room.message", event.get("type")) && isUserMessage(content)))
+      return false;
     if (content.get("m.relates_to") instanceof Map<?, ?> relation) {
       Object type = relation.get("rel_type");
       return !"m.replace".equals(type) && !"m.annotation".equals(type);
     }
     return true;
+  }
+
+  /** Rooms created without encryption carry plaintext; notices and empty bodies are no message. */
+  private static boolean isUserMessage(Map<?, ?> content) {
+    if (!(content.get("msgtype") instanceof String msgtype)
+        || !USER_MESSAGE_TYPES.contains(msgtype)) return false;
+    return (content.get("body") instanceof String body && !isBlank(body))
+        || content.containsKey("url")
+        || content.containsKey("file");
   }
 
   private void retryPreflight(ReplyEmailDelivery row, RuntimeException unavailable) {

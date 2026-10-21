@@ -322,6 +322,21 @@ class InternalChatEmailServiceTest {
     assertThat(received).hasSize(1);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"m.text", "m.emote", "m.file"})
+  void unencryptedInternalRoomMessageDeliversMail(String msgtype) {
+    event.put("type", "m.room.message");
+    event.put(
+        "content",
+        msgtype.equals("m.file")
+            ? Map.of("msgtype", msgtype, "body", "plan.pdf", "url", "mxc://matrix.example/f")
+            : Map.of("msgtype", msgtype, "body", "PRIVATE_PLAINTEXT_MARKER"));
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).hasSize(1);
+    assertThat(received.get(0).toString()).doesNotContain("PRIVATE_PLAINTEXT_MARKER");
+  }
+
   @Test
   void missingMatrixEventStopsRetryingAfterTheAttemptCap() {
     when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token")).thenReturn(Optional.empty());
@@ -355,7 +370,16 @@ class InternalChatEmailServiceTest {
 
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(
-      strings = {"sender", "event-id", "plaintext", "empty", "edit", "reaction"})
+      strings = {
+        "sender",
+        "event-id",
+        "plaintext",
+        "empty",
+        "edit",
+        "reaction",
+        "notice",
+        "blank-text"
+      })
   void forgedOrNonMessageMatrixEventsCannotGenerateMail(String invalid) {
     switch (invalid) {
       case "sender" -> event.put("sender", recipient.getMatrixUserId());
@@ -366,6 +390,14 @@ class InternalChatEmailServiceTest {
           event.put(
               "content",
               Map.of("ciphertext", "opaque", "m.relates_to", Map.of("rel_type", "m.replace")));
+      case "notice" -> {
+        event.put("type", "m.room.message");
+        event.put("content", Map.of("msgtype", "m.notice", "body", "system notice"));
+      }
+      case "blank-text" -> {
+        event.put("type", "m.room.message");
+        event.put("content", Map.of("msgtype", "m.text", "body", " "));
+      }
       case "reaction" ->
           event.put(
               "content",
