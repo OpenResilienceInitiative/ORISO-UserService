@@ -3,11 +3,13 @@ package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairService;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
+import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance;
 import de.caritas.cob.userservice.api.workflow.delete.service.UserHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -25,12 +27,19 @@ public class DeleteUserAccountScheduler {
   private final @NonNull UserHardDeleteClaimService userHardDeleteClaimService;
   private final @NonNull IdentityReactivationRepairService identityReactivationRepairService;
 
+  @Autowired(required = false)
+  private ScheduledAskerMaintenance scopedMaintenance;
+
   @Value("${user.account.deleteworkflow.claim.duration:PT12H}")
   private Duration claimDuration;
 
   /** Entry method to perform deletion workflow. */
   @Scheduled(cron = "${user.account.deleteworkflow.cron}")
   public void performDeletionWorkflow() {
+    if (scopedMaintenance != null) {
+      scopedMaintenance.performDeletionWorkflow();
+      return;
+    }
     if (!taskClaimService.tryClaim(TASK_NAME, claimDuration)) {
       return;
     }

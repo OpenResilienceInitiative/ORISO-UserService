@@ -85,14 +85,14 @@ class DeletionBoundaryEvidenceTest(unittest.TestCase):
         proof.select_slice("deletion")
         return proof
 
-    def test_actual_two_method_deletion_inventory_qualifies_only_assertion_red(self):
+    def test_actual_three_method_deletion_inventory_qualifies_only_assertion_red(self):
         proof = self.proof()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             suite = ET.Element(
                 "testsuite",
                 name=proof.SUITE,
-                tests="2",
+                tests="3",
                 failures="1",
                 errors="0",
                 skipped="0",
@@ -114,9 +114,15 @@ class DeletionBoundaryEvidenceTest(unittest.TestCase):
                 "failure",
                 type="org.mockito.exceptions.verification.NoInteractionsWanted",
             )
+            ET.SubElement(
+                suite,
+                "testcase",
+                classname=proof.SUITE,
+                name="publicSchedulerFreezesOwnedDeletionBeforeRpcAndAcknowledgesOnlyVerifiedReceipt",
+            )
             ET.ElementTree(suite).write(root / "TEST-deletion.xml")
             result = proof.sanitize(root, root / "clean.xml")
-            self.assertEqual(2, result["floor"])
+            self.assertEqual(3, result["floor"])
             self.assertTrue(result["adapter_behavior_red"])
             self.assertFalse(result["all_passed"])
 

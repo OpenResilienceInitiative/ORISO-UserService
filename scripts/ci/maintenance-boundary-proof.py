@@ -42,9 +42,12 @@ def select_slice(name):
         CASES = {
             LEGACY,
             "fiveActorsMissingScopedDeletionStopsBeforeOwnedDownstreamCleanup",
+            "publicSchedulerFreezesOwnedDeletionBeforeRpcAndAcknowledgesOnlyVerifiedReceipt",
         }
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/workflow/delete/service/DeleteUserAccountService",
+            "de/caritas/cob/userservice/api/workflow/delete/scheduler/DeleteUserAccountScheduler",
+            "de/caritas/cob/userservice/api/workflow/delete/service/ScheduledAskerMaintenance",
             "de/caritas/cob/userservice/api/workflow/delete/service/UserHardDeleteClaimService",
             "de/caritas/cob/userservice/api/workflow/delete/action/asker/DeleteKeycloakAskerAction",
         ]
