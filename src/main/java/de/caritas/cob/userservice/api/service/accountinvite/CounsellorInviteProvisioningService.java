@@ -41,6 +41,31 @@ public class CounsellorInviteProvisioningService {
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment lifecycleEnvironment;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads
+      checkedPolicyReads;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation>
+      ordinaryAccountCreation;
+
+  private boolean fiveActors() {
+    return lifecycleEnvironment != null
+        && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+      ordinaryWorkflow() {
+    var flow = ordinaryAccountCreation == null ? null : ordinaryAccountCreation.getIfAvailable();
+    if (flow == null)
+      throw new IllegalStateException("Ordinary invitation lifecycle activation remains gated");
+    return flow;
+  }
+
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
     return acceptInvite(rawToken, command, WizardAccept.NONE);
@@ -71,6 +96,11 @@ public class CounsellorInviteProvisioningService {
       // (idempotent 200 while the 2FA gate is pending, 410 with a reason code otherwise). No
       // caller-supplied user id is recorded on this path — provisioning identity is always the
       // server-created consultant id.
+      if (fiveActors()
+          && invite.getStatus() == AccountInviteStatus.ACCEPTED
+          && (invite.getExpiresAt() == null || invite.getExpiresAt().isAfter(LocalDateTime.now()))
+          && invite.getProvisionedUserId() != null
+          && ordinaryWorkflow().finishInvitationIfPending(invite)) return invite;
       return accountInviteService.acceptInvite(rawToken, null);
     }
     if (invite.getProvisioningStatus() == AccountInviteProvisioningStatus.IN_PROGRESS) {
@@ -95,6 +125,31 @@ public class CounsellorInviteProvisioningService {
       // leaving it IN_PROGRESS, which would answer every retry with 409.
       technicalAccessToken = acceptTimeAgencyCheck.serviceToken();
       acceptTimeAgencyCheck.requireLiveAgency(invite, technicalAccessToken);
+      if (fiveActors()) {
+        if (checkedPolicyReads == null)
+          throw new IllegalStateException("Checked invitation policy is unavailable");
+        String selectedToken = technicalAccessToken;
+        return checkedPolicyReads.withInvitation(
+            rawToken,
+            Boolean.TRUE.equals(command.grantAgencyAdmin())
+                ? "CONSULTANT_AGENCY_ADMIN"
+                : "CONSULTANT",
+            () ->
+                TechnicalAccessTokenContext.callWith(
+                    selectedToken,
+                    () ->
+                        createConsultantSaga.createInvitedConsultant(
+                            toConsultant(command, invite),
+                            invite,
+                            Boolean.TRUE.equals(command.grantAgencyAdmin()),
+                            consultant ->
+                                completeOrdinaryInvitation(
+                                    rawToken,
+                                    command,
+                                    invite,
+                                    agencyAdminAlsoCounselling,
+                                    consultant.getId()))));
+      }
       // The service identity is ambient ONLY around the remote calls that need it: consultant
       // creation and agency assignment reach TenantService/AgencyService/ConsultingTypeService
       // through the shared admin services, which read the bearer from the header supplier.
@@ -155,6 +210,34 @@ public class CounsellorInviteProvisioningService {
     } finally {
       restoreTenantContext(requestTenant);
     }
+  }
+
+  private AccountInvite completeOrdinaryInvitation(
+      String rawToken,
+      ProvisionCounsellorCommand command,
+      AccountInvite invite,
+      boolean alsoCounselling,
+      String consultantId) {
+    alignRequirementsWithInvite(consultantId, invite);
+    invite.setProvisionedUserId(consultantId);
+    invite.setUpdateDate(LocalDateTime.now());
+    accountInviteRepository.save(invite);
+    consultantAgencyRelationCreatorService.createNewConsultantAgency(
+        consultantId,
+        new CreateConsultantAgencyDTO()
+            .agencyId(invite.getAgencyId())
+            .roleSetKey(DEFAULT_ROLE_SET));
+    consultantTopicRepository.assignUnscopedTopicsToAgency(consultantId, invite.getAgencyId());
+    if (Boolean.TRUE.equals(command.grantAgencyAdmin()))
+      counsellorAgencyAdminGrantService.bindInitialAgencyAdmin(
+          consultantId, invite.getAgencyId(), invite);
+    AccountInvite accepted = accountInviteService.acceptInvite(rawToken, consultantId);
+    if (alsoCounselling) accepted.setAlsoCounsellor(true);
+    accepted.setProvisionedUserId(consultantId);
+    accepted.setProvisioningStatus(AccountInviteProvisioningStatus.COMPLETED);
+    accepted.setProvisioningFailureReason(null);
+    accepted.setUpdateDate(LocalDateTime.now());
+    return accountInviteRepository.save(accepted);
   }
 
   private static TenantData snapshotTenantContext() {

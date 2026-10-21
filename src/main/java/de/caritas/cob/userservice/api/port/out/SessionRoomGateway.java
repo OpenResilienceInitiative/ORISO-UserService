@@ -22,6 +22,18 @@ public interface SessionRoomGateway {
   String createRoomAsUser(String roomName, String roomAlias, String matrixUserId)
       throws MatrixCreateRoomException;
 
+  default String createRoom(
+      String roomName, String roomAlias, String accessToken, OwnedMatrixEffect effect)
+      throws MatrixCreateRoomException {
+    throw new IllegalStateException("Owned room creation is unsupported");
+  }
+
+  default String createRoomAsUser(
+      String roomName, String roomAlias, String matrixUserId, OwnedMatrixEffect effect)
+      throws MatrixCreateRoomException {
+    throw new IllegalStateException("Owned room creation is unsupported");
+  }
+
   String createUser(String username, String password, String displayName)
       throws MatrixCreateUserException;
 

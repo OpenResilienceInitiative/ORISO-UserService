@@ -61,6 +61,136 @@ public class CreateAnonymousEnquiryFacadeTest {
             mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class));
   }
 
+  @Test
+  void fiveActorAnonymousPathCompletesItsOwnedConversationBeforeLoginAndNeverUsesNativeCreator() {
+    var flow =
+        mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+                .class);
+    var provider = mock(org.springframework.beans.factory.ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(flow);
+    ReflectionTestUtils.setField(
+        createAnonymousEnquiryFacade,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    ReflectionTestUtils.setField(createAnonymousEnquiryFacade, "ordinaryAccountCreation", provider);
+    var users = mock(de.caritas.cob.userservice.api.service.user.UserService.class);
+    var recovery =
+        mock(de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.class);
+    var inactivity =
+        mock(de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.class);
+    var inputs =
+        mock(
+            de.caritas.cob.userservice.api.admin.service.consultant.validation
+                .UserAccountInputValidator.class);
+    var login = mock(de.caritas.cob.userservice.api.port.out.IdentityAuthentication.class);
+    ReflectionTestUtils.setField(createAnonymousEnquiryFacade, "lifecycleUsers", users);
+    ReflectionTestUtils.setField(createAnonymousEnquiryFacade, "lifecycleRecovery", recovery);
+    ReflectionTestUtils.setField(createAnonymousEnquiryFacade, "lifecycleInactivity", inactivity);
+    ReflectionTestUtils.setField(createAnonymousEnquiryFacade, "lifecycleInputs", inputs);
+    ReflectionTestUtils.setField(createAnonymousEnquiryFacade, "lifecycleLogin", login);
+    TenantContext.setCurrentTenant(79L);
+    String encoded =
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+            .encodeUsername("Anonymous-42");
+    when(usernameRegistry.generateUniqueUsername()).thenReturn(encoded);
+    when(userHelper.getRandomPassword()).thenReturn("synthetic-chosen-password");
+    var policy =
+        new de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy(
+            24, 3, java.time.Instant.now());
+    when(inactivity.capture(
+            79L,
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.ASKER))
+        .thenReturn(policy);
+    var settings = new ExtendedConsultingTypeResponseDTO().languageFormal(true);
+    when(consultingTypeManager.getConsultingTypeSettings(String.valueOf(CONSULTING_TYPE_ID_SUCHT)))
+        .thenReturn(settings);
+    var scope =
+        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+            .CreationScope(
+            "79",
+            "ANONYMOUS",
+            "/human-roles/user",
+            new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+                .Origin(
+                "ANONYMOUS",
+                "anonymous:one",
+                "anonymous:consulting",
+                null,
+                null,
+                null,
+                java.util.List.of()));
+    when(flow.anonymousScope(any(), org.mockito.ArgumentMatchers.eq(79L))).thenReturn(scope);
+    var pending =
+        mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+                .Pending.class);
+    when(pending.accountId()).thenReturn("owned-account");
+    when(pending.projection())
+        .thenReturn(
+            new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+                .AccountProjection(
+                "owned-account",
+                "anonymous-42",
+                "owned@example.test",
+                null,
+                null,
+                "79",
+                "de",
+                false,
+                false,
+                java.util.List.of(),
+                false));
+    var user =
+        new de.caritas.cob.userservice.api.model.User(
+            "owned-account", null, encoded, "owned@example.test", true);
+    when(users.createNewLifecycleUser(
+            any(),
+            any(),
+            any(),
+            org.mockito.ArgumentMatchers.anyBoolean(),
+            any(),
+            any(),
+            org.mockito.ArgumentMatchers.eq(policy)))
+        .thenReturn(user);
+    when(flow.createChatAccount(org.mockito.ArgumentMatchers.eq(pending), any(), any()))
+        .thenReturn("@anonymous-42:example.test");
+    Session ownedSession = new Session();
+    ownedSession.setId(42L);
+    when(anonymousConversationCreatorService.createOwnedAnonymousConversation(any(), any()))
+        .thenReturn(ownedSession);
+    var localFinished = new java.util.concurrent.atomic.AtomicBoolean();
+    when(flow.create(org.mockito.ArgumentMatchers.eq(scope), any(), any()))
+        .thenAnswer(
+            call -> {
+              java.util.function.Function<
+                      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+                          .OrdinaryAccountCreation.Pending,
+                      Session>
+                  writes = call.getArgument(2);
+              var result = writes.apply(pending);
+              localFinished.set(true);
+              return result;
+            });
+    when(login.login(encoded, "synthetic-chosen-password"))
+        .thenAnswer(
+            call -> {
+              org.junit.jupiter.api.Assertions.assertTrue(localFinished.get());
+              return new de.caritas.cob.userservice.api.port.out.IdentityLogin(
+                  "synthetic-user-token", 300, 600, "synthetic-refresh");
+            });
+    var result =
+        createAnonymousEnquiryFacade.createAnonymousEnquiry(
+            new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT), true);
+    assertEquals(42L, result.getSessionId());
+    assertEquals("synthetic-user-token", result.getAccessToken());
+    verifyNoInteractions(anonymousUserCreatorService);
+    verify(anonymousConversationCreatorService, org.mockito.Mockito.never())
+        .createAnonymousConversation(any(), any());
+    verify(inputs).validateUserDTO(any());
+  }
+
   EasyRandom easyRandom = new EasyRandom();
 
   @Test

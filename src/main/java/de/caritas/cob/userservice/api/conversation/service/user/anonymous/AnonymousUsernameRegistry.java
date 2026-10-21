@@ -32,6 +32,14 @@ public class AnonymousUsernameRegistry {
   // check never perturbs callers that verify how often the returned value is encoded.
   private final UsernameTranscoder matrixLocalpartTranscoder = new UsernameTranscoder();
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment lifecycleEnvironment;
+
+  private boolean fiveActors() {
+    return lifecycleEnvironment != null
+        && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
+  }
+
   @Value("${anonymous.username.prefix}")
   private String usernamePrefix;
 
@@ -88,7 +96,7 @@ public class AnonymousUsernameRegistry {
             () ->
                 userService.findUserByUsername(username).isPresent()
                     || consultantService.getConsultantByUsername(username).isPresent())
-        || !identityUsernameAvailability.isUsernameAvailable(username)
+        || (!fiveActors() && !identityUsernameAvailability.isUsernameAvailable(username))
         || existsInMatrix(username);
   }
 

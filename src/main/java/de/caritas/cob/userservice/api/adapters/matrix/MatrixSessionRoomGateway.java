@@ -42,6 +42,36 @@ public class MatrixSessionRoomGateway implements SessionRoomGateway {
   }
 
   @Override
+  public String createRoom(
+      String roomName,
+      String roomAlias,
+      String accessToken,
+      de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect effect)
+      throws MatrixCreateRoomException {
+    effect.started(roomAlias);
+    String roomId = createRoom(roomName, roomAlias, accessToken);
+    if (roomId == null || roomId.isBlank())
+      throw new IllegalStateException("Created room outcome is unconfirmed");
+    effect.created(roomId);
+    return roomId;
+  }
+
+  @Override
+  public String createRoomAsUser(
+      String roomName,
+      String roomAlias,
+      String matrixUserId,
+      de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect effect)
+      throws MatrixCreateRoomException {
+    effect.started(roomAlias);
+    String roomId = createRoomAsUser(roomName, roomAlias, matrixUserId);
+    if (roomId == null || roomId.isBlank())
+      throw new IllegalStateException("Created room outcome is unconfirmed");
+    effect.created(roomId);
+    return roomId;
+  }
+
+  @Override
   public String createUser(String username, String password, String displayName)
       throws MatrixCreateUserException {
     var response =

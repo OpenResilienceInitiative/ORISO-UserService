@@ -692,6 +692,85 @@ class CounsellorInviteProvisioningServiceTest {
     return provisioned;
   }
 
+  @Test
+  void fiveActorAcceptedInviteRetriesItsPendingActivationWithoutRecreatingOrReturningConsumed() {
+    var invite = activeCounsellorInvite();
+    invite.setId(41L);
+    invite.setStatus(AccountInviteStatus.ACCEPTED);
+    invite.setProvisionedUserId("created-consultant");
+    invite.setTwoFactorStatus(TwoFactorGateStatus.NOT_REQUIRED);
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    var flow =
+        mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+                .class);
+    var provider = mock(org.springframework.beans.factory.ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(flow);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "ordinaryAccountCreation", provider);
+    when(flow.finishInvitationIfPending(invite)).thenReturn(true);
+    assertThat(
+            service.acceptInvite(
+                "raw-token", new ProvisionCounsellorCommand("name", "chosen-secret", true, null)))
+        .isSameAs(invite);
+    verify(accountInviteService, never()).acceptInvite(any(), any());
+    verifyNoInteractions(createConsultantSaga, consultantAdminFacade, identityPasswordUpdater);
+  }
+
+  @Test
+  void fiveActorInvitationIncludesAcceptanceAndRelationsInTheCheckedCreationCallback() {
+    var policyReads =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads.class);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "checkedPolicyReads", policyReads);
+    when(policyReads.withInvitation(eq("raw-token"), eq("CONSULTANT"), any()))
+        .thenAnswer(call -> ((java.util.function.Supplier<?>) call.getArgument(2)).get());
+    var invite = activeCounsellorInvite();
+    invite.setId(41L);
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(accountInviteService.acceptInvite("raw-token", "created-consultant")).thenReturn(invite);
+    when(identityClientConfig.isFiveActorMode()).thenReturn(true);
+    when(identityClientConfig.taskAccessToken(
+            de.caritas.cob.userservice.api.config.auth.TaskPurpose.INVITE_RESERVATIONS))
+        .thenReturn("synthetic-setup-token");
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    when(createConsultantSaga.createInvitedConsultant(any(), eq(invite), eq(false), any()))
+        .thenAnswer(
+            call -> {
+              java.util.function.Function<Consultant, AccountInvite> finish = call.getArgument(3);
+              return finish.apply(
+                  Consultant.builder()
+                      .id("created-consultant")
+                      .username("invited-counsellor")
+                      .firstName("Lisa")
+                      .lastName("Simpson")
+                      .email("lisa.simpson@example.org")
+                      .tenantId(79L)
+                      .build());
+            });
+    var accepted =
+        service.acceptInvite(
+            "raw-token",
+            new ProvisionCounsellorCommand("invited-counsellor", "chosen-secret", true, null));
+    assertThat(accepted.getProvisioningStatus())
+        .isEqualTo(AccountInviteProvisioningStatus.COMPLETED);
+    verify(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(eq("created-consultant"), any());
+    verify(consultantTopicRepository).assignUnscopedTopicsToAgency("created-consultant", 275L);
+    verify(identityAuthentication, never()).loginService(any(), any());
+    verifyNoInteractions(identityPasswordUpdater, consultantAdminFacade);
+  }
+
   private static AccountInvite activeCounsellorInvite() {
     return AccountInvite.builder()
         .targetRole(AccountInviteTargetRole.COUNSELLOR)

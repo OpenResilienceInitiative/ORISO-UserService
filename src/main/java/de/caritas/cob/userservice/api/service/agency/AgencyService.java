@@ -68,6 +68,23 @@ public class AgencyService {
         .orElse(null);
   }
 
+  /** Fresh finite owner projection with an explicit bounded service bearer. */
+  public List<AgencyDTO> getAgenciesForOrdinaryCreation(
+      List<Long> agencyIds, String boundedAccessToken) {
+    if (agencyIds == null
+        || agencyIds.isEmpty()
+        || boundedAccessToken == null
+        || boundedAccessToken.isBlank())
+      throw new IllegalArgumentException("Exact agencies and a bounded service token are required");
+    var api = getAgencyControllerApi();
+    var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(boundedAccessToken);
+    tenantHeaderSupplier.addTenantHeader(headers);
+    headers.forEach(
+        (name, values) ->
+            values.forEach(value -> api.getApiClient().addDefaultHeader(name, value)));
+    return api.getAgenciesByIds(agencyIds).stream().map(this::fromOriginalAgency).toList();
+  }
+
   /**
    * Returns List of {@link AgencyDTO} for provided agencyIds. Agencies will be cached for further
    * requests.

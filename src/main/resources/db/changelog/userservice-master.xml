@@ -250,4 +250,5 @@
        pre-dev merge, leaving the 0086_reactivation_saga_claim changeset orphaned; appended here
        so it stays append-only. Idempotent (ADD COLUMN IF NOT EXISTS). -->
   <include file="db/changelog/changeset/0086_reactivation_saga_claim/0086_changeSet.xml"/>
+  <include file="db/changelog/changeset/20261021_identity_lifecycle_367/changeSet.xml"/>
 </databaseChangeLog>

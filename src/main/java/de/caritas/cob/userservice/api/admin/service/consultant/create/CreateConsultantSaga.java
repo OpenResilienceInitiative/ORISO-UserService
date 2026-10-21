@@ -65,6 +65,9 @@ import org.springframework.web.client.RestClientException;
 @RequiredArgsConstructor
 @Slf4j
 public class CreateConsultantSaga {
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads
+      checkedPolicyReads;
 
   private final ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
   private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
@@ -98,9 +101,48 @@ public class CreateConsultantSaga {
 
   private final ObjectMapper objectMapper = new ObjectMapper();
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment lifecycleEnvironment;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation>
+      ordinaryAccountCreation;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private de.caritas.cob.userservice.api.admin.service.admin.AdminScope lifecycleAdminScope;
+
+  private boolean fiveActors() {
+    return lifecycleEnvironment != null
+        && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+      ordinaryWorkflow() {
+    var workflow =
+        ordinaryAccountCreation == null ? null : ordinaryAccountCreation.getIfAvailable();
+    if (workflow == null)
+      throw new IllegalStateException("Ordinary consultant lifecycle activation remains gated");
+    return workflow;
+  }
+
   private Consultant createNewConsultantWithoutAppointment(
       CreateConsultantDTO createConsultantDTO) {
-    setCurrentTenant(createConsultantDTO);
+    return createNewConsultantWithoutAppointment(createConsultantDTO, null, null, null);
+  }
+
+  private Consultant createNewConsultantWithoutAppointment(
+      CreateConsultantDTO createConsultantDTO,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos.CreationScope
+          checkedScope,
+      Set<String> checkedRoles,
+      java.util.function.Consumer<Consultant> finish) {
+    if (fiveActors() && !multiTenancyEnabled)
+      createConsultantDTO.setTenantId(
+          ordinaryWorkflow()
+              .resolveSingleTenant(
+                  createConsultantDTO.getTenantId(), createConsultantDTO.getAgencyIds()));
+    else setCurrentTenant(createConsultantDTO);
     validateTenantId(createConsultantDTO);
     ensureTenantIdResolved(createConsultantDTO);
     java.util.Map<Long, java.util.Set<Long>> topicIdsByAgencyId = null;
@@ -113,7 +155,24 @@ public class CreateConsultantSaga {
               createConsultantDTO.getTenantId());
     }
 
-    assertLicensesNotExceeded(createConsultantDTO);
+    var roles = asSet(CONSULTANT.getValue());
+    addGroupChatConsultantRole(createConsultantDTO, roles);
+    if (checkedRoles != null) roles = checkedRoles;
+    if (fiveActors() && checkedScope == null) {
+      // Establish the actual human scope before any full licensing or enrollment policy read.
+      checkedScope =
+          ordinaryWorkflow()
+              .humanScope(
+                  lifecycleAdminScope,
+                  createConsultantDTO.getTenantId(),
+                  createConsultantDTO.getAgencyIds(),
+                  "CONSULTANT",
+                  roles);
+    }
+    boolean checkedMachine =
+        checkedScope != null
+            && java.util.Set.of("INVITATION", "IMPORT").contains(checkedScope.origin().kind());
+    assertLicensesNotExceeded(createConsultantDTO, checkedMachine);
 
     this.userAccountInputValidator.validateAbsence(
         new CreateConsultantDTOAbsenceInputAdapter(createConsultantDTO));
@@ -122,10 +181,7 @@ public class CreateConsultantSaga {
         new CreateConsultantDTOCreationInputAdapter(createConsultantDTO)
             .withTopicIdsByAgencyId(topicIdsByAgencyId);
 
-    var roles = asSet(CONSULTANT.getValue());
-    addGroupChatConsultantRole(createConsultantDTO, roles);
-
-    return createNewConsultant(consultantCreationInput, roles);
+    return createNewConsultant(consultantCreationInput, roles, checkedScope, finish);
   }
 
   /**
@@ -147,10 +203,34 @@ public class CreateConsultantSaga {
     ConsultantAdminResponseDTO consultantAdminResponseDTO =
         ConsultantResponseDTOBuilder.getInstance(newConsultant).buildResponseDTO();
 
-    if (appointmentFeatureEnabled) {
+    if (appointmentFeatureEnabled && !fiveActors()) {
       createConsultantInAppointmentServiceOrRollback(newConsultant, consultantAdminResponseDTO);
     }
     return consultantAdminResponseDTO;
+  }
+
+  /** Held public invitation owns the final local writes before activation is requested. */
+  public <T> T createInvitedConsultant(
+      CreateConsultantDTO dto,
+      de.caritas.cob.userservice.api.model.AccountInvite invite,
+      boolean grantAgencyAdmin,
+      java.util.function.Function<Consultant, T> finish) {
+    if (!fiveActors()) throw new IllegalStateException("Checked C invitation path is unavailable");
+    var roles = new java.util.HashSet<>(Set.of(CONSULTANT.getValue()));
+    addGroupChatConsultantRole(dto, roles);
+    if (grantAgencyAdmin) roles.addAll(Set.of("restricted-agency-admin", "user-admin"));
+    var scope =
+        ordinaryWorkflow()
+            .heldInvitationScope(
+                invite, grantAgencyAdmin ? "CONSULTANT_AGENCY_ADMIN" : "CONSULTANT", roles);
+    if (!java.util.Objects.equals(
+        scope.tenantId(), dto.getTenantId() == null ? null : dto.getTenantId().toString()))
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Invitation tenant differs from creation");
+    var value = new java.util.concurrent.atomic.AtomicReference<T>();
+    createNewConsultantWithoutAppointment(
+        dto, scope, roles, consultant -> value.set(finish.apply(consultant)));
+    return value.get();
   }
 
   private void createConsultantInAppointmentServiceOrRollback(
@@ -216,13 +296,42 @@ public class CreateConsultantSaga {
    */
   @Transactional
   public Consultant createNewConsultant(ImportRecord importRecord, Set<String> roles) {
+    if (fiveActors())
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Configured CSV row authorization is required");
     ConsultantCreationInput consultantCreationInput =
         new ImportRecordCreationInputAdapter(importRecord);
     return createNewConsultant(consultantCreationInput, roles);
   }
 
+  /** The configured import owner supplies the exact parsed source and resolved agency set. */
+  @Transactional
+  public Consultant createImportedConsultant(
+      ImportRecord row,
+      Set<String> roles,
+      Set<Long> agencies,
+      String sourceDigest,
+      long rowNumber,
+      java.util.function.Consumer<Consultant> finish) {
+    if (!fiveActors()) throw new IllegalStateException("Checked C import path is unavailable");
+    var scope =
+        ordinaryWorkflow()
+            .configuredImportScope(row.getTenantId(), roles, agencies, sourceDigest, rowNumber);
+    assertLicensesNotExceeded(new CreateConsultantDTO().tenantId(row.getTenantId()), true);
+    return createNewConsultant(new ImportRecordCreationInputAdapter(row), roles, scope, finish);
+  }
+
   private Consultant createNewConsultant(
       ConsultantCreationInput consultantCreationInput, Set<String> roles) {
+    return createNewConsultant(consultantCreationInput, roles, null, null);
+  }
+
+  private Consultant createNewConsultant(
+      ConsultantCreationInput consultantCreationInput,
+      Set<String> roles,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos.CreationScope
+          checkedScope,
+      java.util.function.Consumer<Consultant> finish) {
 
     // MATRIX MIGRATION: Get plain credentials from ThreadLocal (captured during JSON
     // deserialization)
@@ -236,6 +345,20 @@ public class CreateConsultantSaga {
             consultantCreationInput.getTenantId(),
             de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
                 .CONSULTANT);
+    if (fiveActors()) {
+      var workflow = ordinaryWorkflow();
+      var scope =
+          checkedScope == null
+              ? workflow.humanScope(
+                  lifecycleAdminScope,
+                  consultantCreationInput.getTenantId(),
+                  consultantCreationInput.getAgencyIds(),
+                  "CONSULTANT",
+                  roles)
+              : checkedScope;
+      return createOrdinaryConsultant(
+          consultantCreationInput, scope, snapshot, inactivityPolicy, finish);
+    }
     String keycloakUserId = createKeycloakUser(consultantCreationInput);
 
     String password = consultantCreationInput.getPassword();
@@ -310,6 +433,69 @@ public class CreateConsultantSaga {
 
     assignAgenciesOrRollback(consultant, consultantCreationInput.getAgencyIds());
     return consultant;
+  }
+
+  private Consultant createOrdinaryConsultant(
+      ConsultantCreationInput input,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos.CreationScope
+          scope,
+      RecoveryPolicySnapshot snapshot,
+      de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy
+          inactivityPolicy,
+      java.util.function.Consumer<Consultant> finish) {
+    var dto = buildUserDTO(input.getUserName(), input.getEmail(), input.getTenantId());
+    userAccountInputValidator.validateUserDTO(dto);
+    String password = input.getPassword();
+    if ((password == null || password.isBlank()) && input.shouldGeneratePassword())
+      password = userHelper.getRandomPassword();
+    if (password == null || password.isBlank())
+      throw new BadRequestException("Password is required for consultant creation");
+    var account =
+        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+            .AccountCreation(
+            input.getUserName(),
+            input.getEmail(),
+            input.getFirstName(),
+            input.getLastName(),
+            "de",
+            password,
+            !"INVITATION".equals(scope.origin().kind()) && input.isPasswordChangeRequired());
+    var workflow = ordinaryWorkflow();
+    try {
+      return workflow.create(
+          scope,
+          account,
+          pending -> {
+            String id = pending.accountId();
+            if (consultantService.getConsultant(id).isPresent())
+              throw new org.springframework.security.access.AccessDeniedException(
+                  "New creation cannot adopt an existing consultant");
+            String displayName =
+                consultantDisplayNameResolver.resolveMatrixDisplayName(
+                    input.getDisplayName(), input.getUserName());
+            String matrixId = workflow.createChatAccount(pending, input.getUserName(), displayName);
+            var consultant = buildConsultant(input, id, matrixId);
+            consultant.setChatRecoveryMode(snapshot.mode());
+            consultant.setChatRecoveryPolicyRevision(snapshot.revision());
+            inactivityEnrollment.enroll(id, input.getTenantId(), inactivityPolicy);
+            consultant = consultantService.saveConsultant(consultant);
+            if (input.getAgencyIds() != null)
+              for (Long agency :
+                  input.getAgencyIds().stream()
+                      .filter(java.util.Objects::nonNull)
+                      .distinct()
+                      .toList())
+                consultantAgencyRelationCreatorService.createNewConsultantAgency(
+                    id, new CreateConsultantAgencyDTO().agencyId(agency));
+            if (appointmentFeatureEnabled)
+              workflow.createAppointment(
+                  pending, ConsultantResponseDTOBuilder.getInstance(consultant).buildResponseDTO());
+            if (finish != null) finish.accept(consultant);
+            return consultant;
+          });
+    } finally {
+      de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
+    }
   }
 
   private void assignAgenciesOrRollback(Consultant consultant, List<Long> agencyIds) {
@@ -560,7 +746,26 @@ public class CreateConsultantSaga {
    * TenantService outage as "unlimited" would let creations slip past a limit that is merely
    * unreadable at that moment.
    */
-  private void assertLicensesNotExceeded(CreateConsultantDTO createConsultantDTO) {
+  private void assertLicensesNotExceeded(
+      CreateConsultantDTO createConsultantDTO, boolean checkedMachine) {
+    if (fiveActors() && checkedMachine) {
+      if (checkedPolicyReads == null || createConsultantDTO.getTenantId() == null)
+        throw new org.springframework.security.access.AccessDeniedException(
+            "Checked account policy origin required");
+      final Integer limit;
+      try {
+        limit = checkedPolicyReads.read(createConsultantDTO.getTenantId()).allowedNumberOfUsers();
+      } catch (IllegalStateException unavailable) {
+        throw new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED);
+      }
+      if (limit != null
+          && consultantService.getNumberOfActiveConsultants(createConsultantDTO.getTenantId())
+              >= limit)
+        throw new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED);
+      return;
+    }
     if (!multiTenancyEnabled) {
       return;
     }
