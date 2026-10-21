@@ -60,6 +60,21 @@ def select_slice(name):
             "de/caritas/cob/userservice/api/UserServiceMapper",
         ]
         TEST_CLASS = SUITE.replace(".", "/")
+    elif name == "jpa":
+        SLICE = name
+        SUITE = "de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenanceJpaTest"
+        LEGACY = ""
+        CASES = {
+            "actualJpaCommitPrecedesNativeDispatchEvenWhenReplyIsUnknown",
+            "actualJpaFlushFailureRollsBackDomainAndPreventsDispatchableIntent",
+        }
+        COMPILED_CLASSES += [
+            "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance",
+            "de/caritas/cob/userservice/api/AccountManager",
+            "de/caritas/cob/userservice/api/model/User",
+            "de/caritas/cob/userservice/api/port/out/UserRepository",
+        ]
+        TEST_CLASS = SUITE.replace(".", "/")
     elif name == "deletion":
         SLICE = name
         SUITE = "de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountScenarioCBoundaryTest"
@@ -84,6 +99,8 @@ def select_slice(name):
     CONTROLS = {LEGACY}
     if name == "locale":
         CONTROLS.add("domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract")
+    elif name == "jpa":
+        CONTROLS = {"actualJpaCommitPrecedesNativeDispatchEvenWhenReplyIsUnknown"}
 
 
 def sha(path):
@@ -307,7 +324,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["snapshot", "collect"])
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--slice", choices=["adapter", "deletion", "locale"], default="adapter")
+    parser.add_argument("--slice", choices=["adapter", "deletion", "locale", "jpa"], default="adapter")
     args = parser.parse_args()
     select_slice(args.slice)
     root = Path(__file__).resolve().parents[2]

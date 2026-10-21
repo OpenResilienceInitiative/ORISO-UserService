@@ -177,3 +177,29 @@ class LocaleBoundaryEvidenceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             result = proof.sanitize(Path(tmp), Path(tmp) / "clean.xml")
             self.assertFalse(result["adapter_behavior_red"] or result["all_passed"])
+
+
+class JpaBoundaryEvidenceTest(unittest.TestCase):
+    def test_actual_commit_control_is_required_before_rollback_assertion_red(self):
+        proof = importlib.util.module_from_spec(SPEC)
+        SPEC.loader.exec_module(proof)
+        proof.select_slice("jpa")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            suite = ET.Element("testsuite", name=proof.SUITE)
+            control = None
+            for name in proof.CASES:
+                case = ET.SubElement(suite, "testcase", classname=proof.SUITE, name=name)
+                if name in proof.CONTROLS:
+                    control = case
+                else:
+                    ET.SubElement(case, "failure", type="org.opentest4j.AssertionFailedError")
+            path = root / "TEST-jpa.xml"
+            ET.ElementTree(suite).write(path)
+            result = proof.sanitize(root, root / "clean.xml")
+            self.assertEqual(2, result["floor"])
+            self.assertTrue(result["adapter_behavior_red"])
+            self.assertFalse(result["legacy_control_passed"])
+            ET.SubElement(control, "failure", type="org.opentest4j.AssertionFailedError")
+            ET.ElementTree(suite).write(path)
+            self.assertFalse(proof.sanitize(root, root / "clean.xml")["adapter_behavior_red"])

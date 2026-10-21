@@ -32,6 +32,9 @@ jobs:
           - slice: locale
             test: UserSelfLocaleScenarioCBoundaryTest
             test_path: adapters/web/controller/UserSelfLocaleScenarioCBoundaryTest.java
+          - slice: jpa
+            test: SelfLocaleMaintenanceJpaTest
+            test_path: adapters/keycloak/maintenance/SelfLocaleMaintenanceJpaTest.java
           - slice: deletion
             test: DeleteUserAccountScenarioCBoundaryTest
             test_path: workflow/delete/service/DeleteUserAccountScenarioCBoundaryTest.java
@@ -63,23 +66,25 @@ jobs:
           echo "$RUNNER_TEMP/apache-maven-3.9.14/bin" >> "$GITHUB_PATH"
       - name: Verify nonsecret evidence gates without JVM or native fixtures
         run: python -m unittest discover -s tests/ci -p test_maintenance_boundary_proof.py -v
-      - name: Require committed formatting for the four owned locale sources
-        if: matrix.slice == 'locale'
+      - name: Require committed formatting for the five owned locale and JPA sources
+        if: matrix.slice == 'locale' || matrix.slice == 'jpa'
         shell: bash
         env:
           MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2
         run: |
           set -euo pipefail
           mvn -B -ntp -q spotless:apply \
-            "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfLocaleScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec.java"
+            "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenanceJpaTest.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfLocaleScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec.java"
           mkdir -p target/scenario-c-maintenance-caller
           git diff --binary -- \
+            src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenanceJpaTest.java \
             src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfLocaleScenarioCBoundaryTest.java \
             src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance.java \
             src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate.java \
             src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec.java \
             > target/scenario-c-maintenance-caller/locale-format.patch
           git diff --exit-code -- \
+            src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenanceJpaTest.java \
             src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfLocaleScenarioCBoundaryTest.java \
             src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance.java \
             src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate.java \
