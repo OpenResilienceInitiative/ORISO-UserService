@@ -111,7 +111,8 @@ class CiDurationTest(unittest.TestCase):
         self.assertNotIn("needs", build)
         self.assertEqual({"contents": "read"}, build["permissions"])
         self.assertEqual(
-            {"build", "required-integration-tests", "mariadb-contract"}, set(publish["needs"])
+            {"build", "required-integration-tests", "mariadb-contract", "notification-smtp-contract"},
+            set(publish["needs"]),
         )
         self.assertNotIn("if", publish)
         upload = next(s for s in build["steps"] if s.get("uses", "").startswith("actions/upload-artifact@"))
