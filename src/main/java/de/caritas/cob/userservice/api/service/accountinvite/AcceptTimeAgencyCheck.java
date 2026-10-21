@@ -23,9 +23,18 @@ public class AcceptTimeAgencyCheck {
   private final @NonNull AgencyFacts agencyFacts;
   private final @NonNull IdentityAuthentication identityAuthentication;
   private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull de.caritas.cob.userservice.api.admin.service.tenant.TenantService
+      tenantService;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
+
+  /**
+   * Called before a pending invite claims a row or creates a centre/identity. Resume stays allowed.
+   */
+  public void requireOperationalTenant(AccountInvite invite) {
+    tenantService.requireOperationalTenant(invite.getTenantId());
+  }
 
   /** Logs in the Keycloak technical user and checks with that token. */
   public void requireLiveAgency(AccountInvite invite) {

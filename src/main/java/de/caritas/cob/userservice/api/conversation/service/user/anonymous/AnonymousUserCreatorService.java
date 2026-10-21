@@ -27,6 +27,9 @@ public class AnonymousUserCreatorService {
   private final @NonNull IdentityAuthentication identityAuthentication;
   private final @NonNull RollbackFacade rollbackFacade;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment lifecycleEnvironment;
+
   /**
    * Creates an anonymous user account in Keycloak, MariaDB, and Matrix.
    *
@@ -34,7 +37,10 @@ public class AnonymousUserCreatorService {
    * @return {@link AnonymousUserCredentials}
    */
   public AnonymousUserCredentials createAnonymousUser(UserDTO userDto) {
-
+    if (lifecycleEnvironment != null
+        && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY")))
+      throw new IllegalStateException(
+          "Anonymous C creation must include its conversation in the bounded workflow");
     CreatedIdentity response = identityClient.createUser(userDto);
     String identityUserId = CreatedIdentity.requireUserId(response);
     // Use the existing "user" realm role instead of "anonymous": the Keycloak realm does not

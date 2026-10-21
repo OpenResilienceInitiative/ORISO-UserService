@@ -49,6 +49,7 @@ class ConsultantImportServiceTest {
   @Mock private UserHelper userHelper;
   @Mock private CreateConsultantSaga createConsultantSaga;
   @Mock private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
+  @Mock private de.caritas.cob.userservice.api.port.out.IdentityClientConfig lifecycleIdentities;
 
   @TempDir Path tempDir;
 
@@ -63,6 +64,8 @@ class ConsultantImportServiceTest {
     ReflectionTestUtils.setField(
         consultantImportService, "protocolFilename", protocolFile.toString());
     ReflectionTestUtils.setField(consultantImportService, "multiTenancyEnabled", false);
+    ReflectionTestUtils.setField(
+        consultantImportService, "lifecycleIdentities", lifecycleIdentities);
   }
 
   // ---------------------------------------------------------------------------
@@ -259,6 +262,72 @@ class ConsultantImportServiceTest {
   // ---------------------------------------------------------------------------
   // helpers
   // ---------------------------------------------------------------------------
+
+  @Test
+  void fiveActorSingleTenantImportBindsTheCurrentAgencyTenantAndAllRelationsBeforeActivation()
+      throws Exception {
+    org.junit.jupiter.api.Assertions.assertSame(
+        lifecycleIdentities,
+        ReflectionTestUtils.getField(consultantImportService, "lifecycleIdentities"));
+    ReflectionTestUtils.setField(
+        consultantImportService,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    String csv = ",1,validuser,First,Last,valid@example.com,nein,,10;ordinary\r\n";
+    writeCsv(csv);
+    when(userHelper.isUsernameValid("validuser")).thenReturn(true);
+    when(userHelper.isValidEmail("valid@example.com")).thenReturn(true);
+    var agency = agencyWithConsultingType(1);
+    agency.setTenantId(5L);
+    when(lifecycleIdentities.isFiveActorMode()).thenReturn(true);
+    when(lifecycleIdentities.taskAccessToken(
+            de.caritas.cob.userservice.api.config.auth.TaskPurpose.RUNTIME_POLICY))
+        .thenReturn("synthetic-runtime-token");
+    when(agencyService.getAgenciesForOrdinaryCreation(List.of(10L), "synthetic-runtime-token"))
+        .thenReturn(List.of(agency));
+    when(consultingTypeManager.getConsultingTypeSettings(1))
+        .thenReturn(typeWithRoles(Map.of("ordinary", List.of("consultant"))));
+    when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
+        .thenReturn(Optional.empty());
+    when(createConsultantSaga.createImportedConsultant(
+            any(), any(), any(), anyString(), org.mockito.ArgumentMatchers.anyLong(), any()))
+        .thenAnswer(
+            call -> {
+              var created = new Consultant();
+              created.setId("new-imported-consultant");
+              java.util.function.Consumer<Consultant> allRelations = call.getArgument(5);
+              allRelations.accept(created);
+              return created;
+            });
+
+    consultantImportService.startImport();
+
+    var row = org.mockito.ArgumentCaptor.forClass(ConsultantImportService.ImportRecord.class);
+    String digest =
+        java.util.HexFormat.of()
+            .formatHex(
+                java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(csv.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    verify(createConsultantSaga)
+        .createImportedConsultant(
+            row.capture(),
+            eq(java.util.Set.of("consultant")),
+            eq(java.util.Set.of(10L)),
+            eq(digest),
+            eq(1L),
+            any());
+    org.junit.jupiter.api.Assertions.assertEquals(5L, row.getValue().getTenantId());
+    verify(consultantAgencyRelationCreatorService)
+        .createConsultantAgencyRelations(
+            eq("new-imported-consultant"),
+            eq(java.util.Set.of(10L)),
+            eq(java.util.Set.of("consultant")),
+            any());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
+  }
 
   private void writeCsv(String content) throws IOException {
     Files.writeString(importFile, content);

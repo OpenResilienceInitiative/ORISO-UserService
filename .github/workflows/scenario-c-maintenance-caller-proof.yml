@@ -1,0 +1,78 @@
+name: Scenario C maintenance caller boundary diagnostic
+
+on:
+  push:
+    branches: [codex/367-c-maintenance-user-20261021]
+    paths:
+      - src/**
+      - api/**
+      - pom.xml
+      - scripts/ci/maintenance-boundary-proof.py
+      - tests/ci/test_maintenance_boundary_proof.py
+      - .github/workflows/scenario-c-maintenance-caller-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance-caller-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  caller-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21.0.12+8.0.LTS'
+          cache: maven
+          cache-dependency-path: pom.xml
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: 3.12.13
+      - name: Install checksum-verified Maven 3.9.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 \
+            https://archive.apache.org/dist/maven/maven-3/3.9.14/binaries/apache-maven-3.9.14-bin.tar.gz \
+            --output "$RUNNER_TEMP/maven.tar.gz"
+          printf '%s  %s\n' \
+            d50af8ab5e6005b46a07f0ce9d3719e67cfdf898da988a84871304cd59fb1af0fef2f99dea709e6e66f21f732f905979b5c2dce6b6860406f60a70e84d9cf0b8 \
+            "$RUNNER_TEMP/maven.tar.gz" | sha512sum --check
+          tar -xzf "$RUNNER_TEMP/maven.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-3.9.14/bin" >> "$GITHUB_PATH"
+      - name: Verify nonsecret evidence gates without JVM or native fixtures
+        run: python -m unittest discover -s tests/ci -p test_maintenance_boundary_proof.py -v
+      - name: Bind the actual checkout and required normal Dev ancestor
+        run: python scripts/ci/maintenance-boundary-proof.py snapshot --report target/scenario-c-maintenance-caller/maintenance-caller-before.json
+      - name: Compile actual User source and execute all six public adapter boundary cases once
+        shell: bash
+        env:
+          MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -q test \
+            -Dtest=KeycloakServiceScenarioCModeTest \
+            -DfailIfNoTests=true -Dsurefire.failIfNoSpecifiedTests=true \
+            '-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2' \
+            "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakServiceScenarioCModeTest.java"
+      - name: Require all six methods and preserve every sanitized outcome
+        if: always()
+        run: python scripts/ci/maintenance-boundary-proof.py collect --report target/scenario-c-maintenance-caller/maintenance-caller-result.json
+      - name: Upload only sanitized XML, JSON and exact source hashes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: scenario-c-maintenance-caller-boundary
+          path: |
+            target/scenario-c-maintenance-caller/maintenance-caller-*.json
+            target/scenario-c-maintenance-caller/maintenance-caller-*.xml
+          if-no-files-found: error
+          retention-days: 14

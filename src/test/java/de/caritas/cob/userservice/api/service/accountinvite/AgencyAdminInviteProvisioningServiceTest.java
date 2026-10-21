@@ -77,6 +77,113 @@ class AgencyAdminInviteProvisioningServiceTest {
   }
 
   @Test
+  void fiveActorInvitationKeepsAgencyBindingAndAcceptanceInsideTheCheckedCreationCallback() {
+    org.mockito.Mockito.reset(createAdminService, accountInviteService);
+    when(accountInviteService.findInviteByToken(TOKEN)).thenReturn(invite);
+    when(accountInviteService.acceptInvite(TOKEN, ADMIN_ID)).thenReturn(invite);
+    when(accountInviteRepository.save(any())).thenAnswer(call -> call.getArgument(0));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    when(createAdminService.createInvitedAgencyAdmin(
+            any(), org.mockito.ArgumentMatchers.eq(invite), any()))
+        .thenAnswer(
+            call -> {
+              java.util.function.Function<Admin, AccountInvite> finish = call.getArgument(2);
+              return finish.apply(
+                  Admin.builder()
+                      .id(ADMIN_ID)
+                      .username("ada")
+                      .firstName("Ada")
+                      .lastName("Lovelace")
+                      .email("ada@example.org")
+                      .tenantId(79L)
+                      .build());
+            });
+
+    var accepted = service.acceptAsAgencyAdmin(TOKEN, "ada", "synthetic-chosen-secret");
+
+    assertThat(accepted.getProvisionedUserId()).isEqualTo(ADMIN_ID);
+    assertThat(accepted.getProvisioningStatus())
+        .isEqualTo(AccountInviteProvisioningStatus.COMPLETED);
+    verify(adminAgencyRepository)
+        .save(
+            org.mockito.ArgumentMatchers.argThat(
+                relation ->
+                    relation.getAgencyId().equals(275L)
+                        && relation.getAdmin().getId().equals(ADMIN_ID)));
+    verify(createAdminService, org.mockito.Mockito.never()).createNewAgencyAdminInTenant(any());
+    org.mockito.Mockito.verifyNoInteractions(identityAccountRemover);
+  }
+
+  @Test
+  void fiveActorAcceptedInvitationReconcilesItsExactPendingActivationBeforeConsumedResponse() {
+    org.mockito.Mockito.reset(createAdminService, accountInviteService, accountInviteRepository);
+    invite.setStatus(AccountInviteStatus.ACCEPTED);
+    invite.setProvisionedUserId(ADMIN_ID);
+    when(accountInviteService.findInviteByToken(TOKEN)).thenReturn(invite);
+    var flow =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+                .class);
+    var provider = org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(flow);
+    when(flow.finishInvitationIfPending(invite)).thenReturn(true);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "ordinaryAccountCreation", provider);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+
+    assertThat(service.acceptAsAgencyAdmin(TOKEN, "ada", "synthetic-chosen-secret"))
+        .isSameAs(invite);
+
+    verify(accountInviteService, org.mockito.Mockito.never()).acceptInvite(any(), any());
+    org.mockito.Mockito.verifyNoInteractions(
+        createAdminService, adminAgencyRepository, identityAccountRemover);
+  }
+
+  @Test
+  void pausedInviteTenantStopsAgencyAdminBeforeClaimWizardIdentityAndPersistence() {
+    org.mockito.Mockito.reset(accountInviteService, accountInviteRepository, createAdminService);
+    when(accountInviteService.findInviteByToken(TOKEN)).thenReturn(invite);
+    var authorityCheck =
+        new AcceptTimeAgencyCheck(
+            org.mockito.Mockito.mock(AgencyFacts.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.IdentityAuthentication.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class),
+            de.caritas.cob.userservice.api.testHelper.PausedTenantAuthorityFixture.paused(79L));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "acceptTimeAgencyCheck", authorityCheck);
+    var createUnit = org.mockito.Mockito.mock(Runnable.class);
+    var refused =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            org.springframework.web.server.ResponseStatusException.class,
+            () ->
+                service.acceptAsAgencyAdmin(
+                    TOKEN,
+                    "new-admin",
+                    "fixture-password",
+                    WizardAccept.decidedFrom(invite, createUnit)));
+    assertThat(refused.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN);
+    org.mockito.Mockito.verifyNoInteractions(
+        accountInviteRepository,
+        createUnit,
+        createAdminService,
+        adminAgencyRepository,
+        adminRepository,
+        identityAccountRemover);
+    assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.PENDING);
+    verify(accountInviteService, org.mockito.Mockito.never()).acceptInvite(any(), any());
+  }
+
+  @Test
   void acceptAsAgencyAdmin_Should_DeleteTheAdminRowsAndTheIdentity_When_ALaterStepFails() {
     assertThatThrownBy(() -> service.acceptAsAgencyAdmin(TOKEN, "ada", "pw")).isSameAs(failure);
 

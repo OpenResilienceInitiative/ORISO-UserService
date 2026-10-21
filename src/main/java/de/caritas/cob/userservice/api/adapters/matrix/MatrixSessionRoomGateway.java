@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import java.nio.charset.StandardCharsets;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -41,9 +42,40 @@ public class MatrixSessionRoomGateway implements SessionRoomGateway {
   }
 
   @Override
+  public String createRoom(
+      String roomName,
+      String roomAlias,
+      String accessToken,
+      de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect effect)
+      throws MatrixCreateRoomException {
+    effect.started(roomAlias);
+    String roomId = createRoom(roomName, roomAlias, accessToken);
+    if (roomId == null || roomId.isBlank())
+      throw new IllegalStateException("Created room outcome is unconfirmed");
+    effect.created(roomId);
+    return roomId;
+  }
+
+  @Override
+  public String createRoomAsUser(
+      String roomName,
+      String roomAlias,
+      String matrixUserId,
+      de.caritas.cob.userservice.api.port.out.OwnedMatrixEffect effect)
+      throws MatrixCreateRoomException {
+    effect.started(roomAlias);
+    String roomId = createRoomAsUser(roomName, roomAlias, matrixUserId);
+    if (roomId == null || roomId.isBlank())
+      throw new IllegalStateException("Created room outcome is unconfirmed");
+    effect.created(roomId);
+    return roomId;
+  }
+
+  @Override
   public String createUser(String username, String password, String displayName)
       throws MatrixCreateUserException {
-    var response = matrixSynapseService.createUser(username, password, displayName);
+    var response =
+        matrixSynapseService.createUser(encodeLocalpart(username), password, displayName);
     return response == null || response.getBody() == null ? null : response.getBody().getUserId();
   }
 
@@ -51,6 +83,14 @@ public class MatrixSessionRoomGateway implements SessionRoomGateway {
   public void inviteUser(String roomId, String userId, String accessToken)
       throws MatrixInviteUserException {
     matrixSynapseService.inviteUserToRoom(roomId, userId, accessToken);
+  }
+
+  @Override
+  public boolean isJoinedMember(String roomId, String userId) {
+    return matrixSynapseService
+        .getRoomMembers(roomId)
+        .map(members -> members.contains(userId))
+        .orElse(false);
   }
 
   @Override
@@ -76,6 +116,27 @@ public class MatrixSessionRoomGateway implements SessionRoomGateway {
 
   @Override
   public String userIdFor(String localpart) {
-    return "@" + localpart + ":" + matrixConfig.getServerName();
+    return "@" + encodeLocalpart(localpart) + ":" + matrixConfig.getServerName();
+  }
+
+  /** Maps application usernames using the Matrix UTF-8 escaping convention. */
+  private static String encodeLocalpart(String username) {
+    var result = new StringBuilder();
+    for (byte value : username.getBytes(StandardCharsets.UTF_8)) {
+      int character = Byte.toUnsignedInt(value);
+      if (character >= 'A' && character <= 'Z') {
+        character += 'a' - 'A';
+      }
+      if ((character >= 'a' && character <= 'z')
+          || (character >= '0' && character <= '9')
+          || "_-./+".indexOf(character) >= 0) {
+        result.append((char) character);
+      } else {
+        result.append('=');
+        result.append(Character.forDigit(character >>> 4, 16));
+        result.append(Character.forDigit(character & 15, 16));
+      }
+    }
+    return result.toString();
   }
 }

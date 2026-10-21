@@ -94,6 +94,14 @@ public class CreateUserFacade {
 
   private final @NonNull GroupInviteRegistration groupInviteRegistration;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment lifecycleEnvironment;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryRegistrationLifecycle>
+      registrationLifecycle;
+
   @Value("${feature.multitenancy.with.single.domain.enabled:false}")
   private boolean multitenancyWithSingleDomain;
 
@@ -106,6 +114,7 @@ public class CreateUserFacade {
   public Long createUserAccountWithInitializedConsultingType(final UserDTO userDTO) {
 
     initializeTenantContextForRegistration(userDTO);
+    tenantService.requireOperationalTenant(TenantContext.getCurrentTenant());
 
     // MATRIX MIGRATION: Get plain credentials from ThreadLocal (captured during JSON
     // deserialization)
@@ -140,6 +149,22 @@ public class CreateUserFacade {
               TenantContext.getCurrentTenant(),
               de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
                   .ASKER);
+      if (lifecycleEnvironment != null
+          && "FIVE_ACTORS"
+              .equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"))) {
+        var lifecycle =
+            registrationLifecycle == null ? null : registrationLifecycle.getIfAvailable();
+        if (lifecycle == null)
+          throw new IllegalStateException("Ordinary lifecycle activation remains gated");
+        return createOrdinaryRegistration(
+            lifecycle,
+            userDTO,
+            snapshot,
+            consultingTypeSettings,
+            invitedGroup,
+            inactivityPolicy,
+            plainCreds == null ? null : plainCreds.getUsername());
+      }
       CreatedIdentity response = identityClient.createUser(userDTO);
       String identityUserId = CreatedIdentity.requireUserId(response);
       provisioningAttempt = provisioningCompensator.begin(ProvisioningWorkflow.REGISTERED_USER);
@@ -198,23 +223,7 @@ public class CreateUserFacade {
         sessionId = registration.getSessionId();
       }
 
-      // The registration event contract requires a session id; a group join opens none.
-      if (sessionId != null) {
-        try {
-          RegistrationStatisticsEvent registrationEvent =
-              new RegistrationStatisticsEvent(
-                  userDTO,
-                  user,
-                  sessionId,
-                  topicService.findTopicInternalIdentifier(userDTO.getMainTopicId()),
-                  topicService.findTopicsInternalAttributes(userDTO.getTopicIds()),
-                  getTenantName(),
-                  getAgencyName(userDTO));
-          statisticsService.fireEvent(registrationEvent);
-        } catch (Exception e) {
-          log.error("Could not create registration statistics event", e);
-        }
-      }
+      recordRegistrationStatistics(userDTO, user, sessionId);
 
       activeAttempt.complete();
 
@@ -233,6 +242,92 @@ public class CreateUserFacade {
     } finally {
       compensateProvisioning(provisioningAttempt);
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
+    }
+  }
+
+  private Long createOrdinaryRegistration(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryRegistrationLifecycle
+          lifecycle,
+      UserDTO dto,
+      RecoveryPolicySnapshot snapshot,
+      ExtendedConsultingTypeResponseDTO consultingType,
+      Optional<Chat> invitedGroup,
+      de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy
+          inactivityPolicy,
+      String capturedPlainUsername) {
+    AtomicReference<User> completedUser = new AtomicReference<>();
+    String plainUsername =
+        capturedPlainUsername == null
+            ? new UsernameTranscoder().decodeUsername(dto.getUsername())
+            : capturedPlainUsername;
+    Long sessionId =
+        lifecycle.register(
+            dto,
+            TenantContext.getCurrentTenant(),
+            session -> {
+              var projection = session.projection();
+              User user =
+                  userService.createNewLifecycleUser(
+                      projection.id(),
+                      dto.getUsername(),
+                      projection.email(),
+                      isTrue(consultingType.getLanguageFormal()),
+                      projection.preferredLanguage(),
+                      snapshot,
+                      inactivityPolicy);
+              if (shouldClearPrivacyConfirmations(UserRole.USER, dto)) {
+                user.setTermsAndConditionsConfirmation(null);
+                user.setDataPrivacyConfirmation(null);
+              }
+              user.setTemporaryAccount(dto.isTemporary());
+              user.setMatrixUserId(lifecycle.createMatrixUser(session, plainUsername));
+              user = userService.saveUser(user);
+              completedUser.set(user);
+              if (invitedGroup.isPresent()) {
+                // Revalidate the actual invitation in the local transaction before creating its
+                // relation.
+                Chat current =
+                    groupInviteRegistration
+                        .resolveInvitedGroup(dto)
+                        .orElseThrow(
+                            () ->
+                                new BadRequestException(
+                                    "The invited group is no longer available."));
+                if (!current.getId().equals(invitedGroup.get().getId()))
+                  throw new BadRequestException("The invited group changed during registration.");
+                groupInviteRegistration.join(current, user);
+                return null;
+              }
+              return createNewSessionFacade
+                  .initializeOwnedRegistration(
+                      dto, user, consultingType, lifecycle.ownedRooms(session))
+                  .getSessionId();
+            });
+    recordRegistrationStatistics(dto, completedUser.get(), sessionId);
+    // The local transaction and receiver commit are both confirmed before mail is submitted.
+    try {
+      welcomeEmailService.sendWelcomeEmail(completedUser.get(), plainUsername);
+    } catch (Exception failure) {
+      log.warn("Could not schedule completed registration welcome mail");
+    }
+    return sessionId;
+  }
+
+  private void recordRegistrationStatistics(UserDTO dto, User user, Long sessionId) {
+    // The registration event requires a session id; joining an invited group opens none.
+    if (sessionId == null) return;
+    try {
+      statisticsService.fireEvent(
+          new RegistrationStatisticsEvent(
+              dto,
+              user,
+              sessionId,
+              topicService.findTopicInternalIdentifier(dto.getMainTopicId()),
+              topicService.findTopicsInternalAttributes(dto.getTopicIds()),
+              getTenantName(),
+              getAgencyName(dto)));
+    } catch (Exception failure) {
+      log.error("Could not create registration statistics event", failure);
     }
   }
 

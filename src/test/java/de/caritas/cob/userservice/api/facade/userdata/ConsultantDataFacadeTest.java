@@ -41,6 +41,20 @@ public class ConsultantDataFacadeTest {
   @Mock private AccountManager accountManager;
   @Mock private UserDtoMapper userDtoMapper;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
+  @org.junit.jupiter.api.BeforeEach
+  void readsRunDirectly() {
+    org.mockito.Mockito.lenient()
+        .when(
+            membersOnlyChatAccess.readingAcrossTraegerOfChat(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.<java.util.function.Supplier<Object>>any()))
+        .thenAnswer(
+            invocation -> invocation.<java.util.function.Supplier<Object>>getArgument(1).get());
+  }
+
   @Test
   public void updateConsultantAbsent_Should_UpdateAbsenceMessageAndIsAbsence() {
     when(consultantService.saveConsultant(Mockito.any(Consultant.class))).thenReturn(CONSULTANT);

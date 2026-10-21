@@ -2,7 +2,11 @@ package de.caritas.cob.userservice.api.admin.facade;
 
 import static java.util.Objects.nonNull;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
+import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairService;
+import de.caritas.cob.userservice.api.admin.service.IdentityReactivationSagaStore;
+import de.caritas.cob.userservice.api.admin.service.IdentityReactivationUnmutatedException;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
@@ -11,9 +15,11 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 /** Wrapper facade to provide admin operations on asker accounts. */
@@ -22,6 +28,8 @@ import org.springframework.stereotype.Service;
 public class AskerUserAdminFacade {
 
   private final @NonNull IdentityDeactivator identityDeactivator;
+  private final @NonNull IdentityReactivationSagaStore identityReactivationSagaStore;
+  private final @NonNull IdentityReactivationRepairService identityReactivationRepairService;
   private final @NonNull UserService userService;
   private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
@@ -62,6 +70,35 @@ public class AskerUserAdminFacade {
     }
     deletionLifecycleService.pauseUserDeletion(user, reason, months, pausedBy);
     userService.saveUser(user);
+  }
+
+  /**
+   * Reactivates one exact soft-deleted asker identity for a privileged operator.
+   *
+   * <p>Username alone is deliberately insufficient because historic data permits duplicates.
+   */
+  public void reactivateAsker(AskerReactivationRequestDTO request) {
+    assertCallerMayAccessTenant(request.getTenantId());
+    var operation =
+        identityReactivationSagaStore.begin(
+            request.getUsername(), request.getEmail(), request.getTenantId());
+    try {
+      identityReactivationSagaStore.reactivateAndCommit(operation, request.getPassword());
+    } catch (IdentityReactivationUnmutatedException unmutatedFailure) {
+      throw unmutatedFailure.originalFailure();
+    } catch (RuntimeException reactivationFailure) {
+      identityReactivationRepairService.compensate(operation, reactivationFailure);
+      throw reactivationFailure;
+    }
+  }
+
+  private void assertCallerMayAccessTenant(Long requestedTenantId) {
+    Long callerTenantId = TenantContext.getCurrentTenant();
+    if (callerTenantId == null
+        || (!TenantContext.TECHNICAL_TENANT_ID.equals(callerTenantId)
+            && !callerTenantId.equals(requestedTenantId))) {
+      throw new AccessDeniedException("Caller is not authorized for the requested tenant");
+    }
   }
 
   public AskerResponseDTO getAsker(String userId) {

@@ -354,7 +354,8 @@ class AgencyPasswordFreeSynapseIT {
             mock(TeamDiscussionFeatureGate.class),
             new TeamDiscussionCreationWriter(discussions),
             mock(TeamDiscussionParticipantWriter.class),
-            mock(TeamDiscussionRoomCleanupService.class));
+            mock(TeamDiscussionRoomCleanupService.class),
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class));
     var view = facade.getOrCreateDiscussion(42L, consultant.getId());
     var consultantToken = matrix.loginAsUserAccessToken(consultant.getMatrixUserId());
     assertThat(matrix.sendMessage(view.matrixRoomId(), "before archive", consultantToken))

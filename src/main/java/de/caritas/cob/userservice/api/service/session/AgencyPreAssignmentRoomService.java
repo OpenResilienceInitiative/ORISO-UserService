@@ -27,7 +27,25 @@ public class AgencyPreAssignmentRoomService {
   private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
 
   public void ensureHoldingRoom(Session session, User user) {
+    ensureHoldingRoom(session, user, null);
+  }
+
+  public void ensureHoldingRoom(
+      Session session,
+      User user,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcOwnedLifecycleEffects.Scope
+          effects) {
+    if (effects != null) {
+      if (session == null
+          || user == null
+          || session.getUser() == null
+          || !user.getUserId().equals(session.getUser().getUserId()))
+        throw new IllegalStateException("Owned holding room has no exact local owner");
+      effects.requireOwner(user.getUserId(), user.getTenantId());
+    }
     if (session == null || user == null) {
+      if (effects != null)
+        throw new IllegalStateException("Owned holding room outcome is incomplete");
       return;
     }
 
@@ -36,12 +54,16 @@ public class AgencyPreAssignmentRoomService {
           "Session {} already has Matrix room {} configured, skipping agency holding room.",
           session.getId(),
           session.getMatrixRoomId());
+      if (effects != null)
+        throw new IllegalStateException("Owned holding room outcome is incomplete");
       return;
     }
 
     if (session.getAgencyId() == null) {
       log.debug(
           "Session {} has no agency assigned, skipping Matrix holding room.", session.getId());
+      if (effects != null)
+        throw new IllegalStateException("Owned holding room outcome is incomplete");
       return;
     }
 
@@ -50,6 +72,8 @@ public class AgencyPreAssignmentRoomService {
           "User {} missing Matrix user ID, skipping agency holding room for session {}",
           user.getUserId(),
           session.getId());
+      if (effects != null)
+        throw new IllegalStateException("Owned holding room outcome is incomplete");
       return;
     }
 
@@ -61,6 +85,8 @@ public class AgencyPreAssignmentRoomService {
           "No Matrix service account available for agency {}. Session {} will not have holding room.",
           session.getAgencyId(),
           session.getId());
+      if (effects != null)
+        throw new IllegalStateException("Owned holding room outcome is incomplete");
       return;
     }
 
@@ -71,6 +97,8 @@ public class AgencyPreAssignmentRoomService {
           "Matrix service account configuration incomplete for agency {}. Skipping holding room for session {}.",
           session.getAgencyId(),
           session.getId());
+      if (effects != null)
+        throw new IllegalStateException("Owned holding room outcome is incomplete");
       return;
     }
 
@@ -82,6 +110,8 @@ public class AgencyPreAssignmentRoomService {
           credentials.getMatrixUserId(),
           session.getAgencyId(),
           session.getId());
+      if (effects != null)
+        throw new IllegalStateException("Owned holding room outcome is incomplete");
       return;
     }
 
@@ -89,9 +119,15 @@ public class AgencyPreAssignmentRoomService {
     String roomName = buildRoomName(session, credentials.getMatrixUserId());
 
     try {
-      String roomId = sessionRoomGateway.createRoom(roomName, roomAlias, agencyToken);
+      String roomId =
+          effects == null
+              ? sessionRoomGateway.createRoom(roomName, roomAlias, agencyToken)
+              : sessionRoomGateway.createRoom(
+                  roomName, roomAlias, agencyToken, effects.privateRoom());
       if (isBlank(roomId)) {
         log.error("Matrix create room returned empty body for session {}", session.getId());
+        if (effects != null)
+          throw new IllegalStateException("Owned holding room outcome is incomplete");
         return;
       }
 
@@ -108,6 +144,8 @@ public class AgencyPreAssignmentRoomService {
             user.getUserId(),
             roomId,
             session.getId());
+        if (effects != null)
+          throw new IllegalStateException("Owned holding room outcome is incomplete");
         return;
       }
 
@@ -121,6 +159,8 @@ public class AgencyPreAssignmentRoomService {
           session.getAgencyId());
 
     } catch (MatrixCreateRoomException ex) {
+      if (effects != null)
+        throw new IllegalStateException("Owned holding room creation is unconfirmed");
       log.error(
           "Could not create agency holding room for session {}: {}",
           session.getId(),

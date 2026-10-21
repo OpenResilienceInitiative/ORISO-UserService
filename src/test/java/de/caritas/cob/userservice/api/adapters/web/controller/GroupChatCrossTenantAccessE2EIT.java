@@ -215,6 +215,12 @@ class GroupChatCrossTenantAccessE2EIT {
                 return org.springframework.test.web.client.response.MockRestResponseCreators
                     .withNoContent()
                     .createResponse(request);
+              if (path.matches("/tenantadmin/\\d+/permission-policies"))
+                // A TenantService that does not know the internal-group-chat recipient scope.
+                return org.springframework.test.web.client.response.MockRestResponseCreators
+                    .withSuccess(
+                        "{\"policies\":{}}", org.springframework.http.MediaType.APPLICATION_JSON)
+                    .createResponse(request);
               throw new AssertionError("Unexpected identity HTTP path: " + path);
             });
   }

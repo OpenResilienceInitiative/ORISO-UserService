@@ -28,6 +28,8 @@ public class DirectSessionMatrixRoomService {
   private final @NonNull SessionService sessionService;
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
+  private final @NonNull de.caritas.cob.userservice.api.helper.UsernameTranscoder
+      usernameTranscoder;
 
   /**
    * Creates a Matrix room between {@code consultant} and the session's user, invites both parties,
@@ -36,7 +38,22 @@ public class DirectSessionMatrixRoomService {
    * session object back.
    */
   public void provisionRoomForDirectSession(Session session, Consultant consultant) {
+    provisionRoomForDirectSession(session, consultant, null);
+  }
+
+  public void provisionRoomForDirectSession(
+      Session session,
+      Consultant consultant,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcOwnedLifecycleEffects.Scope
+          effects) {
+    if (effects != null) {
+      if (session == null || session.getUser() == null || consultant == null)
+        throw new IllegalStateException("Owned direct room has no exact local owner");
+      effects.requireOwner(session.getUser().getUserId(), session.getUser().getTenantId());
+    }
     if (session == null || consultant == null) {
+      if (effects != null)
+        throw new IllegalStateException("Owned direct room outcome is incomplete");
       return;
     }
     if (session.getMatrixRoomId() != null && !session.getMatrixRoomId().isBlank()) {
@@ -44,16 +61,20 @@ public class DirectSessionMatrixRoomService {
           "Session {} already has Matrix room {}, skipping direct-session room provisioning",
           session.getId(),
           session.getMatrixRoomId());
+      if (effects != null)
+        throw new IllegalStateException("Owned direct room outcome is incomplete");
       return;
     }
 
     try {
-      ensureConsultantMatrixAccount(consultant);
+      if (effects == null) ensureConsultantMatrixAccount(consultant);
       var user = session.getUser();
       if (user == null || user.getMatrixUserId() == null) {
         log.warn(
             "User for session {} has no Matrix account, cannot provision direct-session room",
             session.getId());
+        if (effects != null)
+          throw new IllegalStateException("Owned direct room outcome is incomplete");
         return;
       }
       if (!ConsultantChatIdentityService.hasChatIdentity(consultant)) {
@@ -62,6 +83,8 @@ public class DirectSessionMatrixRoomService {
             session.getId(),
             ConsultantChatIdentityService.missingChatIdentityMessage(
                 "Consultant", consultant.getId()));
+        if (effects != null)
+          throw new IllegalStateException("Owned direct room outcome is incomplete");
         return;
       }
 
@@ -69,10 +92,16 @@ public class DirectSessionMatrixRoomService {
       var roomAlias = "session_" + session.getId();
 
       var roomId =
-          sessionRoomGateway.createRoomAsUser(roomName, roomAlias, consultant.getMatrixUserId());
+          effects == null
+              ? sessionRoomGateway.createRoomAsUser(
+                  roomName, roomAlias, consultant.getMatrixUserId())
+              : sessionRoomGateway.createRoomAsUser(
+                  roomName, roomAlias, consultant.getMatrixUserId(), effects.privateRoom());
       if (roomId == null) {
         log.error(
             "Matrix createRoomAsConsultant returned no room id for session {}", session.getId());
+        if (effects != null)
+          throw new IllegalStateException("Owned direct room outcome is incomplete");
         return;
       }
 
@@ -86,12 +115,16 @@ public class DirectSessionMatrixRoomService {
             consultant.getUsername(),
             roomId,
             session.getId());
+        if (effects != null)
+          throw new IllegalStateException("Owned direct room outcome is incomplete");
         return;
       }
 
       try {
         sessionRoomGateway.inviteUser(roomId, user.getMatrixUserId(), consultantToken);
       } catch (Exception ex) {
+        if (effects != null)
+          throw new IllegalStateException("Owned direct room invitation is unconfirmed");
         log.warn(
             "Failed to invite user {} to direct-session room {}: {}",
             user.getMatrixUserId(),
@@ -106,10 +139,14 @@ public class DirectSessionMatrixRoomService {
           if (joined) {
             log.info("User {} auto-joined direct-session room {}", user.getUsername(), roomId);
           } else {
+            if (effects != null)
+              throw new IllegalStateException("Owned direct room join is unconfirmed");
             log.warn(
                 "User {} failed to auto-join direct-session room {}", user.getUsername(), roomId);
           }
         } else {
+          if (effects != null)
+            throw new IllegalStateException("Owned direct room user login is unconfirmed");
           log.warn(
               "Could not create Matrix token for user {} to auto-join direct-session room {}",
               user.getUsername(),
@@ -118,6 +155,8 @@ public class DirectSessionMatrixRoomService {
       }
 
       boolean consultantJoined = sessionRoomGateway.joinRoom(roomId, consultantToken);
+      if (effects != null && !consultantJoined)
+        throw new IllegalStateException("Owned direct room consultant join is unconfirmed");
       if (consultantJoined) {
         log.info(
             "Consultant {} confirmed in direct-session room {} (session {})",
@@ -141,6 +180,8 @@ public class DirectSessionMatrixRoomService {
           consultant.getUsername(),
           user.getUsername());
     } catch (Exception ex) {
+      if (effects != null)
+        throw new IllegalStateException("Owned direct room provisioning is unconfirmed");
       log.error(
           "Failed to provision direct-session Matrix room for session {}: {}",
           session.getId(),
@@ -157,7 +198,7 @@ public class DirectSessionMatrixRoomService {
     try {
       var matrixUserId =
           sessionRoomGateway.createUser(
-              consultant.getUsername(),
+              usernameTranscoder.decodeUsername(consultant.getUsername()),
               generatedMatrixPassword,
               consultantDisplayNameResolver.resolveMatrixDisplayName(consultant));
       if (matrixUserId != null) {
