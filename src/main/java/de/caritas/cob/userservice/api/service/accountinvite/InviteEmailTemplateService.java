@@ -1,15 +1,19 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class InviteEmailTemplateService {
 
   private final @NonNull InviteEmailTemplateRepository templateRepository;
+  private final @NonNull AccountInviteRepository inviteRepository;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull AccountInviteAccessPolicy accessPolicy;
 
@@ -26,7 +31,7 @@ public class InviteEmailTemplateService {
     // Creating is open to every admin who may send invites (ORISO-Admin#1026 Q30/Q31).
     // What makes that safe is the owner stamped here: a Träger's template belongs to
     // that Träger and is invisible to the others. The platform admin writes templates
-    // with no owner, which everyone may use but only the platform admin may change.
+    // with no owner; only built-in system defaults are shared with scoped admins.
     Long ownerTenantId = accessPolicy.templateOwnerTenantId();
     validate(command);
     // Which kinds a role may write: BST admin counsellor invites only, Träger admin also
@@ -72,8 +77,34 @@ public class InviteEmailTemplateService {
     return templateRepository.save(template);
   }
 
+  /** Removes custom templates only; queued invites and already sent snapshots stay intact. */
+  @Transactional
+  public void deleteTemplate(Long templateId) {
+    InviteEmailTemplate template =
+        templateRepository
+            .findById(templateId)
+            .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    accessPolicy.authorizeTemplateUpdate(template.getTenantId(), template.getKind());
+    if (Boolean.TRUE.equals(template.getSystemDefault())) {
+      throw new ForbiddenException("A system default template cannot be deleted");
+    }
+    if (inviteRepository.existsByQueuedTemplateIdAndStatus(
+        templateId, AccountInviteStatus.WAITING_FOR_UNIT)) {
+      throw new ConflictException("Invite e-mail template is used by queued invitations");
+    }
+    try {
+      inviteRepository.clearReleasedTemplateReferences(
+          templateId, AccountInviteStatus.WAITING_FOR_UNIT);
+      templateRepository.delete(template);
+      // Flush here so a concurrently committed queue reference returns 409, not a late 500.
+      templateRepository.flush();
+    } catch (DataIntegrityViolationException referencedMeanwhile) {
+      throw new ConflictException("Invite e-mail template is still referenced by invitations");
+    }
+  }
+
   /**
-   * Own templates plus the platform's; the platform admin sees every Träger's. Only kinds the
+   * Own templates plus system defaults; the platform admin sees every Träger's. Only kinds the
    * caller may use: asking for another kind lists nothing, as the invite list does.
    */
   @Transactional(readOnly = true)
@@ -114,7 +145,10 @@ public class InviteEmailTemplateService {
         templateRepository
             .findById(templateId)
             .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
-    accessPolicy.authorizeTemplateUse(template.getTenantId(), template.getKind());
+    accessPolicy.authorizeTemplateUse(
+        template.getTenantId(),
+        template.getKind(),
+        Boolean.TRUE.equals(template.getSystemDefault()));
     return template;
   }
 

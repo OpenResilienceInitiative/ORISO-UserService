@@ -191,6 +191,33 @@ class ApiResponseEntityExceptionHandlerTest {
   }
 
   @Test
+  void handleCustomConflict_withReason_exposesItInTheReasonHeader() {
+    // Business reason: a client must tell "the case owner changed" from a transient lock conflict.
+    var response =
+        handler.handleCustomConflict(
+            new ConflictException("owner changed", HttpStatusExceptionReason.CASE_OWNER_CHANGED),
+            request);
+
+    assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+    assertEquals("CASE_OWNER_CHANGED", response.getHeaders().getFirst("X-Reason"));
+    assertNull(response.getBody());
+  }
+
+  @Test
+  void handleCustomConflict_withoutReason_andLockConflicts_carryNoReasonHeader() {
+    assertNull(
+        handler
+            .handleCustomConflict(new ConflictException("c"), request)
+            .getHeaders()
+            .getFirst("X-Reason"));
+    assertNull(
+        handler
+            .handleConflict(new OptimisticLockingFailureException("stale"), request)
+            .getHeaders()
+            .getFirst("X-Reason"));
+  }
+
+  @Test
   void handleDistributedTransactionException_returnsFailedDependencyWithReasonHeader() {
     // Business reason: partial transaction failures need explicit step metadata for support teams.
     var info =

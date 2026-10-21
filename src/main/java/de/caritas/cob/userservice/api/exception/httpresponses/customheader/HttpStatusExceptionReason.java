@@ -57,5 +57,7 @@ public enum HttpStatusExceptionReason {
   /** Another request for the same people is still being processed; try again. */
   INTERNAL_CHAT_BUSY,
   /** The session of a members-only chat ends with its chat; stop the chat instead. */
-  MEMBERS_ONLY_CHAT_STOP_REQUIRED
+  MEMBERS_ONLY_CHAT_STOP_REQUIRED,
+  /** The case owner changed after the case handover request or offer was created. */
+  CASE_OWNER_CHANGED
 }

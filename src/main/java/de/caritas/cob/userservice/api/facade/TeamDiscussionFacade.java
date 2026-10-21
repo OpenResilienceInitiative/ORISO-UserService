@@ -274,6 +274,13 @@ public class TeamDiscussionFacade {
           ConsultantChatIdentityService.missingChatIdentityMessage(
               "Consultant", consultant.getId()));
     }
+    // Every open of a request lands here. Inviting a counsellor who is already in the room changes
+    // nothing but spends their Matrix invite allowance (rc_invites per_user), and once that runs
+    // out every invite waits minutes and the request times out (FE#1799).
+    if (isJoinedMember(discussion.getMatrixRoomId(), consultant.getMatrixUserId())) {
+      recordParticipant(discussion, consultant.getId());
+      return;
+    }
     String agencyToken = loginAgencyOperator(session);
     try {
       try {
@@ -302,6 +309,14 @@ public class TeamDiscussionFacade {
           HttpStatus.BAD_GATEWAY, "Could not join the team discussion", ex);
     }
     recordParticipant(discussion, consultant.getId());
+  }
+
+  /** Unknown membership counts as not joined, so the invite-and-join path still runs. */
+  private boolean isJoinedMember(String roomId, String matrixUserId) {
+    return matrixSynapseService
+        .getRoomMembers(roomId)
+        .map(members -> members.contains(matrixUserId))
+        .orElse(false);
   }
 
   private void recordParticipant(TeamDiscussion discussion, String consultantId) {

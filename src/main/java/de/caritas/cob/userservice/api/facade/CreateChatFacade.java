@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
@@ -23,12 +24,14 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService;
 import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
-import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
+import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,7 +53,9 @@ public class CreateChatFacade {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull de.caritas.cob.userservice.api.port.out.UserRepository userRepository;
+  private final @NonNull AgencySilentMembershipService consultantMembership;
   private final @NonNull GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
+  private final @NonNull GroupChatMatrixCleanupService matrixCleanup;
 
   /**
    * Creates a group chat in MariaDB and Matrix.
@@ -59,6 +64,7 @@ public class CreateChatFacade {
    * @param consultant {@link Consultant}
    * @return the generated chat link URL (String)
    */
+  @org.springframework.transaction.annotation.Transactional
   public CreateChatResponseDTO createChatV1(ChatDTO chatDTO, Consultant consultant) {
     return createMatrixGroupChat(chatDTO, consultant, null).response();
   }
@@ -70,6 +76,7 @@ public class CreateChatFacade {
    * @param consultant {@link Consultant}
    * @return the generated chat link URL (String)
    */
+  @org.springframework.transaction.annotation.Transactional
   public CreateChatResponseDTO createChatV2(ChatDTO chatDTO, Consultant consultant) {
     return createMatrixGroupChat(chatDTO, consultant, null).response();
   }
@@ -115,7 +122,37 @@ public class CreateChatFacade {
     List<String> participantIds =
         chatDTO.getConsultantIds() == null ? List.of() : chatDTO.getConsultantIds();
     Long agencyId = resolveAgencyId(chatDTO, consultant);
+    var selectedIds =
+        participantIds.stream()
+            .distinct()
+            .filter(id -> !Objects.equals(id, consultant.getId()))
+            .toList();
+    if (selectedIds.stream().anyMatch(id -> id == null || id.isBlank())) {
+      throw new BadRequestException("Invalid selected consultant");
+    }
+    var activeById =
+        selectedIds.isEmpty()
+            ? java.util.Map.<String, Consultant>of()
+            : consultantRepository.findByIdInAndDeleteDateIsNull(selectedIds).stream()
+                .collect(
+                    java.util.stream.Collectors.toMap(
+                        Consultant::getId, java.util.function.Function.identity()));
+    List<Consultant> participants =
+        selectedIds.stream()
+            .map(
+                id -> {
+                  var participant = activeById.get(id);
+                  if (participant == null)
+                    throw new BadRequestException("Selected consultant is not active");
+                  if (consultant.getTenantId() == null
+                      || !Objects.equals(consultant.getTenantId(), participant.getTenantId())) {
+                    throw new BadRequestException("Selected consultant belongs to another tenant");
+                  }
+                  return participant;
+                })
+            .toList();
     groupCounsellingDpaPolicy.requireCreation(chatDTO, agencyId, consultant);
+    matrixCleanup.lockOwner(consultant);
 
     // Create a session for the group (needed for backend logic)
     Session session = new Session();
@@ -158,6 +195,7 @@ public class CreateChatFacade {
     String matrixRoomId = null;
     Long sessionId = null;
     Long chatId = null;
+    Long cleanupTaskId = null;
 
     // The first writes are inside the guarded block too: whatever fails after the session is
     // saved leaves nothing behind.
@@ -185,20 +223,23 @@ public class CreateChatFacade {
       String roomName = chatDTO.getTopic();
       String roomAlias = "group_chat_" + sessionId;
 
-      if (!ConsultantChatIdentityService.hasChatIdentity(consultant)) {
-        throw new InternalServerErrorException(
-            ConsultantChatIdentityService.missingChatIdentityMessage(
-                "Consultant", consultant.getId()));
+      String ownerMatrixUserId = consultantMembership.ensureMatrixAccount(consultant);
+      if (ownerMatrixUserId == null || ownerMatrixUserId.isBlank()) {
+        throw new InternalServerErrorException("Consultant does not have Matrix credentials");
       }
 
       var matrixResponse =
           membersOnly
               ? matrixSynapseService.createMembersOnlyRoomAsMatrixUser(
-                  roomName, roomAlias, consultant.getMatrixUserId())
-              : matrixSynapseService.createRoomAsMatrixUser(
-                  roomName, roomAlias, consultant.getMatrixUserId());
+                  roomName, roomAlias, ownerMatrixUserId)
+              : matrixSynapseService.createRoomAsMatrixUser(roomName, roomAlias, ownerMatrixUserId);
 
       matrixRoomId = matrixResponse.getBody().getRoomId();
+      cleanupTaskId =
+          matrixCleanup.recordRoom(
+              new GroupChatMatrixCleanupService.GroupOwner(
+                  chatId, consultant.getId(), consultant.getTenantId()),
+              matrixRoomId);
       log.info("Created Matrix room: {} for group chat session: {}", matrixRoomId, sessionId);
 
       // Persist the Matrix room ID on both domain records.
@@ -211,8 +252,7 @@ public class CreateChatFacade {
       createChatAgencyRelation(chat, agencyId);
 
       // Get consultant token for inviting others
-      String consultantToken =
-          matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
+      String consultantToken = matrixSynapseService.loginAsUserAccessToken(ownerMatrixUserId);
       if (consultantToken == null) {
         throw new InternalServerErrorException("Could not create Matrix token for consultant");
       }
@@ -226,6 +266,7 @@ public class CreateChatFacade {
       groupChatParticipantRepository.save(creatorParticipant);
       log.info("Added creator consultant {} to group_chat_participant", consultant.getId());
 
+      int joinedParticipants = 1;
       if (membersOnly) {
         for (Consultant colleague : membersOnlyColleagues) {
           addColleagueStrictly(matrixRoomId, consultantToken, colleague);
@@ -235,43 +276,24 @@ public class CreateChatFacade {
           member.setRole(GroupChatParticipant.ParticipantRole.CO_MODERATOR);
           member.setConsultantId(colleague.getId());
           groupChatParticipantRepository.save(member);
+          joinedParticipants++;
         }
       }
 
       // Invite and auto-join all selected consultants
-      for (String participantId : membersOnly ? List.<String>of() : participantIds) {
-        try {
-          Consultant participant = consultantRepository.findById(participantId).orElse(null);
-          if (participant == null) {
-            log.warn("Consultant {} not found, skipping", participantId);
-            continue;
-          }
-
-          // Invite to Matrix room
-          matrixSynapseService.inviteUserToRoom(
-              matrixRoomId, participant.getMatrixUserId(), consultantToken);
-
-          // Auto-join the participant
-          String participantToken =
-              matrixSynapseService.loginAsUserAccessToken(participant.getMatrixUserId());
-          if (participantToken != null) {
-            matrixSynapseService.joinRoom(matrixRoomId, participantToken);
-            log.info("Consultant {} joined group chat room: {}", participantId, matrixRoomId);
-          }
-
-          // Save participant in group_chat_participant table (for querying who's in the group)
-          GroupChatParticipant gcp = new GroupChatParticipant();
-          gcp.setChatId(sessionId); // Link to session ID
-          gcp.setSeriesId(chatId);
-          gcp.setRole(GroupChatParticipant.ParticipantRole.CO_MODERATOR);
-          gcp.setConsultantId(participantId);
-          groupChatParticipantRepository.save(gcp);
-
-        } catch (Exception e) {
-          log.error(
-              "Failed to invite consultant {} to group chat: {}", participantId, e.getMessage());
-          // Continue with other participants
+      for (Consultant participant : membersOnly ? List.<Consultant>of() : participants) {
+        if (!consultantMembership.joinConsultantIntoRoom(
+            participant, matrixRoomId, consultantToken)) {
+          throw new InternalServerErrorException(
+              "Selected consultant could not join the group chat");
         }
+        GroupChatParticipant gcp = new GroupChatParticipant();
+        gcp.setChatId(sessionId);
+        gcp.setSeriesId(chatId);
+        gcp.setRole(GroupChatParticipant.ParticipantRole.CO_MODERATOR);
+        gcp.setConsultantId(participant.getId());
+        groupChatParticipantRepository.save(gcp);
+        joinedParticipants++;
       }
 
       appointmentEvents.recordCreated(chat);
@@ -282,8 +304,9 @@ public class CreateChatFacade {
           sessionId,
           chatId,
           matrixRoomId,
-          participantIds.size() + 1); // +1 for creator
+          joinedParticipants);
 
+      matrixCleanup.clear(cleanupTaskId);
       return new CreatedChat(
           new CreateChatResponseDTO()
               .matrixRoomId(matrixRoomId)
@@ -303,6 +326,21 @@ public class CreateChatFacade {
               "Members-only room {} could not be removed after a failed creation and must be"
                   + " purged by an operator",
               matrixRoomId);
+        }
+      }
+      if (cleanupTaskId != null) {
+        matrixCleanup.compensate(cleanupTaskId);
+      } else if (matrixRoomId != null) {
+        // A failed journal write cannot authorize leaving an untracked created room behind.
+        try {
+          if (!matrixCleanup.purgeUnjournaledRoom(matrixRoomId)) {
+            log.error(
+                "New group room {} needs manual cleanup: journal and purge failed", matrixRoomId);
+          }
+        } catch (RuntimeException cleanupFailure) {
+          e.addSuppressed(cleanupFailure);
+          log.error(
+              "New group room {} needs manual cleanup: journal and purge failed", matrixRoomId);
         }
       }
       // Rollback: delete session and chat. A step that fails is remembered: the caller must not be

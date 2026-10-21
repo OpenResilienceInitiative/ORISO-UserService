@@ -63,6 +63,12 @@ public interface GroupChatParticipantRepository extends CrudRepository<GroupChat
 
   /** Whether the consultant takes part in the group chat of this session ({@code chat_id}). */
   boolean existsByChatIdAndConsultantId(Long chatId, String consultantId);
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select participant from GroupChatParticipant participant "
+          + "where participant.seriesId = :seriesId and participant.consultantId = :consultantId")
+  Optional<GroupChatParticipant> findBySeriesIdAndConsultantIdForUpdate(
+      @Param("seriesId") Long seriesId, @Param("consultantId") String consultantId);
 
   /** Delete all canonical participant relations before deleting their chat series. */
   void deleteBySeriesId(Long seriesId);
