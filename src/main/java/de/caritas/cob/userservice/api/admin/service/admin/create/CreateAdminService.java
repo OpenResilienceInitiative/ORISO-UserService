@@ -287,14 +287,14 @@ public class CreateAdminService {
       de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos.CreationScope
           scope,
       java.util.function.Function<Admin, T> finish) {
-    buildValidatedUserDTO(dto);
+    var validated = buildValidatedUserDTO(dto);
     if (StringUtils.isBlank(dto.getPassword()))
       throw new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
           "Password is required for administrator creation");
     var account =
         new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
             .AccountCreation(
-            dto.getUsername(),
+            validated.getUsername(),
             dto.getEmail(),
             dto.getFirstname(),
             dto.getLastname(),

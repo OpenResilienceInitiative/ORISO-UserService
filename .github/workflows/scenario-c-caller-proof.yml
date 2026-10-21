@@ -1,0 +1,202 @@
+name: Scenario C caller proof
+
+on:
+  push:
+    branches: [codex/367-c-caller-finish-20261021]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: caller-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  caller-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SCENARIO_C_DEV_BASE: c944417d9d664d35d63b31bb57c55f852c2d783c
+      MAVEN_OPTS: -Xmx1024m -XX:ActiveProcessorCount=2
+      JAVA_TOOL_OPTIONS: -Xmx512m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21.0.12+8.0.LTS'
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: 3.12.13
+      - name: Prove the admin encoding regression before focused tests and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, shutil, signal, subprocess, sys
+          import xml.etree.ElementTree as ET
+
+          root = pathlib.Path.cwd()
+          proof = root / 'target/scenario-c-caller-proof'
+          proof.mkdir(parents=True, exist_ok=True)
+          target_class = 'de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminServiceTest'
+          target_method = 'fiveActorSingleTenantAdminKeepsTheTrustedConcreteTenantInTheCreatedRow'
+          expected_encoding = 'enc.MFTWK3TDPEWWCZDNNFXCWZDFNVXQ....'
+          # These floors are the previously frozen 281-test/23-suite caller scope.
+          floors = {'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodecTest': 9, 'de.caritas.cob.userservice.api.facade.conversation.CreateAnonymousEnquiryFacadeTest': 8, 'de.caritas.cob.userservice.api.service.ConsultantImportServiceTest': 12, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDispatcherTest': 5, 'de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSagaTest': 41, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCallerConfigurationTest': 4, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcAccountLifecycleJournalTest': 10, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryCreationAuthorizationTest': 7, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleRetryFairnessSqlTest': 4, 'de.caritas.cob.userservice.api.service.accountinvite.AgencyAdminInviteProvisioningServiceTest': 5, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OwnedRegistrationRoomGatewayTest': 3, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCoordinatorTest': 10, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryCreationWorkflowSqlTest': 3, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleScopeBoundsTest': 12, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryCreationTenantResolverTest': 7, 'de.caritas.cob.userservice.api.facade.CreateUserFacadeTest': 38, 'de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminServiceTest': 13, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OwnedCreationEffectCleanupTest': 2, 'de.caritas.cob.userservice.api.admin.service.user.anonymous.AnonymousUsernameRegistryTest': 16, 'de.caritas.cob.userservice.api.service.appointment.AppointmentServiceTest': 25, 'de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningServiceTest': 26, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakAccountLifecycleCommandsTest': 6, 'de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorServiceTest': 15}
+
+          def git(*args):
+              return subprocess.check_output(['git', *args]).decode().strip()
+
+          def snapshot():
+              paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+              values = {}
+              for p in sorted(p for p in paths if p):
+                  path = root / p
+                  data = b'symlink\0' + os.readlink(path).encode() if path.is_symlink() else path.read_bytes()
+                  values[p] = hashlib.sha256(data).hexdigest()
+              return values
+
+          inputs = snapshot()
+          (proof / 'source-before.json').write_text(json.dumps(inputs, indent=2) + '\n')
+          (proof / 'checkout.json').write_text(json.dumps({
+              'commit': git('rev-parse', 'HEAD'), 'parents': git('show', '-s', '--format=%P', 'HEAD'),
+              'devBase': os.environ['SCENARIO_C_DEV_BASE'], 'expectedSuites': floors,
+              'local281ProofIsHostedProof': False,
+          }, indent=2) + '\n')
+          subprocess.run(['git', 'merge-base', '--is-ancestor', os.environ['SCENARIO_C_DEV_BASE'], 'HEAD'], check=True)
+          wrapper = (root / '.mvn/wrapper/maven-wrapper.properties').read_text()
+          expected_url = 'https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.15/apache-maven-3.9.15-bin.zip'
+          assert ('distributionUrl=' + expected_url) in wrapper.splitlines(), 'Unexpected Maven wrapper distribution'
+          changed = subprocess.check_output(['git', 'diff', '--name-only', os.environ['SCENARIO_C_DEV_BASE'], 'HEAD', '--', '*.java']).decode().splitlines()
+          scoped = [str(root / p) for p in sorted(changed) if (root / p).is_file()]
+          assert scoped, 'Missing scoped Java formatting inventory'
+          (proof / 'spotless-scope.json').write_text(json.dumps(scoped, indent=2) + '\n')
+          common = ['./mvnw', '-B', '-ntp', '-Dmaven.wagon.http.retryHandler.count=3',
+                    '-DspotlessFiles=' + '|'.join(re.escape(p) for p in scoped)]
+
+          def execute(argv, log, seconds):
+              with log.open('w') as output:
+                  child = subprocess.Popen(argv, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+                  try:
+                      return child.wait(timeout=seconds)
+                  except subprocess.TimeoutExpired:
+                      os.killpg(child.pid, signal.SIGTERM)
+                      try:
+                          child.wait(timeout=10)
+                      except subprocess.TimeoutExpired:
+                          os.killpg(child.pid, signal.SIGKILL)
+                          child.wait()
+                      return 124
+
+          # Only the tool bootstrap may retry. Product test failures are never retried or suppressed.
+          for attempt in range(1, 4):
+              status = execute(['./mvnw', '--version'], proof / f'toolchain-{attempt}.log', 120)
+              if status == 0:
+                  break
+          if status:
+              raise SystemExit(status)
+          version = (proof / f'toolchain-{attempt}.log').read_text()
+          assert 'Apache Maven 3.9.15' in version, 'Wrong Maven runtime'
+          assert 'Java version: 21.0.12' in version, 'Wrong Java runtime'
+
+          def inventory(phase, status):
+              reports = root / 'target/surefire-reports'
+              destination = proof / phase / 'surefire-reports'
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              if reports.exists():
+                  shutil.move(str(reports), str(destination))
+              suites, cases = {}, []
+              for report in sorted(destination.glob('TEST-*.xml')):
+                  suite = ET.parse(report).getroot()
+                  name = suite.attrib['name']
+                  assert name not in suites, 'Duplicate suite report'
+                  suites[name] = {key: int(suite.get(key, '0')) for key in ('tests', 'failures', 'errors', 'skipped')}
+                  observed = suite.findall('testcase')
+                  assert len(observed) == suites[name]['tests'], 'Incomplete testcase XML inventory'
+                  assert sum(len(case.findall('skipped')) for case in observed) == suites[name]['skipped'], 'Inconsistent skip inventory'
+                  cases.extend(observed)
+              totals = {key: sum(s[key] for s in suites.values()) for key in ('tests', 'failures', 'errors', 'skipped')}
+              result = {'phase': phase, 'mavenExit': status, 'freshReports': True, 'suites': suites, 'totals': totals}
+              if phase == 'regression':
+                  exact = len(cases) == 1 and cases[0].get('classname') == target_class and cases[0].get('name') == target_method
+                  failures = cases[0].findall('failure') if exact else []
+                  detail = '\n'.join((f.get('message', '') + '\n' + (f.text or '')) for f in failures)
+                  encoding_red = (exact and status == 1 and totals == {'tests': 1, 'failures': 1, 'errors': 0, 'skipped': 0}
+                                  and expected_encoding in detail and 'agency-admin+demo' in detail)
+                  result['classification'] = 'PUBLIC_SERVICE_ENCODING_ASSERTION_RED' if encoding_red else 'PASS' if exact and status == 0 and totals == {'tests': 1, 'failures': 0, 'errors': 0, 'skipped': 0} else 'INCONCLUSIVE_OR_OTHER_FAILURE'
+                  valid = exact and status == 0 and totals == {'tests': 1, 'failures': 0, 'errors': 0, 'skipped': 0}
+              else:
+                  valid = (status == 0 and totals['tests'] >= 281 and len(suites) >= 23
+                           and totals['failures'] == totals['errors'] == totals['skipped'] == 0
+                           and all(suites.get(name, {}).get('tests', 0) >= floor for name, floor in floors.items()))
+              if phase != 'regression':
+                  result['classification'] = 'PASS' if valid else 'INCOMPLETE_OR_FAILED'
+              result['acceptedGreen'] = valid
+              (proof / phase / 'inventory.json').write_text(json.dumps(result, indent=2) + '\n')
+              print(json.dumps({'phase': phase, 'classification': result['classification'], 'totals': totals, 'acceptedGreen': valid}))
+              return valid
+
+          def test_phase(phase, selector, seconds):
+              assert not (root / 'target/surefire-reports').exists(), 'Stale test report directory'
+              argv = [*common, 'test', '-Dtest=' + selector]
+              (proof / (phase + '-command.json')).write_text(json.dumps(argv, indent=2) + '\n')
+              status = execute(argv, proof / (phase + '.log'), seconds)
+              valid = inventory(phase, status)
+              assert snapshot() == inputs, 'Source or resource changed during Maven'
+              if status or not valid:
+                  # An expected diagnostic RED remains a failed job; setup/compile failures are not product RED.
+                  raise SystemExit(status or 1)
+
+          test_phase('regression', target_class + '#' + target_method, 600)
+          selectors = ','.join(floors)
+          test_phase('focused', selectors, 600)
+          argv = [*common, 'package', '-Dskip.unit-tests=true', '-Dskip.integration-tests=true', '-DskipTests']
+          (proof / 'package-command.json').write_text(json.dumps(argv, indent=2) + '\n')
+          status = execute(argv, proof / 'package.log', 300)
+          jars = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted((root / 'target').glob('*.jar'))}
+          (proof / 'package.json').write_text(json.dumps({'exit': status, 'jars': jars, 'usesVerifiedFocusedTests': True}, indent=2) + '\n')
+          assert snapshot() == inputs, 'Source or resource changed while packaging'
+          if status or not jars:
+              raise SystemExit(status or 1)
+          PY
+      - name: Preserve source stability and interrupted reports
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, shutil, subprocess
+          root = pathlib.Path.cwd()
+          proof = root / 'target/scenario-c-caller-proof'
+          proof.mkdir(parents=True, exist_ok=True)
+          reports = root / 'target/surefire-reports'
+          if reports.exists():
+              shutil.move(str(reports), str(proof / 'interrupted-surefire-reports'))
+          names = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+          after = {}
+          for p in sorted(p for p in names if p):
+              path = root / p
+              data = b'symlink\0' + os.readlink(path).encode() if path.is_symlink() else path.read_bytes()
+              after[p] = hashlib.sha256(data).hexdigest()
+          (proof / 'source-after.json').write_text(json.dumps(after, indent=2) + '\n')
+          before = proof / 'source-before.json'
+          stable = before.exists() and json.loads(before.read_text()) == after
+          (proof / 'source-stability.json').write_text(json.dumps({'stable': stable}, indent=2) + '\n')
+          if not stable:
+              raise SystemExit('Missing or changed full source/resource manifest')
+          PY
+      - name: Upload complete caller proof, including diagnostic RED evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: scenario-c-caller-${{ github.sha }}
+          path: target/scenario-c-caller-proof/
+          if-no-files-found: error
+          retention-days: 14
