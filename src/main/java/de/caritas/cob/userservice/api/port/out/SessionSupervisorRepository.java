@@ -79,6 +79,13 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
       Long sessionId, String consultantId);
 
   /**
+   * Whether the Matrix account currently supervises the session. A single boolean read that needs
+   * no lazy loading, so it is safe outside a transaction.
+   */
+  boolean existsBySessionIdAndIsActiveTrueAndSupervisorConsultantMatrixUserId(
+      Long sessionId, String matrixUserId);
+
+  /**
    * Count active supervisors for a session.
    *
    * @param sessionId the session ID

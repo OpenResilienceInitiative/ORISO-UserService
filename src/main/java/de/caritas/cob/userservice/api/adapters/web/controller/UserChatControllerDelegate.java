@@ -4,6 +4,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -12,6 +14,7 @@ import de.caritas.cob.userservice.api.facade.AssignChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateChatFacade;
 import de.caritas.cob.userservice.api.facade.GetChatFacade;
 import de.caritas.cob.userservice.api.facade.GetChatMembersFacade;
+import de.caritas.cob.userservice.api.facade.InternalSubsetChatFacade;
 import de.caritas.cob.userservice.api.facade.JoinAndLeaveChatFacade;
 import de.caritas.cob.userservice.api.facade.StartChatFacade;
 import de.caritas.cob.userservice.api.facade.StopChatFacade;
@@ -40,6 +43,7 @@ class UserChatControllerDelegate {
   private final @NonNull JoinAndLeaveChatFacade joinAndLeaveChatFacade;
   private final @NonNull AssignChatFacade assignChatFacade;
   private final @NonNull CreateChatFacade createChatFacade;
+  private final @NonNull InternalSubsetChatFacade internalSubsetChatFacade;
   private final @NonNull StopChatFacade stopChatFacade;
   private final @NonNull GetChatMembersFacade getChatMembersFacade;
   private final @NonNull AccountManaging accountManager;
@@ -61,6 +65,17 @@ class UserChatControllerDelegate {
     groupChatFeatureGate.requireEnabled(callingConsultant, chatDTO);
     var response = createChatFacade.createChatV2(chatDTO, callingConsultant);
     return new ResponseEntity<>(response, HttpStatus.CREATED);
+  }
+
+  ResponseEntity<InternalSubsetChatResponseDTO> openInternalSubsetChat(
+      InternalSubsetChatDTO request) {
+    var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
+    var opened = internalSubsetChatFacade.open(request, callingConsultant);
+    var response =
+        new InternalSubsetChatResponseDTO()
+            .matrixRoomId(opened.matrixRoomId())
+            .chatId(opened.chatId());
+    return new ResponseEntity<>(response, opened.created() ? HttpStatus.CREATED : HttpStatus.OK);
   }
 
   ResponseEntity<Void> startChat(Long chatId) {

@@ -27,6 +27,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class MatrixCaseReplyActorAuthorizerTest {
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock ConsultantRepository consultants;
   @Mock ConsultantAgencyRepository agencies;
   @Mock CaseHandoverRequestRepository handovers;

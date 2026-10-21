@@ -608,6 +608,30 @@ class AssignEnquiryFacadeTest {
   }
 
   @Test
+  void assignEnquiry_Should_NotInviteAgain_When_ConsultantAlreadyInExistingRoom() throws Exception {
+    Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
+    Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
+
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com");
+    when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
+    when(sessionRoomGateway.loginAsUser("@agency:matrix.example.com")).thenReturn("agency-token");
+    when(sessionRoomGateway.isJoinedMember(
+            "!existing-room:matrix.example.com", CONSULTANT_MATRIX_ID))
+        .thenReturn(true);
+
+    assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
+
+    verify(sessionRoomGateway, never()).inviteUser(any(), any(), any());
+    verify(sessionRoomGateway, never()).createRoomAsUser(any(), any(), any());
+    verify(sessionRoomGateway)
+        .setUserPowerLevel(
+            eq("!existing-room:matrix.example.com"),
+            eq(CONSULTANT_MATRIX_ID),
+            eq(100),
+            eq("agency-token"));
+  }
+
+  @Test
   void assignEnquiry_Should_FallBackToNewRoom_When_AgencyCredentialsAbsent() throws Exception {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);

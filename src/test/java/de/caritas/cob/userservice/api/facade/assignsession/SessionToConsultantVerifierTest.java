@@ -27,7 +27,26 @@ class SessionToConsultantVerifierTest {
 
   @InjectMocks private SessionToConsultantVerifier sessionToConsultantVerifier;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock private SessionToConsultantConditionProvider sessionToConsultantConditionProvider;
+
+  @Test
+  void
+      verifySessionIsNotInProgress_Should_refuse_When_theConsultantIsNoParticipantOfAMembersOnlyChat() {
+    var session = mock(Session.class);
+    var colleague = mock(Consultant.class);
+    org.mockito.Mockito.doThrow(new ForbiddenException("not a participant"))
+        .when(membersOnlyChatAccess)
+        .requireAccess(session, colleague);
+    ConsultantSessionDTO dto =
+        ConsultantSessionDTO.builder().consultant(colleague).session(session).build();
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> sessionToConsultantVerifier.verifySessionIsNotInProgress(dto));
+  }
 
   @Test
   void verifySessionIsNotInProgress_Should_throwConflict_When_SessionIsInProgress() {
@@ -42,6 +61,46 @@ class SessionToConsultantVerifierTest {
     assertThrows(
         ConflictException.class,
         () -> sessionToConsultantVerifier.verifySessionIsNotInProgress(consultantSessionDTO));
+  }
+
+  @Test
+  void
+      verifyPreconditionsForAssignment_Should_refuse_When_theTargetIsNoParticipantOfAMembersOnlyChat() {
+    var session = mock(Session.class);
+    var colleague = mock(Consultant.class);
+    org.mockito.Mockito.doThrow(new ForbiddenException("not a participant"))
+        .when(membersOnlyChatAccess)
+        .requireAccess(session, colleague);
+    ConsultantSessionDTO consultantSessionDTO =
+        ConsultantSessionDTO.builder().consultant(colleague).session(session).build();
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> sessionToConsultantVerifier.verifyPreconditionsForAssignment(consultantSessionDTO));
+    org.mockito.Mockito.verifyNoInteractions(sessionToConsultantConditionProvider);
+  }
+
+  @Test
+  void
+      verifyPreconditionsForAssignment_Should_askToStopTheChat_ForAnyAssignmentOfAMembersOnlyCase() {
+    var session = mock(Session.class);
+    var participant = mock(Consultant.class);
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    ConsultantSessionDTO consultantSessionDTO =
+        ConsultantSessionDTO.builder().consultant(participant).session(session).build();
+
+    var refused =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () ->
+                sessionToConsultantVerifier.verifyPreconditionsForAssignment(consultantSessionDTO));
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        org.springframework.http.HttpStatus.CONFLICT, refused.getHttpStatus());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "MEMBERS_ONLY_CHAT_STOP_REQUIRED", refused.getCustomHttpHeaders().getFirst("X-Reason"));
+    org.mockito.Mockito.verifyNoInteractions(sessionToConsultantConditionProvider);
   }
 
   @Test

@@ -53,6 +53,8 @@ class AgencyInviteLinkServiceTest {
   @Mock private AgencyService agencyService;
   @Mock private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
 
+  @Mock private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
+
   @InjectMocks private AgencyInviteLinkService service;
 
   @Mock private AdminScope adminScope;
