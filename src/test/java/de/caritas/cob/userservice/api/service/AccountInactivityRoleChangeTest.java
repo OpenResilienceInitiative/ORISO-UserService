@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertAll;
 
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
@@ -47,8 +48,53 @@ class AccountInactivityRoleChangeTest {
     gateway.ensureRoles("person", List.of("user-admin"));
     assertThat(remoteWrites.get()).isEqualTo(1);
     assertThat(lifecycle.suspend("person")).isTrue();
-    assertThatThrownBy(() -> gateway.ensureRoles("person", List.of("consultant")))
-        .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
-    assertThat(remoteWrites.get()).isEqualTo(1);
+    String lambdaStatus =
+        jdbc.queryForObject(
+            "SELECT status FROM account_inactivity WHERE identity_id='person'", String.class);
+    Throwable lambdaFailure =
+        catchThrowable(() -> gateway.ensureRoles("person", List.of("consultant")));
+
+    lifecycle.assignAtCreation("concrete-person", 1L, 24, 0, clock.instant());
+    var concreteWrites = new AtomicInteger();
+    var concreteFactory = new AspectJProxyFactory(new RecordingRoleUpdater(concreteWrites));
+    concreteFactory.addAspect(new AccountInactivityRoleMutationAspect(lifecycle));
+    IdentityRoleUpdater concreteGateway = concreteFactory.getProxy();
+    concreteGateway.ensureRoles("concrete-person", List.of("user-admin"));
+    assertThat(concreteWrites.get()).isEqualTo(1);
+    assertThat(lifecycle.suspend("concrete-person")).isTrue();
+    String concreteStatus =
+        jdbc.queryForObject(
+            "SELECT status FROM account_inactivity WHERE identity_id='concrete-person'",
+            String.class);
+    Throwable concreteFailure =
+        catchThrowable(() -> concreteGateway.ensureRoles("concrete-person", List.of("consultant")));
+
+    assertAll(
+        "both proxy forms observe real suspended database state",
+        () -> assertThat(lambdaStatus).isEqualTo("SUSPENDED"),
+        () -> assertThat(concreteStatus).isEqualTo("SUSPENDED"),
+        () ->
+            assertThat(lambdaFailure)
+                .as("lambda target refusal")
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class),
+        () -> assertThat(remoteWrites.get()).as("lambda remote writes").isEqualTo(1),
+        () ->
+            assertThat(concreteFailure)
+                .as("concrete application-style target refusal")
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class),
+        () -> assertThat(concreteWrites.get()).as("concrete remote writes").isEqualTo(1));
+  }
+
+  private static final class RecordingRoleUpdater implements IdentityRoleUpdater {
+    private final AtomicInteger writes;
+
+    private RecordingRoleUpdater(AtomicInteger writes) {
+      this.writes = writes;
+    }
+
+    @Override
+    public void ensureRoles(String identityId, java.util.Collection<String> roles) {
+      writes.incrementAndGet();
+    }
   }
 }
