@@ -70,6 +70,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   EventNotificationController.class,
   MessageEventCurrentAccessService.class,
   MatrixCaseReplyActorAuthorizer.class,
+  de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class,
   TeamDiscussionNotificationService.class,
   EventNotificationService.class,
   EventNotificationDeduplicationWriter.class,

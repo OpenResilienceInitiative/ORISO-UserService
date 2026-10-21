@@ -118,6 +118,9 @@ class EnquiryRejectionControllerIT {
         new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO();
     tenantDto.setSubdomain("synthetic");
     when(tenantMetadata.getRestrictedTenantData(7L)).thenReturn(tenantDto);
+    // HttpTenantFilter admits the request only after a fresh operational-status lookup.
+    tenantDto.setActive(true);
+    when(tenantMetadata.getRestrictedTenantDataFresh(7L)).thenReturn(tenantDto);
     when(caller.getUserId()).thenReturn(actorId);
     when(caller.getTenantId()).thenReturn(7L);
     when(caller.isConsultant()).thenReturn(true);

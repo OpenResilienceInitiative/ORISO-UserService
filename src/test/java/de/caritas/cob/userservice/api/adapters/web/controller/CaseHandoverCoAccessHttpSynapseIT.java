@@ -43,7 +43,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -85,7 +84,8 @@ import org.testcontainers.utility.MountableFile;
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 class CaseHandoverCoAccessHttpSynapseIT {
-  @TestConfiguration
+  // Imported only, never annotated: AppConfig's component scan would put this frozen @Primary
+  // clock into every other test context.
   static class FixtureSchedulers {
     // Testing normally omits this worker; register its real production implementation so delayed
     // compensation is exercised by its normal schedule, never by a private helper invocation.
