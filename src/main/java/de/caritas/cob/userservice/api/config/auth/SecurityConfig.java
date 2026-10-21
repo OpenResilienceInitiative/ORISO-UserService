@@ -98,7 +98,8 @@ public class SecurityConfig {
   public SecurityFilterChain filterChain(
       HttpSecurity http,
       Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter,
-      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService inactivity)
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService inactivity,
+      de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService accounts)
       throws Exception {
     http.csrf(AbstractHttpConfigurer::disable);
     http.addFilterBefore(new StatelessCsrfFilter(csrfSecurityProperties), CsrfFilter.class);
@@ -111,6 +112,11 @@ public class SecurityConfig {
     http.addFilterAfter(
         new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
             .AccountInactivityAccessFilter(inactivity),
+        SecurityContextHolderAwareRequestFilter.class);
+
+    http.addFilterAfter(
+        new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+            .ManagedAccountPauseAccessFilter(accounts),
         SecurityContextHolderAwareRequestFilter.class);
 
     http.addFilterAfter(
@@ -488,6 +494,14 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/update",
                     "/users/{matrixUserId}/chat/{chatId:[0-9]+}/ban")
                 .hasAuthority(UPDATE_CHAT)
+                .requestMatchers(
+                    "/useradmin/accounts/*/status", "/service/useradmin/accounts/*/status")
+                .hasAnyAuthority(
+                    USER_ADMIN,
+                    TENANT_ADMIN,
+                    SINGLE_TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN,
+                    CONSULTANT_UPDATE)
                 .requestMatchers(HttpMethod.GET, "/useradmin/supportadmins/search")
                 .hasAnyAuthority(USER_ADMIN, GLOBAL_SUPPORT_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")

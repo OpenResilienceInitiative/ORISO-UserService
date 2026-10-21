@@ -243,5 +243,6 @@
   <include file="db/changelog/changeset/20261008_group_matrix_cleanup/changeSet.xml"/>
   <include file="db/changelog/changeset/20261009_inquiry_acceptance_notice/changeSet.xml" />
   <include file="db/changelog/changeset/20261013_invite_template_delete_guard/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261013_managed_account_pause/changeSet.xml"/>
   <include file="db/changelog/changeset/20261014_co_access_power_rollback/changeSet.xml"/>
 </databaseChangeLog>

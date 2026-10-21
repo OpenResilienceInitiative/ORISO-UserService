@@ -49,6 +49,7 @@ public class ConsultantDataProviderIT {
       retrieveData_Should_returnDataWithHasArchiveTrue_When_ConsultantHasRegisteredSessions() {
     var consultant = giveRandomConsultant();
     consultant.setId("94c3e0b1-0677-4fd2-a7ea-56a71aefd0e8");
+    consultant.setTeamConsultant(false);
     when(agencyService.getAgencies(any())).thenReturn(List.of(new AgencyDTO().consultingType(1)));
     when(consultingTypeManager.getConsultingTypeSettings(anyInt()))
         .thenReturn(new ExtendedConsultingTypeResponseDTO().isAnonymousConversationAllowed(false));
@@ -60,10 +61,11 @@ public class ConsultantDataProviderIT {
 
   @Test
   public void
-      retrieveData_Should_returnDataWithHasArchiveFalse_When_ConsultantHasNoRegisteredSessions() {
+      retrieveData_Should_returnDataWithHasArchiveFalse_When_NonTeamConsultantHasNoRegisteredSessions() {
     var consultant = giveRandomConsultant();
 
     consultant.setId("42c3x532-0677-4fd2-a7ea-56a71aefd088");
+    consultant.setTeamConsultant(false);
     when(agencyService.getAgencies(any())).thenReturn(List.of(new AgencyDTO().consultingType(1)));
     when(consultingTypeManager.getConsultingTypeSettings(anyInt()))
         .thenReturn(new ExtendedConsultingTypeResponseDTO().isAnonymousConversationAllowed(false));
@@ -71,6 +73,17 @@ public class ConsultantDataProviderIT {
     var result = underTest.retrieveData(consultant);
 
     assertFalse(result.isHasArchive());
+  }
+
+  @Test
+  public void teamConsultantWithoutRegisteredSessionsStillHasArchive() {
+    var consultant = giveRandomConsultant();
+    consultant.setId("team-without-registered-sessions");
+    consultant.setTeamConsultant(true);
+    when(agencyService.getAgencies(any())).thenReturn(List.of(new AgencyDTO().consultingType(1)));
+    when(consultingTypeManager.getConsultingTypeSettings(anyInt()))
+        .thenReturn(new ExtendedConsultingTypeResponseDTO().isAnonymousConversationAllowed(false));
+    assertTrue(underTest.retrieveData(consultant).isHasArchive());
   }
 
   @Test

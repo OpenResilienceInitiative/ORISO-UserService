@@ -166,8 +166,8 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                # TenantPR304 supplies the six conversation notification channel fields.
-                r"5705be45ce94a3c777132c719c826975323c3ccb",
+                # TenantPR309 supplies RestrictedTenantDTO.active on top of PR304's channel fields.
+                r"819fa13b2054f6eac87b686f7954d0535d08ad5e",
                 re.DOTALL,
             ),
         )
