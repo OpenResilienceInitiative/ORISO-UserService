@@ -35,6 +35,8 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.MediaType;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.security.access.AccessDeniedException;
@@ -147,6 +149,61 @@ class CheckedAccountPolicyReadsTest {
     assertThat(value.allowedNumberOfUsers()).isEqualTo(2);
     verify(repository).findByTokenHash(AccountInviteService.hash("synthetic-raw-link"));
     assertThatThrownBy(() -> policies.read(42)).isInstanceOf(AccessDeniedException.class);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "{}",
+        "{\"id\":42}",
+        "{\"allowedNumberOfUsers\":2}",
+        "{\"id\":null,\"allowedNumberOfUsers\":2}",
+        "{\"id\":43,\"allowedNumberOfUsers\":2}",
+        "{\"id\":0,\"allowedNumberOfUsers\":2}",
+        "{\"id\":\"42\",\"allowedNumberOfUsers\":2}",
+        "{\"id\":42.0,\"allowedNumberOfUsers\":2}",
+        "{\"id\":true,\"allowedNumberOfUsers\":2}",
+        "{\"id\":9223372036854775808,\"allowedNumberOfUsers\":2}",
+        "{\"id\":42,\"allowedNumberOfUsers\":-1}",
+        "{\"id\":42,\"allowedNumberOfUsers\":2147483648}",
+        "{\"id\":42,\"allowedNumberOfUsers\":\"2\"}",
+        "{\"id\":42,\"allowedNumberOfUsers\":2.0}",
+        "{\"id\":42,\"allowedNumberOfUsers\":true}",
+        "{\"id\":42,\"allowedNumberOfUsers\":[]}",
+        "{\"id\":42,\"allowedNumberOfUsers\":2,\"extra\":0}",
+        "{\"id\":42,\"id\":42,\"allowedNumberOfUsers\":2}",
+        "{\"id\":42,\"allowedNumberOfUsers\":2,\"allowedNumberOfUsers\":null}",
+        "[{\"id\":42,\"allowedNumberOfUsers\":2}]",
+        "null"
+      })
+  void incompleteAmbiguousOrWrongTypedPolicyCannotBecomeAnUnlimitedQuota(String body) {
+    server
+        .expect(
+            requestTo("https://synthetic.tenant/internal/tenants/42/account-provisioning-policy"))
+        .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+    assertThatThrownBy(
+            () ->
+                policies.withInvitation(
+                    "synthetic-raw-link", "CONSULTANT", () -> policies.read(42)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account provisioning policy is unavailable")
+        .hasNoCause();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"null", "0", "2147483647"})
+  void explicitNullAndBoundedIntegralCapsRemainValid(String cap) {
+    server
+        .expect(
+            requestTo("https://synthetic.tenant/internal/tenants/42/account-provisioning-policy"))
+        .andRespond(
+            withSuccess(
+                "{\"id\":42,\"allowedNumberOfUsers\":" + cap + "}", MediaType.APPLICATION_JSON));
+    var value =
+        policies.withInvitation("synthetic-raw-link", "CONSULTANT", () -> policies.read(42));
+    assertThat(value.id()).isEqualTo(42L);
+    assertThat(value.allowedNumberOfUsers())
+        .isEqualTo("null".equals(cap) ? null : Integer.valueOf(cap));
   }
 
   @Test

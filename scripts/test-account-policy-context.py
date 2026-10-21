@@ -27,7 +27,7 @@ UNITS = {"tenant": {"com.vi.tenantservice.config.security.WizardPolicyV2ContextT
                     "com.vi.tenantservice.api.controller.GroupedTaskServiceIdentityAuthorizationIT": 5,
                     "com.vi.tenantservice.api.controller.AccountPolicyPurposeAuthorizationIT": 3},
          "user": {
-             "de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReadsTest": 7,
+             "de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReadsTest": 31,
              "de.caritas.cob.userservice.api.service.ConsultantImportServiceTest": 12,
              "de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningServiceTest": 26,
              "de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSagaTest": 41}}
