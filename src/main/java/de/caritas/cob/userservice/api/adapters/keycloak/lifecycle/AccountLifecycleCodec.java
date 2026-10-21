@@ -16,7 +16,9 @@ import java.util.HexFormat;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.UUID;
+import javax.crypto.Cipher;
 import javax.crypto.Mac;
+import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 /** One shared key; distinct MAC domains for payload, proof and durable creation fingerprint. */
@@ -81,12 +83,224 @@ public final class AccountLifecycleCodec {
 
   /** Data protection only; the package-owned store must independently check its locked metadata. */
   String sealSelfAppIntent(JsonNode independentlyCheckedOwnedMetadata, byte[] frozenCommand) {
-    return null;
+    try {
+      var metadata = selfAppMetadata(independentlyCheckedOwnedMetadata);
+      byte[] plaintext = selfAppCommand(metadata, frozenCommand);
+      byte[] nonce = new byte[12];
+      intentNonce.nextBytes(nonce);
+      byte[] ciphertext = selfAppCipher(Cipher.ENCRYPT_MODE, metadata, nonce, plaintext);
+      return canonical(Map.of("v", 1, "nonce", encode(nonce), "ciphertext", encode(ciphertext)));
+    } catch (RuntimeException failure) {
+      throw invalidSecretIntent();
+    }
   }
 
   /** A decrypted body never supplies ownership, current authority or dispatch permission. */
   byte[] openSelfAppIntent(JsonNode independentlyCheckedOwnedMetadata, String envelope) {
-    return null;
+    try {
+      var metadata = selfAppMetadata(independentlyCheckedOwnedMetadata);
+      if (envelope == null || envelope.length() > 87500) throw invalidSecretIntent();
+      JsonNode value = json.readTree(envelope);
+      intentFields(value, java.util.Set.of("v", "nonce", "ciphertext"));
+      if (!value.path("v").isIntegralNumber()
+          || !value.path("v").canConvertToInt()
+          || value.path("v").intValue() != 1
+          || !envelope.equals(canonical(value))) throw invalidSecretIntent();
+      byte[] nonce = intentBase64(value.path("nonce"), 12, 12);
+      byte[] ciphertext = intentBase64(value.path("ciphertext"), 16, 65552);
+      return selfAppCommand(
+          metadata, selfAppCipher(Cipher.DECRYPT_MODE, metadata, nonce, ciphertext));
+    } catch (RuntimeException | java.io.IOException failure) {
+      throw invalidSecretIntent();
+    }
+  }
+
+  /** Immutable data only; construction is deliberately private and grants no workflow authority. */
+  private record SelfAppMetadata(
+      int v,
+      String realmId,
+      String operationId,
+      String command,
+      String method,
+      String route,
+      String accountId,
+      Long tenantId,
+      String ownerClient,
+      String ownerSubject,
+      String originDigest,
+      String workflowId,
+      String requestDigest,
+      String expectedState,
+      long authorityValidUntil,
+      String representation) {
+    @Override
+    public String toString() {
+      return "SelfAppMetadata[redacted]";
+    }
+  }
+
+  private SelfAppMetadata selfAppMetadata(JsonNode value) {
+    intentFields(
+        value,
+        java.util.Set.of(
+            "v",
+            "realmId",
+            "operationId",
+            "command",
+            "method",
+            "route",
+            "accountId",
+            "tenantId",
+            "ownerClient",
+            "ownerSubject",
+            "originDigest",
+            "workflowId",
+            "requestDigest",
+            "expectedState",
+            "authorityValidUntil",
+            "representation"));
+    if (!value.path("v").isIntegralNumber()
+        || !value.path("v").canConvertToInt()
+        || value.path("v").intValue() != 1) throw invalidSecretIntent();
+    String operationId = intentUuid(value, "operationId");
+    String workflowId = intentUuid(value, "workflowId");
+    if (!operationId.equals(workflowId)
+        || !"otp.app-setup".equals(intentText(value, "command", 64))
+        || !"PUT".equals(intentText(value, "method", 16))
+        || !"otp-config/setup-otp".equals(intentText(value, "route", 128))
+        || !"FROZEN_HTTP_V1".equals(intentText(value, "representation", 64)))
+      throw invalidSecretIntent();
+    JsonNode tenant = value.get("tenantId");
+    Long tenantId = null;
+    if (!tenant.isNull()) {
+      if (!tenant.isIntegralNumber() || !tenant.canConvertToLong() || tenant.longValue() < 0)
+        throw invalidSecretIntent();
+      tenantId = tenant.longValue();
+    }
+    JsonNode expiry = value.get("authorityValidUntil");
+    if (!expiry.isIntegralNumber() || !expiry.canConvertToLong() || expiry.longValue() <= 0)
+      throw invalidSecretIntent();
+    return new SelfAppMetadata(
+        1,
+        intentText(value, "realmId", 512),
+        operationId,
+        "otp.app-setup",
+        "PUT",
+        "otp-config/setup-otp",
+        intentUuid(value, "accountId"),
+        tenantId,
+        intentText(value, "ownerClient", 512),
+        intentUuid(value, "ownerSubject"),
+        intentDigest(value, "originDigest"),
+        workflowId,
+        intentDigest(value, "requestDigest"),
+        intentDigest(value, "expectedState"),
+        expiry.longValue(),
+        "FROZEN_HTTP_V1");
+  }
+
+  private byte[] selfAppCommand(SelfAppMetadata metadata, byte[] bytes) {
+    if (bytes == null || bytes.length == 0 || bytes.length > 65536) throw invalidSecretIntent();
+    byte[] snapshot = bytes.clone();
+    String raw = utf8(snapshot);
+    JsonNode value = read(raw, JsonNode.class);
+    intentFields(value, java.util.Set.of("username", "body"));
+    intentText(value, "username", 512);
+    JsonNode body = value.path("body");
+    intentFields(body, java.util.Set.of("target", "operationId", "expectedState", "otp"));
+    if (!metadata.operationId().equals(intentUuid(body, "operationId"))
+        || !metadata.expectedState().equals(intentDigest(body, "expectedState")))
+      throw invalidSecretIntent();
+    JsonNode target = body.path("target");
+    intentFields(target, java.util.Set.of("accountId", "tenantId", "origin"));
+    JsonNode tenant = target.get("tenantId");
+    if (!metadata.accountId().equals(intentUuid(target, "accountId"))
+        || (metadata.tenantId() == null
+            ? !tenant.isNull()
+            : !tenant.isTextual() || !metadata.tenantId().toString().equals(tenant.textValue())))
+      throw invalidSecretIntent();
+    JsonNode origin = target.path("origin");
+    intentFields(
+        origin,
+        java.util.Set.of(
+            "kind",
+            "humanAuthority",
+            "humanClient",
+            "humanIssuer",
+            "humanSubject",
+            "workflowId"));
+    if (!"SELF".equals(intentText(origin, "kind", 16))
+        || !origin.get("humanAuthority").isNull()
+        || !metadata.accountId().equals(intentUuid(origin, "humanSubject"))
+        || !metadata.workflowId().equals(intentUuid(origin, "workflowId"))
+        || !metadata.originDigest().equals(digest("otp-origin", origin)))
+      throw invalidSecretIntent();
+    intentText(origin, "humanClient", 512);
+    intentText(origin, "humanIssuer", 2048);
+    JsonNode otp = body.path("otp");
+    intentFields(otp, java.util.Set.of("initialCode", "secret", "email"));
+    intentText(otp, "initialCode", 128);
+    intentText(otp, "secret", 4096);
+    if (!otp.get("email").isNull() || !raw.equals(canonical(value))) throw invalidSecretIntent();
+    return snapshot;
+  }
+
+  private byte[] selfAppCipher(int mode, SelfAppMetadata metadata, byte[] nonce, byte[] input) {
+    String metadataDigest = digest("oriso/user-maintenance-intent/metadata/v1", metadata);
+    byte[] encryptionKey = mac("oriso/user-maintenance-intent/encryption/v1\n" + metadataDigest);
+    try {
+      Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+      cipher.init(mode, new SecretKeySpec(encryptionKey, "AES"), new GCMParameterSpec(128, nonce));
+      cipher.updateAAD(canonical(metadata).getBytes(StandardCharsets.UTF_8));
+      return cipher.doFinal(input);
+    } catch (java.security.GeneralSecurityException failure) {
+      throw invalidSecretIntent();
+    } finally {
+      java.util.Arrays.fill(encryptionKey, (byte) 0);
+    }
+  }
+
+  private static void intentFields(JsonNode value, java.util.Set<String> expected) {
+    if (value == null || !value.isObject() || value.size() != expected.size())
+      throw invalidSecretIntent();
+    var actual = new java.util.HashSet<String>();
+    value.fieldNames().forEachRemaining(actual::add);
+    if (!actual.equals(expected)) throw invalidSecretIntent();
+  }
+
+  private static String intentText(JsonNode value, String field, int limit) {
+    JsonNode node = value.get(field);
+    if (node == null || !node.isTextual()) throw invalidSecretIntent();
+    String text = node.textValue();
+    if (text.isBlank() || text.length() > limit || text.chars().anyMatch(c -> c < 32))
+      throw invalidSecretIntent();
+    return text;
+  }
+
+  private static String intentUuid(JsonNode value, String field) {
+    String text = intentText(value, field, 36);
+    if (!UUID.fromString(text).toString().equals(text)) throw invalidSecretIntent();
+    return text;
+  }
+
+  private static String intentDigest(JsonNode value, String field) {
+    String text = intentText(value, field, 64);
+    if (!text.matches("[0-9a-f]{64}")) throw invalidSecretIntent();
+    return text;
+  }
+
+  private static byte[] intentBase64(JsonNode value, int minimum, int maximum) {
+    if (!value.isTextual() || value.textValue().length() > 87403) throw invalidSecretIntent();
+    String encoded = value.textValue();
+    if (!encoded.matches("[A-Za-z0-9_-]+")) throw invalidSecretIntent();
+    byte[] bytes = Base64.getUrlDecoder().decode(encoded);
+    if (bytes.length < minimum || bytes.length > maximum || !encode(bytes).equals(encoded))
+      throw invalidSecretIntent();
+    return bytes;
+  }
+
+  private static IllegalArgumentException invalidSecretIntent() {
+    return new IllegalArgumentException("Invalid owned secret intent");
   }
 
   public String digest(String domain, Object value) {
