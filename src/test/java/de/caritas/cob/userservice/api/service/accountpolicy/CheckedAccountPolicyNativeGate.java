@@ -109,7 +109,8 @@ class CheckedAccountPolicyNativeGate {
   private JwtDecoder decoder;
   private MockEnvironment environment;
   private HttpServer agency;
-  private final java.util.concurrent.atomic.AtomicInteger lastPolicyStatus = new java.util.concurrent.atomic.AtomicInteger();
+  private final java.util.concurrent.atomic.AtomicInteger lastPolicyStatus =
+      new java.util.concurrent.atomic.AtomicInteger();
   private AgencyService agencyService;
   private RestTemplate http;
   private String receiver;
@@ -276,7 +277,11 @@ class CheckedAccountPolicyNativeGate {
 
   @AfterAll
   void cleanup() throws Exception {
-    Files.writeString(Path.of(required("ORISO_POLICY_OBSERVATIONS")), JSON.writeValueAsString(Map.of("lastPolicyHttpStatus", lastPolicyStatus.get(), "policyQueryAttempts", queries())));
+    Files.writeString(
+        Path.of(required("ORISO_POLICY_OBSERVATIONS")),
+        JSON.writeValueAsString(
+            Map.of(
+                "lastPolicyHttpStatus", lastPolicyStatus.get(), "policyQueryAttempts", queries())));
     TenantContext.clear();
     if (agency != null) agency.stop(0);
     if (persistence != null) persistence.destroy();

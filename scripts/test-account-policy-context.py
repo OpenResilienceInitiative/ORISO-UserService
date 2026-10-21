@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -81,11 +82,24 @@ def safe_java_frames(log):
 
 def compiled_inventory(root, role, classpath):
     compiled = root / "target/test-classes" / (FIXTURES[role] + ".class")
-    data = compiled.read_bytes()
-    if not data.startswith(b"\xca\xfe\xba\xbe") or not classpath.is_file():
+    if not compiled.is_file() or not classpath.is_file():
         raise ValueError("Actual compiled policy fixture and classpath are required")
-    return {"fixture": {str(compiled.relative_to(root)): hashlib.sha256(data).hexdigest()},
-            "classpathSHA256": hashlib.sha256(classpath.read_bytes()).hexdigest()}
+    fixtures = {}
+    for path in compiled.parent.glob(compiled.stem + "*.class"):
+        data = path.read_bytes()
+        if not data.startswith(b"\xca\xfe\xba\xbe"):
+            raise ValueError("Actual compiled policy fixture is required")
+        fixtures[str(path.relative_to(root))] = hashlib.sha256(data).hexdigest()
+    dependencies = []
+    for item in classpath.read_text().strip().split(os.pathsep):
+        path = Path(item)
+        if not path.is_file() or path.suffix != ".jar":
+            raise ValueError("Every actual test classpath dependency must be a present JAR")
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        dependencies.append({"jar": path.name, "sha256": digest, "bytes": path.stat().st_size})
+    return {"fixture": fixtures, "classpathSHA256": hashlib.sha256(classpath.read_bytes()).hexdigest(),
+            "dependencies": dependencies}
 
 
 def main():
@@ -119,7 +133,12 @@ def main():
     server = server_log = temporary = None
     status, actors = 2, []
     overall = time.monotonic() + 1200
+    def deadline_expired(signum, frame):
+        raise support.FixtureError("The policy native job exceeded its 1200 second overall lease")
+
     try:
+        signal.signal(signal.SIGALRM, deadline_expired)
+        signal.alarm(1200)
         lease = support.configure_memory(2896, evidence)
         receipt["initialMemoryFreePercent"] = lease.check(starting=True)
         temporary = tempfile.TemporaryDirectory(prefix="oriso-policy-")
@@ -246,6 +265,7 @@ def main():
             receipt["compileDiagnostics"] = diagnostics[-30:]
         status = 2
     finally:
+        signal.alarm(0)
         cleanup_errors = []
         if temporary and receipt["state"] != "PASS":
             receipt["safeJavaFrames"] = {
