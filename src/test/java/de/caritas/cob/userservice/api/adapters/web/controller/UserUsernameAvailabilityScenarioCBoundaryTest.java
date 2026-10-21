@@ -89,7 +89,8 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
   void enabledRuntimeConfigurationWiresTheActualPublicBoundedSelector() {
     var fixture = new Fixture(true);
     fixture.expect(name -> true);
-    fixture.runtimeContext()
+    fixture
+        .runtimeContext()
         .run(
             context -> {
               assertNull(context.getStartupFailure());
@@ -115,7 +116,8 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
   @Test
   void enabledRuntimeRealmMismatchRefusesStartupBeforeAnyNativeCall() {
     var fixture = new Fixture(true);
-    fixture.runtimeContext()
+    fixture
+        .runtimeContext()
         .withPropertyValues("ORISO_ACCOUNT_LIFECYCLE_REALM=another-realm")
         .run(
             context -> {
