@@ -131,7 +131,10 @@ class MatrixCallTenantIT {
             mock(
                 de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
                     .class),
-            freshEmailCursor());
+            freshEmailCursor(),
+            mock(
+                de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
+                    .class));
     try {
       // Control: this fixture must really enforce tenant isolation before testing the worker.
       TenantContext.setCurrentTenant(7L);
