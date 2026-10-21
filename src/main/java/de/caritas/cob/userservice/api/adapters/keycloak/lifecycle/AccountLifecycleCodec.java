@@ -23,6 +23,7 @@ import javax.crypto.spec.SecretKeySpec;
 public final class AccountLifecycleCodec {
   private final byte[] key;
   private final Clock clock;
+  private final java.security.SecureRandom intentNonce;
   private final ObjectMapper json =
       new ObjectMapper()
           .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
@@ -38,10 +39,15 @@ public final class AccountLifecycleCodec {
   }
 
   AccountLifecycleCodec(byte[] key, Clock clock) {
+    this(key, clock, new java.security.SecureRandom());
+  }
+
+  AccountLifecycleCodec(byte[] key, Clock clock, java.security.SecureRandom intentNonce) {
     if (key == null || key.length < 32)
       throw new IllegalArgumentException("Task context key is too short");
     this.key = key.clone();
     this.clock = clock;
+    this.intentNonce = java.util.Objects.requireNonNull(intentNonce);
     var strict = new com.fasterxml.jackson.databind.module.SimpleModule();
     strict.addDeserializer(
         UUID.class,
@@ -71,6 +77,16 @@ public final class AccountLifecycleCodec {
   public CreationIdentity identity(CreationScope scope, AccountCreation account) {
     return new CreationIdentity(
         scope, digest("creation-payload", Map.of("scope", scope, "account", account)));
+  }
+
+  /** Data protection only; the package-owned store must independently check its locked metadata. */
+  String sealSelfAppIntent(JsonNode independentlyCheckedOwnedMetadata, byte[] frozenCommand) {
+    return null;
+  }
+
+  /** A decrypted body never supplies ownership, current authority or dispatch permission. */
+  byte[] openSelfAppIntent(JsonNode independentlyCheckedOwnedMetadata, String envelope) {
+    return null;
   }
 
   public String digest(String domain, Object value) {
