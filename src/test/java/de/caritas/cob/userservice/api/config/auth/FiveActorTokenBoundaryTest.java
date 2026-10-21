@@ -10,7 +10,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -181,6 +183,46 @@ class FiveActorTokenBoundaryTest {
     assertThat(token.validatedJwtExpiresAt())
         .isGreaterThan(java.time.Instant.now().getEpochSecond());
     assertThat(token.toString()).doesNotContain(token.accessToken());
+  }
+
+  @ParameterizedTest
+  @MethodSource("checkedMaintenanceRefusals")
+  void checkedMaintenanceRejectsInvalidSignedAdminOrProviderGrantWithoutFallback(
+      String variant, TaskPurpose purpose) {
+    issuer.variant = variant;
+    assertThatThrownBy(() -> broker.issueCheckedMaintenance(purpose))
+        .hasMessage("Checked maintenance authentication unavailable")
+        .hasNoCause();
+    assertThat(issuer.calls.get()).isEqualTo(1);
+    assertThat(issuer.lastForm.get("client_id")).isEqualTo("backend-account-admin");
+  }
+
+  static java.util.stream.Stream<Arguments> checkedMaintenanceRefusals() {
+    return java.util.stream.Stream.of(
+            "mixed-roles",
+            "admin-extra-role",
+            "admin-missing-role",
+            "wrong-audience",
+            "admin-extra-audience",
+            "admin-missing-audience",
+            "wrong-subject",
+            "wrong-client",
+            "wrong-issuer",
+            "expired",
+            "missing-expiry",
+            "future",
+            "native-admin",
+            "wrong-signature",
+            "provider-error",
+            "missing-issued-at",
+            "zero-issued-at",
+            "negative-issued-at",
+            "future-issued-at",
+            "unordered-native-bounds")
+        .flatMap(
+            variant ->
+                java.util.stream.Stream.of(TaskPurpose.ACCOUNT_MAINTENANCE, TaskPurpose.OTP)
+                    .map(purpose -> Arguments.of(variant, purpose)));
   }
 
   @ParameterizedTest
