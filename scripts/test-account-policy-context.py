@@ -196,7 +196,8 @@ def main():
         env.update({"ORISO_TASK_TOKEN_FIXTURE": str(fixture),
                     "ORISO_POLICY_SHARED_KEY": base64.b64encode(bytes([11]) * 32).decode(),
                     "ORISO_POLICY_RECEIVER_READY": str(private / "receiver-ready"),
-                    "ORISO_POLICY_QUERY_COUNT": str(private / "policy-query-count")})
+                    "ORISO_POLICY_QUERY_COUNT": str(private / "policy-query-count"),
+                    "ORISO_POLICY_OBSERVATIONS": str(private / "policy-observations.json")})
         tenant, user = roots["tenant"], roots["user"]
         classpath = os.pathsep.join([str(tenant / "target/test-classes"), str(tenant / "target/classes"),
                                     (private / "tenant-classpath").read_text().strip()])
@@ -246,6 +247,13 @@ def main():
         status = 2
     finally:
         cleanup_errors = []
+        if temporary and receipt["state"] != "PASS":
+            receipt["safeJavaFrames"] = {
+                path.name: safe_java_frames(path) for path in Path(temporary.name).glob("*.log")}
+        if temporary:
+            observation = Path(temporary.name) / "policy-observations.json"
+            if observation.is_file():
+                receipt["observed"] = json.loads(observation.read_text())
         try:
             if server is not None:
                 if server.stdin:
