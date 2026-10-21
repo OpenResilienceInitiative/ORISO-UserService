@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
 import de.caritas.cob.userservice.api.config.auth.TaskActor;
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
+import de.caritas.cob.userservice.api.config.auth.TaskActorCredentials;
 import de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker;
 import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.model.User;
@@ -84,8 +85,7 @@ public final class ScheduledAskerMaintenance {
     }
   }
 
-  private ClaimedDeletion prepare(
-      ScheduledTaskClaimService.ClaimLease lease, String account) {
+  private ClaimedDeletion prepare(ScheduledTaskClaimService.ClaimLease lease, String account) {
     if (!held(lease)) return null;
     User user = lockedUser(account);
     if (user == null || user.getDeleteDate() == null) return null;
@@ -162,8 +162,17 @@ public final class ScheduledAskerMaintenance {
     result.fieldNames().forEachRemaining(keys::add);
     if (!keys.equals(
             Set.of(
-                "id", "username", "email", "firstName", "lastName", "enabled", "emailVerified",
-                "tenantId", "preferredLanguage", "effectiveRoles", "passwordChangeRequired",
+                "id",
+                "username",
+                "email",
+                "firstName",
+                "lastName",
+                "enabled",
+                "emailVerified",
+                "tenantId",
+                "preferredLanguage",
+                "effectiveRoles",
+                "passwordChangeRequired",
                 "state"))
         || !claim.account.equals(result.path("id").textValue())
         || !Objects.equals(
@@ -241,14 +250,16 @@ public final class ScheduledAskerMaintenance {
     var rows =
         jdbc.query(
             "select user_id,tenant_id,delete_date,deletion_lifecycle_state,"
-                + "deletion_read_only_until,deletion_paused_until from user where user_id=? for update",
+                + "deletion_read_only_until,deletion_paused_until from user"
+                + " where user_id=? for update",
             (rs, index) -> {
               var user = new User();
               user.setUserId(rs.getString("user_id"));
               user.setTenantId(rs.getObject("tenant_id", Long.class));
               user.setDeleteDate(time(rs, "delete_date"));
               String state = rs.getString("deletion_lifecycle_state");
-              user.setDeletionLifecycleState(state == null ? null : DeletionLifecycleState.valueOf(state));
+              user.setDeletionLifecycleState(
+                  state == null ? null : DeletionLifecycleState.valueOf(state));
               user.setDeletionReadOnlyUntil(time(rs, "deletion_read_only_until"));
               user.setDeletionPausedUntil(time(rs, "deletion_paused_until"));
               return user;
@@ -319,7 +330,7 @@ public final class ScheduledAskerMaintenance {
     return target;
   }
 
-  private de.caritas.cob.userservice.api.config.auth.TaskActorCredentials actor(ClaimedDeletion claim) {
+  private TaskActorCredentials actor(ClaimedDeletion claim) {
     var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
     if (!actor.clientId().equals(claim.intent.ownerClient)
         || !actor.serviceSubject().equals(claim.intent.ownerSubject)) throw unavailable();
@@ -336,17 +347,24 @@ public final class ScheduledAskerMaintenance {
     headers.setBearerAuth(token.accessToken());
     headers.set(
         "X-ORISO-Task-Context",
-        codec.maintenanceProof(command, realmName, realmId, claim.account, actor,
-            codec.read(body, JsonNode.class)));
+        codec.maintenanceProof(
+            command, realmName, realmId, claim.account, actor, codec.read(body, JsonNode.class)));
     var endpoint =
         UriComponentsBuilder.fromUriString(authServer)
-            .pathSegment("realms", realmName, "oriso-account-maintenance", "v1", "accounts",
-                claim.account, command)
+            .pathSegment(
+                "realms",
+                realmName,
+                "oriso-account-maintenance",
+                "v1",
+                "accounts",
+                claim.account,
+                command)
             .build()
             .encode()
             .toUri();
     try {
-      return http.exchange(endpoint, HttpMethod.POST, new HttpEntity<>(body, headers), String.class)
+      return http
+          .exchange(endpoint, HttpMethod.POST, new HttpEntity<>(body, headers), String.class)
           .getBody();
     } catch (RuntimeException failure) {
       // Never propagate provider bodies, headers, bearer or native diagnostics into scheduler logs.

@@ -175,7 +175,9 @@ public final class AccountLifecycleCodec {
       String originDigest,
       String result) {}
 
-  /** A transport success is not acknowledgement until every immutable receiver binding is checked. */
+  /**
+   * A transport success is not acknowledgement until every immutable receiver binding is checked.
+   */
   public String verifyMaintenanceDeleteReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
     try {
@@ -195,8 +197,8 @@ public final class AccountLifecycleCodec {
       byte[] decoded = Base64.getUrlDecoder().decode(parts[0]);
       if (!encode(decoded).equals(parts[0])
           || !java.security.MessageDigest.isEqual(
-              HexFormat.of().parseHex(parts[1]),
-              mac("maintenance-operation-receipt\n" + parts[0]))) throw new IllegalArgumentException();
+              HexFormat.of().parseHex(parts[1]), mac("maintenance-operation-receipt\n" + parts[0])))
+        throw new IllegalArgumentException();
       String raw = utf8(decoded);
       var outcome = read(raw, MaintenanceOutcome.class);
       JsonNode tenant = frozen.path("target").path("tenantId");
