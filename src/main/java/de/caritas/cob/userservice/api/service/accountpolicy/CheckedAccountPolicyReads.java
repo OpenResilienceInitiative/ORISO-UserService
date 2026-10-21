@@ -34,6 +34,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -150,16 +151,20 @@ public final class CheckedAccountPolicyReads {
             : TaskPurpose.CONSULTANT_IMPORT;
     var grant = broker.issue(purpose);
     // The same explicitly verified SETUP token supplies the current agency read and policy proof.
-    for (Long agencyId : origin.agencyIds) {
-      var agency =
-          TechnicalAccessTokenContext.callWith(grant.accessToken(), () -> agencies.find(agencyId))
-              .filter(
-                  value ->
-                      !value.deleted()
-                          && Objects.equals(value.id(), agencyId)
-                          && Objects.equals(value.tenantId(), tenantId))
-              .orElseThrow(CheckedAccountPolicyReads::denied);
-      if (agency.id() == null) throw denied();
+    try {
+      for (Long agencyId : origin.agencyIds) {
+        var agency =
+            TechnicalAccessTokenContext.callWith(grant.accessToken(), () -> agencies.find(agencyId))
+                .filter(
+                    value ->
+                        !value.deleted()
+                            && Objects.equals(value.id(), agencyId)
+                            && Objects.equals(value.tenantId(), tenantId))
+                .orElseThrow(CheckedAccountPolicyReads::denied);
+        if (agency.id() == null) throw denied();
+      }
+    } catch (RestClientException providerFailure) {
+      throw unavailable();
     }
     origin.recheck.run();
     var caller = decoder.decode(grant.accessToken());
