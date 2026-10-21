@@ -319,6 +319,7 @@ class CheckedAccountPolicyNativeGate {
   @Test
   void actualHeldRepositoryOriginAndActualBrokerReachTheRealNarrowProjection() throws Exception {
     long before = queries();
+    long beforeSql = sqlQueries();
     var saga = mock(CreateConsultantSaga.class);
     var observed = new AtomicReference<CheckedAccountPolicyReads.Policy>();
     when(saga.createInvitedConsultant(
@@ -346,6 +347,7 @@ class CheckedAccountPolicyNativeGate {
     assertThat(cacheControl.get()).contains("no-store");
     assertSameExplicitBearer();
     assertThat(queries()).isEqualTo(before + 1);
+    assertThat(sqlQueries()).isEqualTo(beforeSql + 1);
     Captured valid = captured.get();
     var origin = claims(valid.proof()).path("origin");
     assertThat(origin.path("reference").asText()).isEqualTo("invite:" + inviteId);
@@ -567,11 +569,13 @@ class CheckedAccountPolicyNativeGate {
     String content =
         row + ",2,nativeother,Other,Family,native-other@example.invalid,nein,,10;ordinary\r\n";
     long before = queries();
+    long beforeSql = sqlQueries();
     configuredImporter(saga, content, List.of("consultant"), false).startImport();
     assertThat(observed).hasSize(2);
     assertThat(cacheControl.get()).contains("no-store");
     assertSameExplicitBearer();
     assertThat(queries()).isEqualTo(before + 2);
+    assertThat(sqlQueries()).isEqualTo(beforeSql + 2);
     String digest =
         java.util.HexFormat.of()
             .formatHex(
