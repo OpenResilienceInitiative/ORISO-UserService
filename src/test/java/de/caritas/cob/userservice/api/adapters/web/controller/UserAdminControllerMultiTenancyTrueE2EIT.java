@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountSettingsUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -136,6 +137,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,
         IdentityRoleLookup.class,
+        IdentityAccountSettingsUpdater.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
         IdentityUsernameAvailability.class

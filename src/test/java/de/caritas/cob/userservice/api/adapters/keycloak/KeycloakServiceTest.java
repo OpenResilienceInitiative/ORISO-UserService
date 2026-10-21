@@ -1516,7 +1516,7 @@ public class KeycloakServiceTest {
     when(userRepresentation.getAttributes()).thenReturn(attributeMap);
 
     // when
-    this.keycloakService.changeLanguage("userId", "de");
+    this.keycloakService.changePreferredLanguage("userId", "de");
 
     // then
     verify(userResource, Mockito.never()).update(userRepresentation);
@@ -1540,7 +1540,7 @@ public class KeycloakServiceTest {
     when(userRepresentation.getAttributes()).thenReturn(attributeMap);
 
     // when
-    this.keycloakService.changeLanguage("userId", "de");
+    this.keycloakService.changePreferredLanguage("userId", "de");
 
     // then
     verify(userResource).update(userRepresentation);
@@ -1566,7 +1566,7 @@ public class KeycloakServiceTest {
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    keycloakService.changeLanguage("userId", "en");
+    keycloakService.changePreferredLanguage("userId", "en");
 
     var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
     verify(userResource).update(representationCaptor.capture());
@@ -1584,7 +1584,7 @@ public class KeycloakServiceTest {
     when(userRepresentation.getAttributes()).thenReturn(attributeMap);
 
     // when
-    this.keycloakService.changeLanguage("userId", "de");
+    this.keycloakService.changePreferredLanguage("userId", "de");
 
     // then
     verify(userResource).update(userRepresentation);
@@ -2664,7 +2664,7 @@ public class KeycloakServiceTest {
     var existing = givenStoredUserWithAttributes("email");
     UserResource userResource = givenUserResourceHolding(existing);
 
-    this.keycloakService.changeLanguage("userId", "en");
+    this.keycloakService.changePreferredLanguage("userId", "en");
 
     var attributes = attributesSentTo(userResource);
     assertThat(attributes.get("locale"), is(List.of("en")));

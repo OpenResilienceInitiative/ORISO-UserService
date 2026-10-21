@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountSettingsUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -104,6 +105,7 @@ class GrantConsultantIdentityTenantScopeIT {
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
+        IdentityAccountSettingsUpdater.class,
         IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,

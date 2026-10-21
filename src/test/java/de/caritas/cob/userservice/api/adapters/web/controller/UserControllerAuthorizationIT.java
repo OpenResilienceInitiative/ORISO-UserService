@@ -77,6 +77,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountSettingsUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -192,6 +193,7 @@ class UserControllerAuthorizationIT {
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,
         IdentityRoleLookup.class,
+        IdentityAccountSettingsUpdater.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
         IdentityUsernameAvailability.class
