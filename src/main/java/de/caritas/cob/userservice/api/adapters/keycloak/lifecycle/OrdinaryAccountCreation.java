@@ -6,6 +6,9 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixUserInUseException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.*;
@@ -310,6 +313,10 @@ public class OrdinaryAccountCreation {
       if (!expected.equals(actual)) throw denied();
       effects.acknowledged(effect, actual);
       return actual;
+    } catch (MatrixUserInUseException rejected) {
+      effects.rejectedWithoutEffect(effect);
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     } catch (de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException failure) {
       throw new IllegalStateException("Owned chat identity creation remains unconfirmed");
     }

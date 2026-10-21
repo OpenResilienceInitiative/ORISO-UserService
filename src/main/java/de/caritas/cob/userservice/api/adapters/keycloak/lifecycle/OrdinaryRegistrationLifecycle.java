@@ -5,11 +5,15 @@ import static de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.Account
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixUserInUseException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
+import org.springframework.http.HttpStatus;
 
 /**
  * Used after CreateUserFacade's real tenant, agency, DPA and invitation validation. Default-off.
@@ -119,6 +123,10 @@ public final class OrdinaryRegistrationLifecycle {
       actual =
           matrix.createUserIdWithoutReactivation(
               localpart, UUID.randomUUID() + "-" + UUID.randomUUID(), plainUsername);
+    } catch (MatrixUserInUseException rejected) {
+      effects.rejectedWithoutEffect(effect);
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     } catch (de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException failure) {
       throw new IllegalStateException("Created chat identity outcome is unconfirmed");
     }
