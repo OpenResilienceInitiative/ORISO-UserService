@@ -8,9 +8,11 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import de.caritas.cob.userservice.api.IdentityManager;
 import de.caritas.cob.userservice.api.adapters.keycloak.*;
+import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
 import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakUsernameAvailability;
 import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedUsernameAvailability;
+import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.UsernameAvailabilityConfiguration;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.*;
 import de.caritas.cob.userservice.api.helper.*;
@@ -20,6 +22,7 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.representations.idm.UserRepresentation;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.http.MediaType;
 import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -80,6 +83,46 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
         ScopedAvailabilityUnavailableException.class,
         () -> fixture.controller.usernameAvailability(NAME));
     verifyNoInteractions(fixture.nativeClient);
+  }
+
+  @Test
+  void enabledRuntimeConfigurationWiresTheActualPublicBoundedSelector() {
+    var fixture = new Fixture(true);
+    fixture.expect(name -> true);
+    fixture.runtimeContext()
+        .run(
+            context -> {
+              assertNull(context.getStartupFailure());
+              var response =
+                  assertDoesNotThrow(() -> fixture.controller.usernameAvailability(NAME));
+              assertEquals(204, response.getStatusCode().value());
+              assertEquals(List.of(NAME, ENCODED), fixture.calls);
+              verifyNoInteractions(fixture.nativeClient);
+            });
+  }
+
+  @Test
+  void defaultOffRuntimeConfigurationCreatesNoSelectorWithoutBindings() {
+    new ApplicationContextRunner()
+        .withUserConfiguration(UsernameAvailabilityConfiguration.class)
+        .run(
+            context -> {
+              assertNull(context.getStartupFailure());
+              assertTrue(context.getBeansOfType(ScopedUsernameAvailability.class).isEmpty());
+            });
+  }
+
+  @Test
+  void enabledRuntimeRealmMismatchRefusesStartupBeforeAnyNativeCall() {
+    var fixture = new Fixture(true);
+    fixture.runtimeContext()
+        .withPropertyValues("ORISO_ACCOUNT_LIFECYCLE_REALM=another-realm")
+        .run(
+            context -> {
+              assertNotNull(context.getStartupFailure());
+              assertTrue(fixture.calls.isEmpty());
+              verifyNoInteractions(fixture.nativeClient);
+            });
   }
 
   @Test
@@ -167,6 +210,36 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
     }
 
     void install(ScopedUsernameAvailability answer) {
+      expect(answer);
+      service.setScopedUsernameAvailability(gateway);
+    }
+
+    ApplicationContextRunner runtimeContext() {
+      var keycloak = mock(KeycloakConfig.class);
+      when(keycloak.getRealm()).thenReturn("fixture");
+      when(keycloak.getAuthServerUrl()).thenReturn("https://identity.test");
+      return new ApplicationContextRunner()
+          .withUserConfiguration(UsernameAvailabilityConfiguration.class)
+          .withPropertyValues(
+              "ORISO_ACCOUNT_LIFECYCLE_ENABLED=true",
+              "TASK_IDENTITY_MODEL=FIVE_ACTORS",
+              "api.error.keycloakError=fixture",
+              "multitenancy.enabled=false",
+              "ORISO_ACCOUNT_LIFECYCLE_REALM=fixture",
+              "KEYCLOAK_REALM_INTERNAL_ID=22222222-2222-4222-8222-222222222222")
+          .withInitializer(
+              context -> {
+                var beans = context.getBeanFactory();
+                beans.registerSingleton("availabilityKeycloak", keycloak);
+                beans.registerSingleton("keycloakRestTemplate", http);
+                beans.registerSingleton("availabilityActors", actors);
+                beans.registerSingleton("availabilityBroker", broker);
+                beans.registerSingleton("availabilityCodec", codec);
+              })
+          .withBean(KeycloakService.class, () -> service);
+    }
+
+    void expect(ScopedUsernameAvailability answer) {
       server
           .expect(
               ExpectedCount.between(0, 2),
@@ -227,7 +300,6 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
                         MediaType.APPLICATION_JSON)
                     .createResponse(outbound);
               });
-      service.setScopedUsernameAvailability(gateway);
     }
   }
 }

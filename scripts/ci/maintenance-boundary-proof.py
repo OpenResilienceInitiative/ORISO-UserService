@@ -72,6 +72,9 @@ def select_slice(name):
             "publicCReportsAvailableOnlyAfterBothExactSelectorsConfirm",
             "publicCUnknownReadCannotBecomeAnAvailableUsername",
             "publicCMissingBoundedAdapterRefusesBeforeRawNativeSearch",
+            "enabledRuntimeConfigurationWiresTheActualPublicBoundedSelector",
+            "defaultOffRuntimeConfigurationCreatesNoSelectorWithoutBindings",
+            "enabledRuntimeRealmMismatchRefusesStartupBeforeAnyNativeCall",
         }
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/adapters/web/controller/UserController",
@@ -79,6 +82,7 @@ def select_slice(name):
             "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/ScopedUsernameAvailability",
             "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/KeycloakUsernameAvailability",
             "de/caritas/cob/userservice/api/port/out/ScopedAvailabilityUnavailableException",
+            "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/UsernameAvailabilityConfiguration",
         ]
         TEST_CLASS = SUITE.replace(".", "/")
     elif name == "jpa":
@@ -122,6 +126,7 @@ def select_slice(name):
         CONTROLS.add("domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract")
     elif name == "availability":
         CONTROLS.add("legacyUnknownAvailabilityKeepsItsExistingHintResponse")
+        CONTROLS.add("defaultOffRuntimeConfigurationCreatesNoSelectorWithoutBindings")
     elif name == "jpa":
         CONTROLS = {"actualJpaCommitPrecedesNativeDispatchEvenWhenReplyIsUnknown"}
 
