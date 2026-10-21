@@ -43,8 +43,23 @@ public class TaskActorTokenBroker {
   public VerifiedMaintenanceToken issueCheckedMaintenance(TaskPurpose purpose) {
     if (purpose != TaskPurpose.ACCOUNT_MAINTENANCE && purpose != TaskPurpose.OTP)
       throw checkedUnavailable();
-    // Signature stub: the actual signed-HTTP positive must fail before enabling this path.
-    throw checkedUnavailable();
+    try {
+      var binding = configuration.require(purpose);
+      if (binding.actor() != TaskActor.ACCOUNT_ADMIN) throw checkedUnavailable();
+      var issued = requestNativeToken(binding);
+      var issuedAt = issued.token.getIssuedAt();
+      var expiresAt = issued.token.getExpiresAt();
+      var now = Instant.now();
+      if (issuedAt == null
+          || expiresAt == null
+          || issuedAt.getEpochSecond() <= 0
+          || expiresAt.getEpochSecond() <= issuedAt.getEpochSecond()
+          || issuedAt.isAfter(now)
+          || expiresAt.getEpochSecond() <= now.getEpochSecond()) throw checkedUnavailable();
+      return new VerifiedMaintenanceToken(purpose, issued);
+    } catch (RuntimeException failure) {
+      throw checkedUnavailable();
+    }
   }
 
   private NativeToken requestNativeToken(TaskActorCredentials binding) {
