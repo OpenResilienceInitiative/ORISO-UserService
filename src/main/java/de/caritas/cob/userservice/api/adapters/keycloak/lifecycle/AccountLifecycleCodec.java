@@ -340,24 +340,30 @@ public final class AccountLifecycleCodec {
       this.receipt = receipt;
     }
 
-    int status() { return status; }
-    String receipt() { return receipt; }
+    int status() {
+      return status;
+    }
+
+    String receipt() {
+      return receipt;
+    }
 
     @Override
-    public String toString() { return "VerifiedSelfAppOutcome[redacted]"; }
+    public String toString() {
+      return "VerifiedSelfAppOutcome[redacted]";
+    }
   }
 
   VerifiedSelfAppOutcome verifySelfAppOtpReceipt(
-      String reply,
-      String realmId,
-      TaskActorCredentials actor,
-      JsonNode frozenCommand) {
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozenCommand) {
     try {
-      if (reply == null || reply.length() > 16384
+      if (reply == null
+          || reply.length() > 16384
           || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
         throw invalidSecretIntent();
       JsonNode result = read(reply, JsonNode.class);
-      intentFields(result, java.util.Set.of("operationId", "accountId", "status", "result", "receipt"));
+      intentFields(
+          result, java.util.Set.of("operationId", "accountId", "status", "result", "receipt"));
       JsonNode body = frozenCommand.path("body");
       JsonNode target = body.path("target");
       if (!intentUuid(body, "operationId").equals(intentUuid(result, "operationId"))
@@ -371,7 +377,8 @@ public final class AccountLifecycleCodec {
         intentText(nativeResult, "info", 512);
       } else if (status == 401) {
         intentFields(nativeResult, java.util.Set.of("error", "error_description"));
-        if (!"invalid_grant".equals(intentText(nativeResult, "error", 100))) throw invalidSecretIntent();
+        if (!"invalid_grant".equals(intentText(nativeResult, "error", 100)))
+          throw invalidSecretIntent();
         intentText(nativeResult, "error_description", 512);
       } else throw invalidSecretIntent();
       String receipt = intentText(result, "receipt", 8192);
@@ -397,7 +404,8 @@ public final class AccountLifecycleCodec {
       expected.put("originDigest", digest("otp-origin", target.path("origin")));
       expected.put("status", status);
       expected.put("resultDigest", digest("otp-result", nativeResult));
-      if (!saved.equals(expected) || !utf8(payload).equals(canonical(expected))) throw invalidSecretIntent();
+      if (!saved.equals(expected) || !utf8(payload).equals(canonical(expected)))
+        throw invalidSecretIntent();
       return new VerifiedSelfAppOutcome(status, receipt);
     } catch (RuntimeException failure) {
       throw invalidSecretIntent();
