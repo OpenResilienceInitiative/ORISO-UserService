@@ -1667,7 +1667,10 @@ public class CaseHandoverService {
               .collect(
                   Collectors.toMap(AgencyDTO::getId, AgencyDTO::getName, (first, second) -> first));
     } catch (RuntimeException e) {
-      log.warn("Case-handover candidates: agency lookup failed for {}", agencyIds, e);
+      log.warn(
+          "Case-handover candidates: agency lookup failed for {} ({})",
+          agencyIds,
+          e.getClass().getSimpleName());
       return Map.of();
     }
   }

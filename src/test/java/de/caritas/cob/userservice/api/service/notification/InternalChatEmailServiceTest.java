@@ -322,6 +322,37 @@ class InternalChatEmailServiceTest {
     assertThat(received).hasSize(1);
   }
 
+  @Test
+  void missingMatrixEventStopsRetryingAfterTheAttemptCap() {
+    when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token")).thenReturn(Optional.empty());
+    service.onMessageIntent(ROOM, EVENT, caller);
+    for (int round = 0; round < 40; round++) {
+      drain();
+      makeRetryDue();
+    }
+    assertThat(writer.pendingIds()).isEmpty();
+    assertThat(stored.values())
+        .extracting(ReplyEmailDelivery::getStatus)
+        .containsOnly(ReplyEmailDelivery.Status.REJECTED);
+    verify(matrix, atMost(InternalChatEmailService.MAX_PREFLIGHT_ATTEMPTS))
+        .getRoomEvent(ROOM, EVENT, "matrix-token");
+    assertThat(received).isEmpty();
+  }
+
+  @Test
+  void briefMatrixOutageStillDeliversOnceTheEventIsReadable() {
+    when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token"))
+        .thenReturn(Optional.empty())
+        .thenReturn(Optional.empty())
+        .thenAnswer(i -> Optional.of(event));
+    service.onMessageIntent(ROOM, EVENT, caller);
+    for (int round = 0; round < 4; round++) {
+      drain();
+      makeRetryDue();
+    }
+    assertThat(received).hasSize(1);
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(
       strings = {"sender", "event-id", "plaintext", "empty", "edit", "reaction"})

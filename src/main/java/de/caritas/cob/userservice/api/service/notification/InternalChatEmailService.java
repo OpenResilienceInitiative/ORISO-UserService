@@ -46,6 +46,9 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 @Slf4j
 public class InternalChatEmailService {
+  /** About one hour of five-minute retries before a preflight that never succeeds is rejected. */
+  static final int MAX_PREFLIGHT_ATTEMPTS = 12;
+
   private final @NonNull SessionRepository sessions;
   private final @NonNull GroupChatParticipantRepository participants;
   private final @NonNull ConsultantRepository consultants;
@@ -147,7 +150,7 @@ public class InternalChatEmailService {
       }
       writer.finish(id, Status.RESOLVED);
     } catch (RuntimeException unavailable) {
-      retryPreflight(id, unavailable);
+      retryPreflight(intent, unavailable);
     }
   }
 
@@ -183,7 +186,7 @@ public class InternalChatEmailService {
         return;
       }
     } catch (RuntimeException unavailable) {
-      retryPreflight(id, unavailable);
+      retryPreflight(claim, unavailable);
       return;
     }
 
@@ -224,7 +227,7 @@ public class InternalChatEmailService {
         tone = OrisoEmailRenderer.Tone.DE_INFORMAL;
       email = renderer.render("neue-nachricht-beratung", tone, values);
     } catch (RuntimeException unavailable) {
-      retryPreflight(id, unavailable);
+      retryPreflight(claim, unavailable);
       return;
     }
     try {
@@ -236,7 +239,7 @@ public class InternalChatEmailService {
           java.util.UUID.fromString(claim.getCorrelationId()));
       writer.finish(id, Status.SENT);
     } catch (TenantSystemEmailRouteService.ConfigurationException unavailable) {
-      retryPreflight(id, unavailable);
+      retryPreflight(claim, unavailable);
     } catch (RuntimeException uncertain) {
       writer.finish(id, Status.UNCERTAIN);
       throw uncertain;
@@ -353,11 +356,21 @@ public class InternalChatEmailService {
     return true;
   }
 
-  private void retryPreflight(long id, RuntimeException unavailable) {
-    writer.retryLater(id);
+  private void retryPreflight(ReplyEmailDelivery row, RuntimeException unavailable) {
+    // Matrix answers a missing event and an outage alike, so only the attempt count ends a retry.
+    if (row.getAttemptCount() >= MAX_PREFLIGHT_ATTEMPTS) {
+      writer.finish(row.getId(), Status.REJECTED);
+      log.warn(
+          "Internal-chat email {} rejected after {} unavailable preflights ({})",
+          row.getId(),
+          row.getAttemptCount(),
+          unavailable.getClass().getSimpleName());
+      return;
+    }
+    writer.retryLater(row.getId());
     log.warn(
         "Internal-chat email {} preflight unavailable ({})",
-        id,
+        row.getId(),
         unavailable.getClass().getSimpleName());
   }
 }

@@ -94,7 +94,9 @@ class CaseHandoverPolicyHttpContractTest {
         .when(transactionManager.getTransaction(any()))
         .thenReturn(mock(TransactionStatus.class));
     lenient().when(cacheRepository.findById(any())).thenReturn(Optional.empty());
-    // Tenant 0 is the platform admin, any other tenant a Träger admin (AdminScope rules).
+    // Wiring stub only: tenant 0 is the platform admin, any other tenant a Träger admin that
+    // reaches only Träger 7. The real AdminScope rules are proven in
+    // CaseHandoverReasonPolicyAuthorizationIT.
     lenient()
         .when(adminScope.current())
         .thenAnswer(
