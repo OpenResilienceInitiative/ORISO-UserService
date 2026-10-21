@@ -70,11 +70,13 @@ class UserAccountControllerDelegate {
   private final @NonNull AgencyAdminDataProvider agencyAdminDataProvider;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
-  private de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance selfLocaleMaintenance;
+  private de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance
+      selfLocaleMaintenance;
 
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   void setSelfLocaleMaintenance(
-      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance maintenance) {
+      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance
+          maintenance) {
     this.selfLocaleMaintenance = maintenance;
   }
 
