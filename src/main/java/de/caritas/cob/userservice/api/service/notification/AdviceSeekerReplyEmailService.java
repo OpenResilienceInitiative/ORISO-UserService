@@ -256,6 +256,7 @@ public class AdviceSeekerReplyEmailService {
     try {
       var configuredRoute = routes.resolve(claim.getTenantId());
       if (configuredRoute.isEmpty()) {
+        // The Träger switched notification mails off: a decision, not an outage to retry.
         writer.finish(deliveryId, Status.REJECTED);
         log.info("Reply email delivery {} suppressed by tenant notification policy", deliveryId);
         return;

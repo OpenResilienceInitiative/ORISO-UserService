@@ -420,6 +420,8 @@ class EmailNotificationFacadeTest {
     ReflectionTestUtils.setField(emailBrand, "brandingResolver", brandResolver);
     ReflectionTestUtils.setField(
         assignEnquiryEmailSupplier, "consultantService", consultantService);
+    ReflectionTestUtils.setField(
+        assignEnquiryEmailSupplier, "releaseToggleService", releaseToggleService);
     facadeLogCaptor = LogbackCaptor.forClass(EmailNotificationFacade.class);
     assignEnquiryLogCaptor = LogbackCaptor.forClass(AssignEnquiryEmailSupplier.class);
     when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
