@@ -278,6 +278,7 @@ public class KeycloakService
 
   @Override
   public IdentityOtpCredential getOtpCredential(String userName) {
+    requireLegacyAccountAccess();
     var requestUrl = getOtpUrl(ENDPOINT_OTP_INFO, userName);
     var response =
         withFreshAdminTokenOnUnauthorized(
@@ -294,6 +295,7 @@ public class KeycloakService
 
   @Override
   public boolean setUpOtpCredential(String userName, String initialCode, String secret) {
+    requireLegacyAccountAccess();
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, secret, null);
     var requestUrl = getOtpUrl(ENDPOINT_OTP_SETUP, userName);
 
@@ -315,6 +317,7 @@ public class KeycloakService
 
   @Override
   public void deleteOtpCredential(String userName) {
+    requireLegacyAccountAccess();
     var requestUrl = getOtpUrl(ENDPOINT_OTP_TEARDOWN, userName);
     withFreshAdminTokenOnUnauthorized(
         "otp-delete",
@@ -323,6 +326,7 @@ public class KeycloakService
 
   @Override
   public IdentityEmailVerificationStart initiateEmailVerification(String username, String email) {
+    requireLegacyAccountAccess();
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(null, null, email);
     var requestUrl = getOtpUrl(ENDPOINT_OTP_VERIFY_EMAIL, username);
 
@@ -341,6 +345,7 @@ public class KeycloakService
 
   @Override
   public IdentityEmailVerification finishEmailVerification(String username, String initialCode) {
+    requireLegacyAccountAccess();
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, null, null);
     var requestUrl = getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);
 
@@ -395,6 +400,13 @@ public class KeycloakService
       recordRetry(operation);
       keycloakClient.refreshAdminSession();
       return request.get();
+    }
+  }
+
+  /** Scoped commands must supply a checked origin; a target-only port cannot fall back to Admin. */
+  private void requireLegacyAccountAccess() {
+    if (identityClientConfig.isFiveActorMode()) {
+      throw new IllegalStateException("Scoped account maintenance command required");
     }
   }
 
@@ -836,6 +848,7 @@ public class KeycloakService
    */
   @Override
   public void updatePassword(final String userId, final String password) {
+    requireLegacyAccountAccess();
     resetPassword(userId, password, false);
   }
 
@@ -1022,6 +1035,7 @@ public class KeycloakService
    */
   @Override
   public void deleteUser(String userId) {
+    requireLegacyAccountAccess();
     try {
       removeUserIfPresent(userId);
     } catch (NotAuthorizedException e) {
@@ -1112,6 +1126,7 @@ public class KeycloakService
 
   @Override
   public Optional<IdentityProfile> findById(String userId) {
+    requireLegacyAccountAccess();
     try {
       UserResource userResource = keycloakClient.getUsersResource().get(userId);
       if (userResource == null) {
@@ -1180,6 +1195,7 @@ public class KeycloakService
    */
   @Override
   public void deactivateUser(String userId) {
+    requireLegacyAccountAccess();
     var userResource = keycloakClient.getUsersResource().get(userId);
     var userRepresentation = userResource.toRepresentation();
     userRepresentation.setEnabled(false);

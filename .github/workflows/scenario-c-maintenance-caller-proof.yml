@@ -62,7 +62,7 @@ jobs:
             -Dtest=KeycloakServiceScenarioCModeTest \
             -DfailIfNoTests=true -Dsurefire.failIfNoSpecifiedTests=true \
             '-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2' \
-            "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakServiceScenarioCModeTest.java"
+            "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakServiceScenarioCModeTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakService.java"
       - name: Require all six methods and preserve every sanitized outcome
         if: always()
         run: python scripts/ci/maintenance-boundary-proof.py collect --report target/scenario-c-maintenance-caller/maintenance-caller-result.json
