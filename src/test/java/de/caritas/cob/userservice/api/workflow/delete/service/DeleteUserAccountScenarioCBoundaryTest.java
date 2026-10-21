@@ -366,8 +366,7 @@ class DeleteUserAccountScenarioCBoundaryTest {
               Integer.class));
       assertEquals(
           firstDelete.get(),
-          jdbc.queryForObject(
-              "select frozen_body from identity_maintenance_intent", String.class));
+          jdbc.queryForObject("select frozen_body from identity_maintenance_intent", String.class));
       jdbc.update(
           "update scheduled_task_claim set claimed_until=? where task_name=?",
           now.plusHours(13),
@@ -375,8 +374,7 @@ class DeleteUserAccountScenarioCBoundaryTest {
       when(claims.tryClaimLease("account-deletion", Duration.ofHours(12)))
           .thenReturn(
               Optional.of(
-                  new ScheduledTaskClaimService.ClaimLease(
-                      "account-deletion", now.plusHours(13))));
+                  new ScheduledTaskClaimService.ClaimLease("account-deletion", now.plusHours(13))));
       ReflectionTestUtils.setField(scheduler, "scopedMaintenance", freshWorker.get());
       scheduler.performDeletionWorkflow();
       // A fresh owner may retry an ACK for cleanup, but cannot issue another native effect.
