@@ -46,6 +46,7 @@ def select_slice(name):
             "publicSchedulerFreezesOwnedDeletionBeforeRpcAndAcknowledgesOnlyVerifiedReceipt",
             "publicSchedulerRejectsInvalidReceiptAndRetainsTheExactFrozenIntent",
             "publicSchedulerLosingLeaseBeforeFreezeCannotSendTheNativeDelete",
+            "publicSchedulerNewOwnerReplaysFrozenDeleteAfterLostReplyAndAckNeverCallsNativeAgain",
         }
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/workflow/delete/service/DeleteUserAccountService",

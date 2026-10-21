@@ -37,6 +37,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.RestTemplate;
@@ -135,7 +137,18 @@ class DeleteUserAccountScenarioCBoundaryTest {
     scheduledWire(false, true);
   }
 
+  @Test
+  void publicSchedulerNewOwnerReplaysFrozenDeleteAfterLostReplyAndAckNeverCallsNativeAgain()
+      throws Exception {
+    scheduledWire(false, false, true);
+  }
+
   private void scheduledWire(boolean invalidReceipt, boolean lostLease) throws Exception {
+    scheduledWire(invalidReceipt, lostLease, false);
+  }
+
+  private void scheduledWire(boolean invalidReceipt, boolean lostLease, boolean lostReply)
+      throws Exception {
     String account = "11111111-1111-4111-8111-111111111111";
     String realmId = "22222222-2222-4222-8222-222222222222";
     var clock = Clock.fixed(Instant.parse("2026-10-21T10:00:00Z"), ZoneOffset.UTC);
@@ -195,6 +208,9 @@ class DeleteUserAccountScenarioCBoundaryTest {
     var http = new RestTemplate();
     var server = MockRestServiceServer.bindTo(http).build();
     var requests = new AtomicInteger();
+    var firstDelete = new AtomicReference<String>();
+    var receiverReply = new AtomicReference<String>();
+    var receiverEffects = new AtomicInteger();
     String endpoint =
         "https://identity.test/realms/fixture/oriso-account-maintenance/v1/accounts/" + account;
     server
@@ -238,7 +254,9 @@ class DeleteUserAccountScenarioCBoundaryTest {
             });
     if (!lostLease) {
       server
-          .expect(requestTo(endpoint + "/delete"))
+          .expect(
+              lostReply ? ExpectedCount.twice() : ExpectedCount.once(),
+              requestTo(endpoint + "/delete"))
           .andExpect(method(HttpMethod.POST))
           .andExpect(header("Authorization", "Bearer fixture-admin"))
           .andRespond(
@@ -295,32 +313,41 @@ class DeleteUserAccountScenarioCBoundaryTest {
                       receipt.substring(0, receipt.length() - 1)
                           + (receipt.endsWith("0") ? "1" : "0");
                 }
+                String reply =
+                    codec.canonical(
+                        Map.of(
+                            "operationId", operation,
+                            "accountId", account,
+                            "result", "DELETED",
+                            "receipt", receipt));
                 requests.incrementAndGet();
-                return withSuccess(
-                        codec.canonical(
-                            Map.of(
-                                "operationId", operation,
-                                "accountId", account,
-                                "result", "DELETED",
-                                "receipt", receipt)),
-                        MediaType.APPLICATION_JSON)
+                if (firstDelete.compareAndSet(null, wire)) {
+                  receiverEffects.incrementAndGet();
+                  receiverReply.set(reply);
+                  if (lostReply) throw new java.io.IOException("Synthetic committed reply lost");
+                } else {
+                  assertEquals(firstDelete.get(), wire);
+                  assertEquals(receiverReply.get(), reply);
+                }
+                return withSuccess(receiverReply.get(), MediaType.APPLICATION_JSON)
                     .createResponse(request);
               });
     }
-    var worker =
-        new ScheduledAskerMaintenance(
-            jdbc,
-            new DataSourceTransactionManager(source),
-            claims,
-            clock,
-            lifecycle,
-            actors,
-            broker,
-            codec,
-            http,
-            "https://identity.test",
-            "fixture",
-            realmId);
+    java.util.function.Supplier<ScheduledAskerMaintenance> freshWorker =
+        () ->
+            new ScheduledAskerMaintenance(
+                jdbc,
+                new DataSourceTransactionManager(source),
+                claims,
+                clock,
+                lifecycle,
+                actors,
+                broker,
+                codec,
+                http,
+                "https://identity.test",
+                "fixture",
+                realmId);
     var scheduler =
         new DeleteUserAccountScheduler(
             service,
@@ -328,8 +355,38 @@ class DeleteUserAccountScenarioCBoundaryTest {
             claims,
             claim,
             mock(IdentityReactivationRepairService.class));
-    ReflectionTestUtils.setField(scheduler, "scopedMaintenance", worker);
-    if (invalidReceipt) {
+    ReflectionTestUtils.setField(scheduler, "scopedMaintenance", freshWorker.get());
+    if (lostReply) {
+      assertThrows(IllegalStateException.class, scheduler::performDeletionWorkflow);
+      assertEquals(
+          1,
+          jdbc.queryForObject(
+              "select count(*) from identity_maintenance_intent where status='FROZEN'"
+                  + " and receipt_json is null and frozen_body is not null",
+              Integer.class));
+      assertEquals(
+          firstDelete.get(),
+          jdbc.queryForObject(
+              "select frozen_body from identity_maintenance_intent", String.class));
+      jdbc.update(
+          "update scheduled_task_claim set claimed_until=? where task_name=?",
+          now.plusHours(13),
+          "account-deletion");
+      when(claims.tryClaimLease("account-deletion", Duration.ofHours(12)))
+          .thenReturn(
+              Optional.of(
+                  new ScheduledTaskClaimService.ClaimLease(
+                      "account-deletion", now.plusHours(13))));
+      ReflectionTestUtils.setField(scheduler, "scopedMaintenance", freshWorker.get());
+      scheduler.performDeletionWorkflow();
+      // A fresh owner may retry an ACK for cleanup, but cannot issue another native effect.
+      ReflectionTestUtils.setField(scheduler, "scopedMaintenance", freshWorker.get());
+      scheduler.performDeletionWorkflow();
+      assertEquals(
+          1,
+          jdbc.queryForObject("select count(*) from identity_maintenance_intent", Integer.class));
+      assertEquals(1, receiverEffects.get());
+    } else if (invalidReceipt) {
       assertThrows(IllegalArgumentException.class, scheduler::performDeletionWorkflow);
     } else {
       scheduler.performDeletionWorkflow();
@@ -356,7 +413,7 @@ class DeleteUserAccountScenarioCBoundaryTest {
                   + " and frozen_body is null and receipt_json is null",
               Integer.class));
     }
-    assertEquals(lostLease ? 1 : 2, requests.get());
+    assertEquals(lostLease ? 1 : lostReply ? 3 : 2, requests.get());
     server.verify();
     assertEquals(1, jdbc.queryForObject("select count(*) from user", Integer.class));
     verifyNoInteractions(nativeClient, users, consultants, registry, mail);
