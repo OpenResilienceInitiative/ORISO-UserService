@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpInputMessage;
 import org.springframework.http.MediaType;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 
 /**
@@ -74,6 +75,22 @@ class RestrictedTenantDataContractTest {
 
     assertThat(dataPrivacyConfirmation).isEqualTo("2026-07-27T14:36:57");
     assertThat(termsAndConditionsConfirmation).isEqualTo("2026-07-27T14:36:57");
+  }
+
+  /**
+   * The RestTemplate reads with Jackson 3. A {@code nullable: true} on {@code active} generated a
+   * {@code JsonNullable} field that Jackson 3 cannot build, and Dev answered 403 for every tenant
+   * user (#1395).
+   */
+  @Test
+  @DisplayName("the operational status reads as a plain Boolean with the runtime converter")
+  void readsTheOperationalStatusWithTheRuntimeConverter() throws Exception {
+    var tenant =
+        (RestrictedTenantDTO)
+            new JacksonJsonHttpMessageConverter()
+                .read(RestrictedTenantDTO.class, jsonMessage("{\"id\": 2, \"active\": false}"));
+
+    assertThat(tenant.getActive()).isEqualTo(Boolean.FALSE);
   }
 
   private RestrictedTenantDTO readPayload() throws Exception {
