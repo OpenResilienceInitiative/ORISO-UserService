@@ -356,6 +356,14 @@ class InternalChatEmailServiceTest {
   }
 
   @Test
+  void counsellorBeingLinkedToAnotherAgencyStillReceivesMail() {
+    recipient.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.IN_PROGRESS);
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).hasSize(1);
+  }
+
+  @Test
   void missingMatrixEventStopsRetryingAfterTheAttemptCap() {
     when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token")).thenReturn(Optional.empty());
     service.onMessageIntent(ROOM, EVENT, caller);
@@ -568,8 +576,8 @@ class InternalChatEmailServiceTest {
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(
       value = ConsultantStatus.class,
-      names = {"CREATED", "ERROR", "IN_DELETION"})
-  void incompleteOrDeletingRecipientCannotReceiveInternalMail(ConsultantStatus status) {
+      names = {"ERROR", "IN_DELETION"})
+  void brokenOrDeletingRecipientCannotReceiveInternalMail(ConsultantStatus status) {
     recipient.setStatus(status);
     service.onMessageIntent(ROOM, EVENT, caller);
     drain();
@@ -579,8 +587,8 @@ class InternalChatEmailServiceTest {
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(
       value = ConsultantStatus.class,
-      names = {"CREATED", "ERROR", "IN_DELETION"})
-  void incompleteOrDeletingSenderCannotGenerateInternalMail(ConsultantStatus status) {
+      names = {"ERROR", "IN_DELETION"})
+  void brokenOrDeletingSenderCannotGenerateInternalMail(ConsultantStatus status) {
     actor.setStatus(status);
     service.onMessageIntent(ROOM, EVENT, caller);
     service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());
@@ -633,6 +641,8 @@ class InternalChatEmailServiceTest {
     consultant.setId(id);
     consultant.setTenantId(tenantId);
     consultant.setMatrixUserId("@" + id + ":matrix.example");
+    // ConsultantAgencyRelationFinalizer leaves every provisioned counsellor CREATED.
+    consultant.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.CREATED);
     consultant.setEmail(id + "@example.org");
     consultant.setNotificationsEnabled(true);
     consultant.setLanguageCode(LanguageCode.de);

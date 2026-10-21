@@ -49,6 +49,10 @@ public class InternalChatEmailService {
   /** About one hour of five-minute retries before a preflight that never succeeds is rejected. */
   static final int MAX_PREFLIGHT_ATTEMPTS = 12;
 
+  // CREATED once provisioned; IN_PROGRESS while an existing counsellor gets another agency.
+  private static final Set<ConsultantStatus> ACTIVE_CONSULTANT_STATUSES =
+      Set.of(ConsultantStatus.CREATED, ConsultantStatus.IN_PROGRESS);
+
   private static final Set<String> USER_MESSAGE_TYPES =
       Set.of("m.text", "m.emote", "m.image", "m.file", "m.audio", "m.video");
 
@@ -289,7 +293,7 @@ public class InternalChatEmailService {
         && consultant != null
         && consultant.getId() != null
         && consultant.getDeleteDate() == null
-        && consultant.getStatus() == ConsultantStatus.IN_PROGRESS
+        && ACTIVE_CONSULTANT_STATUSES.contains(consultant.getStatus())
         && !isBlank(consultant.getMatrixUserId())
         && Objects.equals(consultant.getTenantId(), session.getTenantId())
         && participantIds.contains(consultant.getId());
