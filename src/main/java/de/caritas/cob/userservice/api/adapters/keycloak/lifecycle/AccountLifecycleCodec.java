@@ -109,6 +109,32 @@ public final class AccountLifecycleCodec {
     return encoded + "." + encode(mac("proof\n" + encoded));
   }
 
+  /** Canonical creator proof for the single closed, read-only username selector. */
+  public String usernameAvailabilityProof(
+      String realmName, String realmId, TaskActorCredentials actor, Object body) {
+    if (actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_CREATE)
+      throw new IllegalArgumentException("Wrong availability actor");
+    long now = clock.instant().getEpochSecond();
+    Map<String, Object> claims = new TreeMap<>();
+    claims.put("iss", "userservice");
+    claims.put("aud", "oriso-account-maintenance");
+    claims.put("purpose", "ACCOUNT_AVAILABILITY");
+    claims.put("operation", "account.username-availability");
+    claims.put("method", "POST");
+    claims.put("actor", actor.actor().name());
+    claims.put("realm", realmName);
+    claims.put("target", "realm/" + realmId + "/availability/username");
+    claims.put("taskClient", actor.clientId());
+    claims.put("taskSubject", actor.serviceSubject());
+    claims.put("payloadDigest", digest("payload", body));
+    claims.put("jti", UUID.randomUUID().toString());
+    claims.put("nonce", UUID.randomUUID().toString().replace("-", ""));
+    claims.put("iat", now);
+    claims.put("exp", now + 60);
+    String encoded = encode(canonical(claims).getBytes(StandardCharsets.UTF_8));
+    return encoded + "." + encode(mac("proof\n" + encoded));
+  }
+
   public record CreationProofPayload(
       int v,
       String realmName,

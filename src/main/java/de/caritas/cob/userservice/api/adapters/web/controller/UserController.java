@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedAvailabilityUnavailableException;
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
@@ -178,6 +179,8 @@ public class UserController implements UsersApi {
     boolean usernameAvailable;
     try {
       usernameAvailable = identityManager.isUsernameAvailable(username);
+    } catch (ScopedAvailabilityUnavailableException unavailable) {
+      throw unavailable;
     } catch (RuntimeException exception) {
       log.warn(
           "Could not check username availability for {}. Treating it as available so registration is not blocked.",

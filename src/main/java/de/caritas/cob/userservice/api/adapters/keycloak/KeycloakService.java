@@ -9,6 +9,7 @@ import static java.util.Objects.nonNull;
 
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
+import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedAvailabilityUnavailableException;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
@@ -543,6 +544,18 @@ public class KeycloakService
    * @return true if does not exist, else false
    */
   public boolean isUsernameAvailable(String username) {
+    if (identityClientConfig.isFiveActorMode()) {
+      try {
+        if (scopedUsernameAvailability == null) throw new ScopedAvailabilityUnavailableException();
+        boolean decodedAvailable =
+            scopedUsernameAvailability.available(usernameTranscoder.decodeUsername(username));
+        boolean encodedAvailable =
+            scopedUsernameAvailability.available(usernameTranscoder.encodeUsername(username));
+        return decodedAvailable && encodedAvailable;
+      } catch (RuntimeException unavailable) {
+        throw new ScopedAvailabilityUnavailableException();
+      }
+    }
     List<UserRepresentation> keycloakDecodedUserList =
         findByUsername(usernameTranscoder.decodeUsername(username));
     List<UserRepresentation> keycloakEncodedUserList =
@@ -1102,6 +1115,7 @@ public class KeycloakService
    * @return {@link List} of found users
    */
   public List<UserRepresentation> findByUsername(String username) {
+    requireLegacyAccountAccess();
     try {
       return keycloakClient.getUsersResource().search(username);
     } catch (NotAuthorizedException e) {
