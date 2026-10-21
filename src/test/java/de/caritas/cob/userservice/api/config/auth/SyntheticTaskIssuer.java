@@ -101,7 +101,12 @@ final class SyntheticTaskIssuer implements AutoCloseable {
                 "notification-dispatch",
                 "notifications-technical");
         audiences =
-            List.of("tenantservice", "agencyservice", "consultingtypeservice", "userservice");
+            List.of(
+                "tenantservice",
+                "agencyservice",
+                "consultingtypeservice",
+                "userservice",
+                "oriso-task-commands");
         subject = "native-mail-subject";
       }
       case "backend-runtime" -> {
@@ -150,6 +155,26 @@ final class SyntheticTaskIssuer implements AutoCloseable {
                   "consultingtypeservice",
                   "userservice",
                   "account"));
+      case "mail-five-audiences" ->
+          claims.audience(
+              List.of(
+                  "tenantservice",
+                  "agencyservice",
+                  "consultingtypeservice",
+                  "userservice",
+                  "oriso-task-commands"));
+      case "mail-four-audiences" ->
+          claims.audience(
+              List.of("tenantservice", "agencyservice", "consultingtypeservice", "userservice"));
+      case "mail-proof-audience" ->
+          claims.audience(
+              List.of(
+                  "tenantservice",
+                  "agencyservice",
+                  "consultingtypeservice",
+                  "userservice",
+                  "oriso-task-commands",
+                  "oriso-smtp-control"));
       case "wrong-subject" -> claims.subject("human-subject");
       case "wrong-client" -> claims.claim("azp", "app");
       case "wrong-issuer" -> claims.issuer(base() + "/realms/other");

@@ -14,7 +14,12 @@ public enum TaskActor {
   MAIL(
       Set.of(
           "smtp-sync", "system-email-delivery", "notification-dispatch", "notifications-technical"),
-      Set.of("tenantservice", "agencyservice", "consultingtypeservice", "userservice")),
+      Set.of(
+          "tenantservice",
+          "agencyservice",
+          "consultingtypeservice",
+          "userservice",
+          "oriso-task-commands")),
   RUNTIME(
       Set.of(
           "runtime-policy",

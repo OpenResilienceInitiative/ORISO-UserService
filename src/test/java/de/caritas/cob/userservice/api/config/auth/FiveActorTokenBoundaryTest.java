@@ -114,6 +114,29 @@ class FiveActorTokenBoundaryTest {
   @ParameterizedTest
   @EnumSource(
       value = TaskPurpose.class,
+      names = {"SMTP_SYNC", "SYSTEM_EMAIL_DELIVERY", "NOTIFICATION_DISPATCH"})
+  void mailPurposeAcceptsCanonicalFiveAudienceBearerWithSeparateProofAudience(TaskPurpose purpose) {
+    issuer.variant = "mail-five-audiences";
+    var token = broker.issue(purpose);
+    assertThat(token.actor()).isEqualTo(TaskActor.MAIL);
+    assertThat(issuer.lastForm.get("client_id")).isEqualTo("backend-mail");
+    assertThat(issuer.calls.get()).isEqualTo(1);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"mail-four-audiences", "mail-proof-audience"})
+  void incompleteOrExtraProofAudienceMailBearerRefusesWithoutFallback(String variant) {
+    issuer.variant = variant;
+    assertThatThrownBy(() -> broker.issue(TaskPurpose.SMTP_SYNC))
+        .hasMessage("Task actor authentication unavailable")
+        .hasNoCause();
+    assertThat(issuer.calls.get()).isEqualTo(1);
+    assertThat(issuer.lastForm.get("client_id")).isEqualTo("backend-mail");
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = TaskPurpose.class,
       names = {"ACCOUNT_PROVISIONING", "ACCOUNT_MAINTENANCE", "OTP", "SESSION_EXCHANGE"})
   void unpinnedNativeAccountAndLifecycleContractsRefuseBeforeHttp(TaskPurpose purpose) {
     assertThatThrownBy(() -> broker.issue(purpose))
