@@ -121,19 +121,23 @@ public class DeleteUserAccountService {
 
     var deletionWorkflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
 
-    this.actionsRegistry
-        .buildContainerForType(ConsultantDeletionWorkflowDTO.class)
-        .addActionToExecute(DeleteKeycloakConsultantAction.class)
-        .addActionToExecute(DeleteMatrixConsultantAction.class)
-        .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
-        .addActionToExecute(DeleteChatAction.class)
-        .addActionToExecute(DeleteAppointmentServiceConsultantAction.class)
-        .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
-        .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
-        .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
-        .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
-        .addActionToExecute(DeleteDatabaseConsultantAction.class)
-        .executeActions(deletionWorkflowDTO);
+    try {
+      this.actionsRegistry
+          .buildContainerForType(ConsultantDeletionWorkflowDTO.class)
+          .addActionToExecute(DeleteKeycloakConsultantAction.class)
+          .addActionToExecute(DeleteMatrixConsultantAction.class)
+          .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
+          .addActionToExecute(DeleteChatAction.class)
+          .addActionToExecute(DeleteAppointmentServiceConsultantAction.class)
+          .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
+          .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
+          .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
+          .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
+          .addActionToExecute(DeleteDatabaseConsultantAction.class)
+          .executeActions(deletionWorkflowDTO);
+    } catch (ScopedIdentityCommandRequiredException denied) {
+      // The native action recorded the refusal. Keep the consultant and stop downstream effects.
+    }
 
     return deletionWorkflowDTO.getDeletionWorkflowErrors();
   }

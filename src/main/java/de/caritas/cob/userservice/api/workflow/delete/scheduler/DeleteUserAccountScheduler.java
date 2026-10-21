@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountS
 import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance;
 import de.caritas.cob.userservice.api.workflow.delete.service.UserHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -30,8 +31,18 @@ public class DeleteUserAccountScheduler {
   @Autowired(required = false)
   private ScheduledAskerMaintenance scopedMaintenance;
 
+  @Value("${TASK_IDENTITY_MODEL:LEGACY}")
+  private String taskIdentityModel = "LEGACY";
+
   @Value("${user.account.deleteworkflow.claim.duration:PT12H}")
   private Duration claimDuration;
+
+  @PostConstruct
+  public void verifyScopedMaintenanceAvailability() {
+    if ("FIVE_ACTORS".equals(taskIdentityModel) && scopedMaintenance == null) {
+      throw new IllegalStateException("Five-actor deletion requires the complete scoped scheduler");
+    }
+  }
 
   /** Entry method to perform deletion workflow. */
   @Scheduled(cron = "${user.account.deleteworkflow.cron}")
