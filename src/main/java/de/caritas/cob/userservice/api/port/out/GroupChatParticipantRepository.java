@@ -63,6 +63,7 @@ public interface GroupChatParticipantRepository extends CrudRepository<GroupChat
 
   /** Whether the consultant takes part in the group chat of this session ({@code chat_id}). */
   boolean existsByChatIdAndConsultantId(Long chatId, String consultantId);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query(
       "select participant from GroupChatParticipant participant "
