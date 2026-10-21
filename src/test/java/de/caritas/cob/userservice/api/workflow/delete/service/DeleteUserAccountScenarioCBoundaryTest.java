@@ -170,9 +170,7 @@ class DeleteUserAccountScenarioCBoundaryTest {
     String account = "11111111-1111-4111-8111-111111111111";
     var source =
         new DriverManagerDataSource(
-            "jdbc:h2:mem:consultant-refusal-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1",
-            "sa",
-            "");
+            "jdbc:h2:mem:consultant-refusal-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", "");
     var jdbc = new JdbcTemplate(source);
     jdbc.execute("create table consultant(consultant_id varchar(36) primary key)");
     jdbc.update("insert into consultant values(?)", account);
