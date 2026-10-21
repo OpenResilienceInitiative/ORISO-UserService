@@ -248,16 +248,26 @@ class DeleteUserAccountScenarioCBoundaryTest {
               var outcome =
                   new java.util.TreeMap<String, Object>(
                       Map.of(
-                          "realmId", realmId,
-                          "accountId", account,
-                          "operationId", operation,
-                          "command", "delete",
-                          "ownerClient", actor.clientId(),
-                          "ownerSubject", actor.serviceSubject(),
-                          "intentDigest", codec.digest("maintenance-intent", body),
-                          "previousState", body.path("expectedState").asText(),
-                          "tenantId", "7",
-                          "result", "DELETED"));
+                          "realmId",
+                          realmId,
+                          "accountId",
+                          account,
+                          "operationId",
+                          operation,
+                          "command",
+                          "delete",
+                          "ownerClient",
+                          actor.clientId(),
+                          "ownerSubject",
+                          actor.serviceSubject(),
+                          "intentDigest",
+                          codec.digest("maintenance-intent", body),
+                          "previousState",
+                          body.path("expectedState").asText(),
+                          "tenantId",
+                          "7",
+                          "result",
+                          "DELETED"));
               outcome.put(
                   "originDigest",
                   codec.digest("maintenance-origin", body.path("target").path("origin")));
