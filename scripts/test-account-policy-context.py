@@ -219,7 +219,8 @@ def main():
                     "ORISO_POLICY_RECEIVER_READY": str(private / "receiver-ready"),
                     "ORISO_POLICY_QUERY_COUNT": str(private / "policy-query-count"),
                     "ORISO_POLICY_OBSERVATIONS": str(private / "policy-observations.json"),
-                    "ORISO_POLICY_TENANT_MODE": str(private / "policy-tenant-mode")})
+                    "ORISO_POLICY_TENANT_MODE": str(private / "policy-tenant-mode"),
+                    "ORISO_POLICY_SQL_COUNT": str(private / "policy-sql-count")})
         tenant, user = roots["tenant"], roots["user"]
         classpath = os.pathsep.join([str(tenant / "target/test-classes"), str(tenant / "target/classes"),
                                     (private / "tenant-classpath").read_text().strip()])
