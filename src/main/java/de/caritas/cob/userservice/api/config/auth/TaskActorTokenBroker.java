@@ -32,9 +32,22 @@ public class TaskActorTokenBroker {
 
   public TaskToken issue(TaskPurpose purpose) {
     var binding = configuration.require(purpose);
-    if (binding.actor().audiences().isEmpty()) {
+    if (binding.actor() == TaskActor.ACCOUNT_CREATE || binding.actor() == TaskActor.ACCOUNT_ADMIN) {
       throw new IllegalStateException("Native account actor issuance remains gated");
     }
+    var issued = requestNativeToken(binding);
+    return new TaskToken(binding.actor(), issued.bearer, issued.expiresIn);
+  }
+
+  /** Only the finite checked maintenance/OTP workflow may obtain this private result. */
+  public VerifiedMaintenanceToken issueCheckedMaintenance(TaskPurpose purpose) {
+    if (purpose != TaskPurpose.ACCOUNT_MAINTENANCE && purpose != TaskPurpose.OTP)
+      throw checkedUnavailable();
+    // Signature stub: the actual signed-HTTP positive must fail before enabling this path.
+    throw checkedUnavailable();
+  }
+
+  private NativeToken requestNativeToken(TaskActorCredentials binding) {
     try {
       var response = authentication.loginService(binding.clientId(), binding.clientSecret());
       Jwt token = decoder.decode(response.getAccessToken());
@@ -53,10 +66,90 @@ public class TaskActorTokenBroker {
               && (!(clientRoles instanceof Map<?, ?> roles) || !roles.isEmpty()))) {
         throw new IllegalStateException();
       }
-      return new TaskToken(binding.actor(), response.getAccessToken(), response.getExpiresIn());
+      return new NativeToken(token, response.getAccessToken(), response.getExpiresIn());
     } catch (RuntimeException failure) {
       // Neither tokens, credentials nor provider/decoder diagnostic bodies cross this boundary.
       throw new IllegalStateException("Task actor authentication unavailable");
+    }
+  }
+
+  private static IllegalStateException checkedUnavailable() {
+    return new IllegalStateException("Checked maintenance authentication unavailable");
+  }
+
+  private static final class NativeToken {
+    private final Jwt token;
+    private final String bearer;
+    private final int expiresIn;
+
+    private NativeToken(Jwt token, String bearer, int expiresIn) {
+      this.token = token;
+      this.bearer = bearer;
+      this.expiresIn = expiresIn;
+    }
+
+    @Override
+    public String toString() {
+      return "NativeToken[redacted]";
+    }
+  }
+
+  /** Native-verified original bounds only; never persisted or created from a public tuple. */
+  public static final class VerifiedMaintenanceToken {
+    private final TaskPurpose purpose;
+    private final String bearer;
+    private final String issuer;
+    private final String clientId;
+    private final String subject;
+    private final long issuedAt;
+    private final long expiresAt;
+
+    private VerifiedMaintenanceToken(TaskPurpose purpose, NativeToken issued) {
+      Jwt token = issued.token;
+      this.purpose = purpose;
+      this.bearer = issued.bearer;
+      this.issuer = token.getIssuer().toString();
+      this.clientId = token.getClaimAsString("azp");
+      this.subject = token.getSubject();
+      this.issuedAt = token.getIssuedAt().getEpochSecond();
+      this.expiresAt = token.getExpiresAt().getEpochSecond();
+    }
+
+    public TaskPurpose purpose() {
+      return purpose;
+    }
+
+    public TaskActor actor() {
+      return TaskActor.ACCOUNT_ADMIN;
+    }
+
+    public String accessToken() {
+      return bearer;
+    }
+
+    public String issuer() {
+      return issuer;
+    }
+
+    public String clientId() {
+      return clientId;
+    }
+
+    public String subject() {
+      return subject;
+    }
+
+    public long validatedJwtIssuedAt() {
+      return issuedAt;
+    }
+
+    public long validatedJwtExpiresAt() {
+      return expiresAt;
+    }
+
+    @Override
+    public String toString() {
+      return "VerifiedMaintenanceToken[redacted]";
     }
   }
 

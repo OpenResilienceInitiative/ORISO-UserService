@@ -10,7 +10,7 @@ public enum TaskActor {
   ACCOUNT_CREATE(Set.of("account-provisioning", "account-read"), Set.of()),
   ACCOUNT_ADMIN(
       Set.of("account-maintenance", "account-read", "otp-config-admin", "session-exchange"),
-      Set.of()),
+      Set.of("userservice", "oriso-account-lifecycle", "oriso-otp")),
   MAIL(
       Set.of(
           "smtp-sync", "system-email-delivery", "notification-dispatch", "notifications-technical"),
@@ -41,7 +41,7 @@ public enum TaskActor {
     return roles;
   }
 
-  /** Account audiences remain empty until their native contracts are pinned. */
+  /** Canonical audiences never authorize a generic native-account token grant. */
   public Set<String> audiences() {
     return audiences;
   }
