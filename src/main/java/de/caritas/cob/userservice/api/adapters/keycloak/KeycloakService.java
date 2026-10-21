@@ -52,6 +52,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
@@ -406,7 +407,7 @@ public class KeycloakService
   /** Scoped commands must supply a checked origin; a target-only port cannot fall back to Admin. */
   private void requireLegacyAccountAccess() {
     if (identityClientConfig.isFiveActorMode()) {
-      throw new IllegalStateException("Scoped account maintenance command required");
+      throw new ScopedIdentityCommandRequiredException();
     }
   }
 
