@@ -70,6 +70,10 @@ public class MessageEventCurrentAccessService {
 
   private Long currentCallerTenant(AuthenticatedUser caller) {
     if (caller.getTenantId() != null || multitenancyEnabled) return caller.getTenantId();
+    return configuredSingleTenant();
+  }
+
+  private Long configuredSingleTenant() {
     try {
       // The server resolves exactly one configured tenant; the target case grants no authority.
       var tenant = tenants.getSingleTenancyTenantDataFresh();
@@ -83,6 +87,8 @@ public class MessageEventCurrentAccessService {
     // TenantFilter.CONDITION_WITH_LEGACY_ROWS_OF_TENANT_ONE assigns only this context
     // ownership of legacy rows. Do not mutate stored models or infer another tenant.
     if (tenantId == null && Objects.equals(TenantContext.getCurrentTenant(), 1L)) return 1L;
+    // Single-tenant rows may carry no tenant; they belong to the configured tenant only.
+    if (tenantId == null && !multitenancyEnabled) return configuredSingleTenant();
     return tenantId;
   }
 }

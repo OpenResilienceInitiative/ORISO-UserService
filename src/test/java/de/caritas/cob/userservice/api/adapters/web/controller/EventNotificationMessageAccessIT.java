@@ -23,6 +23,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -199,6 +200,27 @@ class EventNotificationMessageAccessIT {
         .singleElement()
         .satisfies(row -> assertThat(row.getTenantId()).isEqualTo(1L));
     assertThat(TenantContext.getCurrentTenant()).isEqualTo(1L);
+  }
+
+  @Test
+  void tenantlessSingleTenantSessionWithoutTenantContextBelongsToTheConfiguredTenant() {
+    var session = sessions.findById(1L).orElseThrow();
+    session.setTenantId(null);
+    sessions.save(session);
+    TenantContext.clear();
+    when(caller.getUserId()).thenReturn(session.getUser().getUserId());
+    when(caller.getTenantId()).thenReturn(null);
+    when(tenantMetadata.getSingleTenancyTenantDataFresh())
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(1L));
+
+    assertThat(
+            controller
+                .createMessageEventNotification(messageRequest(false))
+                .getStatusCode()
+                .value())
+        .isEqualTo(204);
   }
 
   @ParameterizedTest
