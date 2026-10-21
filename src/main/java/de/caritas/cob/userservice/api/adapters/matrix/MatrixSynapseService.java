@@ -1663,6 +1663,43 @@ public class MatrixSynapseService implements MatrixUserClient {
   }
 
   /**
+   * Like {@link #getRoomEvent} but keeps the outcome: empty only when Synapse answers 404 (the
+   * event does not exist); every other failure throws so the caller can retry.
+   */
+  public java.util.Optional<java.util.Map<String, Object>> findRoomEvent(
+      String roomId, String eventId, String accessToken) {
+    var url =
+        MatrixUrlBuilder.buildUrl(
+            matrixConfig,
+            ENDPOINT_ROOM_EVENT,
+            java.util.Map.of("roomId", roomId, "eventId", eventId));
+    try {
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<Void>(getClientHttpHeaders(accessToken)),
+              java.util.Map.class);
+      if (response.getBody() == null) throw new RoomEventUnavailableException(null);
+      @SuppressWarnings("unchecked")
+      java.util.Map<String, Object> body = response.getBody();
+      return java.util.Optional.of(body);
+    } catch (HttpStatusCodeException response) {
+      if (response.getStatusCode().value() == 404) return java.util.Optional.empty();
+      throw new RoomEventUnavailableException(response);
+    } catch (org.springframework.web.client.RestClientException unavailable) {
+      throw new RoomEventUnavailableException(unavailable);
+    }
+  }
+
+  /** Transient event read failure; the provider body is kept out of the message. */
+  public static final class RoomEventUnavailableException extends RuntimeException {
+    public RoomEventUnavailableException(Throwable cause) {
+      super("room event lookup unavailable", cause);
+    }
+  }
+
+  /**
    * Gets messages from a Matrix room.
    *
    * @param roomId the room ID

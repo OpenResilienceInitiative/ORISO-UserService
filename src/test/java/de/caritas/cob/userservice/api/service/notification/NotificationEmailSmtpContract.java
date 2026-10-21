@@ -223,7 +223,7 @@ class NotificationEmailSmtpContract {
         .thenReturn(Optional.of(List.of(actor.getMatrixUserId(), asker.getMatrixUserId())));
     when(matrix.loginAsUserAccessToken(actor.getMatrixUserId()))
         .thenReturn("synthetic-matrix-token");
-    when(matrix.getRoomEvent(eq(group.getMatrixRoomId()), anyString(), anyString()))
+    when(matrix.findRoomEvent(eq(group.getMatrixRoomId()), anyString(), anyString()))
         .thenAnswer(
             call ->
                 Optional.of(

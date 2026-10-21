@@ -152,7 +152,7 @@ class InternalChatEmailServiceTest {
                 "m.room.encrypted",
                 "content",
                 Map.of("ciphertext", "PRIVATE_ENCRYPTED_MESSAGE_MARKER")));
-    when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token")).thenAnswer(i -> Optional.of(event));
+    when(matrix.findRoomEvent(ROOM, EVENT, "matrix-token")).thenAnswer(i -> Optional.of(event));
     tenantSettings =
         new HashMap<>(
             Map.of(
@@ -441,14 +441,19 @@ class InternalChatEmailServiceTest {
 
   @Test
   void prolongedMatrixOutageRemainsRetryableAndRecoversExactlyOnce() {
-    when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token")).thenReturn(Optional.empty());
+    when(matrix.findRoomEvent(ROOM, EVENT, "matrix-token"))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                .RoomEventUnavailableException(null));
     service.onMessageIntent(ROOM, EVENT, caller);
     for (int round = 0; round < 40; round++) {
       drain();
       makeRetryDue();
     }
     assertThat(received).isEmpty();
-    when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token")).thenAnswer(i -> Optional.of(event));
+    org.mockito.Mockito.doAnswer(i -> Optional.of(event))
+        .when(matrix)
+        .findRoomEvent(ROOM, EVENT, "matrix-token");
     drain();
     assertThat(received).hasSize(1);
     service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());
@@ -457,10 +462,26 @@ class InternalChatEmailServiceTest {
   }
 
   @Test
+  void unknownMatrixEventIsRejectedOnceInsteadOfRetriedForever() {
+    when(matrix.findRoomEvent(ROOM, EVENT, "matrix-token")).thenReturn(Optional.empty());
+    service.onMessageIntent(ROOM, EVENT, caller);
+    for (int round = 0; round < 5; round++) {
+      drain();
+      makeRetryDue();
+    }
+    assertThat(received).isEmpty();
+    verify(matrix, org.mockito.Mockito.times(1)).findRoomEvent(ROOM, EVENT, "matrix-token");
+  }
+
+  @Test
   void briefMatrixOutageStillDeliversOnceTheEventIsReadable() {
-    when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token"))
-        .thenReturn(Optional.empty())
-        .thenReturn(Optional.empty())
+    when(matrix.findRoomEvent(ROOM, EVENT, "matrix-token"))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                .RoomEventUnavailableException(null))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                .RoomEventUnavailableException(null))
         .thenAnswer(i -> Optional.of(event));
     service.onMessageIntent(ROOM, EVENT, caller);
     for (int round = 0; round < 4; round++) {
@@ -790,7 +811,10 @@ class InternalChatEmailServiceTest {
         case "own" -> tenantSettings.put("smtp", Map.of("enabled", true));
         case "membership" -> when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.empty());
         case "event" ->
-            when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token")).thenReturn(Optional.empty());
+            when(matrix.findRoomEvent(ROOM, EVENT, "matrix-token"))
+                .thenThrow(
+                    new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                        .RoomEventUnavailableException(null));
         case "identity" ->
             when(identities.findEnabledById("actor"))
                 .thenThrow(new IllegalStateException("fixture-secret-not-for-logs"));

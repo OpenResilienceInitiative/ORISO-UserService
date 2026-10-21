@@ -1481,6 +1481,29 @@ class MatrixSynapseServiceTest {
         .isEmpty();
   }
 
+  @Test
+  void findRoomEvent_isEmptyOnlyForANotFoundEventAndThrowsOnTransientFailures() {
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(
+            org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Not Found", null, null, null))
+        .thenThrow(
+            org.springframework.web.client.HttpServerErrorException.create(
+                org.springframework.http.HttpStatus.BAD_GATEWAY, "Bad Gateway", null, null, null))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
+
+    assertThat(matrixSynapseService().findRoomEvent(MATRIX_ROOM_ID, "$missing", ACCESS_TOKEN))
+        .isEmpty();
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> matrixSynapseService().findRoomEvent(MATRIX_ROOM_ID, "$event", ACCESS_TOKEN))
+        .isInstanceOf(MatrixSynapseService.RoomEventUnavailableException.class);
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> matrixSynapseService().findRoomEvent(MATRIX_ROOM_ID, "$event", ACCESS_TOKEN))
+        .isInstanceOf(MatrixSynapseService.RoomEventUnavailableException.class);
+  }
+
   // -------------------------------------------------------------------------
   // findOnlineMatrixUserIds
   // -------------------------------------------------------------------------

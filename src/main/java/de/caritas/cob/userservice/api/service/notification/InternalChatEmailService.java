@@ -352,13 +352,14 @@ public class InternalChatEmailService {
             Stage.MATRIX_AUTHENTICATION,
             () -> matrix.loginAsUserAccessToken(actor.getMatrixUserId()));
     if (isBlank(token)) throw failure(Stage.MATRIX_AUTHENTICATION, Reason.DEPENDENCY_UNAVAILABLE);
+    // A 404 is terminal (unknown or browser-invented event); any other failure stays retryable.
     Map<String, Object> event =
         at(
-            Stage.MATRIX_EVENT,
-            () ->
-                matrix
-                    .getRoomEvent(claim.getSourceRoomId(), claim.getSourceEventId(), token)
-                    .orElseThrow(() -> failure(Stage.MATRIX_EVENT, Reason.DEPENDENCY_UNAVAILABLE)));
+                Stage.MATRIX_EVENT,
+                () ->
+                    matrix.findRoomEvent(claim.getSourceRoomId(), claim.getSourceEventId(), token))
+            .orElse(null);
+    if (event == null) return false;
     if (!Objects.equals(claim.getSourceEventId(), event.get("event_id"))
         || !Objects.equals(actor.getMatrixUserId(), event.get("sender"))
         || !(event.get("content") instanceof Map<?, ?> content)) return false;
