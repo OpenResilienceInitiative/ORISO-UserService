@@ -480,8 +480,6 @@ public class SecurityConfig {
                 .hasAuthority(VIEW_AGENCY_CONSULTANTS)
                 .requestMatchers("/users/consultants/import")
                 .hasAuthority(TECHNICAL_DEFAULT)
-                .requestMatchers("/liveproxy/send")
-                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT)
                 .requestMatchers("/users/messages/key")
                 .hasAuthority(TECHNICAL_DEFAULT)
                 .requestMatchers(
@@ -556,6 +554,11 @@ public class SecurityConfig {
                         + "}/deletion/pause")
                 .hasAnyAuthority(
                     USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/askers/deletion/reactivate",
+                    "/service/useradmin/askers/deletion/reactivate")
+                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers(
                     HttpMethod.POST,
                     "/useradmin/admins/{adminId:" + UUID_PATTERN + "}/grant-consultant-identity",
