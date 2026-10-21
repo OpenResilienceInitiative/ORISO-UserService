@@ -54,7 +54,11 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
       }
     } else {
       chatService.deleteChat(chat);
-      matrixChatShutdownService.shutdownRoom(chat);
+      if (!chat.isMembersOnly()) {
+        // A members-only room was purged strictly by deleteChat, in its transaction. A second purge
+        // here could fail after everything is gone and report an error for a stop that worked.
+        matrixChatShutdownService.shutdownRoom(chat);
+      }
     }
   }
 

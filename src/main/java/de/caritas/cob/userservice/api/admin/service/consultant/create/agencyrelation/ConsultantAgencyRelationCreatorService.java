@@ -161,7 +161,12 @@ public class ConsultantAgencyRelationCreatorService {
       for (var roleSetName : input.getRoleSetNames()) {
         requestedRoles.addAll(roleSets.getOrDefault(roleSetName, Collections.emptyList()));
       }
-      identityRoleUpdater.ensureRoles(input.getConsultantId(), requestedRoles);
+      if (de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.PendingCreationRoles
+          .active()) {
+        var consultant = retrieveConsultant(input.getConsultantId());
+        de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.PendingCreationRoles.authorize(
+            input.getConsultantId(), consultant.getTenantId(), requestedRoles);
+      } else identityRoleUpdater.ensureRoles(input.getConsultantId(), requestedRoles);
     }
   }
 
@@ -175,9 +180,18 @@ public class ConsultantAgencyRelationCreatorService {
   }
 
   private void checkConsultantHasRoleSet(Set<String> roles, String consultantId) {
+    boolean pending = false;
+    if (de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.PendingCreationRoles.active()) {
+      var consultant = retrieveConsultant(consultantId);
+      pending =
+          de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.PendingCreationRoles.authorize(
+              consultantId, consultant.getTenantId(), roles);
+    }
     var hasRequestedRole =
         !roles.isEmpty()
-            && identityRoleLookup.findAllByUserId(consultantId).stream().anyMatch(roles::contains);
+            && (pending
+                || identityRoleLookup.findAllByUserId(consultantId).stream()
+                    .anyMatch(roles::contains));
     if (!hasRequestedRole) {
       throw new BadRequestException(
           String.format(

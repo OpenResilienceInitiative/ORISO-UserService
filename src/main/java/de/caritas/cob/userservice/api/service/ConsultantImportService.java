@@ -14,7 +14,6 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
-import java.io.FileReader;
 import java.io.IOException;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
@@ -67,6 +66,17 @@ public class ConsultantImportService {
   private static final String NEWLINE_CHAR = "\r\n";
   private String protocolFile;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment lifecycleEnvironment;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig lifecycleIdentities;
+
+  private boolean fiveActors() {
+    return lifecycleEnvironment != null
+        && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
+  }
+
   public void startImport() {
 
     this.protocolFile = protocolFilename + "." + System.currentTimeMillis();
@@ -75,9 +85,21 @@ public class ConsultantImportService {
     List<CSVRecord> records;
     String logMessage;
     Consultant consultant;
+    final String sourceDigest;
 
     try {
-      in = new FileReader(importFilename);
+      byte[] captured = Files.readAllBytes(Paths.get(importFilename));
+      sourceDigest =
+          java.util.HexFormat.of()
+              .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(captured));
+      String text =
+          StandardCharsets.UTF_8
+              .newDecoder()
+              .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+              .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+              .decode(java.nio.ByteBuffer.wrap(captured))
+              .toString();
+      in = new java.io.StringReader(text);
       records = CSVFormat.DEFAULT.parse(in).getRecords();
     } catch (Exception exception) {
       throw new InternalServerErrorException(exception.getMessage());
@@ -88,6 +110,7 @@ public class ConsultantImportService {
       try {
 
         ImportRecord importRecord = getImportRecord(record);
+        boolean relationsCompletedInCreation = false;
 
         // Check if username is valid
         if (importRecord.getConsultantId() == null
@@ -114,8 +137,21 @@ public class ConsultantImportService {
           }
           String[] agencyRoleArray = agencyRoleSet.split(AGENCY_ROLE_DELIMITER);
 
-          AgencyDTO agency =
-              agencyService.getAgencyWithoutCaching(Long.valueOf(agencyRoleArray[0]));
+          Long agencyId = Long.valueOf(agencyRoleArray[0]);
+          AgencyDTO agency;
+          if (fiveActors()) {
+            if (lifecycleIdentities == null || !lifecycleIdentities.isFiveActorMode())
+              throw new ImportException("Bounded import owner read is unavailable");
+            String token =
+                lifecycleIdentities.taskAccessToken(
+                    de.caritas.cob.userservice.api.config.auth.TaskPurpose.RUNTIME_POLICY);
+            var current = agencyService.getAgenciesForOrdinaryCreation(List.of(agencyId), token);
+            if (current == null
+                || current.size() != 1
+                || !java.util.Objects.equals(current.get(0).getId(), agencyId))
+              throw new ImportException("Configured import agency projection is unavailable");
+            agency = current.get(0);
+          } else agency = agencyService.getAgencyWithoutCaching(agencyId);
 
           if (agency == null) {
             throw new ImportException(
@@ -123,6 +159,17 @@ public class ConsultantImportService {
                     "Consultant %s could not be imported: Invalid agency id %s",
                     importRecord.getUsername(), agencyRoleArray[0]));
           }
+
+          if (fiveActors()
+              && !isTrue(multiTenancyEnabled)
+              && importRecord.getTenantId() == null
+              && agency.getTenantId() != null
+              && agency.getTenantId() > 0) importRecord.setTenantId(agency.getTenantId());
+          if (fiveActors()
+              && (importRecord.getTenantId() == null
+                  || !java.util.Objects.equals(importRecord.getTenantId(), agency.getTenantId())))
+            throw new ImportException(
+                "Configured import agency does not belong to its exact row tenant");
 
           agencyIds.add(Long.valueOf(agencyRoleArray[0]));
 
@@ -187,7 +234,8 @@ public class ConsultantImportService {
           }
 
           // Check if decoded username is already taken
-          if (!identityUsernameAvailability.isUsernameAvailable(importRecord.getUsername())) {
+          if (!fiveActors()
+              && !identityUsernameAvailability.isUsernameAvailable(importRecord.getUsername())) {
             writeToImportLog(
                 String.format(
                     "Could not create Keycloak user for old id %s - username or e-mail address is already taken.",
@@ -226,7 +274,19 @@ public class ConsultantImportService {
         writeToImportLog(logMessage);
 
         if (importRecord.getConsultantId() == null) {
-          consultant = this.createConsultantSaga.createNewConsultant(importRecord, roles);
+          if (fiveActors()) {
+            consultant =
+                this.createConsultantSaga.createImportedConsultant(
+                    importRecord,
+                    roles,
+                    agencyIds,
+                    sourceDigest,
+                    record.getRecordNumber(),
+                    created ->
+                        this.consultantAgencyRelationCreatorService.createConsultantAgencyRelations(
+                            created.getId(), agencyIds, roles, this::writeToImportLog));
+            relationsCompletedInCreation = true;
+          } else consultant = this.createConsultantSaga.createNewConsultant(importRecord, roles);
 
           importRecord.setConsultantId(consultant.getId());
           logMessage = "Keycloak-ID: " + consultant.getId();
@@ -243,8 +303,9 @@ public class ConsultantImportService {
         logMessage =
             "Agencies: " + agencyIds.stream().map(String::valueOf).collect(Collectors.joining(","));
         writeToImportLog(logMessage);
-        this.consultantAgencyRelationCreatorService.createConsultantAgencyRelations(
-            importRecord.getConsultantId(), agencyIds, roles, this::writeToImportLog);
+        if (!relationsCompletedInCreation)
+          this.consultantAgencyRelationCreatorService.createConsultantAgencyRelations(
+              importRecord.getConsultantId(), agencyIds, roles, this::writeToImportLog);
 
         logMessage = "=== END === " + importRecord.getUsername() + " ===" + NEWLINE_CHAR;
         writeToImportLog(logMessage);

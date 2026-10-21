@@ -56,6 +56,39 @@ public class TenantCaseHandoverPolicyReadClient {
         api -> api.updateTenantPermissionPolicies(tenantId, policies), "tenant policy update");
   }
 
+  /**
+   * The resolved policies of one tenant as the raw JSON TenantService answered, read as the
+   * technical service identity. For consumers of settings that this service's generated client does
+   * not model (yet): they read the field they need and tolerate its absence, so this service can be
+   * released before the TenantService that introduces the setting.
+   */
+  public java.util.Map<String, Object> getTenantPermissionPoliciesRaw(Long tenantId) {
+    requireValidTenant(tenantId);
+    return withTechnicalSession(api -> readRawPolicies(api, tenantId), "tenant policy read");
+  }
+
+  private static java.util.Map<String, Object> readRawPolicies(
+      de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi api,
+      Long tenantId) {
+    var client = api.getApiClient();
+    return client
+        .invokeAPI(
+            "/tenantadmin/{id}/permission-policies",
+            org.springframework.http.HttpMethod.GET,
+            java.util.Map.of("id", tenantId),
+            new org.springframework.util.LinkedMultiValueMap<>(),
+            null,
+            new org.springframework.http.HttpHeaders(),
+            new org.springframework.util.LinkedMultiValueMap<>(),
+            new org.springframework.util.LinkedMultiValueMap<>(),
+            client.selectHeaderAccept(new String[] {"application/json"}),
+            client.selectHeaderContentType(new String[] {}),
+            new String[] {"Bearer"},
+            new org.springframework.core.ParameterizedTypeReference<
+                java.util.Map<String, Object>>() {})
+        .getBody();
+  }
+
   private static void requireValidTenant(Long tenantId) {
     if (tenantId == null || tenantId <= 0)
       throw new IllegalArgumentException("Invalid policy tenant");
@@ -87,10 +120,9 @@ public class TenantCaseHandoverPolicyReadClient {
     }
   }
 
-  private TenantPermissionPolicies withTechnicalSession(
+  private <T> T withTechnicalSession(
       java.util.function.Function<
-              de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi,
-              TenantPermissionPolicies>
+              de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi, T>
           operation,
       String operationName) {
     try {
@@ -110,7 +142,7 @@ public class TenantCaseHandoverPolicyReadClient {
     }
   }
 
-  static String failureSummary(RuntimeException exception) {
+  public static String failureSummary(RuntimeException exception) {
     return exception.getClass().getSimpleName()
         + (exception instanceof RestClientResponseException response
             ? " HTTP " + response.getStatusCode().value()

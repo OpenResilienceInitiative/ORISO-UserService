@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+ <changeSet id="20261021-identity-lifecycle-367" author="codex">
+  <comment>#367: default-off ordinary lifecycle journal, immutable finalization intents and exact owned effects.</comment>
+  <sqlFile path="db/changelog/changeset/20261021_identity_lifecycle_367/migrate.sql"
+   relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+  <rollback><sql>DROP TABLE identity_lifecycle_effect;</sql><sql>DROP TABLE identity_lifecycle_outbox;</sql><sql>DROP TABLE identity_lifecycle_attempt;</sql></rollback>
+ </changeSet>
+ <changeSet id="20261021-identity-lifecycle-367-retry-fairness" author="codex">
+  <comment>#367: reserve bounded due retry pages durably so unresolved cleanup cannot starve later activation.</comment>
+  <sqlFile path="db/changelog/changeset/20261021_identity_lifecycle_367/retry-fairness.sql"
+   relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+  <rollback><sql>DROP INDEX idx_identity_lifecycle_outbox_due ON identity_lifecycle_outbox;</sql><sql>ALTER TABLE identity_lifecycle_outbox DROP COLUMN next_attempt_at;</sql></rollback>
+ </changeSet>
+</databaseChangeLog>

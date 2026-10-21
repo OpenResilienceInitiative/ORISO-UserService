@@ -75,6 +75,29 @@ public class CounsellorAgencyAdminGrantService {
         invite.getId());
   }
 
+  /** Initial combined membership is activated later by the bounded receiver, never here. */
+  public void bindInitialAgencyAdmin(String userId, Long agencyId, AccountInvite invite) {
+    if (!de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.PendingCreationRoles.authorize(
+        userId, invite.getTenantId(), List.of("restricted-agency-admin", "user-admin")))
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Initial agency admin needs the live owned creation");
+    bindAdmin(
+        userId,
+        agencyId,
+        () ->
+            Admin.builder()
+                .id(userId)
+                .type(Admin.AdminType.AGENCY)
+                .tenantId(invite.getTenantId())
+                .username(invite.getRecipientEmail())
+                .firstName(invite.getFirstName())
+                .lastName(invite.getLastName())
+                .email(invite.getRecipientEmail())
+                .createDate(nowInUtc())
+                .updateDate(nowInUtc())
+                .build());
+  }
+
   /**
    * The same grant for a counsellor whose account exists. Rows first, realm roles last: inside the
    * caller's transaction a refused role rolls the rows back.

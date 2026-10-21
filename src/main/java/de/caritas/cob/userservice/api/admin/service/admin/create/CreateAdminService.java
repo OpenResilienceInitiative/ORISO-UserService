@@ -57,6 +57,50 @@ public class CreateAdminService {
   private final @NonNull AdminScope adminScope;
   private final @NonNull ExistingAccountSetupIssuer accountSetupIssuer;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment lifecycleEnvironment;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation>
+      ordinaryAccountCreation;
+
+  private boolean fiveActors() {
+    return lifecycleEnvironment != null
+        && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+      ordinaryWorkflow() {
+    var flow = ordinaryAccountCreation == null ? null : ordinaryAccountCreation.getIfAvailable();
+    if (flow == null)
+      throw new IllegalStateException("Ordinary admin lifecycle activation remains gated");
+    return flow;
+  }
+
+  /** Exact held ordinary agency-admin invite; protected Träger authority uses another surface. */
+  public <T> T createInvitedAgencyAdmin(
+      CreateAdminDTO dto,
+      de.caritas.cob.userservice.api.model.AccountInvite invite,
+      java.util.function.Function<Admin, T> finish) {
+    if (!fiveActors()
+        || dto.getTenantId() == null
+        || !java.util.Objects.equals(dto.getTenantId().longValue(), invite.getTenantId()))
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Ordinary invite tenant differs from admin creation");
+    var roles =
+        getDefaultRoles(Admin.AdminType.AGENCY).stream()
+            .map(UserRole::getValue)
+            .collect(java.util.stream.Collectors.toSet());
+    var flow = ordinaryWorkflow();
+    var scope = flow.heldInvitationScope(invite, "AGENCY_ADMIN", roles);
+    var policy =
+        inactivityEnrollment.capture(
+            invite.getTenantId(),
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.OTHER);
+    return createOrdinaryAdmin(dto, Admin.AdminType.AGENCY, false, policy, scope, finish);
+  }
+
   public Admin createNewAgencyAdmin(CreateAdminDTO createAdminDTO) {
     setTenantId(createAdminDTO);
     return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY, true);
@@ -112,7 +156,10 @@ public class CreateAdminService {
     if (multiTenancyEnabled) {
       setTenantIdForMultiTenancy(createAdminDTO);
     } else {
-      createAdminDTO.setTenantId(null);
+      createAdminDTO.setTenantId(
+          fiveActors()
+              ? Math.toIntExact(ordinaryWorkflow().resolveSingleTenant(null, java.util.List.of()))
+              : null);
     }
   }
 
@@ -155,6 +202,38 @@ public class CreateAdminService {
                 de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
                     .OTHER)
             : null;
+    if (fiveActors()) {
+      if (adminType != Admin.AdminType.AGENCY)
+        throw new org.springframework.security.access.AccessDeniedException(
+            "Protected administrator creation requires its exact human invitation authorization");
+      if (!temporaryPassword)
+        throw new org.springframework.security.access.AccessDeniedException(
+            "Invited agency admin creation requires its held invitation origin");
+      var flow = ordinaryWorkflow();
+      var roles =
+          getDefaultRoles(adminType).stream()
+              .map(UserRole::getValue)
+              .collect(java.util.stream.Collectors.toSet());
+      Long tenant =
+          createAdminDTO.getTenantId() == null ? null : createAdminDTO.getTenantId().longValue();
+      var scope = flow.humanScope(adminScope, tenant, java.util.List.of(), "AGENCY_ADMIN", roles);
+      String initial =
+          StringUtils.isNotBlank(createAdminDTO.getPassword())
+              ? createAdminDTO.getPassword()
+              : userHelper.getRandomPassword();
+      createAdminDTO.setPassword(initial);
+      var admin =
+          createOrdinaryAdmin(
+              createAdminDTO,
+              adminType,
+              true,
+              inactivityPolicy,
+              scope,
+              java.util.function.Function.identity());
+      accountSetupIssuer.issueAfterCreation(
+          AccountInviteTargetRole.AGENCY_ADMIN, admin.getId(), initial);
+      return admin;
+    }
     final String keycloakUserId = createUser(createAdminDTO);
     final String password =
         StringUtils.isNotBlank(createAdminDTO.getPassword())
@@ -198,6 +277,43 @@ public class CreateAdminService {
           password);
     }
     return saved;
+  }
+
+  private <T> T createOrdinaryAdmin(
+      CreateAdminDTO dto,
+      Admin.AdminType type,
+      boolean temporary,
+      de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy policy,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos.CreationScope
+          scope,
+      java.util.function.Function<Admin, T> finish) {
+    buildValidatedUserDTO(dto);
+    if (StringUtils.isBlank(dto.getPassword()))
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
+          "Password is required for administrator creation");
+    var account =
+        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+            .AccountCreation(
+            dto.getUsername(),
+            dto.getEmail(),
+            dto.getFirstname(),
+            dto.getLastname(),
+            "de",
+            dto.getPassword(),
+            temporary);
+    return ordinaryWorkflow()
+        .create(
+            scope,
+            account,
+            pending -> {
+              String id = pending.accountId();
+              if (adminRepository.existsById(id))
+                throw new org.springframework.security.access.AccessDeniedException(
+                    "New admin creation cannot adopt an existing row");
+              var saved = adminRepository.saveAndFlush(buildAdmin(dto, type, id));
+              if (policy != null) inactivityEnrollment.enroll(id, saved.getTenantId(), policy);
+              return finish.apply(saved);
+            });
   }
 
   private void rollbackProvisioning(

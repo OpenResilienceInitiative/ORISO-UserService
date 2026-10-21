@@ -1,7 +1,10 @@
 package de.caritas.cob.userservice.api.service;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.AccountInactivitySettings;
 import java.time.Clock;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -24,6 +27,7 @@ public class AccountInactivityEnrollmentService {
   private final TenantServiceApiControllerFactory tenantApi;
   private final AccountInactivityService lifecycle;
   private final Clock clock;
+  private final SecurityHeaderSupplier securityHeaderSupplier;
 
   @Transactional
   public void enroll(String identityId, Long tenantId, Group group) {
@@ -46,12 +50,22 @@ public class AccountInactivityEnrollmentService {
   public Policy capture(Long tenantId, Group group) {
     try {
       var api = tenantApi.createControllerApi();
-      // Tenant zero is intentional here: platform administrators are people too.
-      var tenant =
-          tenantId == null
-              ? api.getRestrictedSingleTenancyTenantData()
-              : api.getRestrictedTenantDataByTenantId(tenantId);
-      var policy = tenant.getSettings().getTenantAdminControls().getAccountInactivitySettings();
+      AccountInactivitySettings policy;
+      if (TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
+        // Platform administrators have no ordinary tenant record. Read their defaults with the
+        // caller's rights, never an ambient service identity, and still enroll each person.
+        securityHeaderSupplier
+            .getCallerKeycloakAndCsrfHttpHeaders()
+            .forEach(
+                (name, values) -> api.getApiClient().addDefaultHeader(name, values.getFirst()));
+        policy = api.getTenantAdminControls().getAccountInactivitySettings();
+      } else {
+        var tenant =
+            tenantId == null
+                ? api.getRestrictedSingleTenancyTenantData()
+                : api.getRestrictedTenantDataByTenantId(tenantId);
+        policy = tenant.getSettings().getTenantAdminControls().getAccountInactivitySettings();
+      }
       Integer months =
           switch (group) {
             case ASKER -> policy.getAskerMonths();

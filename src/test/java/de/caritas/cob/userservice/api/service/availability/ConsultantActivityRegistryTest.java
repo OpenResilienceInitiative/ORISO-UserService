@@ -113,6 +113,25 @@ class ConsultantActivityRegistryTest {
   }
 
   @Test
+  void filterActiveOrThrow_Should_PreserveFailureForEndpointDiagnostics() {
+    givenValueOperations();
+    var failure = new RedisConnectionFailureException("redis unavailable");
+    when(valueOperations.multiGet(List.of(PREFIX + "consultant-1"))).thenThrow(failure);
+
+    assertThatThrownBy(() -> registry.filterActiveOrThrow(List.of("consultant-1"), TTL.toMillis()))
+        .isInstanceOf(AvailabilityStoreException.class)
+        .hasCause(failure);
+    assertThat(
+            meterRegistry
+                .get(ConsultantActivityRegistry.STORE_METRIC)
+                .tag("operation", "read")
+                .tag("outcome", "failure")
+                .counter()
+                .count())
+        .isEqualTo(1);
+  }
+
+  @Test
   void markAvailable_Should_RejectEnableAndExposeMetric_WhenRedisWriteFails() {
     givenValueOperations();
     org.mockito.Mockito.doThrow(new RedisConnectionFailureException("redis unavailable"))

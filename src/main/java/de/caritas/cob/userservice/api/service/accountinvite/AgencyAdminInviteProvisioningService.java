@@ -38,6 +38,27 @@ public class AgencyAdminInviteProvisioningService {
   private final @NonNull IdentityAccountRemover identityAccountRemover;
   private final @NonNull AcceptTimeAgencyCheck acceptTimeAgencyCheck;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment lifecycleEnvironment;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation>
+      ordinaryAccountCreation;
+
+  private boolean fiveActors() {
+    return lifecycleEnvironment != null
+        && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+      ordinaryWorkflow() {
+    var flow = ordinaryAccountCreation == null ? null : ordinaryAccountCreation.getIfAvailable();
+    if (flow == null)
+      throw new IllegalStateException("Ordinary invitation lifecycle activation remains gated");
+    return flow;
+  }
+
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptAsAgencyAdmin(String rawToken, String username, String password) {
     return acceptAsAgencyAdmin(rawToken, username, password, WizardAccept.NONE);
@@ -58,6 +79,11 @@ public class AgencyAdminInviteProvisioningService {
     if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT
         || (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(LocalDateTime.now()))) {
       // Same resume/consumed contract as every other accept path.
+      if (fiveActors()
+          && invite.getStatus() == AccountInviteStatus.ACCEPTED
+          && (invite.getExpiresAt() == null || invite.getExpiresAt().isAfter(LocalDateTime.now()))
+          && invite.getProvisionedUserId() != null
+          && ordinaryWorkflow().finishInvitationIfPending(invite)) return invite;
       return accountInviteService.acceptInvite(rawToken, null);
     }
     if (invite.getProvisioningStatus() == AccountInviteProvisioningStatus.IN_PROGRESS) {
@@ -69,6 +95,7 @@ public class AgencyAdminInviteProvisioningService {
     if (isBlank(username) || isBlank(password)) {
       throw new BadRequestException("username and password are required");
     }
+    acceptTimeAgencyCheck.requireOperationalTenant(invite);
     InviteRowHold.hold(accountInviteRepository, invite, LocalDateTime.now());
     wizard.createUnit().run();
 
@@ -82,6 +109,26 @@ public class AgencyAdminInviteProvisioningService {
     TenantContext.setCurrentTenant(invite.getTenantId());
     try {
       acceptTimeAgencyCheck.requireLiveAgency(invite);
+      if (fiveActors())
+        return createAdminService.createInvitedAgencyAdmin(
+            toAdmin(invite, username, password),
+            invite,
+            admin -> {
+              adminAgencyRepository.save(
+                  AdminAgency.builder()
+                      .admin(admin)
+                      .agencyId(invite.getAgencyId())
+                      .createDate(nowInUtc())
+                      .updateDate(nowInUtc())
+                      .build());
+              AccountInvite accepted = accountInviteService.acceptInvite(rawToken, admin.getId());
+              accepted.setProvisionedUserId(admin.getId());
+              accepted.setProvisioningStatus(AccountInviteProvisioningStatus.COMPLETED);
+              accepted.setProvisioningFailureReason(null);
+              accepted.setAlsoCounsellor(false);
+              accepted.setUpdateDate(LocalDateTime.now());
+              return accountInviteRepository.save(accepted);
+            });
       var admin =
           createAdminService.createNewAgencyAdminInTenant(toAdmin(invite, username, password));
       adminId = admin.getId();

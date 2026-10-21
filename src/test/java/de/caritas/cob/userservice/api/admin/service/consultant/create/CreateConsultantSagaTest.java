@@ -142,6 +142,94 @@ class CreateConsultantSagaTest {
   }
 
   @Test
+  void fiveActorConsultantCreationNeverFallsBackToNativeIdentityWhenLifecycleIsAbsent() {
+    org.springframework.mock.env.MockEnvironment environment =
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS");
+    ReflectionTestUtils.setField(createConsultantSaga, "lifecycleEnvironment", environment);
+    try {
+      createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+    } catch (RuntimeException expectedUnavailable) {
+      /* observe native effect independently */
+    }
+    verify(identityClient, never()).createUser(any(), anyString(), anyString());
+  }
+
+  @Test
+  void fiveActorConsultantCreationUsesCheckedPendingWorkflowAndKeepsNativeCreationUntouched() {
+    var workflow =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+                .class);
+    var provider = org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(workflow);
+    ReflectionTestUtils.setField(
+        createConsultantSaga,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    ReflectionTestUtils.setField(createConsultantSaga, "ordinaryAccountCreation", provider);
+    ReflectionTestUtils.setField(
+        createConsultantSaga,
+        "lifecycleAdminScope",
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class));
+    var dto = validCreateConsultantDto();
+    dto.setTenantId(7L);
+    when(workflow.resolveSingleTenant(eq(7L), any())).thenReturn(7L);
+    var scope =
+        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+            .CreationScope(
+            "7",
+            "CONSULTANT",
+            "/human-roles/consultant",
+            new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+                .Origin(
+                "HUMAN_ADMIN",
+                "human:one",
+                "human:verified",
+                "https://issuer.example/realms/oriso",
+                "human-subject",
+                "user-admin",
+                List.of()));
+    when(workflow.humanScope(any(), eq(7L), any(), eq("CONSULTANT"), eq(Set.of("consultant"))))
+        .thenReturn(scope);
+    var pending =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+                .Pending.class);
+    when(pending.accountId()).thenReturn(KEYCLOAK_USER_ID);
+    when(workflow.create(eq(scope), any(), any()))
+        .thenAnswer(
+            invocation -> {
+              java.util.function.Function<
+                      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+                          .OrdinaryAccountCreation.Pending,
+                      Consultant>
+                  writes = invocation.getArgument(2);
+              return writes.apply(pending);
+            });
+    when(workflow.createChatAccount(eq(pending), eq(VALID_USERNAME), any()))
+        .thenReturn("@validusername:example.test");
+    when(consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    org.mockito.Mockito.lenient()
+        .when(identityClient.createUser(any(), anyString(), anyString()))
+        .thenReturn(new CreatedIdentity(KEYCLOAK_USER_ID));
+    var result = createConsultantSaga.createNewConsultant(dto);
+    assertThat(result.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    var account =
+        ArgumentCaptor.forClass(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+                .AccountCreation.class);
+    verify(workflow).create(eq(scope), account.capture(), any());
+    assertThat(account.getValue().password(), is(VALID_PASSWORD));
+    assertThat(account.getValue().passwordTemporary(), is(true));
+    verify(userAccountInputValidator).validateUserDTO(any());
+    verifyNoInteractions(identityClient, identityPasswordUpdater, rollbackFacade);
+  }
+
+  @Test
   void unavailableRecoveryPolicyStopsBeforeIdentityCreation() {
     org.mockito.Mockito.doThrow(
             new de.caritas.cob.userservice.api.exception.httpresponses

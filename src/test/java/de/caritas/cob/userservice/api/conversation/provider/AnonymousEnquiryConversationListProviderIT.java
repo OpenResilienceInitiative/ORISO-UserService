@@ -207,6 +207,7 @@ class AnonymousEnquiryConversationListProviderIT {
           session.setConsultant(null);
           session.setUser(user);
           session.setId(null);
+          session.setConversationType(null);
           session.setSessionData(null);
           session.setPostcode("12345");
           session.setConsultingTypeId(CONSULTING_TYPE_ID_OFFENDER);

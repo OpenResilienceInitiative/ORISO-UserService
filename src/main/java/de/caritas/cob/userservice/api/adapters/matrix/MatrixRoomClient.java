@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.matrix;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
@@ -12,6 +13,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,6 +43,7 @@ public class MatrixRoomClient {
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
   private static final String ENDPOINT_MEMBERSHIP =
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.member/{userId}";
+  private static final int MEMBERS_ONLY_INVITE_LEVEL = 100;
   private static final int INVITE_USER_MAX_ATTEMPTS = 3;
   private static final long DEFAULT_INVITE_RETRY_DELAY_MS = 1000L;
   private static final Pattern RETRY_AFTER_MS_PATTERN =
@@ -59,6 +62,27 @@ public class MatrixRoomClient {
   public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
       String roomName, String roomAlias, String accessToken, boolean encryptionEnabled)
       throws MatrixCreateRoomException {
+    return createRoom(roomName, roomAlias, accessToken, encryptionEnabled, false);
+  }
+
+  /**
+   * A members-only chat holds exactly its selected members. The room is created with the invite
+   * power level at the creator's (admin) level, so a member cannot invite an arbitrary Matrix user;
+   * the default level is 0. Applies to new rooms only, existing rooms are not changed.
+   */
+  public ResponseEntity<MatrixCreateRoomResponseDTO> createMembersOnlyRoom(
+      String roomName, String roomAlias, String accessToken, boolean encryptionEnabled)
+      throws MatrixCreateRoomException {
+    return createRoom(roomName, roomAlias, accessToken, encryptionEnabled, true);
+  }
+
+  private ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
+      String roomName,
+      String roomAlias,
+      String accessToken,
+      boolean encryptionEnabled,
+      boolean membersOnly)
+      throws MatrixCreateRoomException {
 
     try {
       var headers = getClientHttpHeaders(accessToken);
@@ -71,6 +95,9 @@ public class MatrixRoomClient {
       roomCreateRequest.setVisibility("private");
 
       roomCreateRequest.setInitialState(buildInitialState(encryptionEnabled));
+      if (membersOnly) {
+        roomCreateRequest.setPowerLevelContentOverride(Map.of("invite", MEMBERS_ONLY_INVITE_LEVEL));
+      }
 
       HttpEntity<MatrixCreateRoomRequestDTO> request = new HttpEntity<>(roomCreateRequest, headers);
 
@@ -406,6 +433,100 @@ public class MatrixRoomClient {
           ex.getMessage());
       return false;
     }
+  }
+
+  /**
+   * Demotes a reader with the owner's authority first. Matrix forbids demoting an equal-powered
+   * peer, but permits that peer to lower their own power (room authorization rule9.6). Only that
+   * precise permission rejection permits a self-demotion; transport failures remain failures.
+   * Returns the captured power so a rolled-back grant can restore a standing member.
+   */
+  public Optional<Integer> makeUserReadOnly(
+      String roomId,
+      String userId,
+      int readerPower,
+      String ownerId,
+      String ownerToken,
+      String memberToken) {
+    try {
+      var power = readPowerLevels(roomId, ownerToken);
+      int originalPower = userPower(power, userId);
+      try {
+        writePowerLevels(roomId, userId, readerPower, ownerToken, power);
+      } catch (HttpClientErrorException rejected) {
+        if (rejected.getStatusCode().value() != 403
+            || !"M_FORBIDDEN"
+                .equals(
+                    new ObjectMapper()
+                        .readTree(rejected.getResponseBodyAsString())
+                        .path("errcode")
+                        .asText())
+            || originalPower != userPower(power, ownerId)
+            || readerPower >= originalPower) {
+          return Optional.empty();
+        }
+        // Refresh before the fallback: never replay a snapshot that could undo another member's
+        // rights, or change a requester whose own power changed meanwhile.
+        var current = readPowerLevels(roomId, memberToken);
+        if (userPower(current, userId) != originalPower
+            || userPower(current, ownerId) != originalPower) {
+          return Optional.empty();
+        }
+        writePowerLevels(roomId, userId, readerPower, memberToken, current);
+      }
+      return Optional.of(originalPower);
+    } catch (Exception failure) {
+      log.warn(
+          "Could not establish Matrix read-only access ({})", failure.getClass().getSimpleName());
+      return Optional.empty();
+    }
+  }
+
+  /** Restore only this demotion; a later power change is not ours to overwrite. */
+  public boolean restoreUserPowerLevel(
+      String roomId, String userId, int expectedPower, int originalPower, String ownerToken) {
+    try {
+      var current = readPowerLevels(roomId, ownerToken);
+      if (userPower(current, userId) != expectedPower) {
+        return true;
+      }
+      writePowerLevels(roomId, userId, originalPower, ownerToken, current);
+      return true;
+    } catch (Exception failure) {
+      log.warn(
+          "Could not restore rolled-back Matrix power ({})", failure.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> readPowerLevels(String roomId, String token) {
+    var response =
+        restTemplate.exchange(
+            buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId)),
+            HttpMethod.GET,
+            new HttpEntity<>(getClientHttpHeaders(token)),
+            Map.class);
+    if (response.getBody() == null) {
+      throw new IllegalStateException("Matrix returned no power levels");
+    }
+    return new HashMap<>(response.getBody());
+  }
+
+  private int userPower(Map<String, Object> power, String userId) {
+    return Integer.parseInt(
+        String.valueOf(
+            extractUsers(power).getOrDefault(userId, power.getOrDefault("users_default", 0))));
+  }
+
+  private void writePowerLevels(
+      String roomId, String userId, int value, String token, Map<String, Object> power) {
+    var users = new HashMap<>(extractUsers(power));
+    users.put(userId, value);
+    power.put("users", users);
+    restTemplate.put(
+        buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId)),
+        new HttpEntity<>(power, getClientHttpHeaders(token)));
   }
 
   public boolean setUserPowerLevel(

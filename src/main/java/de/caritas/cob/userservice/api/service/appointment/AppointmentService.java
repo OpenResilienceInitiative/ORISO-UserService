@@ -73,6 +73,57 @@ public class AppointmentService {
     }
   }
 
+  /** Creation ledger owns the exact returned native account and the captured original tenant. */
+  public void createOwnedConsultant(ConsultantAdminResponseDTO response, Long capturedTenant) {
+    if (!appointmentFeatureEnabled
+        || response == null
+        || response.getEmbedded() == null
+        || capturedTenant == null
+        || capturedTenant < 1)
+      throw new IllegalStateException("Owned appointment creation is unavailable");
+    var dto = getConsultantDTO(response, getObjectMapper(false));
+    if (dto == null || dto.getId() == null || !dto.getId().equals(response.getEmbedded().getId()))
+      throw new IllegalArgumentException("Owned appointment payload differs from account");
+    var api = appointmentConsultantServiceApiControllerFactory.createControllerApi();
+    addCapturedTaskHeaders(api.getApiClient(), TaskPurpose.APPOINTMENT_SYNC, capturedTenant);
+    try {
+      var result = api.createConsultantWithHttpInfo(dto);
+      if (result == null || !HttpStatus.OK.equals(result.getStatusCode()))
+        throw new IllegalStateException("Owned appointment creation is unacknowledged");
+    } catch (RestClientException failure) {
+      throw new IllegalStateException("Owned appointment creation outcome is unconfirmed");
+    }
+  }
+
+  /** Cleanup does not depend on a consultant row which may already have rolled back. */
+  public void deleteOwnedCreationConsultant(String accountId, Long capturedTenant) {
+    if (!appointmentFeatureEnabled
+        || accountId == null
+        || accountId.isBlank()
+        || capturedTenant == null
+        || capturedTenant < 1)
+      throw new IllegalStateException("Owned appointment cleanup remains pending");
+    var api = appointmentConsultantServiceApiControllerFactory.createControllerApi();
+    addCapturedTaskHeaders(api.getApiClient(), TaskPurpose.APPOINTMENT_CLEANUP, capturedTenant);
+    try {
+      api.deleteConsultant(accountId);
+    } catch (HttpClientErrorException failure) {
+      if (!HttpStatus.NOT_FOUND.equals(failure.getStatusCode()))
+        throw new IllegalStateException("Owned appointment cleanup outcome is unconfirmed");
+    } catch (RestClientException failure) {
+      throw new IllegalStateException("Owned appointment cleanup outcome is unconfirmed");
+    }
+  }
+
+  private void addCapturedTaskHeaders(ApiClient api, TaskPurpose purpose, Long tenant) {
+    String token =
+        RoutineTaskAuthentication.accessToken(
+            purpose, identityClientConfig, identityAuthentication);
+    var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(token);
+    headers.set("tenantId", tenant.toString());
+    headers.forEach((key, value) -> api.addDefaultHeader(key, value.getFirst()));
+  }
+
   private de.caritas.cob.userservice.appointmentservice.generated.web.model.ConsultantDTO
       getConsultantDTO(ConsultantAdminResponseDTO consultantAdminResponseDTO, ObjectMapper mapper) {
     de.caritas.cob.userservice.appointmentservice.generated.web.model.ConsultantDTO consultant =
