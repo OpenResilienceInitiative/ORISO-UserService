@@ -256,7 +256,8 @@ public class InternalChatEmailService {
         && consultant != null
         && consultant.getId() != null
         && consultant.getDeleteDate() == null
-        && consultant.getStatus() == ConsultantStatus.IN_PROGRESS
+        && (consultant.getStatus() == ConsultantStatus.CREATED
+            || consultant.getStatus() == ConsultantStatus.IN_PROGRESS)
         && !isBlank(consultant.getMatrixUserId())
         && Objects.equals(consultant.getTenantId(), session.getTenantId())
         && participantIds.contains(consultant.getId());

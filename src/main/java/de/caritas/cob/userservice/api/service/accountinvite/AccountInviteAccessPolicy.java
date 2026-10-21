@@ -191,19 +191,20 @@ public class AccountInviteAccessPolicy {
 
   /**
    * Whether the caller may see and send with a template owned by {@code templateTenantId}. Everyone
-   * may use a platform template ({@code null}); a Träger's own template is theirs alone. The owner
-   * rule only; {@link #canUseTemplate(Long, InviteEmailTemplateKind)} adds the kind rule.
+   * may use a platform system default ({@code null} owner); a Träger's own template is theirs
+   * alone. Custom platform templates remain in the platform catalogue only.
    */
-  boolean canUseTemplate(Long templateTenantId) {
+  boolean canUseTemplate(Long templateTenantId, boolean systemDefault) {
     var reach = adminScope.ownerReach();
     return reach instanceof AdminScope.Platform
-        || templateTenantId == null
-        || templateTenantId.equals(reach.tenantId());
+        || (templateTenantId == null && systemDefault)
+        || (templateTenantId != null && templateTenantId.equals(reach.tenantId()));
   }
 
   /** The owner rule and the kind rule together: may the caller see and send with this template? */
-  public boolean canUseTemplate(Long templateTenantId, InviteEmailTemplateKind kind) {
-    return canUseTemplate(templateTenantId) && mayUseTemplateKind(kind);
+  public boolean canUseTemplate(
+      Long templateTenantId, InviteEmailTemplateKind kind, boolean systemDefault) {
+    return canUseTemplate(templateTenantId, systemDefault) && mayUseTemplateKind(kind);
   }
 
   /**
@@ -215,8 +216,9 @@ public class AccountInviteAccessPolicy {
    * @throws ForbiddenException if the template belongs to another Träger or its kind is out of
    *     reach
    */
-  public void authorizeTemplateUse(Long templateTenantId, InviteEmailTemplateKind kind) {
-    if (!canUseTemplate(templateTenantId)) {
+  public void authorizeTemplateUse(
+      Long templateTenantId, InviteEmailTemplateKind kind, boolean systemDefault) {
+    if (!canUseTemplate(templateTenantId, systemDefault)) {
       throw denyTemplate("use invite e-mail template of tenant " + templateTenantId);
     }
     if (!mayUseTemplateKind(kind)) {

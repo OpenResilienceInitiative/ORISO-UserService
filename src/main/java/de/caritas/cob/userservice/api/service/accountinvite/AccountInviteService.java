@@ -1008,7 +1008,10 @@ public class AccountInviteService {
     // Hiding another Träger's template from the list is not enough: the id travels in
     // the send request body, so sending with it has to be refused too (ORISO-Admin#1026).
     // The kind rule rides along: a BST admin may not send with a Träger invite text.
-    accessPolicy.authorizeTemplateUse(template.getTenantId(), template.getKind());
+    accessPolicy.authorizeTemplateUse(
+        template.getTenantId(),
+        template.getKind(),
+        Boolean.TRUE.equals(template.getSystemDefault()));
     // Before anything is written: a template without text is refused, never mailed empty.
     InviteDelivery.requireText(template.getSubject(), withoutActionLink(template.getBody()));
     return template;

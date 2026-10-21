@@ -210,6 +210,27 @@ class InternalChatEmailServiceTest {
     assertThat(received.getFirst().email().text()).contains("/42").doesNotContain("PRIVATE_");
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "CREATED,CREATED",
+    "CREATED,IN_PROGRESS",
+    "IN_PROGRESS,CREATED",
+    "IN_PROGRESS,IN_PROGRESS"
+  })
+  void operationalCounsellorsReceiveInternalMailExactlyOnce(
+      ConsultantStatus senderStatus, ConsultantStatus recipientStatus) {
+    actor.setStatus(senderStatus);
+    recipient.setStatus(recipientStatus);
+
+    service.onMessageIntent(ROOM, EVENT, caller);
+    service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());
+    drain();
+
+    assertThat(received).hasSize(1);
+    assertThat(received.getFirst().recipient()).isEqualTo("recipient@example.org");
+    assertThat(received.getFirst().email().text()).contains("/42").doesNotContain("PRIVATE_");
+  }
+
   @Test
   void duplicateBrowserAcknowledgementAndMatrixEventDeliverOnlyOnce() {
     service.onMessageIntent(ROOM, EVENT, caller);
@@ -459,8 +480,8 @@ class InternalChatEmailServiceTest {
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(
       value = ConsultantStatus.class,
-      names = {"CREATED", "ERROR", "IN_DELETION"})
-  void incompleteOrDeletingRecipientCannotReceiveInternalMail(ConsultantStatus status) {
+      names = {"ERROR", "IN_DELETION"})
+  void failedOrDeletingRecipientCannotReceiveInternalMail(ConsultantStatus status) {
     recipient.setStatus(status);
     service.onMessageIntent(ROOM, EVENT, caller);
     drain();
@@ -470,8 +491,8 @@ class InternalChatEmailServiceTest {
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(
       value = ConsultantStatus.class,
-      names = {"CREATED", "ERROR", "IN_DELETION"})
-  void incompleteOrDeletingSenderCannotGenerateInternalMail(ConsultantStatus status) {
+      names = {"ERROR", "IN_DELETION"})
+  void failedOrDeletingSenderCannotGenerateInternalMail(ConsultantStatus status) {
     actor.setStatus(status);
     service.onMessageIntent(ROOM, EVENT, caller);
     service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());

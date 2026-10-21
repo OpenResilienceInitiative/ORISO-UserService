@@ -195,6 +195,7 @@
   <include file="db/changelog/changeset/0105_service_notice_draft/0105_changeSet.xml" />
   <include file="db/changelog/changeset/0106_existing_account_setup/0106_changeSet.xml" />
 
+  <include file="db/changelog/changeset/0091_group_session_tenant/0091_changeSet.xml" />
   <include file="db/changelog/changeset/0091_matrix_call_binding/0091_changeSet.xml"/>
   <include file="db/changelog/changeset/0094_session_ownership_revision/0094_changeSet.xml" />
   <include file="db/changelog/changeset/0095_case_handover_period_operations/0095_changeSet.xml" />
@@ -224,6 +225,7 @@
   <include file="db/changelog/changeset/20260924_invite_email_template_tenant/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_account_invite_timeline/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_id_reservation_lock/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260927_case_handover_extended_at/changeSet.xml"/>
   <include file="db/changelog/changeset/20260923_chat_invite_token_1237/changeSet.xml"/>
   <include file="db/changelog/changeset/20260923_group_chat_join_request_1499/changeSet.xml"/>
   <include file="db/changelog/changeset/20260926_group_chat_admission_1499/changeSet.xml"/>
@@ -239,6 +241,9 @@
   <include file="db/changelog/changeset/20261007_user_avatar_1240/changeSet.xml"/>
   <include file="db/changelog/changeset/20261008_enquiry_rejection/changeSet.xml"/>
   <include file="db/changelog/changeset/20261007_standing_access_preference_1657/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261008_group_matrix_cleanup/changeSet.xml"/>
   <include file="db/changelog/changeset/20261009_inquiry_acceptance_notice/changeSet.xml" />
+  <include file="db/changelog/changeset/20261013_invite_template_delete_guard/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261013_managed_account_pause/changeSet.xml"/>
   <include file="db/changelog/changeset/20261014_co_access_power_rollback/changeSet.xml"/>
 </databaseChangeLog>

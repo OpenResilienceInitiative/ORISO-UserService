@@ -117,7 +117,9 @@ class EnquiryRejectionControllerIT {
     var tenantDto =
         new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO();
     tenantDto.setSubdomain("synthetic");
+    tenantDto.setActive(true);
     when(tenantMetadata.getRestrictedTenantData(7L)).thenReturn(tenantDto);
+    when(tenantMetadata.getRestrictedTenantDataFresh(7L)).thenReturn(tenantDto);
     when(caller.getUserId()).thenReturn(actorId);
     when(caller.getTenantId()).thenReturn(7L);
     when(caller.isConsultant()).thenReturn(true);
@@ -1426,8 +1428,6 @@ class EnquiryRejectionControllerIT {
     assertThat(projected.path("registrationType").asText()).isEqualTo("REGISTERED");
     assertThat(projected.has("conversationType")).isTrue();
     assertThat(projected.get("conversationType").isNull()).isTrue();
-    System.out.println(
-        "N12_CANONICAL_LEGACY_READ: conversationType=null, status=1, registrationType=REGISTERED, agencyId=70");
     when(caller.isConsultant()).thenReturn(true);
     when(caller.getUserId()).thenReturn(actorId);
     when(caller.getRoles()).thenReturn(Set.of("consultant"));

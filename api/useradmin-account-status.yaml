@@ -1,0 +1,86 @@
+openapi: 3.0.1
+info:
+  title: Managed account operational status and security metadata
+  version: 1.0.0
+  description: >-
+    Existing account management permissions and AdminScope apply to the target identity.
+    Manual pause is independent of provider login locks, absence, inactivity lifecycle and tenant status.
+    Organisation restrictions never rewrite individual account flags. Only metadata is returned;
+    enrollment secrets, QR codes and recovery credentials are excluded. Both prefixes are supported.
+servers:
+  - url: /
+  - url: /service
+paths:
+  /useradmin/accounts/{accountId}/status:
+    parameters:
+      - in: path
+        name: accountId
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getManagedAccountStatus
+      security: [{Bearer: []}]
+      responses:
+        '200':
+          description: Confirmed metadata; unavailable fields are null.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountStatus'}
+        '403': {description: Caller cannot manage the account or is outside its scope}
+        '404': {description: Managed account does not exist}
+    put:
+      operationId: updateManagedAccountStatus
+      security: [{Bearer: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active: {type: boolean}
+      responses:
+        '200':
+          description: Selected identity's manual pause saved; unrelated restrictions preserved.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountStatus'}
+        '400': {description: Active flag missing or invalid}
+        '403': {description: Account write authority or scope missing}
+        '404': {description: Managed account does not exist}
+        '409':
+          description: Independent restrictions refuse activation; saved pause is unchanged.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountStatus'}
+        '502': {description: Authoritative activation prerequisites unavailable}
+components:
+  securitySchemes:
+    Bearer: {type: http, scheme: bearer, bearerFormat: JWT}
+  schemas:
+    AccountStatus:
+      type: object
+      required: [accountId, username, paused, absent, restrictions, twoFactor]
+      properties:
+        accountId: {type: string}
+        username: {type: string}
+        createDate: {type: string, nullable: true}
+        updateDate: {type: string, nullable: true}
+        active: {type: boolean, nullable: true}
+        paused: {type: boolean}
+        loginEnabled: {type: boolean, nullable: true}
+        absent: {type: boolean}
+        lifecycleRestricted: {type: boolean, nullable: true}
+        tenantActive: {type: boolean, nullable: true}
+        restrictions:
+          type: array
+          items:
+            type: string
+            enum: [MANAGED_PAUSE, LOGIN_DISABLED, ABSENT, LIFECYCLE_RESTRICTED, TENANT_INACTIVE]
+        twoFactor:
+          type: object
+          properties:
+            required: {type: boolean, nullable: true}
+            configured: {type: boolean, nullable: true}
+            active: {type: boolean, nullable: true}

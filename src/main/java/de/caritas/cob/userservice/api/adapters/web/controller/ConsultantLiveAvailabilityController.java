@@ -3,7 +3,10 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantLiveAvailabilityRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantLiveAvailabilityResponseDTO;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
+import de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +33,8 @@ public class ConsultantLiveAvailabilityController {
 
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull ConsultantActivityRegistry consultantActivityRegistry;
+  private final @NonNull ConsultantService consultantService;
+  private final @NonNull NewCounsellingDpaPolicy newCounsellingDpaPolicy;
 
   /**
    * The live-chat availability window in milliseconds. Kept in sync with {@code
@@ -67,15 +72,26 @@ public class ConsultantLiveAvailabilityController {
   /**
    * Returns whether the calling consultant is currently within the live-chat availability window,
    * read from {@link ConsultantActivityRegistry}. Non-consultants always read {@code false}.
+   *
+   * <p>Also reports whether the AVV of the consultant's provider allows new counselling (#1704), so
+   * the app can warn a consultant who is live while advice seekers are turned away.
    */
   @GetMapping("/conversations/consultants/availability")
   public ResponseEntity<ConsultantLiveAvailabilityResponseDTO> getLiveChatAvailability() {
     boolean available = false;
+    Boolean newCounsellingAllowed = null;
     if (authenticatedUser.isConsultant() && authenticatedUser.getUserId() != null) {
       String userId = authenticatedUser.getUserId();
       available =
           consultantActivityRegistry.filterActive(List.of(userId), activeWindowMs).contains(userId);
+      newCounsellingAllowed =
+          consultantService
+              .getConsultant(userId)
+              .map(Consultant::getTenantId)
+              .map(newCounsellingDpaPolicy::allowsNewCounselling)
+              .orElse(null);
     }
-    return ResponseEntity.ok(new ConsultantLiveAvailabilityResponseDTO(available));
+    return ResponseEntity.ok(
+        new ConsultantLiveAvailabilityResponseDTO(available, newCounsellingAllowed));
   }
 }
