@@ -408,7 +408,10 @@ class MatrixCallNotificationIT {
                 mock(
                     de.caritas.cob.userservice.api.service.notification
                         .AdviceSeekerReplyEmailService.class),
-                freshEmailCursor());
+                freshEmailCursor(),
+                mock(
+                    de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
+                        .class));
     var listener = fresh.get();
     try {
       listener.initialize();
@@ -688,7 +691,10 @@ class MatrixCallNotificationIT {
                 mock(
                     de.caritas.cob.userservice.api.service.notification
                         .AdviceSeekerReplyEmailService.class),
-                freshEmailCursor());
+                freshEmailCursor(),
+                mock(
+                    de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
+                        .class));
     var listener = freshListener.get();
     try {
       listener.initialize();
@@ -902,7 +908,8 @@ class MatrixCallNotificationIT {
         mock(
             de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
                 .class),
-        freshEmailCursor()) {
+        freshEmailCursor(),
+        mock(de.caritas.cob.userservice.api.service.notification.InternalChatEmailService.class)) {
       @Override
       void sleep(long millis) throws InterruptedException {
         super.sleep(Math.min(millis, 10));
@@ -1146,7 +1153,10 @@ class MatrixCallNotificationIT {
                 mock(
                     de.caritas.cob.userservice.api.service.notification
                         .AdviceSeekerReplyEmailService.class),
-                freshEmailCursor());
+                freshEmailCursor(),
+                mock(
+                    de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
+                        .class));
     var listener = newListener.get();
     try {
       listener.initialize();

@@ -1533,6 +1533,12 @@ components:
         featureAskerBrowserSelfHelpEnabled:
           type: boolean
           default: true
+        featureConsultantEmailInternalGroupEnabled:
+          type: boolean
+          default: true
+        featureConsultantBrowserInternalGroupEnabled:
+          type: boolean
+          default: true
         featureStatisticsEnabled:
           type: boolean
           example: 'false'

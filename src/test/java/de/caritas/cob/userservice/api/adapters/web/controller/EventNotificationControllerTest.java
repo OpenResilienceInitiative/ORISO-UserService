@@ -50,6 +50,10 @@ class EventNotificationControllerTest {
   private de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService
       feedbackMessageEmailService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
+      internalChatEmailService;
+
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
 
@@ -63,6 +67,7 @@ class EventNotificationControllerTest {
             eventNotificationService,
             teamDiscussionNotificationService,
             feedbackMessageEmailService,
+            internalChatEmailService,
             authenticatedUser,
             Optional.of(redisMessageMirrorService));
     controllerWithoutMirror =
@@ -70,8 +75,26 @@ class EventNotificationControllerTest {
             eventNotificationService,
             teamDiscussionNotificationService,
             feedbackMessageEmailService,
+            internalChatEmailService,
             authenticatedUser,
             Optional.empty());
+  }
+
+  /** api-error-contract: a failed durable step never answers 2xx; the client retries. */
+  @Test
+  void internalChatIntentDatabaseFailureIsNotAcknowledged() {
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("!internal:matrix.example");
+    request.setMatrixEventId("$event");
+    org.mockito.Mockito.doThrow(
+            new org.springframework.dao.DataIntegrityViolationException("column cannot be null"))
+        .when(internalChatEmailService)
+        .onMessageIntent("!internal:matrix.example", "$event", authenticatedUser);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        org.springframework.dao.DataAccessException.class,
+        () -> controllerWithoutMirror.createMessageEventNotification(request));
+    verifyNoInteractions(eventNotificationService);
   }
 
   @Test
@@ -138,6 +161,7 @@ class EventNotificationControllerTest {
             realService,
             teamDiscussionNotificationService,
             feedbackMessageEmailService,
+            internalChatEmailService,
             authenticatedUser,
             Optional.empty());
 
