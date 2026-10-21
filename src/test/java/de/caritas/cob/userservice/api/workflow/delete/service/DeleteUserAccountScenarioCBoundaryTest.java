@@ -141,13 +141,10 @@ class DeleteUserAccountScenarioCBoundaryTest {
         "create table user(user_id varchar(36) primary key, tenant_id bigint,"
             + " delete_date timestamp(6), deletion_lifecycle_state varchar(64),"
             + " deletion_read_only_until timestamp(6), deletion_paused_until timestamp(6))");
-    jdbc.execute(
-        "create table identity_maintenance_intent(operation_id varchar(36) primary key,"
-            + " realm_id varchar(36), realm_name varchar(255), subject_type varchar(32),"
-            + " subject_id varchar(36), deletion_started_at timestamp(6), tenant_id bigint,"
-            + " claim_token varchar(36), claim_until timestamp(6), status varchar(32),"
-            + " expected_state varchar(64), frozen_body clob, receipt_json clob,"
-            + " unique(subject_type, subject_id, deletion_started_at))");
+    new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
+            new org.springframework.core.io.ClassPathResource(
+                "db/changelog/changeset/20261021_identity_maintenance_367/migrate.sql"))
+        .execute(source);
     jdbc.update(
         "insert into scheduled_task_claim values(?,?,?)",
         "account-deletion",
@@ -289,6 +286,7 @@ class DeleteUserAccountScenarioCBoundaryTest {
             new DataSourceTransactionManager(source),
             claims,
             clock,
+            lifecycle,
             actors,
             broker,
             codec,

@@ -127,6 +127,99 @@ public final class AccountLifecycleCodec {
     }
   }
 
+  /** Finite maintenance proof encoding; only the checked private domain writer issues a scope. */
+  public String maintenanceProof(
+      String command,
+      String realmName,
+      String realmId,
+      String accountId,
+      TaskActorCredentials actor,
+      Object body) {
+    if (!java.util.Set.of("read", "delete").contains(command)
+        || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
+      throw new IllegalArgumentException("Invalid maintenance proof binding");
+    long now = clock.instant().getEpochSecond();
+    Map<String, Object> claims = new TreeMap<>();
+    claims.put("iss", "userservice");
+    claims.put("aud", "oriso-account-maintenance");
+    claims.put("purpose", TaskPurpose.ACCOUNT_MAINTENANCE.name());
+    claims.put("operation", "account." + command);
+    claims.put("method", "POST");
+    claims.put("actor", actor.actor().name());
+    claims.put("realm", realmName);
+    claims.put("target", "realm/" + realmId + "/account/" + accountId);
+    claims.put("taskClient", actor.clientId());
+    claims.put("taskSubject", actor.serviceSubject());
+    claims.put("payloadDigest", digest("payload", body));
+    claims.put("jti", UUID.randomUUID().toString());
+    claims.put("nonce", UUID.randomUUID().toString().replace("-", ""));
+    claims.put("iat", now);
+    claims.put("exp", now + 60);
+    String encoded = encode(canonical(claims).getBytes(StandardCharsets.UTF_8));
+    return encoded + "." + encode(mac("proof\n" + encoded));
+  }
+
+  private record MaintenanceReply(
+      UUID operationId, String accountId, String result, String receipt) {}
+
+  private record MaintenanceOutcome(
+      String realmId,
+      String accountId,
+      UUID operationId,
+      String command,
+      String ownerClient,
+      String ownerSubject,
+      String intentDigest,
+      String previousState,
+      String tenantId,
+      String originDigest,
+      String result) {}
+
+  /** A transport success is not acknowledgement until every immutable receiver binding is checked. */
+  public String verifyMaintenanceDeleteReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    try {
+      var result = read(reply, MaintenanceReply.class);
+      UUID operation = UUID.fromString(frozen.path("operationId").asText());
+      String account = frozen.path("target").path("accountId").asText();
+      if (actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN
+          || !operation.equals(result.operationId())
+          || !account.equals(result.accountId())
+          || !"DELETED".equals(result.result())
+          || result.receipt() == null
+          || result.receipt().length() > 16384) throw new IllegalArgumentException();
+      String[] parts = result.receipt().split("\\.", -1);
+      if (parts.length != 2
+          || !parts[0].matches("[A-Za-z0-9_-]+")
+          || !parts[1].matches("[0-9a-f]{64}")) throw new IllegalArgumentException();
+      byte[] decoded = Base64.getUrlDecoder().decode(parts[0]);
+      if (!encode(decoded).equals(parts[0])
+          || !java.security.MessageDigest.isEqual(
+              HexFormat.of().parseHex(parts[1]),
+              mac("maintenance-operation-receipt\n" + parts[0]))) throw new IllegalArgumentException();
+      String raw = utf8(decoded);
+      var outcome = read(raw, MaintenanceOutcome.class);
+      JsonNode tenant = frozen.path("target").path("tenantId");
+      String expectedTenant = tenant.isNull() ? null : tenant.textValue();
+      if (!raw.equals(canonical(outcome))
+          || !realmId.equals(outcome.realmId())
+          || !account.equals(outcome.accountId())
+          || !operation.equals(outcome.operationId())
+          || !"delete".equals(outcome.command())
+          || !actor.clientId().equals(outcome.ownerClient())
+          || !actor.serviceSubject().equals(outcome.ownerSubject())
+          || !digest("maintenance-intent", frozen).equals(outcome.intentDigest())
+          || !frozen.path("expectedState").asText().equals(outcome.previousState())
+          || !java.util.Objects.equals(expectedTenant, outcome.tenantId())
+          || !digest("maintenance-origin", frozen.path("target").path("origin"))
+              .equals(outcome.originDigest())
+          || !"DELETED".equals(outcome.result())) throw new IllegalArgumentException();
+      return canonical(result);
+    } catch (RuntimeException failure) {
+      throw new IllegalArgumentException("Invalid native maintenance receipt");
+    }
+  }
+
   /** Verify receiver-owned provenance before trusting an account id returned over HTTP. */
   public CreationProofPayload verifyCreationProof(
       String proof,
