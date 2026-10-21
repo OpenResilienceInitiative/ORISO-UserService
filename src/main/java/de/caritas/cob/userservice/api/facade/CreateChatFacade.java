@@ -96,6 +96,7 @@ public class CreateChatFacade {
    * @param creator the calling counsellor
    * @param colleagues the selected colleagues; validated by the caller, never the creator
    */
+  @org.springframework.transaction.annotation.Transactional
   public CreatedChat createMembersOnlyChat(
       ChatDTO chatDTO, Consultant creator, List<Consultant> colleagues) {
     return createMatrixGroupChat(chatDTO, creator, List.copyOf(colleagues));
