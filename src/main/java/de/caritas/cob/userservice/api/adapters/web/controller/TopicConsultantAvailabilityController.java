@@ -1,10 +1,13 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAvailabilityDTO;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.AvailabilityEndpoint;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -21,9 +24,11 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequiredArgsConstructor
+@Slf4j
 public class TopicConsultantAvailabilityController {
 
   private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
+  private final @NonNull LiveChatDiagnosticMetrics liveChatDiagnosticMetrics;
 
   @GetMapping("/conversations/anonymous/availability")
   public ResponseEntity<ConsultantAvailabilityDTO> getTopicConsultantAvailability(
@@ -33,6 +38,15 @@ public class TopicConsultantAvailabilityController {
     try {
       availableConsultantIds = topicConsultantRoutingService.findAvailableConsultantIds(topicId);
     } catch (Exception ex) {
+      // Still answered as "nobody", the endpoint's contract — but no longer silently (#1270). Only
+      // the topic and the exception class are logged: no message, stack trace or user data (KDG).
+      log.warn(
+          "Live-chat availability lookup failed; reporting nobody live (endpoint=anonymous_door,"
+              + " topicId={}, exception={})",
+          topicId,
+          ex.getClass().getSimpleName());
+      liveChatDiagnosticMetrics.recordAvailabilityLookupFailure(
+          AvailabilityEndpoint.ANONYMOUS_DOOR);
       availableConsultantIds = List.of();
     }
 

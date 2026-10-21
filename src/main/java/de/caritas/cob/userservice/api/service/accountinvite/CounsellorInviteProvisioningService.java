@@ -77,6 +77,7 @@ public class CounsellorInviteProvisioningService {
       throw new ConflictException("Account invite provisioning is already in progress");
     }
     validate(command, invite);
+    acceptTimeAgencyCheck.requireOperationalTenant(invite);
     InviteRowHold.hold(accountInviteRepository, invite, LocalDateTime.now());
     wizard.createUnit().run();
 

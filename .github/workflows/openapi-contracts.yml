@@ -56,9 +56,9 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
-        # TenantService dev after PR315 merge: PR304 notification channel fields plus the
-        # featureConsultant{Browser,Email}InternalGroupEnabled settings consumed here.
-        ref: ${{ github.event_name == 'pull_request' && 'ec6d1484b8119fb5931d09a5b3599baccc19a400' || 'dev' }}
+        # TenantService dev after PR309 + PR315 merges: PR304 notification channel fields,
+        # RestrictedTenantDTO.active and featureConsultant{Browser,Email}InternalGroupEnabled.
+        ref: ${{ github.event_name == 'pull_request' && 'b10255a4f27bb2dd6721b3d9b5261ce52b2d7f42' || 'dev' }}
         path: .providers/tenant
         persist-credentials: false
 

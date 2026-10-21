@@ -32,6 +32,8 @@ public class CreateAnonymousEnquiryFacade {
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull TenantContextProvider tenantContextProvider;
+  private final @NonNull de.caritas.cob.userservice.api.admin.service.tenant.TenantService
+      tenantService;
 
   private static final String DEFAULT_ANONYMOUS_POSTCODE = "00000";
 
@@ -60,6 +62,7 @@ public class CreateAnonymousEnquiryFacade {
       CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO,
       boolean skipConsultingTypeAnonymousCheck) {
 
+    tenantService.requireOperationalTenant(TenantContext.getCurrentTenant());
     if (!skipConsultingTypeAnonymousCheck) {
       checkIfConsultingTypeHasAnonymousConsulting(createAnonymousEnquiryDTO.getConsultingType());
     }

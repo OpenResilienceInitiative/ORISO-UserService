@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
@@ -33,6 +34,13 @@ public class ConsultantService {
    */
   public Consultant saveConsultant(Consultant consultant) {
     return consultantRepository.save(consultant);
+  }
+
+  /**
+   * Clears the "must change password" flag after a reset, whatever the request's tenant (#1699).
+   */
+  public void clearPasswordChangeRequirement(String consultantId) {
+    consultantRepository.clearPasswordChangeRequired(consultantId, nowInUtc());
   }
 
   /**

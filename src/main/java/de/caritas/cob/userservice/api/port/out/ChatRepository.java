@@ -47,6 +47,10 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
   Optional<Chat> findByMatrixRoomId(String matrixRoomId);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select c from Chat c where c.matrixRoomId = :matrixRoomId")
+  Optional<Chat> findByMatrixRoomIdForUpdate(@Param("matrixRoomId") String matrixRoomId);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select c from Chat c where c.id = :chatId")
   Optional<Chat> findByIdForUpdate(@Param("chatId") Long chatId);
 
