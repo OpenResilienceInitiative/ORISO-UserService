@@ -51,9 +51,6 @@ public class MatrixCaseReplyActorAuthorizer {
         || Objects.equals(actor.getId(), session.getUser().getUserId())) {
       return false;
     }
-    if (membersOnlyChatAccess.excludes(session, actor)) {
-      return false;
-    }
     if (!isCurrentAssignedOrTeamWriter(session, actor)) {
       return false;
     }
@@ -65,9 +62,10 @@ public class MatrixCaseReplyActorAuthorizer {
     return hasCurrentRoomMembers(session, senderMatrixUserId, session.getUser().getMatrixUserId());
   }
 
-  // Tenant/current-identity validation remains the caller's responsibility. This shared pure
+  // Tenant/current-identity validation remains the caller's responsibility. This shared
   // decision also serves the controller's documented tenant-one legacy ownership boundary.
   boolean isCurrentAssignedOrTeamWriter(Session session, Consultant actor) {
+    if (membersOnlyChatAccess.excludes(session, actor)) return false;
     return session.isAdvisedBy(actor) || isPermittedTeamWriter(session, actor);
   }
 

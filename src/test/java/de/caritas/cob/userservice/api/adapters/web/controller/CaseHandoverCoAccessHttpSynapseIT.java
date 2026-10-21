@@ -44,7 +44,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -87,7 +86,8 @@ import org.testcontainers.utility.MountableFile;
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 class CaseHandoverCoAccessHttpSynapseIT {
-  @TestConfiguration
+  // Imported only, never annotated: AppConfig's component scan would put this frozen @Primary
+  // clock into every other test context.
   @ConditionalOnProperty(name = "oriso.testing.coaccess-http-fixture.enabled", havingValue = "true")
   static class FixtureSchedulers {
     // Testing normally omits this worker; register its real production implementation so delayed
