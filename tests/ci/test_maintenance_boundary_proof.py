@@ -160,12 +160,12 @@ class LocaleBoundaryEvidenceTest(unittest.TestCase):
             ET.ElementTree(suite).write(root / "TEST-locale.xml")
             return proof.sanitize(root, root / "clean.xml")
 
-    def test_six_public_cases_require_both_domain_and_legacy_controls(self):
+    def test_nine_public_cases_require_both_domain_and_legacy_controls(self):
         result = self.result()
-        self.assertEqual(6, result["floor"])
+        self.assertEqual(9, result["floor"])
         self.assertTrue(result["adapter_behavior_red"])
         self.assertTrue(result["all_required_controls_passed"])
-        self.assertEqual(4, result["failures"])
+        self.assertEqual(7, result["failures"])
 
     def test_failing_domain_only_control_cannot_be_locale_red(self):
         result = self.result({"domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract"})

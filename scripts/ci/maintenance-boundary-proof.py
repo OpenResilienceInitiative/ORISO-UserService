@@ -47,6 +47,9 @@ def select_slice(name):
             "publicPatchNewOwnerReplaysFrozenLocaleAfterLostReplyWithoutDomainReapply",
             "publicPatchSameIdCannotSubstituteTheCompleteMixedRequest",
             "publicPatchMissingIntentRefusesBeforeAnyDomainMutation",
+            "publicPatchDomainFailureCannotCommitDispatchableIntentOrPartialDomainChange",
+            "publicPatchRejectsUnverifiedReceiptAndRetainsFrozenIntentForExactRetry",
+            "publicPatchCurrentDomainTenantMismatchRefusesBeforeIntentOrRpc",
             "domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract",
         }
         COMPILED_CLASSES += [
