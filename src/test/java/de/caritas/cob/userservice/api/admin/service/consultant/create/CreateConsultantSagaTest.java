@@ -196,9 +196,7 @@ class CreateConsultantSagaTest {
                     row, Set.of("consultant"), Set.of(10L), "a".repeat(64), 1, ignored -> {}));
     assertThat(
         failure.getCustomHttpHeaders().get("X-Reason").get(0),
-        is(
-            (unavailable ? TENANT_LICENSING_NOT_CONFIGURED : NUMBER_OF_LICENSES_EXCEEDED)
-                .name()));
+        is((unavailable ? TENANT_LICENSING_NOT_CONFIGURED : NUMBER_OF_LICENSES_EXCEEDED).name()));
     verify(workflow, never()).create(any(), any(), any());
     verifyNoInteractions(tenantAdminService, identityClient, identityPasswordUpdater);
   }
