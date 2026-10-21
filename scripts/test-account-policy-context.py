@@ -67,6 +67,18 @@ def xml_inventory(path, started, expected, forbidden=()):
                     for case in cases]
 
 
+def safe_java_frames(log):
+    frames, types = [], []
+    for line in log.read_text(errors="replace").splitlines():
+        failure = re.search(r"(?:Caused by: |^)([A-Za-z_][A-Za-z0-9_.$]*(?:Exception|Error))(?::|$)", line)
+        if failure:
+            types.append(failure[1])
+        frame = re.fullmatch(r"\s*at ((?:com\.vi\.tenantservice|de\.caritas\.cob\.userservice)[A-Za-z0-9_.$]+)\(([A-Za-z0-9_]+\.java):(\d+)\)", line)
+        if frame:
+            frames.append({"callsite": frame[1], "file": frame[2], "line": int(frame[3])})
+    return {"exceptionTypes": list(dict.fromkeys(types))[-8:], "sourceFrames": frames[-10:]}
+
+
 def compiled_inventory(root, role, classpath):
     compiled = root / "target/test-classes" / (FIXTURES[role] + ".class")
     data = compiled.read_bytes()
@@ -221,6 +233,9 @@ def main():
         receipt["failureType"] = type(failure).__name__
         if isinstance(failure, (support.FixtureError, resources.ResourceRefusal, ValueError)):
             receipt["safeFailure"] = str(failure)
+        if temporary and actors:
+            receipt["safeJavaFrames"] = {
+                path.name: safe_java_frames(path) for path in Path(temporary.name).glob("*.log")}
         # Before actor creation, compiler output cannot contain native credentials or proofs.
         if temporary and not actors:
             diagnostics = []

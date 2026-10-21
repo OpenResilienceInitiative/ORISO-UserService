@@ -88,7 +88,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
-/** Explicit native slice: actual broker, locked JPA repository and helper reach real Tenant HTTP. */
+/**
+ * Explicit native slice: actual broker, locked JPA repository and helper reach real Tenant HTTP.
+ */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class CheckedAccountPolicyNativeGate {
   private static final ObjectMapper JSON = new ObjectMapper();
@@ -123,7 +125,8 @@ class CheckedAccountPolicyNativeGate {
 
   @BeforeAll
   void requireRealFixtureAndModules() throws Exception {
-    JsonNode fixture = JSON.readTree(Files.readString(Path.of(required("ORISO_TASK_TOKEN_FIXTURE"))));
+    JsonNode fixture =
+        JSON.readTree(Files.readString(Path.of(required("ORISO_TASK_TOKEN_FIXTURE"))));
     assertThat(fixture.path("identityModel").asText()).isEqualTo("FIVE_ACTORS");
     assertThat(fixture.path("tasks").size()).isEqualTo(5);
     receiver = required("ORISO_POLICY_RECEIVER_URL");
@@ -141,7 +144,8 @@ class CheckedAccountPolicyNativeGate {
       environment.setProperty(prefix + "_CLIENT_SECRET", actor.path("secret").asText());
       environment.setProperty(prefix + "_SERVICE_SUBJECT", actor.path("subject").asText());
     }
-    assertThat(actorNames).isEqualTo(Set.of("SETUP", "ACCOUNT_CREATE", "ACCOUNT_ADMIN", "MAIL", "RUNTIME"));
+    assertThat(actorNames)
+        .isEqualTo(Set.of("SETUP", "ACCOUNT_CREATE", "ACCOUNT_ADMIN", "MAIL", "RUNTIME"));
     String issuer = fixture.path("issuer").asText();
     int realmStart = issuer.lastIndexOf("/realms/");
     assertThat(realmStart).isPositive();
@@ -187,11 +191,13 @@ class CheckedAccountPolicyNativeGate {
         exchange -> {
           try {
             String header = exchange.getRequestHeaders().getFirst("Authorization");
-            if (header == null || !header.startsWith("Bearer ")) throw new IllegalArgumentException();
+            if (header == null || !header.startsWith("Bearer "))
+              throw new IllegalArgumentException();
             var caller = decoder.decode(header.substring(7));
             boolean detail = exchange.getRequestURI().getPath().equals("/agencyadmin/agencies/10");
             String expected = detail ? "backend-setup" : "backend-runtime";
-            if (!expected.equals(caller.getClaimAsString("azp"))) throw new IllegalArgumentException();
+            if (!expected.equals(caller.getClaimAsString("azp")))
+              throw new IllegalArgumentException();
             if (detail) observedAgencyBearer.set(header.substring(7));
             byte[] body =
                 (detail
@@ -215,12 +221,14 @@ class CheckedAccountPolicyNativeGate {
     var adminFactory = new AgencyAdminServiceApiControllerFactory();
     ReflectionTestUtils.setField(adminFactory, "restTemplate", boundedHttp());
     ReflectionTestUtils.setField(adminFactory, "agencyAdminServiceApiUrl", agencyUrl());
-    var currentAgencies = new AgencyServiceAgencyFacts(securityHeaders, tenantHeaders, adminFactory);
+    var currentAgencies =
+        new AgencyServiceAgencyFacts(securityHeaders, tenantHeaders, adminFactory);
     var agencyFactory = new AgencyServiceApiControllerFactory();
     ReflectionTestUtils.setField(agencyFactory, "restTemplate", boundedHttp());
     ReflectionTestUtils.setField(agencyFactory, "agencyServiceApiUrl", agencyUrl());
     agencyService =
-        new AgencyService(securityHeaders, tenantHeaders, agencyFactory, new ConcurrentMapCacheManager());
+        new AgencyService(
+            securityHeaders, tenantHeaders, agencyFactory, new ConcurrentMapCacheManager());
     http = boundedHttp();
     http.getInterceptors()
         .add(
@@ -279,7 +287,8 @@ class CheckedAccountPolicyNativeGate {
             "synthetic-unrelated-ambient-token",
             () ->
                 transaction.execute(
-                    status -> policies.withInvitation(RAW_LINK, "CONSULTANT", () -> policies.read(1))));
+                    status ->
+                        policies.withInvitation(RAW_LINK, "CONSULTANT", () -> policies.read(1))));
     assertThat(policy.id()).isEqualTo(1L);
     assertThat(policy.allowedNumberOfUsers()).isEqualTo(5);
     assertThat(cacheControl.get()).contains("no-store");
@@ -295,7 +304,8 @@ class CheckedAccountPolicyNativeGate {
   @Test
   void unheldRevokedChangedAndForeignTransactionOriginsNeverQueryTenant() throws Exception {
     long before = queries();
-    assertThatThrownBy(() -> policies.withInvitation(RAW_LINK, "CONSULTANT", () -> policies.read(1)))
+    assertThatThrownBy(
+            () -> policies.withInvitation(RAW_LINK, "CONSULTANT", () -> policies.read(1)))
         .isInstanceOf(AccessDeniedException.class);
     transaction.executeWithoutResult(
         status ->
@@ -303,8 +313,12 @@ class CheckedAccountPolicyNativeGate {
                 RAW_LINK,
                 "CONSULTANT",
                 () -> {
-                  invites.findByIdForUpdate(inviteId).orElseThrow().setStatus(AccountInviteStatus.REVOKED);
-                  assertThatThrownBy(() -> policies.read(1)).isInstanceOf(AccessDeniedException.class);
+                  invites
+                      .findByIdForUpdate(inviteId)
+                      .orElseThrow()
+                      .setStatus(AccountInviteStatus.REVOKED);
+                  assertThatThrownBy(() -> policies.read(1))
+                      .isInstanceOf(AccessDeniedException.class);
                   return null;
                 }));
     assertThat(queries()).isEqualTo(before);
@@ -323,7 +337,9 @@ class CheckedAccountPolicyNativeGate {
                 "CONSULTANT",
                 () -> {
                   nested.executeWithoutResult(
-                      inner -> assertThatThrownBy(() -> policies.read(1)).isInstanceOf(AccessDeniedException.class));
+                      inner ->
+                          assertThatThrownBy(() -> policies.read(1))
+                              .isInstanceOf(AccessDeniedException.class));
                   return null;
                 }));
     assertThat(queries()).isEqualTo(before);
@@ -337,7 +353,8 @@ class CheckedAccountPolicyNativeGate {
         status -> policies.withInvitation(RAW_LINK, "CONSULTANT", () -> policies.read(1)));
     Captured valid = captured.get();
     long before = queries();
-    for (String field : List.of("purpose", "target", "azp", "sub", "tokenIssuer", "nonce", "payloadDigest")) {
+    for (String field :
+        List.of("purpose", "target", "azp", "sub", "tokenIssuer", "nonce", "payloadDigest")) {
       var changed = JSON.convertValue(claims(valid.proof()), TreeMap.class);
       changed.put(field, "purpose".equals(field) ? "CONSULTANT_IMPORT" : "invalid");
       String proof = independentlySign(changed);
@@ -363,19 +380,27 @@ class CheckedAccountPolicyNativeGate {
     when(users.isUsernameValid("nativeuser")).thenReturn(true);
     when(users.isValidEmail("native-policy@example.invalid")).thenReturn(true);
     var consultants = mock(ConsultantService.class);
-    when(consultants.findConsultantByUsernameOrEmail(anyString(), anyString())).thenReturn(Optional.empty());
+    when(consultants.findConsultantByUsernameOrEmail(anyString(), anyString()))
+        .thenReturn(Optional.empty());
     var types = mock(ConsultingTypeManager.class);
-    var consultantRoles = new de.caritas.cob.userservice.api.manager.consultingtype.roles.Consultant();
-    consultantRoles.setRoleSets(new java.util.LinkedHashMap<>(Map.of("ordinary", List.of("consultant"))));
+    var consultantRoles =
+        new de.caritas.cob.userservice.api.manager.consultingtype.roles.Consultant();
+    consultantRoles.setRoleSets(
+        new java.util.LinkedHashMap<>(Map.of("ordinary", List.of("consultant"))));
     when(types.getConsultingTypeSettings(1))
         .thenReturn(
-            new de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO()
+            new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+                    .ExtendedConsultingTypeResponseDTO()
                 .slug("native")
                 .languageFormal(true)
-                .roles(new de.caritas.cob.userservice.consultingtypeservice.generated.web.model.RolesDTO().consultant(consultantRoles)));
+                .roles(
+                    new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+                            .RolesDTO()
+                        .consultant(consultantRoles)));
     var saga = mock(CreateConsultantSaga.class);
     var observed = new AtomicReference<CheckedAccountPolicyReads.Policy>();
-    when(saga.createImportedConsultant(any(), any(), any(), anyString(), org.mockito.ArgumentMatchers.anyLong(), any()))
+    when(saga.createImportedConsultant(
+            any(), any(), any(), anyString(), org.mockito.ArgumentMatchers.anyLong(), any()))
         .thenAnswer(
             call -> {
               observed.set(policies.read(1));
@@ -393,10 +418,12 @@ class CheckedAccountPolicyNativeGate {
             saga,
             mock(ConsultantAgencyRelationCreatorService.class));
     Path csv = temporary.resolve("configured-native.csv");
-    String content = ",1,nativeuser,\"Native\nGiven\",Family,native-policy@example.invalid,nein,,10;ordinary\r\n";
+    String content =
+        ",1,nativeuser,\"Native\nGiven\",Family,native-policy@example.invalid,nein,,10;ordinary\r\n";
     Files.writeString(csv, content);
     ReflectionTestUtils.setField(importer, "importFilename", csv.toString());
-    ReflectionTestUtils.setField(importer, "protocolFilename", temporary.resolve("protocol").toString());
+    ReflectionTestUtils.setField(
+        importer, "protocolFilename", temporary.resolve("protocol").toString());
     ReflectionTestUtils.setField(importer, "multiTenancyEnabled", false);
     ReflectionTestUtils.setField(importer, "lifecycleEnvironment", environment);
     ReflectionTestUtils.setField(importer, "lifecycleIdentities", identities);
@@ -410,16 +437,28 @@ class CheckedAccountPolicyNativeGate {
     assertThat(queries()).isEqualTo(before + 1);
     var signed = claims(captured.get().proof());
     assertThat(signed.path("purpose").asText()).isEqualTo("CONSULTANT_IMPORT");
-    String digest = java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content.getBytes(StandardCharsets.UTF_8)));
-    assertThat(signed.path("origin").path("reference").asText()).isEqualTo("import:" + digest + ":1");
+    String digest =
+        java.util.HexFormat.of()
+            .formatHex(
+                MessageDigest.getInstance("SHA-256")
+                    .digest(content.getBytes(StandardCharsets.UTF_8)));
+    assertThat(signed.path("origin").path("reference").asText())
+        .isEqualTo("import:" + digest + ":1");
     assertThatThrownBy(() -> policies.read(1)).isInstanceOf(AccessDeniedException.class);
   }
 
   private String independentlySign(Map<String, Object> claims) throws Exception {
-    String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(JSON.writeValueAsBytes(new TreeMap<>(claims)));
+    String encoded =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(JSON.writeValueAsBytes(new TreeMap<>(claims)));
     Mac mac = Mac.getInstance("HmacSHA256");
     mac.init(new SecretKeySpec(key, "HmacSHA256"));
-    return encoded + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(mac.doFinal(("proof\n" + encoded).getBytes(StandardCharsets.US_ASCII)));
+    return encoded
+        + "."
+        + Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(mac.doFinal(("proof\n" + encoded).getBytes(StandardCharsets.US_ASCII)));
   }
 
   private JsonNode claims(String proof) throws Exception {
@@ -453,7 +492,8 @@ class CheckedAccountPolicyNativeGate {
 
   private static String required(String name) {
     String value = System.getenv(name);
-    if (value == null || value.isBlank()) throw new IllegalStateException("Native policy fixture missing: " + name);
+    if (value == null || value.isBlank())
+      throw new IllegalStateException("Native policy fixture missing: " + name);
     return value;
   }
 }
