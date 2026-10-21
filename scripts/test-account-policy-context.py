@@ -24,7 +24,8 @@ FIXTURES = {
     "user": "de/caritas/cob/userservice/api/service/accountpolicy/CheckedAccountPolicyNativeGate",
 }
 UNITS = {"tenant": {"com.vi.tenantservice.config.security.WizardPolicyV2ContextTest": 35,
-                    "com.vi.tenantservice.api.controller.GroupedTaskServiceIdentityAuthorizationIT": 5},
+                    "com.vi.tenantservice.api.controller.GroupedTaskServiceIdentityAuthorizationIT": 5,
+                    "com.vi.tenantservice.api.controller.AccountPolicyPurposeAuthorizationIT": 3},
          "user": {
              "de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReadsTest": 7,
              "de.caritas.cob.userservice.api.service.ConsultantImportServiceTest": 12,
@@ -179,8 +180,9 @@ def main():
                 counts, cases = xml_inventory(report, started, minimum)
                 receipt["units"][role][name] = {"counts": counts, "cases": cases}
                 shutil.copy2(report, evidence / report.name)
-                if result or any(counts[k] for k in ("failures", "errors", "skipped")):
-                    raise support.FixtureError(role + " affected unit suite failed before any container")
+            if result or any(any(value["counts"][key] for key in ("failures", "errors", "skipped"))
+                             for value in receipt["units"][role].values()):
+                raise support.FixtureError(role + " affected unit frontier failed before any container")
         receipt["stage"] = "network"
         owned.plan("network", network)
         support.docker("network", "create", "--label", label, network)
@@ -216,7 +218,8 @@ def main():
                     "ORISO_POLICY_SHARED_KEY": base64.b64encode(bytes([11]) * 32).decode(),
                     "ORISO_POLICY_RECEIVER_READY": str(private / "receiver-ready"),
                     "ORISO_POLICY_QUERY_COUNT": str(private / "policy-query-count"),
-                    "ORISO_POLICY_OBSERVATIONS": str(private / "policy-observations.json")})
+                    "ORISO_POLICY_OBSERVATIONS": str(private / "policy-observations.json"),
+                    "ORISO_POLICY_TENANT_MODE": str(private / "policy-tenant-mode")})
         tenant, user = roots["tenant"], roots["user"]
         classpath = os.pathsep.join([str(tenant / "target/test-classes"), str(tenant / "target/classes"),
                                     (private / "tenant-classpath").read_text().strip()])
@@ -241,7 +244,7 @@ def main():
         result = support.bounded(["./mvnw", "-B", "-ntp", "-q", "-Dtest=CheckedAccountPolicyNativeGate",
             "-DargLine=" + " ".join(jvm), "-DfailIfNoTests=true", "surefire:test"], user, env, private / "user-native.log", 240, overall)
         report = user / "target/surefire-reports" / ("TEST-" + FIXTURES["user"].replace("/", ".") + ".xml")
-        forbidden = [actor["secret"] for actor in actors] + [env["ORISO_POLICY_SHARED_KEY"], "synthetic-native-policy-link"]
+        forbidden = [actor["secret"] for actor in actors] + [env["ORISO_POLICY_SHARED_KEY"], "synthetic-native-policy-link", "synthetic-private-password"]
         counts, cases = xml_inventory(report, started, CASES, forbidden)
         shutil.copy2(report, evidence / report.name)
         receipt["counts"], receipt["cases"] = counts, cases
