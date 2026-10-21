@@ -49,8 +49,9 @@ jobs:
           target_class = 'de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminServiceTest'
           target_method = 'fiveActorSingleTenantAdminKeepsTheTrustedConcreteTenantInTheCreatedRow'
           expected_encoding = 'enc.MFTWK3TDPEWWCZDNNFXCWZDFNVXQ....'
-          # These floors are the previously frozen 281-test/23-suite caller scope.
-          floors = {'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodecTest': 9, 'de.caritas.cob.userservice.api.facade.conversation.CreateAnonymousEnquiryFacadeTest': 8, 'de.caritas.cob.userservice.api.service.ConsultantImportServiceTest': 12, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDispatcherTest': 5, 'de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSagaTest': 41, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCallerConfigurationTest': 4, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcAccountLifecycleJournalTest': 10, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryCreationAuthorizationTest': 7, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleRetryFairnessSqlTest': 4, 'de.caritas.cob.userservice.api.service.accountinvite.AgencyAdminInviteProvisioningServiceTest': 5, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OwnedRegistrationRoomGatewayTest': 3, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCoordinatorTest': 10, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryCreationWorkflowSqlTest': 3, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleScopeBoundsTest': 12, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryCreationTenantResolverTest': 7, 'de.caritas.cob.userservice.api.facade.CreateUserFacadeTest': 38, 'de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminServiceTest': 13, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OwnedCreationEffectCleanupTest': 2, 'de.caritas.cob.userservice.api.admin.service.user.anonymous.AnonymousUsernameRegistryTest': 16, 'de.caritas.cob.userservice.api.service.appointment.AppointmentServiceTest': 25, 'de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningServiceTest': 26, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakAccountLifecycleCommandsTest': 6, 'de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorServiceTest': 15}
+          # Original 281 cases plus the deterministic held-row reservation contract.
+          floors = {'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodecTest': 9, 'de.caritas.cob.userservice.api.facade.conversation.CreateAnonymousEnquiryFacadeTest': 8, 'de.caritas.cob.userservice.api.service.ConsultantImportServiceTest': 12, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDispatcherTest': 5, 'de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSagaTest': 41, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCallerConfigurationTest': 4, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcAccountLifecycleJournalTest': 10, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryCreationAuthorizationTest': 7, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleRetryFairnessSqlTest': 5, 'de.caritas.cob.userservice.api.service.accountinvite.AgencyAdminInviteProvisioningServiceTest': 5, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OwnedRegistrationRoomGatewayTest': 3, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCoordinatorTest': 10, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryCreationWorkflowSqlTest': 3, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleScopeBoundsTest': 12, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryCreationTenantResolverTest': 7, 'de.caritas.cob.userservice.api.facade.CreateUserFacadeTest': 38, 'de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminServiceTest': 13, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OwnedCreationEffectCleanupTest': 2, 'de.caritas.cob.userservice.api.admin.service.user.anonymous.AnonymousUsernameRegistryTest': 16, 'de.caritas.cob.userservice.api.service.appointment.AppointmentServiceTest': 25, 'de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningServiceTest': 26, 'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakAccountLifecycleCommandsTest': 6, 'de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorServiceTest': 15}
+          floors['de.caritas.cob.userservice.api.config.auth.FiveActorTokenBoundaryTest'] = 33
 
           def git(*args):
               return subprocess.check_output(['git', *args]).decode().strip()
@@ -134,7 +135,7 @@ jobs:
                   result['classification'] = 'PUBLIC_SERVICE_ENCODING_ASSERTION_RED' if encoding_red else 'PASS' if exact and status == 0 and totals == {'tests': 1, 'failures': 0, 'errors': 0, 'skipped': 0} else 'INCONCLUSIVE_OR_OTHER_FAILURE'
                   valid = exact and status == 0 and totals == {'tests': 1, 'failures': 0, 'errors': 0, 'skipped': 0}
               else:
-                  valid = (status == 0 and totals['tests'] >= 281 and len(suites) >= 23
+                  valid = (status == 0 and totals['tests'] >= 282 and len(suites) >= 23
                            and totals['failures'] == totals['errors'] == totals['skipped'] == 0
                            and all(suites.get(name, {}).get('tests', 0) >= floor for name, floor in floors.items()))
               if phase != 'regression':
@@ -198,5 +199,165 @@ jobs:
         with:
           name: scenario-c-caller-${{ github.sha }}
           path: target/scenario-c-caller-proof/
+          if-no-files-found: error
+          retention-days: 14
+  native-fairness:
+    needs: caller-proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: 11.0.6
+            image: mariadb@sha256:082554e82eb0e333cddd152d474bb55b8155c8f6585d4c5b0fb47ce2f740cb08
+          - version: 11.4.13
+            image: mariadb@sha256:33a6653ab666774f48818120045f9367a81cd4c54c027412fe294a7d1274e2dc
+    services:
+      mariadb:
+        image: ${{ matrix.image }}
+        env:
+          MARIADB_ROOT_PASSWORD: caller-proof
+          MARIADB_DATABASE: caller_fairness
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SCENARIO_C_DEV_BASE: c944417d9d664d35d63b31bb57c55f852c2d783c
+      MAVEN_OPTS: -Xmx1024m -XX:ActiveProcessorCount=2
+      JAVA_TOOL_OPTIONS: -Xmx512m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2
+      CALLER_FAIRNESS_DB_URL: jdbc:mariadb://127.0.0.1:3306/caller_fairness
+      CALLER_FAIRNESS_DB_PASSWORD: caller-proof
+      CALLER_FAIRNESS_DB_VERSION: ${{ matrix.version }}
+      CALLER_FAIRNESS_DB_IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21.0.12+8.0.LTS'
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: 3.12.13
+      - name: Prove actual MariaDB reservations, restart, expiry and migration
+        env:
+          CALLER_FAIRNESS_DB_CONTAINER: ${{ job.services.mariadb.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, shutil, signal, subprocess
+          import xml.etree.ElementTree as ET
+
+          root = pathlib.Path.cwd()
+          proof = root / 'target/scenario-c-caller-native'
+          proof.mkdir(parents=True)
+          def snapshot():
+              inputs = {}
+              for name in sorted(subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')):
+                  if not name:
+                      continue
+                  path = root / name
+                  body = b'symlink\0' + os.readlink(path).encode() if path.is_symlink() else path.read_bytes()
+                  inputs[name] = hashlib.sha256(body).hexdigest()
+              return inputs
+
+          before = snapshot()
+          (proof / 'source-before.json').write_text(json.dumps(before, indent=2) + '\n')
+          inspect = subprocess.check_output(['docker', 'inspect', '--format', '{{.Config.Image}} {{.Image}} {{.State.Health.Status}}', os.environ['CALLER_FAIRNESS_DB_CONTAINER']]).decode().strip()
+          assert inspect.split()[0] == os.environ['CALLER_FAIRNESS_DB_IMAGE'] and inspect.split()[-1] == 'healthy'
+          (proof / 'environment.json').write_text(json.dumps({
+              'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip(),
+              'version': os.environ['CALLER_FAIRNESS_DB_VERSION'], 'containerImageState': inspect,
+              'proofDatabase': 'disposable caller_fairness; no live database access',
+          }, indent=2) + '\n')
+          wrapper = (root / '.mvn/wrapper/maven-wrapper.properties').read_text()
+          assert 'distributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.15/apache-maven-3.9.15-bin.zip' in wrapper.splitlines()
+
+          def execute(argv, name, seconds):
+              (proof / (name + '-command.json')).write_text(json.dumps(argv, indent=2) + '\n')
+              with (proof / (name + '.log')).open('w') as output:
+                  child = subprocess.Popen(argv, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+                  try:
+                      return child.wait(timeout=seconds)
+                  except subprocess.TimeoutExpired:
+                      os.killpg(child.pid, signal.SIGTERM)
+                      try:
+                          child.wait(timeout=10)
+                      except subprocess.TimeoutExpired:
+                          os.killpg(child.pid, signal.SIGKILL)
+                          child.wait()
+                      return 124
+
+          for attempt in range(1, 4):
+              bootstrap = execute(['./mvnw', '--version'], 'toolchain-' + str(attempt), 120)
+              if bootstrap == 0:
+                  break
+          if bootstrap:
+              raise SystemExit(bootstrap)
+          version = (proof / ('toolchain-' + str(attempt) + '.log')).read_text()
+          assert 'Apache Maven 3.9.15' in version and 'Java version: 21.0.12' in version
+          changed = subprocess.check_output(['git', 'diff', '--name-only', os.environ['SCENARIO_C_DEV_BASE'], 'HEAD', '--', '*.java']).decode().splitlines()
+          scope = '|'.join(re.escape(str(root / name)) for name in sorted(changed) if (root / name).is_file())
+          assert scope
+          assert not (root / 'target/surefire-reports').exists()
+          status = execute(['./mvnw', '-B', '-ntp', '-Dmaven.wagon.http.retryHandler.count=3',
+                            '-DspotlessFiles=' + scope, 'test',
+                            '-Dtest=de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleRetryFairnessMariaDbIT'], 'native', 600)
+          destination = proof / 'surefire-reports'
+          if (root / 'target/surefire-reports').exists():
+              shutil.move(str(root / 'target/surefire-reports'), destination)
+          reports = list(destination.glob('TEST-*.xml'))
+          totals = {key: 0 for key in ('tests', 'failures', 'errors', 'skipped')}
+          names, suites = set(), []
+          for report in reports:
+              suite = ET.parse(report).getroot()
+              suites.append(suite.get('name'))
+              cases = suite.findall('testcase')
+              assert len(cases) == int(suite.get('tests'))
+              for key in totals:
+                  totals[key] += int(suite.get(key, '0'))
+              assert sum(len(case.findall('skipped')) for case in cases) == int(suite.get('skipped', '0'))
+              names.update(case.get('name') for case in cases)
+          expected = {
+              'oneHundredUncertainOwnedCleanupsCannotStarveTheNextCommittedAccountAfterRestart',
+              'twoReplicaReservationsAreDisjointAndCrashReservationsExpireWithoutDroppingIntents',
+              'aTemporarilyLockedIntentRemainsDueAndIsClaimedByTheNextTickAfterRelease',
+              'reservationCommitsPhysicallyBeforeDispatchAndSurvivesAnUnrelatedOuterRollback',
+              'migrationBackfillsAnExistingPendingIntentWithoutChangingItsImmutableBody',
+              'thePinnedServerUsesInnoDbAndTheExactDueQueueIndex',
+              'theActualLiquibaseChangeSetCanRollBackAndUpgradeAnExistingPendingIntent',
+          }
+          after = snapshot()
+          (proof / 'source-after.json').write_text(json.dumps(after, indent=2) + '\n')
+          accepted = (status == 0 and before == after and names == expected
+                      and suites == ['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleRetryFairnessMariaDbIT']
+                      and totals == {'tests': 7, 'failures': 0, 'errors': 0, 'skipped': 0})
+          (proof / 'inventory.json').write_text(json.dumps({
+              'mavenExit': status, 'totals': totals, 'testNames': sorted(names),
+              'sourceStable': before == after, 'acceptedGreen': accepted,
+          }, indent=2) + '\n')
+          if not accepted:
+              raise SystemExit(status or 1)
+          PY
+      - name: Preserve complete native fairness evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: scenario-c-caller-native-${{ matrix.version }}-${{ github.sha }}
+          path: |
+            target/scenario-c-caller-native/
+            target/surefire-reports/
           if-no-files-found: error
           retention-days: 14
