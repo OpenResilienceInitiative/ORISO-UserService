@@ -125,6 +125,15 @@ public class Chat {
   @Column(name = "is_active", nullable = false)
   private boolean active;
 
+  /**
+   * A chat only its members may see and join: the room for a subset of selected colleagues
+   * (ORISO-UserService#1418). Every other chat is open to the colleagues {@code
+   * GroupChatConsultantAccess} admits by the Träger's recipient scope.
+   */
+  @Column(name = "members_only", nullable = false)
+  @org.hibernate.annotations.ColumnDefault("false")
+  private boolean membersOnly;
+
   @Column(name = "max_participants", columnDefinition = "tinyint(4) unsigned NULL")
   @JdbcTypeCode(SqlTypes.TINYINT)
   private Integer maxParticipants;

@@ -64,6 +64,48 @@ class MatrixChatShutdownServiceTest {
     assertThatCode(() -> matrixChatShutdownService.shutdownRoom(chat)).doesNotThrowAnyException();
   }
 
+  @Test
+  void shutdownRoomShouldFailForAMembersOnlyRoomThatCannotBePurged() {
+    var chat = chatWithMatrixRoomId(MATRIX_ROOM_ID);
+    chat.setMembersOnly(true);
+    when(matrixSynapseService.purgeRoomOrConfirmGone(MATRIX_ROOM_ID))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.FAILED);
+
+    var refused =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> matrixChatShutdownService.shutdownRoom(chat));
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        org.springframework.http.HttpStatus.BAD_GATEWAY, refused.getHttpStatus());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "INTERNAL_CHAT_MEMBERSHIP_FAILED", refused.getCustomHttpHeaders().getFirst("X-Reason"));
+  }
+
+  @Test
+  void shutdownRoomShouldFailForAMembersOnlyRoomWhenSynapseCannotBeReached() {
+    var chat = chatWithMatrixRoomId(MATRIX_ROOM_ID);
+    chat.setMembersOnly(true);
+    when(matrixSynapseService.purgeRoomOrConfirmGone(MATRIX_ROOM_ID))
+        .thenThrow(new RestClientException("Synapse unavailable"));
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () -> matrixChatShutdownService.shutdownRoom(chat));
+  }
+
+  @Test
+  void shutdownRoomShouldAcceptAMembersOnlyRoomThatIsGoneAlready() {
+    var chat = chatWithMatrixRoomId(MATRIX_ROOM_ID);
+    chat.setMembersOnly(true);
+    when(matrixSynapseService.purgeRoomOrConfirmGone(MATRIX_ROOM_ID))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.ALREADY_GONE);
+
+    assertThatCode(() -> matrixChatShutdownService.shutdownRoom(chat)).doesNotThrowAnyException();
+  }
+
   private Chat chatWithMatrixRoomId(String matrixRoomId) {
     var chat = new Chat();
     chat.setId(1L);

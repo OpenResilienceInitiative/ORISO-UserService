@@ -43,6 +43,7 @@ public class MatrixRoomClient {
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
   private static final String ENDPOINT_MEMBERSHIP =
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.member/{userId}";
+  private static final int MEMBERS_ONLY_INVITE_LEVEL = 100;
   private static final int INVITE_USER_MAX_ATTEMPTS = 3;
   private static final long DEFAULT_INVITE_RETRY_DELAY_MS = 1000L;
   private static final Pattern RETRY_AFTER_MS_PATTERN =
@@ -61,6 +62,27 @@ public class MatrixRoomClient {
   public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
       String roomName, String roomAlias, String accessToken, boolean encryptionEnabled)
       throws MatrixCreateRoomException {
+    return createRoom(roomName, roomAlias, accessToken, encryptionEnabled, false);
+  }
+
+  /**
+   * A members-only chat holds exactly its selected members. The room is created with the invite
+   * power level at the creator's (admin) level, so a member cannot invite an arbitrary Matrix user;
+   * the default level is 0. Applies to new rooms only, existing rooms are not changed.
+   */
+  public ResponseEntity<MatrixCreateRoomResponseDTO> createMembersOnlyRoom(
+      String roomName, String roomAlias, String accessToken, boolean encryptionEnabled)
+      throws MatrixCreateRoomException {
+    return createRoom(roomName, roomAlias, accessToken, encryptionEnabled, true);
+  }
+
+  private ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
+      String roomName,
+      String roomAlias,
+      String accessToken,
+      boolean encryptionEnabled,
+      boolean membersOnly)
+      throws MatrixCreateRoomException {
 
     try {
       var headers = getClientHttpHeaders(accessToken);
@@ -73,6 +95,9 @@ public class MatrixRoomClient {
       roomCreateRequest.setVisibility("private");
 
       roomCreateRequest.setInitialState(buildInitialState(encryptionEnabled));
+      if (membersOnly) {
+        roomCreateRequest.setPowerLevelContentOverride(Map.of("invite", MEMBERS_ONLY_INVITE_LEVEL));
+      }
 
       HttpEntity<MatrixCreateRoomRequestDTO> request = new HttpEntity<>(roomCreateRequest, headers);
 

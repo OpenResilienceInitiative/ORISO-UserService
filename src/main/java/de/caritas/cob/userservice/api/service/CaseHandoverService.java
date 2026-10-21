@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepositor
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
 import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
@@ -349,6 +350,7 @@ public class CaseHandoverService {
   private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
   private final @NonNull Clock clock;
   private final @NonNull PlatformTransactionManager transactionManager;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * When topics are off, a department degenerates to the agency. When they are on, an empty topic
@@ -740,8 +742,10 @@ public class CaseHandoverService {
         sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
             agencyIds, requester, statuses);
 
+    var membersOnlyCases = membersOnlyChatAccess.membersOnlySessionIds(candidates);
     List<Session> matchingCandidates =
         candidates.stream()
+            .filter(session -> !membersOnlyCases.contains(session.getId()))
             .filter(session -> isInRequesterDepartment(session, requester))
             .filter(session -> matchesCandidateQuery(session, query))
             .collect(Collectors.toList());
@@ -808,9 +812,21 @@ public class CaseHandoverService {
   }
 
   private Session getSessionForUpdate(Long sessionId) {
-    return sessionRepository
-        .findByIdForUpdate(sessionId)
-        .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+    return requireHandable(
+        sessionRepository
+            .findByIdForUpdate(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId)));
+  }
+
+  /**
+   * The case of a members-only chat belongs to the participants of the chat. It is never handed
+   * over, never offered and never open to a request for access, whoever asks.
+   */
+  private Session requireHandable(Session session) {
+    if (membersOnlyChatAccess.concerns(session)) {
+      throw new NotFoundException("Session not found: " + session.getId());
+    }
+    return session;
   }
 
   @Transactional
@@ -1480,9 +1496,10 @@ public class CaseHandoverService {
   }
 
   private Session getSession(Long sessionId) {
-    return sessionRepository
-        .findById(sessionId)
-        .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+    return requireHandable(
+        sessionRepository
+            .findById(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId)));
   }
 
   private ConsultantSessionListResponseDTO emptyCandidateResponse(int offset) {
