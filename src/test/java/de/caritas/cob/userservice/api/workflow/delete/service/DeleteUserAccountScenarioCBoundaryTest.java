@@ -22,7 +22,9 @@ import org.junit.jupiter.api.Test;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
 
-/** Actual scheduled-service boundary; a missing C capability cannot authorize downstream cleanup. */
+/**
+ * Actual scheduled-service boundary; a missing C capability cannot authorize downstream cleanup.
+ */
 class DeleteUserAccountScenarioCBoundaryTest {
   private final IdentityClientConfig config = mock(IdentityClientConfig.class);
   private final KeycloakClient nativeClient = mock(KeycloakClient.class);
