@@ -147,9 +147,9 @@ class AccountLifecycleRetryFairnessSqlTest {
               "SELECT body_json FROM identity_lifecycle_outbox WHERE attempt_id=?",
               String.class,
               id.toString());
-      when(remote.commit(eq(id), any()))
-          .thenThrow(
-              new KeycloakAccountLifecycleCommands.RemoteFailure(status, "private-proof-code"));
+      var refusal =
+          new KeycloakAccountLifecycleCommands.RemoteFailure(status, "private-proof-code");
+      doThrow(refusal).when(remote).commit(eq(id), any());
 
       assertDoesNotThrow(() -> dispatcher(journal).dispatch(id));
 
@@ -183,9 +183,9 @@ class AccountLifecycleRetryFairnessSqlTest {
     UUID unknown = commitReady(journal);
     UUID healthy = commitReady(journal);
     String sentinel = "sentinel-password-bearer-body-creation-proof";
-    when(remote.commit(eq(unavailable), any()))
-        .thenThrow(new KeycloakAccountLifecycleCommands.RemoteFailure(503, sentinel));
-    when(remote.commit(eq(unknown), any())).thenThrow(new IllegalStateException(sentinel));
+    var unavailableFailure = new KeycloakAccountLifecycleCommands.RemoteFailure(503, sentinel);
+    doThrow(unavailableFailure).when(remote).commit(eq(unavailable), any());
+    doThrow(new IllegalStateException(sentinel)).when(remote).commit(eq(unknown), any());
     var bodies =
         jdbc.queryForList("SELECT id,body_json FROM identity_lifecycle_outbox ORDER BY id");
 
