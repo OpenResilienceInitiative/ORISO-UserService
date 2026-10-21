@@ -35,6 +35,8 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -84,6 +86,43 @@ class EventNotificationControllerTest {
                 de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
                     .class),
             Optional.empty());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"ordinary", "feedback"})
+  void deniedPrimaryRoomWriterStopsEveryDownstreamNotification(String kind) {
+    var access =
+        mock(
+            de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                .class);
+    var controller =
+        new EventNotificationController(
+            eventNotificationService,
+            teamDiscussionNotificationService,
+            feedbackMessageEmailService,
+            internalChatEmailService,
+            authenticatedUser,
+            access,
+            Optional.of(redisMessageMirrorService));
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("!case:matrix.example");
+    request.setMatrixEventId("$event");
+    request.setFeedbackMailIntent("feedback".equals(kind));
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+                "No current case access"))
+        .when(access)
+        .assertPrimaryRoomWriter("!case:matrix.example", authenticatedUser);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> controller.createMessageEventNotification(request));
+    verifyNoInteractions(
+        eventNotificationService,
+        teamDiscussionNotificationService,
+        feedbackMessageEmailService,
+        internalChatEmailService,
+        redisMessageMirrorService);
   }
 
   /** api-error-contract: a failed durable step never answers 2xx; the client retries. */

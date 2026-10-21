@@ -78,10 +78,16 @@ class TeamDiscussionConcurrencyIT {
 
   @AfterEach
   void cleanUp() {
-    participants.deleteAll();
-    discussions.deleteAll();
-    if (ownSessionId != null) sessions.deleteById(ownSessionId);
-    if (ownUserId != null) users.deleteById(ownUserId);
+    try {
+      participants.deleteAll();
+      discussions.deleteAll();
+    } finally {
+      try {
+        if (ownSessionId != null) sessions.deleteById(ownSessionId);
+      } finally {
+        if (ownUserId != null) users.deleteById(ownUserId);
+      }
+    }
   }
 
   @ParameterizedTest

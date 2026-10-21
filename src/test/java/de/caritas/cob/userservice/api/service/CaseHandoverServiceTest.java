@@ -240,6 +240,38 @@ class CaseHandoverServiceTest {
         () -> caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Advice"));
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"requestAccess", "resolveClientConsent", "updateConsentPreference"})
+  void aMembersOnlyCaseRefusesEveryHandoverMutation(String mutation) {
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> mutate(mutation));
+    verify(sessionRepository, never()).updateAdditionalAccessPreference(any(), anyBoolean());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verifyNoInteractions(matrixSynapseService);
+  }
+
+  private void mutate(String mutation) {
+    switch (mutation) {
+      case "requestAccess" ->
+          caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "support");
+      case "resolveClientConsent" -> caseHandoverService.resolveClientConsent(123L, 1L, true);
+      default -> caseHandoverService.updateConsentPreference(123L, false);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"requestAccess", "resolveClientConsent", "updateConsentPreference"})
+  void aRejectedEnquiryRefusesEveryHandoverMutation(String mutation) {
+    session.setStatus(SessionStatus.REJECTED);
+    session.setMatrixRoomId("!case:example.org");
+    assertThrows(ConflictException.class, () -> mutate(mutation));
+    verify(sessionRepository, never()).updateAdditionalAccessPreference(any(), anyBoolean());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verifyNoInteractions(matrixSynapseService);
+  }
+
   @Test
   void requestAccess_standingOffDoesNotWeakenBaselineOptIn() {
     var status = caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "support");

@@ -1266,7 +1266,9 @@ class InternalSubsetChatHttpIT {
             "/users/sessions/" + sessionId + "/case-handover/consent-preference",
             creator,
             "{\"alwaysAskBeforeAdditionalAccess\":true}");
-    // These asker-only endpoints reject a consultant before reaching the service.
+    // These asker-only endpoints reject a consultant before reaching the service. The session's
+    // own user is a technical system account without an asker login, so the service guard is
+    // covered in CaseHandoverServiceTest instead.
     assertThat(preference.statusCode()).as(preference.body()).isEqualTo(403);
     var consent =
         request(

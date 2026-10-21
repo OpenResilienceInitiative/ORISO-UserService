@@ -164,11 +164,18 @@ class FirstEnquiryFollowUpChainIT {
   @org.springframework.test.context.transaction.AfterTransaction
   void removeOnlyTheCommittedRecipientFixture() {
     var transaction = new org.springframework.transaction.support.TransactionTemplate(transactions);
-    transaction.executeWithoutResult(
-        ignored -> {
-          if (ownedMembershipId != null) consultantAgencyRepository.deleteById(ownedMembershipId);
-          if (ownedConsultantId != null) consultants.deleteById(ownedConsultantId);
-        });
+    // Separate transactions: a failed membership delete must not roll back the consultant delete.
+    try {
+      transaction.executeWithoutResult(
+          ignored -> {
+            if (ownedMembershipId != null) consultantAgencyRepository.deleteById(ownedMembershipId);
+          });
+    } finally {
+      transaction.executeWithoutResult(
+          ignored -> {
+            if (ownedConsultantId != null) consultants.deleteById(ownedConsultantId);
+          });
+    }
   }
 
   private Session anOpenSessionWithoutEnquiryAt(Long agencyId) {
