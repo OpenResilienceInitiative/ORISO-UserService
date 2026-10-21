@@ -22,6 +22,16 @@ jobs:
   caller-boundary:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slice: adapter
+            test: KeycloakServiceScenarioCModeTest
+            test_path: adapters/keycloak/KeycloakServiceScenarioCModeTest.java
+          - slice: deletion
+            test: DeleteUserAccountScenarioCBoundaryTest
+            test_path: workflow/delete/service/DeleteUserAccountScenarioCBoundaryTest.java
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -51,26 +61,26 @@ jobs:
       - name: Verify nonsecret evidence gates without JVM or native fixtures
         run: python -m unittest discover -s tests/ci -p test_maintenance_boundary_proof.py -v
       - name: Bind the actual checkout and required normal Dev ancestor
-        run: python scripts/ci/maintenance-boundary-proof.py snapshot --report target/scenario-c-maintenance-caller/maintenance-caller-before.json
-      - name: Compile actual User source and execute all six public adapter boundary cases once
+        run: python scripts/ci/maintenance-boundary-proof.py snapshot --report target/scenario-c-maintenance-caller/maintenance-caller-before.json --slice ${{ matrix.slice }}
+      - name: Compile actual User source and execute each actual public boundary case once
         shell: bash
         env:
           MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2
         run: |
           set -euo pipefail
           mvn -B -ntp -q test \
-            -Dtest=KeycloakServiceScenarioCModeTest \
+            -Dtest=${{ matrix.test }} \
             -DfailIfNoTests=true -Dsurefire.failIfNoSpecifiedTests=true \
             '-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2' \
-            "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakServiceScenarioCModeTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakService.java"
-      - name: Require all six methods and preserve every sanitized outcome
+            "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/${{ matrix.test_path }}|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakService.java"
+      - name: Require the exact finite method inventory and preserve every sanitized outcome
         if: always()
-        run: python scripts/ci/maintenance-boundary-proof.py collect --report target/scenario-c-maintenance-caller/maintenance-caller-result.json
+        run: python scripts/ci/maintenance-boundary-proof.py collect --report target/scenario-c-maintenance-caller/maintenance-caller-result.json --slice ${{ matrix.slice }}
       - name: Upload only sanitized XML, JSON and exact source hashes
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: scenario-c-maintenance-caller-boundary
+          name: scenario-c-maintenance-caller-${{ matrix.slice }}
           path: |
             target/scenario-c-maintenance-caller/maintenance-caller-*.json
             target/scenario-c-maintenance-caller/maintenance-caller-*.xml

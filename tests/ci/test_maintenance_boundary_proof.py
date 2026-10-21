@@ -5,8 +5,9 @@ import unittest
 import xml.etree.ElementTree as ET
 
 SPEC = importlib.util.spec_from_file_location(
-    "maintenance_boundary_proof", Path(__file__).resolve().parents[2]
-    / "scripts/ci/maintenance-boundary-proof.py")
+    "maintenance_boundary_proof",
+    Path(__file__).resolve().parents[2] / "scripts/ci/maintenance-boundary-proof.py",
+)
 PROOF = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PROOF)
 
@@ -17,8 +18,12 @@ class MaintenanceBoundaryEvidenceTest(unittest.TestCase):
         for name in PROOF.CASES:
             case = ET.SubElement(suite, "testcase", classname=PROOF.SUITE, name=name)
             if name == failure or legacy_failure and name == PROOF.LEGACY:
-                child = ET.SubElement(case, "failure", type="org.opentest4j.AssertionFailedError",
-                                      message="password and token must be scrubbed")
+                child = ET.SubElement(
+                    case,
+                    "failure",
+                    type="org.opentest4j.AssertionFailedError",
+                    message="password and token must be scrubbed",
+                )
                 child.text = "secret in native traceback"
             if name == error:
                 ET.SubElement(case, "error", type="java.lang.NullPointerException")
@@ -57,13 +62,68 @@ class MaintenanceBoundaryEvidenceTest(unittest.TestCase):
         self.assertFalse(result["adapter_behavior_red"])
 
     def test_fixture_errors_cannot_be_red(self):
-        result, _ = self.run_case(failure="fiveActorsRequiresTheScopedAdapterBeforeRead",
-                                  error="fiveActorsRequiresTheScopedAdapterBeforeDeletion")
+        result, _ = self.run_case(
+            failure="fiveActorsRequiresTheScopedAdapterBeforeRead",
+            error="fiveActorsRequiresTheScopedAdapterBeforeDeletion",
+        )
         self.assertFalse(result["adapter_behavior_red"])
 
     def test_diagnostics_are_removed_without_losing_methods(self):
-        result, xml = self.run_case(failure="fiveActorsRequiresTheScopedAdapterBeforeRead")
+        result, xml = self.run_case(
+            failure="fiveActorsRequiresTheScopedAdapterBeforeRead"
+        )
         self.assertEqual(6, result["tests"])
         for secret in ["password", "token", "traceback", "raw-"]:
             self.assertNotIn(secret, xml)
         self.assertEqual(6, len(ET.fromstring(xml).findall("testcase")))
+
+
+class DeletionBoundaryEvidenceTest(unittest.TestCase):
+    def proof(self):
+        proof = importlib.util.module_from_spec(SPEC)
+        SPEC.loader.exec_module(proof)
+        proof.select_slice("deletion")
+        return proof
+
+    def test_actual_two_method_deletion_inventory_qualifies_only_assertion_red(self):
+        proof = self.proof()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            suite = ET.Element(
+                "testsuite",
+                name=proof.SUITE,
+                tests="2",
+                failures="1",
+                errors="0",
+                skipped="0",
+            )
+            ET.SubElement(
+                suite,
+                "testcase",
+                classname=proof.SUITE,
+                name="legacyModeRetainsItsExistingDeletionWorkflow",
+            )
+            case = ET.SubElement(
+                suite,
+                "testcase",
+                classname=proof.SUITE,
+                name="fiveActorsMissingScopedDeletionStopsBeforeOwnedDownstreamCleanup",
+            )
+            ET.SubElement(
+                case,
+                "failure",
+                type="org.mockito.exceptions.verification.NoInteractionsWanted",
+            )
+            ET.ElementTree(suite).write(root / "TEST-deletion.xml")
+            result = proof.sanitize(root, root / "clean.xml")
+            self.assertEqual(2, result["floor"])
+            self.assertTrue(result["adapter_behavior_red"])
+            self.assertFalse(result["all_passed"])
+
+    def test_old_adapter_inventory_cannot_qualify_deletion(self):
+        proof = self.proof()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            MaintenanceBoundaryEvidenceTest().reports(root)
+            result = proof.sanitize(root, root / "clean.xml")
+            self.assertFalse(result["adapter_behavior_red"] or result["all_passed"])
