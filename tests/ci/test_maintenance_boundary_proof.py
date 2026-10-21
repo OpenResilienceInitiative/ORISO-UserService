@@ -85,14 +85,14 @@ class DeletionBoundaryEvidenceTest(unittest.TestCase):
         proof.select_slice("deletion")
         return proof
 
-    def test_actual_three_method_deletion_inventory_qualifies_only_assertion_red(self):
+    def test_actual_five_method_deletion_inventory_qualifies_only_assertion_red(self):
         proof = self.proof()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             suite = ET.Element(
                 "testsuite",
                 name=proof.SUITE,
-                tests="3",
+                tests="5",
                 failures="1",
                 errors="0",
                 skipped="0",
@@ -120,9 +120,14 @@ class DeletionBoundaryEvidenceTest(unittest.TestCase):
                 classname=proof.SUITE,
                 name="publicSchedulerFreezesOwnedDeletionBeforeRpcAndAcknowledgesOnlyVerifiedReceipt",
             )
+            for name in [
+                "publicSchedulerRejectsInvalidReceiptAndRetainsTheExactFrozenIntent",
+                "publicSchedulerLosingLeaseBeforeFreezeCannotSendTheNativeDelete",
+            ]:
+                ET.SubElement(suite, "testcase", classname=proof.SUITE, name=name)
             ET.ElementTree(suite).write(root / "TEST-deletion.xml")
             result = proof.sanitize(root, root / "clean.xml")
-            self.assertEqual(3, result["floor"])
+            self.assertEqual(5, result["floor"])
             self.assertTrue(result["adapter_behavior_red"])
             self.assertFalse(result["all_passed"])
 

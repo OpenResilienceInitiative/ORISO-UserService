@@ -27,6 +27,7 @@ WORKFLOW = ".github/workflows/scenario-c-maintenance-caller-proof.yml"
 SLICE = "adapter"
 COMPILED_CLASSES = [
     "de/caritas/cob/userservice/api/adapters/keycloak/KeycloakService",
+    "de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec",
 ]
 TEST_CLASS = (
     "de/caritas/cob/userservice/api/adapters/keycloak/KeycloakServiceScenarioCModeTest"
@@ -43,6 +44,8 @@ def select_slice(name):
             LEGACY,
             "fiveActorsMissingScopedDeletionStopsBeforeOwnedDownstreamCleanup",
             "publicSchedulerFreezesOwnedDeletionBeforeRpcAndAcknowledgesOnlyVerifiedReceipt",
+            "publicSchedulerRejectsInvalidReceiptAndRetainsTheExactFrozenIntent",
+            "publicSchedulerLosingLeaseBeforeFreezeCannotSendTheNativeDelete",
         }
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/workflow/delete/service/DeleteUserAccountService",

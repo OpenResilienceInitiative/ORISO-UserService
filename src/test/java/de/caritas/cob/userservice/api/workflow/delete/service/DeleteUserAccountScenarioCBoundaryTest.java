@@ -122,6 +122,20 @@ class DeleteUserAccountScenarioCBoundaryTest {
   @Test
   void publicSchedulerFreezesOwnedDeletionBeforeRpcAndAcknowledgesOnlyVerifiedReceipt()
       throws Exception {
+    scheduledWire(false, false);
+  }
+
+  @Test
+  void publicSchedulerRejectsInvalidReceiptAndRetainsTheExactFrozenIntent() throws Exception {
+    scheduledWire(true, false);
+  }
+
+  @Test
+  void publicSchedulerLosingLeaseBeforeFreezeCannotSendTheNativeDelete() throws Exception {
+    scheduledWire(false, true);
+  }
+
+  private void scheduledWire(boolean invalidReceipt, boolean lostLease) throws Exception {
     String account = "11111111-1111-4111-8111-111111111111";
     String realmId = "22222222-2222-4222-8222-222222222222";
     var clock = Clock.fixed(Instant.parse("2026-10-21T10:00:00Z"), ZoneOffset.UTC);
@@ -203,6 +217,12 @@ class DeleteUserAccountScenarioCBoundaryTest {
               assertEquals("DELETION", body.path("target").path("origin").path("kind").asText());
               assertTrue(body.path("target").path("origin").path("humanSubject").isNull());
               requests.incrementAndGet();
+              if (lostLease) {
+                jdbc.update(
+                    "update scheduled_task_claim set claimed_until=? where task_name=?",
+                    now.plusHours(13),
+                    "account-deletion");
+              }
               return withSuccess(
                       "{\"id\":\""
                           + account
@@ -216,70 +236,77 @@ class DeleteUserAccountScenarioCBoundaryTest {
                       MediaType.APPLICATION_JSON)
                   .createResponse(request);
             });
-    server
-        .expect(requestTo(endpoint + "/delete"))
-        .andExpect(method(HttpMethod.POST))
-        .andExpect(header("Authorization", "Bearer fixture-admin"))
-        .andRespond(
-            request -> {
-              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-              String wire = ((MockClientHttpRequest) request).getBodyAsString();
-              var body = codec.read(wire, JsonNode.class);
-              assertMaintenanceProof(request, codec, body, "delete", realmId, account, actor);
-              String operation = body.path("operationId").asText();
-              assertEquals(operation, UUID.fromString(operation).toString());
-              var frozen =
-                  jdbc.queryForMap(
-                      "select status, frozen_body from identity_maintenance_intent"
-                          + " where operation_id=?",
-                      operation);
-              assertEquals("FROZEN", frozen.get("STATUS"));
-              assertEquals(
-                  codec.canonical(body),
-                  jdbc.queryForObject(
-                      "select frozen_body from identity_maintenance_intent where operation_id=?",
-                      String.class,
-                      operation));
-              assertEquals("a".repeat(64), body.path("expectedState").asText());
-              assertEquals(0, body.path("change").size());
-              var outcome =
-                  new java.util.TreeMap<String, Object>(
-                      Map.of(
-                          "realmId",
-                          realmId,
-                          "accountId",
-                          account,
-                          "operationId",
-                          operation,
-                          "command",
-                          "delete",
-                          "ownerClient",
-                          actor.clientId(),
-                          "ownerSubject",
-                          actor.serviceSubject(),
-                          "intentDigest",
-                          codec.digest("maintenance-intent", body),
-                          "previousState",
-                          body.path("expectedState").asText(),
-                          "tenantId",
-                          "7",
-                          "result",
-                          "DELETED"));
-              outcome.put(
-                  "originDigest",
-                  codec.digest("maintenance-origin", body.path("target").path("origin")));
-              String receipt = nativeReceipt(key, codec, outcome);
-              requests.incrementAndGet();
-              return withSuccess(
-                      codec.canonical(
-                          Map.of(
-                              "operationId", operation,
-                              "accountId", account,
-                              "result", "DELETED",
-                              "receipt", receipt)),
-                      MediaType.APPLICATION_JSON)
-                  .createResponse(request);
-            });
+    if (!lostLease) {
+      server
+          .expect(requestTo(endpoint + "/delete"))
+          .andExpect(method(HttpMethod.POST))
+          .andExpect(header("Authorization", "Bearer fixture-admin"))
+          .andRespond(
+              request -> {
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                String wire = ((MockClientHttpRequest) request).getBodyAsString();
+                var body = codec.read(wire, JsonNode.class);
+                assertMaintenanceProof(request, codec, body, "delete", realmId, account, actor);
+                String operation = body.path("operationId").asText();
+                assertEquals(operation, UUID.fromString(operation).toString());
+                var frozen =
+                    jdbc.queryForMap(
+                        "select status, frozen_body from identity_maintenance_intent"
+                            + " where operation_id=?",
+                        operation);
+                assertEquals("FROZEN", frozen.get("STATUS"));
+                assertEquals(
+                    codec.canonical(body),
+                    jdbc.queryForObject(
+                        "select frozen_body from identity_maintenance_intent where operation_id=?",
+                        String.class,
+                        operation));
+                assertEquals("a".repeat(64), body.path("expectedState").asText());
+                assertEquals(0, body.path("change").size());
+                var outcome =
+                    new java.util.TreeMap<String, Object>(
+                        Map.of(
+                            "realmId",
+                            realmId,
+                            "accountId",
+                            account,
+                            "operationId",
+                            operation,
+                            "command",
+                            "delete",
+                            "ownerClient",
+                            actor.clientId(),
+                            "ownerSubject",
+                            actor.serviceSubject(),
+                            "intentDigest",
+                            codec.digest("maintenance-intent", body),
+                            "previousState",
+                            body.path("expectedState").asText(),
+                            "tenantId",
+                            "7",
+                            "result",
+                            "DELETED"));
+                outcome.put(
+                    "originDigest",
+                    codec.digest("maintenance-origin", body.path("target").path("origin")));
+                String receipt = nativeReceipt(key, codec, outcome);
+                if (invalidReceipt) {
+                  receipt =
+                      receipt.substring(0, receipt.length() - 1)
+                          + (receipt.endsWith("0") ? "1" : "0");
+                }
+                requests.incrementAndGet();
+                return withSuccess(
+                        codec.canonical(
+                            Map.of(
+                                "operationId", operation,
+                                "accountId", account,
+                                "result", "DELETED",
+                                "receipt", receipt)),
+                        MediaType.APPLICATION_JSON)
+                    .createResponse(request);
+              });
+    }
     var worker =
         new ScheduledAskerMaintenance(
             jdbc,
@@ -302,14 +329,34 @@ class DeleteUserAccountScenarioCBoundaryTest {
             claim,
             mock(IdentityReactivationRepairService.class));
     ReflectionTestUtils.setField(scheduler, "scopedMaintenance", worker);
-    scheduler.performDeletionWorkflow();
+    if (invalidReceipt) {
+      assertThrows(IllegalArgumentException.class, scheduler::performDeletionWorkflow);
+    } else {
+      scheduler.performDeletionWorkflow();
+    }
     assertEquals(
-        1,
+        invalidReceipt || lostLease ? 0 : 1,
         jdbc.queryForObject(
             "select count(*) from identity_maintenance_intent where status='ACKNOWLEDGED'"
                 + " and receipt_json is not null",
             Integer.class));
-    assertEquals(2, requests.get());
+    if (invalidReceipt) {
+      assertEquals(
+          1,
+          jdbc.queryForObject(
+              "select count(*) from identity_maintenance_intent where status='FROZEN'"
+                  + " and receipt_json is null and frozen_body is not null",
+              Integer.class));
+    }
+    if (lostLease) {
+      assertEquals(
+          1,
+          jdbc.queryForObject(
+              "select count(*) from identity_maintenance_intent where status='PREPARED'"
+                  + " and frozen_body is null and receipt_json is null",
+              Integer.class));
+    }
+    assertEquals(lostLease ? 1 : 2, requests.get());
     server.verify();
     assertEquals(1, jdbc.queryForObject("select count(*) from user", Integer.class));
     verifyNoInteractions(nativeClient, users, consultants, registry, mail);
