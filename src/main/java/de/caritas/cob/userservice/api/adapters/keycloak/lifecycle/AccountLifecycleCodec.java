@@ -223,12 +223,7 @@ public final class AccountLifecycleCodec {
     intentFields(
         origin,
         java.util.Set.of(
-            "kind",
-            "humanAuthority",
-            "humanClient",
-            "humanIssuer",
-            "humanSubject",
-            "workflowId"));
+            "kind", "humanAuthority", "humanClient", "humanIssuer", "humanSubject", "workflowId"));
     if (!"SELF".equals(intentText(origin, "kind", 16))
         || !origin.get("humanAuthority").isNull()
         || !metadata.accountId().equals(intentUuid(origin, "humanSubject"))
