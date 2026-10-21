@@ -148,7 +148,8 @@ public class InternalChatEmailService {
         try {
           writer.reserveInternalRecipient(recipient.getId(), intent);
         } catch (DataIntegrityViolationException replay) {
-          // A partial fan-out is safe to resolve again without duplicate mail claims.
+          // A partial fan-out is safe to resolve again; any other constraint is a fault to retry.
+          if (!writer.hasInternalRecipient(recipient.getId(), intent.getEventKey())) throw replay;
         }
       }
       writer.finish(id, Status.RESOLVED);

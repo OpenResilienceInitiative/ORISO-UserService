@@ -100,6 +100,11 @@ public class ReplyEmailDeliveryWriter {
         RecipientKind.INTERNAL_INTENT, actorId, eventKey);
   }
 
+  public boolean hasInternalRecipient(String recipientId, String eventKey) {
+    return repository.existsByRecipientKindAndRecipientUserIdAndEventKey(
+        RecipientKind.INTERNAL, recipientId, eventKey);
+  }
+
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public long reserveInternalRecipient(String recipientId, ReplyEmailDelivery intent) {
     return saveNew(

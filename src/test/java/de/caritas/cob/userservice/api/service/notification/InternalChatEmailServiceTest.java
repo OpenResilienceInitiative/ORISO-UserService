@@ -46,6 +46,8 @@ class InternalChatEmailServiceTest {
   private final TenantSystemEmailClient mailClient = mock(TenantSystemEmailClient.class);
   private final AuthenticatedUser caller = mock(AuthenticatedUser.class);
   private final Map<Long, ReplyEmailDelivery> stored = new LinkedHashMap<>();
+  private final java.util.concurrent.atomic.AtomicBoolean failNextRecipientInsert =
+      new java.util.concurrent.atomic.AtomicBoolean();
   private final List<Delivered> received = new ArrayList<>();
   private final ReplyEmailDeliveryWriter writer = new ReplyEmailDeliveryWriter(repository);
   private InternalChatEmailService service;
@@ -64,6 +66,11 @@ class InternalChatEmailServiceTest {
         .thenAnswer(
             invocation -> {
               ReplyEmailDelivery row = invocation.getArgument(0);
+              if (row.getId() == null
+                  && row.getRecipientKind() == ReplyEmailDelivery.RecipientKind.INTERNAL
+                  && failNextRecipientInsert.getAndSet(false)) {
+                throw new DataIntegrityViolationException("other constraint");
+              }
               if (row.getId() == null) {
                 if (stored.values().stream()
                     .anyMatch(
@@ -335,6 +342,17 @@ class InternalChatEmailServiceTest {
     drain();
     assertThat(received).hasSize(1);
     assertThat(received.get(0).toString()).doesNotContain("PRIVATE_PLAINTEXT_MARKER");
+  }
+
+  @Test
+  void nonDuplicateFanOutFailureKeepsTheIntentForRetry() {
+    failNextRecipientInsert.set(true);
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).isEmpty();
+    makeRetryDue();
+    drain();
+    assertThat(received).hasSize(1);
   }
 
   @Test
