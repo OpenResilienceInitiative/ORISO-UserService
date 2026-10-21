@@ -1,5 +1,9 @@
 package de.caritas.cob.userservice.api.service.accountpolicy;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker;
 import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -42,6 +46,11 @@ import org.springframework.web.util.UriComponentsBuilder;
 @Component
 @ConditionalOnProperty(name = "TASK_IDENTITY_MODEL", havingValue = "FIVE_ACTORS")
 public final class CheckedAccountPolicyReads {
+  private static final ObjectMapper JSON =
+      new ObjectMapper()
+          .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+
   public record Policy(Long id, Integer allowedNumberOfUsers) {}
 
   private final AccountInviteRepository invites;
@@ -209,10 +218,25 @@ public final class CheckedAccountPolicyReads {
                   "internal", "tenants", Long.toString(tenantId), "account-provisioning-policy")
               .build()
               .toUriString();
-      Policy result =
-          http.exchange(url, HttpMethod.GET, new HttpEntity<Void>(headers), Policy.class).getBody();
-      if (result == null || !Objects.equals(result.id(), tenantId)) throw unavailable();
-      return result;
+      JsonNode result =
+          JSON.readTree(
+              http.exchange(url, HttpMethod.GET, new HttpEntity<Void>(headers), String.class)
+                  .getBody());
+      if (result == null
+          || !result.isObject()
+          || result.size() != 2
+          || !result.has("id")
+          || !result.has("allowedNumberOfUsers")) throw unavailable();
+      JsonNode id = result.get("id");
+      JsonNode cap = result.get("allowedNumberOfUsers");
+      if (!id.isIntegralNumber()
+          || !id.canConvertToLong()
+          || id.longValue() < 1
+          || id.longValue() != tenantId
+          || (!cap.isNull()
+              && (!cap.isIntegralNumber() || !cap.canConvertToInt() || cap.intValue() < 0)))
+        throw unavailable();
+      return new Policy(id.longValue(), cap.isNull() ? null : cap.intValue());
     } catch (Exception failure) {
       // Provider bodies, raw links and credentials never cross this boundary.
       throw unavailable();
