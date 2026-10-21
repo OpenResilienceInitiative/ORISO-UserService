@@ -80,6 +80,9 @@ class CaseHandoverReasonPolicyAuthorizationIT {
     when(subdomainTenantResolver.resolve(any())).thenReturn(Optional.of(OWN));
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().subdomain("synthetic"));
+    // HttpTenantFilter admits the request only after a fresh operational-status lookup.
+    when(tenantService.getRestrictedTenantDataFresh(anyLong()))
+        .thenReturn(new RestrictedTenantDTO().active(true).subdomain("synthetic"));
     when(policies.getEffective(anyLong())).thenAnswer(call -> stored());
     when(policies.updateEffective(anyLong(), any())).thenAnswer(call -> stored());
   }
