@@ -188,8 +188,13 @@ public final class AccountLifecycleCodec {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "locale", "UPDATED");
   }
 
-  private String verifyMaintenanceReceipt(String reply, String realmId,
-      TaskActorCredentials actor, JsonNode frozen, String command, String expectedResult) {
+  private String verifyMaintenanceReceipt(
+      String reply,
+      String realmId,
+      TaskActorCredentials actor,
+      JsonNode frozen,
+      String command,
+      String expectedResult) {
     try {
       var result = read(reply, MaintenanceReply.class);
       UUID operation = UUID.fromString(frozen.path("operationId").asText());
