@@ -34,8 +34,8 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.test.web.client.MockRestServiceServer;
-import org.springframework.web.client.RestTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 /** SQL/outbox proof with an explicit remote port double; not native Keycloak acceptance. */
@@ -239,7 +239,13 @@ class OrdinaryCreationWorkflowSqlTest {
             call -> {
               CompensateRequest request = call.getArgument(1);
               return new AttemptResult(
-                  id, "owned-account", "COMPENSATED", request.execution(), "proof", null, "terminal");
+                  id,
+                  "owned-account",
+                  "COMPENSATED",
+                  request.execution(),
+                  "proof",
+                  null,
+                  "terminal");
             });
     dispatcher.dispatch(id);
     if (inUse) {
@@ -255,7 +261,8 @@ class OrdinaryCreationWorkflowSqlTest {
           failure instanceof CustomValidationHttpStatusException validation ? validation : null;
       assertAll(
           () -> assertInstanceOf(CustomValidationHttpStatusException.class, failure),
-          () -> assertEquals(HttpStatus.CONFLICT, rejected == null ? null : rejected.getHttpStatus()),
+          () ->
+              assertEquals(HttpStatus.CONFLICT, rejected == null ? null : rejected.getHttpStatus()),
           () ->
               assertEquals(
                   "USERNAME_NOT_AVAILABLE",
