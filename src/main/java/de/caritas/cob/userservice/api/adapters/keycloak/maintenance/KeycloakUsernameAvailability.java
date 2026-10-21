@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecyc
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker;
 import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
+import de.caritas.cob.userservice.api.port.out.ScopedAvailabilityUnavailableException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;

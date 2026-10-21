@@ -1,4 +1,4 @@
-package de.caritas.cob.userservice.api.adapters.keycloak.maintenance;
+package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 

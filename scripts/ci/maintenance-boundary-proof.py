@@ -78,7 +78,7 @@ def select_slice(name):
             "de/caritas/cob/userservice/api/IdentityManager",
             "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/ScopedUsernameAvailability",
             "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/KeycloakUsernameAvailability",
-            "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/ScopedAvailabilityUnavailableException",
+            "de/caritas/cob/userservice/api/port/out/ScopedAvailabilityUnavailableException",
         ]
         TEST_CLASS = SUITE.replace(".", "/")
     elif name == "jpa":

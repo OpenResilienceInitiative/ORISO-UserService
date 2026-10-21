@@ -9,7 +9,6 @@ import static java.util.Objects.nonNull;
 
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
-import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedAvailabilityUnavailableException;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
@@ -53,6 +52,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.port.out.ScopedAvailabilityUnavailableException;
 import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;

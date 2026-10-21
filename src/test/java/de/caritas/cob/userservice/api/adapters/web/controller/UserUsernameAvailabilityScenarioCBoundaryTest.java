@@ -10,7 +10,6 @@ import de.caritas.cob.userservice.api.IdentityManager;
 import de.caritas.cob.userservice.api.adapters.keycloak.*;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
 import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakUsernameAvailability;
-import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedAvailabilityUnavailableException;
 import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedUsernameAvailability;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.*;
