@@ -148,7 +148,8 @@ class AccountLifecycleRetryFairnessSqlTest {
               String.class,
               id.toString());
       when(remote.commit(eq(id), any()))
-          .thenThrow(new KeycloakAccountLifecycleCommands.RemoteFailure(status, "private-proof-code"));
+          .thenThrow(
+              new KeycloakAccountLifecycleCommands.RemoteFailure(status, "private-proof-code"));
 
       assertDoesNotThrow(() -> dispatcher(journal).dispatch(id));
 
@@ -210,8 +211,7 @@ class AccountLifecycleRetryFairnessSqlTest {
             Integer.class));
     assertEquals(
         bodies,
-        jdbc.queryForList(
-            "SELECT id,body_json FROM identity_lifecycle_outbox ORDER BY id"));
+        jdbc.queryForList("SELECT id,body_json FROM identity_lifecycle_outbox ORDER BY id"));
     verify(remote, never()).compensate(any(), any());
     verifyNoInteractions(downstream);
   }
