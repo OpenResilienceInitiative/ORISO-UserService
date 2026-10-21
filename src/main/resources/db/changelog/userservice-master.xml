@@ -245,6 +245,7 @@
   <include file="db/changelog/changeset/20261013_invite_template_delete_guard/changeSet.xml"/>
   <include file="db/changelog/changeset/20261013_managed_account_pause/changeSet.xml"/>
   <include file="db/changelog/changeset/20261014_co_access_power_rollback/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261017_chat_members_only_1418/changeSet.xml"/>
   <!-- #1082 reactivation saga claim. The include added in 13dc4ae9b was dropped by an earlier
        pre-dev merge, leaving the 0086_reactivation_saga_claim changeset orphaned; appended here
        so it stays append-only. Idempotent (ADD COLUMN IF NOT EXISTS). -->

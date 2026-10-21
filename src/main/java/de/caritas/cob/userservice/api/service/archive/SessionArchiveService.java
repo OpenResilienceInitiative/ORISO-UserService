@@ -1,13 +1,16 @@
 package de.caritas.cob.userservice.api.service.archive;
 
 import de.caritas.cob.userservice.api.AccountManager;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.ArchiveOrDeleteSessionStatisticsEvent;
 import java.time.LocalDateTime;
@@ -15,6 +18,7 @@ import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /** Service for archive functionality. */
@@ -28,6 +32,7 @@ public class SessionArchiveService {
   private final @NonNull SessionArchiveValidator sessionArchiveValidator;
   private final @NonNull AccountManager accountManager;
   private final @NonNull StatisticsService statisticsService;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * Archive a session.
@@ -68,11 +73,24 @@ public class SessionArchiveService {
 
     Session session = retrieveSession(sessionId);
     checkPermission(session);
+    // The technical session of a members-only chat lives and ends with the chat: archiving it, or
+    // bringing it back, under a chat that stays open is refused. Whoever is no participant was
+    // already refused with 403 above.
+    if (membersOnlyChatAccess.concerns(session)) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.MEMBERS_ONLY_CHAT_STOP_REQUIRED, HttpStatus.CONFLICT);
+    }
     sessionValidateMethod.accept(session);
     executeArchiving(sessionStatusTo, session);
   }
 
   public void checkPermission(Session session) {
+    if (membersOnlyChatAccess.excludes(session, authenticatedUser.getUserId())) {
+      throw new ForbiddenException(
+          String.format(
+              "Archive/reactivate session %s is not allowed for user with id %s",
+              session.getId(), authenticatedUser.getUserId()));
+    }
     if (!hasConsultantPermission(session) && !session.isAdvised(authenticatedUser.getUserId())) {
       var template = "Archive/reactivate session %s is not allowed for user with id %s";
       var message = String.format(template, session.getId(), authenticatedUser.getUserId());

@@ -36,6 +36,8 @@ class GroupChatParticipantReconciliationServiceTest {
 
   @Mock private GroupChatMatrixCleanupService matrixCleanup;
 
+  @Mock private MembersOnlyRevocation revocation;
+
   private GroupChatParticipantReconciliationService service;
   private Chat series;
   private GroupChatParticipant owner;
@@ -51,7 +53,8 @@ class GroupChatParticipantReconciliationServiceTest {
             membershipService,
             consultantMembership,
             groupPolicy,
-            matrixCleanup);
+            matrixCleanup,
+            revocation);
     Mockito.lenient()
         .when(membershipService.removeLeavingMemberFromRoomAndConfirm(Mockito.any(), Mockito.any()))
         .thenReturn(true);
@@ -219,7 +222,8 @@ class GroupChatParticipantReconciliationServiceTest {
             membershipService,
             consultantMembership,
             admission,
-            matrixCleanup);
+            matrixCleanup,
+            revocation);
 
     org.junit.jupiter.api.Assertions.assertSame(
         refusal,
@@ -250,7 +254,8 @@ class GroupChatParticipantReconciliationServiceTest {
             membershipService,
             consultantMembership,
             admission,
-            matrixCleanup);
+            matrixCleanup,
+            revocation);
 
     guarded.reconcile(series, List.of("returning", "newcomer"));
 
@@ -330,9 +335,30 @@ class GroupChatParticipantReconciliationServiceTest {
 
     service.reconcile(series, List.of());
 
+    verify(participantRepository, never()).delete(owner);
+    // The main room, whose access matters most, is left last: a failure of it rolls everything
+    // back, and what is already gone then is only the side room of a supervision.
+    var handOver = Mockito.inOrder(revocation, membershipService, participantRepository);
+    handOver.verify(revocation).revokeAccessOf(series, removed);
+    handOver
+        .verify(membershipService)
+        .removeLeavingMemberFromRoomAndConfirm(series, "@removed:matrix");
+    handOver.verify(participantRepository).delete(removed);
+  }
+
+  @Test
+  void reconcile_ShouldTakeASoftDeletedCoModeratorOutOfTheMatrixRoomToo() {
+    var removed = participant(7L, "removed", ParticipantRole.CO_MODERATOR);
+    var removedConsultant = consultant("removed", "@removed:matrix");
+    removedConsultant.setDeleteDate(java.time.LocalDateTime.now());
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
+    // Only a lookup by participation finds the account; the active-only one does not.
+    when(consultantRepository.findById("removed")).thenReturn(Optional.of(removedConsultant));
+
+    service.reconcile(series, List.of());
+
     verify(membershipService).removeLeavingMemberFromRoomAndConfirm(series, "@removed:matrix");
     verify(participantRepository).delete(removed);
-    verify(participantRepository, never()).delete(owner);
   }
 
   @Test

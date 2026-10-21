@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
@@ -59,6 +60,7 @@ public class TeamDiscussionFacade {
   private final @NonNull TeamDiscussionCreationWriter creationWriter;
   private final @NonNull TeamDiscussionParticipantWriter participantWriter;
   private final @NonNull TeamDiscussionRoomCleanupService roomCleanupService;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /** Read model returned to the controller. */
   public record TeamDiscussionView(
@@ -194,9 +196,14 @@ public class TeamDiscussionFacade {
   }
 
   private Session loadSession(Long sessionId) {
-    return sessionRepository
-        .findById(sessionId)
-        .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
+    var session =
+        sessionRepository
+            .findById(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
+    // A team discussion belongs to an open enquiry; a members-only chat's case is none.
+    membersOnlyChatAccess.requireOrdinary(
+        session, "The session of a members-only chat has no team discussion.");
+    return session;
   }
 
   private Consultant requireEligibleConsultant(Session session, String consultantId) {

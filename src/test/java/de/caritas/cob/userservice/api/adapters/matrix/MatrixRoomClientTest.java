@@ -111,6 +111,39 @@ class MatrixRoomClientTest {
   }
 
   @Test
+  void createRoom_ForAMembersOnlyRoom_ShouldLockInvitesToTheAdminPowerLevel() throws Exception {
+    var responseBody = new MatrixCreateRoomResponseDTO();
+    responseBody.setRoomId(ROOM_ID);
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
+            createRoomRequestCaptor.capture(),
+            eq(MatrixCreateRoomResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(responseBody));
+
+    matrixRoomClient.createMembersOnlyRoom("Room name", "room-alias", ACCESS_TOKEN, true);
+
+    var body = createRoomRequestCaptor.getValue().getBody();
+    assertThat(body.getPowerLevelContentOverride()).isEqualTo(Map.of("invite", 100));
+    assertThat(body.getInitialState()).hasSize(1);
+  }
+
+  @Test
+  void createRoom_ForAnOrdinaryRoom_ShouldKeepTheDefaultPowerLevels() throws Exception {
+    var responseBody = new MatrixCreateRoomResponseDTO();
+    responseBody.setRoomId(ROOM_ID);
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
+            createRoomRequestCaptor.capture(),
+            eq(MatrixCreateRoomResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(responseBody));
+
+    matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN, true);
+
+    assertThat(createRoomRequestCaptor.getValue().getBody().getPowerLevelContentOverride())
+        .isNull();
+  }
+
+  @Test
   void createRoom_ShouldThrowMatrixCreateRoomException_WhenMatrixRejectsRequest() {
     when(restTemplate.postForEntity(
             eq(uri(API_URL + "/_matrix/client/r0/createRoom")),

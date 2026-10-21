@@ -98,6 +98,9 @@ class CaseHandoverServiceTest {
 
   @InjectMocks private CaseHandoverService caseHandoverService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock private CaseHandoverRequestRepository caseHandoverRequestRepository;
   @Mock private CaseHandoverReasonPolicyRepository caseHandoverReasonPolicyRepository;
   @Mock private CaseHandoverPolicyCacheService caseHandoverPolicyCacheService;
@@ -3447,6 +3450,19 @@ class CaseHandoverServiceTest {
     // restriction hid exactly the cases the feature exists for (#202).
     givenRequesterTopics(5L);
     givenCandidates(candidateSession(201L, 10L, 5L, true));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(1, response.getTotal());
+    assertEquals(201L, response.getSessions().get(0).getSession().getId());
+  }
+
+  @Test
+  void searchCandidates_neverListsTheCaseOfAMembersOnlyChat() {
+    givenRequesterTopics(5L);
+    var membersOnlyCase = candidateSession(202L, 10L, 5L, false);
+    givenCandidates(candidateSession(201L, 10L, 5L, true), membersOnlyCase);
+    when(membersOnlyChatAccess.membersOnlySessionIds(any())).thenReturn(Set.of(202L));
 
     var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
 

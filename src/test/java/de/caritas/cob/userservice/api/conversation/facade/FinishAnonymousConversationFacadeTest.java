@@ -37,6 +37,9 @@ class FinishAnonymousConversationFacadeTest {
 
   @Mock private AuthenticatedUser authenticatedUser;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   private final ActionCommandMockProvider actionCommandMockProvider =
       new ActionCommandMockProvider();
 
@@ -125,5 +128,20 @@ class FinishAnonymousConversationFacadeTest {
     assertThrows(
         ForbiddenException.class,
         () -> this.finishAnonymousConversationFacade.finishConversation(session.getId()));
+  }
+
+  @Test
+  void finishConversation_Should_refuseTheSessionOfAMembersOnlyChat() {
+    Session session = anonymousSession();
+    when(this.sessionService.getSession(any())).thenReturn(Optional.of(session));
+    org.mockito.Mockito.doThrow(new ForbiddenException("members-only"))
+        .when(membersOnlyChatAccess)
+        .requireOrdinary(org.mockito.ArgumentMatchers.eq(session), any());
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> this.finishAnonymousConversationFacade.finishConversation(session.getId()));
+
+    org.mockito.Mockito.verifyNoInteractions(actionsRegistry);
   }
 }

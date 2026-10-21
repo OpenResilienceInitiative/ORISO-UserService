@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverMatrixRepairTaskRepository;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -38,8 +39,12 @@ public class CaseHandoverMatrixRepairService {
   private final @NonNull CaseHandoverRequestRepository handoverRequestRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
   private final @NonNull Clock clock;
   private final @NonNull PlatformTransactionManager transactionManager;
+
+  /** Not a consultant id: a supervision kick is never cancelled by a Case Handover grant. */
+  public static final String SUPERVISION_REMOVAL_REQUESTER = "supervision-removal";
 
   @Value("${case.handover.matrix-repair.max-attempts:100}")
   private int maxAttempts;
@@ -60,6 +65,48 @@ public class CaseHandoverMatrixRepairService {
         operatorId,
         sessionId,
         requesterConsultantId);
+  }
+
+  /**
+   * Queues the removal of a former supervisor from a Matrix room through the caller's own
+   * transaction (no new one): the kick is queued exactly when the supervision ends, and not at all
+   * when that transaction rolls back.
+   */
+  public void enqueueRemovalInCurrentTransaction(
+      String roomId, String memberId, String operatorId, Long sessionId) {
+    repository
+        .findExistingForUpdate(CaseHandoverMatrixRepairAction.REMOVE, roomId, memberId)
+        .ifPresentOrElse(
+            existing -> {
+              existing.setOperatorId(operatorId);
+              existing.setSessionId(sessionId);
+              existing.setRequesterConsultantId(SUPERVISION_REMOVAL_REQUESTER);
+              existing.setAttemptCount(0);
+              existing.setLastAttemptAt(null);
+              existing.setCreateDate(LocalDateTime.now(clock));
+              existing.setGeneration(existing.getGeneration() + 1);
+              repository.save(existing);
+            },
+            () ->
+                repository.save(
+                    CaseHandoverMatrixRepairTask.builder()
+                        .action(CaseHandoverMatrixRepairAction.REMOVE)
+                        .roomId(roomId)
+                        .memberId(memberId)
+                        .sessionId(sessionId)
+                        .requesterConsultantId(SUPERVISION_REMOVAL_REQUESTER)
+                        .operatorId(operatorId)
+                        .createDate(LocalDateTime.now(clock))
+                        .build()));
+  }
+
+  /**
+   * Drops the queued kicks of a supervisor in a session, in the caller's transaction: a supervisor
+   * who is added again must not be removed by a retry that was queued for their earlier removal.
+   */
+  public void cancelPendingRemovals(Long sessionId, String memberId) {
+    repository.deleteByActionAndRequesterConsultantIdAndSessionIdAndMemberId(
+        CaseHandoverMatrixRepairAction.REMOVE, SUPERVISION_REMOVAL_REQUESTER, sessionId, memberId);
   }
 
   public void enqueueJoin(
@@ -271,23 +318,30 @@ public class CaseHandoverMatrixRepairService {
         return restorePowerUnlessSuperseded(task);
       }
       boolean activeAccess = hasActiveAccess(task);
-      if (task.getAction() == CaseHandoverMatrixRepairAction.REMOVE && activeAccess) {
+      if (task.getAction() == CaseHandoverMatrixRepairAction.REMOVE
+          && (activeAccess || supervisorIsActiveAgain(task))) {
         return true;
       }
       String loginId =
           task.getAction() == CaseHandoverMatrixRepairAction.JOIN
               ? task.getMemberId()
               : task.getOperatorId();
-      if (isBlank(loginId)) {
-        return false;
-      }
-      String token = matrixSynapseService.loginAsUserAccessToken(loginId);
+      String token = isBlank(loginId) ? null : matrixSynapseService.loginAsUserAccessToken(loginId);
       if (isBlank(token)) {
-        return false;
+        // An operator who can no longer mint a token (e.g. a disabled consultant) must not block a
+        // supervision removal: the supervisor can still leave with their own token.
+        return task.getAction() == CaseHandoverMatrixRepairAction.REMOVE
+            && SUPERVISION_REMOVAL_REQUESTER.equals(task.getRequesterConsultantId())
+            && removeOrConfirmAbsent(task, null);
+      }
+      // Re-checked after the login round trip: never kick on the strength of a stale check.
+      if (task.getAction() == CaseHandoverMatrixRepairAction.REMOVE
+          && supervisorIsActiveAgain(task)) {
+        return true;
       }
       return switch (task.getAction()) {
         case JOIN -> reconcileJoin(task, token, activeAccess);
-        case REMOVE -> removeOrConfirmAbsent(task, token);
+        case REMOVE -> removeThenRestoreIfReAdded(task, token);
         case POWER_RESTORE ->
             throw new IllegalStateException("Power restore uses the session lock");
       };
@@ -378,10 +432,76 @@ public class CaseHandoverMatrixRepairService {
                     && (request.getExpiresAt() == null || request.getExpiresAt().isAfter(now)));
   }
 
-  private boolean removeOrConfirmAbsent(CaseHandoverMatrixRepairTask task, String token) {
-    if (matrixSynapseService.removeUserFromRoom(task.getRoomId(), task.getMemberId(), token)) {
+  /**
+   * A queued supervision kick is void once the supervisor is authorised again: the active
+   * supervision row is the truth, not the task that was queued for an earlier removal.
+   */
+  private boolean supervisorIsActiveAgain(CaseHandoverMatrixRepairTask task) {
+    return SUPERVISION_REMOVAL_REQUESTER.equals(task.getRequesterConsultantId())
+        && sessionSupervisorRepository
+            .existsBySessionIdAndIsActiveTrueAndSupervisorConsultantMatrixUserId(
+                task.getSessionId(), task.getMemberId());
+  }
+
+  /**
+   * A re-add can commit between the last active-supervision check and the remote kick. After the
+   * kick the database is therefore checked once more; if the supervisor is active again they are
+   * invited and joined again, using the same steps as the add path.
+   */
+  private boolean removeThenRestoreIfReAdded(CaseHandoverMatrixRepairTask task, String token) {
+    if (!removeOrConfirmAbsent(task, token)) {
+      return false;
+    }
+    if (!supervisorIsActiveAgain(task)) {
       return true;
     }
+    log.info(
+        "Supervisor of session {} was re-added during removal from room {}; restoring membership",
+        task.getSessionId(),
+        task.getRoomId());
+    try {
+      if (!isBlank(token)) {
+        try {
+          matrixSynapseService.inviteUserToRoom(task.getRoomId(), task.getMemberId(), token);
+        } catch (Exception exception) {
+          // "already in the room" or a failed invite: joining below decides.
+          log.debug("Re-invite of supervisor skipped: {}", exception.getClass().getSimpleName());
+        }
+      }
+      String memberToken = matrixSynapseService.loginAsUserAccessToken(task.getMemberId());
+      return !isBlank(memberToken) && matrixSynapseService.joinRoom(task.getRoomId(), memberToken);
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Restoring re-added supervisor in room {} failed with {}",
+          task.getRoomId(),
+          exception.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  private boolean removeOrConfirmAbsent(CaseHandoverMatrixRepairTask task, String token) {
+    if (!isBlank(token)
+        && matrixSynapseService.removeUserFromRoom(task.getRoomId(), task.getMemberId(), token)) {
+      return true;
+    }
+    if (isAbsent(task)) {
+      return true;
+    }
+    // The operator may lack the power to kick in a private room. A removed supervisor can always
+    // leave with their own token, which ends the membership just the same.
+    if (SUPERVISION_REMOVAL_REQUESTER.equals(task.getRequesterConsultantId())) {
+      String memberToken = matrixSynapseService.loginAsUserAccessToken(task.getMemberId());
+      if (!isBlank(memberToken)
+          && !supervisorIsActiveAgain(task)
+          && matrixSynapseService.leaveRoom(task.getRoomId(), memberToken)) {
+        return true;
+      }
+      return isAbsent(task);
+    }
+    return false;
+  }
+
+  private boolean isAbsent(CaseHandoverMatrixRepairTask task) {
     return matrixSynapseService
         .getRoomMembers(task.getRoomId())
         .map(members -> !members.contains(task.getMemberId()))

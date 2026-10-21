@@ -178,6 +178,19 @@ class JoinAndLeaveChatFacadeTest {
   }
 
   @Test
+  void lastMemberLeavingAMembersOnlyChatLeavesThePurgeToDeleteChat() {
+    Chat chat = activeMatrixChat();
+    when(chat.isMembersOnly()).thenReturn(true);
+    User user = matrixUser();
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+
+    facade.leaveChat(CHAT_ID, authenticatedUser);
+
+    verify(chatService).deleteChat(chat);
+    verify(matrixChatShutdownService, never()).shutdownRoom(chat);
+  }
+
+  @Test
   void lastMemberLeavingRepetitiveChatShouldCreateNextOccurrence() {
     Chat chat = activeMatrixChat();
     User user = matrixUser();

@@ -150,6 +150,7 @@ class ArchivedTeamSessionConversationListProviderTestIT {
           session.setConsultant(consultant2);
           session.setUser(user);
           session.setId(null);
+          session.setConversationType(null);
           session.setSessionData(null);
           session.setTeamSession(true);
           session.setPostcode("12345");

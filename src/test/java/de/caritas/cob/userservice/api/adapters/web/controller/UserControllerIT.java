@@ -349,6 +349,7 @@ class UserControllerIT {
   @MockitoBean private JoinAndLeaveChatFacade joinAndLeaveChatFacade;
   @MockitoBean private AssignChatFacade assignChatFacade;
   @MockitoBean private CreateChatFacade createChatFacade;
+  @MockitoBean private InternalSubsetChatFacade internalSubsetChatFacade;
   @MockitoBean private ChatPermissionVerifier chatPermissionVerifier;
   @MockitoBean private StopChatFacade stopChatFacade;
   @MockitoBean private GetChatMembersFacade getChatMembersFacade;
