@@ -648,12 +648,15 @@ class CheckedAccountPolicyNativeGate {
     assertThat(queries()).isEqualTo(afterValid + 2);
     agencyMode.set("live");
     Path tenantMode = Path.of(required("ORISO_POLICY_TENANT_MODE"));
+    long beforeUnavailableSql = sqlQueries();
     try {
       Files.writeString(tenantMode, "outage");
       configuredImporter(actualQuotaSaga(0, afterPolicy), row, List.of("consultant"), false)
           .startImport();
       assertThat(afterPolicy.get()).isZero();
       assertThat(queries()).isEqualTo(afterValid + 3);
+      assertThat(lastPolicyStatus.get()).isEqualTo(503);
+      assertThat(sqlQueries()).isEqualTo(beforeUnavailableSql);
     } finally {
       Files.writeString(tenantMode, "live");
     }
