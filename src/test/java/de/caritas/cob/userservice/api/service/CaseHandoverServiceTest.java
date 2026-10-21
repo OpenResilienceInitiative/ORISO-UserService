@@ -244,9 +244,13 @@ class CaseHandoverServiceTest {
   @ValueSource(strings = {"requestAccess", "resolveClientConsent", "updateConsentPreference"})
   void aMembersOnlyCaseRefusesEveryHandoverMutation(String mutation) {
     when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    // A pending request exists, so only the members-only guard can produce the refusal.
+    when(caseHandoverRequestRepository.findByIdAndSessionId(1L, 123L))
+        .thenReturn(Optional.of(pendingConsentRequest()));
     assertThrows(
         de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
         () -> mutate(mutation));
+    verify(caseHandoverRequestRepository, never()).findByIdAndSessionId(any(), any());
     verify(sessionRepository, never()).updateAdditionalAccessPreference(any(), anyBoolean());
     verify(caseHandoverRequestRepository, never()).save(any());
     verifyNoInteractions(matrixSynapseService);
