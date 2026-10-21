@@ -13,11 +13,13 @@ import java.util.Objects;
 import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** The two durable phases; protocol traffic is deliberately outside this component. */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class EnquiryRejectionTransactions {
@@ -225,8 +227,10 @@ public class EnquiryRejectionTransactions {
       // The server resolves exactly one configured tenant; the target case grants no authority.
       var tenant = tenants.getSingleTenancyTenantDataFresh();
       return tenant != null ? tenant.getId() : null;
-    } catch (RuntimeException unavailable) {
-      return null;
+    } catch (org.springframework.web.client.RestClientException unavailable) {
+      // An outage is not a denial: report 503 and never name tenant details in the log.
+      log.warn("Single-tenant lookup unavailable: {}", unavailable.getClass().getSimpleName());
+      throw new ServiceUnavailableException("Tenant unavailable");
     }
   }
 

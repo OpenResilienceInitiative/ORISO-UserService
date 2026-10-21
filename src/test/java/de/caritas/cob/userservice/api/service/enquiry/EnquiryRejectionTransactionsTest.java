@@ -109,4 +109,26 @@ class EnquiryRejectionTransactionsTest {
     verify(tenants, never()).getSingleTenancyTenantDataFresh();
     verify(rejections, never()).saveAndFlush(any());
   }
+
+  @Test
+  void singleTenantLookupOutageIsUnavailableNotForbiddenAndWritesNothing() {
+    ReflectionTestUtils.setField(transactions, "multitenancyEnabled", false);
+    when(tenants.getSingleTenancyTenantDataFresh())
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("down"));
+
+    assertThatThrownBy(() -> transactions.begin(5L))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException
+                .class);
+    verify(rejections, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void unrelatedLookupFailureIsNotMaskedAsADenial() {
+    ReflectionTestUtils.setField(transactions, "multitenancyEnabled", false);
+    when(tenants.getSingleTenancyTenantDataFresh()).thenThrow(new IllegalStateException("bug"));
+
+    assertThatThrownBy(() -> transactions.begin(5L)).isInstanceOf(IllegalStateException.class);
+    verify(rejections, never()).saveAndFlush(any());
+  }
 }
