@@ -2,7 +2,7 @@ name: Scenario C caller proof
 
 on:
   push:
-    branches: [codex/367-c-caller-finish-20261021]
+    branches: [codex/367-c-caller-finish-20261021, codex/367-c-maintenance-user-20261021]
 
 permissions:
   contents: read

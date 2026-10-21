@@ -64,6 +64,8 @@ mariadb_owned_tests=(
   GroupChatMatrixCleanupAdoptionMariaDbIT
   IdentityReactivationSagaMariaDbIT
   UserHardDeleteClaimMariaDbIT
+  # Dedicated scenario-c-caller-proof runs this exact seven-case native suite on both Maria versions.
+  AccountLifecycleRetryFairnessMariaDbIT
 )
 required_test_pattern="**/*IT"
 for mariadb_owned_test in "${mariadb_owned_tests[@]}"; do
