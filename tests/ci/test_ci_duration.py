@@ -79,8 +79,11 @@ class CiDurationTest(unittest.TestCase):
             {"contents": "read", "pull-requests": "read"},
             jobs["route-validation"]["permissions"],
         )
-        for name in ("validate", "required-integration-tests", "mariadb-contract"):
-            self.assertEqual("route-validation", jobs[name]["needs"])
+        # Every branch check, including reusable workflows, must defer to an open PR's run.
+        branch_checks = [name for name in jobs if name != "route-validation"]
+        self.assertIn("notification-smtp-contract", branch_checks)
+        for name in branch_checks:
+            self.assertEqual("route-validation", jobs[name]["needs"], name)
             self.assertEqual(
                 "needs.route-validation.outputs.run_validation == 'true'", jobs[name]["if"]
             )

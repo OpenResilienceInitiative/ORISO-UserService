@@ -91,4 +91,6 @@ jobs:
     uses: ./.github/workflows/mariadb-contract.yml
 
   notification-smtp-contract:
+    needs: route-validation
+    if: needs.route-validation.outputs.run_validation == 'true'
     uses: ./.github/workflows/notification-smtp-contract.yml
