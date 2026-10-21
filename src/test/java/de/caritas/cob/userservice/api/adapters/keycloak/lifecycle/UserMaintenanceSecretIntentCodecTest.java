@@ -63,10 +63,26 @@ class UserMaintenanceSecretIntentCodecTest {
   void everyMetadataKeyIsMandatoryAndUnknownOrCoercedFieldsCannotSeal() throws Exception {
     var vector = ordinaryVector();
     var codec = vectorCodec();
-    byte[] plaintext = vector.path("canonical_plaintext_utf8").textValue().getBytes(StandardCharsets.UTF_8);
-    for (String field : List.of("v", "realmId", "operationId", "command", "method", "route",
-        "accountId", "tenantId", "ownerClient", "ownerSubject", "originDigest", "workflowId",
-        "requestDigest", "expectedState", "authorityValidUntil", "representation")) {
+    byte[] plaintext =
+        vector.path("canonical_plaintext_utf8").textValue().getBytes(StandardCharsets.UTF_8);
+    for (String field :
+        List.of(
+            "v",
+            "realmId",
+            "operationId",
+            "command",
+            "method",
+            "route",
+            "accountId",
+            "tenantId",
+            "ownerClient",
+            "ownerSubject",
+            "originDigest",
+            "workflowId",
+            "requestDigest",
+            "expectedState",
+            "authorityValidUntil",
+            "representation")) {
       var missing = (ObjectNode) vector.path("metadata").deepCopy();
       missing.remove(field);
       refuses(() -> codec.sealSelfAppIntent(missing, plaintext));
@@ -91,9 +107,14 @@ class UserMaintenanceSecretIntentCodecTest {
     var codec = vectorCodec();
     var metadata = vector.path("metadata");
     String original = vector.path("canonical_envelope_utf8").textValue();
-    for (String wire : List.of(" " + original, original + " {}", original.replace("\"v\":1", "\"v\":1,\"v\":1"),
-        original.replace("\"v\":1", "\"v\":2"), original.replace("\"v\":1", "\"v\":\"1\""),
-        original.replace("\"v\":1", "\"v\":1.0"))) {
+    for (String wire :
+        List.of(
+            " " + original,
+            original + " {}",
+            original.replace("\"v\":1", "\"v\":1,\"v\":1"),
+            original.replace("\"v\":1", "\"v\":2"),
+            original.replace("\"v\":1", "\"v\":\"1\""),
+            original.replace("\"v\":1", "\"v\":1.0"))) {
       refuses(() -> codec.openSelfAppIntent(metadata, wire));
     }
     var extra = codec.read(original, ObjectNode.class);
@@ -118,13 +139,22 @@ class UserMaintenanceSecretIntentCodecTest {
     String original = vector.path("canonical_plaintext_utf8").textValue();
     var unknown = codec.read(original, ObjectNode.class);
     unknown.put("humanBearer", "must-never-persist");
-    refuses(() -> codec.sealSelfAppIntent(metadata, codec.canonical(unknown).getBytes(StandardCharsets.UTF_8)));
+    refuses(
+        () ->
+            codec.sealSelfAppIntent(
+                metadata, codec.canonical(unknown).getBytes(StandardCharsets.UTF_8)));
     var foreign = codec.read(original, ObjectNode.class);
     ((ObjectNode) foreign.path("body")).put("operationId", "44444444-4444-4444-8444-444444444444");
-    refuses(() -> codec.sealSelfAppIntent(metadata, codec.canonical(foreign).getBytes(StandardCharsets.UTF_8)));
+    refuses(
+        () ->
+            codec.sealSelfAppIntent(
+                metadata, codec.canonical(foreign).getBytes(StandardCharsets.UTF_8)));
     var altered = codec.read(original, ObjectNode.class);
     ((ObjectNode) altered.path("body").path("target")).put("tenantId", "8");
-    refuses(() -> codec.sealSelfAppIntent(metadata, codec.canonical(altered).getBytes(StandardCharsets.UTF_8)));
+    refuses(
+        () ->
+            codec.sealSelfAppIntent(
+                metadata, codec.canonical(altered).getBytes(StandardCharsets.UTF_8)));
     byte[] noncanonical = (" " + original).getBytes(StandardCharsets.UTF_8);
     refuses(() -> codec.sealSelfAppIntent(metadata, noncanonical));
     refuses(() -> codec.sealSelfAppIntent(metadata, new byte[65537]));
@@ -136,10 +166,13 @@ class UserMaintenanceSecretIntentCodecTest {
     var vector = ordinaryVector();
     var codec = vectorCodec();
     var metadata = vector.path("metadata");
-    byte[] plaintext = vector.path("canonical_plaintext_utf8").textValue().getBytes(StandardCharsets.UTF_8);
+    byte[] plaintext =
+        vector.path("canonical_plaintext_utf8").textValue().getBytes(StandardCharsets.UTF_8);
     String first = codec.sealSelfAppIntent(metadata, plaintext);
     String second = codec.sealSelfAppIntent(metadata, plaintext);
-    assertNotEquals(codec.read(first, JsonNode.class).path("nonce"), codec.read(second, JsonNode.class).path("nonce"));
+    assertNotEquals(
+        codec.read(first, JsonNode.class).path("nonce"),
+        codec.read(second, JsonNode.class).path("nonce"));
     assertArrayEquals(plaintext, codec.openSelfAppIntent(metadata, first));
     assertArrayEquals(plaintext, codec.openSelfAppIntent(metadata, second));
     assertFalse(first.contains("\"secret\""));
@@ -149,15 +182,17 @@ class UserMaintenanceSecretIntentCodecTest {
   private JsonNode ordinaryVector() throws Exception {
     try (var input = getClass().getResourceAsStream("/user-maintenance-secret-intent-v1.json")) {
       assertNotNull(input);
-      var fixture = new AccountLifecycleCodec(new byte[32]).read(
-          new String(input.readAllBytes(), StandardCharsets.UTF_8), JsonNode.class);
+      var fixture =
+          new AccountLifecycleCodec(new byte[32])
+              .read(new String(input.readAllBytes(), StandardCharsets.UTF_8), JsonNode.class);
       return fixture.path("crypto_vectors").get(0);
     }
   }
 
   private AccountLifecycleCodec vectorCodec() {
-    return new AccountLifecycleCodec(HexFormat.of().parseHex(
-        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"));
+    return new AccountLifecycleCodec(
+        HexFormat.of()
+            .parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"));
   }
 
   private void refuses(org.junit.jupiter.api.function.Executable operation) {
