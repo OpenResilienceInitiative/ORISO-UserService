@@ -298,6 +298,112 @@ public final class AccountLifecycleCodec {
     return new IllegalArgumentException("Invalid owned secret intent");
   }
 
+  /** Fixed app command encoding; only the independently checked owned workflow calls this. */
+  String selfAppOtpProof(
+      String realmName,
+      String realmId,
+      String accountId,
+      TaskActorCredentials actor,
+      JsonNode materialized,
+      long authorityValidUntil) {
+    long now = clock.instant().getEpochSecond();
+    long expiry = Math.min(now + 60, authorityValidUntil);
+    if (actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN
+        || expiry <= now) throw invalidSecretIntent();
+    Map<String, Object> claims = new TreeMap<>();
+    claims.put("iss", "userservice");
+    claims.put("aud", "oriso-otp");
+    claims.put("purpose", TaskPurpose.OTP.name());
+    claims.put("operation", "otp.app-setup");
+    claims.put("method", "PUT");
+    claims.put("actor", actor.actor().name());
+    claims.put("realm", realmName);
+    claims.put("target", "realm/" + realmId + "/account/" + accountId);
+    claims.put("taskClient", actor.clientId());
+    claims.put("taskSubject", actor.serviceSubject());
+    claims.put("payloadDigest", digest("payload", materialized));
+    claims.put("jti", UUID.randomUUID().toString());
+    claims.put("nonce", UUID.randomUUID().toString().replace("-", ""));
+    claims.put("iat", now);
+    claims.put("exp", expiry);
+    String encoded = encode(canonical(claims).getBytes(StandardCharsets.UTF_8));
+    return encoded + "." + encode(mac("proof\n" + encoded));
+  }
+
+  /** No caller can construct a verified outcome from an HTTP status or public tuple. */
+  static final class VerifiedSelfAppOutcome {
+    private final int status;
+    private final String receipt;
+
+    private VerifiedSelfAppOutcome(int status, String receipt) {
+      this.status = status;
+      this.receipt = receipt;
+    }
+
+    int status() { return status; }
+    String receipt() { return receipt; }
+
+    @Override
+    public String toString() { return "VerifiedSelfAppOutcome[redacted]"; }
+  }
+
+  VerifiedSelfAppOutcome verifySelfAppOtpReceipt(
+      String reply,
+      String realmId,
+      TaskActorCredentials actor,
+      JsonNode frozenCommand) {
+    try {
+      if (reply == null || reply.length() > 16384
+          || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
+        throw invalidSecretIntent();
+      JsonNode result = read(reply, JsonNode.class);
+      intentFields(result, java.util.Set.of("operationId", "accountId", "status", "result", "receipt"));
+      JsonNode body = frozenCommand.path("body");
+      JsonNode target = body.path("target");
+      if (!intentUuid(body, "operationId").equals(intentUuid(result, "operationId"))
+          || !intentUuid(target, "accountId").equals(intentUuid(result, "accountId"))
+          || !result.path("status").isIntegralNumber()
+          || !result.path("status").canConvertToInt()) throw invalidSecretIntent();
+      int status = result.path("status").intValue();
+      JsonNode nativeResult = result.path("result");
+      if (status == 200 || status == 201) {
+        intentFields(nativeResult, java.util.Set.of("info"));
+        intentText(nativeResult, "info", 512);
+      } else if (status == 401) {
+        intentFields(nativeResult, java.util.Set.of("error", "error_description"));
+        if (!"invalid_grant".equals(intentText(nativeResult, "error", 100))) throw invalidSecretIntent();
+        intentText(nativeResult, "error_description", 512);
+      } else throw invalidSecretIntent();
+      String receipt = intentText(result, "receipt", 8192);
+      String[] parts = receipt.split("\\.", -1);
+      if (parts.length != 2 || !parts[1].matches("[a-f0-9]{64}")) throw invalidSecretIntent();
+      byte[] payload = intentBase64(json.valueToTree(parts[0]), 1, 6000);
+      if (!java.security.MessageDigest.isEqual(
+          mac("otp-operation-receipt\n" + parts[0]), HexFormat.of().parseHex(parts[1])))
+        throw invalidSecretIntent();
+      JsonNode saved = read(utf8(payload), JsonNode.class);
+      var expected = json.createObjectNode();
+      expected.put("realmId", realmId);
+      expected.put("accountId", target.path("accountId").textValue());
+      expected.put("operationId", body.path("operationId").textValue());
+      expected.put("operation", "otp.app-setup");
+      expected.put("ownerClient", actor.clientId());
+      expected.put("ownerSubject", actor.serviceSubject());
+      var materialized = ((ObjectNode) body).deepCopy();
+      materialized.put("username", intentText(frozenCommand, "username", 255));
+      expected.put("intentDigest", digest("otp-intent", materialized));
+      expected.put("previousState", intentDigest(body, "expectedState"));
+      expected.set("tenantId", target.path("tenantId"));
+      expected.put("originDigest", digest("otp-origin", target.path("origin")));
+      expected.put("status", status);
+      expected.put("resultDigest", digest("otp-result", nativeResult));
+      if (!saved.equals(expected) || !utf8(payload).equals(canonical(expected))) throw invalidSecretIntent();
+      return new VerifiedSelfAppOutcome(status, receipt);
+    } catch (RuntimeException failure) {
+      throw invalidSecretIntent();
+    }
+  }
+
   public String digest(String domain, Object value) {
     return HexFormat.of().formatHex(mac(domain + "\n" + canonical(value)));
   }
