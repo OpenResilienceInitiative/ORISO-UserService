@@ -14,6 +14,17 @@ public class MatrixCallBindingService {
   private final MatrixCallBindingRepository bindings;
   private final MatrixCallBindingWriter writer;
 
+  public java.util.Set<String> knownMediaRooms(java.util.Collection<String> rooms) {
+    var candidates = java.util.List.copyOf(rooms);
+    var known = new java.util.HashSet<String>();
+    for (int offset = 0; offset < candidates.size(); offset += 500) {
+      known.addAll(
+          bindings.findKnownMediaRooms(
+              candidates.subList(offset, Math.min(offset + 500, candidates.size()))));
+    }
+    return known;
+  }
+
   public java.util.List<String> unobservedMediaRooms(long now) {
     return bindings.findObservationCandidates(
         now, org.springframework.data.domain.PageRequest.of(0, 100));

@@ -1382,6 +1382,13 @@ public class MatrixSynapseService implements MatrixUserClient {
                   java.util.Map<String, Object>>() {});
       return java.util.Optional.ofNullable(response.getBody());
     } catch (HttpStatusCodeException response) {
+      if (response.getStatusCode().value() == 401) {
+        String code = errcodeOf(response);
+        // This state request uses the member's token, not the administrative credentials.
+        if ("M_USER_LOCKED".equals(code) || "M_USER_DEACTIVATED".equals(code)) {
+          return java.util.Optional.empty();
+        }
+      }
       if (response.getStatusCode().value() == 401 || isRetryableCallLookupStatus(response)) {
         throw new CallLookupUnavailableException("call binding lookup unavailable", response);
       }

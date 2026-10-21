@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.enquiry;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.EnquiryRejection;
 import de.caritas.cob.userservice.api.port.out.EnquiryRejectionRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -12,6 +13,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /** Bounded recovery of original closure intents; each durable claim arbitrates replicas. */
+@lombok.extern.slf4j.Slf4j
 @Component
 @Profile("!testing")
 @RequiredArgsConstructor
@@ -45,13 +47,22 @@ public class EnquiryRejectionRepairScheduler {
           () -> {
             try {
               repair.repair(task.id());
-            } catch (RuntimeException failure) {
-              // Only a bounded diagnostic is stored; never redirect the immutable room/identity.
+            } catch (ConflictException changedBinding) {
+              // Only a proven snapshot conflict is deferred as BINDING.
               try {
                 transactions.deferUnclaimedRepair(task.id(), task.generation());
               } catch (RuntimeException unavailable) {
-                /* durable lease expires for a subsequent run */
+                log.warn(
+                    "Enquiry rejection conflict deferral failed for session {} ({})",
+                    task.id(),
+                    unavailable.getClass().getSimpleName());
               }
+            } catch (RuntimeException failure) {
+              // Preserve the durable retry/lease; do not label storage failures as changed rooms.
+              log.warn(
+                  "Enquiry rejection repair failed for session {} ({})",
+                  task.id(),
+                  failure.getClass().getSimpleName());
             }
           });
     }

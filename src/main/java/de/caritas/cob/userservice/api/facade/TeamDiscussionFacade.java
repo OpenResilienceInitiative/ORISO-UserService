@@ -10,7 +10,6 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
-import de.caritas.cob.userservice.api.model.TeamDiscussionParticipant;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -21,7 +20,6 @@ import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
-import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionRoomCleanupService;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -58,7 +56,9 @@ public class TeamDiscussionFacade {
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull TeamDiscussionFeatureGate featureGate;
   private final @NonNull TeamDiscussionCreationWriter creationWriter;
-  private final @NonNull TeamDiscussionParticipantWriter participantWriter;
+  private final @NonNull de.caritas.cob.userservice.api.service.teamdiscussion
+          .TeamDiscussionAccessTransactions
+      accessTransactions;
   private final @NonNull TeamDiscussionRoomCleanupService roomCleanupService;
   private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
@@ -78,9 +78,7 @@ public class TeamDiscussionFacade {
 
     Optional<TeamDiscussion> existing = teamDiscussionRepository.findBySessionId(sessionId);
     if (existing.isPresent()) {
-      TeamDiscussion discussion = reconcileOnAccess(existing.get(), session);
-      joinConsultant(discussion, session, consultant);
-      return toView(discussion);
+      return joinAndView(sessionId, existing.get().getId(), consultantId);
     }
 
     requireOpenEnquiry(session);
@@ -126,10 +124,7 @@ public class TeamDiscussionFacade {
     // Create/accept race: re-read the assignment state after committing the row — if the case
     // was accepted while we were creating the room, archive immediately instead of leaving an
     // OPEN discussion on an assigned case.
-    Session freshSession = sessionRepository.findById(sessionId).orElse(session);
-    discussion = reconcileOnAccess(discussion, freshSession);
-    joinConsultant(discussion, session, consultant);
-    return toView(discussion);
+    return joinAndView(sessionId, discussion.getId(), consultantId);
   }
 
   /** Repairs access only to an existing room; never creates a replacement. */
@@ -138,8 +133,7 @@ public class TeamDiscussionFacade {
     if (discussion == null) return;
     var session = loadSession(discussion.getSessionId());
     featureGate.requireEnabled(session.getTenantId());
-    var consultant = requireEligibleConsultant(session, consultantId);
-    joinConsultant(reconcileOnAccess(discussion, session), session, consultant);
+    joinAndView(session.getId(), discussion.getId(), consultantId);
   }
 
   /** Returns the discussion if one exists — also ARCHIVED ones (read-only archive access). */
@@ -149,8 +143,36 @@ public class TeamDiscussionFacade {
     requireEligibleConsultant(session, consultantId);
     return teamDiscussionRepository
         .findBySessionId(sessionId)
-        .map(discussion -> reconcileOnAccess(discussion, session))
-        .map(this::toView);
+        .map(
+            discussion ->
+                accessTransactions.read(
+                    sessionId,
+                    discussion.getId(),
+                    consultantId,
+                    access -> toView(reconcileOnAccess(access.discussion(), access.session()))));
+  }
+
+  private TeamDiscussionView joinAndView(Long sessionId, Long discussionId, String consultantId) {
+    return accessTransactions.join(
+        sessionId,
+        discussionId,
+        consultantId,
+        access -> {
+          var discussion = reconcileOnAccess(access.discussion(), access.session());
+          if (access.session().getStatus() == SessionStatus.REJECTED
+              && !discussion.isReadOnlyApplied()) {
+            // An existing joined reader may keep reading while verified closure is pending.
+            // Rejoining a departed reader must wait until the room is confirmed read-only.
+            if (!isJoinedMember(
+                discussion.getMatrixRoomId(), access.consultant().getMatrixUserId())) {
+              throw new ResponseStatusException(
+                  HttpStatus.SERVICE_UNAVAILABLE, "Team closure is pending");
+            }
+          } else {
+            joinConsultant(discussion, access.session(), access.consultant());
+          }
+          return toView(discussion);
+        });
   }
 
   /**
@@ -298,7 +320,6 @@ public class TeamDiscussionFacade {
     // nothing but spends their Matrix invite allowance (rc_invites per_user), and once that runs
     // out every invite waits minutes and the request times out (FE#1799).
     if (isJoinedMember(discussion.getMatrixRoomId(), consultant.getMatrixUserId())) {
-      recordParticipant(discussion, consultant.getId());
       return;
     }
     String agencyToken = loginAgencyOperator(session);
@@ -328,7 +349,6 @@ public class TeamDiscussionFacade {
       throw new ResponseStatusException(
           HttpStatus.BAD_GATEWAY, "Could not join the team discussion", ex);
     }
-    recordParticipant(discussion, consultant.getId());
   }
 
   /** Unknown membership counts as not joined, so the invite-and-join path still runs. */
@@ -337,25 +357,6 @@ public class TeamDiscussionFacade {
         .getRoomMembers(roomId)
         .map(members -> members.contains(matrixUserId))
         .orElse(false);
-  }
-
-  private void recordParticipant(TeamDiscussion discussion, String consultantId) {
-    if (participantWriter.isRecorded(discussion.getId(), consultantId)) {
-      return;
-    }
-    try {
-      participantWriter.record(
-          TeamDiscussionParticipant.builder()
-              .teamDiscussionId(discussion.getId())
-              .consultantId(consultantId)
-              .joinDate(LocalDateTime.now())
-              .build());
-    } catch (DataIntegrityViolationException conflict) {
-      // Another tab may have completed the same join while this request was in Matrix.
-      if (!participantWriter.isRecorded(discussion.getId(), consultantId)) {
-        throw conflict;
-      }
-    }
   }
 
   /**

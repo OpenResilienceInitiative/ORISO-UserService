@@ -70,6 +70,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   EventNotificationController.class,
   MessageEventCurrentAccessService.class,
   MatrixCaseReplyActorAuthorizer.class,
+  de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class,
   TeamDiscussionNotificationService.class,
   EventNotificationService.class,
   EventNotificationDeduplicationWriter.class,
@@ -116,6 +117,10 @@ class TeamDiscussionNotificationIT {
   @MockitoBean private InternalChatEmailService internalMail;
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private SessionService sessionService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
+
   private MockMvc mvc;
   private Long discussionId;
 
@@ -206,6 +211,37 @@ class TeamDiscussionNotificationIT {
               users.deleteAll();
             });
     TenantContext.clear();
+  }
+
+  @Test
+  void oneTeamPostChecksTheEligibleAudienceWithOneLifecycleQuery() throws Exception {
+    var jdbc = new JdbcTemplate(dataSource);
+    var previous =
+        jdbc.queryForList(
+            "SELECT SETTING_VALUE FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME='QUERY_STATISTICS'",
+            String.class);
+    jdbc.execute("SET QUERY_STATISTICS TRUE");
+    try {
+      long before = lifecycleSelectCount(jdbc);
+      postTeam(false);
+      long queries = lifecycleSelectCount(jdbc) - before;
+      assertThat(events.findAll())
+          .extracting(event -> event.getRecipientUserId())
+          .containsExactlyInAnyOrder(RECEIVER, LEGACY);
+      assertThat(queries).isEqualTo(1);
+    } finally {
+      jdbc.execute(
+          "SET QUERY_STATISTICS "
+              + (previous.stream().anyMatch("TRUE"::equalsIgnoreCase) ? "TRUE" : "FALSE"));
+    }
+  }
+
+  private long lifecycleSelectCount(JdbcTemplate jdbc) {
+    return jdbc.queryForObject(
+        "SELECT COALESCE(SUM(EXECUTION_COUNT),0) FROM INFORMATION_SCHEMA.QUERY_STATISTICS "
+            + "WHERE UPPER(SQL_STATEMENT) LIKE 'SELECT%FROM ACCOUNT_INACTIVITY%' "
+            + "AND UPPER(SQL_STATEMENT) NOT LIKE '%QUERY_STATISTICS%'",
+        Long.class);
   }
 
   @ParameterizedTest

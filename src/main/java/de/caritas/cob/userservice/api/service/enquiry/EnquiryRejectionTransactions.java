@@ -15,8 +15,6 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** The two durable phases; protocol traffic is deliberately outside this component. */
 @Service
@@ -171,17 +169,7 @@ public class EnquiryRejectionTransactions {
                 .tenantId(decision.getTenantId())
                 .createDate(now())
                 .build());
-        TransactionSynchronizationManager.registerSynchronization(
-            new TransactionSynchronization() {
-              @Override
-              public void afterCommit() {
-                try {
-                  signal.signalFeedUpdated(decision.getSeekerId());
-                } catch (RuntimeException ignored) {
-                  /* durable feed remains authoritative */
-                }
-              }
-            });
+        signal.signalFeedUpdated(decision.getSeekerId());
       }
     }
     discussions

@@ -78,6 +78,7 @@ class MatrixCallNotificationIT {
   @MockitoBean private IdentityTombstoneService tombstones;
   @Autowired private AccountInactivityService accountLifecycle;
   @Autowired private javax.sql.DataSource accountDataSource;
+  @Autowired private jakarta.persistence.EntityManagerFactory entityManagerFactory;
 
   @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
   @org.springframework.context.annotation.Profile("call-notification-account-fixture")
@@ -124,8 +125,71 @@ class MatrixCallNotificationIT {
   }
 
   @Test
+  void ordinaryRoomsInOneSyncDoNotCauseOneCallBindingQueryPerRoom() throws Exception {
+    when(matrix.getAdminToken()).thenReturn("synthetic-token");
+    when(matrix.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    var joinedRooms = new java.util.LinkedHashMap<String, Object>();
+    for (int i = 0; i < 250; i++) {
+      joinedRooms.put("!ordinary-" + i + ":synthetic.oriso.test", Map.of());
+    }
+    var completedFirstBatch = new java.util.concurrent.CountDownLatch(1);
+    var releaseSync = new java.util.concurrent.CountDownLatch(1);
+    var requests = new java.util.concurrent.atomic.AtomicInteger();
+    when(matrix.makeMatrixRequest(any(), any(), any(), any()))
+        .thenAnswer(
+            invocation -> {
+              if (requests.incrementAndGet() == 1) {
+                return Map.of("next_batch", "ordinary-batch", "rooms", Map.of("join", joinedRooms));
+              }
+              completedFirstBatch.countDown();
+              releaseSync.await(10, java.util.concurrent.TimeUnit.SECONDS);
+              return Map.of("next_batch", "quiet", "rooms", Map.of());
+            });
+    var statistics =
+        entityManagerFactory.unwrap(org.hibernate.SessionFactory.class).getStatistics();
+    boolean statisticsWereEnabled = statistics.isStatisticsEnabled();
+    var listener = fastRetryListener();
+    try {
+      statistics.setStatisticsEnabled(true);
+      statistics.clear();
+      listener.initialize();
+      assertThat(completedFirstBatch.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      assertThat(statistics.getPrepareStatementCount()).isLessThanOrEqualTo(10);
+      assertThat(notifications.findAll()).isEmpty();
+    } finally {
+      releaseSync.countDown();
+      listener.shutdown();
+      statistics.setStatisticsEnabled(statisticsWereEnabled);
+    }
+  }
+
+  @Test
   void currentInviteProducesAPersistedNotificationForTheOtherConversationMember() {
     assertInviteNotifications(System.currentTimeMillis(), 1, false);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(AccountInactivityService.Status.class)
+  void onlyAnActiveCallerCanCreateANewCallInvitation(AccountInactivityService.Status status) {
+    accountLifecycle.assignAtCreation("call-asker", 7L, 12, 1L, java.time.Instant.now());
+    new JdbcTemplate(accountDataSource)
+        .update(
+            "UPDATE account_inactivity SET status=? WHERE identity_id=?",
+            status.name(),
+            "call-asker");
+
+    assertInviteNotifications(
+        System.currentTimeMillis(),
+        status == AccountInactivityService.Status.ACTIVE ? 1 : 0,
+        false);
+    if (status != AccountInactivityService.Status.ACTIVE) {
+      org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+          .getCallRoomBinding(
+              org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+      org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+          .ensureAdminInRoom(
+              org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    }
   }
 
   @Test
@@ -353,9 +417,14 @@ class MatrixCallNotificationIT {
   }
 
   @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  @org.junit.jupiter.params.provider.CsvSource({
+    "false,false",
+    "false,true",
+    "true,false",
+    "true,true"
+  })
   void failedMediaSubscriptionIsRecoveredAfterRestartWithoutReplayingTheInvite(
-      boolean losePreviouslyObservedRoom) {
+      boolean losePreviouslyObservedRoom, boolean suspendOriginalCaller) {
     String source = "!recovery-source:example";
     String media = "!recovery-media:example";
     String caller = "@recovery-caller:example";
@@ -380,9 +449,20 @@ class MatrixCallNotificationIT {
         .thenReturn(Optional.of(Map.of("call_id", "recovery-call", "source_room_id", source)));
     var allowRecovery = new java.util.concurrent.atomic.AtomicBoolean(losePreviouslyObservedRoom);
     var subscribed = new java.util.concurrent.atomic.AtomicBoolean();
+    var firstBindingVisible = new java.util.concurrent.atomic.AtomicReference<Boolean>();
     when(matrix.ensureAdminInRoom(media, caller))
         .thenAnswer(
             invocation -> {
+              try (var connection = accountDataSource.getConnection();
+                  var statement =
+                      connection.prepareStatement(
+                          "SELECT COUNT(*) FROM matrix_call_binding WHERE media_room_id=?")) {
+                statement.setString(1, media);
+                try (var rows = statement.executeQuery()) {
+                  rows.next();
+                  firstBindingVisible.compareAndSet(null, rows.getLong(1) == 1);
+                }
+              }
               boolean available = allowRecovery.get();
               subscribed.set(available);
               return available;
@@ -465,6 +545,9 @@ class MatrixCallNotificationIT {
           .atMost(Duration.ofSeconds(3))
           .untilAsserted(
               () -> {
+                assertThat(firstBindingVisible.get())
+                    .as("observer sees the committed binding through another connection")
+                    .isTrue();
                 assertThat(notifications.findAll())
                     .filteredOn(event -> "call.invited".equals(event.getEventType()))
                     .singleElement()
@@ -488,6 +571,22 @@ class MatrixCallNotificationIT {
             .untilAsserted(() -> assertThat(quietBatches.get()).isGreaterThanOrEqualTo(2));
       }
       listener.shutdown();
+      if (suspendOriginalCaller) {
+        accountLifecycle.assignAtCreation("recovery-caller", 7L, 12, 1L, java.time.Instant.now());
+        new JdbcTemplate(accountDataSource)
+            .update(
+                "UPDATE account_inactivity SET status='SUSPENDED' WHERE identity_id=?",
+                "recovery-caller");
+        when(matrix.getCallRoomBinding(media, receiver))
+            .thenReturn(Optional.of(Map.of("call_id", "recovery-call", "source_room_id", source)));
+        when(matrix.ensureAdminInRoom(media, receiver))
+            .thenAnswer(
+                call -> {
+                  subscribed.set(allowRecovery.get());
+                  return allowRecovery.get();
+                });
+        org.mockito.Mockito.clearInvocations(matrix);
+      }
       mediaBatches.set(0);
       allowRecovery.set(true);
       listener = fresh.get();
@@ -496,6 +595,14 @@ class MatrixCallNotificationIT {
           .during(Duration.ofMillis(300))
           .atMost(Duration.ofSeconds(3))
           .untilAsserted(() -> assertThat(mediaBatches.get()).isGreaterThanOrEqualTo(2));
+      if (suspendOriginalCaller) {
+        org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+            .getCallRoomBinding(media, caller);
+        org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+            .ensureAdminInRoom(media, caller);
+        org.mockito.Mockito.verify(matrix, org.mockito.Mockito.atLeastOnce())
+            .ensureAdminInRoom(media, receiver);
+      }
       finish.set(true);
       await()
           .during(Duration.ofMillis(300))
@@ -506,10 +613,13 @@ class MatrixCallNotificationIT {
                     notifications.findAll().stream()
                         .filter(event -> "call.ended".equals(event.getEventType()))
                         .toList();
-                assertThat(ended).hasSize(2);
+                assertThat(ended).hasSize(suspendOriginalCaller ? 1 : 2);
                 assertThat(ended)
                     .extracting(event -> event.getRecipientUserId())
-                    .containsExactlyInAnyOrder("recovery-caller", "recovery-receiver");
+                    .containsExactlyInAnyOrderElementsOf(
+                        suspendOriginalCaller
+                            ? List.of("recovery-receiver")
+                            : List.of("recovery-caller", "recovery-receiver"));
                 assertThat(ended)
                     .allSatisfy(
                         event -> {

@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.ConversationType;
@@ -10,6 +11,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -22,6 +24,10 @@ public class MessageEventCurrentAccessService {
   private final @NonNull SessionService sessionService;
   private final @NonNull ConsultantRepository consultants;
   private final @NonNull MatrixCaseReplyActorAuthorizer writers;
+  private final @NonNull TenantService tenants;
+
+  @Value("${multitenancy.enabled}")
+  private boolean multitenancyEnabled;
 
   public void assertPrimaryRoomWriter(String roomId, AuthenticatedUser caller) {
     var current = sessions.findByMatrixRoomId(roomId);
@@ -33,8 +39,9 @@ public class MessageEventCurrentAccessService {
       // Separate group and protected-room producers retain their own current membership rules.
       return;
     }
-    if (caller.getTenantId() == null
-        || !Objects.equals(effectiveTenant(session.getTenantId()), caller.getTenantId())) {
+    Long callerTenant = currentCallerTenant(caller);
+    if (callerTenant == null
+        || !Objects.equals(effectiveTenant(session.getTenantId()), callerTenant)) {
       throw new ForbiddenException("Message event caller has no current case tenant access");
     }
     sessionService.assertUserHasAccess(session.getId(), caller);
@@ -51,13 +58,24 @@ public class MessageEventCurrentAccessService {
           || actor.getMatrixUserId().isBlank()
           || session.getUser() == null
           || Objects.equals(actor.getId(), session.getUser().getUserId())
-          || !Objects.equals(effectiveTenant(actor.getTenantId()), caller.getTenantId())
+          || !Objects.equals(effectiveTenant(actor.getTenantId()), callerTenant)
           || !(legacyIdentity
               ? writers.isCurrentAssignedOrTeamWriter(session, actor)
               : writers.isCurrentWriter(session, actor.getMatrixUserId(), false))) {
         throw new ForbiddenException(
             "Message event caller has no current primary-room write access");
       }
+    }
+  }
+
+  private Long currentCallerTenant(AuthenticatedUser caller) {
+    if (caller.getTenantId() != null || multitenancyEnabled) return caller.getTenantId();
+    try {
+      // The server resolves exactly one configured tenant; the target case grants no authority.
+      var tenant = tenants.getSingleTenancyTenantDataFresh();
+      return tenant != null && tenant.getId() != null && tenant.getId() > 0 ? tenant.getId() : null;
+    } catch (RuntimeException unavailable) {
+      return null;
     }
   }
 

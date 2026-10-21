@@ -55,7 +55,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.StreamSupport;
 import lombok.NonNull;
@@ -330,11 +329,46 @@ class DeleteTemporaryAccountsSchedulerIT {
     var group = inviteGroup;
     ageBy(participant, maxAge.plusMinutes(1));
 
-    // Exercise the real periodic workflow in the same window as account cleanup, without
-    // depending on the test reaching a particular minute boundary.
-    var expiration = CompletableFuture.runAsync(groupExpiration::performDeactivationWorkflow);
-    scheduler.performDeletionWorkflow();
-    expiration.get(10, TimeUnit.SECONDS);
+    var cleanupEntered = new java.util.concurrent.CountDownLatch(1);
+    var releaseCleanup = new java.util.concurrent.CountDownLatch(1);
+    var cleanupTransactionActive = new java.util.concurrent.atomic.AtomicBoolean();
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              cleanupTransactionActive.set(
+                  org.springframework.transaction.support.TransactionSynchronizationManager
+                      .isActualTransactionActive());
+              cleanupEntered.countDown();
+              if (!releaseCleanup.await(10, TimeUnit.SECONDS))
+                throw new IllegalStateException("Fixture cleanup release timed out");
+              return call.callRealMethod();
+            })
+        .when(identityAccounts)
+        .deleteUser(participant.getUserId());
+    var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+    Long tenant = TenantContext.getCurrentTenant();
+    try {
+      var cleanup =
+          executor.submit(
+              () -> {
+                TenantContext.setCurrentTenant(tenant);
+                try {
+                  scheduler.performDeletionWorkflow();
+                } finally {
+                  TenantContext.clear();
+                }
+              });
+      assertTrue(cleanupEntered.await(10, TimeUnit.SECONDS));
+      assertTrue(cleanupTransactionActive.get());
+      groupExpiration.performDeactivationWorkflow();
+      assertFalse(cleanup.isDone());
+      assertTrue(chatRepository.findById(group.getId()).orElseThrow().isActive());
+      releaseCleanup.countDown();
+      cleanup.get(10, TimeUnit.SECONDS);
+    } finally {
+      releaseCleanup.countDown();
+      executor.shutdownNow();
+      assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
+    }
 
     assertFalse(userService.getUser(participant.getUserId()).isPresent());
     assertTrue(chatRepository.findById(group.getId()).orElseThrow().isActive());

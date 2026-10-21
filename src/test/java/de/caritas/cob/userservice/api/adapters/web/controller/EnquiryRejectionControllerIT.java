@@ -26,7 +26,12 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 /** Actual HTTP handlers and committed relational state; only current authentication is a port. */
-@SpringBootTest(properties = {"multitenancy.enabled=true"})
+@SpringBootTest(
+    properties = {
+      "multitenancy.enabled=true",
+      "matrix.feedSignal.enabled=true",
+      "matrix.feedSignal.coalesceMillis=10"
+    })
 @ActiveProfiles("testing")
 class EnquiryRejectionControllerIT {
   @Autowired private WebApplicationContext context;
@@ -45,7 +50,7 @@ class EnquiryRejectionControllerIT {
   @MockitoBean
   private de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient credentials;
 
-  @MockitoBean
+  @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
   private de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService feedSignal;
 
   @Autowired private EnquiryRejectionRepository rejections;
@@ -60,6 +65,7 @@ class EnquiryRejectionControllerIT {
   @BeforeEach
   void submittedOrdinaryAgencyEnquiry() {
     TenantContext.setCurrentTenant(7L);
+    org.mockito.Mockito.doNothing().when(feedSignal).signalFeedUpdated(anyString());
     seekerId = UUID.randomUUID().toString();
     actorId = UUID.randomUUID().toString();
     var seeker =
@@ -229,6 +235,82 @@ class EnquiryRejectionControllerIT {
         .first()
         .extracting(EventNotification::getEventType)
         .isEqualTo("request.denied");
+  }
+
+  @Test
+  void confirmedRejectionSignalsTheCommittedFeedOnceInTheOriginalTenant() throws Exception {
+    record Receipt(
+        String type, String matrixId, Object content, Long tenant, String thread, long rows) {}
+    var received = new java.util.concurrent.CopyOnWriteArrayList<Receipt>();
+    when(matrix.sendToDeviceMessage(
+            anyString(), anyString(), org.mockito.ArgumentMatchers.anyMap()))
+        .thenAnswer(
+            call -> {
+              received.add(
+                  new Receipt(
+                      call.getArgument(0),
+                      call.getArgument(1),
+                      call.getArgument(2),
+                      TenantContext.getCurrentTenant(),
+                      Thread.currentThread().getName(),
+                      feed().size()));
+              return true;
+            });
+    org.mockito.Mockito.doCallRealMethod().when(feedSignal).signalFeedUpdated(seekerId);
+
+    mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
+        .andExpect(status().isNoContent());
+    org.awaitility.Awaitility.await()
+        .atMost(java.time.Duration.ofSeconds(5))
+        .untilAsserted(() -> assertThat(received).hasSize(1));
+    assertThat(received.getFirst())
+        .satisfies(
+            receipt -> {
+              assertThat(receipt.type()).isEqualTo("org.oriso.feed.updated");
+              assertThat(receipt.matrixId()).isEqualTo("@seeker:synthetic.oriso.test");
+              assertThat(receipt.content()).isEqualTo(java.util.Map.of());
+              assertThat(receipt.tenant()).isEqualTo(7L);
+              assertThat(receipt.thread()).startsWith("feed-signal-");
+              assertThat(receipt.rows()).isEqualTo(1);
+            });
+
+    mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
+        .andExpect(status().isNoContent());
+    org.awaitility.Awaitility.await()
+        .during(java.time.Duration.ofMillis(300))
+        .atMost(java.time.Duration.ofSeconds(3))
+        .untilAsserted(() -> assertThat(received).hasSize(1));
+    assertThat(feed()).hasSize(1);
+  }
+
+  @Test
+  void rolledBackFeedInsertSendsNoSignalAndLeavesTheCommittedDecisionPending() {
+    org.mockito.Mockito.doCallRealMethod().when(feedSignal).signalFeedUpdated(seekerId);
+    var attempt = rejectionTransactions.begin(sessionId);
+    var transaction =
+        new org.springframework.transaction.support.TransactionTemplate(
+            context.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+    transaction.executeWithoutResult(
+        status -> {
+          assertThat(
+                  rejectionTransactions.finish(
+                      sessionId, attempt.decision().getGeneration(), attempt.token(), true, null))
+              .isTrue();
+          assertThat(feed()).hasSize(1);
+          status.setRollbackOnly();
+        });
+
+    org.awaitility.Awaitility.await()
+        .during(java.time.Duration.ofMillis(300))
+        .atMost(java.time.Duration.ofSeconds(3))
+        .untilAsserted(
+            () ->
+                org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+                    .sendToDeviceMessage(
+                        anyString(), anyString(), org.mockito.ArgumentMatchers.anyMap()));
+    assertThat(feed()).isEmpty();
+    assertThat(rejections.findById(sessionId).orElseThrow().getState())
+        .isEqualTo(EnquiryRejection.State.PENDING);
   }
 
   @Test
@@ -456,6 +538,27 @@ class EnquiryRejectionControllerIT {
   @Autowired private TeamDiscussionRepository teamDiscussions;
 
   @Test
+  void tenantlessCallerInMultitenantModeCannotUseTheSingleTenantFallback() throws Exception {
+    when(caller.getTenantId()).thenReturn(null);
+    when(caller.getUserId()).thenReturn(seekerId);
+    when(caller.isConsultant()).thenReturn(false);
+    when(caller.getRoles()).thenReturn(Set.of("user"));
+    when(tenantMetadata.getSingleTenancyTenantDataFresh())
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(7L));
+    mvc.perform(
+            post("/users/event-notifications/message-events")
+                .contentType("application/json")
+                .content(
+                    "{\"roomId\":\"!ordinary-rejection:synthetic.oriso.test\",\"messagePreview\":\"Synthetic message\"}"))
+        .andExpect(status().isForbidden());
+    org.mockito.Mockito.verify(tenantMetadata, org.mockito.Mockito.never())
+        .getSingleTenancyTenantDataFresh();
+    assertThat(feed()).isEmpty();
+  }
+
+  @Test
   void currentReadAccessCannotPublishANewMessageEventForRejectedHistory() throws Exception {
     mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
         .andExpect(status().isNoContent());
@@ -469,6 +572,230 @@ class EnquiryRejectionControllerIT {
                     "{\"roomId\":\"!ordinary-rejection:synthetic.oriso.test\",\"messagePreview\":\"Synthetic blocked post\"}"))
         .andExpect(status().isForbidden());
     assertThat(feed()).hasSize(1);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "false,GET,false", "false,POST,false", "false,RESTORE,false", "true,GET,false",
+        "true,POST,false", "true,RESTORE,false",
+    "false,GET,true", "false,POST,true", "false,RESTORE,true", "true,GET,true", "true,POST,true",
+        "true,RESTORE,true"
+  })
+  void rejectionFreezesNewReadersButPreservesEstablishedTeamReaders(
+      boolean confirmed, String operation, boolean recorded) throws Exception {
+    var team =
+        teamDiscussions.saveAndFlush(
+            TeamDiscussion.builder()
+                .sessionId(sessionId)
+                .matrixRoomId("!frozen-team:synthetic.oriso.test")
+                .tenantId(7L)
+                .createDate(LocalDateTime.now())
+                .build());
+    if (recorded) {
+      teamParticipants.saveAndFlush(
+          TeamDiscussionParticipant.builder()
+              .teamDiscussionId(team.getId())
+              .consultantId(actorId)
+              .joinDate(LocalDateTime.now().minusDays(1))
+              .build());
+    }
+    org.mockito.Mockito.doReturn(confirmed)
+        .when(matrixRooms)
+        .closeRoomForMessagesVerified(anyString(), anyString(), anyString());
+    when(matrix.getRoomMembers(team.getMatrixRoomId()))
+        .thenReturn(java.util.Optional.of(java.util.List.of("@counsellor:synthetic.oriso.test")));
+    try {
+      mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
+          .andExpect(confirmed ? status().isNoContent() : status().isServiceUnavailable());
+      org.mockito.Mockito.clearInvocations(matrix);
+      if (operation.equals("RESTORE")) {
+        org.assertj.core.api.ThrowableAssert.ThrowingCallable restore =
+            () ->
+                context
+                    .getBean(de.caritas.cob.userservice.api.facade.TeamDiscussionFacade.class)
+                    .restoreExistingDiscussionMembership(team.getId(), actorId);
+        if (recorded)
+          org.assertj.core.api.Assertions.assertThatCode(restore).doesNotThrowAnyException();
+        else
+          org.assertj.core.api.Assertions.assertThatThrownBy(restore)
+              .isInstanceOf(
+                  de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+      } else {
+        var request =
+            operation.equals("GET")
+                ? org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                    "/users/sessions/{sessionId}/team-discussion", sessionId)
+                : post("/users/sessions/{sessionId}/team-discussion", sessionId);
+        mvc.perform(request).andExpect(recorded ? status().isOk() : status().isForbidden());
+      }
+      if (!recorded) org.mockito.Mockito.verifyNoInteractions(matrix);
+      assertThat(teamParticipants.findByTeamDiscussionId(team.getId())).hasSize(recorded ? 1 : 0);
+    } finally {
+      teamParticipants.deleteAll(teamParticipants.findByTeamDiscussionId(team.getId()));
+      teamDiscussions.deleteById(team.getId());
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "false,false",
+    "false,true",
+    "true,false",
+    "true,true"
+  })
+  void departedEstablishedReaderWaitsForVerifiedClosureBeforeRejoining(
+      boolean confirmed, boolean membershipUnavailable) throws Exception {
+    var team =
+        teamDiscussions.saveAndFlush(
+            TeamDiscussion.builder()
+                .sessionId(sessionId)
+                .tenantId(7L)
+                .matrixRoomId("!departed-team:synthetic.oriso.test")
+                .createDate(LocalDateTime.now())
+                .build());
+    teamParticipants.saveAndFlush(
+        TeamDiscussionParticipant.builder()
+            .teamDiscussionId(team.getId())
+            .consultantId(actorId)
+            .joinDate(LocalDateTime.now().minusDays(1))
+            .build());
+    org.mockito.Mockito.doReturn(confirmed)
+        .when(matrixRooms)
+        .closeRoomForMessagesVerified(anyString(), anyString(), anyString());
+    when(matrix.getRoomMembers(team.getMatrixRoomId()))
+        .thenReturn(
+            membershipUnavailable
+                ? java.util.Optional.empty()
+                : java.util.Optional.of(java.util.List.of()));
+    when(matrix.loginAsUserAccessToken("@counsellor:synthetic.oriso.test"))
+        .thenReturn("synthetic-counsellor-token");
+    when(matrix.joinRoom(team.getMatrixRoomId(), "synthetic-counsellor-token")).thenReturn(true);
+    try {
+      mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
+          .andExpect(confirmed ? status().isNoContent() : status().isServiceUnavailable());
+      mvc.perform(
+              org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                  "/users/sessions/{sessionId}/team-discussion", sessionId))
+          .andExpect(status().isOk());
+      mvc.perform(post("/users/sessions/{sessionId}/team-discussion", sessionId))
+          .andExpect(confirmed ? status().isOk() : status().isServiceUnavailable());
+      if (!confirmed) {
+        org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+            .inviteUserToRoom(
+                org.mockito.ArgumentMatchers.eq(team.getMatrixRoomId()), anyString(), anyString());
+        org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+            .joinRoom(org.mockito.ArgumentMatchers.eq(team.getMatrixRoomId()), anyString());
+      }
+      assertThat(teamParticipants.findByTeamDiscussionId(team.getId())).hasSize(1);
+    } finally {
+      teamParticipants.deleteAll(teamParticipants.findByTeamDiscussionId(team.getId()));
+      teamDiscussions.deleteById(team.getId());
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void existingTeamAdmissionAndRejectionSerializeOnTheSameSession(boolean rejectionWins)
+      throws Exception {
+    var team =
+        teamDiscussions.saveAndFlush(
+            TeamDiscussion.builder()
+                .sessionId(sessionId)
+                .tenantId(7L)
+                .matrixRoomId("!racing-team:synthetic.oriso.test")
+                .createDate(LocalDateTime.now())
+                .build());
+    var joinEntered = new java.util.concurrent.CountDownLatch(1);
+    var rejectEntered = new java.util.concurrent.CountDownLatch(1);
+    var secondRequestStarted = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    var closed = new java.util.concurrent.atomic.AtomicInteger();
+    var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+    when(matrix.getRoomMembers(team.getMatrixRoomId()))
+        .thenReturn(java.util.Optional.of(java.util.List.of()));
+    when(matrix.loginAsUserAccessToken("@counsellor:synthetic.oriso.test"))
+        .thenReturn("synthetic-counsellor-token");
+    when(matrix.joinRoom(team.getMatrixRoomId(), "synthetic-counsellor-token"))
+        .thenAnswer(
+            call -> {
+              joinEntered.countDown();
+              if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                throw new IllegalStateException("Fixture admission release timed out");
+              return true;
+            });
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              if (!rejectionWins) rejectEntered.countDown();
+              Object result = call.callRealMethod();
+              if (rejectionWins) {
+                rejectEntered.countDown();
+                if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                  throw new IllegalStateException("Fixture rejection release timed out");
+              }
+              return result;
+            })
+        .when(rejectionTransactions)
+        .begin(sessionId);
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              closed.incrementAndGet();
+              return true;
+            })
+        .when(matrixRooms)
+        .closeRoomForMessagesVerified(anyString(), anyString(), anyString());
+    java.util.function.Function<String, java.util.concurrent.Callable<Integer>> request =
+        endpoint ->
+            () -> {
+              TenantContext.setCurrentTenant(7L);
+              try {
+                return mvc.perform(post("/users/sessions/{sessionId}/" + endpoint, sessionId))
+                    .andReturn()
+                    .getResponse()
+                    .getStatus();
+              } finally {
+                TenantContext.clear();
+              }
+            };
+    try {
+      var first = executor.submit(request.apply(rejectionWins ? "rejection" : "team-discussion"));
+      assertThat(
+              (rejectionWins ? rejectEntered : joinEntered)
+                  .await(10, java.util.concurrent.TimeUnit.SECONDS))
+          .isTrue();
+      var second =
+          executor.submit(
+              () -> {
+                secondRequestStarted.countDown();
+                return request.apply(rejectionWins ? "team-discussion" : "rejection").call();
+              });
+      assertThat(secondRequestStarted.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      if (!rejectionWins)
+        assertThat(rejectEntered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      org.awaitility.Awaitility.await()
+          .during(java.time.Duration.ofMillis(200))
+          .atMost(java.time.Duration.ofSeconds(3))
+          .untilAsserted(
+              () -> {
+                assertThat(second.isDone()).isFalse();
+                assertThat(closed.get()).isZero();
+              });
+      release.countDown();
+      assertThat(first.get(10, java.util.concurrent.TimeUnit.SECONDS))
+          .isEqualTo(rejectionWins ? 204 : 200);
+      assertThat(second.get(10, java.util.concurrent.TimeUnit.SECONDS))
+          .isEqualTo(rejectionWins ? 403 : 204);
+      assertThat(sessions.findById(sessionId).orElseThrow().getStatus())
+          .isEqualTo(Session.SessionStatus.REJECTED);
+      assertThat(teamParticipants.findByTeamDiscussionId(team.getId()))
+          .hasSize(rejectionWins ? 0 : 1);
+      assertThat(teamDiscussions.findById(team.getId()).orElseThrow().isReadOnlyApplied()).isTrue();
+    } finally {
+      release.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      teamParticipants.deleteAll(teamParticipants.findByTeamDiscussionId(team.getId()));
+      teamDiscussions.deleteById(team.getId());
+    }
   }
 
   @Test
@@ -555,6 +882,45 @@ class EnquiryRejectionControllerIT {
       assertThat(feed())
           .extracting(EventNotification::getEventType)
           .containsExactly("request.denied");
+    } finally {
+      callBindings.findByMediaRoomId(media).ifPresent(callBindings::delete);
+    }
+  }
+
+  @Test
+  void rolledBackCallBindingNeverJoinsTheTechnicalObserver() {
+    String source = sessions.findById(sessionId).orElseThrow().getMatrixRoomId();
+    String media = "!rolled-back-media:synthetic.oriso.test";
+    String callerMatrixId = "@seeker:synthetic.oriso.test";
+    String callId = "rolled-back-call";
+    when(matrix.getCallRoomMembers(source))
+        .thenReturn(
+            java.util.Optional.of(
+                java.util.List.of(callerMatrixId, "@counsellor:synthetic.oriso.test")));
+    when(matrix.getCallRoomBinding(media, callerMatrixId))
+        .thenReturn(
+            java.util.Optional.of(java.util.Map.of("call_id", callId, "source_room_id", source)));
+    when(matrix.ensureAdminInRoom(media, callerMatrixId)).thenReturn(true);
+    var invite =
+        java.util.Map.<String, Object>of(
+            "sender",
+            callerMatrixId,
+            "origin_server_ts",
+            System.currentTimeMillis(),
+            "content",
+            java.util.Map.of("call_id", callId, "call_room_id", media, "lifetime", 60000));
+    var transaction =
+        new org.springframework.transaction.support.TransactionTemplate(
+            context.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+    try {
+      transaction.executeWithoutResult(
+          status -> {
+            assertThat(callInvites.handle(source, invite)).isTrue();
+            status.setRollbackOnly();
+          });
+      assertThat(callBindings.findByMediaRoomId(media)).isEmpty();
+      org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+          .ensureAdminInRoom(media, callerMatrixId);
     } finally {
       callBindings.findByMediaRoomId(media).ifPresent(callBindings::delete);
     }
@@ -1166,6 +1532,50 @@ class EnquiryRejectionControllerIT {
     scheduler.retryPending();
     org.mockito.Mockito.verify(matrixRooms, org.mockito.Mockito.times(2))
         .closeRoomForMessagesVerified(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  @org.junit.jupiter.api.extension.ExtendWith(
+      org.springframework.boot.test.system.OutputCaptureExtension.class)
+  void unexpectedStorageFailureIsDiagnosedWithoutPretendingTheBindingChanged(
+      org.springframework.boot.test.system.CapturedOutput output) throws Exception {
+    org.mockito.Mockito.doReturn(false)
+        .when(matrixRooms)
+        .closeRoomForMessagesVerified(anyString(), anyString(), anyString());
+    mvc.perform(post("/users/sessions/{sessionId}/rejection", sessionId))
+        .andExpect(status().isServiceUnavailable());
+    var pending = rejections.findById(sessionId).orElseThrow();
+    pending.setNextAttemptAt(LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+    rejections.saveAndFlush(pending);
+    var scheduler =
+        new de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionRepairScheduler(
+            rejections,
+            rejectionService,
+            context.getBean(
+                de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionTransactions.class),
+            context.getBean(java.time.Clock.class));
+    jdbc.execute(
+        "ALTER TABLE enquiry_rejection ADD CONSTRAINT n12_attempt_storage_fault CHECK (attempt_count < 2)");
+    try {
+      scheduler.retryPending();
+      var retained = rejections.findById(sessionId).orElseThrow();
+      assertThat(retained.getState()).isEqualTo(EnquiryRejection.State.PENDING);
+      assertThat(retained.getFailureStage()).isEqualTo(pending.getFailureStage());
+      assertThat(retained.getGeneration()).isEqualTo(pending.getGeneration());
+      assertThat(feed()).isEmpty();
+      assertThat(output)
+          .contains("Enquiry rejection repair failed for session " + sessionId)
+          .contains("DataIntegrityViolationException");
+    } finally {
+      jdbc.execute("ALTER TABLE enquiry_rejection DROP CONSTRAINT n12_attempt_storage_fault");
+    }
+    org.mockito.Mockito.doReturn(true)
+        .when(matrixRooms)
+        .closeRoomForMessagesVerified(anyString(), anyString(), anyString());
+    scheduler.retryPending();
+    assertThat(rejections.findById(sessionId).orElseThrow().getState())
+        .isEqualTo(EnquiryRejection.State.CONFIRMED);
+    assertThat(feed()).hasSize(1);
   }
 
   @Test

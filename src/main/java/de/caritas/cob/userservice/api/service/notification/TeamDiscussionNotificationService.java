@@ -114,15 +114,11 @@ public class TeamDiscussionNotificationService {
 
     recordSenderAsParticipant(discussion, senderUserId, eligible);
 
+    var inactive = accountLifecycle.inactiveAmong(recipients);
     for (String recipientId : recipients) {
       // Suspension may retain the domain identity and agency membership. Legacy accounts
       // without a lifecycle row keep their established eligibility.
-      if (accountLifecycle
-          .snapshot(recipientId)
-          .map(account -> account.status() != AccountInactivityService.Status.ACTIVE)
-          .orElse(false)) {
-        continue;
-      }
+      if (inactive.contains(recipientId)) continue;
       if (dropForConversationLevel(recipientId, roomId, mentioned.contains(recipientId))) {
         continue;
       }

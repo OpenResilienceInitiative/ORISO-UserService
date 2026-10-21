@@ -234,6 +234,23 @@ class CaseHandoverEmailNotificationTest {
             sessions,
             toggles);
 
+    when(delivery.sendConfirmed(
+            org.mockito.ArgumentMatchers.eq(40L),
+            org.mockito.ArgumentMatchers.eq(route),
+            org.mockito.ArgumentMatchers.eq(TenantSystemEmailDelivery.Purpose.HANDOVER_CONFIRMED),
+            org.mockito.ArgumentMatchers.eq("incoming@example.test"),
+            org.mockito.ArgumentMatchers.any()))
+        .thenReturn(true);
+    delayedSender.send(queued.getValue());
+    verify(delivery)
+        .sendConfirmed(
+            org.mockito.ArgumentMatchers.eq(40L),
+            org.mockito.ArgumentMatchers.eq(route),
+            org.mockito.ArgumentMatchers.eq(TenantSystemEmailDelivery.Purpose.HANDOVER_CONFIRMED),
+            org.mockito.ArgumentMatchers.eq("incoming@example.test"),
+            org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.clearInvocations(delivery);
+
     request.getRequesterConsultant().setNotificationsEnabled(false);
     delayedSender.send(queued.getValue());
 

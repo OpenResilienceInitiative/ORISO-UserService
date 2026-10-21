@@ -95,8 +95,9 @@ class InternalChatEmailServiceTest {
         .thenAnswer(i -> Optional.ofNullable(stored.get(i.getArgument(0))));
     when(repository.findByIdForUpdate(anyLong()))
         .thenAnswer(i -> Optional.ofNullable(stored.get(i.getArgument(0))));
-    when(repository.findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByCreatedAtAsc(
-            any(), any()))
+    when(repository
+            .findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscCreatedAtAscIdAsc(
+                any(), any()))
         .thenAnswer(
             i ->
                 stored.values().stream()

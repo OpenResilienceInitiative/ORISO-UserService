@@ -58,7 +58,8 @@ public class MatrixCallLifecycleService {
     var members = matrix.getCallRoomMembers(binding.getSourceRoomId()).orElse(null);
     if (members == null) return;
     for (String member : members) {
-      if (identity(member, binding.getTenantId()).isEmpty()) continue;
+      var candidate = identity(member, binding.getTenantId()).orElse(null);
+      if (candidate == null || !isActiveRecipient(candidate.id())) continue;
       var state = matrix.getCallRoomBinding(room, member).orElse(null);
       if (state == null
           || !binding.getCallId().equals(state.get("call_id"))

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -42,7 +43,6 @@ import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClien
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
-import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionRoomCleanupService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -100,6 +100,14 @@ class TeamDiscussionFacadeTest {
 
   @BeforeEach
   void setUp() throws Exception {
+    var created = new java.util.HashMap<Long, TeamDiscussion>();
+    org.mockito.Mockito.lenient()
+        .when(teamDiscussionRepository.findById(anyLong()))
+        .thenAnswer(
+            call ->
+                teamDiscussionRepository
+                    .findBySessionId(SESSION_ID)
+                    .or(() -> Optional.ofNullable(created.get(call.getArgument(0)))));
     facade =
         new TeamDiscussionFacade(
             sessionRepository,
@@ -110,7 +118,13 @@ class TeamDiscussionFacadeTest {
             matrixCredentialClient,
             featureGate,
             new TeamDiscussionCreationWriter(teamDiscussionRepository, sessionRepository),
-            new TeamDiscussionParticipantWriter(participantRepository),
+            new de.caritas.cob.userservice.api.service.teamdiscussion
+                .TeamDiscussionAccessTransactions(
+                sessionRepository,
+                consultantRepository,
+                consultantAgencyRepository,
+                teamDiscussionRepository,
+                participantRepository),
             roomCleanupService,
             membersOnly);
     session = new Session();
@@ -139,6 +153,7 @@ class TeamDiscussionFacadeTest {
             invocation -> {
               TeamDiscussion d = invocation.getArgument(0);
               d.setId(99L);
+              created.put(99L, d);
               return d;
             });
 
@@ -377,10 +392,9 @@ class TeamDiscussionFacadeTest {
                     .matrixRoomId(ROOM_ID)
                     .status(TeamDiscussion.Status.OPEN)
                     .build()));
+    // The session lock makes the other tab's committed participant visible before admission.
     when(participantRepository.existsByTeamDiscussionIdAndConsultantId(99L, CONSULTANT_ID))
-        .thenReturn(false, true);
-    when(participantRepository.saveAndFlush(any()))
-        .thenThrow(new DataIntegrityViolationException("Concurrent participant insert"));
+        .thenReturn(true);
 
     assertThat(controller.getOrCreate(SESSION_ID).getBody().matrixRoomId()).isEqualTo(ROOM_ID);
     assertThat(controller.getOrCreate(SESSION_ID).getBody().matrixRoomId()).isEqualTo(ROOM_ID);
@@ -723,6 +737,8 @@ class TeamDiscussionFacadeTest {
             .build();
     when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
     when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+    when(participantRepository.existsByTeamDiscussionIdAndConsultantId(99L, CONSULTANT_ID))
         .thenReturn(true);
     assertThat(facade.getDiscussion(SESSION_ID, CONSULTANT_ID)).isPresent();
     assertThat(discussion.isReadOnlyApplied()).isFalse();

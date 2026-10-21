@@ -47,14 +47,8 @@ public class GroupChatNotificationRecipientService {
         .map(relation -> relation.getUser().getUserId())
         .filter(GroupChatNotificationRecipientService::isPresent)
         .forEach(recipientIds::add);
-    return recipientIds.stream().filter(this::isCurrentlyActive).toList();
-  }
-
-  private boolean isCurrentlyActive(String identityId) {
-    return accountInactivityService
-        .snapshot(identityId)
-        .map(state -> state.status() == AccountInactivityService.Status.ACTIVE)
-        .orElse(true);
+    var inactive = accountInactivityService.inactiveAmong(recipientIds);
+    return recipientIds.stream().filter(id -> !inactive.contains(id)).toList();
   }
 
   private static boolean isPresent(String value) {

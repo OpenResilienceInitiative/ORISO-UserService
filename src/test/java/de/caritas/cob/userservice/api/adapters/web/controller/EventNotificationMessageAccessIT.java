@@ -36,7 +36,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * Real controller, permission service, producer and committed storage; only auth/Matrix edges
  * mocked.
  */
-@SpringBootTest
+@SpringBootTest(properties = "multitenancy.enabled=false")
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class EventNotificationMessageAccessIT {
@@ -58,6 +58,10 @@ class EventNotificationMessageAccessIT {
   @Autowired private ReplyEmailDeliveryRepository mailIntents;
   @MockitoBean private AuthenticatedUser caller;
   @MockitoBean private MatrixSynapseService matrix;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantMetadata;
+
   private String eventId;
 
   @BeforeEach
@@ -163,6 +167,77 @@ class EventNotificationMessageAccessIT {
                       consultant ? session.getUser().getUserId() : session.getConsultant().getId());
               assertThat(row.getEventType()).isEqualTo(thread ? "thread.reply.new" : "message.new");
             });
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void tenantlessSingleTenantPrimaryPartiesCanPublishUsingTheFreshConfiguredTenant(
+      boolean consultant) {
+    var session = sessions.findById(1L).orElseThrow();
+    when(caller.getUserId())
+        .thenReturn(consultant ? session.getConsultant().getId() : session.getUser().getUserId());
+    when(caller.getRoles()).thenReturn(Set.of(consultant ? "consultant" : "user"));
+    when(caller.isConsultant()).thenReturn(consultant);
+    when(caller.getTenantId()).thenReturn(null);
+    when(tenantMetadata.getSingleTenancyTenantDataFresh())
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(1L));
+
+    assertThat(
+            controller
+                .createMessageEventNotification(messageRequest(false))
+                .getStatusCode()
+                .value())
+        .isEqualTo(204);
+    assertThat(
+            notifications.findAll().stream()
+                .filter(
+                    row ->
+                        row.getDeduplicationKey() != null
+                            && row.getDeduplicationKey().contains(eventId)))
+        .singleElement()
+        .satisfies(row -> assertThat(row.getTenantId()).isEqualTo(1L));
+    assertThat(TenantContext.getCurrentTenant()).isEqualTo(1L);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"missing", "zero", "negative", "foreign", "outage"})
+  void tenantlessCallerCannotInferAuthorityFromTheTargetCaseWhenConfigurationIsInvalid(
+      String invalid) {
+    var session = sessions.findById(1L).orElseThrow();
+    when(caller.getUserId()).thenReturn(session.getUser().getUserId());
+    when(caller.getTenantId()).thenReturn(null);
+    if (invalid.equals("outage")) {
+      when(tenantMetadata.getSingleTenancyTenantDataFresh())
+          .thenThrow(new IllegalStateException("synthetic lookup outage"));
+    } else {
+      Long id =
+          switch (invalid) {
+            case "zero" -> 0L;
+            case "negative" -> -1L;
+            case "foreign" -> 2L;
+            default -> null;
+          };
+      when(tenantMetadata.getSingleTenancyTenantDataFresh())
+          .thenReturn(
+              id == null
+                  ? null
+                  : new de.caritas.cob.userservice.tenantservice.generated.web.model
+                          .RestrictedTenantDTO()
+                      .id(id));
+    }
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> controller.createMessageEventNotification(messageRequest(false)))
+        .isInstanceOf(ForbiddenException.class);
+    assertThat(
+            notifications.findAll().stream()
+                .filter(
+                    row ->
+                        row.getDeduplicationKey() != null
+                            && row.getDeduplicationKey().contains(eventId)))
+        .isEmpty();
+    assertThat(TenantContext.getCurrentTenant()).isEqualTo(1L);
   }
 
   @ParameterizedTest
