@@ -36,6 +36,11 @@ class JdbcAccountLifecycleJournalTest {
                 "src/main/resources/db/changelog/changeset/20261021_identity_lifecycle_367/migrate.sql"));
     for (String sql : migration.split(";")) if (!sql.isBlank()) jdbc.execute(sql);
     jdbc.execute("CREATE TABLE local_saga_record(id VARCHAR(36) PRIMARY KEY)");
+    for (String retrySql :
+        Files.readString(
+                Path.of(
+                    "src/main/resources/db/changelog/changeset/20261021_identity_lifecycle_367/retry-fairness.sql"))
+            .split(";")) if (!retrySql.isBlank()) jdbc.execute(retrySql);
     codec = new AccountLifecycleCodec(new byte[32]);
     journal =
         new JdbcAccountLifecycleJournal(

@@ -61,6 +61,11 @@ class OrdinaryCreationWorkflowSqlTest {
             .split(";")) if (!sql.isBlank()) jdbc.execute(sql);
     jdbc.execute("CREATE TABLE local_created(id VARCHAR(255) PRIMARY KEY)");
     codec = new AccountLifecycleCodec(new byte[32]);
+    for (String retrySql :
+        Files.readString(
+                Path.of(
+                    "src/main/resources/db/changelog/changeset/20261021_identity_lifecycle_367/retry-fairness.sql"))
+            .split(";")) if (!retrySql.isBlank()) jdbc.execute(retrySql);
     journal = new JdbcAccountLifecycleJournal(jdbc, manager, codec, Clock.systemUTC(), 300);
     remote = mock(IdentityProvisioningCommands.class);
     flow = restarted();

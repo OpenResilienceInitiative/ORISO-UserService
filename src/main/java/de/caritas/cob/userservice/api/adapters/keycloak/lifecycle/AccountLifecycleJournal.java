@@ -21,6 +21,10 @@ public interface AccountLifecycleJournal {
 
   void requestRecovery(UUID id, ExecutionRef execution);
 
+  /**
+   * Independently reserves a bounded due page before dispatch. Reservations expire after failure or
+   * process loss; an empty page means no claimable work now, not that every intent is terminal.
+   */
   List<UUID> pending(int limit);
 
   Optional<Attempt> findWorkflow(

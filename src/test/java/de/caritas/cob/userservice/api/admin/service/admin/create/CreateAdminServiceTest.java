@@ -142,11 +142,18 @@ class CreateAdminServiceTest {
             });
     when(adminRepository.saveAndFlush(any(Admin.class))).thenAnswer(call -> call.getArgument(0));
     var dto = givenValidCreateAdminDTO(null);
+    dto.setUsername("agency-admin+demo");
     dto.setPassword("synthetic-chosen-secret");
 
     var created = createAdminService.createNewAgencyAdmin(dto);
 
     assertThat(created.getTenantId()).isEqualTo(79L);
+    var account =
+        org.mockito.ArgumentCaptor.forClass(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+                .AccountCreation.class);
+    verify(flow).create(org.mockito.ArgumentMatchers.eq(scope), account.capture(), any());
+    assertThat(account.getValue().username()).isEqualTo("enc.MFTWK3TDPEWWCZDNNFXCWZDFNVXQ....");
     verifyNoInteractions(identityClient, identityPasswordUpdater, identityAccountRemover);
   }
 

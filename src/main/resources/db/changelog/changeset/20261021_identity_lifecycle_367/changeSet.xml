@@ -8,4 +8,10 @@
    relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
   <rollback><sql>DROP TABLE identity_lifecycle_effect;</sql><sql>DROP TABLE identity_lifecycle_outbox;</sql><sql>DROP TABLE identity_lifecycle_attempt;</sql></rollback>
  </changeSet>
+ <changeSet id="20261021-identity-lifecycle-367-retry-fairness" author="codex">
+  <comment>#367: reserve bounded due retry pages durably so unresolved cleanup cannot starve later activation.</comment>
+  <sqlFile path="db/changelog/changeset/20261021_identity_lifecycle_367/retry-fairness.sql"
+   relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+  <rollback><sql>DROP INDEX idx_identity_lifecycle_outbox_due ON identity_lifecycle_outbox;</sql><sql>ALTER TABLE identity_lifecycle_outbox DROP COLUMN next_attempt_at;</sql></rollback>
+ </changeSet>
 </databaseChangeLog>

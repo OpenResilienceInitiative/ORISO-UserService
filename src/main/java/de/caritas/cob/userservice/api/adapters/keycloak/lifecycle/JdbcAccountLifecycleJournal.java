@@ -250,13 +250,32 @@ public final class JdbcAccountLifecycleJournal implements AccountLifecycleJourna
   @Override
   public List<UUID> pending(int limit) {
     if (limit < 1 || limit > 100) throw new IllegalArgumentException("Invalid retry page");
-    return jdbc.query(
-        """
-        SELECT attempt_id FROM identity_lifecycle_outbox WHERE status='PENDING'
-        ORDER BY created_at LIMIT ?
-        """,
-        (rs, i) -> UUID.fromString(rs.getString(1)),
-        limit);
+    return separately(
+        () -> {
+          var due = now();
+          var rows =
+              jdbc.query(
+                  """
+                  SELECT id,attempt_id FROM identity_lifecycle_outbox
+                  WHERE status='PENDING' AND next_attempt_at<=?
+                  ORDER BY next_attempt_at,created_at,id LIMIT ? FOR UPDATE SKIP LOCKED
+                  """,
+                  (rs, i) -> Map.entry(rs.getString(1), UUID.fromString(rs.getString(2))),
+                  due,
+                  limit);
+          var retry = Timestamp.from(due.toInstant().plusSeconds(30));
+          for (var row : rows) {
+            if (jdbc.update(
+                    "UPDATE identity_lifecycle_outbox SET next_attempt_at=? WHERE id=? AND status='PENDING' AND next_attempt_at<=?",
+                    retry,
+                    row.getKey(),
+                    due)
+                != 1) throw denied();
+          }
+          // This independent transaction commits every reservation before any remote dispatch.
+          // Failure/rollback in withPending cannot restore a poison page's old queue position.
+          return rows.stream().map(Map.Entry::getValue).toList();
+        });
   }
 
   @Override
@@ -436,11 +455,12 @@ public final class JdbcAccountLifecycleJournal implements AccountLifecycleJourna
 
   private void insertIntent(UUID id, UUID outbox, String operation, String body) {
     jdbc.update(
-        "INSERT INTO identity_lifecycle_outbox(id,attempt_id,operation,body_json,status,created_at) VALUES (?,?,?,?,'PENDING',?)",
+        "INSERT INTO identity_lifecycle_outbox(id,attempt_id,operation,body_json,status,created_at,next_attempt_at) VALUES (?,?,?,?,'PENDING',?,?)",
         outbox.toString(),
         id.toString(),
         operation,
         body,
+        now(),
         now());
   }
 
