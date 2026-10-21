@@ -209,7 +209,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
             org.mockito.ArgumentMatchers.eq("!created:matrix"));
     order.verify(matrixCleanup).compensate(101L);
     order.verify(sessionService).deleteSession(any());
-    order.verify(chatService).deleteChat(any());
+    order.verify(chatService).deleteChatRecords(any());
   }
 
   @Test
@@ -589,7 +589,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         InternalServerErrorException.class,
         () -> createChatFacade.createChatV1(chatDto, consultant));
     verify(sessionService).deleteSession(savedSession);
-    verify(chatService).deleteChat(savedChat);
+    verify(chatService).deleteChatRecords(savedChat);
   }
 
   // ---------------------------------------------------------------------------
