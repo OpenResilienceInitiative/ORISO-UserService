@@ -55,6 +55,7 @@ class MatrixRoomClientVerifiedClosureTest {
         .andExpect(jsonPath("$.events['m.room.redaction']").value(61))
         .andExpect(jsonPath("$.events['org.matrix.msc3401.call.member']").value(61))
         .andExpect(jsonPath("$.events['org.oriso.call.invite']").value(61))
+        .andExpect(jsonPath("$.events['m.room.power_levels']").value(61))
         .andExpect(jsonPath("$.events['m.room.name']").value(50))
         .andExpect(jsonPath("$.state_default").value(50))
         .andRespond(withSuccess("{\"event_id\":\"$closed\"}", MediaType.APPLICATION_JSON));
@@ -193,6 +194,26 @@ class MatrixRoomClientVerifiedClosureTest {
     server.verify();
   }
 
+  @Test
+  void memberAbleToRewritePowerLevelsAfterClosureCannotProduceConfirmation() {
+    identity(OPERATOR);
+    server
+        .expect(requestTo(STATE))
+        .andRespond(withSuccess(state(false), MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(POWER))
+        .andExpect(method(HttpMethod.PUT))
+        .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(STATE))
+        .andRespond(
+            withSuccess(
+                state(true).replace("\"m.room.power_levels\":61", "\"m.room.power_levels\":50"),
+                MediaType.APPLICATION_JSON));
+    assertThat(rooms.closeRoomForMessagesVerified(ROOM, OPERATOR, "synthetic-token")).isFalse();
+    server.verify();
+  }
+
   private String versionTwelve(boolean closed) {
     return state(closed)
         .replace("\"room_version\":\"11\"", "\"room_version\":\"12\"")
@@ -216,8 +237,17 @@ class MatrixRoomClientVerifiedClosureTest {
        {"type":"m.room.power_levels","state_key":"","content":{
          "users":{"@operator:synthetic.test":100,"@human:synthetic.test":60},"users_default":0,"state_default":50,
          "events_default":%d,"events":{"m.call.member":%d,"m.room.name":50,"m.room.message":%d,"m.room.encrypted":%d,"m.reaction":%d,"m.room.redaction":%d,
-         "org.matrix.msc3401.call.member":%d,"org.oriso.call.invite":%d}}}]
+         "org.matrix.msc3401.call.member":%d,"org.oriso.call.invite":%d,"m.room.power_levels":%d}}}]
       """
-        .formatted(required, required, required, required, required, required, required, required);
+        .formatted(
+            required,
+            required,
+            required,
+            required,
+            required,
+            required,
+            required,
+            required,
+            closed ? 61 : 50);
   }
 }

@@ -32,6 +32,7 @@ import org.springframework.web.client.RestTemplate;
 public class MatrixRoomClient {
 
   private static final String ENDPOINT_CREATE_ROOM = "/_matrix/client/r0/createRoom";
+  private static final String POWER_LEVELS_EVENT = "m.room.power_levels";
   private static final String ROOM_ENCRYPTION_EVENT_TYPE = "m.room.encryption";
   private static final String MEGOLM_ALGORITHM = "m.megolm.v1.aes-sha2";
   private static final String ENDPOINT_INVITE_USER = "/_matrix/client/r0/rooms/{roomId}/invite";
@@ -99,7 +100,8 @@ public class MatrixRoomClient {
       if (identity == null || !operatorUserId.equals(identity.get("user_id"))) return false;
       stage = "initial-state";
       var before = closureState(roomId, operatorUserId, headers);
-      long threshold = Math.addExact(before.highestOtherPower(), 1L);
+      // highestOtherPower is bounded by MAX_SAFE_POWER, so this cannot overflow.
+      long threshold = before.highestOtherPower() + 1L;
       if (threshold > MAX_SAFE_POWER) return false;
       var updated = new HashMap<String, Object>(before.power());
       var events = new HashMap<String, Object>(objectMap(updated.get("events")));
@@ -116,12 +118,14 @@ public class MatrixRoomClient {
       long powerEventRequired =
           power(
               events,
-              "m.room.power_levels",
+              POWER_LEVELS_EVENT,
               power(updated, "state_default", 50, before.version()),
               before.version());
       if (!before.infiniteOperator() && powerEventRequired > before.operatorPower()) return false;
       updated.put("events_default", threshold);
       for (String type : protectedEvents) events.put(type, threshold);
+      // Another member able to write power levels could add a new low content type afterwards.
+      events.put(POWER_LEVELS_EVENT, Math.max(threshold, powerEventRequired));
       updated.put("events", events);
       stage = "write";
       restTemplate.exchange(
@@ -150,7 +154,13 @@ public class MatrixRoomClient {
                 : power(after.power(), "events_default", 0, after.version());
         if (power(actualEvents, type, fallback, after.version()) <= blockedAbove) return false;
       }
-      return true;
+      long powerEventAfter =
+          power(
+              actualEvents,
+              POWER_LEVELS_EVENT,
+              power(after.power(), "state_default", 50, after.version()),
+              after.version());
+      return powerEventAfter > blockedAbove;
     } catch (RuntimeException ex) {
       // Provider bodies and credentials are deliberately excluded from diagnostic logging.
       log.warn(
