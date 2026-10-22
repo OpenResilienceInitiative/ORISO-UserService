@@ -1359,7 +1359,8 @@ public class AccountInviteService {
     if (delivery.protects(invite.getTargetRole())
         && protectedInviteEntityManager != null
         && protectedInviteEntityManager.contains(invite)) {
-      protectedInviteEntityManager.refresh(invite, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+      protectedInviteEntityManager.refresh(
+          invite, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
     }
     return invite;
   }

@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationAcceptance.AcceptanceClaim;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.PreparedCreation;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCreated;
-import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.config.auth.TaskActor;
+import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker;
 import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import java.net.URI;
@@ -111,8 +111,14 @@ public final class KeycloakProtectedAccounts {
     var route =
         UriComponentsBuilder.fromUri(authServer)
             .pathSegment(
-                "realms", realmName, "oriso-protected-invitations", "v1", "approvals",
-                approval.toString(), "attempts", attempt.toString());
+                "realms",
+                realmName,
+                "oriso-protected-invitations",
+                "v1",
+                "approvals",
+                approval.toString(),
+                "attempts",
+                attempt.toString());
     if (suffix != null) route.pathSegment(suffix);
     var headers = new HttpHeaders();
     headers.setBearerAuth(token.accessToken());
@@ -122,7 +128,10 @@ public final class KeycloakProtectedAccounts {
     try {
       var response =
           http.exchange(
-              route.build().encode().toUri(), method, new HttpEntity<>(body, headers), byte[].class);
+              route.build().encode().toUri(),
+              method,
+              new HttpEntity<>(body, headers),
+              byte[].class);
       int status = response.getStatusCode().value();
       if ((status != 200 && !(method == HttpMethod.PUT && status == 201))
           || response.getBody() == null) throw new RemoteFailure(status);

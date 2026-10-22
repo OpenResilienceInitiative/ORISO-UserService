@@ -35,11 +35,18 @@ public final class ProtectedAccountCodec {
   private final ObjectMapper nodes = new ObjectMapper();
 
   public ProtectedAccountCodec(
-      byte[] key, Clock clock, ProtectedInvitationCodec approvals,
-      String realmName, String realmId, String realmIssuer) {
+      byte[] key,
+      Clock clock,
+      ProtectedInvitationCodec approvals,
+      String realmName,
+      String realmId,
+      String realmIssuer) {
     json = new AccountLifecycleCodec(key);
-    if (clock == null || approvals == null || !bounded(realmName, 255)
-        || !bounded(realmId, 255) || !bounded(realmIssuer, 512)
+    if (clock == null
+        || approvals == null
+        || !bounded(realmName, 255)
+        || !bounded(realmId, 255)
+        || !bounded(realmIssuer, 512)
         || !realmName.equals(approvals.realmName())) throw invalid();
     this.key = key.clone();
     this.clock = clock;
@@ -49,13 +56,23 @@ public final class ProtectedAccountCodec {
     this.realmIssuer = realmIssuer;
   }
 
-  String realmName() { return realmName; }
+  String realmName() {
+    return realmName;
+  }
 
-  public PreparedCreation prepare(AcceptanceClaim claim, JsonNode registration, AccountCreation account) {
+  public PreparedCreation prepare(
+      AcceptanceClaim claim, JsonNode registration, AccountCreation account) {
     try {
-      if (claim == null || account == null || registration == null || !registration.isObject()
-          || claim.frozen() == null || claim.approval() == null || claim.claimId() == null
-          || claim.attemptId() == null || claim.executionId() == null || claim.journalVersion() != 1
+      if (claim == null
+          || account == null
+          || registration == null
+          || !registration.isObject()
+          || claim.frozen() == null
+          || claim.approval() == null
+          || claim.claimId() == null
+          || claim.attemptId() == null
+          || claim.executionId() == null
+          || claim.journalVersion() != 1
           || !realmId.equals(claim.frozen().issuerRealm())) throw invalid();
       var frozen = claim.frozen();
       var supplied = claim.approval();
@@ -69,19 +86,35 @@ public final class ProtectedAccountCodec {
       long numericInvite = Long.parseLong(inviteId);
       if (numericInvite < 1 || !Long.toString(numericInvite).equals(inviteId)) throw invalid();
       JsonNode exactRegistration = json.read(json.canonical(registration), JsonNode.class);
-      String registrationDigest = json.digest("protected-recipient-registration/v1", Map.of(
-          "inviteId", inviteId, "approvalId", frozen.approvalId().toString(),
-          "approvalRequestDigest", frozen.requestDigest(), "registration", exactRegistration));
+      String registrationDigest =
+          json.digest(
+              "protected-recipient-registration/v1",
+              Map.of(
+                  "inviteId",
+                  inviteId,
+                  "approvalId",
+                  frozen.approvalId().toString(),
+                  "approvalRequestDigest",
+                  frozen.requestDigest(),
+                  "registration",
+                  exactRegistration));
       if (!equal(registrationDigest, claim.registrationDigest())) throw invalid();
       String recipient = text(scope, "recipient", 320);
-      String username = recipient.startsWith("enc.") ? recipient
-          : "enc." + new Base32().encodeAsString(recipient.getBytes(StandardCharsets.UTF_8)).replace('=', '.');
-      if (!recipient.equals(account.email()) || !username.equals(account.username())) throw invalid();
+      String username =
+          recipient.startsWith("enc.")
+              ? recipient
+              : "enc."
+                  + new Base32()
+                      .encodeAsString(recipient.getBytes(StandardCharsets.UTF_8))
+                      .replace('=', '.');
+      if (!recipient.equals(account.email()) || !username.equals(account.username()))
+        throw invalid();
       JsonNode receipt = json.read(verified.receiptJson(), JsonNode.class);
       ObjectNode receiptPayload = receipt.deepCopy();
       receiptPayload.remove("receipt");
-      if (!receiptPayload.equals(decode(text(receipt, "receipt", 16384),
-          "protected-approval-receipt/v1", true))) throw invalid();
+      if (!receiptPayload.equals(
+          decode(text(receipt, "receipt", 16384), "protected-approval-receipt/v1", true)))
+        throw invalid();
       UUID workflow = uuid(text(scope, "workflowId", 36));
       long revision = number(scope, "authorizationRevision");
       if (revision < 1) throw invalid();
@@ -100,10 +133,24 @@ public final class ProtectedAccountCodec {
       body.set("account", json.read(json.canonical(account), JsonNode.class));
       String fingerprint = json.digest("protected-account-creation/v1", body);
       body.put("creationFingerprint", fingerprint);
-      return new PreparedCreation(this, frozen.approvalId(), claim.claimId(), claim.attemptId(),
-          claim.executionId(), scope, acceptance, receipt, frozen.issuerSubject(), verified.scopeDigest(),
-          fingerprint, account, json.canonical(body), Instant.parse(text(scope, "validUntil", 30)));
-    } catch (RuntimeException failure) { throw invalid(); }
+      return new PreparedCreation(
+          this,
+          frozen.approvalId(),
+          claim.claimId(),
+          claim.attemptId(),
+          claim.executionId(),
+          scope,
+          acceptance,
+          receipt,
+          frozen.issuerSubject(),
+          verified.scopeDigest(),
+          fingerprint,
+          account,
+          json.canonical(body),
+          Instant.parse(text(scope, "validUntil", 30)));
+    } catch (RuntimeException failure) {
+      throw invalid();
+    }
   }
 
   public byte[] createBody(PreparedCreation prepared) {
@@ -124,21 +171,38 @@ public final class ProtectedAccountCodec {
       String accountId = text(result, "accountId", 255);
       String creationProof = text(result, "creationProof", 16384);
       JsonNode authenticated = decode(creationProof, "creation-proof", false);
-      fields(authenticated, "v", "realmName", "realmId", "attemptId", "accountId", "ownerClient",
-          "ownerSubject", "scope", "initialGroupId", "initialRoleFingerprint", "creationFingerprint");
+      fields(
+          authenticated,
+          "v",
+          "realmName",
+          "realmId",
+          "attemptId",
+          "accountId",
+          "ownerClient",
+          "ownerSubject",
+          "scope",
+          "initialGroupId",
+          "initialRoleFingerprint",
+          "creationFingerprint");
       if (number(authenticated, "v") != 1
           || !realmName.equals(text(authenticated, "realmName", 255))
           || !realmId.equals(text(authenticated, "realmId", 255))
           || !prepared.attemptId.equals(uuid(text(authenticated, "attemptId", 36)))
           || !accountId.equals(text(authenticated, "accountId", 255))
-          || !text(prepared.scope, "creatorClient", 255).equals(text(authenticated, "ownerClient", 255))
-          || !text(prepared.scope, "creatorSubject", 36).equals(text(authenticated, "ownerSubject", 36))
-          || !equal(prepared.fingerprint, text(authenticated, "creationFingerprint", 64))) throw invalid();
+          || !text(prepared.scope, "creatorClient", 255)
+              .equals(text(authenticated, "ownerClient", 255))
+          || !text(prepared.scope, "creatorSubject", 36)
+              .equals(text(authenticated, "ownerSubject", 36))
+          || !equal(prepared.fingerprint, text(authenticated, "creationFingerprint", 64)))
+        throw invalid();
       checkedInternalScope(prepared, authenticated.path("scope"));
       text(authenticated, "initialGroupId", 512);
       hex(text(authenticated, "initialRoleFingerprint", 64));
-      return new VerifiedCreated(this, prepared, accountId, creationProof, json.canonical(authenticated));
-    } catch (RuntimeException failure) { throw invalid(); }
+      return new VerifiedCreated(
+          this, prepared, accountId, creationProof, json.canonical(authenticated));
+    } catch (RuntimeException failure) {
+      throw invalid();
+    }
   }
 
   public byte[] ownedReadBody(VerifiedCreated created) {
@@ -156,8 +220,19 @@ public final class ProtectedAccountCodec {
     try {
       require(created);
       JsonNode value = json.read(json.utf8(projection), JsonNode.class);
-      fields(value, "id", "username", "email", "firstName", "lastName", "tenantId",
-          "preferredLanguage", "enabled", "emailVerified", "effectiveRoles", "passwordChangeRequired");
+      fields(
+          value,
+          "id",
+          "username",
+          "email",
+          "firstName",
+          "lastName",
+          "tenantId",
+          "preferredLanguage",
+          "enabled",
+          "emailVerified",
+          "effectiveRoles",
+          "passwordChangeRequired");
       AccountCreation account = created.prepared.account;
       if (!created.accountId.equals(text(value, "id", 255))
           || !account.username().equalsIgnoreCase(text(value, "username", 255))
@@ -167,10 +242,14 @@ public final class ProtectedAccountCodec {
           || !Long.toString(created.tenantId()).equals(text(value, "tenantId", 30))
           || !(account.preferredLanguage() == null ? "de" : account.preferredLanguage())
               .equals(text(value, "preferredLanguage", 20))
-          || bool(value, "enabled") || !bool(value, "emailVerified")
-          || !value.path("effectiveRoles").isArray() || !value.path("effectiveRoles").isEmpty()
+          || bool(value, "enabled")
+          || !bool(value, "emailVerified")
+          || !value.path("effectiveRoles").isArray()
+          || !value.path("effectiveRoles").isEmpty()
           || bool(value, "passwordChangeRequired") != account.passwordTemporary()) throw invalid();
-    } catch (RuntimeException failure) { throw invalid(); }
+    } catch (RuntimeException failure) {
+      throw invalid();
+    }
   }
 
   public byte[] commitBody(VerifiedCreated created, LocalOutcome local) {
@@ -178,20 +257,35 @@ public final class ProtectedAccountCodec {
     return json.canonical(commit(created, local)).getBytes(StandardCharsets.UTF_8);
   }
 
-  public String commitProof(VerifiedCreated created, LocalOutcome local, TaskActorCredentials actor) {
+  public String commitProof(
+      VerifiedCreated created, LocalOutcome local, TaskActorCredentials actor) {
     require(created);
     return proof(created.prepared, actor, "commit", "POST", commit(created, local));
   }
 
-  public VerifiedCommitted verifyCommitted(VerifiedCreated created, LocalOutcome local, byte[] response) {
+  public VerifiedCommitted verifyCommitted(
+      VerifiedCreated created, LocalOutcome local, byte[] response) {
     try {
       require(created);
       JsonNode result = result(created.prepared, response, "COMMITTED", created);
       String receipt = text(result, "terminalReceipt", 16384);
       JsonNode terminal = decode(receipt, "terminal-receipt", true);
-      fields(terminal, "realmId", "attemptId", "accountId", "ownerClient", "ownerSubject", "scope",
-          "creationFingerprint", "groupId", "roleFingerprint", "state", "generation", "executionId",
-          "operation", "commandDigest");
+      fields(
+          terminal,
+          "realmId",
+          "attemptId",
+          "accountId",
+          "ownerClient",
+          "ownerSubject",
+          "scope",
+          "creationFingerprint",
+          "groupId",
+          "roleFingerprint",
+          "state",
+          "generation",
+          "executionId",
+          "operation",
+          "commandDigest");
       JsonNode authenticated = json.read(created.authenticated, JsonNode.class);
       if (!realmId.equals(text(terminal, "realmId", 255))
           || !created.attemptId().equals(uuid(text(terminal, "attemptId", 36)))
@@ -202,13 +296,17 @@ public final class ProtectedAccountCodec {
           || !equal(created.creationFingerprint(), text(terminal, "creationFingerprint", 64))
           || !created.initialGroupId().equals(text(terminal, "groupId", 512))
           || !equal(created.initialRoleFingerprint(), text(terminal, "roleFingerprint", 64))
-          || !"COMMITTED".equals(text(terminal, "state", 20)) || number(terminal, "generation") != 0
+          || !"COMMITTED".equals(text(terminal, "state", 20))
+          || number(terminal, "generation") != 0
           || !created.executionId().equals(uuid(text(terminal, "executionId", 36)))
           || !"commit".equals(text(terminal, "operation", 20))
-          || !equal(json.digest("protected-invitation-payload/v1", commit(created, local)),
+          || !equal(
+              json.digest("protected-invitation-payload/v1", commit(created, local)),
               text(terminal, "commandDigest", 64))) throw invalid();
       return new VerifiedCommitted(created, receipt);
-    } catch (RuntimeException failure) { throw invalid(); }
+    } catch (RuntimeException failure) {
+      throw invalid();
+    }
   }
 
   private void checkedInternalScope(PreparedCreation prepared, JsonNode value) {
@@ -219,7 +317,15 @@ public final class ProtectedAccountCodec {
         || !text(original, "protectedKind", 30).equals(text(value, "registrationKind", 30))
         || !text(value, "initialGroup", 512).startsWith("/")) throw invalid();
     JsonNode origin = value.path("origin");
-    fields(origin, "kind", "workflowId", "provenance", "humanIssuer", "humanSubject", "humanAuthority", "agencyIds");
+    fields(
+        origin,
+        "kind",
+        "workflowId",
+        "provenance",
+        "humanIssuer",
+        "humanSubject",
+        "humanAuthority",
+        "agencyIds");
     if (!"INVITATION".equals(text(origin, "kind", 20))
         || !text(original, "workflowId", 36).equals(text(origin, "workflowId", 36))
         || !("protected-approval-v1:" + prepared.approvalId).equals(text(origin, "provenance", 512))
@@ -235,12 +341,22 @@ public final class ProtectedAccountCodec {
     if (!prepared.approvalId.toString().equals(text(binding, "approvalId", 36))
         || !equal(prepared.scopeDigest, text(binding, "scopeDigest", 64))
         || number(original, "authorizationRevision") != number(binding, "authorizationRevision")
-        || !json.canonical(prepared.acceptance).equals(json.canonical(binding.path("acceptanceClaim")))) throw invalid();
+        || !json.canonical(prepared.acceptance)
+            .equals(json.canonical(binding.path("acceptanceClaim")))) throw invalid();
   }
 
-  private JsonNode result(PreparedCreation prepared, byte[] response, String state, VerifiedCreated created) {
+  private JsonNode result(
+      PreparedCreation prepared, byte[] response, String state, VerifiedCreated created) {
     JsonNode value = json.read(json.utf8(response), JsonNode.class);
-    fields(value, "attemptId", "accountId", "state", "execution", "creationProof", "recoveryReceipt", "terminalReceipt");
+    fields(
+        value,
+        "attemptId",
+        "accountId",
+        "state",
+        "execution",
+        "creationProof",
+        "recoveryReceipt",
+        "terminalReceipt");
     if (!prepared.attemptId.equals(uuid(text(value, "attemptId", 36)))
         || !state.equals(text(value, "state", 20))
         || !execution(prepared.executionId).equals(value.path("execution"))
@@ -280,25 +396,46 @@ public final class ProtectedAccountCodec {
 
   private ObjectNode execution(UUID id) {
     ObjectNode value = nodes.createObjectNode();
-    value.put("executionId", id.toString()); value.put("generation", 0);
+    value.put("executionId", id.toString());
+    value.put("generation", 0);
     return value;
   }
 
-  private String proof(PreparedCreation prepared, TaskActorCredentials actor, String operation, String method, JsonNode body) {
-    if (actor == null || actor.actor() != TaskActor.ACCOUNT_CREATE
+  private String proof(
+      PreparedCreation prepared,
+      TaskActorCredentials actor,
+      String operation,
+      String method,
+      JsonNode body) {
+    if (actor == null
+        || actor.actor() != TaskActor.ACCOUNT_CREATE
         || !text(prepared.scope, "creatorClient", 255).equals(actor.clientId())
-        || !text(prepared.scope, "creatorSubject", 36).equals(actor.serviceSubject())) throw invalid();
+        || !text(prepared.scope, "creatorSubject", 36).equals(actor.serviceSubject()))
+      throw invalid();
     long now = clock.instant().getEpochSecond();
     Map<String, Object> claims = new TreeMap<>();
-    claims.put("iss", "userservice"); claims.put("aud", "oriso-protected-invitations");
-    claims.put("purpose", "ACCOUNT_PROVISIONING"); claims.put("actor", "ACCOUNT_CREATE");
-    claims.put("operation", "protected-account." + operation); claims.put("method", method);
+    claims.put("iss", "userservice");
+    claims.put("aud", "oriso-protected-invitations");
+    claims.put("purpose", "ACCOUNT_PROVISIONING");
+    claims.put("actor", "ACCOUNT_CREATE");
+    claims.put("operation", "protected-account." + operation);
+    claims.put("method", method);
     claims.put("realm", realmName);
-    claims.put("target", "realm/" + realmId + "/protected-invitation/" + prepared.approvalId + "/account-attempt/" + prepared.attemptId);
-    claims.put("taskClient", actor.clientId()); claims.put("taskSubject", actor.serviceSubject());
+    claims.put(
+        "target",
+        "realm/"
+            + realmId
+            + "/protected-invitation/"
+            + prepared.approvalId
+            + "/account-attempt/"
+            + prepared.attemptId);
+    claims.put("taskClient", actor.clientId());
+    claims.put("taskSubject", actor.serviceSubject());
     claims.put("payloadDigest", json.digest("protected-invitation-payload/v1", body));
-    claims.put("jti", UUID.randomUUID().toString()); claims.put("nonce", UUID.randomUUID().toString().replace("-", ""));
-    claims.put("iat", now); claims.put("exp", now + 60);
+    claims.put("jti", UUID.randomUUID().toString());
+    claims.put("nonce", UUID.randomUUID().toString().replace("-", ""));
+    claims.put("iat", now);
+    claims.put("exp", now + 60);
     String encoded = encode(json.canonical(claims).getBytes(StandardCharsets.UTF_8));
     return encoded + "." + encode(mac("protected-invitation-proof/v1\n" + encoded));
   }
@@ -311,7 +448,8 @@ public final class ProtectedAccountCodec {
     if (!encode(raw).equals(parts[0])) throw invalid();
     byte[] signature;
     if (hexSignature) {
-      hex(parts[1]); signature = HexFormat.of().parseHex(parts[1]);
+      hex(parts[1]);
+      signature = HexFormat.of().parseHex(parts[1]);
     } else {
       if (!parts[1].matches("[A-Za-z0-9_-]+")) throw invalid();
       signature = Base64.getUrlDecoder().decode(parts[1]);
@@ -324,45 +462,83 @@ public final class ProtectedAccountCodec {
     return value;
   }
 
-  private void require(PreparedCreation value) { if (value == null || value.owner != this) throw invalid(); }
-  private void require(VerifiedCreated value) { if (value == null || value.owner != this) throw invalid(); }
-  private static boolean bounded(String value, int limit) { return value != null && !value.isBlank() && value.length() <= limit; }
+  private void require(PreparedCreation value) {
+    if (value == null || value.owner != this) throw invalid();
+  }
+
+  private void require(VerifiedCreated value) {
+    if (value == null || value.owner != this) throw invalid();
+  }
+
+  private static boolean bounded(String value, int limit) {
+    return value != null && !value.isBlank() && value.length() <= limit;
+  }
+
   private static void fields(JsonNode value, String... names) {
     if (value == null || !value.isObject()) throw invalid();
-    Set<String> actual = new HashSet<>(); value.fieldNames().forEachRemaining(actual::add);
+    Set<String> actual = new HashSet<>();
+    value.fieldNames().forEachRemaining(actual::add);
     if (!actual.equals(Set.of(names))) throw invalid();
   }
+
   private static String text(JsonNode value, String name, int limit) {
     JsonNode field = value.path(name);
     if (!field.isTextual() || !bounded(field.textValue(), limit)) throw invalid();
     return field.textValue();
   }
+
   private static long number(JsonNode value, String name) {
     JsonNode field = value.path(name);
     if (!field.isIntegralNumber() || !field.canConvertToLong()) throw invalid();
     return field.longValue();
   }
+
   private static boolean bool(JsonNode value, String name) {
-    if (!value.path(name).isBoolean()) throw invalid(); return value.path(name).booleanValue();
+    if (!value.path(name).isBoolean()) throw invalid();
+    return value.path(name).booleanValue();
   }
+
   private static boolean nullableEquals(JsonNode value, String expected) {
-    return expected == null ? value.isNull() : value.isTextual() && expected.equals(value.textValue());
+    return expected == null
+        ? value.isNull()
+        : value.isTextual() && expected.equals(value.textValue());
   }
+
   private static UUID uuid(String value) {
-    UUID id = UUID.fromString(value); if (!id.toString().equals(value)) throw invalid(); return id;
+    UUID id = UUID.fromString(value);
+    if (!id.toString().equals(value)) throw invalid();
+    return id;
   }
-  private static String hex(String value) { if (!value.matches("[0-9a-f]{64}")) throw invalid(); return value; }
+
+  private static String hex(String value) {
+    if (!value.matches("[0-9a-f]{64}")) throw invalid();
+    return value;
+  }
+
   private static boolean equal(String left, String right) {
-    return left != null && right != null && MessageDigest.isEqual(left.getBytes(StandardCharsets.UTF_8), right.getBytes(StandardCharsets.UTF_8));
+    return left != null
+        && right != null
+        && MessageDigest.isEqual(
+            left.getBytes(StandardCharsets.UTF_8), right.getBytes(StandardCharsets.UTF_8));
   }
-  private static String encode(byte[] value) { return Base64.getUrlEncoder().withoutPadding().encodeToString(value); }
+
+  private static String encode(byte[] value) {
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(value);
+  }
+
   private byte[] mac(String value) {
     try {
-      Mac mac = Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(key, "HmacSHA256"));
+      Mac mac = Mac.getInstance("HmacSHA256");
+      mac.init(new SecretKeySpec(key, "HmacSHA256"));
       return mac.doFinal(value.getBytes(StandardCharsets.UTF_8));
-    } catch (java.security.GeneralSecurityException failure) { throw new IllegalStateException("Protected account HMAC unavailable"); }
+    } catch (java.security.GeneralSecurityException failure) {
+      throw new IllegalStateException("Protected account HMAC unavailable");
+    }
   }
-  private static IllegalArgumentException invalid() { return new IllegalArgumentException("Protected account result is unavailable"); }
+
+  private static IllegalArgumentException invalid() {
+    return new IllegalArgumentException("Protected account result is unavailable");
+  }
 
   public static final class PreparedCreation {
     private final ProtectedAccountCodec owner;
@@ -371,19 +547,62 @@ public final class ProtectedAccountCodec {
     private final String issuerSubject, scopeDigest, fingerprint, body;
     private final AccountCreation account;
     private final Instant validUntil;
-    private PreparedCreation(ProtectedAccountCodec owner, UUID approvalId, UUID claimId, UUID attemptId,
-        UUID executionId, JsonNode scope, JsonNode acceptance, JsonNode receipt, String issuerSubject,
-        String scopeDigest, String fingerprint, AccountCreation account, String body, Instant validUntil) {
-      this.owner=owner; this.approvalId=approvalId; this.claimId=claimId; this.attemptId=attemptId; this.executionId=executionId;
-      this.scope=scope.deepCopy(); this.acceptance=acceptance.deepCopy(); this.receipt=receipt.deepCopy(); this.issuerSubject=issuerSubject;
-      this.scopeDigest=scopeDigest; this.fingerprint=fingerprint; this.account=account; this.body=body; this.validUntil=validUntil;
+
+    private PreparedCreation(
+        ProtectedAccountCodec owner,
+        UUID approvalId,
+        UUID claimId,
+        UUID attemptId,
+        UUID executionId,
+        JsonNode scope,
+        JsonNode acceptance,
+        JsonNode receipt,
+        String issuerSubject,
+        String scopeDigest,
+        String fingerprint,
+        AccountCreation account,
+        String body,
+        Instant validUntil) {
+      this.owner = owner;
+      this.approvalId = approvalId;
+      this.claimId = claimId;
+      this.attemptId = attemptId;
+      this.executionId = executionId;
+      this.scope = scope.deepCopy();
+      this.acceptance = acceptance.deepCopy();
+      this.receipt = receipt.deepCopy();
+      this.issuerSubject = issuerSubject;
+      this.scopeDigest = scopeDigest;
+      this.fingerprint = fingerprint;
+      this.account = account;
+      this.body = body;
+      this.validUntil = validUntil;
     }
-    public UUID approvalId() { return approvalId; }
-    public UUID claimId() { return claimId; }
-    public UUID attemptId() { return attemptId; }
-    public UUID executionId() { return executionId; }
-    public String creationFingerprint() { return fingerprint; }
-    @Override public String toString() { return "ProtectedPreparedCreation[redacted]"; }
+
+    public UUID approvalId() {
+      return approvalId;
+    }
+
+    public UUID claimId() {
+      return claimId;
+    }
+
+    public UUID attemptId() {
+      return attemptId;
+    }
+
+    public UUID executionId() {
+      return executionId;
+    }
+
+    public String creationFingerprint() {
+      return fingerprint;
+    }
+
+    @Override
+    public String toString() {
+      return "ProtectedPreparedCreation[redacted]";
+    }
   }
 
   /** Authenticated creation ownership only; never an OTP/local-account authority handle. */
@@ -391,39 +610,126 @@ public final class ProtectedAccountCodec {
     private final ProtectedAccountCodec owner;
     private final PreparedCreation prepared;
     private final String accountId, creationProof, authenticated;
-    private VerifiedCreated(ProtectedAccountCodec owner, PreparedCreation prepared, String accountId,
-        String creationProof, String authenticated) {
-      this.owner=owner; this.prepared=prepared; this.accountId=accountId; this.creationProof=creationProof; this.authenticated=authenticated;
+
+    private VerifiedCreated(
+        ProtectedAccountCodec owner,
+        PreparedCreation prepared,
+        String accountId,
+        String creationProof,
+        String authenticated) {
+      this.owner = owner;
+      this.prepared = prepared;
+      this.accountId = accountId;
+      this.creationProof = creationProof;
+      this.authenticated = authenticated;
     }
-    private JsonNode authenticated() { return owner.json.read(authenticated, JsonNode.class); }
-    public String realmId() { return owner.realmId; }
-    public UUID approvalId() { return prepared.approvalId; }
-    public UUID workflowId() { return uuid(text(prepared.scope, "workflowId", 36)); }
-    public String inviteId() { return text(prepared.scope, "inviteId", 255); }
-    public long authorizationRevision() { return number(prepared.scope, "authorizationRevision"); }
-    public long tenantId() { return prepared.scope.path("targetTenantIds").get(0).longValue(); }
-    public String registrationKind() { return text(prepared.scope, "protectedKind", 30); }
-    public String profileId() { return text(prepared.scope, "protectedProfileId", 255); }
-    public String initialGroupId() { return text(authenticated(), "initialGroupId", 512); }
-    public String initialGroupPath() { return text(authenticated().path("scope"), "initialGroup", 512); }
-    public String initialRoleFingerprint() { return text(authenticated(), "initialRoleFingerprint", 64); }
-    public UUID claimId() { return prepared.claimId; }
-    public UUID attemptId() { return prepared.attemptId; }
-    public UUID executionId() { return prepared.executionId; }
-    public String accountId() { return accountId; }
-    public String creationFingerprint() { return prepared.fingerprint; }
-    public String creationProof() { return creationProof; }
-    @Override public String toString() { return "ProtectedVerifiedCreated[redacted]"; }
+
+    private JsonNode authenticated() {
+      return owner.json.read(authenticated, JsonNode.class);
+    }
+
+    public String realmId() {
+      return owner.realmId;
+    }
+
+    public UUID approvalId() {
+      return prepared.approvalId;
+    }
+
+    public UUID workflowId() {
+      return uuid(text(prepared.scope, "workflowId", 36));
+    }
+
+    public String inviteId() {
+      return text(prepared.scope, "inviteId", 255);
+    }
+
+    public long authorizationRevision() {
+      return number(prepared.scope, "authorizationRevision");
+    }
+
+    public long tenantId() {
+      return prepared.scope.path("targetTenantIds").get(0).longValue();
+    }
+
+    public String registrationKind() {
+      return text(prepared.scope, "protectedKind", 30);
+    }
+
+    public String profileId() {
+      return text(prepared.scope, "protectedProfileId", 255);
+    }
+
+    public String initialGroupId() {
+      return text(authenticated(), "initialGroupId", 512);
+    }
+
+    public String initialGroupPath() {
+      return text(authenticated().path("scope"), "initialGroup", 512);
+    }
+
+    public String initialRoleFingerprint() {
+      return text(authenticated(), "initialRoleFingerprint", 64);
+    }
+
+    public UUID claimId() {
+      return prepared.claimId;
+    }
+
+    public UUID attemptId() {
+      return prepared.attemptId;
+    }
+
+    public UUID executionId() {
+      return prepared.executionId;
+    }
+
+    public String accountId() {
+      return accountId;
+    }
+
+    public String creationFingerprint() {
+      return prepared.fingerprint;
+    }
+
+    public String creationProof() {
+      return creationProof;
+    }
+
+    @Override
+    public String toString() {
+      return "ProtectedVerifiedCreated[redacted]";
+    }
   }
 
   public static final class VerifiedCommitted {
     private final VerifiedCreated created;
     private final String receipt;
-    private VerifiedCommitted(VerifiedCreated created, String receipt) { this.created=created; this.receipt=receipt; }
-    public UUID claimId() { return created.claimId(); }
-    public UUID attemptId() { return created.attemptId(); }
-    public String accountId() { return created.accountId(); }
-    public String terminalReceipt() { return receipt; }
-    @Override public String toString() { return "ProtectedVerifiedCommitted[redacted]"; }
+
+    private VerifiedCommitted(VerifiedCreated created, String receipt) {
+      this.created = created;
+      this.receipt = receipt;
+    }
+
+    public UUID claimId() {
+      return created.claimId();
+    }
+
+    public UUID attemptId() {
+      return created.attemptId();
+    }
+
+    public String accountId() {
+      return created.accountId();
+    }
+
+    public String terminalReceipt() {
+      return receipt;
+    }
+
+    @Override
+    public String toString() {
+      return "ProtectedVerifiedCommitted[redacted]";
+    }
   }
 }
