@@ -53,9 +53,27 @@ class UserSelfAppOtpNativePairProof {
   private static final List<Map<String, Object>> PHASES = new ArrayList<>();
 
   private static void phase(String name, int status) throws java.io.IOException {
-    if (!Set.of("owner-ready", "human-signed", "machine-signed", "stock-denied", "public-first-call", "public-after-first-call", "public-retry", "public-success", "native-read-http", "native-app-http", "native-token-http", "native-stock-http").contains(name) || status < 0 || status > 599 || PHASES.size() >= 100) throw new IllegalArgumentException("Invalid fixture observation");
+    if (!Set.of(
+                "owner-ready",
+                "human-signed",
+                "machine-signed",
+                "stock-denied",
+                "public-first-call",
+                "public-after-first-call",
+                "public-retry",
+                "public-success",
+                "native-read-http",
+                "native-app-http",
+                "native-token-http",
+                "native-stock-http")
+            .contains(name)
+        || status < 0
+        || status > 599
+        || PHASES.size() >= 100) throw new IllegalArgumentException("Invalid fixture observation");
     PHASES.add(Map.of("phase", name, "status", status));
-    java.nio.file.Files.writeString(java.nio.file.Path.of(required("PAIR_WITNESS")), new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(PHASES));
+    java.nio.file.Files.writeString(
+        java.nio.file.Path.of(required("PAIR_WITNESS")),
+        new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(PHASES));
   }
 
   private static String required(String name) {
@@ -158,7 +176,15 @@ class UserSelfAppOtpNativePairProof {
                   nativeCalls.incrementAndGet();
                 }
                 var response = execution.execute(mapped, bytes);
-              phase(mutation ? "native-app-http" : logical.getPath().endsWith("/read") ? "native-read-http" : logical.getPath().endsWith("/token") ? "native-token-http" : "native-stock-http", response.getStatusCode().value());
+                phase(
+                    mutation
+                        ? "native-app-http"
+                        : logical.getPath().endsWith("/read")
+                            ? "native-read-http"
+                            : logical.getPath().endsWith("/token")
+                                ? "native-token-http"
+                                : "native-stock-http",
+                    response.getStatusCode().value());
                 if (mutation && lost.getAndIncrement() == 0) {
                   assertEquals(201, response.getStatusCode().value());
                   response.getBody().readAllBytes();

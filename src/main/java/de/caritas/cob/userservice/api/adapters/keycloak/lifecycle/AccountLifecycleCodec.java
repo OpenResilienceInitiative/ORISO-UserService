@@ -169,7 +169,8 @@ public final class AccountLifecycleCodec {
     if (!operationId.equals(workflowId)
         || !(deletion || "otp.app-setup".equals(operation))
         || !(deletion ? "DELETE" : "PUT").equals(intentText(value, "method", 16))
-        || !(deletion ? "otp-config/delete-otp" : "otp-config/setup-otp").equals(intentText(value, "route", 128))
+        || !(deletion ? "otp-config/delete-otp" : "otp-config/setup-otp")
+            .equals(intentText(value, "route", 128))
         || !"FROZEN_HTTP_V1".equals(intentText(value, "representation", 64)))
       throw invalidSecretIntent();
     JsonNode tenant = value.get("tenantId");
@@ -313,7 +314,15 @@ public final class AccountLifecycleCodec {
       TaskActorCredentials actor,
       JsonNode materialized,
       long authorityValidUntil) {
-    return selfOtpProof(realmName, realmId, accountId, actor, materialized, authorityValidUntil, "otp.app-setup", "PUT");
+    return selfOtpProof(
+        realmName,
+        realmId,
+        accountId,
+        actor,
+        materialized,
+        authorityValidUntil,
+        "otp.app-setup",
+        "PUT");
   }
 
   String selfDeleteOtpProof(
@@ -323,7 +332,15 @@ public final class AccountLifecycleCodec {
       TaskActorCredentials actor,
       JsonNode materialized,
       long authorityValidUntil) {
-    return selfOtpProof(realmName, realmId, accountId, actor, materialized, authorityValidUntil, "otp.delete", "DELETE");
+    return selfOtpProof(
+        realmName,
+        realmId,
+        accountId,
+        actor,
+        materialized,
+        authorityValidUntil,
+        "otp.delete",
+        "DELETE");
   }
 
   private String selfOtpProof(
@@ -332,7 +349,9 @@ public final class AccountLifecycleCodec {
       String accountId,
       TaskActorCredentials actor,
       JsonNode materialized,
-      long authorityValidUntil, String operation, String method) {
+      long authorityValidUntil,
+      String operation,
+      String method) {
     long now = clock.instant().getEpochSecond();
     long expiry = Math.min(now + 60, authorityValidUntil);
     if (actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN
@@ -392,7 +411,11 @@ public final class AccountLifecycleCodec {
   }
 
   private VerifiedSelfAppOutcome verifySelfOtpReceipt(
-      String reply, String realmId, TaskActorCredentials actor, JsonNode frozenCommand, boolean deletion) {
+      String reply,
+      String realmId,
+      TaskActorCredentials actor,
+      JsonNode frozenCommand,
+      boolean deletion) {
     try {
       if (reply == null
           || reply.length() > 16384

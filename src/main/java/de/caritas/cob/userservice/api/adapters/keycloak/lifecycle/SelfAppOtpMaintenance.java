@@ -68,7 +68,8 @@ public final class SelfAppOtpMaintenance {
     return execute(initialCode, secret, markActive, false);
   }
 
-  private boolean execute(String initialCode, String secret, Runnable markActive, boolean deletion) {
+  private boolean execute(
+      String initialCode, String secret, Runnable markActive, boolean deletion) {
     if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
       throw unavailable();
     if ((!deletion && (!text(initialCode, 128) || !text(secret, 4096))) || markActive == null)
@@ -80,9 +81,12 @@ public final class SelfAppOtpMaintenance {
     String requestDigest =
         codec.digest(
             "oriso/user-maintenance-intent/request/v1",
-            deletion ? Map.of("operation", "otp.delete") : Map.of("otp", initialCode, "secret", secret));
+            deletion
+                ? Map.of("operation", "otp.delete")
+                : Map.of("otp", initialCode, "secret", secret));
     // Check actual local ownership before even the token HTTP call, outside every RPC lock.
-    CheckedIntent checked = transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
+    CheckedIntent checked =
+        transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
     if (checked == null) {
       // Only a native-validated original grant can set the immutable first lifetime minimum.
       var originalMachine = machine(self, actor, TaskPurpose.OTP);
@@ -91,7 +95,9 @@ public final class SelfAppOtpMaintenance {
               Math.min(self.expires, originalMachine.validatedJwtExpiresAt()),
               clock.instant().getEpochSecond() + 600);
       try {
-        checked = transaction(() -> prepare(self, operation, requestDigest, actor, originalExpiry, deletion));
+        checked =
+            transaction(
+                () -> prepare(self, operation, requestDigest, actor, originalExpiry, deletion));
       } catch (RuntimeException uncertain) {
         checked = transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
         if (checked == null) throw unavailable();
@@ -104,7 +110,15 @@ public final class SelfAppOtpMaintenance {
         checked =
             transaction(
                 () ->
-                    freeze(self, operation, requestDigest, actor, projection, initialCode, secret, deletion));
+                    freeze(
+                        self,
+                        operation,
+                        requestDigest,
+                        actor,
+                        projection,
+                        initialCode,
+                        secret,
+                        deletion));
       } catch (RuntimeException uncertain) {
         checked = transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
         if (checked == null
@@ -125,7 +139,10 @@ public final class SelfAppOtpMaintenance {
               codec.utf8(codec.openSelfAppIntent(frozen.metadata, frozen.row.envelope)),
               JsonNode.class);
       var reply = invoke(self, frozen.row, actor, command, deletion);
-      outcome = deletion ? codec.verifySelfDeleteOtpReceipt(reply.body, realmId, actor, command) : codec.verifySelfAppOtpReceipt(reply.body, realmId, actor, command);
+      outcome =
+          deletion
+              ? codec.verifySelfDeleteOtpReceipt(reply.body, realmId, actor, command)
+              : codec.verifySelfAppOtpReceipt(reply.body, realmId, actor, command);
       if (outcome.status() != reply.status) throw unavailable();
     } catch (RuntimeException unknown) {
       throw unavailable();
@@ -134,10 +151,18 @@ public final class SelfAppOtpMaintenance {
       return transaction(
           () ->
               acknowledge(
-                  self, operation, requestDigest, actor, frozen.row.envelope, outcome, markActive, deletion));
+                  self,
+                  operation,
+                  requestDigest,
+                  actor,
+                  frozen.row.envelope,
+                  outcome,
+                  markActive,
+                  deletion));
     } catch (RuntimeException uncertain) {
       // A fresh durable row is the only commit witness. Do not rerun the domain callback here.
-      var resolved = transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
+      var resolved =
+          transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
       if (resolved == null
           || !terminal(resolved.row.status)
           || !Objects.equals(outcome.receipt(), resolved.row.receipt)
@@ -147,7 +172,12 @@ public final class SelfAppOtpMaintenance {
   }
 
   private CheckedIntent prepare(
-      Self self, String operation, String digest, TaskActorCredentials actor, long expiry, boolean deletion) {
+      Self self,
+      String operation,
+      String digest,
+      TaskActorCredentials actor,
+      long expiry,
+      boolean deletion) {
     lockedDomain(self);
     var prior = find(operation);
     if (prior != null) return checked(self, prior, digest, actor, deletion);
@@ -175,7 +205,8 @@ public final class SelfAppOtpMaintenance {
       TaskActorCredentials actor,
       JsonNode projection,
       String code,
-      String secret, boolean deletion) {
+      String secret,
+      boolean deletion) {
     var current = findChecked(self, operation, digest, actor, deletion);
     if (current == null) throw unavailable();
     if (!"PREPARED".equals(current.row.status)) return current;
@@ -215,7 +246,8 @@ public final class SelfAppOtpMaintenance {
       TaskActorCredentials actor,
       String envelope,
       AccountLifecycleCodec.VerifiedSelfAppOutcome outcome,
-      Runnable markActive, boolean deletion) {
+      Runnable markActive,
+      boolean deletion) {
     var current = findChecked(self, operation, digest, actor, deletion);
     if (current == null || !Objects.equals(envelope, current.row.envelope)) throw unavailable();
     if (terminal(current.row.status)) {
@@ -244,7 +276,8 @@ public final class SelfAppOtpMaintenance {
     return row == null ? null : checked(self, row, digest, actor, deletion);
   }
 
-  private CheckedIntent checked(Self self, Intent row, String digest, TaskActorCredentials actor, boolean deletion) {
+  private CheckedIntent checked(
+      Self self, Intent row, String digest, TaskActorCredentials actor, boolean deletion) {
     if (!realmId.equals(row.realm)
         || !realmName.equals(row.realmName)
         || !self.account.equals(row.account)
@@ -367,7 +400,8 @@ public final class SelfAppOtpMaintenance {
     return projection;
   }
 
-  private Reply invoke(Self self, Intent row, TaskActorCredentials actor, JsonNode command, boolean deletion) {
+  private Reply invoke(
+      Self self, Intent row, TaskActorCredentials actor, JsonNode command, boolean deletion) {
     outsideLocks(self, row);
     var token = machine(self, actor, TaskPurpose.OTP);
     var body = command.path("body");
@@ -377,7 +411,11 @@ public final class SelfAppOtpMaintenance {
     long expiry = Math.min(Math.min(row.expiry, self.expires), token.validatedJwtExpiresAt());
     headers.set(
         "X-ORISO-Task-Context",
-        (deletion ? codec.selfDeleteOtpProof(realmName, realmId, self.account, actor, materialized, expiry) : codec.selfAppOtpProof(realmName, realmId, self.account, actor, materialized, expiry)));
+        (deletion
+            ? codec.selfDeleteOtpProof(
+                realmName, realmId, self.account, actor, materialized, expiry)
+            : codec.selfAppOtpProof(
+                realmName, realmId, self.account, actor, materialized, expiry)));
     var uri =
         UriComponentsBuilder.fromUriString(authServer)
             .pathSegment(
@@ -392,7 +430,10 @@ public final class SelfAppOtpMaintenance {
     try {
       var response =
           http.exchange(
-              uri, deletion ? HttpMethod.DELETE : HttpMethod.PUT, new HttpEntity<>(codec.canonical(body), headers), String.class);
+              uri,
+              deletion ? HttpMethod.DELETE : HttpMethod.PUT,
+              new HttpEntity<>(codec.canonical(body), headers),
+              String.class);
       return new Reply(response.getStatusCode().value(), response.getBody());
     } catch (RestClientResponseException failure) {
       if (failure.getStatusCode().value() != 401
