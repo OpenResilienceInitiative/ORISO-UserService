@@ -92,8 +92,7 @@ class UserSelfAppOtpNativePairProof {
   }
 
   @Test
-  void actualPublicUserEmailLostSentReplyPreservesEarlierOriginalMachineExpiry()
-      throws Exception {
+  void actualPublicUserEmailLostSentReplyPreservesEarlierOriginalMachineExpiry() throws Exception {
     runPair(true);
   }
 
@@ -114,7 +113,9 @@ class UserSelfAppOtpNativePairProof {
     assertEquals(32, key.length);
     var codec = new AccountLifecycleCodec(key);
     var http = new RestTemplate();
-    http.setRequestFactory(new org.springframework.http.client.BufferingClientHttpRequestFactory(http.getRequestFactory()));
+    http.setRequestFactory(
+        new org.springframework.http.client.BufferingClientHttpRequestFactory(
+            http.getRequestFactory()));
     var decoderReference = new AtomicReference<JwtDecoder>();
     var inPublicCall = new java.util.concurrent.atomic.AtomicBoolean();
     var firstMachineExpiry = new java.util.concurrent.atomic.AtomicLong();
@@ -137,7 +138,8 @@ class UserSelfAppOtpNativePairProof {
     try {
       jdbc.execute(
           "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512),email varchar(320))");
-      jdbc.update("insert into user values(?,?,null,?,'original@oriso.org')", account, 11L, username);
+      jdbc.update(
+          "insert into user values(?,?,null,?,'original@oriso.org')", account, 11L, username);
       jdbc.execute(
           "create table account_invite(id bigint primary key,accepted_by_user_id varchar(36),two_factor_status varchar(32),write_count int)");
       jdbc.update("insert into account_invite values(1,?,'PENDING_SETUP',0)", account);
@@ -145,8 +147,10 @@ class UserSelfAppOtpNativePairProof {
               new ClassPathResource(
                   "db/changelog/changeset/20261022_identity_self_app_otp_367/migrate.sql"))
           .execute(source);
-      new ResourceDatabasePopulator(new ClassPathResource(
-          "db/changelog/changeset/20261022_identity_self_otp_email_367/migrate.sql")).execute(source);
+      new ResourceDatabasePopulator(
+              new ClassPathResource(
+                  "db/changelog/changeset/20261022_identity_self_otp_email_367/migrate.sql"))
+          .execute(source);
       http.getInterceptors()
           .add(
               (outbound, bytes, execution) -> {
@@ -164,8 +168,13 @@ class UserSelfAppOtpNativePairProof {
                         return physical;
                       }
                     };
-                boolean mutation = logical.getPath().contains(email
-                    ? "/otp-config/send-verification-mail/" : "/otp-config/setup-otp/");
+                boolean mutation =
+                    logical
+                        .getPath()
+                        .contains(
+                            email
+                                ? "/otp-config/send-verification-mail/"
+                                : "/otp-config/setup-otp/");
                 if (mutation) {
                   assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
                   assertEquals(
@@ -182,8 +191,9 @@ class UserSelfAppOtpNativePairProof {
                   if (email) {
                     assertTrue(firstMachineExpiry.get() > 0);
                     assertTrue(firstMachineExpiry.get() < humanExpiry.get());
-                    assertEquals(firstMachineExpiry.get(), codec.read(wire, JsonNode.class)
-                        .path("authorityValidUntil").longValue());
+                    assertEquals(
+                        firstMachineExpiry.get(),
+                        codec.read(wire, JsonNode.class).path("authorityValidUntil").longValue());
                   }
                   String cipher =
                       jdbc.queryForObject(
@@ -205,9 +215,14 @@ class UserSelfAppOtpNativePairProof {
                 }
                 var response = execution.execute(mapped, bytes);
                 if (email && inPublicCall.get() && logical.getPath().endsWith("/token")) {
-                  // Read only in memory; the same native signature decoder independently validates bounds.
-                  var nativeToken = codec.read(new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8), JsonNode.class);
-                  var verified = decoderReference.get().decode(nativeToken.path("access_token").textValue());
+                  // Read only in memory; the same native signature decoder independently validates
+                  // bounds.
+                  var nativeToken =
+                      codec.read(
+                          new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8),
+                          JsonNode.class);
+                  var verified =
+                      decoderReference.get().decode(nativeToken.path("access_token").textValue());
                   firstMachineExpiry.compareAndSet(0, verified.getExpiresAt().getEpochSecond());
                 }
                 phase(
@@ -219,7 +234,8 @@ class UserSelfAppOtpNativePairProof {
                                 ? "native-token-http"
                                 : "native-stock-http",
                     response.getStatusCode().value());
-                if (mutation && (!email || response.getStatusCode().value() == 200)
+                if (mutation
+                    && (!email || response.getStatusCode().value() == 200)
                     && lost.getAndIncrement() == 0) {
                   assertEquals(email ? 200 : 201, response.getStatusCode().value());
                   response.getBody().readAllBytes();
@@ -290,7 +306,8 @@ class UserSelfAppOtpNativePairProof {
       var machineJwt = decoder.decode(checkedMachine.accessToken());
       if (email) {
         assertTrue(machineJwt.getExpiresAt().isBefore(jwt.getExpiresAt()));
-        assertTrue(machineJwt.getExpiresAt().getEpochSecond() <= Instant.now().getEpochSecond() + 100);
+        assertTrue(
+            machineJwt.getExpiresAt().getEpochSecond() <= Instant.now().getEpochSecond() + 100);
       }
       phase("machine-signed", 0);
       assertEquals(
@@ -307,7 +324,9 @@ class UserSelfAppOtpNativePairProof {
         assertEquals(403, denied.getStatusCode().value());
       }
       phase("stock-denied", 403);
-      var request = new MockHttpServletRequest("PUT", email ? "/service/users/2fa/email" : "/service/users/2fa/app");
+      var request =
+          new MockHttpServletRequest(
+              "PUT", email ? "/service/users/2fa/email" : "/service/users/2fa/app");
       var authentication =
           new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_USER")));
       request.setUserPrincipal(authentication);
@@ -391,10 +410,12 @@ class UserSelfAppOtpNativePairProof {
       emailDto.setEmail(pendingEmail);
       inPublicCall.set(true);
       phase("public-first-call", 0);
-      assertThrows(RuntimeException.class, () -> {
-        if (email) controller.startTwoFactorAuthByEmailSetup(emailDto);
-        else controller.activateTwoFactorAuthByApp(dto);
-      });
+      assertThrows(
+          RuntimeException.class,
+          () -> {
+            if (email) controller.startTwoFactorAuthByEmailSetup(emailDto);
+            else controller.activateTwoFactorAuthByApp(dto);
+          });
       phase("public-after-first-call", 0);
       assertEquals(
           "FROZEN",
@@ -421,9 +442,12 @@ class UserSelfAppOtpNativePairProof {
               realmId));
       phase("public-retry", 0);
       for (int retry = 0; retry < 2; retry++) {
-        var resolved = assertDoesNotThrow(() -> email
-            ? controller.startTwoFactorAuthByEmailSetup(emailDto)
-            : controller.activateTwoFactorAuthByApp(dto));
+        var resolved =
+            assertDoesNotThrow(
+                () ->
+                    email
+                        ? controller.startTwoFactorAuthByEmailSetup(emailDto)
+                        : controller.activateTwoFactorAuthByApp(dto));
         assertEquals(email ? 204 : 200, resolved.getStatusCode().value());
       }
       assertEquals(
@@ -442,9 +466,15 @@ class UserSelfAppOtpNativePairProof {
       assertEquals(email ? 0 : 1, activationCalls.get());
       assertEquals(email ? 3 : 2, nativeCalls.get());
       if (email) {
-        assertEquals(operation, jdbc.queryForObject(
-            "select start_operation_id from identity_self_otp_pending_email where account_id=?", String.class, account));
-        assertEquals("original@oriso.org", jdbc.queryForObject("select email from user where user_id=?", String.class, account));
+        assertEquals(
+            operation,
+            jdbc.queryForObject(
+                "select start_operation_id from identity_self_otp_pending_email where account_id=?",
+                String.class,
+                account));
+        assertEquals(
+            "original@oriso.org",
+            jdbc.queryForObject("select email from user where user_id=?", String.class, account));
       }
       String receipt =
           jdbc.queryForObject(
@@ -463,8 +493,12 @@ class UserSelfAppOtpNativePairProof {
         assertEquals("otp.email-start", facts.path("operation").textValue());
         assertEquals("SENT", facts.path("deliveryState").textValue());
         assertEquals(firstMachineExpiry.get(), facts.path("authorityValidUntil").longValue());
-        assertEquals(firstMachineExpiry.get(), jdbc.queryForObject(
-            "select authority_valid_until from identity_self_app_otp_intent where operation_id=?", Long.class, operation));
+        assertEquals(
+            firstMachineExpiry.get(),
+            jdbc.queryForObject(
+                "select authority_valid_until from identity_self_app_otp_intent where operation_id=?",
+                Long.class,
+                operation));
       }
       assertEquals(
           actors.require(TaskPurpose.OTP).serviceSubject(), facts.path("ownerSubject").textValue());
