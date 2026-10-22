@@ -346,6 +346,9 @@ class JdbcProtectedInvitationCancellationTest {
 
     // A fresh owner has the persisted ACK, but the original foreground caller never released.
     assertEquals(java.util.List.of(73L), service().pendingInviteIds(100));
+    jdbc.update("UPDATE account_invite SET status='SUPERSEDED' WHERE id=73");
+    assertEquals(java.util.List.of(73L), service().pendingInviteIds(100));
+    jdbc.update("UPDATE account_invite SET status='REVOKED' WHERE id=73");
     service()
         .withAcknowledged(
             73,
