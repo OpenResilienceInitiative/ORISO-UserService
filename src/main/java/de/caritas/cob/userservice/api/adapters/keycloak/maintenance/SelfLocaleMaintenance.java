@@ -416,10 +416,13 @@ public final class SelfLocaleMaintenance {
       headers.setContentType(MediaType.APPLICATION_JSON);
       var machine = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
       long now = clock.instant().getEpochSecond();
-      if (machine == null || machine.actor() != actor.actor()
+      if (machine == null
+          || machine.actor() != actor.actor()
           || machine.purpose() != TaskPurpose.ACCOUNT_MAINTENANCE
-          || !actor.clientId().equals(machine.clientId()) || !actor.serviceSubject().equals(machine.subject())
-          || !publicIssuer.equals(machine.issuer()) || machine.validatedJwtIssuedAt() <= 0
+          || !actor.clientId().equals(machine.clientId())
+          || !actor.serviceSubject().equals(machine.subject())
+          || !publicIssuer.equals(machine.issuer())
+          || machine.validatedJwtIssuedAt() <= 0
           || machine.validatedJwtExpiresAt() <= machine.validatedJwtIssuedAt()
           || machine.validatedJwtExpiresAt() <= now) throw unavailable();
       headers.setBearerAuth(machine.accessToken());

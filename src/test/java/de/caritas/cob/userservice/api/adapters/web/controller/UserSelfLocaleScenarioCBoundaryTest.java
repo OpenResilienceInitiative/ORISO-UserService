@@ -321,9 +321,15 @@ class UserSelfLocaleScenarioCBoundaryTest {
       when(checked.purpose()).thenReturn(TaskPurpose.ACCOUNT_MAINTENANCE);
       when(checked.clientId()).thenReturn(actor.clientId());
       when(checked.subject()).thenReturn(actor.serviceSubject());
-      when(checked.issuer()).thenReturn(splitIssuer ? "https://public.identity.test/realms/fixture" : "https://identity.test/realms/fixture");
-      when(checked.validatedJwtIssuedAt()).thenReturn(Instant.now().minusSeconds(1).getEpochSecond());
-      when(checked.validatedJwtExpiresAt()).thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
+      when(checked.issuer())
+          .thenReturn(
+              splitIssuer
+                  ? "https://public.identity.test/realms/fixture"
+                  : "https://identity.test/realms/fixture");
+      when(checked.validatedJwtIssuedAt())
+          .thenReturn(Instant.now().minusSeconds(1).getEpochSecond());
+      when(checked.validatedJwtExpiresAt())
+          .thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
       when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
       var users = mock(UserRepository.class);
       when(users.findByUserIdAndDeleteDateIsNull(ACCOUNT))
