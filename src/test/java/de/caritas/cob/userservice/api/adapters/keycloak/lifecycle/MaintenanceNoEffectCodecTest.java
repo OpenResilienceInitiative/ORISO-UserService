@@ -30,9 +30,12 @@ class MaintenanceNoEffectCodecTest {
     }
     key = HexFormat.of().parseHex(vector.path("testKeyHex").textValue());
     codec = new AccountLifecycleCodec(key);
-    actor = new TaskActorCredentials(TaskActor.ACCOUNT_ADMIN,
-        vector.path("payload").path("ownerClient").textValue(), "synthetic-only",
-        vector.path("payload").path("ownerSubject").textValue());
+    actor =
+        new TaskActorCredentials(
+            TaskActor.ACCOUNT_ADMIN,
+            vector.path("payload").path("ownerClient").textValue(),
+            "synthetic-only",
+            vector.path("payload").path("ownerSubject").textValue());
   }
 
   @Test
@@ -53,31 +56,43 @@ class MaintenanceNoEffectCodecTest {
     ObjectNode policy = vector.path("payload").deepCopy();
     policy.put("status", 400);
     policy.put("command", "password-reset");
-    assertEquals(400, codec.verifyMaintenanceNoEffectReceipt(reply(policy),
-        vector.path("payload").path("realmId").textValue(), actor, body,
-        "password-reset").status());
+    assertEquals(
+        400,
+        codec
+            .verifyMaintenanceNoEffectReceipt(
+                reply(policy),
+                vector.path("payload").path("realmId").textValue(),
+                actor,
+                body,
+                "password-reset")
+            .status());
   }
 
   @Test
   void everyResignedNativeBindingAndEveryChangedFrozenIntentIsRejected() throws Exception {
     JsonNode body = vector.path("requestBody");
-    for (var fields = vector.path("payload").fieldNames(); fields.hasNext();) {
+    for (var fields = vector.path("payload").fieldNames(); fields.hasNext(); ) {
       String field = fields.next();
       if (field.equals("status")) continue;
       ObjectNode changed = vector.path("payload").deepCopy();
-      changed.put(field, field.endsWith("Digest") || field.equals("previousState")
-          ? "b".repeat(64) : field.equals("operationId")
-              ? "77777777-7777-4777-8777-777777777777" : "foreign");
+      changed.put(
+          field,
+          field.endsWith("Digest") || field.equals("previousState")
+              ? "b".repeat(64)
+              : field.equals("operationId") ? "77777777-7777-4777-8777-777777777777" : "foreign");
       String resigned = reply(changed);
       assertThrows(IllegalArgumentException.class, () -> verify(resigned, body), field);
     }
     String valid = json.writeValueAsString(vector.path("outer"));
     for (String field : List.of("operationId", "expectedState", "change", "target")) {
       ObjectNode changed = body.deepCopy();
-      if (field.equals("change")) ((ObjectNode) changed.path(field)).put("email", "other@example.test");
+      if (field.equals("change"))
+        ((ObjectNode) changed.path(field)).put("email", "other@example.test");
       else if (field.equals("target")) ((ObjectNode) changed.path(field)).put("tenantId", "12");
-      else changed.put(field, field.equals("operationId")
-          ? "77777777-7777-4777-8777-777777777777" : "b".repeat(64));
+      else
+        changed.put(
+            field,
+            field.equals("operationId") ? "77777777-7777-4777-8777-777777777777" : "b".repeat(64));
       assertThrows(IllegalArgumentException.class, () -> verify(valid, changed), field);
     }
   }
@@ -93,21 +108,30 @@ class MaintenanceNoEffectCodecTest {
       missing.remove(field);
       assertThrows(IllegalArgumentException.class, () -> verify(reply(missing), body));
     }
-    for (JsonNode value : List.of(json.readTree("409.0"), json.readTree("\"409\""),
-        json.readTree("null"), json.readTree("400"), json.readTree("401"), json.readTree("500"))) {
+    for (JsonNode value :
+        List.of(
+            json.readTree("409.0"),
+            json.readTree("\"409\""),
+            json.readTree("null"),
+            json.readTree("400"),
+            json.readTree("401"),
+            json.readTree("500"))) {
       ObjectNode changed = vector.path("payload").deepCopy();
       changed.set("status", value);
       assertThrows(IllegalArgumentException.class, () -> verify(reply(changed), body));
     }
     ObjectNode outer = vector.path("outer").deepCopy();
     outer.put("status", 403);
-    assertThrows(IllegalArgumentException.class, () -> verify(json.writeValueAsString(outer), body));
+    assertThrows(
+        IllegalArgumentException.class, () -> verify(json.writeValueAsString(outer), body));
     outer.put("status", 409);
     outer.put("extra", true);
-    assertThrows(IllegalArgumentException.class, () -> verify(json.writeValueAsString(outer), body));
+    assertThrows(
+        IllegalArgumentException.class, () -> verify(json.writeValueAsString(outer), body));
     String original = json.writeValueAsString(vector.path("outer"));
     assertThrows(IllegalArgumentException.class, () -> verify(original + " {}", body));
-    assertThrows(IllegalArgumentException.class,
+    assertThrows(
+        IllegalArgumentException.class,
         () -> verify(original.replaceFirst("\\{", "{\"status\":409,"), body));
   }
 
@@ -117,29 +141,39 @@ class MaintenanceNoEffectCodecTest {
     ObjectNode outer = vector.path("outer").deepCopy();
     String payload = outer.path("receipt").textValue().split("\\.")[0];
     outer.put("receipt", payload + "." + hmac("maintenance-operation-receipt\n" + payload));
-    assertThrows(IllegalArgumentException.class, () -> verify(json.writeValueAsString(outer), body));
+    assertThrows(
+        IllegalArgumentException.class, () -> verify(json.writeValueAsString(outer), body));
     String valid = json.writeValueAsString(vector.path("outer"));
     String realm = vector.path("payload").path("realmId").textValue();
-    var creator = new TaskActorCredentials(TaskActor.ACCOUNT_CREATE, actor.clientId(),
-        "synthetic-only", actor.serviceSubject());
-    assertThrows(IllegalArgumentException.class,
+    var creator =
+        new TaskActorCredentials(
+            TaskActor.ACCOUNT_CREATE, actor.clientId(), "synthetic-only", actor.serviceSubject());
+    assertThrows(
+        IllegalArgumentException.class,
         () -> codec.verifyMaintenanceNoEffectReceipt(valid, realm, creator, body, "profile"));
-    assertThrows(IllegalArgumentException.class,
+    assertThrows(
+        IllegalArgumentException.class,
         () -> codec.verifyMaintenanceNoEffectReceipt(valid, realm, actor, body, "email"));
-    assertThrows(IllegalArgumentException.class,
+    assertThrows(
+        IllegalArgumentException.class,
         () -> codec.verifyMaintenanceNoEffectReceipt(valid, "foreign", actor, body, "profile"));
-    assertThrows(IllegalArgumentException.class,
-        () -> codec.verifyMaintenanceNoEffectReceipt("{\"status\":409}", realm, actor, body, "profile"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            codec.verifyMaintenanceNoEffectReceipt(
+                "{\"status\":409}", realm, actor, body, "profile"));
   }
 
   private AccountLifecycleCodec.VerifiedMaintenanceNoEffect verify(String reply, JsonNode body) {
-    return codec.verifyMaintenanceNoEffectReceipt(reply,
-        vector.path("payload").path("realmId").textValue(), actor, body, "profile");
+    return codec.verifyMaintenanceNoEffectReceipt(
+        reply, vector.path("payload").path("realmId").textValue(), actor, body, "profile");
   }
 
   private String reply(ObjectNode outcome) throws Exception {
-    String payload = Base64.getUrlEncoder().withoutPadding()
-        .encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
+    String payload =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
     ObjectNode outer = json.createObjectNode();
     for (String field : List.of("operationId", "accountId", "result", "status"))
       outer.set(field, outcome.path(field));
