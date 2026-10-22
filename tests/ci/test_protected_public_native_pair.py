@@ -24,11 +24,12 @@ class ProtectedPairEvidence(unittest.TestCase):
             suite = ET.Element("testsuite", name=pair.SUITE)
             case = ET.SubElement(suite, "testcase", classname=pair.SUITE, name=pair.CASE)
             error = ET.SubElement(case, "error", type="jakarta.servlet.ServletException")
-            error.text = "Bearer secret; SQL private-row; JdbcProtectedAccountActivation.java:120\nCaused by: java.lang.IllegalStateException: secret"
+            error.text = "Bearer secret; SQL private-row; JdbcProtectedAccountActivation.java:120\nCaused by: java.lang.IllegalStateException: secret\n\tat org.springframework.test.web.servlet.MockMvc.perform(MockMvc.java:201)\n\tat example.privateData(secret.java:34)"
             ET.ElementTree(suite).write(root / "TEST-pair.xml")
             result = pair.sanitize(root, root / "sanitized.xml")
             self.assertEqual(["JdbcProtectedAccountActivation.java:120"], result.get("closed_source_failure_frames"))
             self.assertEqual(["jakarta.servlet.ServletException", "java.lang.IllegalStateException"], result.get("failure_types"))
+            self.assertEqual(["org.springframework.test.web.servlet.MockMvc#perform@MockMvc.java:201"], result.get("closed_spring_failure_frames"))
             self.assertNotIn("secret", str(result))
             self.assertNotIn("private-row", str(result))
             self.assertNotIn("secret", (root / "sanitized.xml").read_text())

@@ -43,7 +43,7 @@ def sanitize(reports, output):
     clean = ET.Element("testsuite", name=SUITE)
     totals = dict(tests=0, failures=0, errors=0, skipped=0)
     files = list(reports.glob("TEST-*.xml"))
-    names, locations, frames, types, valid = [], [], [], [], len(files) == 1
+    names, locations, frames, spring_frames, types, valid = [], [], [], [], [], len(files) == 1
     for path in files:
         suite = ET.parse(path).getroot()
         valid &= suite.get("name") == SUITE
@@ -59,6 +59,7 @@ def sanitize(reports, output):
                     ET.SubElement(child, tag, message="Sensitive paired diagnostic omitted")
                     locations += re.findall(r"ProtectedAdminPublicNativePairProof\.java:[0-9]+", found.text or "")
                     frames += closed_failure_frames((found.text or "").encode(), b"")
+                    spring_frames += closed_spring_failure_frames(found.text or "")
                     category = found.get("type", "")
                     if len(category) <= 255 and re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+", category):
                         types.append(category)
@@ -72,7 +73,7 @@ def sanitize(reports, output):
         clean.set(name, str(number))
     output.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(clean).write(output, encoding="utf-8", xml_declaration=True)
-    return {**totals, "exact_method_inventory": valid, "failure_locations": sorted(set(locations)), "closed_source_failure_frames": sorted(set(frames))[:50], "failure_types": sorted(set(types))[:10], "accepted": valid and totals == dict(tests=1, failures=0, errors=0, skipped=0)}
+    return {**totals, "exact_method_inventory": valid, "failure_locations": sorted(set(locations)), "closed_source_failure_frames": sorted(set(frames))[:50], "closed_spring_failure_frames": list(dict.fromkeys(spring_frames))[:8], "failure_types": sorted(set(types))[:10], "accepted": valid and totals == dict(tests=1, failures=0, errors=0, skipped=0)}
 
 def delivered_code(messages):
     import email
@@ -96,6 +97,10 @@ def closed_failure_frames(stdout, stderr):
         "AccountInactivityService", "AccountInactivityEnrollmentService"}
     frames = re.findall(r"\b([A-Za-z]+)\.java:([0-9]{1,5})\b", text)
     return sorted({name + ".java:" + line for name, line in frames if name in names})[:50]
+
+def closed_spring_failure_frames(text):
+    frames = re.findall(r"(?m)^\s*at (org\.springframework\.[A-Za-z0-9_$.]+)\.([A-Za-z0-9_$]+)\(([A-Za-z0-9_$]+\.java):([0-9]{1,5})\)", text)
+    return list(dict.fromkeys(name + "#" + method + "@" + source + ":" + line for name, method, source, line in frames))[:8]
 
 def native(kc, report):
     if platform.system() != "Linux" or os.environ.get("GITHUB_ACTIONS") != "true":
