@@ -152,7 +152,44 @@ public final class JdbcProtectedInvitationAcceptance {
 
   /** Saved terminal-status custody cannot authorize creation or a new activation. */
   public HistoricalAcceptance historical(long inviteId) {
-    throw unavailable();
+    if (inviteId < 1
+        || TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()
+        || !TransactionSynchronizationManager.getResourceMap().isEmpty()) throw unavailable();
+    return journal.withHistoricalInvite(
+        inviteId,
+        () -> {
+          var invite =
+              jdbc.queryForMap("SELECT status,token_hash FROM account_invite WHERE id=?", inviteId);
+          String token = (String) invite.get("token_hash");
+          // Revocation can erase the live token. This typed history remains reducing/status-only.
+          if (token != null && !token.matches("[0-9a-f]{64}")) throw unavailable();
+          FrozenApproval frozen = journal.pending(inviteId);
+          String response =
+              jdbc.queryForObject(
+                  "SELECT response_json FROM protected_invitation_authorization WHERE invite_id=?",
+                  String.class,
+                  inviteId);
+          var approval = approvals.verifyAuthorizedHistory(frozen, response);
+          var found = rows(inviteId);
+          if (found.size() != 1) throw unavailable();
+          var saved = found.getFirst();
+          if (!frozen.approvalId().toString().equals(saved.approvalId())
+              || saved.version() != 1
+              || saved.digest() == null
+              || !saved.digest().matches("[0-9a-f]{64}")) throw unavailable();
+          requireAcceptedAccount(inviteId, (String) invite.get("status"));
+          return new HistoricalAcceptance(
+              inviteId,
+              new AcceptanceClaim(
+                  frozen,
+                  approval,
+                  uuid(saved.claimId()),
+                  uuid(saved.attemptId()),
+                  uuid(saved.executionId()),
+                  saved.digest(),
+                  token));
+        });
   }
 
   public static final class HistoricalAcceptance {

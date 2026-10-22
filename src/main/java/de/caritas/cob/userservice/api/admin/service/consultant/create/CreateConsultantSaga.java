@@ -65,6 +65,9 @@ import org.springframework.web.client.RestClientException;
 @RequiredArgsConstructor
 @Slf4j
 public class CreateConsultantSaga {
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads
+      checkedPolicyReads;
 
   private final ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
   private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
@@ -152,7 +155,24 @@ public class CreateConsultantSaga {
               createConsultantDTO.getTenantId());
     }
 
-    assertLicensesNotExceeded(createConsultantDTO);
+    var roles = asSet(CONSULTANT.getValue());
+    addGroupChatConsultantRole(createConsultantDTO, roles);
+    if (checkedRoles != null) roles = checkedRoles;
+    if (fiveActors() && checkedScope == null) {
+      // Establish the actual human scope before any full licensing or enrollment policy read.
+      checkedScope =
+          ordinaryWorkflow()
+              .humanScope(
+                  lifecycleAdminScope,
+                  createConsultantDTO.getTenantId(),
+                  createConsultantDTO.getAgencyIds(),
+                  "CONSULTANT",
+                  roles);
+    }
+    boolean checkedMachine =
+        checkedScope != null
+            && java.util.Set.of("INVITATION", "IMPORT").contains(checkedScope.origin().kind());
+    assertLicensesNotExceeded(createConsultantDTO, checkedMachine);
 
     this.userAccountInputValidator.validateAbsence(
         new CreateConsultantDTOAbsenceInputAdapter(createConsultantDTO));
@@ -161,10 +181,6 @@ public class CreateConsultantSaga {
         new CreateConsultantDTOCreationInputAdapter(createConsultantDTO)
             .withTopicIdsByAgencyId(topicIdsByAgencyId);
 
-    var roles = asSet(CONSULTANT.getValue());
-    addGroupChatConsultantRole(createConsultantDTO, roles);
-
-    if (checkedRoles != null) roles = checkedRoles;
     return createNewConsultant(consultantCreationInput, roles, checkedScope, finish);
   }
 
@@ -301,6 +317,7 @@ public class CreateConsultantSaga {
     var scope =
         ordinaryWorkflow()
             .configuredImportScope(row.getTenantId(), roles, agencies, sourceDigest, rowNumber);
+    assertLicensesNotExceeded(new CreateConsultantDTO().tenantId(row.getTenantId()), true);
     return createNewConsultant(new ImportRecordCreationInputAdapter(row), roles, scope, finish);
   }
 
@@ -729,7 +746,26 @@ public class CreateConsultantSaga {
    * TenantService outage as "unlimited" would let creations slip past a limit that is merely
    * unreadable at that moment.
    */
-  private void assertLicensesNotExceeded(CreateConsultantDTO createConsultantDTO) {
+  private void assertLicensesNotExceeded(
+      CreateConsultantDTO createConsultantDTO, boolean checkedMachine) {
+    if (fiveActors() && checkedMachine) {
+      if (checkedPolicyReads == null || createConsultantDTO.getTenantId() == null)
+        throw new org.springframework.security.access.AccessDeniedException(
+            "Checked account policy origin required");
+      final Integer limit;
+      try {
+        limit = checkedPolicyReads.read(createConsultantDTO.getTenantId()).allowedNumberOfUsers();
+      } catch (IllegalStateException unavailable) {
+        throw new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED);
+      }
+      if (limit != null
+          && consultantService.getNumberOfActiveConsultants(createConsultantDTO.getTenantId())
+              >= limit)
+        throw new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED);
+      return;
+    }
     if (!multiTenancyEnabled) {
       return;
     }

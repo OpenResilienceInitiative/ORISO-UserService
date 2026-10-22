@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService;
 import de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantCreationClient.VerifiedTenant;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Timestamp;
@@ -176,6 +177,12 @@ class JdbcProtectedAccountActivationTest {
                   "The actual OTP currentSetup port requires completed owner SQL");
               return setup;
             });
+    when(otp.currentSetupWithinOwner(any()))
+        .thenAnswer(
+            call -> {
+              assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+              return setup;
+            });
   }
 
   @Test
@@ -223,7 +230,7 @@ class JdbcProtectedAccountActivationTest {
     Completion complete = completion();
     assertThrows(RuntimeException.class, () -> restart().ready(claim, complete));
     assertEquals("WAITING_OTP", state());
-    when(otp.completed(any())).thenReturn(complete);
+    allowCompletion(complete);
     jdbc.update("UPDATE admin SET tenant_id=8 WHERE admin_id=?", ACCOUNT);
     assertThrows(RuntimeException.class, () -> restart().ready(claim, complete));
     assertEquals("WAITING_OTP", state());
@@ -239,7 +246,7 @@ class JdbcProtectedAccountActivationTest {
   void onlyTheSameVerifiedNativeCommitFinishesTheOwningInvitation() {
     assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy));
     Completion complete = completion();
-    when(otp.completed(any())).thenReturn(complete);
+    allowCompletion(complete);
     var ready = assertDoesNotThrow(() -> restart().ready(claim, complete));
     VerifiedCommitted nativeCommit = mock(VerifiedCommitted.class);
     when(nativeCommit.claimId()).thenReturn(UUID.randomUUID());
@@ -267,7 +274,7 @@ class JdbcProtectedAccountActivationTest {
   void aLostCommitReplyCanFinishFromConsumedStatusAfterExpiryWithoutNewActivation() {
     assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy));
     Completion complete = completion();
-    when(otp.completed(any())).thenReturn(complete);
+    allowCompletion(complete);
     var ready = assertDoesNotThrow(() -> restart().ready(claim, complete));
     Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
     var historical = assertDoesNotThrow(() -> acceptanceAt(late).historical(73));
@@ -298,9 +305,11 @@ class JdbcProtectedAccountActivationTest {
   void historicalStatusCannotAcknowledgeAForeignOutcomeOrAlteredSavedReadyDigest() {
     assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy));
     Completion complete = completion();
-    when(otp.completed(any())).thenReturn(complete);
+    allowCompletion(complete);
     var ready = assertDoesNotThrow(() -> restart().ready(claim, complete));
     Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
+    jdbc.update("UPDATE account_invite SET status='REVOKED',token_hash=NULL");
+    jdbc.update("UPDATE protected_invitation_authorization SET state='CANCEL_REQUESTED'");
     var historical = assertDoesNotThrow(() -> acceptanceAt(late).historical(73));
     var saved = assertDoesNotThrow(() -> activationAt(late).historicalReady(historical));
     var foreign =
@@ -331,6 +340,47 @@ class JdbcProtectedAccountActivationTest {
     verify(otp, never()).setupApp(any(), any());
     verify(otp, never()).startEmail(any());
     verify(otp, never()).finishEmail(any(), any());
+  }
+
+  @Test
+  void reservedAdminStagingRequiresTheExactPrivateTenantResultAndFreezesItsReceipt() throws Exception {
+    byte[] key = HexFormat.of().parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    var approvals = new ProtectedInvitationCodec(key, clock, "oriso", "native-synthetic-realm");
+    JsonNode vector = json.read(Files.readString(Path.of("src/test/resources/scenario-c/protected-approval-reserved-v1.json")), JsonNode.class);
+    jdbc.update("DELETE FROM protected_invitation_acceptance");
+    jdbc.update("DELETE FROM protected_invitation_authorization");
+    jdbc.update("UPDATE account_invite SET tenant_id_reservation_token=?", vector.path("syntheticReservationToken").asText());
+    var frozen = approvals.freeze(UUID.fromString(vector.path("approvalId").asText()), json.canonical(vector.path("request")), vector.path("issuerRealm").asText(), vector.path("issuerSubject").asText());
+    journal.propose(73, frozen);
+    journal.recordReady(frozen.approvalId(), approvals.verifyAuthorized(frozen, json.canonical(vector.path("response"))));
+    claim = new JdbcProtectedInvitationAcceptance(jdbc, manager, journal, approvals, json, clock).claim(73, TOKEN, json.read("{\"password\":\"synthetic-memory-only\"}", JsonNode.class));
+    when(pending.claim()).thenReturn(claim);
+    when(created.claimId()).thenReturn(claim.claimId());
+    when(created.attemptId()).thenReturn(claim.attemptId());
+    when(created.executionId()).thenReturn(claim.executionId());
+    when(created.approvalId()).thenReturn(frozen.approvalId());
+    assertThrows(RuntimeException.class, () -> restart().stage(claim, pending, prepared, policy));
+    assertEquals(0, count("admin"));
+    var tenant = mock(VerifiedTenant.class);
+    when(tenant.tenantId()).thenReturn(8L);
+    assertThrows(RuntimeException.class, () -> restart().stageReserved(claim, pending, prepared, policy, tenant));
+    when(tenant.tenantId()).thenReturn(7L);
+    when(tenant.claimId()).thenReturn(claim.claimId());
+    when(tenant.attemptId()).thenReturn(UUID.randomUUID());
+    when(tenant.executionId()).thenReturn(claim.executionId());
+    when(tenant.receipt()).thenReturn("synthetic-authenticated-tenant-receipt");
+    assertThrows(RuntimeException.class, () -> restart().stageReserved(claim, pending, prepared, policy, tenant));
+    assertEquals(0, count("admin"));
+    when(tenant.attemptId()).thenReturn(claim.attemptId());
+    assertEquals(setup, assertDoesNotThrow(() -> restart().stageReserved(claim, pending, prepared, policy, tenant)));
+    assertEquals(setup, restart().stageReserved(claim, pending, prepared, policy, tenant));
+    assertEquals(1, count("admin"));
+    assertEquals("WAITING_OTP", state());
+    var effects = json.read(jdbc.queryForObject("SELECT local_effects_json FROM protected_account_activation", String.class), JsonNode.class);
+    assertEquals(tenant.receipt(), effects.path("tenantBootstrapReceipt").asText());
+    when(tenant.receipt()).thenReturn("synthetic-different-tenant-receipt");
+    assertThrows(RuntimeException.class, () -> restart().stageReserved(claim, pending, prepared, policy, tenant));
+    assertEquals(1, count("admin"));
   }
 
   private VerifiedCommitted committed(AccountLifecycleDtos.LocalOutcome local) {
@@ -372,6 +422,21 @@ class JdbcProtectedAccountActivationTest {
         .thenReturn(UUID.fromString("475493a1-188f-49c8-84c2-d4aaed2e7092"));
     when(complete.receipt()).thenReturn("synthetic-verified-completion-receipt");
     return complete;
+  }
+
+  private void allowCompletion(Completion completion) {
+    when(otp.completed(any()))
+        .thenAnswer(
+            call -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              return completion;
+            });
+    when(otp.completedWithinOwner(any()))
+        .thenAnswer(
+            call -> {
+              assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+              return completion;
+            });
   }
 
   private JdbcProtectedAccountActivation restart() {

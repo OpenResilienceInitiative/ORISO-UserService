@@ -16,6 +16,13 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 @RequiredArgsConstructor
 public class AccountInactivityEnrollmentService {
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment taskEnvironment;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private de.caritas.cob.userservice.api.service.accountpolicy.CheckedPlatformInactivityPolicyReads
+      platformPolicy;
+
   public enum Group {
     ASKER,
     CONSULTANT,
@@ -49,6 +56,14 @@ public class AccountInactivityEnrollmentService {
 
   public Policy capture(Long tenantId, Group group) {
     try {
+      if (TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)
+          && group == Group.OTHER
+          && taskEnvironment != null
+          && "FIVE_ACTORS".equals(taskEnvironment.getProperty("TASK_IDENTITY_MODEL"))) {
+        if (platformPolicy == null)
+          throw new IllegalStateException("Checked platform policy unavailable");
+        return platformPolicy.capture();
+      }
       var api = tenantApi.createControllerApi();
       AccountInactivitySettings policy;
       if (TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {

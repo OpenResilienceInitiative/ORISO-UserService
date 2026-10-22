@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService;
 import de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantCreationClient.VerifiedTenant;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Timestamp;
@@ -79,7 +80,8 @@ public final class JdbcProtectedAccountActivation {
           if (!previous.isEmpty()) {
             var saved = checked(claim, previous.getFirst());
             if (!"WAITING_OTP".equals(saved.state())) throw unavailable();
-            return otp.currentSetup(claim);
+            if (!equal(accounts.checkpoint(created), saved.checkpoint())) throw unavailable();
+            return otp.currentSetupWithinOwner(claim);
           }
           JsonNode scope = scope(claim);
           // Reserved creation additionally needs TenantCreationClient's verified result.
@@ -173,8 +175,32 @@ public final class JdbcProtectedAccountActivation {
     LOCAL_CLEANED
   }
 
-  public Phase phase(AcceptanceClaim claim) {
+  public IdentityOtpCredential stageReserved(
+      AcceptanceClaim claim,
+      PendingOwnedAccount pending,
+      PreparedBootstrap prepared,
+      Policy policy,
+      VerifiedTenant tenant) {
     throw unavailable();
+  }
+
+  public Phase phase(AcceptanceClaim claim) {
+    outsideSql();
+    return owned(
+        claim,
+        () -> {
+          var saved = rows(claim);
+          if (saved.isEmpty()) return Phase.UNSTAGED;
+          if (saved.size() != 1) throw unavailable();
+          var row = Set.of("READY", "COMMITTED").contains(saved.getFirst().state())
+              ? historicallyChecked(claim, saved.getFirst())
+              : checked(claim, saved.getFirst());
+          try {
+            return Phase.valueOf(row.state());
+          } catch (IllegalArgumentException failure) {
+            throw unavailable();
+          }
+        });
   }
 
   public IdentityOtpCredential currentSetup(AcceptanceClaim claim) {
@@ -184,7 +210,7 @@ public final class JdbcProtectedAccountActivation {
         () -> {
           Row row = checked(claim, one(claim));
           if (!"WAITING_OTP".equals(row.state())) throw unavailable();
-          return Objects.requireNonNull(otp.currentSetup(claim));
+          return Objects.requireNonNull(otp.currentSetupWithinOwner(claim));
         });
   }
 
@@ -205,7 +231,7 @@ public final class JdbcProtectedAccountActivation {
         claim,
         () -> {
           Row row = checked(claim, one(claim));
-          Completion current = otp.completed(claim);
+          Completion current = otp.completedWithinOwner(claim);
           requireCompletion(claim, row, current);
           requireCompletion(claim, row, completion);
           if (!completion.bootstrapIncarnation().equals(current.bootstrapIncarnation())
@@ -242,17 +268,24 @@ public final class JdbcProtectedAccountActivation {
   public void acknowledge(ReadyActivation ready, VerifiedCommitted committed) {
     outsideSql();
     if (ready == null || committed == null) throw unavailable();
+    acknowledge(ready.claim, ready.outcome, committed, false);
+  }
+
+  private void acknowledge(
+      AcceptanceClaim claim, LocalOutcome outcome, VerifiedCommitted committed, boolean historical) {
     owned(
-        ready.claim,
+        claim,
+        historical,
         () -> {
-          Row row = checked(ready.claim, one(ready.claim));
+          Row row = historical ? historicallyChecked(claim, one(claim)) : checked(claim, one(claim));
           if (!Set.of("READY", "COMMITTED").contains(row.state())
-              || !equal(row.readyDigest(), ready.outcome.effectsDigest())
-              || !row.outbox().equals(ready.outcome.outboxId().toString())
-              || !ready.claim.claimId().equals(committed.claimId())
-              || !ready.claim.attemptId().equals(committed.attemptId())
+              || !equal(row.readyDigest(), outcome.effectsDigest())
+              || outcome.journalVersion() != 1
+              || !row.outbox().equals(outcome.outboxId().toString())
+              || !claim.claimId().equals(committed.claimId())
+              || !claim.attemptId().equals(committed.attemptId())
               || !row.accountId().equals(committed.accountId())
-              || !ready.outcome.equals(committed.localOutcome())
+              || !outcome.equals(committed.localOutcome())
               || committed.terminalReceipt() == null
               || committed.terminalReceipt().isBlank()
               || committed.terminalReceipt().length() > 16384) throw unavailable();
@@ -265,12 +298,12 @@ public final class JdbcProtectedAccountActivation {
               "UPDATE protected_account_activation SET state='COMMITTED',native_commit_receipt=?,updated_at=? WHERE invite_id=? AND state='READY'",
               committed.terminalReceipt(),
               now,
-              inviteId(ready.claim));
+              inviteId(claim));
           if (jdbc.update(
                   "UPDATE account_invite SET provisioning_status='COMPLETED',provisioning_failure_reason=NULL,active_recipient_key=NULL,update_date=?"
-                      + " WHERE id=? AND status='ACCEPTED' AND accepted_by_user_id=?",
+                      + " WHERE id=? AND status IN ('ACCEPTED','EXPIRED','REVOKED','SUPERSEDED') AND accepted_by_user_id=?",
                   now,
-                  inviteId(ready.claim),
+                  inviteId(claim),
                   row.accountId())
               != 1) throw unavailable();
           return null;
@@ -303,11 +336,25 @@ public final class JdbcProtectedAccountActivation {
   }
 
   public HistoricalReady historicalReady(HistoricalAcceptance historical) {
-    throw unavailable();
+    outsideSql();
+    if (historical == null) throw unavailable();
+    AcceptanceClaim claim = historical.claim();
+    return owned(
+        claim,
+        true,
+        () -> {
+          Row row = historicallyChecked(claim, one(claim));
+          return new HistoricalReady(
+              claim,
+              accounts.restore(claim, row.checkpoint()),
+              new LocalOutcome(1, UUID.fromString(row.outbox()), row.readyDigest()));
+        });
   }
 
   public void acknowledge(HistoricalReady historical, VerifiedCommitted committed) {
-    throw unavailable();
+    outsideSql();
+    if (historical == null || committed == null) throw unavailable();
+    acknowledge(historical.claim, historical.outcome, committed, true);
   }
 
   /** Data for a fresh status read; deliberately incompatible with the activation transport. */
@@ -391,10 +438,12 @@ public final class JdbcProtectedAccountActivation {
   }
 
   private <T> T owned(AcceptanceClaim claim, Supplier<T> action) {
+    return owned(claim, false, action);
+  }
+
+  private <T> T owned(AcceptanceClaim claim, boolean historical, Supplier<T> action) {
     long invite = inviteId(claim);
-    return journal.withRecipientInvite(
-        invite,
-        () -> {
+    Supplier<T> checked = () -> {
           if (!claim.frozen().equals(journal.pending(invite))) throw unavailable();
           var row =
               jdbc.queryForMap(
@@ -412,15 +461,53 @@ public final class JdbcProtectedAccountActivation {
                   "SELECT token_hash FROM account_invite WHERE id=?", String.class, invite);
           String response =
               jdbc.queryForObject(
-                  "SELECT response_json FROM protected_invitation_authorization WHERE invite_id=? AND state='READY'",
+                  "SELECT response_json FROM protected_invitation_authorization WHERE invite_id=?"
+                      + (historical ? "" : " AND state='READY'"),
                   String.class,
                   invite);
-          if (!equal(token, claim.tokenHash())
+          if (!(historical ? Objects.equals(token, claim.tokenHash()) : equal(token, claim.tokenHash()))
               || !equal(
                   json.canonical(json.read(response, JsonNode.class)),
                   claim.approval().responseJson())) throw unavailable();
           return action.get();
-        });
+        };
+    return historical
+        ? journal.withHistoricalInvite(invite, checked)
+        : journal.withRecipientInvite(invite, checked);
+  }
+
+  private Row historicallyChecked(AcceptanceClaim claim, Row row) {
+    if (!Set.of("READY", "COMMITTED").contains(row.state())
+        || !claim.claimId().toString().equals(row.claimId())
+        || !claim.attemptId().toString().equals(row.attemptId())
+        || !claim.executionId().toString().equals(row.executionId())) throw unavailable();
+    VerifiedCreated restored = accounts.restore(claim, row.checkpoint());
+    requireCreated(claim, restored);
+    if (!row.accountId().equals(restored.accountId())) throw unavailable();
+    JsonNode effects = json.read(row.effects(), JsonNode.class);
+    if (!equal(row.digest(), json.digest("protected-local-registration/v1", effects))
+        || !row.accountId().equals(effects.path("admin").path("id").asText())
+        || !row.accountId().equals(effects.path("inactivity").path("id").asText())
+        || effects.path("admin").path("tenantId").asLong(-1) != restored.tenantId()
+        || effects.path("inactivity").path("tenantId").asLong(-1) != restored.tenantId()
+        || row.otpIncarnation() == null
+        || row.otpReceipt() == null
+        || row.otpReceipt().isBlank()
+        || row.otpReceipt().length() > 16384) throw unavailable();
+    canonicalUuid(row.otpIncarnation());
+    String ready =
+        json.digest(
+            "protected-local-ready/v1",
+            Map.of(
+                "registrationEffectsDigest", row.digest(),
+                "otpIncarnation", row.otpIncarnation(),
+                "otpReceipt", row.otpReceipt()));
+    if (!equal(ready, row.readyDigest())) throw unavailable();
+    var invite = jdbc.queryForMap("SELECT accepted_by_user_id FROM account_invite WHERE id=?", inviteId(claim));
+    String accepted = jdbc.queryForObject("SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?", String.class, inviteId(claim));
+    if (!row.accountId().equals(invite.get("accepted_by_user_id"))
+        || !row.accountId().equals(accepted)) throw unavailable();
+    return row;
   }
 
   private void requireCreated(AcceptanceClaim claim, VerifiedCreated created) {
