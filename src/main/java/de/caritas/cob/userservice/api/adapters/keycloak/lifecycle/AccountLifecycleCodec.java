@@ -532,8 +532,7 @@ public final class AccountLifecycleCodec {
       expected.put("resultDigest", digest("otp-result", nativeResult));
       expected.set("emailCredential", credential);
       if (!saved.equals(read(canonical(expected), JsonNode.class))
-          || !utf8(payload).equals(canonical(expected)))
-        throw invalidSecretIntent();
+          || !utf8(payload).equals(canonical(expected))) throw invalidSecretIntent();
       return new VerifiedSelfAppOutcome(status, receipt, credential, expiry);
     } catch (RuntimeException failure) {
       throw invalidSecretIntent();
