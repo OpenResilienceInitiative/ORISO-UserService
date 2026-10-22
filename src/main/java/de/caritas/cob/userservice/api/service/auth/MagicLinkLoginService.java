@@ -4,6 +4,8 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
+import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
@@ -32,6 +34,7 @@ import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -50,6 +53,71 @@ public class MagicLinkLoginService {
   private final @NonNull ApplicationSettingsService applicationSettingsService;
   private final @NonNull OrisoEmailRenderer emailRenderer;
   private final @NonNull OrisoEmailBrand emailBrand;
+  private final @NonNull TaskActorConfiguration taskActors;
+  private final @NonNull ObjectProvider<AccountLifecycleCodec> lifecycleCodec;
+
+  /** A public subject or saved TokenClaim never constructs this live workflow handle. */
+  public static final class ClaimedMagicLink {
+    private final OneTimeTokenStore.TokenClaim claim;
+    private final Thread owner = Thread.currentThread();
+    private boolean active = true;
+
+    private ClaimedMagicLink(OneTimeTokenStore.TokenClaim claim) {
+      this.claim = claim;
+      if (claim == null
+          || claim.workflowId() == null
+          || claim.subjectId() == null
+          || !UUID.fromString(claim.subjectId()).toString().equals(claim.subjectId())
+          || claim.capabilityDigest() == null
+          || !claim.capabilityDigest().matches("[0-9a-f]{64}")
+          || claim.expiresAt() == null
+          || !claim.expiresAt().isAfter(Instant.now())
+          || claim.expiresAt().isAfter(Instant.now().plusSeconds(900))
+          || claim.tenantId() != null && claim.tenantId() < 0) throw unavailable();
+    }
+
+    public void requireCurrent() {
+      if (!active
+          || owner != Thread.currentThread()
+          || !claim.expiresAt().isAfter(Instant.now())
+          || org.springframework.transaction.support.TransactionSynchronizationManager
+              .isActualTransactionActive()) throw unavailable();
+    }
+
+    private static IllegalStateException unavailable() {
+      return new IllegalStateException("Claimed magic link unavailable");
+    }
+
+    public String targetUserId() {
+      requireCurrent();
+      return claim.subjectId();
+    }
+
+    public UUID workflowId() {
+      requireCurrent();
+      return claim.workflowId();
+    }
+
+    public Long tenantId() {
+      requireCurrent();
+      return claim.tenantId();
+    }
+
+    public Instant expiresAt() {
+      requireCurrent();
+      return claim.expiresAt();
+    }
+
+    public String claimDigest() {
+      requireCurrent();
+      return claim.capabilityDigest();
+    }
+
+    @Override
+    public String toString() {
+      return "ClaimedMagicLink[redacted]";
+    }
+  }
 
   @Value("${identity.email-dummy-suffix:@beratungcaritas.de}")
   private String emailDummySuffix;
@@ -84,7 +152,21 @@ public class MagicLinkLoginService {
   }
 
   public Optional<IdentitySession> consumeMagicLink(String token) {
-    if (isBlank(token)) {
+    return consumeMagicLink(token, null);
+  }
+
+  public Optional<IdentitySession> consumeMagicLink(String token, String otp) {
+    if (isBlank(token) || otp != null && !otp.matches("[0-9]{6}")) {
+      return Optional.empty();
+    }
+
+    final boolean scoped;
+    try {
+      scoped = taskActors.isEnabled();
+      if (scoped
+          && org.springframework.transaction.support.TransactionSynchronizationManager
+              .isActualTransactionActive()) return Optional.empty();
+    } catch (RuntimeException invalidConfiguration) {
       return Optional.empty();
     }
 
@@ -99,6 +181,8 @@ public class MagicLinkLoginService {
     if (claim.isEmpty()) {
       return Optional.empty();
     }
+
+    if (scoped) return exchangeScoped(token, claim.get(), otp);
 
     Optional<IdentitySession> exchanged;
     try {
@@ -116,6 +200,37 @@ public class MagicLinkLoginService {
       return Optional.empty();
     }
     return exchanged;
+  }
+
+  private Optional<IdentitySession> exchangeScoped(
+      String token, OneTimeTokenStore.TokenClaim stored, String otp) {
+    final ClaimedMagicLink live;
+    try {
+      // A pre-cutover legacy record is consumed and refused; it never acquires scoped authority.
+      live = new ClaimedMagicLink(stored);
+    } catch (RuntimeException invalidStoredClaim) {
+      return Optional.empty();
+    }
+    Optional<IdentitySession> result;
+    try {
+      result =
+          otp == null
+              ? identitySessionExchange.exchangeMagicLink(live)
+              : identitySessionExchange.exchangeMagicLink(live, otp);
+    } catch (IdentitySessionExchange.MagicLinkChallenge challenge) {
+      restoreTokenForRetry(token, stored);
+      throw challenge;
+    } catch (RuntimeException unknownOutcome) {
+      restoreTokenForRetry(token, stored);
+      return Optional.empty();
+    } finally {
+      live.active = false;
+    }
+    if (result == null || result.isEmpty()) {
+      restoreTokenForRetry(token, stored);
+      return Optional.empty();
+    }
+    return result;
   }
 
   private void restoreTokenForRetry(String token, OneTimeTokenStore.TokenClaim claim) {
@@ -190,12 +305,35 @@ public class MagicLinkLoginService {
               smtpSettings.getPassword());
 
       var email = renderMagicLink(magicUrl, target.getTenantId(), target.getLanguageCode());
-      oneTimeTokenStore.store(
-          TOKEN_SCOPE,
-          oneTimeToken,
-          target.getKeycloakUserId(),
-          Instant.now().plus(MAGIC_LINK_TOKEN_TTL),
-          false);
+      if (taskActors.isEnabled()) {
+        String subject = target.getKeycloakUserId();
+        if (subject == null
+            || !UUID.fromString(subject).toString().equals(subject)
+            || target.getTenantId() != null && target.getTenantId() < 0)
+          throw new IllegalStateException("Magic link account binding unavailable");
+        UUID workflow = UUID.randomUUID();
+        var scoped =
+            new OneTimeTokenStore.TokenClaim(
+                subject,
+                Instant.now()
+                    .plus(MAGIC_LINK_TOKEN_TTL)
+                    .truncatedTo(java.time.temporal.ChronoUnit.SECONDS),
+                workflow,
+                target.getTenantId(),
+                lifecycleCodec
+                    .getObject()
+                    .digest(
+                        "magic-link-capability/v1",
+                        Map.of("workflowId", workflow.toString(), "token", oneTimeToken)));
+        oneTimeTokenStore.storeMagicLink(oneTimeToken, scoped);
+      } else {
+        oneTimeTokenStore.store(
+            TOKEN_SCOPE,
+            oneTimeToken,
+            target.getKeycloakUserId(),
+            Instant.now().plus(MAGIC_LINK_TOKEN_TTL),
+            false);
+      }
       MimeMessage message = new MimeMessage(session);
       message.setFrom(new InternetAddress(smtpSettings.getFrom()));
       message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(target.getEmail()));
