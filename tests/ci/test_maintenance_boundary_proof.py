@@ -168,11 +168,11 @@ class DeletionBoundaryEvidenceTest(unittest.TestCase):
 
 
 class PasswordBoundaryEvidenceTest(unittest.TestCase):
-    def test_real_six_case_password_inventory_requires_legacy_and_scope_controls(self):
+    def test_real_eight_case_password_inventory_requires_legacy_and_scope_controls(self):
         proof = importlib.util.module_from_spec(SPEC)
         SPEC.loader.exec_module(proof)
         proof.select_slice("password")
-        self.assertEqual(6, len(proof.CASES))
+        self.assertEqual(8, len(proof.CASES))
         self.assertEqual(3, len(proof.CONTROLS))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

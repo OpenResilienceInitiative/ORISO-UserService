@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.update.Consultant
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.auth.*;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.facade.userdata.*;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -124,6 +125,40 @@ class UserSelfPasswordScenarioCBoundaryTest {
   }
 
   @Test
+  void unsignedOrForgedPolicy400KeepsTheActualSelfPasswordIntentFrozen() {
+    for (int refusal : List.of(1, 3)) {
+      try (var f = new Fixture(true, true)) {
+        f.policyResponse = refusal;
+        f.expectNative();
+        assertThrows(
+            ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
+        assertEquals("FROZEN", f.status());
+        assertEquals(0, f.clears());
+        assertEquals(0, f.effects.get());
+        f.server.verify();
+      }
+    }
+  }
+
+  @Test
+  void signedPolicy400StoresItsExactTerminalReceiptBeforeSelfPasswordRefusal() {
+    try (var f = new Fixture(true, true)) {
+      f.policyResponse = 2;
+      f.expectNative();
+      assertThrows(BadRequestException.class, () -> f.controller.updatePassword(f.password()));
+      assertEquals("REJECTED", f.status());
+      String terminal =
+          f.jdbc.queryForObject("select receipt from identity_self_password_intent", String.class);
+      assertNotNull(terminal);
+      assertTrue(terminal.contains("NO_EFFECT"));
+      assertThrows(BadRequestException.class, () -> f.controller.updatePassword(f.password()));
+      assertEquals(0, f.clears());
+      assertEquals(0, f.effects.get());
+      f.server.verify();
+    }
+  }
+
+  @Test
   void unsupportedOuterEnvelopeVersionCannotResumeUnknownPasswordOrClearSetup() {
     try (var f = new Fixture(true, true)) {
       f.expectNative(true);
@@ -193,6 +228,7 @@ class UserSelfPasswordScenarioCBoundaryTest {
     final RestTemplate http = new RestTemplate();
     final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
     final AtomicInteger effects = new AtomicInteger();
+    int policyResponse;
     final Long tenant;
     final String ownedKind;
     final boolean ownsConsultant;
@@ -470,7 +506,12 @@ class UserSelfPasswordScenarioCBoundaryTest {
                 assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
                 assertEquals("FROZEN", status());
                 assertEquals(0, clears());
-                int nativeAttempt = effects.incrementAndGet();
+                if (policyResponse == 1)
+                  return withStatus(HttpStatus.BAD_REQUEST)
+                      .body("{\"error\":\"Password rejected\"}")
+                      .contentType(MediaType.APPLICATION_JSON)
+                      .createResponse(out);
+                int nativeAttempt = policyResponse == 0 ? effects.incrementAndGet() : 0;
                 if (unknownFirst && nativeAttempt == 1)
                   return withStatus(HttpStatus.SERVICE_UNAVAILABLE).createResponse(out);
                 JsonNode body =
@@ -498,7 +539,9 @@ class UserSelfPasswordScenarioCBoundaryTest {
                 facts.put(
                     "originDigest",
                     codec.digest("maintenance-origin", body.path("target").path("origin")));
-                facts.put("result", "UPDATED");
+                String result = policyResponse == 0 ? "UPDATED" : "NO_EFFECT";
+                facts.put("result", result);
+                if (policyResponse != 0) facts.put("status", 400);
                 String encoded =
                     Base64.getUrlEncoder()
                         .withoutPadding()
@@ -512,20 +555,23 @@ class UserSelfPasswordScenarioCBoundaryTest {
                           + HexFormat.of()
                               .formatHex(
                                   mac.doFinal(
-                                      ("maintenance-operation-receipt\n" + encoded)
+                                      ((policyResponse == 0
+                                              ? "maintenance-operation-receipt\n"
+                                              : "maintenance-no-effect-receipt/v1\n")
+                                          + encoded)
                                           .getBytes(StandardCharsets.UTF_8)));
-                  return withSuccess(
-                          codec.canonical(
-                              Map.of(
-                                  "operationId",
-                                  operation,
-                                  "accountId",
-                                  ACCOUNT,
-                                  "result",
-                                  "UPDATED",
-                                  "receipt",
-                                  receipt)),
-                          MediaType.APPLICATION_JSON)
+                  if (policyResponse == 3)
+                    receipt = receipt.substring(0, receipt.length() - 1)
+                        + (receipt.endsWith("0") ? "1" : "0");
+                  var reply = new TreeMap<String, Object>();
+                  reply.put("operationId", operation);
+                  reply.put("accountId", ACCOUNT);
+                  reply.put("result", result);
+                  reply.put("receipt", receipt);
+                  if (policyResponse != 0) reply.put("status", 400);
+                  return withStatus(policyResponse == 0 ? HttpStatus.OK : HttpStatus.BAD_REQUEST)
+                      .body(codec.canonical(reply))
+                      .contentType(MediaType.APPLICATION_JSON)
                       .createResponse(out);
                 } catch (Exception e) {
                   throw new IllegalStateException("Synthetic receipt unavailable");

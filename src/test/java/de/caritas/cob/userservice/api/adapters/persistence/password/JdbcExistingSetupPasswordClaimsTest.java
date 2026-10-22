@@ -177,18 +177,39 @@ class JdbcExistingSetupPasswordClaimsTest {
   void recoveryRetainsOnlyExactExistingCustodyForSevenDaysAndNeverAllocates() throws Exception {
     var f = new Fixture();
     Claim original = f.claim(DIGEST);
-    var afterExpiry = new JdbcExistingSetupPasswordClaims(f.jdbc,
-        Clock.fixed(Instant.parse("2026-10-24T00:00:00Z"), ZoneOffset.UTC));
-    assertEquals(original, f.tx.execute(status -> afterExpiry.recoverWithinOwner(f.binding, DIGEST).orElseThrow()));
-    assertDoesNotThrow(() -> f.tx.executeWithoutResult(status -> afterExpiry.requireRecoveryWithinOwner(original)));
-    assertThrows(IllegalStateException.class, () -> f.tx.executeWithoutResult(status -> afterExpiry.requireCurrentWithinOwner(original)));
-    assertThrows(IllegalStateException.class, () -> f.tx.execute(status -> afterExpiry.recoverWithinOwner(f.binding, CHANGED)));
+    var afterExpiry =
+        new JdbcExistingSetupPasswordClaims(
+            f.jdbc, Clock.fixed(Instant.parse("2026-10-24T00:00:00Z"), ZoneOffset.UTC));
+    assertEquals(
+        original,
+        f.tx.execute(status -> afterExpiry.recoverWithinOwner(f.binding, DIGEST).orElseThrow()));
+    assertDoesNotThrow(
+        () ->
+            f.tx.executeWithoutResult(status -> afterExpiry.requireRecoveryWithinOwner(original)));
+    assertThrows(
+        IllegalStateException.class,
+        () -> f.tx.executeWithoutResult(status -> afterExpiry.requireCurrentWithinOwner(original)));
+    assertThrows(
+        IllegalStateException.class,
+        () -> f.tx.execute(status -> afterExpiry.recoverWithinOwner(f.binding, CHANGED)));
     var missing = new Fixture();
-    assertTrue(missing.tx.execute(status -> missing.journal.recoverWithinOwner(missing.binding, DIGEST)).isEmpty());
-    assertEquals(0, missing.jdbc.queryForObject("select count(*) from identity_setup_password_claim", Integer.class));
-    var beyondRetention = new JdbcExistingSetupPasswordClaims(f.jdbc,
-        Clock.fixed(Instant.parse("2026-10-31T00:00:00Z"), ZoneOffset.UTC));
-    assertThrows(IllegalStateException.class, () -> f.tx.executeWithoutResult(status -> beyondRetention.requireRecoveryWithinOwner(original)));
+    assertTrue(
+        missing
+            .tx
+            .execute(status -> missing.journal.recoverWithinOwner(missing.binding, DIGEST))
+            .isEmpty());
+    assertEquals(
+        0,
+        missing.jdbc.queryForObject(
+            "select count(*) from identity_setup_password_claim", Integer.class));
+    var beyondRetention =
+        new JdbcExistingSetupPasswordClaims(
+            f.jdbc, Clock.fixed(Instant.parse("2026-10-31T00:00:00Z"), ZoneOffset.UTC));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            f.tx.executeWithoutResult(
+                status -> beyondRetention.requireRecoveryWithinOwner(original)));
     assertEquals(original.id().toString(), f.savedClaim());
     assertEquals(original.binding().expiresAt(), f.binding.expiresAt());
   }

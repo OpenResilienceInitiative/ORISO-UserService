@@ -289,6 +289,35 @@ class ClaimedPasswordMaintenanceFlowIT {
     }
   }
 
+  @Test
+  void signedPasswordPolicyRefusalIsRecordedBeforeTheActualResetClaimIsReleased() throws Exception {
+    try (var f = new Fixture()) {
+      f.policyRefusal = true;
+      String token = f.requestLink();
+      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
+          .isInstanceOf(de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException.class);
+      assertThat(f.effects).isZero();
+      assertThat(f.required()).isTrue();
+      assertThat(f.phase()).isEqualTo("REJECTED");
+      assertThat(f.jdbc.queryForObject("select receipt from identity_claimed_password_intent", String.class))
+          .contains("NO_EFFECT");
+    }
+  }
+
+  @Test
+  void unsignedPolicy400CannotReleaseOrRebindTheActualResetClaim() throws Exception {
+    try (var f = new Fixture()) {
+      f.barePolicy = true;
+      String token = f.requestLink();
+      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(f.effects).isZero();
+      assertThat(f.phase()).isEqualTo("FROZEN");
+      assertThat(f.service.confirmPasswordReset(token, "fixture-other-password!42")).isFalse();
+      assertThat(f.required()).isTrue();
+    }
+  }
+
   private static final class Fixture implements AutoCloseable {
     final AccountLifecycleCodec codec = new AccountLifecycleCodec(new byte[32]);
     final DriverManagerDataSource source =
@@ -344,7 +373,8 @@ class ClaimedPasswordMaintenanceFlowIT {
     String resetUrl, savedReply;
     int effects;
     boolean loseReply, corruptReceipt, failSetupCompletion, expiredAbsent, foreignUsername;
-    boolean candidateCatalog, ambiguousCatalog, reverseCatalog;
+    boolean candidateCatalog, ambiguousCatalog, reverseCatalog, policyRefusal, barePolicy;
+    int savedStatus = 200;
     final Set<String> readCandidates = new HashSet<>();
 
     Fixture() throws Exception {
@@ -413,9 +443,11 @@ class ClaimedPasswordMaintenanceFlowIT {
                 }
                 reply = savedReply == null ? projection() : savedReply;
               } else {
+                if (barePolicy) { exchange.sendResponseHeaders(400, -1); return; }
                 if (savedReply == null) {
-                  effects++;
-                  savedReply = signedReply(body);
+                  if (!policyRefusal) effects++;
+                  savedStatus = policyRefusal ? 400 : 200;
+                  savedReply = signedReply(body, policyRefusal);
                 }
                 reply = savedReply;
                 if (loseReply) {
@@ -427,7 +459,7 @@ class ClaimedPasswordMaintenanceFlowIT {
               if (corruptReceipt && savedReply != null) reply = reply.replace("UPDATED", "DELETED");
               byte[] bytes = reply.getBytes(StandardCharsets.UTF_8);
               exchange.getResponseHeaders().add("Content-Type", "application/json");
-              exchange.sendResponseHeaders(200, bytes.length);
+              exchange.sendResponseHeaders(savedReply == null ? 200 : savedStatus, bytes.length);
               exchange.getResponseBody().write(bytes);
             } catch (Exception failure) {
               throw new java.io.IOException(failure);
@@ -678,7 +710,7 @@ class ClaimedPasswordMaintenanceFlowIT {
       return codec.canonical(value);
     }
 
-    String signedReply(JsonNode body) throws Exception {
+    String signedReply(JsonNode body, boolean noEffect) throws Exception {
       var receipt = new TreeMap<String, Object>();
       receipt.put("realmId", "fixture-realm");
       receipt.put("accountId", ACCOUNT);
@@ -691,7 +723,9 @@ class ClaimedPasswordMaintenanceFlowIT {
       receipt.put("tenantId", "42");
       receipt.put(
           "originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
-      receipt.put("result", "UPDATED");
+      String result = noEffect ? "NO_EFFECT" : "UPDATED";
+      receipt.put("result", result);
+      if (noEffect) receipt.put("status", 400);
       String encoded =
           Base64.getUrlEncoder()
               .withoutPadding()
@@ -704,18 +738,15 @@ class ClaimedPasswordMaintenanceFlowIT {
               + HexFormat.of()
                   .formatHex(
                       mac.doFinal(
-                          ("maintenance-operation-receipt\n" + encoded)
+                          ((noEffect ? "maintenance-no-effect-receipt/v1\n" : "maintenance-operation-receipt\n") + encoded)
                               .getBytes(StandardCharsets.UTF_8)));
-      return codec.canonical(
-          Map.of(
-              "operationId",
-              body.path("operationId").textValue(),
-              "accountId",
-              ACCOUNT,
-              "result",
-              "UPDATED",
-              "receipt",
-              signed));
+      var outer = new TreeMap<String, Object>();
+      outer.put("operationId", body.path("operationId").textValue());
+      outer.put("accountId", ACCOUNT);
+      outer.put("result", result);
+      outer.put("receipt", signed);
+      if (noEffect) outer.put("status", 400);
+      return codec.canonical(outer);
     }
 
     @Override
