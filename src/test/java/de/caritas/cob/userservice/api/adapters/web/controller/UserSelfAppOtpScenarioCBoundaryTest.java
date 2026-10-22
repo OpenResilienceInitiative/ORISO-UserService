@@ -949,6 +949,137 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
+  void publicOtpHttpKeyCannotMoveAnAcknowledgedRequestToAnotherAllowedPath() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.expectNative(false, false);
+      assertEquals(
+          200,
+          fixture.controller.activateTwoFactorAuthByApp(fixture.dto()).getStatusCode().value());
+      String original = fixture.envelope();
+      fixture.server.verify();
+      fixture.server.reset();
+      fixture.request.setRequestURI("/users/2fa/app");
+      assertThrows(
+          ConflictException.class,
+          () -> fixture.controller.activateTwoFactorAuthByApp(fixture.dto()));
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals(original, fixture.envelope());
+      assertEquals(1, fixture.domainWrites());
+      assertEquals(1, fixture.nativeExecutions.get());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void publicOtpHttpKeyKeepsPreparedMethodPathAndBodyBindingBeforeAnotherRpc() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      var reads = new AtomicInteger();
+      fixture.server
+          .expect(
+              ExpectedCount.between(1, 2),
+              requestTo(
+                  fixture.issuer.issuer()
+                      + "/oriso-account-maintenance/v1/accounts/"
+                      + ACCOUNT
+                      + "/read"))
+          .andExpect(method(HttpMethod.POST))
+          .andRespond(
+              outbound -> {
+                reads.incrementAndGet();
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                return withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body("{\"error\":\"bounded read unavailable\"}")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
+              });
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> fixture.controller.activateTwoFactorAuthByApp(fixture.dto()));
+      assertEquals("PREPARED", fixture.status());
+      assertNull(fixture.envelope());
+      fixture.request.setRequestURI("/users/2fa/app");
+      assertThrows(
+          ConflictException.class,
+          () -> fixture.controller.activateTwoFactorAuthByApp(fixture.dto()));
+      assertEquals(1, reads.get());
+      fixture.server.verify();
+      fixture.server.reset();
+      fixture.request.setRequestURI("/service/users/2fa/app");
+      fixture.expectNative(false, false);
+      assertEquals(
+          200,
+          fixture.controller.activateTwoFactorAuthByApp(fixture.dto()).getStatusCode().value());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals(1, fixture.domainWrites());
+      assertEquals(1, fixture.nativeExecutions.get());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void publicOtpHttpIntentNeverAdoptsAnOlderPreparedRowWithoutItsPublicBinding() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      var reads = new AtomicInteger();
+      fixture.server
+          .expect(
+              ExpectedCount.between(1, 2),
+              requestTo(
+                  fixture.issuer.issuer()
+                      + "/oriso-account-maintenance/v1/accounts/"
+                      + ACCOUNT
+                      + "/read"))
+          .andExpect(method(HttpMethod.POST))
+          .andRespond(outbound -> {
+            reads.incrementAndGet();
+            return withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                .body("{\"error\":\"bounded read unavailable\"}")
+                .contentType(MediaType.APPLICATION_JSON).createResponse(outbound);
+          });
+      assertThrows(ServiceUnavailableException.class,
+          () -> fixture.controller.activateTwoFactorAuthByApp(fixture.dto()));
+      String older = fixture.codec.digest("oriso/user-maintenance-intent/request/v1",
+          Map.of("otp", CODE, "secret", SECRET));
+      fixture.jdbc.update(
+          "update identity_self_app_otp_intent set request_digest=? where operation_id=?",
+          older, fixture.operation);
+      assertThrows(ConflictException.class,
+          () -> fixture.controller.activateTwoFactorAuthByApp(fixture.dto()));
+      assertEquals("PREPARED", fixture.status());
+      assertNull(fixture.envelope());
+      assertEquals(older, fixture.jdbc.queryForObject(
+          "select request_digest from identity_self_app_otp_intent where operation_id=?",
+          String.class, fixture.operation));
+      assertEquals(1, reads.get());
+      assertEquals(0, fixture.domainWrites());
+      assertEquals(0, fixture.nativeExecutions.get());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void publicOtpAckCannotTransitionInviteAttachedAfterItsFrozenMembershipCheck() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.attachInviteDuringCallback = true;
+      fixture.expectNative(false, false);
+      assertEquals(
+          200,
+          fixture.controller.activateTwoFactorAuthByApp(fixture.dto()).getStatusCode().value());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals("ACTIVE", fixture.inviteStatus());
+      assertEquals(
+          "PENDING_SETUP",
+          fixture.jdbc.queryForObject(
+              "select two_factor_status from account_invite where id=2", String.class));
+      assertEquals(
+          0,
+          fixture.jdbc.queryForObject("select write_count from account_invite where id=2", Integer.class));
+      assertEquals(1, fixture.domainWrites());
+      assertEquals(1, fixture.nativeExecutions.get());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
   void missingScopedEmailFinishKeepsActualCGuardAndLegacyInvalidCodeWorking() throws Exception {
     try (var fixture = new Fixture(true, false)) {
       fixture.request.setMethod("POST");
@@ -1004,6 +1135,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     String operation = UUID.randomUUID().toString();
     String emailStartOperation;
     final AtomicInteger nativeExecutions = new AtomicInteger();
+    boolean attachInviteDuringCallback;
     boolean tamperReceipt;
     String savedEmailReply;
     String savedEmailWire;
@@ -1059,12 +1191,29 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                   if (fiveActors)
                     assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
                   TwoFactorGateStatus wanted = invocation.getArgument(1);
-                  if (!wanted.name().equals(inviteStatus())) return List.of();
-                  var invite = new AccountInvite();
-                  invite.setId(1L);
-                  invite.setAcceptedByUserId(ACCOUNT);
-                  invite.setTwoFactorStatus(wanted);
-                  return List.of(invite);
+                  if (attachInviteDuringCallback) {
+                    attachInviteDuringCallback = false;
+                    // A second physical connection commits after the private membership check,
+                    // at the actual domain query. It does not acquire the owning User row lock.
+                    try (var writer = source.getConnection()) {
+                      writer.setAutoCommit(false);
+                      try (var insert = writer.prepareStatement(
+                          "insert into account_invite values(2,?,'PENDING_SETUP',0)")) {
+                        insert.setString(1, ACCOUNT);
+                        assertEquals(1, insert.executeUpdate());
+                      }
+                      writer.commit();
+                    }
+                  }
+                  return jdbc.queryForList(
+                      "select id,two_factor_status from account_invite where accepted_by_user_id=? and two_factor_status=? order by id",
+                      ACCOUNT, wanted.name()).stream().map(row -> {
+                        var invite = new AccountInvite();
+                        invite.setId(((Number) row.get("id")).longValue());
+                        invite.setAcceptedByUserId(ACCOUNT);
+                        invite.setTwoFactorStatus(TwoFactorGateStatus.valueOf((String) row.get("two_factor_status")));
+                        return invite;
+                      }).toList();
                 });
         when(invites.saveAll(any()))
             .thenAnswer(
