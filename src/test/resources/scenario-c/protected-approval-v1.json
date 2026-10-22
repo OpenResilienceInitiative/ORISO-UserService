@@ -1,0 +1,49 @@
+{
+  "syntheticPublicKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+  "issuerRealm": "native-synthetic-realm",
+  "issuerSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+  "request": {
+    "scope": {
+      "workflowId": "f09e4bce-89bd-40cb-86eb-2ed8cf481290",
+      "inviteId": "73",
+      "authorizationRevision": 1,
+      "purpose": "INVITE",
+      "recipient": "ada@example.test",
+      "protectedKind": "TENANT_ADMIN",
+      "targetTenantIds": [
+        7
+      ],
+      "tenantMode": "EXISTING",
+      "reservationBinding": null,
+      "agencyBinding": null,
+      "protectedProfileId": "tenant-owner",
+      "validUntil": "2030-01-02T03:04:05Z",
+      "creatorClient": "backend-account-create",
+      "creatorSubject": "259d23a0-5b65-4559-8cc1-aa5683961d02",
+      "setupClient": "backend-setup",
+      "setupSubject": "4ebf5f9c-a3f4-41fe-8a22-ec1f511d77ed"
+    }
+  },
+  "requestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+  "response": {
+    "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "state": "AUTHORIZED",
+    "version": 0,
+    "boundAttemptId": null,
+    "fencedExecution": null,
+    "approvalReceipt": {
+      "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuerSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+      "bindingVersion": 3,
+      "profileVersion": 2,
+      "validUntil": "2030-01-02T03:04:05Z",
+      "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+      "receipt": "eyJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXBwcm92YWxSZXF1ZXN0RGlnZXN0IjoiZWRjOTNkNDQ4NWU0MWVlYWNjZDBiMmJiYzFlYTgxZjRlOTE5MjZjM2I4NjY5MmRlZmVkMmNiZTBhNGUzZDRjZiIsImJpbmRpbmdWZXJzaW9uIjozLCJpc3N1ZXJTdWJqZWN0IjoiMTVhNTFhYmYtYTZlNy00NTEzLTk0MmEtZDFlYTIwOWUwMGRkIiwicHJvZmlsZVZlcnNpb24iOjIsInNjb3BlRGlnZXN0IjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZhbGlkVW50aWwiOiIyMDMwLTAxLTAyVDAzOjA0OjA1WiJ9.89df4c7fd63f1baa3952ac76d840935201795c14f9dc8245c6a4a796d123d8be"
+    },
+    "transitionReceipt": null,
+    "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf"
+  }
+}

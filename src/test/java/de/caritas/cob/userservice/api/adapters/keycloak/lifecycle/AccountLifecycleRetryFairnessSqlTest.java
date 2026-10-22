@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.Account
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Timestamp;
@@ -134,6 +135,85 @@ class AccountLifecycleRetryFairnessSqlTest {
           return null;
         });
     return id;
+  }
+
+  @Test
+  void confirmedNativeConflictAndRefusalCommitReconciliationWithoutClaimingCompletion() {
+    var journal = journal(NOW);
+    for (int status : new int[] {409, 403}) {
+      UUID id = commitReady(journal);
+      String body =
+          jdbc.queryForObject(
+              "SELECT body_json FROM identity_lifecycle_outbox WHERE attempt_id=?",
+              String.class,
+              id.toString());
+      var refusal =
+          new KeycloakAccountLifecycleCommands.RemoteFailure(status, "private-proof-code");
+      doThrow(refusal).when(remote).commit(eq(id), any());
+
+      assertDoesNotThrow(() -> dispatcher(journal).dispatch(id));
+
+      assertEquals("LOCAL_RECONCILIATION_REQUIRED", status(id));
+      assertEquals(
+          "DELIVERED",
+          jdbc.queryForObject(
+              "SELECT status FROM identity_lifecycle_outbox WHERE attempt_id=?",
+              String.class,
+              id.toString()));
+      assertEquals(
+          body,
+          jdbc.queryForObject(
+              "SELECT body_json FROM identity_lifecycle_outbox WHERE attempt_id=?",
+              String.class,
+              id.toString()));
+      assertNull(
+          jdbc.queryForObject(
+              "SELECT terminal_receipt FROM identity_lifecycle_attempt WHERE id=?",
+              String.class,
+              id.toString()));
+    }
+    verify(remote, never()).compensate(any(), any());
+    verifyNoInteractions(downstream);
+  }
+
+  @Test
+  void retryFailuresEmitBoundedDiagnosticsAndKeepUnknownIntentsWhileHealthyWorkProgresses() {
+    var journal = journal(NOW);
+    UUID unavailable = commitReady(journal);
+    UUID unknown = commitReady(journal);
+    UUID healthy = commitReady(journal);
+    String sentinel = "sentinel-password-bearer-body-creation-proof";
+    var unavailableFailure = new KeycloakAccountLifecycleCommands.RemoteFailure(503, sentinel);
+    doThrow(unavailableFailure).when(remote).commit(eq(unavailable), any());
+    doThrow(new IllegalStateException(sentinel)).when(remote).commit(eq(unknown), any());
+    var bodies =
+        jdbc.queryForList("SELECT id,body_json FROM identity_lifecycle_outbox ORDER BY id");
+
+    try (var logs = LogbackCaptor.forClass(AccountLifecycleDispatcher.class)) {
+      dispatcher(journal).retryPending();
+      assertEquals("COMMITTED", status(healthy));
+      assertEquals("COMMIT_REQUESTED", status(unavailable));
+      assertEquals("COMMIT_REQUESTED", status(unknown));
+      assertEquals(2, logs.count(ch.qos.logback.classic.Level.WARN));
+      for (var event : logs.events()) {
+        assertFalse(event.getFormattedMessage().contains(sentinel));
+        assertFalse(event.getFormattedMessage().contains("synthetic-password"));
+        assertFalse(event.getFormattedMessage().contains("proof:"));
+        assertNull(event.getThrowableProxy());
+      }
+      assertTrue(logs.contains(ch.qos.logback.classic.Level.WARN, "503"));
+      assertTrue(logs.contains(ch.qos.logback.classic.Level.WARN, "UNKNOWN_OUTCOME"));
+    }
+    assertEquals(
+        2,
+        jdbc.queryForObject(
+            "SELECT COUNT(*) FROM identity_lifecycle_outbox WHERE status='PENDING'",
+            Integer.class));
+    assertEquals(
+        bodies,
+        jdbc.queryForList("SELECT id,body_json FROM identity_lifecycle_outbox ORDER BY id"));
+    verify(remote, never()).compensate(any(), any());
+    verifyNoInteractions(downstream);
   }
 
   @Test

@@ -1,0 +1,270 @@
+{
+  "description": "Public synthetic independent Python HMAC vectors only; no live identity, account, password or native ownership acceptance.",
+  "syntheticPublicKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "approvalVector": {
+    "syntheticPublicKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+    "issuerRealm": "native-synthetic-realm",
+    "issuerSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+    "request": {
+      "scope": {
+        "workflowId": "f09e4bce-89bd-40cb-86eb-2ed8cf481290",
+        "inviteId": "73",
+        "authorizationRevision": 1,
+        "purpose": "INVITE",
+        "recipient": "ada@example.test",
+        "protectedKind": "TENANT_ADMIN",
+        "targetTenantIds": [
+          7
+        ],
+        "tenantMode": "EXISTING",
+        "reservationBinding": null,
+        "agencyBinding": null,
+        "protectedProfileId": "tenant-owner",
+        "validUntil": "2030-01-02T03:04:05Z",
+        "creatorClient": "backend-account-create",
+        "creatorSubject": "259d23a0-5b65-4559-8cc1-aa5683961d02",
+        "setupClient": "backend-setup",
+        "setupSubject": "4ebf5f9c-a3f4-41fe-8a22-ec1f511d77ed"
+      }
+    },
+    "requestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+    "response": {
+      "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "state": "AUTHORIZED",
+      "version": 0,
+      "boundAttemptId": null,
+      "fencedExecution": null,
+      "approvalReceipt": {
+        "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+        "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "issuerSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+        "bindingVersion": 3,
+        "profileVersion": 2,
+        "validUntil": "2030-01-02T03:04:05Z",
+        "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+        "receipt": "eyJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXBwcm92YWxSZXF1ZXN0RGlnZXN0IjoiZWRjOTNkNDQ4NWU0MWVlYWNjZDBiMmJiYzFlYTgxZjRlOTE5MjZjM2I4NjY5MmRlZmVkMmNiZTBhNGUzZDRjZiIsImJpbmRpbmdWZXJzaW9uIjozLCJpc3N1ZXJTdWJqZWN0IjoiMTVhNTFhYmYtYTZlNy00NTEzLTk0MmEtZDFlYTIwOWUwMGRkIiwicHJvZmlsZVZlcnNpb24iOjIsInNjb3BlRGlnZXN0IjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZhbGlkVW50aWwiOiIyMDMwLTAxLTAyVDAzOjA0OjA1WiJ9.89df4c7fd63f1baa3952ac76d840935201795c14f9dc8245c6a4a796d123d8be"
+      },
+      "transitionReceipt": null,
+      "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf"
+    }
+  },
+  "realmName": "synthetic",
+  "realmId": "native-synthetic-realm",
+  "realmIssuer": "https://identity.example/realms/synthetic",
+  "claimId": "05ae0d43-64f2-4b14-8c38-2c13bc8e0f09",
+  "attemptId": "15adb2ed-e40b-48ce-aa4a-49f7f2d71937",
+  "executionId": "0a5d2e1b-0391-4f89-b395-dea1668a6ef5",
+  "registration": {
+    "organizationName": "Synthetic organization",
+    "password": "synthetic-only password\n"
+  },
+  "registrationDigest": "64a87713ed5ba1441270fea07000f52d94420669c89b06d543369caac7d388fb",
+  "account": {
+    "username": "enc.MFSGCQDFPBQW24DMMUXHIZLTOQ......",
+    "email": "ada@example.test",
+    "firstName": "Ada",
+    "lastName": null,
+    "preferredLanguage": "de",
+    "password": "synthetic-only password\n",
+    "passwordTemporary": false
+  },
+  "createBody": {
+    "approvalReceipt": {
+      "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuerSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+      "bindingVersion": 3,
+      "profileVersion": 2,
+      "validUntil": "2030-01-02T03:04:05Z",
+      "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+      "receipt": "eyJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXBwcm92YWxSZXF1ZXN0RGlnZXN0IjoiZWRjOTNkNDQ4NWU0MWVlYWNjZDBiMmJiYzFlYTgxZjRlOTE5MjZjM2I4NjY5MmRlZmVkMmNiZTBhNGUzZDRjZiIsImJpbmRpbmdWZXJzaW9uIjozLCJpc3N1ZXJTdWJqZWN0IjoiMTVhNTFhYmYtYTZlNy00NTEzLTk0MmEtZDFlYTIwOWUwMGRkIiwicHJvZmlsZVZlcnNpb24iOjIsInNjb3BlRGlnZXN0IjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZhbGlkVW50aWwiOiIyMDMwLTAxLTAyVDAzOjA0OjA1WiJ9.89df4c7fd63f1baa3952ac76d840935201795c14f9dc8245c6a4a796d123d8be"
+    },
+    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "authorizationRevision": 1,
+    "acceptanceClaim": {
+      "workflowId": "f09e4bce-89bd-40cb-86eb-2ed8cf481290",
+      "inviteId": "73",
+      "authorizationRevision": 1,
+      "claimId": "05ae0d43-64f2-4b14-8c38-2c13bc8e0f09",
+      "journalVersion": 1
+    },
+    "execution": {
+      "executionId": "0a5d2e1b-0391-4f89-b395-dea1668a6ef5",
+      "generation": 0
+    },
+    "account": {
+      "username": "enc.MFSGCQDFPBQW24DMMUXHIZLTOQ......",
+      "email": "ada@example.test",
+      "firstName": "Ada",
+      "lastName": null,
+      "preferredLanguage": "de",
+      "password": "synthetic-only password\n",
+      "passwordTemporary": false
+    },
+    "creationFingerprint": "3959f93dbb02e723a6b254559197fdafce291229c102dc351f2d16f7d4374105"
+  },
+  "creationFingerprint": "3959f93dbb02e723a6b254559197fdafce291229c102dc351f2d16f7d4374105",
+  "creationProofPayload": {
+    "v": 1,
+    "realmName": "synthetic",
+    "realmId": "native-synthetic-realm",
+    "attemptId": "15adb2ed-e40b-48ce-aa4a-49f7f2d71937",
+    "accountId": "19e3b2ee-dc47-4e06-b263-77ee717e12e4",
+    "ownerClient": "backend-account-create",
+    "ownerSubject": "259d23a0-5b65-4559-8cc1-aa5683961d02",
+    "scope": {
+      "tenantId": "7",
+      "registrationKind": "TENANT_ADMIN",
+      "initialGroup": "/synthetic-tenant-admin",
+      "origin": {
+        "kind": "INVITATION",
+        "workflowId": "f09e4bce-89bd-40cb-86eb-2ed8cf481290",
+        "provenance": "protected-approval-v1:b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+        "humanIssuer": "https://identity.example/realms/synthetic",
+        "humanSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+        "humanAuthority": "PLATFORM",
+        "agencyIds": []
+      },
+      "approvalBinding": {
+        "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+        "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorizationRevision": 1,
+        "acceptanceClaim": {
+          "workflowId": "f09e4bce-89bd-40cb-86eb-2ed8cf481290",
+          "inviteId": "73",
+          "authorizationRevision": 1,
+          "claimId": "05ae0d43-64f2-4b14-8c38-2c13bc8e0f09",
+          "journalVersion": 1
+        }
+      }
+    },
+    "initialGroupId": "synthetic-tenant-admin-group",
+    "initialRoleFingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "creationFingerprint": "3959f93dbb02e723a6b254559197fdafce291229c102dc351f2d16f7d4374105"
+  },
+  "createdResponse": {
+    "attemptId": "15adb2ed-e40b-48ce-aa4a-49f7f2d71937",
+    "accountId": "19e3b2ee-dc47-4e06-b263-77ee717e12e4",
+    "state": "OPEN",
+    "execution": {
+      "executionId": "0a5d2e1b-0391-4f89-b395-dea1668a6ef5",
+      "generation": 0
+    },
+    "creationProof": "eyJhY2NvdW50SWQiOiIxOWUzYjJlZS1kYzQ3LTRlMDYtYjI2My03N2VlNzE3ZTEyZTQiLCJhdHRlbXB0SWQiOiIxNWFkYjJlZC1lNDBiLTQ4Y2UtYWE0YS00OWY3ZjJkNzE5MzciLCJjcmVhdGlvbkZpbmdlcnByaW50IjoiMzk1OWY5M2RiYjAyZTcyM2E2YjI1NDU1OTE5N2ZkYWZjZTI5MTIyOWMxMDJkYzM1MWYyZDE2ZjdkNDM3NDEwNSIsImluaXRpYWxHcm91cElkIjoic3ludGhldGljLXRlbmFudC1hZG1pbi1ncm91cCIsImluaXRpYWxSb2xlRmluZ2VycHJpbnQiOiJjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIiwib3duZXJDbGllbnQiOiJiYWNrZW5kLWFjY291bnQtY3JlYXRlIiwib3duZXJTdWJqZWN0IjoiMjU5ZDIzYTAtNWI2NS00NTU5LThjYzEtYWE1NjgzOTYxZDAyIiwicmVhbG1JZCI6Im5hdGl2ZS1zeW50aGV0aWMtcmVhbG0iLCJyZWFsbU5hbWUiOiJzeW50aGV0aWMiLCJzY29wZSI6eyJhcHByb3ZhbEJpbmRpbmciOnsiYWNjZXB0YW5jZUNsYWltIjp7ImF1dGhvcml6YXRpb25SZXZpc2lvbiI6MSwiY2xhaW1JZCI6IjA1YWUwZDQzLTY0ZjItNGIxNC04YzM4LTJjMTNiYzhlMGYwOSIsImludml0ZUlkIjoiNzMiLCJqb3VybmFsVmVyc2lvbiI6MSwid29ya2Zsb3dJZCI6ImYwOWU0YmNlLTg5YmQtNDBjYi04NmViLTJlZDhjZjQ4MTI5MCJ9LCJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXV0aG9yaXphdGlvblJldmlzaW9uIjoxLCJzY29wZURpZ2VzdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifSwiaW5pdGlhbEdyb3VwIjoiL3N5bnRoZXRpYy10ZW5hbnQtYWRtaW4iLCJvcmlnaW4iOnsiYWdlbmN5SWRzIjpbXSwiaHVtYW5BdXRob3JpdHkiOiJQTEFURk9STSIsImh1bWFuSXNzdWVyIjoiaHR0cHM6Ly9pZGVudGl0eS5leGFtcGxlL3JlYWxtcy9zeW50aGV0aWMiLCJodW1hblN1YmplY3QiOiIxNWE1MWFiZi1hNmU3LTQ1MTMtOTQyYS1kMWVhMjA5ZTAwZGQiLCJraW5kIjoiSU5WSVRBVElPTiIsInByb3ZlbmFuY2UiOiJwcm90ZWN0ZWQtYXBwcm92YWwtdjE6YjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwid29ya2Zsb3dJZCI6ImYwOWU0YmNlLTg5YmQtNDBjYi04NmViLTJlZDhjZjQ4MTI5MCJ9LCJyZWdpc3RyYXRpb25LaW5kIjoiVEVOQU5UX0FETUlOIiwidGVuYW50SWQiOiI3In0sInYiOjF9.LPr-O34JSITHRmD90DBPiMP_KSGgHEbjUTLtBRsFcSc",
+    "recoveryReceipt": null,
+    "terminalReceipt": null
+  },
+  "ownedProjection": {
+    "id": "19e3b2ee-dc47-4e06-b263-77ee717e12e4",
+    "username": "enc.mfsgcqdfpbqw24dmmuxhizltoq......",
+    "email": "ada@example.test",
+    "firstName": "Ada",
+    "lastName": null,
+    "tenantId": "7",
+    "preferredLanguage": "de",
+    "enabled": false,
+    "emailVerified": true,
+    "effectiveRoles": [],
+    "passwordChangeRequired": false
+  },
+  "localOutcome": {
+    "journalVersion": 2,
+    "outboxId": "6496ad22-ec5a-4a1c-a977-ef229843405a",
+    "effectsDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "commitBody": {
+    "approvalReceipt": {
+      "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuerSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+      "bindingVersion": 3,
+      "profileVersion": 2,
+      "validUntil": "2030-01-02T03:04:05Z",
+      "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+      "receipt": "eyJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXBwcm92YWxSZXF1ZXN0RGlnZXN0IjoiZWRjOTNkNDQ4NWU0MWVlYWNjZDBiMmJiYzFlYTgxZjRlOTE5MjZjM2I4NjY5MmRlZmVkMmNiZTBhNGUzZDRjZiIsImJpbmRpbmdWZXJzaW9uIjozLCJpc3N1ZXJTdWJqZWN0IjoiMTVhNTFhYmYtYTZlNy00NTEzLTk0MmEtZDFlYTIwOWUwMGRkIiwicHJvZmlsZVZlcnNpb24iOjIsInNjb3BlRGlnZXN0IjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZhbGlkVW50aWwiOiIyMDMwLTAxLTAyVDAzOjA0OjA1WiJ9.89df4c7fd63f1baa3952ac76d840935201795c14f9dc8245c6a4a796d123d8be"
+    },
+    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "authorizationRevision": 1,
+    "creationFingerprint": "3959f93dbb02e723a6b254559197fdafce291229c102dc351f2d16f7d4374105",
+    "execution": {
+      "executionId": "0a5d2e1b-0391-4f89-b395-dea1668a6ef5",
+      "generation": 0
+    },
+    "accountId": "19e3b2ee-dc47-4e06-b263-77ee717e12e4",
+    "creationProof": "eyJhY2NvdW50SWQiOiIxOWUzYjJlZS1kYzQ3LTRlMDYtYjI2My03N2VlNzE3ZTEyZTQiLCJhdHRlbXB0SWQiOiIxNWFkYjJlZC1lNDBiLTQ4Y2UtYWE0YS00OWY3ZjJkNzE5MzciLCJjcmVhdGlvbkZpbmdlcnByaW50IjoiMzk1OWY5M2RiYjAyZTcyM2E2YjI1NDU1OTE5N2ZkYWZjZTI5MTIyOWMxMDJkYzM1MWYyZDE2ZjdkNDM3NDEwNSIsImluaXRpYWxHcm91cElkIjoic3ludGhldGljLXRlbmFudC1hZG1pbi1ncm91cCIsImluaXRpYWxSb2xlRmluZ2VycHJpbnQiOiJjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIiwib3duZXJDbGllbnQiOiJiYWNrZW5kLWFjY291bnQtY3JlYXRlIiwib3duZXJTdWJqZWN0IjoiMjU5ZDIzYTAtNWI2NS00NTU5LThjYzEtYWE1NjgzOTYxZDAyIiwicmVhbG1JZCI6Im5hdGl2ZS1zeW50aGV0aWMtcmVhbG0iLCJyZWFsbU5hbWUiOiJzeW50aGV0aWMiLCJzY29wZSI6eyJhcHByb3ZhbEJpbmRpbmciOnsiYWNjZXB0YW5jZUNsYWltIjp7ImF1dGhvcml6YXRpb25SZXZpc2lvbiI6MSwiY2xhaW1JZCI6IjA1YWUwZDQzLTY0ZjItNGIxNC04YzM4LTJjMTNiYzhlMGYwOSIsImludml0ZUlkIjoiNzMiLCJqb3VybmFsVmVyc2lvbiI6MSwid29ya2Zsb3dJZCI6ImYwOWU0YmNlLTg5YmQtNDBjYi04NmViLTJlZDhjZjQ4MTI5MCJ9LCJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXV0aG9yaXphdGlvblJldmlzaW9uIjoxLCJzY29wZURpZ2VzdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifSwiaW5pdGlhbEdyb3VwIjoiL3N5bnRoZXRpYy10ZW5hbnQtYWRtaW4iLCJvcmlnaW4iOnsiYWdlbmN5SWRzIjpbXSwiaHVtYW5BdXRob3JpdHkiOiJQTEFURk9STSIsImh1bWFuSXNzdWVyIjoiaHR0cHM6Ly9pZGVudGl0eS5leGFtcGxlL3JlYWxtcy9zeW50aGV0aWMiLCJodW1hblN1YmplY3QiOiIxNWE1MWFiZi1hNmU3LTQ1MTMtOTQyYS1kMWVhMjA5ZTAwZGQiLCJraW5kIjoiSU5WSVRBVElPTiIsInByb3ZlbmFuY2UiOiJwcm90ZWN0ZWQtYXBwcm92YWwtdjE6YjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwid29ya2Zsb3dJZCI6ImYwOWU0YmNlLTg5YmQtNDBjYi04NmViLTJlZDhjZjQ4MTI5MCJ9LCJyZWdpc3RyYXRpb25LaW5kIjoiVEVOQU5UX0FETUlOIiwidGVuYW50SWQiOiI3In0sInYiOjF9.LPr-O34JSITHRmD90DBPiMP_KSGgHEbjUTLtBRsFcSc",
+    "localCommit": {
+      "journalVersion": 2,
+      "outboxId": "6496ad22-ec5a-4a1c-a977-ef229843405a",
+      "effectsDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  },
+  "terminalPayload": {
+    "realmId": "native-synthetic-realm",
+    "attemptId": "15adb2ed-e40b-48ce-aa4a-49f7f2d71937",
+    "accountId": "19e3b2ee-dc47-4e06-b263-77ee717e12e4",
+    "ownerClient": "backend-account-create",
+    "ownerSubject": "259d23a0-5b65-4559-8cc1-aa5683961d02",
+    "scope": "{\"approvalBinding\":{\"acceptanceClaim\":{\"authorizationRevision\":1,\"claimId\":\"05ae0d43-64f2-4b14-8c38-2c13bc8e0f09\",\"inviteId\":\"73\",\"journalVersion\":1,\"workflowId\":\"f09e4bce-89bd-40cb-86eb-2ed8cf481290\"},\"approvalId\":\"b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31\",\"authorizationRevision\":1,\"scopeDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"initialGroup\":\"/synthetic-tenant-admin\",\"origin\":{\"agencyIds\":[],\"humanAuthority\":\"PLATFORM\",\"humanIssuer\":\"https://identity.example/realms/synthetic\",\"humanSubject\":\"15a51abf-a6e7-4513-942a-d1ea209e00dd\",\"kind\":\"INVITATION\",\"provenance\":\"protected-approval-v1:b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31\",\"workflowId\":\"f09e4bce-89bd-40cb-86eb-2ed8cf481290\"},\"registrationKind\":\"TENANT_ADMIN\",\"tenantId\":\"7\"}",
+    "creationFingerprint": "3959f93dbb02e723a6b254559197fdafce291229c102dc351f2d16f7d4374105",
+    "groupId": "synthetic-tenant-admin-group",
+    "roleFingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "state": "COMMITTED",
+    "generation": 0,
+    "executionId": "0a5d2e1b-0391-4f89-b395-dea1668a6ef5",
+    "operation": "commit",
+    "commandDigest": "98b80547134dae5d0f10ac1a68d823b0d061cd95bca19894ba16ed3675b699b4"
+  },
+  "committedResponse": {
+    "attemptId": "15adb2ed-e40b-48ce-aa4a-49f7f2d71937",
+    "accountId": "19e3b2ee-dc47-4e06-b263-77ee717e12e4",
+    "state": "COMMITTED",
+    "execution": {
+      "executionId": "0a5d2e1b-0391-4f89-b395-dea1668a6ef5",
+      "generation": 0
+    },
+    "creationProof": "eyJhY2NvdW50SWQiOiIxOWUzYjJlZS1kYzQ3LTRlMDYtYjI2My03N2VlNzE3ZTEyZTQiLCJhdHRlbXB0SWQiOiIxNWFkYjJlZC1lNDBiLTQ4Y2UtYWE0YS00OWY3ZjJkNzE5MzciLCJjcmVhdGlvbkZpbmdlcnByaW50IjoiMzk1OWY5M2RiYjAyZTcyM2E2YjI1NDU1OTE5N2ZkYWZjZTI5MTIyOWMxMDJkYzM1MWYyZDE2ZjdkNDM3NDEwNSIsImluaXRpYWxHcm91cElkIjoic3ludGhldGljLXRlbmFudC1hZG1pbi1ncm91cCIsImluaXRpYWxSb2xlRmluZ2VycHJpbnQiOiJjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIiwib3duZXJDbGllbnQiOiJiYWNrZW5kLWFjY291bnQtY3JlYXRlIiwib3duZXJTdWJqZWN0IjoiMjU5ZDIzYTAtNWI2NS00NTU5LThjYzEtYWE1NjgzOTYxZDAyIiwicmVhbG1JZCI6Im5hdGl2ZS1zeW50aGV0aWMtcmVhbG0iLCJyZWFsbU5hbWUiOiJzeW50aGV0aWMiLCJzY29wZSI6eyJhcHByb3ZhbEJpbmRpbmciOnsiYWNjZXB0YW5jZUNsYWltIjp7ImF1dGhvcml6YXRpb25SZXZpc2lvbiI6MSwiY2xhaW1JZCI6IjA1YWUwZDQzLTY0ZjItNGIxNC04YzM4LTJjMTNiYzhlMGYwOSIsImludml0ZUlkIjoiNzMiLCJqb3VybmFsVmVyc2lvbiI6MSwid29ya2Zsb3dJZCI6ImYwOWU0YmNlLTg5YmQtNDBjYi04NmViLTJlZDhjZjQ4MTI5MCJ9LCJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXV0aG9yaXphdGlvblJldmlzaW9uIjoxLCJzY29wZURpZ2VzdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifSwiaW5pdGlhbEdyb3VwIjoiL3N5bnRoZXRpYy10ZW5hbnQtYWRtaW4iLCJvcmlnaW4iOnsiYWdlbmN5SWRzIjpbXSwiaHVtYW5BdXRob3JpdHkiOiJQTEFURk9STSIsImh1bWFuSXNzdWVyIjoiaHR0cHM6Ly9pZGVudGl0eS5leGFtcGxlL3JlYWxtcy9zeW50aGV0aWMiLCJodW1hblN1YmplY3QiOiIxNWE1MWFiZi1hNmU3LTQ1MTMtOTQyYS1kMWVhMjA5ZTAwZGQiLCJraW5kIjoiSU5WSVRBVElPTiIsInByb3ZlbmFuY2UiOiJwcm90ZWN0ZWQtYXBwcm92YWwtdjE6YjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwid29ya2Zsb3dJZCI6ImYwOWU0YmNlLTg5YmQtNDBjYi04NmViLTJlZDhjZjQ4MTI5MCJ9LCJyZWdpc3RyYXRpb25LaW5kIjoiVEVOQU5UX0FETUlOIiwidGVuYW50SWQiOiI3In0sInYiOjF9.LPr-O34JSITHRmD90DBPiMP_KSGgHEbjUTLtBRsFcSc",
+    "recoveryReceipt": null,
+    "terminalReceipt": "eyJhY2NvdW50SWQiOiIxOWUzYjJlZS1kYzQ3LTRlMDYtYjI2My03N2VlNzE3ZTEyZTQiLCJhdHRlbXB0SWQiOiIxNWFkYjJlZC1lNDBiLTQ4Y2UtYWE0YS00OWY3ZjJkNzE5MzciLCJjb21tYW5kRGlnZXN0IjoiOThiODA1NDcxMzRkYWU1ZDBmMTBhYzFhNjhkODIzYjBkMDYxY2Q5NWJjYTE5ODk0YmExNmVkMzY3NWI2OTliNCIsImNyZWF0aW9uRmluZ2VycHJpbnQiOiIzOTU5ZjkzZGJiMDJlNzIzYTZiMjU0NTU5MTk3ZmRhZmNlMjkxMjI5YzEwMmRjMzUxZjJkMTZmN2Q0Mzc0MTA1IiwiZXhlY3V0aW9uSWQiOiIwYTVkMmUxYi0wMzkxLTRmODktYjM5NS1kZWExNjY4YTZlZjUiLCJnZW5lcmF0aW9uIjowLCJncm91cElkIjoic3ludGhldGljLXRlbmFudC1hZG1pbi1ncm91cCIsIm9wZXJhdGlvbiI6ImNvbW1pdCIsIm93bmVyQ2xpZW50IjoiYmFja2VuZC1hY2NvdW50LWNyZWF0ZSIsIm93bmVyU3ViamVjdCI6IjI1OWQyM2EwLTViNjUtNDU1OS04Y2MxLWFhNTY4Mzk2MWQwMiIsInJlYWxtSWQiOiJuYXRpdmUtc3ludGhldGljLXJlYWxtIiwicm9sZUZpbmdlcnByaW50IjoiY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjYyIsInNjb3BlIjoie1wiYXBwcm92YWxCaW5kaW5nXCI6e1wiYWNjZXB0YW5jZUNsYWltXCI6e1wiYXV0aG9yaXphdGlvblJldmlzaW9uXCI6MSxcImNsYWltSWRcIjpcIjA1YWUwZDQzLTY0ZjItNGIxNC04YzM4LTJjMTNiYzhlMGYwOVwiLFwiaW52aXRlSWRcIjpcIjczXCIsXCJqb3VybmFsVmVyc2lvblwiOjEsXCJ3b3JrZmxvd0lkXCI6XCJmMDllNGJjZS04OWJkLTQwY2ItODZlYi0yZWQ4Y2Y0ODEyOTBcIn0sXCJhcHByb3ZhbElkXCI6XCJiOGVjZWEyMy0zODJlLTRjYTUtOGI3MC04YWIwZDhhYjFiMzFcIixcImF1dGhvcml6YXRpb25SZXZpc2lvblwiOjEsXCJzY29wZURpZ2VzdFwiOlwiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYVwifSxcImluaXRpYWxHcm91cFwiOlwiL3N5bnRoZXRpYy10ZW5hbnQtYWRtaW5cIixcIm9yaWdpblwiOntcImFnZW5jeUlkc1wiOltdLFwiaHVtYW5BdXRob3JpdHlcIjpcIlBMQVRGT1JNXCIsXCJodW1hbklzc3VlclwiOlwiaHR0cHM6Ly9pZGVudGl0eS5leGFtcGxlL3JlYWxtcy9zeW50aGV0aWNcIixcImh1bWFuU3ViamVjdFwiOlwiMTVhNTFhYmYtYTZlNy00NTEzLTk0MmEtZDFlYTIwOWUwMGRkXCIsXCJraW5kXCI6XCJJTlZJVEFUSU9OXCIsXCJwcm92ZW5hbmNlXCI6XCJwcm90ZWN0ZWQtYXBwcm92YWwtdjE6YjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxXCIsXCJ3b3JrZmxvd0lkXCI6XCJmMDllNGJjZS04OWJkLTQwY2ItODZlYi0yZWQ4Y2Y0ODEyOTBcIn0sXCJyZWdpc3RyYXRpb25LaW5kXCI6XCJURU5BTlRfQURNSU5cIixcInRlbmFudElkXCI6XCI3XCJ9Iiwic3RhdGUiOiJDT01NSVRURUQifQ.55bad140f3a12e367eec69c99feb92f2b869581ab905ef026a060f6611ebb848"
+  },
+  "createProofClaims": {
+    "iss": "userservice",
+    "aud": "oriso-protected-invitations",
+    "purpose": "ACCOUNT_PROVISIONING",
+    "operation": "protected-account.create",
+    "method": "PUT",
+    "actor": "ACCOUNT_CREATE",
+    "realm": "synthetic",
+    "target": "realm/native-synthetic-realm/protected-invitation/b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31/account-attempt/15adb2ed-e40b-48ce-aa4a-49f7f2d71937",
+    "taskClient": "backend-account-create",
+    "taskSubject": "259d23a0-5b65-4559-8cc1-aa5683961d02",
+    "payloadDigest": "3f890d6e42238faa886074231167be0e39089924ebd8266943b4c520a3e4a377",
+    "jti": "d620ba86-f83d-4dbf-96f7-f6bd8e4c1999",
+    "nonce": "d88ba0f7244d44a187bf3dbb01c360c8a",
+    "iat": 1893456000,
+    "exp": 1893456060
+  },
+  "createProof": "eyJhY3RvciI6IkFDQ09VTlRfQ1JFQVRFIiwiYXVkIjoib3Jpc28tcHJvdGVjdGVkLWludml0YXRpb25zIiwiZXhwIjoxODkzNDU2MDYwLCJpYXQiOjE4OTM0NTYwMDAsImlzcyI6InVzZXJzZXJ2aWNlIiwianRpIjoiZDYyMGJhODYtZjgzZC00ZGJmLTk2ZjctZjZiZDhlNGMxOTk5IiwibWV0aG9kIjoiUFVUIiwibm9uY2UiOiJkODhiYTBmNzI0NGQ0NGExODdiZjNkYmIwMWMzNjBjOGEiLCJvcGVyYXRpb24iOiJwcm90ZWN0ZWQtYWNjb3VudC5jcmVhdGUiLCJwYXlsb2FkRGlnZXN0IjoiM2Y4OTBkNmU0MjIzOGZhYTg4NjA3NDIzMTE2N2JlMGUzOTA4OTkyNGViZDgyNjY5NDNiNGM1MjBhM2U0YTM3NyIsInB1cnBvc2UiOiJBQ0NPVU5UX1BST1ZJU0lPTklORyIsInJlYWxtIjoic3ludGhldGljIiwidGFyZ2V0IjoicmVhbG0vbmF0aXZlLXN5bnRoZXRpYy1yZWFsbS9wcm90ZWN0ZWQtaW52aXRhdGlvbi9iOGVjZWEyMy0zODJlLTRjYTUtOGI3MC04YWIwZDhhYjFiMzEvYWNjb3VudC1hdHRlbXB0LzE1YWRiMmVkLWU0MGItNDhjZS1hYTRhLTQ5ZjdmMmQ3MTkzNyIsInRhc2tDbGllbnQiOiJiYWNrZW5kLWFjY291bnQtY3JlYXRlIiwidGFza1N1YmplY3QiOiIyNTlkMjNhMC01YjY1LTQ1NTktOGNjMS1hYTU2ODM5NjFkMDIifQ.K8BQeqf4omfaPT2tQLFPmIJdzJilfxfICaMtlk40UCM",
+  "ownedReadBody": {
+    "approvalReceipt": {
+      "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuerSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+      "bindingVersion": 3,
+      "profileVersion": 2,
+      "validUntil": "2030-01-02T03:04:05Z",
+      "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+      "receipt": "eyJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXBwcm92YWxSZXF1ZXN0RGlnZXN0IjoiZWRjOTNkNDQ4NWU0MWVlYWNjZDBiMmJiYzFlYTgxZjRlOTE5MjZjM2I4NjY5MmRlZmVkMmNiZTBhNGUzZDRjZiIsImJpbmRpbmdWZXJzaW9uIjozLCJpc3N1ZXJTdWJqZWN0IjoiMTVhNTFhYmYtYTZlNy00NTEzLTk0MmEtZDFlYTIwOWUwMGRkIiwicHJvZmlsZVZlcnNpb24iOjIsInNjb3BlRGlnZXN0IjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZhbGlkVW50aWwiOiIyMDMwLTAxLTAyVDAzOjA0OjA1WiJ9.89df4c7fd63f1baa3952ac76d840935201795c14f9dc8245c6a4a796d123d8be"
+    },
+    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "authorizationRevision": 1,
+    "creationFingerprint": "3959f93dbb02e723a6b254559197fdafce291229c102dc351f2d16f7d4374105",
+    "execution": {
+      "executionId": "0a5d2e1b-0391-4f89-b395-dea1668a6ef5",
+      "generation": 0
+    },
+    "accountId": "19e3b2ee-dc47-4e06-b263-77ee717e12e4",
+    "creationProof": "eyJhY2NvdW50SWQiOiIxOWUzYjJlZS1kYzQ3LTRlMDYtYjI2My03N2VlNzE3ZTEyZTQiLCJhdHRlbXB0SWQiOiIxNWFkYjJlZC1lNDBiLTQ4Y2UtYWE0YS00OWY3ZjJkNzE5MzciLCJjcmVhdGlvbkZpbmdlcnByaW50IjoiMzk1OWY5M2RiYjAyZTcyM2E2YjI1NDU1OTE5N2ZkYWZjZTI5MTIyOWMxMDJkYzM1MWYyZDE2ZjdkNDM3NDEwNSIsImluaXRpYWxHcm91cElkIjoic3ludGhldGljLXRlbmFudC1hZG1pbi1ncm91cCIsImluaXRpYWxSb2xlRmluZ2VycHJpbnQiOiJjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIiwib3duZXJDbGllbnQiOiJiYWNrZW5kLWFjY291bnQtY3JlYXRlIiwib3duZXJTdWJqZWN0IjoiMjU5ZDIzYTAtNWI2NS00NTU5LThjYzEtYWE1NjgzOTYxZDAyIiwicmVhbG1JZCI6Im5hdGl2ZS1zeW50aGV0aWMtcmVhbG0iLCJyZWFsbU5hbWUiOiJzeW50aGV0aWMiLCJzY29wZSI6eyJhcHByb3ZhbEJpbmRpbmciOnsiYWNjZXB0YW5jZUNsYWltIjp7ImF1dGhvcml6YXRpb25SZXZpc2lvbiI6MSwiY2xhaW1JZCI6IjA1YWUwZDQzLTY0ZjItNGIxNC04YzM4LTJjMTNiYzhlMGYwOSIsImludml0ZUlkIjoiNzMiLCJqb3VybmFsVmVyc2lvbiI6MSwid29ya2Zsb3dJZCI6ImYwOWU0YmNlLTg5YmQtNDBjYi04NmViLTJlZDhjZjQ4MTI5MCJ9LCJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXV0aG9yaXphdGlvblJldmlzaW9uIjoxLCJzY29wZURpZ2VzdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifSwiaW5pdGlhbEdyb3VwIjoiL3N5bnRoZXRpYy10ZW5hbnQtYWRtaW4iLCJvcmlnaW4iOnsiYWdlbmN5SWRzIjpbXSwiaHVtYW5BdXRob3JpdHkiOiJQTEFURk9STSIsImh1bWFuSXNzdWVyIjoiaHR0cHM6Ly9pZGVudGl0eS5leGFtcGxlL3JlYWxtcy9zeW50aGV0aWMiLCJodW1hblN1YmplY3QiOiIxNWE1MWFiZi1hNmU3LTQ1MTMtOTQyYS1kMWVhMjA5ZTAwZGQiLCJraW5kIjoiSU5WSVRBVElPTiIsInByb3ZlbmFuY2UiOiJwcm90ZWN0ZWQtYXBwcm92YWwtdjE6YjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwid29ya2Zsb3dJZCI6ImYwOWU0YmNlLTg5YmQtNDBjYi04NmViLTJlZDhjZjQ4MTI5MCJ9LCJyZWdpc3RyYXRpb25LaW5kIjoiVEVOQU5UX0FETUlOIiwidGVuYW50SWQiOiI3In0sInYiOjF9.LPr-O34JSITHRmD90DBPiMP_KSGgHEbjUTLtBRsFcSc"
+  }
+}

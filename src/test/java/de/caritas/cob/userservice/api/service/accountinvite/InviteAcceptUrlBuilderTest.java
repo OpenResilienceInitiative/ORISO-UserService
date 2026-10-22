@@ -37,10 +37,14 @@ class InviteAcceptUrlBuilderTest {
 
   @Test
   void buildAcceptUrl_Should_targetPublicAppRoute_ForOtherRoles() {
-    assertThat(builder.buildAcceptUrl(AccountInviteTargetRole.PLATFORM_ADMIN, "t"))
-        .isEqualTo("https://app.example.org/account-invite/t");
     assertThat(builder.buildAcceptUrl(AccountInviteTargetRole.ADVICE_SEEKER, "t"))
         .isEqualTo("https://app.example.org/account-invite/t");
+  }
+
+  @Test
+  void platformAdministratorUsesThePublicAdminAcceptanceRoute() {
+    assertThat(builder.buildAcceptUrl(AccountInviteTargetRole.PLATFORM_ADMIN, "t"))
+        .isEqualTo("https://admin.example.org/admin/tenant-onboarding/t");
   }
 
   @Test
@@ -54,6 +58,8 @@ class InviteAcceptUrlBuilderTest {
         .isEqualTo("https://admin.example.org/admin/tenant-onboarding/tok");
     assertThat(slashy.buildAcceptUrl(AccountInviteTargetRole.COUNSELLOR, "tok"))
         .isEqualTo("https://admin.example.org/admin/counsellor-onboarding/tok");
+    assertThat(slashy.buildAcceptUrl(AccountInviteTargetRole.PLATFORM_ADMIN, "tok"))
+        .isEqualTo("https://admin.example.org/admin/tenant-onboarding/tok");
   }
 
   /**

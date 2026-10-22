@@ -10,9 +10,8 @@ import org.springframework.stereotype.Component;
  * invite's role and configuration — never by the calling client (TEN-INV-U6, #890):
  *
  * <ul>
- *   <li>{@code TENANT_ADMIN} → the PUBLIC ADMIN onboarding route. The tenant is an organisation,
- *       not an app user — the login belongs to the tenant admin and the flow completes on the Admin
- *       panel's public page ({@code /admin/tenant-onboarding/{token}}, Admin U8, #571).
+ *   <li>{@code TENANT_ADMIN} and {@code PLATFORM_ADMIN} → the PUBLIC ADMIN onboarding route ({@code
+ *       /admin/tenant-onboarding/{token}}, Admin U8, #571).
  *   <li>{@code COUNSELLOR} and {@code AGENCY_ADMIN} → the PUBLIC ADMIN counsellor onboarding wizard
  *       ({@code /admin/counsellor-onboarding/{token}}, #997) — product decision 2026-08-12:
  *       counsellor onboarding runs step-by-step in the Admin SPA instead of the generic App
@@ -51,7 +50,8 @@ public class InviteAcceptUrlBuilder {
 
   /** Builds the absolute accept URL for the given role's public frontend route. */
   public String buildAcceptUrl(AccountInviteTargetRole targetRole, String rawToken) {
-    if (targetRole == AccountInviteTargetRole.TENANT_ADMIN) {
+    if (targetRole == AccountInviteTargetRole.TENANT_ADMIN
+        || targetRole == AccountInviteTargetRole.PLATFORM_ADMIN) {
       return adminFrontendBaseUrl + ADMIN_TENANT_ONBOARDING_PATH + "/" + rawToken;
     }
     if (targetRole == AccountInviteTargetRole.COUNSELLOR
