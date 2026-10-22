@@ -14,13 +14,9 @@ import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
-import org.springframework.beans.factory.ObjectProvider;
-import java.util.UUID;
-import java.util.concurrent.atomic.AtomicReference;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
+import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
@@ -41,6 +37,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -50,7 +48,9 @@ import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
@@ -695,24 +695,34 @@ class MagicLinkLoginServiceTest {
     when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
     var seen = new AtomicReference<MagicLinkLoginService.ClaimedMagicLink>();
     var session = new IdentitySession("access", 300, 600, "refresh", "Bearer", "session", "openid");
-    when(identitySessionExchange.exchangeMagicLink(any())).thenAnswer(invocation -> {
-      MagicLinkLoginService.ClaimedMagicLink claim = invocation.getArgument(0);
-      seen.set(claim);
-      claim.requireCurrent();
-      assertThat(claim.targetUserId()).isEqualTo(stored.subjectId());
-      assertThat(claim.workflowId()).isEqualTo(stored.workflowId());
-      assertThat(claim.tenantId()).isEqualTo(42L);
-      assertThat(claim.expiresAt()).isEqualTo(stored.expiresAt());
-      assertThat(claim.claimDigest()).isEqualTo(stored.capabilityDigest());
-      assertThat(claim.toString()).doesNotContain(stored.subjectId(), stored.capabilityDigest());
-      var wrongThread = new AtomicReference<Throwable>();
-      Thread thread = new Thread(() -> {
-        try { claim.requireCurrent(); } catch (Throwable failure) { wrongThread.set(failure); }
-      });
-      thread.start(); thread.join(2000);
-      assertThat(wrongThread.get()).isInstanceOf(IllegalStateException.class);
-      return Optional.of(session);
-    });
+    when(identitySessionExchange.exchangeMagicLink(any()))
+        .thenAnswer(
+            invocation -> {
+              MagicLinkLoginService.ClaimedMagicLink claim = invocation.getArgument(0);
+              seen.set(claim);
+              claim.requireCurrent();
+              assertThat(claim.targetUserId()).isEqualTo(stored.subjectId());
+              assertThat(claim.workflowId()).isEqualTo(stored.workflowId());
+              assertThat(claim.tenantId()).isEqualTo(42L);
+              assertThat(claim.expiresAt()).isEqualTo(stored.expiresAt());
+              assertThat(claim.claimDigest()).isEqualTo(stored.capabilityDigest());
+              assertThat(claim.toString())
+                  .doesNotContain(stored.subjectId(), stored.capabilityDigest());
+              var wrongThread = new AtomicReference<Throwable>();
+              Thread thread =
+                  new Thread(
+                      () -> {
+                        try {
+                          claim.requireCurrent();
+                        } catch (Throwable failure) {
+                          wrongThread.set(failure);
+                        }
+                      });
+              thread.start();
+              thread.join(2000);
+              assertThat(wrongThread.get()).isInstanceOf(IllegalStateException.class);
+              return Optional.of(session);
+            });
     assertThat(magicLinkLoginService.consumeMagicLink("scoped-token")).contains(session);
     org.assertj.core.api.Assertions.assertThatThrownBy(() -> seen.get().requireCurrent())
         .isInstanceOf(IllegalStateException.class);
@@ -723,10 +733,27 @@ class MagicLinkLoginServiceTest {
   @Test
   void fiveActorsNeverTreatsLegacyOrMalformedClaimMetadataAsScopedAuthority() {
     when(taskActors.isEnabled()).thenReturn(true);
-    for (var stored : List.of(validClaim("legacy-user"),
-        new OneTimeTokenStore.TokenClaim("not-a-uuid", Instant.now().plusSeconds(60), UUID.randomUUID(), 42L, "b".repeat(64)),
-        new OneTimeTokenStore.TokenClaim(UUID.randomUUID().toString(), Instant.now().minusSeconds(1), UUID.randomUUID(), 42L, "b".repeat(64)),
-        new OneTimeTokenStore.TokenClaim(UUID.randomUUID().toString(), Instant.now().plusSeconds(60), UUID.randomUUID(), -1L, "b".repeat(64)))) {
+    for (var stored :
+        List.of(
+            validClaim("legacy-user"),
+            new OneTimeTokenStore.TokenClaim(
+                "not-a-uuid",
+                Instant.now().plusSeconds(60),
+                UUID.randomUUID(),
+                42L,
+                "b".repeat(64)),
+            new OneTimeTokenStore.TokenClaim(
+                UUID.randomUUID().toString(),
+                Instant.now().minusSeconds(1),
+                UUID.randomUUID(),
+                42L,
+                "b".repeat(64)),
+            new OneTimeTokenStore.TokenClaim(
+                UUID.randomUUID().toString(),
+                Instant.now().plusSeconds(60),
+                UUID.randomUUID(),
+                -1L,
+                "b".repeat(64)))) {
       when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
       assertThat(magicLinkLoginService.consumeMagicLink("scoped-token")).isEmpty();
     }
@@ -739,7 +766,8 @@ class MagicLinkLoginServiceTest {
     when(taskActors.isEnabled()).thenReturn(true);
     var stored = scopedClaim(42L);
     when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
-    when(identitySessionExchange.exchangeMagicLink(any())).thenThrow(new IllegalStateException("private"));
+    when(identitySessionExchange.exchangeMagicLink(any()))
+        .thenThrow(new IllegalStateException("private"));
     assertThat(magicLinkLoginService.consumeMagicLink("scoped-token")).isEmpty();
     verify(oneTimeTokenStore).restore("magic-login", "scoped-token", stored, false);
     verify(identitySessionExchange, never()).exchangeForUser(anyString());
@@ -748,12 +776,15 @@ class MagicLinkLoginServiceTest {
   @Test
   void fiveActorsPreservesAnUnassignedTenantWithoutInventingZero() {
     when(taskActors.isEnabled()).thenReturn(true);
-    when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(scopedClaim(null)));
-    when(identitySessionExchange.exchangeMagicLink(any())).thenAnswer(invocation -> {
-      MagicLinkLoginService.ClaimedMagicLink claim = invocation.getArgument(0);
-      assertThat(claim.tenantId()).isNull();
-      return Optional.empty();
-    });
+    when(oneTimeTokenStore.claim("magic-login", "scoped-token"))
+        .thenReturn(Optional.of(scopedClaim(null)));
+    when(identitySessionExchange.exchangeMagicLink(any()))
+        .thenAnswer(
+            invocation -> {
+              MagicLinkLoginService.ClaimedMagicLink claim = invocation.getArgument(0);
+              assertThat(claim.tenantId()).isNull();
+              return Optional.empty();
+            });
     assertThat(magicLinkLoginService.consumeMagicLink("scoped-token")).isEmpty();
     verify(identitySessionExchange).exchangeMagicLink(any());
     verify(identitySessionExchange, never()).exchangeForUser(anyString());
@@ -765,7 +796,9 @@ class MagicLinkLoginServiceTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     try {
       assertThat(magicLinkLoginService.consumeMagicLink("scoped-token")).isEmpty();
-    } finally { TransactionSynchronizationManager.clear(); }
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
     verifyNoInteractions(oneTimeTokenStore, identitySessionExchange);
   }
 
@@ -778,7 +811,8 @@ class MagicLinkLoginServiceTest {
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
     stubReadyMail();
     try (MockedStatic<Transport> transport = mockStatic(Transport.class)) {
-      assertThat(magicLinkLoginService.requestMagicLink("testuser")).isEqualTo(MagicLinkRequestResult.ACCEPTED);
+      assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+          .isEqualTo(MagicLinkRequestResult.ACCEPTED);
       transport.verify(() -> Transport.send(any(Message.class)));
     }
     var token = org.mockito.ArgumentCaptor.forClass(String.class);
@@ -787,15 +821,29 @@ class MagicLinkLoginServiceTest {
     assertThat(stored.getValue().subjectId()).isEqualTo(user.getUserId());
     assertThat(stored.getValue().tenantId()).isEqualTo(user.getTenantId());
     assertThat(stored.getValue().workflowId()).isNotNull();
-    assertThat(stored.getValue().expiresAt()).isAfter(Instant.now()).isBefore(Instant.now().plusSeconds(901));
-    assertThat(stored.getValue().capabilityDigest()).isEqualTo(new AccountLifecycleCodec(new byte[32]).digest(
-        "magic-link-capability/v1", Map.of("workflowId", stored.getValue().workflowId().toString(), "token", token.getValue())));
-    verify(oneTimeTokenStore, never()).store(anyString(), anyString(), anyString(), any(), anyBoolean());
+    assertThat(stored.getValue().expiresAt())
+        .isAfter(Instant.now())
+        .isBefore(Instant.now().plusSeconds(901));
+    assertThat(stored.getValue().capabilityDigest())
+        .isEqualTo(
+            new AccountLifecycleCodec(new byte[32])
+                .digest(
+                    "magic-link-capability/v1",
+                    Map.of(
+                        "workflowId",
+                        stored.getValue().workflowId().toString(),
+                        "token",
+                        token.getValue())));
+    verify(oneTimeTokenStore, never())
+        .store(anyString(), anyString(), anyString(), any(), anyBoolean());
   }
 
   private static OneTimeTokenStore.TokenClaim scopedClaim(Long tenant) {
-    return new OneTimeTokenStore.TokenClaim("11111111-1111-4111-8111-111111111111",
+    return new OneTimeTokenStore.TokenClaim(
+        "11111111-1111-4111-8111-111111111111",
         Instant.now().plusSeconds(90).truncatedTo(java.time.temporal.ChronoUnit.SECONDS),
-        UUID.randomUUID(), tenant, "b".repeat(64));
+        UUID.randomUUID(),
+        tenant,
+        "b".repeat(64));
   }
 }

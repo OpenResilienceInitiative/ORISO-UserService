@@ -1,8 +1,8 @@
 package de.caritas.cob.userservice.api.service.auth;
 
 import java.time.Instant;
-import java.util.UUID;
 import java.util.Optional;
+import java.util.UUID;
 
 /** Shared, fail-closed storage for short-lived, single-use authentication tokens. */
 public interface OneTimeTokenStore {
@@ -21,11 +21,19 @@ public interface OneTimeTokenStore {
     throw new IllegalStateException("Scoped magic-link storage unavailable");
   }
 
-  record TokenClaim(String subjectId, Instant expiresAt, UUID workflowId,
-                    Long tenantId, String capabilityDigest) {
+  record TokenClaim(
+      String subjectId,
+      Instant expiresAt,
+      UUID workflowId,
+      Long tenantId,
+      String capabilityDigest) {
     public TokenClaim(String subjectId, Instant expiresAt) {
       this(subjectId, expiresAt, null, null, null);
     }
-    @Override public String toString() { return "TokenClaim[redacted]"; }
+
+    @Override
+    public String toString() {
+      return "TokenClaim[redacted]";
+    }
   }
 }

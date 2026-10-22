@@ -842,8 +842,11 @@ public final class AccountLifecycleCodec {
 
   /** Fixed claimed-session wire; producers still require a live private claim and checked actor. */
   public String magicLinkProof(
-      de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker.VerifiedMaintenanceToken actor,
-      String realmName, String realmId, JsonNode command) {
+      de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker.VerifiedMaintenanceToken
+          actor,
+      String realmName,
+      String realmId,
+      JsonNode command) {
     return "";
   }
 

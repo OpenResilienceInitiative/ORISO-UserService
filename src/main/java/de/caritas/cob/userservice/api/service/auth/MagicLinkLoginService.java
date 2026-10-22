@@ -4,10 +4,9 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
-import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
-import org.springframework.beans.factory.ObjectProvider;
+import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
@@ -35,6 +34,7 @@ import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -59,13 +59,40 @@ public class MagicLinkLoginService {
   /** A public subject or saved TokenClaim never constructs this live workflow handle. */
   public static final class ClaimedMagicLink {
     private ClaimedMagicLink(OneTimeTokenStore.TokenClaim claim) {}
-    public void requireCurrent() { throw new IllegalStateException("Claimed magic link unavailable"); }
-    public String targetUserId() { requireCurrent(); return null; }
-    public UUID workflowId() { requireCurrent(); return null; }
-    public Long tenantId() { requireCurrent(); return null; }
-    public Instant expiresAt() { requireCurrent(); return null; }
-    public String claimDigest() { requireCurrent(); return null; }
-    @Override public String toString() { return "ClaimedMagicLink[redacted]"; }
+
+    public void requireCurrent() {
+      throw new IllegalStateException("Claimed magic link unavailable");
+    }
+
+    public String targetUserId() {
+      requireCurrent();
+      return null;
+    }
+
+    public UUID workflowId() {
+      requireCurrent();
+      return null;
+    }
+
+    public Long tenantId() {
+      requireCurrent();
+      return null;
+    }
+
+    public Instant expiresAt() {
+      requireCurrent();
+      return null;
+    }
+
+    public String claimDigest() {
+      requireCurrent();
+      return null;
+    }
+
+    @Override
+    public String toString() {
+      return "ClaimedMagicLink[redacted]";
+    }
   }
 
   @Value("${identity.email-dummy-suffix:@beratungcaritas.de}")
