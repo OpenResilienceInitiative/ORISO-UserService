@@ -208,7 +208,9 @@ public final class JdbcProtectedAccountCreation {
         });
   }
 
-  /** Read existing saved recovery identity only; cannot allocate a new generation inside release. */
+  /**
+   * Read existing saved recovery identity only; cannot allocate a new generation inside release.
+   */
   PreparedRecovery recoveryWithinOwner(
       JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical, long expectedGeneration) {
     throw unavailable();
