@@ -29,7 +29,10 @@ public interface ExistingSetupPasswordClaims {
     }
   }
 
-  /** Joins the caller's exact owning SQL transaction; never starts a separate transaction. */
+  /**
+   * Joins the caller's exact owning SQL transaction. An exact acknowledged outcome is returned as
+   * historical data only; it cannot pass requireCurrentWithinOwner or authorize another effect.
+   */
   Claim claimWithinOwner(Binding binding, String completeKeyedRequestDigest);
 
   void requireCurrentWithinOwner(Claim claim);

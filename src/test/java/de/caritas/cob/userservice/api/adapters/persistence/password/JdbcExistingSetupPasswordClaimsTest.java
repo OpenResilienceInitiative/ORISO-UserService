@@ -144,6 +144,26 @@ class JdbcExistingSetupPasswordClaimsTest {
         assertDoesNotThrow(
             () -> f.tx.execute(status -> afterDeadline.claimWithinOwner(f.binding, DIGEST)));
     assertEquals(first, historical);
+    var unfinished = new Fixture();
+    var expiredUnfinished =
+        new JdbcExistingSetupPasswordClaims(
+            unfinished.jdbc, Clock.fixed(Instant.parse("2026-10-24T00:00:00Z"), ZoneOffset.UTC));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            unfinished.tx.execute(
+                status -> expiredUnfinished.claimWithinOwner(unfinished.binding, DIGEST)));
+    assertEquals(
+        0,
+        unfinished.jdbc.queryForObject(
+            "select count(*) from identity_setup_password_claim", Integer.class));
+    unfinished.claim(DIGEST);
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            unfinished.tx.execute(
+                status -> expiredUnfinished.claimWithinOwner(unfinished.binding, DIGEST)));
+    assertEquals("FROZEN", unfinished.journalPhase());
     assertThrows(
         IllegalStateException.class,
         () -> f.tx.execute(status -> afterDeadline.claimWithinOwner(f.binding, CHANGED)));

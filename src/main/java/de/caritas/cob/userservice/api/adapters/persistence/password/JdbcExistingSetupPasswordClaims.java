@@ -38,10 +38,20 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
         () -> {
           requireBinding(binding);
           require(digest(completeKeyedRequestDigest));
-          require(binding.expiresAt().isAfter(LocalDateTime.now(clock)));
           Invite invite = lockInvite(binding);
-          require("EMAIL_SENT".equals(invite.status()) && invite.hasVerifier());
           List<Saved> rows = lockSaved(binding.inviteId());
+          if ("ACCEPTED".equals(invite.status()) && "COMPLETED".equals(invite.phase())) {
+            require(rows.size() == 1);
+            Saved saved = rows.getFirst();
+            require(
+                "ACKNOWLEDGED".equals(saved.status())
+                    && saved.bindingMatches(binding)
+                    && saved.requestDigest().equals(completeKeyedRequestDigest));
+            // Historical data only: requireCurrentWithinOwner still refuses this terminal row.
+            return saved.claim(binding);
+          }
+          require(binding.expiresAt().isAfter(LocalDateTime.now(clock)));
+          require("EMAIL_SENT".equals(invite.status()) && invite.hasVerifier());
           if (!rows.isEmpty()) {
             Saved saved = rows.getFirst();
             require(saved.bindingMatches(binding));

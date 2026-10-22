@@ -241,6 +241,9 @@ public class ExistingAccountSetupService {
       throw new ScopedIdentityCommandRequiredException();
     }
     CausalTarget target = inTransaction(() -> claimCausal(rawToken, chosenPassword));
+    if (target.completed()) {
+      return;
+    }
     boolean unchanged;
     try {
       unchanged =
@@ -315,10 +318,12 @@ public class ExistingAccountSetupService {
         invites
             .findByTokenHash(AccountInviteService.hash(rawToken))
             .orElseThrow(() -> new NotFoundException("Account setup link not found"));
-    if (invite.getPurpose() != SETUP || invite.getStatus() != SENT) {
+    boolean completed = invite.getStatus() == AccountInviteStatus.ACCEPTED;
+    if (invite.getPurpose() != SETUP || (invite.getStatus() != SENT && !completed)) {
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.NOT_ACTIVE);
     }
-    if (invite.getExpiresAt() == null || !invite.getExpiresAt().isAfter(LocalDateTime.now())) {
+    if (invite.getExpiresAt() == null
+        || (!completed && !invite.getExpiresAt().isAfter(LocalDateTime.now()))) {
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
     if (isBlank(invite.getProvisionedUserId())
@@ -326,7 +331,7 @@ public class ExistingAccountSetupService {
         || (multitenancyEnabled && invite.getTenantId() == null)
         || invite.getTargetRole() == null
         || isBlank(invite.getRecipientEmail())
-        || isBlank(invite.getInitialPasswordVerifier())) {
+        || (!completed && isBlank(invite.getInitialPasswordVerifier()))) {
       throw new BadRequestException("Account setup binding is incomplete");
     }
     if (invite.getTargetRole() != AccountInviteTargetRole.TENANT_ADMIN
@@ -356,7 +361,7 @@ public class ExistingAccountSetupService {
             saved.email());
     // Pure keyed binding only; this port operation cannot issue a bearer or call the provider.
     String digest = passwords.existingSetupRequestDigest(binding, chosenPassword);
-    return new CausalTarget(saved, setupPasswordClaims.claimWithinOwner(binding, digest));
+    return new CausalTarget(saved, setupPasswordClaims.claimWithinOwner(binding, digest), completed);
   }
 
   private void releaseDefinitive(CausalTarget target, String reason) {
@@ -400,7 +405,7 @@ public class ExistingAccountSetupService {
     }
   }
 
-  private record CausalTarget(SetupTarget saved, Claim claim) {
+  private record CausalTarget(SetupTarget saved, Claim claim, boolean completed) {
     @Override
     public String toString() {
       return "ExistingSetupCausalTarget[redacted]";
