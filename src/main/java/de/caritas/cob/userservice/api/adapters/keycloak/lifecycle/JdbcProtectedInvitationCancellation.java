@@ -170,7 +170,8 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
 
   @Override
   public List<Long> pendingInviteIds(int limit) {
-    if (limit < 1 || limit > 100) throw new IllegalArgumentException("Invalid protected recovery page");
+    if (limit < 1 || limit > 100)
+      throw new IllegalArgumentException("Invalid protected recovery page");
     if (TransactionSynchronizationManager.isActualTransactionActive())
       throw new IllegalStateException("Protected recovery discovery requires completed local SQL");
     return jdbc.queryForList(
@@ -181,7 +182,9 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
             + " OR (c.state='ACKNOWLEDGED' AND i.status='SUPERSEDED'"
             + " AND i.superseded_by_invite_id IS NULL AND i.tenant_id_reservation_token IS NOT NULL AND i.expires_at<=?))"
             + " ORDER BY COALESCE(c.updated_at,i.update_date,i.expires_at),i.id LIMIT ?",
-        Long.class,Timestamp.from(clock.instant()),limit);
+        Long.class,
+        Timestamp.from(clock.instant()),
+        limit);
   }
 
   private VerifiedRestriction checkedAck(Row row) {
