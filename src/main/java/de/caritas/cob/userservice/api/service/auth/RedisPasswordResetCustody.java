@@ -17,8 +17,9 @@ final class RedisPasswordResetCustody {
   private static final Duration RECOVERY_RETENTION = Duration.ofDays(7);
   private static final ObjectMapper JSON =
       new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
-  private static final DefaultRedisScript<Long> STORE = new DefaultRedisScript<>(
-      """
+  private static final DefaultRedisScript<Long> STORE =
+      new DefaultRedisScript<>(
+          """
       if redis.call('EXISTS', KEYS[1]) == 1 or redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
       local priorKey = redis.call('GET', KEYS[3])
       if priorKey then
@@ -34,9 +35,11 @@ final class RedisPasswordResetCustody {
       redis.call('SET', KEYS[2], KEYS[1], 'PXAT', ARGV[2])
       redis.call('SET', KEYS[3], KEYS[1], 'PXAT', ARGV[2])
       return 1
-      """, Long.class);
-  private static final DefaultRedisScript<Long> DELIVERY = new DefaultRedisScript<>(
-      """
+      """,
+          Long.class);
+  private static final DefaultRedisScript<Long> DELIVERY =
+      new DefaultRedisScript<>(
+          """
       local raw = redis.call('GET', KEYS[1])
       if not raw then return 0 end
       local state = cjson.decode(raw)
@@ -47,9 +50,11 @@ final class RedisPasswordResetCustody {
       state.delivery = ARGV[2]
       redis.call('SET', KEYS[1], cjson.encode(state), 'KEEPTTL')
       return 1
-      """, Long.class);
-  private static final DefaultRedisScript<String> CLAIM = new DefaultRedisScript<>(
-      """
+      """,
+          Long.class);
+  private static final DefaultRedisScript<String> CLAIM =
+      new DefaultRedisScript<>(
+          """
       local flow = redis.call('GET', KEYS[1])
       if not flow then return nil end
       local raw = redis.call('GET', flow)
@@ -72,9 +77,11 @@ final class RedisPasswordResetCustody {
       redis.call('SET', flow, changed, 'PXAT', state.recoverUntil)
       redis.call('PEXPIREAT', KEYS[1], state.recoverUntil)
       return changed
-      """, String.class);
-  private static final DefaultRedisScript<Long> FINISH = new DefaultRedisScript<>(
-      """
+      """,
+          String.class);
+  private static final DefaultRedisScript<Long> FINISH =
+      new DefaultRedisScript<>(
+          """
       local raw = redis.call('GET', KEYS[1])
       if not raw then return 0 end
       local state = cjson.decode(raw)
@@ -85,12 +92,14 @@ final class RedisPasswordResetCustody {
       state.status = ARGV[5]
       redis.call('SET', KEYS[1], cjson.encode(state), 'KEEPTTL')
       return 1
-      """, Long.class);
+      """,
+          Long.class);
   private final StringRedisTemplate redis;
   private final String prefix;
 
   RedisPasswordResetCustody(StringRedisTemplate redis, String prefix) {
-    this.redis = redis; this.prefix = prefix + "password-reset:causal:";
+    this.redis = redis;
+    this.prefix = prefix + "password-reset:causal:";
   }
 
   void store(String token, PasswordResetBinding binding) {
@@ -98,13 +107,23 @@ final class RedisPasswordResetCustody {
     long now = Instant.now().toEpochMilli(), expiry = binding.expiresAt().toEpochMilli();
     if (expiry <= now || expiry > now + Duration.ofMinutes(120).toMillis()) throw invalid();
     var state = new TreeMap<String, Object>();
-    state.put("binding", original); state.put("claimId", UUID.randomUUID().toString());
-    state.put("version", 1); state.put("requestDigest", ""); state.put("status", "ISSUED");
-    state.put("delivery", "PENDING"); state.put("expires", expiry);
+    state.put("binding", original);
+    state.put("claimId", UUID.randomUUID().toString());
+    state.put("version", 1);
+    state.put("requestDigest", "");
+    state.put("status", "ISSUED");
+    state.put("delivery", "PENDING");
+    state.put("expires", expiry);
     state.put("recoverUntil", expiry + RECOVERY_RETENTION.toMillis());
-    state.put("locator", locator(token)); state.put("subjectIndex", subject(binding.subjectId()));
-    if (!Long.valueOf(1).equals(redis.execute(STORE,
-        List.of(flow(binding), locator(token), subject(binding.subjectId())), write(state), Long.toString(expiry)))) throw invalid();
+    state.put("locator", locator(token));
+    state.put("subjectIndex", subject(binding.subjectId()));
+    if (!Long.valueOf(1)
+        .equals(
+            redis.execute(
+                STORE,
+                List.of(flow(binding), locator(token), subject(binding.subjectId())),
+                write(state),
+                Long.toString(expiry)))) throw invalid();
   }
 
   Optional<PasswordResetBinding> issuance(String token) {
@@ -119,7 +138,10 @@ final class RedisPasswordResetCustody {
 
   void delivery(PasswordResetBinding binding, String delivery) {
     if (!Set.of("ATTEMPTED", "SENT", "UNKNOWN").contains(delivery)
-        || !Long.valueOf(1).equals(redis.execute(DELIVERY, List.of(flow(binding)), encodeBinding(binding), delivery))) throw invalid();
+        || !Long.valueOf(1)
+            .equals(
+                redis.execute(DELIVERY, List.of(flow(binding)), encodeBinding(binding), delivery)))
+      throw invalid();
   }
 
   Optional<PasswordResetClaim> claim(String token, String digest) {
@@ -133,81 +155,205 @@ final class RedisPasswordResetCustody {
     String raw = redis.opsForValue().get(flow(claim.binding()));
     if (raw == null) throw invalid();
     PasswordResetClaim actual = claim(state(raw));
-    if (!actual.binding().equals(claim.binding()) || !actual.claimId().equals(claim.claimId())
-        || actual.version() != claim.version() || !actual.requestDigest().equals(claim.requestDigest())
+    if (!actual.binding().equals(claim.binding())
+        || !actual.claimId().equals(claim.claimId())
+        || actual.version() != claim.version()
+        || !actual.requestDigest().equals(claim.requestDigest())
         || !Set.of("FROZEN", "ACKNOWLEDGED").contains(actual.status())) throw invalid();
   }
 
   void finish(PasswordResetClaim claim, boolean accepted) {
     validateClaim(claim);
-    if (!Long.valueOf(1).equals(redis.execute(FINISH, List.of(flow(claim.binding())),
-        encodeBinding(claim.binding()), claim.claimId().toString(), Long.toString(claim.version()),
-        claim.requestDigest(), accepted ? "ACKNOWLEDGED" : "REJECTED"))) throw invalid();
+    if (!Long.valueOf(1)
+        .equals(
+            redis.execute(
+                FINISH,
+                List.of(flow(claim.binding())),
+                encodeBinding(claim.binding()),
+                claim.claimId().toString(),
+                Long.toString(claim.version()),
+                claim.requestDigest(),
+                accepted ? "ACKNOWLEDGED" : "REJECTED"))) throw invalid();
   }
 
   private static void validateClaim(PasswordResetClaim claim) {
     if (claim == null || claim.claimId() == null || claim.version() <= 0) throw invalid();
-    encodeBinding(claim.binding()); digest(claim.requestDigest());
+    encodeBinding(claim.binding());
+    digest(claim.requestDigest());
   }
 
   private PasswordResetClaim claim(JsonNode state) {
-    return new PasswordResetClaim(binding(text(state, "binding")), uuid(text(state, "claimId")),
-        positive(state, "version"), checkedDigest(text(state, "requestDigest")), text(state, "status"), text(state, "delivery"));
+    return new PasswordResetClaim(
+        binding(text(state, "binding")),
+        uuid(text(state, "claimId")),
+        positive(state, "version"),
+        checkedDigest(text(state, "requestDigest")),
+        text(state, "status"),
+        text(state, "delivery"));
   }
 
   private static String encodeBinding(PasswordResetBinding b) {
-    if (b == null || b.workflowId() == null || b.expiresAt() == null
-        || b.expiresAt().toEpochMilli() <= 0 || b.tenantId() != null && b.tenantId() < 0
-        || !Set.of("USER", "CONSULTANT", "PLATFORM_ADMIN", "TENANT_ADMIN", "AGENCY_ADMIN").contains(b.accountKind())) throw invalid();
-    uuid(b.subjectId()); bounded(b.username(), 255); bounded(b.accountVersion(), 512); digest(b.recipientDigest());
+    if (b == null
+        || b.workflowId() == null
+        || b.expiresAt() == null
+        || b.expiresAt().toEpochMilli() <= 0
+        || b.tenantId() != null && b.tenantId() < 0
+        || !Set.of("USER", "CONSULTANT", "PLATFORM_ADMIN", "TENANT_ADMIN", "AGENCY_ADMIN")
+            .contains(b.accountKind())) throw invalid();
+    uuid(b.subjectId());
+    bounded(b.username(), 255);
+    bounded(b.accountVersion(), 512);
+    digest(b.recipientDigest());
     var value = new TreeMap<String, Object>();
-    value.put("workflowId", b.workflowId().toString()); value.put("subjectId", b.subjectId());
-    value.put("tenantId", b.tenantId()); value.put("username", b.username());
-    value.put("accountKind", b.accountKind()); value.put("accountVersion", b.accountVersion());
-    value.put("recipientDigest", b.recipientDigest()); value.put("expiresAt", b.expiresAt().toString());
+    value.put("workflowId", b.workflowId().toString());
+    value.put("subjectId", b.subjectId());
+    value.put("tenantId", b.tenantId());
+    value.put("username", b.username());
+    value.put("accountKind", b.accountKind());
+    value.put("accountVersion", b.accountVersion());
+    value.put("recipientDigest", b.recipientDigest());
+    value.put("expiresAt", b.expiresAt().toString());
     return write(value);
   }
 
   private static PasswordResetBinding binding(String raw) {
     JsonNode value = read(raw);
-    fields(value, Set.of("workflowId", "subjectId", "tenantId", "username", "accountKind", "accountVersion", "recipientDigest", "expiresAt"));
+    fields(
+        value,
+        Set.of(
+            "workflowId",
+            "subjectId",
+            "tenantId",
+            "username",
+            "accountKind",
+            "accountVersion",
+            "recipientDigest",
+            "expiresAt"));
     JsonNode tenant = value.get("tenantId");
-    if (!tenant.isNull() && (!tenant.isIntegralNumber() || !tenant.canConvertToLong())) throw invalid();
-    var b = new PasswordResetBinding(uuid(text(value, "workflowId")), text(value, "subjectId"),
-        tenant.isNull() ? null : tenant.longValue(), text(value, "username"), text(value, "accountKind"),
-        text(value, "accountVersion"), text(value, "recipientDigest"), Instant.parse(text(value, "expiresAt")));
+    if (!tenant.isNull() && (!tenant.isIntegralNumber() || !tenant.canConvertToLong()))
+      throw invalid();
+    var b =
+        new PasswordResetBinding(
+            uuid(text(value, "workflowId")),
+            text(value, "subjectId"),
+            tenant.isNull() ? null : tenant.longValue(),
+            text(value, "username"),
+            text(value, "accountKind"),
+            text(value, "accountVersion"),
+            text(value, "recipientDigest"),
+            Instant.parse(text(value, "expiresAt")));
     if (!encodeBinding(b).equals(raw)) throw invalid();
     return b;
   }
 
   private static JsonNode state(String raw) {
     JsonNode value = read(raw);
-    fields(value, Set.of("binding", "claimId", "version", "requestDigest", "status", "delivery", "expires", "recoverUntil", "locator", "subjectIndex"));
+    fields(
+        value,
+        Set.of(
+            "binding",
+            "claimId",
+            "version",
+            "requestDigest",
+            "status",
+            "delivery",
+            "expires",
+            "recoverUntil",
+            "locator",
+            "subjectIndex"));
     long expiry = positive(value, "expires"), until = positive(value, "recoverUntil");
     if (until != expiry + RECOVERY_RETENTION.toMillis()) throw invalid();
     if (binding(text(value, "binding")).expiresAt().toEpochMilli() != expiry) throw invalid();
     if (!Set.of("ISSUED", "FROZEN", "REJECTED", "ACKNOWLEDGED").contains(text(value, "status"))
-        || !Set.of("PENDING", "ATTEMPTED", "SENT", "UNKNOWN").contains(text(value, "delivery"))) throw invalid();
+        || !Set.of("PENDING", "ATTEMPTED", "SENT", "UNKNOWN").contains(text(value, "delivery")))
+      throw invalid();
     return value;
   }
-  private String flow(PasswordResetBinding b) { encodeBinding(b); return prefix + "flow:" + b.workflowId(); }
-  private String subject(String id) { return prefix + "subject:" + sha(id); }
-  private String locator(String token) { bounded(token, 4096); return prefix + "token:" + sha(token); }
+
+  private String flow(PasswordResetBinding b) {
+    encodeBinding(b);
+    return prefix + "flow:" + b.workflowId();
+  }
+
+  private String subject(String id) {
+    return prefix + "subject:" + sha(id);
+  }
+
+  private String locator(String token) {
+    bounded(token, 4096);
+    return prefix + "token:" + sha(token);
+  }
+
   private static String sha(String value) {
-    try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
-    catch (java.security.NoSuchAlgorithmException impossible) { throw invalid(); }
+    try {
+      return HexFormat.of()
+          .formatHex(
+              MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw invalid();
+    }
   }
+
   private static UUID uuid(String value) {
-    try { UUID result = UUID.fromString(value); if (!result.toString().equals(value)) throw invalid(); return result; }
-    catch (RuntimeException invalid) { throw invalid(); }
+    try {
+      UUID result = UUID.fromString(value);
+      if (!result.toString().equals(value)) throw invalid();
+      return result;
+    } catch (RuntimeException invalid) {
+      throw invalid();
+    }
   }
-  private static String checkedDigest(String value) { digest(value); return value; }
-  private static void digest(String value) { if (value == null || !value.matches("[a-f0-9]{64}")) throw invalid(); }
-  private static void bounded(String value, int max) { if (value == null || value.isBlank() || value.length() > max) throw invalid(); }
-  private static String text(JsonNode value, String name) { JsonNode n = value.get(name); if (n == null || !n.isTextual()) throw invalid(); return n.textValue(); }
-  private static long positive(JsonNode value, String name) { JsonNode n = value.get(name); if (n == null || !n.isIntegralNumber() || !n.canConvertToLong() || n.longValue() <= 0) throw invalid(); return n.longValue(); }
-  private static void fields(JsonNode value, Set<String> expected) { var actual = new HashSet<String>(); value.fieldNames().forEachRemaining(actual::add); if (!value.isObject() || !actual.equals(expected)) throw invalid(); }
-  private static JsonNode read(String raw) { try { if (raw == null || raw.length() > 8192) throw invalid(); return JSON.readTree(raw); } catch (java.io.IOException failure) { throw invalid(); } }
-  private static String write(Object value) { try { return JSON.writeValueAsString(value); } catch (java.io.IOException failure) { throw invalid(); } }
-  private static IllegalStateException invalid() { return new IllegalStateException("Invalid password-reset custody"); }
+
+  private static String checkedDigest(String value) {
+    digest(value);
+    return value;
+  }
+
+  private static void digest(String value) {
+    if (value == null || !value.matches("[a-f0-9]{64}")) throw invalid();
+  }
+
+  private static void bounded(String value, int max) {
+    if (value == null || value.isBlank() || value.length() > max) throw invalid();
+  }
+
+  private static String text(JsonNode value, String name) {
+    JsonNode n = value.get(name);
+    if (n == null || !n.isTextual()) throw invalid();
+    return n.textValue();
+  }
+
+  private static long positive(JsonNode value, String name) {
+    JsonNode n = value.get(name);
+    if (n == null || !n.isIntegralNumber() || !n.canConvertToLong() || n.longValue() <= 0)
+      throw invalid();
+    return n.longValue();
+  }
+
+  private static void fields(JsonNode value, Set<String> expected) {
+    var actual = new HashSet<String>();
+    value.fieldNames().forEachRemaining(actual::add);
+    if (!value.isObject() || !actual.equals(expected)) throw invalid();
+  }
+
+  private static JsonNode read(String raw) {
+    try {
+      if (raw == null || raw.length() > 8192) throw invalid();
+      return JSON.readTree(raw);
+    } catch (java.io.IOException failure) {
+      throw invalid();
+    }
+  }
+
+  private static String write(Object value) {
+    try {
+      return JSON.writeValueAsString(value);
+    } catch (java.io.IOException failure) {
+      throw invalid();
+    }
+  }
+
+  private static IllegalStateException invalid() {
+    return new IllegalStateException("Invalid password-reset custody");
+  }
 }
