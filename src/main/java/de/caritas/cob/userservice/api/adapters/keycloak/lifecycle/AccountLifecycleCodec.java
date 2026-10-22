@@ -1086,8 +1086,13 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     private final String intentDigest;
 
     private VerifiedMaintenanceNoEffect(
-        int status, String receipt, UUID operationId, String accountId,
-        String command, String realmId, String intentDigest) {
+        int status,
+        String receipt,
+        UUID operationId,
+        String accountId,
+        String command,
+        String realmId,
+        String intentDigest) {
       this.status = status;
       this.receipt = receipt;
       this.operationId = operationId;
@@ -1097,15 +1102,36 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       this.intentDigest = intentDigest;
     }
 
-    public int status() { return status; }
-    public String receipt() { return receipt; }
-    public UUID operationId() { return operationId; }
-    public String accountId() { return accountId; }
-    public String command() { return command; }
-    public String realmId() { return realmId; }
-    public String intentDigest() { return intentDigest; }
+    public int status() {
+      return status;
+    }
 
-    @Override public String toString() {
+    public String receipt() {
+      return receipt;
+    }
+
+    public UUID operationId() {
+      return operationId;
+    }
+
+    public String accountId() {
+      return accountId;
+    }
+
+    public String command() {
+      return command;
+    }
+
+    public String realmId() {
+      return realmId;
+    }
+
+    public String intentDigest() {
+      return intentDigest;
+    }
+
+    @Override
+    public String toString() {
       return "VerifiedMaintenanceNoEffect[bindings=redacted]";
     }
   }
