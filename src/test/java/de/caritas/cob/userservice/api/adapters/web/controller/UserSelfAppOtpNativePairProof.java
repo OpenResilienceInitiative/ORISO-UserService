@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import de.caritas.cob.userservice.api.IdentityManager;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
@@ -30,13 +29,13 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.*;
 import org.springframework.http.client.support.HttpRequestWrapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -53,12 +52,14 @@ import org.springframework.web.client.RestTemplate;
 class UserSelfAppOtpNativePairProof {
   private static String required(String name) {
     String value = System.getenv(name);
-    assertTrue(value != null && !value.isBlank(), "Required isolated native fixture field is absent");
+    assertTrue(
+        value != null && !value.isBlank(), "Required isolated native fixture field is absent");
     return value;
   }
 
   @Test
-  void actualPublicUserAppLostNativeReplyReplaysOneCredentialAndCommitsOwnedInvite() throws Exception {
+  void actualPublicUserAppLostNativeReplyReplaysOneCredentialAndCommitsOwnedInvite()
+      throws Exception {
     assertEquals("true", required("GITHUB_ACTIONS"));
     assertEquals("Linux", System.getProperty("os.name"));
     String base = required("PAIR_NATIVE_BASE");
@@ -78,118 +79,321 @@ class UserSelfAppOtpNativePairProof {
     var lost = new AtomicInteger();
     var frozenWire = new AtomicReference<String>();
     var frozenCipher = new AtomicReference<String>();
-    var source = new DriverManagerDataSource("jdbc:h2:mem:app-native-" + UUID.randomUUID() + ";MODE=MySQL;NON_KEYWORDS=USER;DB_CLOSE_DELAY=-1", "sa", "");
+    var source =
+        new DriverManagerDataSource(
+            "jdbc:h2:mem:app-native-"
+                + UUID.randomUUID()
+                + ";MODE=MySQL;NON_KEYWORDS=USER;DB_CLOSE_DELAY=-1",
+            "sa",
+            "");
     var jdbc = new JdbcTemplate(source);
     var transactions = new DataSourceTransactionManager(source);
     try {
-      jdbc.execute("create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512))");
+      jdbc.execute(
+          "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512))");
       jdbc.update("insert into user values(?,?,null,?)", account, 11L, username);
-      jdbc.execute("create table account_invite(id bigint primary key,accepted_by_user_id varchar(36),two_factor_status varchar(32),write_count int)");
+      jdbc.execute(
+          "create table account_invite(id bigint primary key,accepted_by_user_id varchar(36),two_factor_status varchar(32),write_count int)");
       jdbc.update("insert into account_invite values(1,?,'PENDING_SETUP',0)", account);
-      new ResourceDatabasePopulator(new ClassPathResource("db/changelog/changeset/20261022_identity_self_app_otp_367/migrate.sql")).execute(source);
-      http.getInterceptors().add((outbound, bytes, execution) -> {
-        URI logical = outbound.getURI();
-        assertEquals("maintenance-human-fixture.invalid", logical.getHost());
-        var physical = URI.create(base + logical.getRawPath() + (logical.getRawQuery() == null ? "" : "?" + logical.getRawQuery()));
-        var mapped = new HttpRequestWrapper(outbound) { @Override public URI getURI() { return physical; } };
-        boolean mutation = logical.getPath().contains("/otp-config/setup-otp/");
-        if (mutation) {
-          assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-          assertEquals("FROZEN", jdbc.queryForObject("select status from identity_self_app_otp_intent where operation_id=?", String.class, operation));
-          assertEquals("PENDING_SETUP", jdbc.queryForObject("select two_factor_status from account_invite where id=1", String.class));
-          String wire = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-          String cipher = jdbc.queryForObject("select envelope from identity_self_app_otp_intent where operation_id=?", String.class, operation);
-          if (frozenWire.get() == null) { frozenWire.set(wire); frozenCipher.set(cipher); }
-          else { assertTrue(frozenWire.get().equals(wire), "Actual exact native body must remain frozen"); assertTrue(frozenCipher.get().equals(cipher), "Actual exact ciphertext must remain frozen"); }
-          nativeCalls.incrementAndGet();
-        }
-        var response = execution.execute(mapped, bytes);
-        if (mutation && lost.getAndIncrement() == 0) {
-          assertEquals(201, response.getStatusCode().value());
-          response.getBody().readAllBytes();
-          response.close();
-          throw new ResourceAccessException("Fixture lost actual committed native reply");
-        }
-        return response;
-      });
+      new ResourceDatabasePopulator(
+              new ClassPathResource(
+                  "db/changelog/changeset/20261022_identity_self_app_otp_367/migrate.sql"))
+          .execute(source);
+      http.getInterceptors()
+          .add(
+              (outbound, bytes, execution) -> {
+                URI logical = outbound.getURI();
+                assertEquals("maintenance-human-fixture.invalid", logical.getHost());
+                var physical =
+                    URI.create(
+                        base
+                            + logical.getRawPath()
+                            + (logical.getRawQuery() == null ? "" : "?" + logical.getRawQuery()));
+                var mapped =
+                    new HttpRequestWrapper(outbound) {
+                      @Override
+                      public URI getURI() {
+                        return physical;
+                      }
+                    };
+                boolean mutation = logical.getPath().contains("/otp-config/setup-otp/");
+                if (mutation) {
+                  assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                  assertEquals(
+                      "FROZEN",
+                      jdbc.queryForObject(
+                          "select status from identity_self_app_otp_intent where operation_id=?",
+                          String.class,
+                          operation));
+                  assertEquals(
+                      "PENDING_SETUP",
+                      jdbc.queryForObject(
+                          "select two_factor_status from account_invite where id=1", String.class));
+                  String wire = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+                  String cipher =
+                      jdbc.queryForObject(
+                          "select envelope from identity_self_app_otp_intent where operation_id=?",
+                          String.class,
+                          operation);
+                  if (frozenWire.get() == null) {
+                    frozenWire.set(wire);
+                    frozenCipher.set(cipher);
+                  } else {
+                    assertTrue(
+                        frozenWire.get().equals(wire),
+                        "Actual exact native body must remain frozen");
+                    assertTrue(
+                        frozenCipher.get().equals(cipher),
+                        "Actual exact ciphertext must remain frozen");
+                  }
+                  nativeCalls.incrementAndGet();
+                }
+                var response = execution.execute(mapped, bytes);
+                if (mutation && lost.getAndIncrement() == 0) {
+                  assertEquals(201, response.getStatusCode().value());
+                  response.getBody().readAllBytes();
+                  response.close();
+                  throw new ResourceAccessException("Fixture lost actual committed native reply");
+                }
+                return response;
+              });
       var form = new LinkedMultiValueMap<String, String>();
-      form.add("grant_type", "password"); form.add("client_id", required("PAIR_HUMAN_CLIENT")); form.add("username", username); form.add("password", required("PAIR_PASSWORD")); form.add("scope", "openid");
-      var headers = new HttpHeaders(); headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-      var tokens = http.postForObject(issuer + "/protocol/openid-connect/token", new HttpEntity<>(form, headers), Map.class);
+      form.add("grant_type", "password");
+      form.add("client_id", required("PAIR_HUMAN_CLIENT"));
+      form.add("username", username);
+      form.add("password", required("PAIR_PASSWORD"));
+      form.add("scope", "openid");
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+      var tokens =
+          http.postForObject(
+              issuer + "/protocol/openid-connect/token",
+              new HttpEntity<>(form, headers),
+              Map.class);
       assertNotNull(tokens);
       assertTrue(tokens.get("access_token") instanceof String);
       String humanBearer = (String) tokens.get("access_token");
-      var decoder = NimbusJwtDecoder.withJwkSetUri(base + "/realms/" + realm + "/protocol/openid-connect/certs").build();
+      var decoder =
+          NimbusJwtDecoder.withJwkSetUri(
+                  base + "/realms/" + realm + "/protocol/openid-connect/certs")
+              .build();
       decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
       var jwt = decoder.decode(humanBearer);
-      assertEquals(account, jwt.getSubject()); assertEquals(required("PAIR_HUMAN_CLIENT"), jwt.getClaimAsString("azp")); assertEquals(Set.of("userservice"), Set.copyOf(jwt.getAudience()));
-      assertEquals(Set.of("user"), Set.copyOf((List<?>) ((Map<?, ?>) jwt.getClaims().get("realm_access")).get("roles")));
+      assertEquals(account, jwt.getSubject());
+      assertEquals(required("PAIR_HUMAN_CLIENT"), jwt.getClaimAsString("azp"));
+      assertEquals(Set.of("userservice"), Set.copyOf(jwt.getAudience()));
+      assertEquals(
+          Set.of("user"),
+          Set.copyOf((List<?>) ((Map<?, ?>) jwt.getClaims().get("realm_access")).get("roles")));
       assertEquals("11", jwt.getClaimAsString("tenantId"));
-      var identity = new IdentityConfig(); identity.setOpenidConnectUrl(issuer + "/protocol/openid-connect"); identity.setOtpAllowedForUsers(true);
+      var identity = new IdentityConfig();
+      identity.setOpenidConnectUrl(issuer + "/protocol/openid-connect");
+      identity.setOtpAllowedForUsers(true);
       var environment = new MockEnvironment().withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS");
       for (var actor : TaskActor.values()) {
         String prefix = "IDENTITY_" + actor.name();
-        environment.setProperty(prefix + "_CLIENT_ID", required("PAIR_" + actor.name() + "_CLIENT"));
-        environment.setProperty(prefix + "_CLIENT_SECRET", required("PAIR_" + actor.name() + "_SECRET"));
-        environment.setProperty(prefix + "_SERVICE_SUBJECT", required("PAIR_" + actor.name() + "_SUBJECT"));
+        environment.setProperty(
+            prefix + "_CLIENT_ID", required("PAIR_" + actor.name() + "_CLIENT"));
+        environment.setProperty(
+            prefix + "_CLIENT_SECRET", required("PAIR_" + actor.name() + "_SECRET"));
+        environment.setProperty(
+            prefix + "_SERVICE_SUBJECT", required("PAIR_" + actor.name() + "_SUBJECT"));
       }
       var actors = new TaskActorConfiguration(environment, new KeycloakCustomConfig(), identity);
-      var config = new KeycloakConfig(); config.setAuthServerUrl("http://maintenance-human-fixture.invalid"); config.setRealm(realm);
-      var human = new AuthenticatedUser(account, username, Set.of("user"), humanBearer, Set.of("ROLE_USER")); human.setTenantId(11L);
-      var broker = new TaskActorTokenBroker(actors, new KeycloakAuthClient(http, human, identity), decoder, config);
+      var config = new KeycloakConfig();
+      config.setAuthServerUrl("http://maintenance-human-fixture.invalid");
+      config.setRealm(realm);
+      var human =
+          new AuthenticatedUser(
+              account, username, Set.of("user"), humanBearer, Set.of("ROLE_USER"));
+      human.setTenantId(11L);
+      var broker =
+          new TaskActorTokenBroker(
+              actors, new KeycloakAuthClient(http, human, identity), decoder, config);
       var checkedMachine = broker.issueCheckedMaintenance(TaskPurpose.OTP);
       assertEquals(actors.require(TaskPurpose.OTP).serviceSubject(), checkedMachine.subject());
       var machineJwt = decoder.decode(checkedMachine.accessToken());
-      assertEquals(Set.of("userservice", "oriso-account-lifecycle", "oriso-otp"), Set.copyOf(machineJwt.getAudience()));
-      try { http.exchange("http://maintenance-human-fixture.invalid/admin/realms/" + realm + "/users/" + account, HttpMethod.GET, new HttpEntity<>(bearer(checkedMachine.accessToken())), String.class); fail("Canonical ADMIN must have no stock native target query power"); }
-      catch (org.springframework.web.client.HttpClientErrorException denied) { assertEquals(403, denied.getStatusCode().value()); }
+      assertEquals(
+          Set.of("userservice", "oriso-account-lifecycle", "oriso-otp"),
+          Set.copyOf(machineJwt.getAudience()));
+      try {
+        http.exchange(
+            "http://maintenance-human-fixture.invalid/admin/realms/" + realm + "/users/" + account,
+            HttpMethod.GET,
+            new HttpEntity<>(bearer(checkedMachine.accessToken())),
+            String.class);
+        fail("Canonical ADMIN must have no stock native target query power");
+      } catch (org.springframework.web.client.HttpClientErrorException denied) {
+        assertEquals(403, denied.getStatusCode().value());
+      }
       var request = new MockHttpServletRequest("PUT", "/service/users/2fa/app");
-      var authentication = new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_USER")));
-      request.setUserPrincipal(authentication); request.addHeader("Authorization", "Bearer " + humanBearer); request.addHeader("Idempotency-Key", operation); SecurityContextHolder.getContext().setAuthentication(authentication);
+      var authentication =
+          new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_USER")));
+      request.setUserPrincipal(authentication);
+      request.addHeader("Authorization", "Bearer " + humanBearer);
+      request.addHeader("Idempotency-Key", operation);
+      SecurityContextHolder.getContext().setAuthentication(authentication);
       var invites = mock(AccountInviteRepository.class);
-      when(invites.findAllByAcceptedByUserIdAndTwoFactorStatus(eq(account), any())).thenAnswer(invocation -> {
-        assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-        TwoFactorGateStatus wanted = invocation.getArgument(1);
-        String actual = jdbc.queryForObject("select two_factor_status from account_invite where id=1", String.class);
-        if (!wanted.name().equals(actual)) return List.of();
-        var invite = new AccountInvite(); invite.setId(1L); invite.setAcceptedByUserId(account); invite.setTwoFactorStatus(wanted); return List.of(invite);
-      });
-      when(invites.saveAll(any())).thenAnswer(invocation -> { assertTrue(TransactionSynchronizationManager.isActualTransactionActive()); for (AccountInvite invite : (Iterable<AccountInvite>) invocation.getArgument(0)) jdbc.update("update account_invite set two_factor_status=?,write_count=write_count+1 where id=1", invite.getTwoFactorStatus().name()); activationCalls.incrementAndGet(); return invocation.getArgument(0); });
-      var inviteService = new AccountInviteService(invites, mock(InviteEmailTemplateRepository.class), human, mock(IdentityEmailOwnerLookup.class), transactions, mock(AccountInviteAccessPolicy.class), mock(AgencyFacts.class), mock(InviteTargetResolver.class), mock(ReservationLedger.class), mock(UnitQueue.class), mock(InviteDelivery.class), mock(ExistingAccountSetupIssuer.class));
-      var mode = mock(IdentityClientConfig.class); when(mode.isFiveActorMode()).thenReturn(true);
+      when(invites.findAllByAcceptedByUserIdAndTwoFactorStatus(eq(account), any()))
+          .thenAnswer(
+              invocation -> {
+                assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+                TwoFactorGateStatus wanted = invocation.getArgument(1);
+                String actual =
+                    jdbc.queryForObject(
+                        "select two_factor_status from account_invite where id=1", String.class);
+                if (!wanted.name().equals(actual)) return List.of();
+                var invite = new AccountInvite();
+                invite.setId(1L);
+                invite.setAcceptedByUserId(account);
+                invite.setTwoFactorStatus(wanted);
+                return List.of(invite);
+              });
+      when(invites.saveAll(any()))
+          .thenAnswer(
+              invocation -> {
+                assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+                for (AccountInvite invite : (Iterable<AccountInvite>) invocation.getArgument(0))
+                  jdbc.update(
+                      "update account_invite set two_factor_status=?,write_count=write_count+1 where id=1",
+                      invite.getTwoFactorStatus().name());
+                activationCalls.incrementAndGet();
+                return invocation.getArgument(0);
+              });
+      var inviteService =
+          new AccountInviteService(
+              invites,
+              mock(InviteEmailTemplateRepository.class),
+              human,
+              mock(IdentityEmailOwnerLookup.class),
+              transactions,
+              mock(AccountInviteAccessPolicy.class),
+              mock(AgencyFacts.class),
+              mock(InviteTargetResolver.class),
+              mock(ReservationLedger.class),
+              mock(UnitQueue.class),
+              mock(InviteDelivery.class),
+              mock(ExistingAccountSetupIssuer.class));
+      var mode = mock(IdentityClientConfig.class);
+      when(mode.isFiveActorMode()).thenReturn(true);
       var legacy = mock(IdentityManager.class);
-      var delegate = new UserTwoFactorAuthControllerDelegate(human, identity, legacy, mock(AccountManaging.class), inviteService, new UserDtoMapper(identity), new UsernameTranscoder());
-      var controller = mock(UserController.class, CALLS_REAL_METHODS); ReflectionTestUtils.setField(controller, "userTwoFactorAuthControllerDelegate", delegate);
-      var dto = new OneTimePasswordDTO(); dto.setSecret("JBSWY3DPEHPK3PXP"); dto.setOtp(currentCode());
-      delegate.setSelfAppOtpMaintenance(new SelfAppOtpMaintenance(mode, human, request, jdbc, transactions, actors, broker, codec, http, Clock.systemUTC(), "http://maintenance-human-fixture.invalid", realm, realmId));
+      var delegate =
+          new UserTwoFactorAuthControllerDelegate(
+              human,
+              identity,
+              legacy,
+              mock(AccountManaging.class),
+              inviteService,
+              new UserDtoMapper(identity),
+              new UsernameTranscoder());
+      var controller = mock(UserController.class, CALLS_REAL_METHODS);
+      ReflectionTestUtils.setField(controller, "userTwoFactorAuthControllerDelegate", delegate);
+      var dto = new OneTimePasswordDTO();
+      dto.setSecret("JBSWY3DPEHPK3PXP");
+      dto.setOtp(currentCode());
+      delegate.setSelfAppOtpMaintenance(
+          new SelfAppOtpMaintenance(
+              mode,
+              human,
+              request,
+              jdbc,
+              transactions,
+              actors,
+              broker,
+              codec,
+              http,
+              Clock.systemUTC(),
+              "http://maintenance-human-fixture.invalid",
+              realm,
+              realmId));
       assertThrows(RuntimeException.class, () -> controller.activateTwoFactorAuthByApp(dto));
-      assertEquals("FROZEN", jdbc.queryForObject("select status from identity_self_app_otp_intent where operation_id=?", String.class, operation));
+      assertEquals(
+          "FROZEN",
+          jdbc.queryForObject(
+              "select status from identity_self_app_otp_intent where operation_id=?",
+              String.class,
+              operation));
       assertEquals(0, activationCalls.get());
       // Reconstruct the actual public delegate's owner over the same durable rows; no cached grant.
-      delegate.setSelfAppOtpMaintenance(new SelfAppOtpMaintenance(mode, human, request, jdbc, transactions, actors, broker, codec, http, Clock.systemUTC(), "http://maintenance-human-fixture.invalid", realm, realmId));
+      delegate.setSelfAppOtpMaintenance(
+          new SelfAppOtpMaintenance(
+              mode,
+              human,
+              request,
+              jdbc,
+              transactions,
+              actors,
+              broker,
+              codec,
+              http,
+              Clock.systemUTC(),
+              "http://maintenance-human-fixture.invalid",
+              realm,
+              realmId));
       assertEquals(200, controller.activateTwoFactorAuthByApp(dto).getStatusCode().value());
       assertEquals(200, controller.activateTwoFactorAuthByApp(dto).getStatusCode().value());
-      assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from identity_self_app_otp_intent where operation_id=?", String.class, operation));
-      assertEquals("ACTIVE", jdbc.queryForObject("select two_factor_status from account_invite where id=1", String.class));
-      assertEquals(1, jdbc.queryForObject("select write_count from account_invite where id=1", Integer.class));
-      assertEquals(1, activationCalls.get()); assertEquals(2, nativeCalls.get());
-      String receipt = jdbc.queryForObject("select receipt from identity_self_app_otp_intent where operation_id=?", String.class, operation);
+      assertEquals(
+          "ACKNOWLEDGED",
+          jdbc.queryForObject(
+              "select status from identity_self_app_otp_intent where operation_id=?",
+              String.class,
+              operation));
+      assertEquals(
+          "ACTIVE",
+          jdbc.queryForObject(
+              "select two_factor_status from account_invite where id=1", String.class));
+      assertEquals(
+          1,
+          jdbc.queryForObject("select write_count from account_invite where id=1", Integer.class));
+      assertEquals(1, activationCalls.get());
+      assertEquals(2, nativeCalls.get());
+      String receipt =
+          jdbc.queryForObject(
+              "select receipt from identity_self_app_otp_intent where operation_id=?",
+              String.class,
+              operation);
       assertNotNull(receipt);
-      var facts = codec.read(new String(Base64.getUrlDecoder().decode(receipt.split("\\.")[0]), java.nio.charset.StandardCharsets.UTF_8), JsonNode.class);
-      assertEquals("backend-account-admin", facts.path("ownerClient").textValue()); assertEquals(actors.require(TaskPurpose.OTP).serviceSubject(), facts.path("ownerSubject").textValue());
-      var stored = jdbc.queryForMap("select * from identity_self_app_otp_intent where operation_id=?", operation);
+      var facts =
+          codec.read(
+              new String(
+                  Base64.getUrlDecoder().decode(receipt.split("\\.")[0]),
+                  java.nio.charset.StandardCharsets.UTF_8),
+              JsonNode.class);
+      assertEquals("backend-account-admin", facts.path("ownerClient").textValue());
+      assertEquals(
+          actors.require(TaskPurpose.OTP).serviceSubject(), facts.path("ownerSubject").textValue());
+      var stored =
+          jdbc.queryForMap(
+              "select * from identity_self_app_otp_intent where operation_id=?", operation);
       String flat = stored.toString();
-      for (String secret : List.of(humanBearer, checkedMachine.accessToken(), dto.getSecret(), dto.getOtp())) assertFalse(flat.contains(secret), "No plaintext secret or JWT may enter the private durable row");
+      for (String secret :
+          List.of(humanBearer, checkedMachine.accessToken(), dto.getSecret(), dto.getOtp()))
+        assertFalse(
+            flat.contains(secret), "No plaintext secret or JWT may enter the private durable row");
       verifyNoInteractions(legacy);
-    } finally { SecurityContextHolder.clearContext(); jdbc.execute("shutdown"); }
+    } finally {
+      SecurityContextHolder.clearContext();
+      jdbc.execute("shutdown");
+    }
   }
 
-  private static HttpHeaders bearer(String token) { var headers = new HttpHeaders(); headers.setBearerAuth(token); return headers; }
+  private static HttpHeaders bearer(String token) {
+    var headers = new HttpHeaders();
+    headers.setBearerAuth(token);
+    return headers;
+  }
+
   private static String currentCode() throws Exception {
-    var mac = Mac.getInstance("HmacSHA1"); mac.init(new SecretKeySpec(HexFormat.of().parseHex("48656c6c6f21deadbeef"), "HmacSHA1"));
-    byte[] value = mac.doFinal(ByteBuffer.allocate(8).putLong(Instant.now().getEpochSecond() / 30).array());
+    var mac = Mac.getInstance("HmacSHA1");
+    mac.init(new SecretKeySpec(HexFormat.of().parseHex("48656c6c6f21deadbeef"), "HmacSHA1"));
+    byte[] value =
+        mac.doFinal(ByteBuffer.allocate(8).putLong(Instant.now().getEpochSecond() / 30).array());
     int at = value[value.length - 1] & 15;
-    int number = ((value[at] & 127) << 24) | ((value[at + 1] & 255) << 16) | ((value[at + 2] & 255) << 8) | (value[at + 3] & 255);
+    int number =
+        ((value[at] & 127) << 24)
+            | ((value[at + 1] & 255) << 16)
+            | ((value[at + 2] & 255) << 8)
+            | (value[at + 3] & 255);
     return String.format(java.util.Locale.ROOT, "%06d", number % 1000000);
   }
 }

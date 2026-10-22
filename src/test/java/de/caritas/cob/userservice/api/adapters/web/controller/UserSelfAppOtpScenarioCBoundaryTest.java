@@ -269,7 +269,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
-  void publicAppDeleteLostReplyNewOwnerReplaysFrozenDeleteWithoutSecondGateTransition() throws Exception {
+  void publicAppDeleteLostReplyNewOwnerReplaysFrozenDeleteWithoutSecondGateTransition()
+      throws Exception {
     try (var fixture = new Fixture(true, true)) {
       fixture.request.setMethod("DELETE");
       fixture.jdbc.update("update account_invite set two_factor_status='ACTIVE' where id=1");
@@ -297,7 +298,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.jdbc.update("update account_invite set two_factor_status='ACTIVE' where id=1");
       fixture.tamperReceipt = true;
       fixture.expectDelete(false);
-      assertThrows(ServiceUnavailableException.class, () -> fixture.controller.deactivateTwoFactorAuthByApp());
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> fixture.controller.deactivateTwoFactorAuthByApp());
       assertEquals("FROZEN", fixture.status());
       assertEquals("ACTIVE", fixture.inviteStatus());
       assertEquals(0, fixture.domainWrites());
@@ -310,7 +313,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     try (var fixture = new Fixture(true, false)) {
       fixture.request.setMethod("DELETE");
       fixture.jdbc.update("update account_invite set two_factor_status='ACTIVE' where id=1");
-      assertThrows(ScopedIdentityCommandRequiredException.class, () -> fixture.controller.deactivateTwoFactorAuthByApp());
+      assertThrows(
+          ScopedIdentityCommandRequiredException.class,
+          () -> fixture.controller.deactivateTwoFactorAuthByApp());
       assertEquals("ACTIVE", fixture.inviteStatus());
       verifyNoInteractions(fixture.nativeClient);
     }
@@ -664,38 +669,92 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     }
 
     void expectDelete(boolean lostReply) {
-      server.expect(requestTo(issuer.issuer() + "/oriso-account-maintenance/v1/accounts/" + ACCOUNT + "/read"))
-          .andExpect(method(HttpMethod.POST)).andRespond(outbound -> {
-            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-            assertEquals("PREPARED", status());
-            assertEquals("ACTIVE", inviteStatus());
-            return withSuccess("{\"id\":\"" + ACCOUNT + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\"" + "a".repeat(64) + "\"}", MediaType.APPLICATION_JSON).createResponse(outbound);
-          });
+      server
+          .expect(
+              requestTo(
+                  issuer.issuer() + "/oriso-account-maintenance/v1/accounts/" + ACCOUNT + "/read"))
+          .andExpect(method(HttpMethod.POST))
+          .andRespond(
+              outbound -> {
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                assertEquals("PREPARED", status());
+                assertEquals("ACTIVE", inviteStatus());
+                return withSuccess(
+                        "{\"id\":\""
+                            + ACCOUNT
+                            + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""
+                            + "a".repeat(64)
+                            + "\"}",
+                        MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
+              });
       var frozen = new AtomicReference<String>();
       var response = new AtomicReference<String>();
-      server.expect(lostReply ? ExpectedCount.twice() : ExpectedCount.once(), requestTo(issuer.issuer() + "/otp-config/delete-otp/ordinary"))
-          .andExpect(method(HttpMethod.DELETE)).andRespond(outbound -> {
-            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-            assertEquals("FROZEN", status());
-            assertEquals("ACTIVE", inviteStatus());
-            assertEquals(0, domainWrites());
-            String wire = ((MockClientHttpRequest) outbound).getBodyAsString();
-            var body = codec.read(wire, ObjectNode.class);
-            var materialized = body.deepCopy(); materialized.put("username", "ordinary");
-            checkProof(outbound.getHeaders(), materialized, "otp.delete", "OTP", "oriso-otp", "DELETE");
-            assertTrue(body.path("otp").isNull());
-            if (frozen.get() == null) {
-              frozen.set(wire);
-              JsonNode result = codec.read("{\"info\":\"OTP credentials deleted\"}", JsonNode.class);
-              var facts = codec.read("{}", ObjectNode.class);
-              facts.put("realmId", REALM_ID); facts.put("accountId", ACCOUNT); facts.put("operationId", operation); facts.put("operation", "otp.delete"); facts.put("ownerClient", "backend-account-admin"); facts.put("ownerSubject", ADMIN); facts.put("intentDigest", codec.digest("otp-intent", materialized)); facts.put("previousState", "a".repeat(64)); facts.put("tenantId", "7"); facts.put("originDigest", codec.digest("otp-origin", body.path("target").path("origin"))); facts.put("status", 200); facts.put("resultDigest", codec.digest("otp-result", result));
-              String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(codec.canonical(facts).getBytes(StandardCharsets.UTF_8));
-              var reply = codec.read("{}", ObjectNode.class); reply.put("operationId", operation); reply.put("accountId", ACCOUNT); reply.put("status", 200); reply.set("result", result); reply.put("receipt", encoded + "." + HexFormat.of().formatHex(mac("otp-operation-receipt\n" + encoded)) + (tamperReceipt ? "x" : ""));
-              response.set(codec.canonical(reply)); nativeExecutions.incrementAndGet();
-              if (lostReply) throw new ResourceAccessException("Fixture lost committed delete reply");
-            } else assertTrue(frozen.get().equals(wire), "Exact frozen delete body required");
-            return withSuccess(response.get(), MediaType.APPLICATION_JSON).createResponse(outbound);
-          });
+      server
+          .expect(
+              lostReply ? ExpectedCount.twice() : ExpectedCount.once(),
+              requestTo(issuer.issuer() + "/otp-config/delete-otp/ordinary"))
+          .andExpect(method(HttpMethod.DELETE))
+          .andRespond(
+              outbound -> {
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                assertEquals("FROZEN", status());
+                assertEquals("ACTIVE", inviteStatus());
+                assertEquals(0, domainWrites());
+                String wire = ((MockClientHttpRequest) outbound).getBodyAsString();
+                var body = codec.read(wire, ObjectNode.class);
+                var materialized = body.deepCopy();
+                materialized.put("username", "ordinary");
+                checkProof(
+                    outbound.getHeaders(),
+                    materialized,
+                    "otp.delete",
+                    "OTP",
+                    "oriso-otp",
+                    "DELETE");
+                assertTrue(body.path("otp").isNull());
+                if (frozen.get() == null) {
+                  frozen.set(wire);
+                  JsonNode result =
+                      codec.read("{\"info\":\"OTP credentials deleted\"}", JsonNode.class);
+                  var facts = codec.read("{}", ObjectNode.class);
+                  facts.put("realmId", REALM_ID);
+                  facts.put("accountId", ACCOUNT);
+                  facts.put("operationId", operation);
+                  facts.put("operation", "otp.delete");
+                  facts.put("ownerClient", "backend-account-admin");
+                  facts.put("ownerSubject", ADMIN);
+                  facts.put("intentDigest", codec.digest("otp-intent", materialized));
+                  facts.put("previousState", "a".repeat(64));
+                  facts.put("tenantId", "7");
+                  facts.put(
+                      "originDigest",
+                      codec.digest("otp-origin", body.path("target").path("origin")));
+                  facts.put("status", 200);
+                  facts.put("resultDigest", codec.digest("otp-result", result));
+                  String encoded =
+                      Base64.getUrlEncoder()
+                          .withoutPadding()
+                          .encodeToString(codec.canonical(facts).getBytes(StandardCharsets.UTF_8));
+                  var reply = codec.read("{}", ObjectNode.class);
+                  reply.put("operationId", operation);
+                  reply.put("accountId", ACCOUNT);
+                  reply.put("status", 200);
+                  reply.set("result", result);
+                  reply.put(
+                      "receipt",
+                      encoded
+                          + "."
+                          + HexFormat.of().formatHex(mac("otp-operation-receipt\n" + encoded))
+                          + (tamperReceipt ? "x" : ""));
+                  response.set(codec.canonical(reply));
+                  nativeExecutions.incrementAndGet();
+                  if (lostReply)
+                    throw new ResourceAccessException("Fixture lost committed delete reply");
+                } else assertTrue(frozen.get().equals(wire), "Exact frozen delete body required");
+                return withSuccess(response.get(), MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
+              });
     }
 
     void checkProof(
