@@ -120,7 +120,8 @@ public final class JdbcProtectedAccountCreation {
     return recovery(claim, expectedGeneration, false);
   }
 
-  private PreparedRecovery recovery(AcceptanceClaim claim, long expectedGeneration, boolean historical) {
+  private PreparedRecovery recovery(
+      AcceptanceClaim claim, long expectedGeneration, boolean historical) {
     outsideSql();
     if (expectedGeneration < 0 || expectedGeneration == Long.MAX_VALUE)
       throw new IllegalArgumentException("Invalid protected recovery generation");
@@ -153,15 +154,30 @@ public final class JdbcProtectedAccountCreation {
         });
   }
 
-  public java.util.Optional<PreparedMetadata> findPrepared(AcceptanceClaim claim) { throw unavailable(); }
-  public java.util.Optional<de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO> tenantRequest(AcceptanceClaim claim) { throw unavailable(); }
-  public de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO freezeTenantRequest(AcceptanceClaim claim, de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO original) { throw unavailable(); }
+  public java.util.Optional<PreparedMetadata> findPrepared(AcceptanceClaim claim) {
+    throw unavailable();
+  }
+
+  public java.util.Optional<
+          de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO>
+      tenantRequest(AcceptanceClaim claim) {
+    throw unavailable();
+  }
+
+  public de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO
+      freezeTenantRequest(
+          AcceptanceClaim claim,
+          de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO
+              original) {
+    throw unavailable();
+  }
 
   /** Historical SQL evidence can request reducing recovery only, never creation. */
   public PreparedRecovery recovery(
       JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical, long expectedGeneration) {
     outsideSql();
-    if (historical == null || historical.inviteId() != inviteId(historical.claim())) throw unavailable();
+    if (historical == null || historical.inviteId() != inviteId(historical.claim()))
+      throw unavailable();
     return recovery(historical.claim(), expectedGeneration, true);
   }
 
@@ -171,22 +187,39 @@ public final class JdbcProtectedAccountCreation {
 
   private <T> T owned(AcceptanceClaim claim, boolean historical, Supplier<T> action) {
     long invite = inviteId(claim);
-    Supplier<T> checked = () -> {
-      if (!claim.frozen().equals(journal.pending(invite))) throw unavailable();
-      var row = jdbc.queryForMap("SELECT * FROM protected_invitation_acceptance WHERE invite_id=? FOR UPDATE", invite);
-      if (!claim.frozen().approvalId().toString().equals(row.get("approval_id"))
-          || !claim.claimId().toString().equals(row.get("claim_id"))
-          || !claim.attemptId().toString().equals(row.get("attempt_id"))
-          || !claim.executionId().toString().equals(row.get("execution_id"))
-          || ((Number) row.get("journal_version")).longValue() != 1
-          || !equal(claim.registrationDigest(), (String) row.get("registration_digest"))) throw unavailable();
-      String token = jdbc.queryForObject("SELECT token_hash FROM account_invite WHERE id=?", String.class, invite);
-      String response = jdbc.queryForObject("SELECT response_json FROM protected_invitation_authorization WHERE invite_id=?", String.class, invite);
-      if (!(historical ? Objects.equals(token, claim.tokenHash()) : equal(token, claim.tokenHash()))
-          || !equal(json.canonical(json.read(response, JsonNode.class)), claim.approval().responseJson())) throw unavailable();
-      return action.get();
-    };
-    return historical ? journal.withHistoricalInvite(invite, checked) : journal.withRecipientInvite(invite, checked);
+    Supplier<T> checked =
+        () -> {
+          if (!claim.frozen().equals(journal.pending(invite))) throw unavailable();
+          var row =
+              jdbc.queryForMap(
+                  "SELECT * FROM protected_invitation_acceptance WHERE invite_id=? FOR UPDATE",
+                  invite);
+          if (!claim.frozen().approvalId().toString().equals(row.get("approval_id"))
+              || !claim.claimId().toString().equals(row.get("claim_id"))
+              || !claim.attemptId().toString().equals(row.get("attempt_id"))
+              || !claim.executionId().toString().equals(row.get("execution_id"))
+              || ((Number) row.get("journal_version")).longValue() != 1
+              || !equal(claim.registrationDigest(), (String) row.get("registration_digest")))
+            throw unavailable();
+          String token =
+              jdbc.queryForObject(
+                  "SELECT token_hash FROM account_invite WHERE id=?", String.class, invite);
+          String response =
+              jdbc.queryForObject(
+                  "SELECT response_json FROM protected_invitation_authorization WHERE invite_id=?",
+                  String.class,
+                  invite);
+          if (!(historical
+                  ? Objects.equals(token, claim.tokenHash())
+                  : equal(token, claim.tokenHash()))
+              || !equal(
+                  json.canonical(json.read(response, JsonNode.class)),
+                  claim.approval().responseJson())) throw unavailable();
+          return action.get();
+        };
+    return historical
+        ? journal.withHistoricalInvite(invite, checked)
+        : journal.withRecipientInvite(invite, checked);
   }
 
   private List<Row> rows(AcceptanceClaim claim) {

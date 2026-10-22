@@ -1026,12 +1026,37 @@ public class TenantAdminOnboardingService {
       String dpaVersion) {
 
     /** Existing legacy callers keep their original constructor and consent semantics. */
-    public RegisterTenantAdminCommand(String organisationName, String subdomain, String address,
-        boolean dpaAccepted, String dpaSignerName, String dpaSignerPosition, String dpaSignerEmail,
-        String dpaSignerOrganisation, String password, Long reservedTenantId,
-        String tenantIdReservationToken, String legalName, String contactEmail, String contactPhone) {
-      this(organisationName,subdomain,address,dpaAccepted,dpaSignerName,dpaSignerPosition,dpaSignerEmail,
-          dpaSignerOrganisation,password,reservedTenantId,tenantIdReservationToken,legalName,contactEmail,contactPhone,null);
+    public RegisterTenantAdminCommand(
+        String organisationName,
+        String subdomain,
+        String address,
+        boolean dpaAccepted,
+        String dpaSignerName,
+        String dpaSignerPosition,
+        String dpaSignerEmail,
+        String dpaSignerOrganisation,
+        String password,
+        Long reservedTenantId,
+        String tenantIdReservationToken,
+        String legalName,
+        String contactEmail,
+        String contactPhone) {
+      this(
+          organisationName,
+          subdomain,
+          address,
+          dpaAccepted,
+          dpaSignerName,
+          dpaSignerPosition,
+          dpaSignerEmail,
+          dpaSignerOrganisation,
+          password,
+          reservedTenantId,
+          tenantIdReservationToken,
+          legalName,
+          contactEmail,
+          contactPhone,
+          null);
     }
 
     /** A registration without the optional sender block. */
@@ -1068,8 +1093,9 @@ public class TenantAdminOnboardingService {
   /** The created (inactive) tenant plus the TOTP setup material for the 2FA step. */
   public record TenantAdminRegistrationResult(
       Long tenantId, String totpSecret, String totpQrCodeBase64, String phase) {
-    public TenantAdminRegistrationResult(Long tenantId, String totpSecret, String totpQrCodeBase64) {
-      this(tenantId,totpSecret,totpQrCodeBase64,null);
+    public TenantAdminRegistrationResult(
+        Long tenantId, String totpSecret, String totpQrCodeBase64) {
+      this(tenantId, totpSecret, totpQrCodeBase64, null);
     }
   }
 

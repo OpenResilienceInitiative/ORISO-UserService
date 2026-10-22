@@ -1,22 +1,8 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
-import de.caritas.cob.userservice.api.service.accountinvite.onboarding.ProtectedAdminOnboardingService;
-import de.caritas.cob.userservice.api.service.accountinvite.onboarding.ProtectedAdminRegistrationBodyAdvice;
-import org.springframework.beans.factory.ObjectProvider;
-import jakarta.servlet.http.HttpServletRequest;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.web.server.ResponseStatusException;
-import org.springframework.http.HttpStatus;
-import java.util.function.Supplier;
-import java.util.Objects;
-import java.util.UUID;
-import java.nio.charset.StandardCharsets;
-import java.nio.charset.CodingErrorAction;
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-
+import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
@@ -27,21 +13,34 @@ import de.caritas.cob.userservice.api.service.accountinvite.onboarding.Counsello
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorRegistrationResult;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.RegisterCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.TopicOption;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.ProtectedAdminOnboardingService;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.ProtectedAdminRegistrationBodyAdvice;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.OnboardingInviteState;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.TenantAdminRegistrationResult;
+import jakarta.servlet.http.HttpServletRequest;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * PUBLIC onboarding endpoints behind an invite link (#569 chain fix; extended by #997). One set of
@@ -79,43 +78,63 @@ public class TenantAdminOnboardingController {
       TaskActorConfiguration actors,
       ObjectProvider<ProtectedAdminOnboardingService> coordinator,
       HttpServletRequest request) {
-    protectedActors=Objects.requireNonNull(actors);
-    protectedCoordinator=Objects.requireNonNull(coordinator);
-    protectedRequest=Objects.requireNonNull(request);
+    protectedActors = Objects.requireNonNull(actors);
+    protectedCoordinator = Objects.requireNonNull(coordinator);
+    protectedRequest = Objects.requireNonNull(request);
   }
 
   private ProtectedAdminOnboardingService protectedFlow(String token) {
-    if (protectedActors==null || !protectedActors.isEnabled()) return null;
-    var role=targetRoleOf(token);
-    if (!(role==AccountInviteTargetRole.TENANT_ADMIN || role==AccountInviteTargetRole.PLATFORM_ADMIN)) return null;
-    var service=protectedCoordinator.getIfAvailable();
-    if(service==null) throw protectedUnavailable();
+    if (protectedActors == null || !protectedActors.isEnabled()) return null;
+    var role = targetRoleOf(token);
+    if (!(role == AccountInviteTargetRole.TENANT_ADMIN
+        || role == AccountInviteTargetRole.PLATFORM_ADMIN)) return null;
+    var service = protectedCoordinator.getIfAvailable();
+    if (service == null) throw protectedUnavailable();
     return service;
   }
 
   private JsonNode originalRegistration() {
     try {
-      Object captured=protectedRequest.getAttribute(ProtectedAdminRegistrationBodyAdvice.ATTRIBUTE);
-      if (!(captured instanceof byte[] bytes) || bytes.length<1 || bytes.length>65536) throw protectedUnavailable();
-      String key=protectedRequest.getHeader("Idempotency-Key");
-      if(key==null || !UUID.fromString(key).toString().equals(key)
+      Object captured =
+          protectedRequest.getAttribute(ProtectedAdminRegistrationBodyAdvice.ATTRIBUTE);
+      if (!(captured instanceof byte[] bytes) || bytes.length < 1 || bytes.length > 65536)
+        throw protectedUnavailable();
+      String key = protectedRequest.getHeader("Idempotency-Key");
+      if (key == null
+          || !UUID.fromString(key).toString().equals(key)
           || !"POST".equals(protectedRequest.getMethod())) throw protectedUnavailable();
-      String raw=StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-          .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
-      var body=new ObjectMapper().createObjectNode();
-      body.put("method",protectedRequest.getMethod()); body.put("path",protectedRequest.getRequestURI());
-      body.put("key",key); body.put("body",raw);
+      String raw =
+          StandardCharsets.UTF_8
+              .newDecoder()
+              .onMalformedInput(CodingErrorAction.REPORT)
+              .onUnmappableCharacter(CodingErrorAction.REPORT)
+              .decode(ByteBuffer.wrap(bytes))
+              .toString();
+      var body = new ObjectMapper().createObjectNode();
+      body.put("method", protectedRequest.getMethod());
+      body.put("path", protectedRequest.getRequestURI());
+      body.put("key", key);
+      body.put("body", raw);
       return body;
-    } catch (CharacterCodingException | IllegalArgumentException failure) { throw protectedUnavailable(); }
+    } catch (CharacterCodingException | IllegalArgumentException failure) {
+      throw protectedUnavailable();
+    }
   }
 
   private static ResponseStatusException protectedUnavailable() {
-    return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Protected onboarding unavailable");
+    return new ResponseStatusException(
+        HttpStatus.SERVICE_UNAVAILABLE, "Protected onboarding unavailable");
   }
 
-  private static <T>T protectedCall(Supplier<T> action) {
-    try { return action.get(); }
-    catch (de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedAccounts.RemoteFailure unavailable) { throw protectedUnavailable(); }
+  private static <T> T protectedCall(Supplier<T> action) {
+    try {
+      return action.get();
+    } catch (
+        de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedAccounts
+                .RemoteFailure
+            unavailable) {
+      throw protectedUnavailable();
+    }
   }
 
   @GetMapping({
@@ -124,8 +143,11 @@ public class TenantAdminOnboardingController {
   })
   public ResponseEntity<TenantAdminOnboardingInviteResponseDTO> resolveOnboardingInvite(
       @PathVariable String token) {
-    var protectedFlow=protectedFlow(token);
-    if(protectedFlow!=null) return ResponseEntity.ok(TenantAdminOnboardingInviteResponseDTO.from(protectedCall(() -> protectedFlow.resolve(token))));
+    var protectedFlow = protectedFlow(token);
+    if (protectedFlow != null)
+      return ResponseEntity.ok(
+          TenantAdminOnboardingInviteResponseDTO.from(
+              protectedCall(() -> protectedFlow.resolve(token))));
     if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
       CounsellorOnboardingState state = counsellorOnboardingService.resolveOnboardingInvite(token);
       return ResponseEntity.ok(TenantAdminOnboardingInviteResponseDTO.from(state));
@@ -141,8 +163,13 @@ public class TenantAdminOnboardingController {
   public ResponseEntity<TenantAdminRegistrationResponseDTO> registerTenantAdmin(
       @PathVariable String token,
       @RequestBody(required = false) TenantAdminRegistrationRequestDTO request) {
-    var protectedFlow=protectedFlow(token);
-    if(protectedFlow!=null) return ResponseEntity.ok(TenantAdminRegistrationResponseDTO.from(protectedCall(() -> protectedFlow.register(token,toCommand(request),originalRegistration()))));
+    var protectedFlow = protectedFlow(token);
+    if (protectedFlow != null)
+      return ResponseEntity.ok(
+          TenantAdminRegistrationResponseDTO.from(
+              protectedCall(
+                  () ->
+                      protectedFlow.register(token, toCommand(request), originalRegistration()))));
     if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
       CounsellorRegistrationResult result =
           counsellorOnboardingService.registerCounsellor(token, toCounsellorCommand(request));
@@ -161,9 +188,15 @@ public class TenantAdminOnboardingController {
       @PathVariable String token,
       @RequestBody(required = false) TwoFactorActivationRequestDTO request) {
     String otp = request == null ? null : request.otp;
-    var protectedFlow=protectedFlow(token);
-    if(protectedFlow!=null) {
-      protectedCall(() -> { if(request!=null && request.method==IdentityOtpType.EMAIL) protectedFlow.finishEmail(token,otp); else protectedFlow.setupApp(token,otp); return null; });
+    var protectedFlow = protectedFlow(token);
+    if (protectedFlow != null) {
+      protectedCall(
+          () -> {
+            if (request != null && request.method == IdentityOtpType.EMAIL)
+              protectedFlow.finishEmail(token, otp);
+            else protectedFlow.setupApp(token, otp);
+            return null;
+          });
       return ResponseEntity.ok().build();
     }
     if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
@@ -187,9 +220,13 @@ public class TenantAdminOnboardingController {
     "/service/users/account-invites/{token}/onboarding/two-factor/email"
   })
   public ResponseEntity<Void> startEmailTwoFactor(@PathVariable String token) {
-    var protectedFlow=protectedFlow(token);
-    if(protectedFlow!=null) {
-      protectedCall(() -> { protectedFlow.startEmail(token); return null; });
+    var protectedFlow = protectedFlow(token);
+    if (protectedFlow != null) {
+      protectedCall(
+          () -> {
+            protectedFlow.startEmail(token);
+            return null;
+          });
       return ResponseEntity.noContent().build();
     }
     if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
@@ -484,7 +521,10 @@ public class TenantAdminOnboardingController {
      * will be provided by the platform operator" hint.
      */
     public String dpaContent;
-    /** C own-consent must echo this exact displayed version; forwarded consent stays server-owned. */
+
+    /**
+     * C own-consent must echo this exact displayed version; forwarded consent stays server-owned.
+     */
     public String dpaVersion;
 
     /**
@@ -526,18 +566,32 @@ public class TenantAdminOnboardingController {
      */
     public String dpaSignedAt;
 
-    static TenantAdminOnboardingInviteResponseDTO from(ProtectedAdminOnboardingService.Resolved state) {
-      var invite=state.invite(); var dto=new TenantAdminOnboardingInviteResponseDTO();
-      dto.targetRole=invite.getTargetRole().name(); dto.onboardingPurpose=invite.getPurpose().name();
-      dto.recipientEmail=invite.getRecipientEmail(); dto.firstName=invite.getFirstName(); dto.lastName=invite.getLastName();
-      dto.expiresAt=invite.getExpiresAt(); dto.joinsExistingTenant=state.joinsExistingTenant();
-      if(state.joinsExistingTenant()) dto.tenantId=invite.getTenantId();
-      else { dto.reservedTenantId=invite.getTenantId(); dto.tenantIdReservationToken=invite.getTenantIdReservationToken(); }
-      dto.dpaContent=state.dpaContent(); dto.dpaVersion=state.dpaVersion();
-      dto.dpaUnavailableReason=state.dpaUnavailableReason()==null?null:state.dpaUnavailableReason().name();
-      dto.dpaForwardedAt=isoOrNull(invite.getDpaForwardedAt()); dto.dpaSignedAt=isoOrNull(invite.getDpaSignedAt());
-      dto.phase=state.phase();
-      if(state.twoFactor()!=null) dto.twoFactor=TwoFactorSetupDTO.of(state.twoFactor().secret(),state.twoFactor().secretQrCode());
+    static TenantAdminOnboardingInviteResponseDTO from(
+        ProtectedAdminOnboardingService.Resolved state) {
+      var invite = state.invite();
+      var dto = new TenantAdminOnboardingInviteResponseDTO();
+      dto.targetRole = invite.getTargetRole().name();
+      dto.onboardingPurpose = invite.getPurpose().name();
+      dto.recipientEmail = invite.getRecipientEmail();
+      dto.firstName = invite.getFirstName();
+      dto.lastName = invite.getLastName();
+      dto.expiresAt = invite.getExpiresAt();
+      dto.joinsExistingTenant = state.joinsExistingTenant();
+      if (state.joinsExistingTenant()) dto.tenantId = invite.getTenantId();
+      else {
+        dto.reservedTenantId = invite.getTenantId();
+        dto.tenantIdReservationToken = invite.getTenantIdReservationToken();
+      }
+      dto.dpaContent = state.dpaContent();
+      dto.dpaVersion = state.dpaVersion();
+      dto.dpaUnavailableReason =
+          state.dpaUnavailableReason() == null ? null : state.dpaUnavailableReason().name();
+      dto.dpaForwardedAt = isoOrNull(invite.getDpaForwardedAt());
+      dto.dpaSignedAt = isoOrNull(invite.getDpaSignedAt());
+      dto.phase = state.phase();
+      if (state.twoFactor() != null)
+        dto.twoFactor =
+            TwoFactorSetupDTO.of(state.twoFactor().secret(), state.twoFactor().secretQrCode());
       return dto;
     }
 
@@ -626,7 +680,8 @@ public class TenantAdminOnboardingController {
       TenantAdminRegistrationResponseDTO dto = new TenantAdminRegistrationResponseDTO();
       dto.tenantId = result.tenantId();
       dto.phase = result.phase();
-      if(!"COMPLETED".equals(result.phase())) dto.twoFactor = TwoFactorSetupDTO.of(result.totpSecret(), result.totpQrCodeBase64());
+      if (!"COMPLETED".equals(result.phase()))
+        dto.twoFactor = TwoFactorSetupDTO.of(result.totpSecret(), result.totpQrCodeBase64());
       return dto;
     }
 
