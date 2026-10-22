@@ -66,6 +66,11 @@ public class TaskActorTokenBroker {
     @Override public String toString() { return "VerifiedProvisioningToken[redacted]"; }
   }
 
+  /** Only the private claimed Magic Link transport may obtain this finite session result. */
+  public VerifiedMaintenanceToken issueCheckedSessionExchange() {
+    throw checkedUnavailable();
+  }
+
   /** Only the finite checked maintenance/OTP workflow may obtain this private result. */
   public VerifiedMaintenanceToken issueCheckedMaintenance(TaskPurpose purpose) {
     if (purpose != TaskPurpose.ACCOUNT_MAINTENANCE && purpose != TaskPurpose.OTP)
