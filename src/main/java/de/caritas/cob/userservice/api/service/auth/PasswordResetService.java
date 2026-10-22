@@ -69,24 +69,32 @@ public class PasswordResetService {
       this.claim = claim;
     }
 
-    /** Fresh data check. Provider authorization and its native result remain independently checked. */
+    /**
+     * Fresh data check. Provider authorization and its native result remain independently checked.
+     */
     public OneTimeTokenStore.PasswordResetClaim checkedClaim() {
       if (!claim.binding().expiresAt().isAfter(Instant.now())) throw unavailable();
       return checkedRecoveryClaim();
     }
 
-    /** Historical data only; the adapter may only recover its exact already frozen native intent. */
+    /**
+     * Historical data only; the adapter may only recover its exact already frozen native intent.
+     */
     public OneTimeTokenStore.PasswordResetClaim checkedRecoveryClaim() {
       if (!active || Thread.currentThread() != requestThread) throw unavailable();
       owner.oneTimeTokenStore.requirePasswordResetClaim(claim);
       return claim;
     }
 
-    private static de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException unavailable() {
+    private static de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException
+        unavailable() {
       return new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
     }
 
-    @Override public String toString() { return "ClaimedPasswordReset[redacted]"; }
+    @Override
+    public String toString() {
+      return "ClaimedPasswordReset[redacted]";
+    }
   }
 
   private static final Duration RESET_TOKEN_TTL = Duration.ofMinutes(120);
@@ -275,13 +283,15 @@ public class PasswordResetService {
 
   private boolean confirmCausalPasswordReset(String token, String newPassword) {
     identityPasswordUpdater.requirePasswordResetSupport();
-    if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+        .isActualTransactionActive())
       throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
     Optional<OneTimeTokenStore.PasswordResetClaim> claimed;
     try {
       var issuance = oneTimeTokenStore.passwordResetIssuance(token);
       if (issuance.isEmpty()) return false;
-      String digest = identityPasswordUpdater.passwordResetRequestDigest(issuance.get(), newPassword);
+      String digest =
+          identityPasswordUpdater.passwordResetRequestDigest(issuance.get(), newPassword);
       claimed = oneTimeTokenStore.claimPasswordReset(token, digest);
     } catch (RuntimeException unavailable) {
       log.warn("Password-reset custody unavailable ({})", unavailable.getClass().getSimpleName());
@@ -335,14 +345,19 @@ public class PasswordResetService {
     if (userOptional.isPresent()) {
       User user = userOptional.get();
       return Optional.of(
-          new AccountResetTarget(user.getUserId(), user.getEmail(), user.getTenantId(), user.getUsername(), "USER"));
+          new AccountResetTarget(
+              user.getUserId(), user.getEmail(), user.getTenantId(), user.getUsername(), "USER"));
     }
 
     Optional<Consultant> consultantOptional = consultantService.findConsultantForSignIn(username);
     return consultantOptional.map(
         consultant ->
             new AccountResetTarget(
-                consultant.getId(), consultant.getEmail(), consultant.getTenantId(), consultant.getUsername(), "CONSULTANT"));
+                consultant.getId(),
+                consultant.getEmail(),
+                consultant.getTenantId(),
+                consultant.getUsername(),
+                "CONSULTANT"));
   }
 
   private Optional<AccountResetTarget> resolveAccount(
@@ -350,13 +365,18 @@ public class PasswordResetService {
     if (application == PasswordResetApplication.ADMIN) {
       Optional<Admin> adminOptional = adminRepository.findForSignIn(username);
       return adminOptional.map(
-          admin -> new AccountResetTarget(admin.getId(), admin.getEmail(), admin.getTenantId(), admin.getUsername(),
-              switch (admin.getType()) {
-                case SUPER -> "PLATFORM_ADMIN";
-                case TENANT -> "TENANT_ADMIN";
-                case AGENCY -> "AGENCY_ADMIN";
-                case SUPPORT -> "UNSUPPORTED";
-              }));
+          admin ->
+              new AccountResetTarget(
+                  admin.getId(),
+                  admin.getEmail(),
+                  admin.getTenantId(),
+                  admin.getUsername(),
+                  switch (admin.getType()) {
+                    case SUPER -> "PLATFORM_ADMIN";
+                    case TENANT -> "TENANT_ADMIN";
+                    case AGENCY -> "AGENCY_ADMIN";
+                    case SUPPORT -> "UNSUPPORTED";
+                  }));
     }
     return resolveAccount(username);
   }
@@ -400,12 +420,21 @@ public class PasswordResetService {
       identityPasswordUpdater.requirePasswordResetSupport();
       UUID workflow = UUID.randomUUID();
       Instant expiry = Instant.now().plus(RESET_TOKEN_TTL);
-      issuance = identityPasswordUpdater.passwordResetIssuance(workflow,
-          target.getKeycloakUserId(), target.getTenantId(), target.getUsername(), target.getEmail(), target.getAccountKind(), expiry);
-      if (issuance == null || !workflow.equals(issuance.workflowId())
+      issuance =
+          identityPasswordUpdater.passwordResetIssuance(
+              workflow,
+              target.getKeycloakUserId(),
+              target.getTenantId(),
+              target.getUsername(),
+              target.getEmail(),
+              target.getAccountKind(),
+              expiry);
+      if (issuance == null
+          || !workflow.equals(issuance.workflowId())
           || !target.getKeycloakUserId().equals(issuance.subjectId())
           || !java.util.Objects.equals(target.getTenantId(), issuance.tenantId())
-          || !target.getAccountKind().equals(issuance.accountKind()) || !expiry.equals(issuance.expiresAt()))
+          || !target.getAccountKind().equals(issuance.accountKind())
+          || !expiry.equals(issuance.expiresAt()))
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
       oneTimeToken = newResetToken();
       oneTimeTokenStore.storePasswordReset(oneTimeToken, issuance);
@@ -419,7 +448,8 @@ public class PasswordResetService {
         oneTimeTokenStore.passwordResetDelivery(issuance, "ATTEMPTED");
         attempted = true;
       }
-      mailSender.send(target.getEmail(), locale, resetUrl, target.getTenantId(), frontendBaseUrl, smtpSettings);
+      mailSender.send(
+          target.getEmail(), locale, resetUrl, target.getTenantId(), frontendBaseUrl, smtpSettings);
       if (causal) oneTimeTokenStore.passwordResetDelivery(issuance, "SENT");
     } catch (Exception ex) {
       try {
@@ -431,7 +461,9 @@ public class PasswordResetService {
           oneTimeTokenStore.discard(TOKEN_SCOPE, oneTimeToken, target.getKeycloakUserId());
         }
       } catch (RuntimeException custodyFailure) {
-        log.warn("Password-reset delivery custody unavailable ({})", custodyFailure.getClass().getSimpleName());
+        log.warn(
+            "Password-reset delivery custody unavailable ({})",
+            custodyFailure.getClass().getSimpleName());
       }
       log.warn("Password reset email dispatch failed ({})", ex.getClass().getSimpleName());
     }
@@ -507,7 +539,8 @@ public class PasswordResetService {
   }
 
   private String newResetToken() {
-    return UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", "");
+    return UUID.randomUUID().toString().replace("-", "")
+        + UUID.randomUUID().toString().replace("-", "");
   }
 
   private String buildResetFrontendUrl(String oneTimeToken, String frontendBaseUrl) {

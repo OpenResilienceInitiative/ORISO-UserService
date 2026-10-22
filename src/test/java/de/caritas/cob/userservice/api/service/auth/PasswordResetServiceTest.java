@@ -534,13 +534,25 @@ class PasswordResetServiceTest {
     when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
     var issued = new java.util.concurrent.atomic.AtomicReference<PasswordResetBinding>();
-    org.mockito.Mockito.lenient().when(identityPasswordUpdater.passwordResetIssuance(
-        any(), anyString(), any(), anyString(), anyString(), anyString(), any()))
-        .thenAnswer(call -> {
-          var binding = new PasswordResetBinding(call.getArgument(0), call.getArgument(1), call.getArgument(2),
-              call.getArgument(3), call.getArgument(5), "version", "a".repeat(64), call.getArgument(6));
-          issued.set(binding); return binding;
-        });
+    org.mockito.Mockito.lenient()
+        .when(
+            identityPasswordUpdater.passwordResetIssuance(
+                any(), anyString(), any(), anyString(), anyString(), anyString(), any()))
+        .thenAnswer(
+            call -> {
+              var binding =
+                  new PasswordResetBinding(
+                      call.getArgument(0),
+                      call.getArgument(1),
+                      call.getArgument(2),
+                      call.getArgument(3),
+                      call.getArgument(5),
+                      "version",
+                      "a".repeat(64),
+                      call.getArgument(6));
+              issued.set(binding);
+              return binding;
+            });
     passwordResetService.requestPasswordReset("testuser", "en");
     var binding = issued.get();
     var ordered = org.mockito.Mockito.inOrder(oneTimeTokenStore);

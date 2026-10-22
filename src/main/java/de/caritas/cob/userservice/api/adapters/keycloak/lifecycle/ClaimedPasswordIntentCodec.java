@@ -58,41 +58,95 @@ final class ClaimedPasswordIntentCodec {
   }
 
   private record Metadata(
-      int v, String realmId, String operationId, String command, String method, String route,
-      String accountId, Long tenantId, String ownerClient, String ownerSubject,
-      String originDigest, String claimId, long claimVersion, String workflowKind,
-      String workflowDigest, String requestDigest, String expectedState,
-      long authorityValidUntil, String representation) {
-    @Override public String toString() { return "ClaimedPasswordMetadata[redacted]"; }
+      int v,
+      String realmId,
+      String operationId,
+      String command,
+      String method,
+      String route,
+      String accountId,
+      Long tenantId,
+      String ownerClient,
+      String ownerSubject,
+      String originDigest,
+      String claimId,
+      long claimVersion,
+      String workflowKind,
+      String workflowDigest,
+      String requestDigest,
+      String expectedState,
+      long authorityValidUntil,
+      String representation) {
+    @Override
+    public String toString() {
+      return "ClaimedPasswordMetadata[redacted]";
+    }
   }
 
   private Metadata metadata(JsonNode value) {
-    fields(value, Set.of("v", "realmId", "operationId", "command", "method", "route",
-        "accountId", "tenantId", "ownerClient", "ownerSubject", "originDigest", "claimId",
-        "claimVersion", "workflowKind", "workflowDigest", "requestDigest", "expectedState",
-        "authorityValidUntil", "representation"));
-    if (positive(value, "v") != 1 || !"account.password-reset".equals(text(value, "command", 64))
+    fields(
+        value,
+        Set.of(
+            "v",
+            "realmId",
+            "operationId",
+            "command",
+            "method",
+            "route",
+            "accountId",
+            "tenantId",
+            "ownerClient",
+            "ownerSubject",
+            "originDigest",
+            "claimId",
+            "claimVersion",
+            "workflowKind",
+            "workflowDigest",
+            "requestDigest",
+            "expectedState",
+            "authorityValidUntil",
+            "representation"));
+    if (positive(value, "v") != 1
+        || !"account.password-reset".equals(text(value, "command", 64))
         || !"POST".equals(text(value, "method", 16))
         || !"oriso-account-maintenance/v1/accounts/password-reset".equals(text(value, "route", 128))
-        || !"FROZEN_CLAIMED_PASSWORD_HTTP_V1".equals(text(value, "representation", 64))) throw invalid();
+        || !"FROZEN_CLAIMED_PASSWORD_HTTP_V1".equals(text(value, "representation", 64)))
+      throw invalid();
     String kind = text(value, "workflowKind", 32);
     if (!Set.of("EXISTING_SETUP", "PASSWORD_RESET").contains(kind)) throw invalid();
-    var tenant = value.get("tenantId"); Long tenantId = null;
+    var tenant = value.get("tenantId");
+    Long tenantId = null;
     if (!tenant.isNull()) {
-      if (!tenant.isIntegralNumber() || !tenant.canConvertToLong() || tenant.longValue() < 0) throw invalid();
+      if (!tenant.isIntegralNumber() || !tenant.canConvertToLong() || tenant.longValue() < 0)
+        throw invalid();
       tenantId = tenant.longValue();
     }
-    return new Metadata(1, text(value, "realmId", 512), uuid(value, "operationId"), "account.password-reset",
-        "POST", "oriso-account-maintenance/v1/accounts/password-reset", uuid(value, "accountId"), tenantId,
-        text(value, "ownerClient", 255), uuid(value, "ownerSubject"), digest(value, "originDigest"),
-        uuid(value, "claimId"), positive(value, "claimVersion"), kind, digest(value, "workflowDigest"),
-        digest(value, "requestDigest"), digest(value, "expectedState"), positive(value, "authorityValidUntil"),
+    return new Metadata(
+        1,
+        text(value, "realmId", 512),
+        uuid(value, "operationId"),
+        "account.password-reset",
+        "POST",
+        "oriso-account-maintenance/v1/accounts/password-reset",
+        uuid(value, "accountId"),
+        tenantId,
+        text(value, "ownerClient", 255),
+        uuid(value, "ownerSubject"),
+        digest(value, "originDigest"),
+        uuid(value, "claimId"),
+        positive(value, "claimVersion"),
+        kind,
+        digest(value, "workflowDigest"),
+        digest(value, "requestDigest"),
+        digest(value, "expectedState"),
+        positive(value, "authorityValidUntil"),
         "FROZEN_CLAIMED_PASSWORD_HTTP_V1");
   }
 
   private byte[] command(Metadata metadata, byte[] bytes) {
     if (bytes == null || bytes.length == 0 || bytes.length > 65536) throw invalid();
-    byte[] snapshot = bytes.clone(); String raw = codec.utf8(snapshot);
+    byte[] snapshot = bytes.clone();
+    String raw = codec.utf8(snapshot);
     var wrapper = codec.read(raw, JsonNode.class);
     fields(wrapper, Set.of("body", "localState"));
     var local = wrapper.path("localState");
@@ -105,38 +159,66 @@ final class ClaimedPasswordIntentCodec {
     fields(body, Set.of("target", "workflow", "operationId", "expectedState", "change"));
     if (!metadata.operationId().equals(uuid(body, "operationId"))
         || !metadata.expectedState().equals(digest(body, "expectedState"))) throw invalid();
-    var target = body.path("target"); fields(target, Set.of("accountId", "tenantId", "origin"));
+    var target = body.path("target");
+    fields(target, Set.of("accountId", "tenantId", "origin"));
     if (!metadata.accountId().equals(uuid(target, "accountId"))
-        || (metadata.tenantId() == null ? !target.get("tenantId").isNull()
-            : !target.path("tenantId").isTextual() || !metadata.tenantId().toString().equals(target.path("tenantId").textValue()))) throw invalid();
+        || (metadata.tenantId() == null
+            ? !target.get("tenantId").isNull()
+            : !target.path("tenantId").isTextual()
+                || !metadata.tenantId().toString().equals(target.path("tenantId").textValue())))
+      throw invalid();
     var origin = target.path("origin");
-    fields(origin, Set.of("kind", "workflowId", "humanSubject", "humanIssuer", "humanClient", "humanAuthority"));
+    fields(
+        origin,
+        Set.of(
+            "kind", "workflowId", "humanSubject", "humanIssuer", "humanClient", "humanAuthority"));
     if (!"PASSWORD_RESET".equals(text(origin, "kind", 32))
         || !metadata.claimId().equals(uuid(origin, "workflowId"))
-        || !origin.get("humanSubject").isNull() || !origin.get("humanIssuer").isNull()
-        || !origin.get("humanClient").isNull() || !origin.get("humanAuthority").isNull()
-        || !metadata.originDigest().equals(codec.digest("maintenance-origin", origin))) throw invalid();
+        || !origin.get("humanSubject").isNull()
+        || !origin.get("humanIssuer").isNull()
+        || !origin.get("humanClient").isNull()
+        || !origin.get("humanAuthority").isNull()
+        || !metadata.originDigest().equals(codec.digest("maintenance-origin", origin)))
+      throw invalid();
     var workflow = body.path("workflow");
-    fields(workflow, Set.of("v", "kind", "claimId", "claimVersion", "authorityValidUntil",
-        "expectedUsername", "expectedEmailDigest", "profileKind", "profileId", "profileVersion"));
-    if (positive(workflow, "v") != 1 || !metadata.workflowKind().equals(text(workflow, "kind", 32))
+    fields(
+        workflow,
+        Set.of(
+            "v",
+            "kind",
+            "claimId",
+            "claimVersion",
+            "authorityValidUntil",
+            "expectedUsername",
+            "expectedEmailDigest",
+            "profileKind",
+            "profileId",
+            "profileVersion"));
+    if (positive(workflow, "v") != 1
+        || !metadata.workflowKind().equals(text(workflow, "kind", 32))
         || !metadata.claimId().equals(uuid(workflow, "claimId"))
         || metadata.claimVersion() != positive(workflow, "claimVersion")
         || metadata.authorityValidUntil() != positive(workflow, "authorityValidUntil")
         || !Set.of("ORDINARY", "PROTECTED").contains(text(workflow, "profileKind", 16))
-        || !metadata.workflowDigest().equals(codec.digest("password-reset-workflow/v1", workflow))) throw invalid();
-    text(workflow, "expectedUsername", 255); digest(workflow, "expectedEmailDigest");
-    text(workflow, "profileId", 255); positive(workflow, "profileVersion");
-    var change = body.path("change"); fields(change, Set.of("password", "temporary"));
+        || !metadata.workflowDigest().equals(codec.digest("password-reset-workflow/v1", workflow)))
+      throw invalid();
+    text(workflow, "expectedUsername", 255);
+    digest(workflow, "expectedEmailDigest");
+    text(workflow, "profileId", 255);
+    positive(workflow, "profileVersion");
+    var change = body.path("change");
+    fields(change, Set.of("password", "temporary"));
     text(change, "password", 4096);
-    if (!change.path("temporary").isBoolean() || change.path("temporary").booleanValue()
+    if (!change.path("temporary").isBoolean()
+        || change.path("temporary").booleanValue()
         || !raw.equals(codec.canonical(wrapper))) throw invalid();
     return snapshot;
   }
 
   private static long positive(JsonNode value, String name) {
     var number = value.path(name);
-    if (!number.isIntegralNumber() || !number.canConvertToLong() || number.longValue() <= 0) throw invalid();
+    if (!number.isIntegralNumber() || !number.canConvertToLong() || number.longValue() <= 0)
+      throw invalid();
     return number.longValue();
   }
 
