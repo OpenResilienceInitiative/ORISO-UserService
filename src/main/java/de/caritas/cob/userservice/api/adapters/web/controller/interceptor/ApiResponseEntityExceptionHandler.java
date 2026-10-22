@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.picture.PictureDiagnostics;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange.MagicLinkChallenge;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.DefiniteProfileNoEffect;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolationException;
@@ -269,7 +270,8 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
             .map(reason -> new CustomHttpHeader(reason).buildHeader())
             .orElseGet(HttpHeaders::new);
 
-    return handleExceptionInternal(null, null, headers, HttpStatus.CONFLICT, request);
+    return handleExceptionInternal(
+        null, null, definiteProfileHeaders(ex, headers), HttpStatus.CONFLICT, request);
   }
 
   /**
@@ -366,7 +368,17 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final ForbiddenException ex, final WebRequest request) {
     ex.executeLogging();
 
-    return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.FORBIDDEN, request);
+    return handleExceptionInternal(
+        null, null, definiteProfileHeaders(ex, new HttpHeaders()), HttpStatus.FORBIDDEN, request);
+  }
+
+  private HttpHeaders definiteProfileHeaders(RuntimeException exception, HttpHeaders headers) {
+    if (exception instanceof DefiniteProfileNoEffect outcome) {
+      headers.set("X-ORISO-Mutation-Outcome", "NO_EFFECT");
+      headers.set("X-ORISO-Mutation-Operation", outcome.operationId().toString());
+      headers.setCacheControl("no-store");
+    }
+    return headers;
   }
 
   /** Maps service-layer tenant-scope denials to the same explicit 403 contract as role denials. */

@@ -302,6 +302,23 @@ class AccountInactivityServiceTest {
         .isEqualTo(original.get());
   }
 
+  @Test
+  void aForeignTransactionManagerCannotClaimTheActualInactivityRow() {
+    createService(new Effects());
+    var calls=new java.util.concurrent.atomic.AtomicInteger();
+    var unrelated=new DriverManagerDataSource("jdbc:h2:mem:foreign-owner;DB_CLOSE_DELAY=-1","sa","");
+    var service=new AccountInactivityService(inactivityJdbc(),new DataSourceTransactionManager(unrelated),
+        Clock.fixed(Instant.parse("2026-02-01T00:00:00Z"),ZoneOffset.UTC),new Effects() {
+          public Set<Role> currentRoles(String id) {calls.incrementAndGet();return Set.of(Role.CONSULTANT);}
+        });
+    scopedMode(service);
+    String id="61000000-0000-4000-8000-000000000010";
+    service.assignAtCreation(id,7L,24,0,Instant.parse("2023-01-01T00:00:00Z"));
+    org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,() -> service.scan(false));
+    assertThat(calls.get()).isZero();
+    assertThat(service.snapshot(id).orElseThrow().status()).isEqualTo(AccountInactivityService.Status.ACTIVE);
+  }
+
   private void scopedMode(AccountInactivityService service) {
     var mode =
         org.mockito.Mockito.mock(
@@ -747,8 +764,11 @@ class AccountInactivityServiceTest {
             + " BIGINT,assigned_months INT NOT NULL,revision BIGINT NOT NULL,last_activity"
             + " TIMESTAMP(6) NOT NULL,due_at TIMESTAMP(6) NOT NULL,status VARCHAR(20) NOT"
             + " NULL,last_error VARCHAR(1000),attempts INT DEFAULT 0 NOT NULL)");
-    jdbc.execute(
-        "ALTER TABLE account_inactivity ADD COLUMN work_id VARCHAR(36), ADD COLUMN claimed_at TIMESTAMP(6), ADD COLUMN claimed_json CLOB, ADD COLUMN source_json CLOB, ADD COLUMN native_phase VARCHAR(24), ADD COLUMN native_body CLOB, ADD COLUMN native_receipt CLOB, ADD COLUMN suspension_operation_id VARCHAR(36), ADD COLUMN suspension_body CLOB, ADD COLUMN suspension_receipt CLOB, ADD COLUMN access_work_id VARCHAR(36)");
+    for (String column : java.util.List.of(
+        "work_id VARCHAR(36)", "claimed_at TIMESTAMP(6)", "claimed_json CLOB", "source_json CLOB",
+        "native_phase VARCHAR(24)", "native_body CLOB", "native_receipt CLOB",
+        "suspension_operation_id VARCHAR(36)", "suspension_body CLOB", "suspension_receipt CLOB", "access_work_id VARCHAR(36)"))
+      jdbc.execute("ALTER TABLE account_inactivity ADD COLUMN " + column);
     for (String table : java.util.List.of("user", "consultant", "admin")) {
       jdbc.execute("DROP TABLE IF EXISTS `" + table + "`");
       String key = table.equals("user") ? "user_id" : table + "_id";

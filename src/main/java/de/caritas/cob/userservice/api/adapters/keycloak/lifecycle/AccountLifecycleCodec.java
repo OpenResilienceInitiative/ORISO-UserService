@@ -1010,7 +1010,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       String accountId,
       TaskActorCredentials actor,
       Object body) {
-    if (!java.util.Set.of("read", "delete", "locale", "profile", "email", "ordinary-profile")
+    if (!java.util.Set.of("read", "delete", "locale", "profile", "email", "ordinary-profile", "deactivate", "reactivate")
             .contains(command)
         || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
       throw new IllegalArgumentException("Invalid maintenance proof binding");
@@ -1227,12 +1227,22 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
 
   public String verifyMaintenanceInactivitySuspendReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
-    throw new IllegalArgumentException("Checked inactivity suspension receipt is unavailable");
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "deactivate", "UPDATED");
   }
 
   public String verifyMaintenanceInactivityRestoreReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
-    throw new IllegalArgumentException("Checked inactivity restoration receipt is unavailable");
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "reactivate", "UPDATED");
+  }
+
+  /** Fixed configured-existing-import source tuple, never an authority factory. */
+  public String existingImportSourceKey(JsonNode exactSourceTuple) {
+    throw new IllegalArgumentException("Existing import source binding is unavailable");
+  }
+
+  /** Exact persisted nonsecret existing-import ownership snapshot. */
+  public String existingImportRowDigest(JsonNode exactOwnedSource) {
+    throw new IllegalArgumentException("Existing import source binding is unavailable");
   }
 
   public String claimedInactivityDeletionRowDigest(JsonNode exactOwnedRow) {
