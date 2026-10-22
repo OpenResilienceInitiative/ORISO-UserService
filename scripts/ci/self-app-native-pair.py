@@ -42,6 +42,14 @@ def snapshot(kc):
     return {"user_commit": actual, "keycloak_commit": native, "user_sources": manifest(ROOT), "keycloak_sources": manifest(kc)}
 
 
+def reviewed_self_operations(kind):
+    if kind == "app":
+        return ["account.read", "otp.read", "otp.app-setup"]
+    if kind == "email":
+        return ["account.read", "otp.read", "otp.email-start", "otp.email-finish"]
+    raise ValueError("Unknown native pair kind")
+
+
 def public_self_reads_complete(observed):
     return (isinstance(observed, list)
             and observed.count({"phase": "public-self-read", "status": 200}) == 1
@@ -190,7 +198,7 @@ def native(kc, report):
 
         @classmethod
         def reviewed_self_operations(cls):
-            return ["account.read", "otp.email-start", "otp.email-finish"] if kind == "email" else ["account.read", "otp.app-setup"]
+            return reviewed_self_operations(kind)
 
         @classmethod
         def extra_launch_arguments(cls):
@@ -227,7 +235,7 @@ def native(kc, report):
         assert otp_policy["otpPolicyPeriod"] == 30
         machine = fixture.token("ACCOUNT_ADMIN")
         assert lifecycle.call(fixture.base, "GET", "/admin/realms/" + lifecycle.REALM + "/users/" + fixture.account_id, token=machine)[0] == 403
-        receipt["native_preconditions"] = {"actual_user_registration": True, "current_user_group_role": True, "actual_native_human_session": True, "canonical_admin3": True, "stock_native_denied": True, "no_app_credential": True, "actual_totp_sha1_6_30_policy": True}
+        receipt["native_preconditions"] = {"actual_user_registration": True, "current_user_group_role": True, "actual_native_human_session": True, "canonical_admin3": True, "stock_native_denied": True, "no_app_credential": True, "actual_totp_sha1_6_30_policy": True, "reviewed_otp_read_operation": "otp.read" in UserPair.reviewed_self_operations()}
         phase = "actual-public-java-native-pair"
         environment = dict(os.environ)
         environment.update({"PAIR_KIND": kind, "PAIR_NATIVE_BASE": fixture.base, "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id, "PAIR_ACCOUNT_ID": fixture.account_id, "PAIR_USERNAME": fixture.creation_input["account"]["username"], "PAIR_PASSWORD": fixture.creation_input["account"]["password"], "PAIR_HUMAN_CLIENT": CLIENT, "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(), "PAIR_WITNESS": str(report.with_name("self-app-native-witness.json").resolve())})

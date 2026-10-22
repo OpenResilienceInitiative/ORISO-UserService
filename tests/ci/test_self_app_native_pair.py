@@ -56,6 +56,12 @@ class SelfAppNativePairEvidenceTest(unittest.TestCase):
         for messages in ([], [b"Content-Type: text/plain\n\nnone"], [b"Content-Type: text/plain\n\n654321 and 123456"], [b"one", b"two"]):
             with self.subTest(count=len(messages)), self.assertRaises(ValueError): PROOF.delivered_code(messages)
 
+    def test_each_actual_pair_fixture_reviews_the_read_operation_and_only_its_mutations(self):
+        self.assertEqual(["account.read", "otp.read", "otp.app-setup"], PROOF.reviewed_self_operations("app"))
+        self.assertEqual(["account.read", "otp.read", "otp.email-start", "otp.email-finish"], PROOF.reviewed_self_operations("email"))
+        with self.assertRaises(ValueError):
+            PROOF.reviewed_self_operations("wildcard")
+
     def test_actual_public_read_pair_requires_both_states_and_two_original_native_gets(self):
         rows = [{"phase": "public-self-read", "status": 200},
                 {"phase": "public-self-read-active", "status": 200},
