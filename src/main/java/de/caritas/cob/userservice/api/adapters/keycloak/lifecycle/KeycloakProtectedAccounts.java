@@ -1,8 +1,10 @@
 package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedAccountActivation.ReadyActivation;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationAcceptance.AcceptanceClaim;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.PreparedCreation;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCommitted;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCreated;
 import de.caritas.cob.userservice.api.config.auth.TaskActor;
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
@@ -74,6 +76,10 @@ public final class KeycloakProtectedAccounts {
     } catch (RuntimeException failure) {
       throw new RemoteFailure(0);
     }
+  }
+
+  public VerifiedCommitted commit(ReadyActivation ready) {
+    throw new IllegalStateException("Protected activation transport is pending");
   }
 
   public PendingOwnedAccount ownedRead(AcceptanceClaim claim, VerifiedCreated created) {

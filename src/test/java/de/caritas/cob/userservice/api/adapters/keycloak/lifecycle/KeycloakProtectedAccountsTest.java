@@ -6,8 +6,11 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.*;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos.LocalOutcome;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedAccountActivation.ReadyActivation;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationAcceptance.AcceptanceClaim;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.PreparedCreation;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCommitted;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCreated;
 import de.caritas.cob.userservice.api.config.auth.TaskActor;
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
@@ -135,6 +138,53 @@ class KeycloakProtectedAccountsTest {
   }
 
   @Test
+  void activationRequiresTheCommittedPrivateLocalHandleAndExactNativeReceipt() {
+    var ready = mock(ReadyActivation.class);
+    var local =
+        new LocalOutcome(
+            1, UUID.fromString("742ae66e-2fe1-44d4-998c-d3543e5a1bc8"), "a".repeat(64));
+    when(ready.created()).thenReturn(created);
+    when(ready.outcome()).thenReturn(local);
+    byte[] commitBody =
+        "{\"synthetic\":\"committed-local-outcome\"}".getBytes(StandardCharsets.UTF_8);
+    when(codec.commitBody(created, local)).thenReturn(commitBody);
+    when(codec.commitProof(eq(created), eq(local), any()))
+        .thenReturn("public-synthetic-commit-proof");
+    var committed = mock(VerifiedCommitted.class);
+    when(codec.verifyCommitted(eq(created), eq(local), aryEq(createdResponse)))
+        .thenReturn(committed);
+    server
+        .expect(requestTo(url() + "/commit"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(header("Authorization", "Bearer public-synthetic-creator"))
+        .andExpect(header("X-ORISO-Task-Context", "public-synthetic-commit-proof"))
+        .andExpect(content().bytes(commitBody))
+        .andRespond(withSuccess(createdResponse, MediaType.APPLICATION_JSON));
+    assertSame(committed, assertDoesNotThrow(() -> transport.commit(ready)));
+    verify(codec).verifyCommitted(eq(created), eq(local), aryEq(createdResponse));
+    server.verify();
+  }
+
+  @Test
+  void anUnconfirmedCommitCannotFinishTheLocalActivation() {
+    var ready = mock(ReadyActivation.class);
+    var local =
+        new LocalOutcome(
+            1, UUID.fromString("742ae66e-2fe1-44d4-998c-d3543e5a1bc8"), "a".repeat(64));
+    when(ready.created()).thenReturn(created);
+    when(ready.outcome()).thenReturn(local);
+    when(codec.commitBody(created, local)).thenReturn(createBody);
+    when(codec.commitProof(eq(created), eq(local), any()))
+        .thenReturn("public-synthetic-commit-proof");
+    server
+        .expect(requestTo(url() + "/commit"))
+        .andRespond(withStatus(HttpStatus.ACCEPTED).body(createdResponse));
+    assertThrows(KeycloakProtectedAccounts.RemoteFailure.class, () -> transport.commit(ready));
+    verify(codec, never()).verifyCommitted(any(), any(), any());
+    server.verify();
+  }
+
+  @Test
   void aCreationReceiptCannotBeReboundToAnotherDurableClaim() {
     var original = claim.frozen();
     assertAll(
@@ -182,6 +232,7 @@ class KeycloakProtectedAccountsTest {
     try {
       assertThrows(IllegalStateException.class, () -> transport.create(prepared));
       assertThrows(IllegalStateException.class, () -> transport.ownedRead(claim, created));
+      assertThrows(IllegalStateException.class, () -> transport.commit(mock(ReadyActivation.class)));
       verifyNoInteractions(actors, broker, codec);
     } finally {
       TransactionSynchronizationManager.setActualTransactionActive(false);

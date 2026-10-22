@@ -168,7 +168,14 @@ class JdbcProtectedAccountActivationTest {
               jdbc.update("INSERT INTO synthetic_otp_stage VALUES(73,'synthetic-ciphertext')");
               return setup;
             });
-    when(otp.currentSetup(any())).thenReturn(setup);
+    when(otp.currentSetup(any()))
+        .thenAnswer(
+            call -> {
+              assertFalse(
+                  TransactionSynchronizationManager.isActualTransactionActive(),
+                  "The actual OTP currentSetup port requires completed owner SQL");
+              return setup;
+            });
   }
 
   @Test
@@ -238,6 +245,11 @@ class JdbcProtectedAccountActivationTest {
     when(nativeCommit.attemptId()).thenReturn(claim.attemptId());
     when(nativeCommit.accountId()).thenReturn(ACCOUNT);
     when(nativeCommit.terminalReceipt()).thenReturn("synthetic-authenticated-terminal-receipt");
+    when(nativeCommit.localOutcome())
+        .thenReturn(new AccountLifecycleDtos.LocalOutcome(1, UUID.randomUUID(), "f".repeat(64)));
+    assertThrows(RuntimeException.class, () -> restart().acknowledge(ready, nativeCommit));
+    assertEquals("READY", state());
+    when(nativeCommit.localOutcome()).thenReturn(ready.outcome());
     assertDoesNotThrow(() -> restart().acknowledge(ready, nativeCommit));
     assertEquals("COMMITTED", state());
     assertEquals(
