@@ -68,6 +68,19 @@ class StopChatActionCommandTest {
   }
 
   @Test
+  void stopChatShouldLeaveThePurgeOfAMembersOnlyRoomToDeleteChat() {
+    Chat chat = activeMatrixChat();
+    when(chat.isMembersOnly()).thenReturn(true);
+
+    command.execute(chat);
+
+    // deleteChat purged it strictly in its own transaction; a second, redundant purge could fail
+    // after everything is gone and report an error for a stop that succeeded.
+    verify(chatService).deleteChat(chat);
+    verify(matrixChatShutdownService, never()).shutdownRoom(chat);
+  }
+
+  @Test
   void stopChatShouldCreateNextOccurrenceForRepetitiveChat() {
     Chat chat = activeMatrixChat();
     when(chat.isRepetitive()).thenReturn(true);

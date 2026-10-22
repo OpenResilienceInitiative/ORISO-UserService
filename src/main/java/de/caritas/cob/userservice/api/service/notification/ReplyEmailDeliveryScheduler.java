@@ -20,6 +20,7 @@ public class ReplyEmailDeliveryScheduler {
   private final @NonNull ReplyEmailDeliveryWriter writer;
   private final @NonNull AdviceSeekerReplyEmailService service;
   private final @NonNull FeedbackMessageEmailService feedback;
+  private final @NonNull InternalChatEmailService internalChat;
   private final @NonNull ScheduledTaskClaimService claims;
   private long lastObservedUncertainCount = -1;
 
@@ -67,6 +68,8 @@ public class ReplyEmailDeliveryScheduler {
       switch (kind.get()) {
         case FEEDBACK_INTENT -> feedback.resolveIntent(id);
         case FEEDBACK -> feedback.deliverPending(id);
+        case INTERNAL_INTENT -> internalChat.resolveIntent(id);
+        case INTERNAL -> internalChat.deliverPending(id);
         case ASKER, CONSULTANT -> service.deliverPending(id);
       }
     } catch (RuntimeException failure) {

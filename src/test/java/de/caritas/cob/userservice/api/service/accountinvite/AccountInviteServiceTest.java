@@ -373,7 +373,7 @@ class AccountInviteServiceTest {
     lenient().when(templateRepository.findById(21L)).thenReturn(Optional.of(foreign));
     doThrow(new ForbiddenException("foreign template"))
         .when(accessPolicy)
-        .authorizeTemplateUse(8L, InviteEmailTemplateKind.COUNSELLOR_INVITE);
+        .authorizeTemplateUse(8L, InviteEmailTemplateKind.COUNSELLOR_INVITE, false);
     return foreign;
   }
 
