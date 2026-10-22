@@ -347,7 +347,7 @@ class ProtectedAccountCodecTest {
             p -> p.put("tenantId", "8"),
             p -> p.put("preferredLanguage", "en"),
             p -> p.put("enabled", true),
-            p -> p.put("emailVerified", true),
+            p -> p.put("emailVerified", false),
             p -> p.put("passwordChangeRequired", true),
             p -> p.putArray("effectiveRoles").add("tenant-admin"),
             p -> p.put("enabled", "false"),

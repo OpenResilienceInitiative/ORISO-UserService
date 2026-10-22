@@ -45,7 +45,7 @@ class KeycloakProtectedAccountsTest {
       "{\"synthetic\":\"created\"}".getBytes(StandardCharsets.UTF_8);
   private final byte[] readBody = "{\"synthetic\":\"owned-read\"}".getBytes(StandardCharsets.UTF_8);
   private final byte[] projection =
-      "{\"synthetic\":\"disabled-owned\"}".getBytes(StandardCharsets.UTF_8);
+      "{\"username\":\"enc.synthetic-owned\"}".getBytes(StandardCharsets.UTF_8);
   private KeycloakProtectedAccounts transport;
 
   @BeforeEach
@@ -128,6 +128,7 @@ class KeycloakProtectedAccountsTest {
     assertSame(created, pending.created());
     assertEquals("oriso", pending.realmName());
     assertEquals("synthetic-realm", pending.realmId());
+    assertEquals("enc.synthetic-owned", pending.username());
     verify(codec).checkOwnedProjection(eq(created), aryEq(projection));
     assertEquals("ProtectedPendingOwnedAccount[redacted]", pending.toString());
     server.verify();

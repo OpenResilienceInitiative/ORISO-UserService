@@ -105,6 +105,9 @@ public class AccountInviteService {
   private ProtectedInvitationIssuance protectedInvitationIssuance;
   private ProtectedInvitationCancellation protectedInvitationCancellation;
 
+  @jakarta.persistence.PersistenceContext
+  private jakarta.persistence.EntityManager protectedInviteEntityManager;
+
   @Autowired(required = false)
   void configureProtectedIssuance(ProtectedInvitationIssuance issuance) {
     protectedInvitationIssuance = issuance;
@@ -907,8 +910,9 @@ public class AccountInviteService {
         reason,
         () -> {
           AccountInvite current =
-              InviteRowHold.lock(accountInviteRepository, initial.getId())
-                  .orElseThrow(() -> new NotFoundException("Account invite not found"));
+              refreshProtectedInvite(
+                  InviteRowHold.lock(accountInviteRepository, initial.getId())
+                      .orElseThrow(() -> new NotFoundException("Account invite not found")));
           if (current.getStatus() == AccountInviteStatus.ACCEPTED) throw inviteAlreadyAccepted();
           if (reason == Reason.ISSUANCE_ABORTED) {
             expired[0] = expireAndReleaseNumbers(current, now);
@@ -920,8 +924,9 @@ public class AccountInviteService {
         initial.getId(),
         () -> {
           AccountInvite current =
-              InviteRowHold.lock(accountInviteRepository, initial.getId())
-                  .orElseThrow(() -> new NotFoundException("Account invite not found"));
+              refreshProtectedInvite(
+                  InviteRowHold.lock(accountInviteRepository, initial.getId())
+                      .orElseThrow(() -> new NotFoundException("Account invite not found")));
           if (reason == Reason.SUPERSEDED) {
             if (current.getStatus() != AccountInviteStatus.SUPERSEDED) {
               throw new BadRequestException("The cancellation state changed");
@@ -1054,6 +1059,11 @@ public class AccountInviteService {
     AccountInvite invite =
         InviteRowHold.lockByToken(accountInviteRepository, hash(rawToken))
             .orElseThrow(() -> new NotFoundException("Account invite not found"));
+
+    if (delivery.protects(invite.getTargetRole())) {
+      throw new AccessDeniedException(
+          "Protected invitation acceptance requires its recipient registration workflow");
+    }
 
     // The ordinary acceptance path provisions a new identity. An existing-account setup token
     // must never reach it, including its accepted-link resume branch.
@@ -1302,8 +1312,20 @@ public class AccountInviteService {
       accessPolicy.authorizeMissing(inviteId);
       throw new NotFoundException("Account invite not found");
     }
-    accessPolicy.authorizeAccess(invite.get());
-    return invite.get();
+    AccountInvite current = refreshProtectedInvite(invite.get());
+    accessPolicy.authorizeAccess(current);
+    return current;
+  }
+
+  private AccountInvite refreshProtectedInvite(AccountInvite invite) {
+    // A new SQL lock does not refresh a request-bound JPA first-level cache after native RPC.
+    // Refresh only this locked row, preserving unrelated local managed work.
+    if (delivery.protects(invite.getTargetRole())
+        && protectedInviteEntityManager != null
+        && protectedInviteEntityManager.contains(invite)) {
+      protectedInviteEntityManager.refresh(invite, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+    }
+    return invite;
   }
 
   private AccountInvite findInvite(Long inviteId) {

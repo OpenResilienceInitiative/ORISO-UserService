@@ -165,7 +165,7 @@
     "tenantId": "7",
     "preferredLanguage": "de",
     "enabled": false,
-    "emailVerified": false,
+    "emailVerified": true,
     "effectiveRoles": [],
     "passwordChangeRequired": false
   },
