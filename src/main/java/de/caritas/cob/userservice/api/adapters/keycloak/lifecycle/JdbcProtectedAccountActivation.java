@@ -244,12 +244,29 @@ public final class JdbcProtectedAccountActivation {
 
   public Phase phase(AcceptanceClaim claim) {
     outsideSql();
+    return readPhase(claim, null);
+  }
+
+  /** Original saved phase data cannot authorize a new recipient operation. */
+  public Phase phase(HistoricalAcceptance historical) {
+    outsideSql();
+    if (historical == null) throw unavailable();
+    return readPhase(historical.claim(), historical);
+  }
+
+  private Phase readPhase(AcceptanceClaim claim, HistoricalAcceptance historical) {
     return owned(
         claim,
+        historical != null,
         () -> {
           var saved = rows(claim);
           if (saved.isEmpty()) {
-            if (!cleanupRows(claim).isEmpty()) throw unavailable();
+            var cleaned = cleanupRows(claim);
+            if (!cleaned.isEmpty()) {
+              if (cleaned.size() != 1 || historical == null) throw unavailable();
+              checkedUnstagedCleanup(claim, historical, cleaned.getFirst());
+              return Phase.LOCAL_CLEANED;
+            }
             return Phase.UNSTAGED;
           }
           if (saved.size() != 1) throw unavailable();
@@ -262,18 +279,13 @@ public final class JdbcProtectedAccountActivation {
           var row =
               Set.of("READY", "COMMITTED").contains(saved.getFirst().state())
                   ? historicallyChecked(claim, saved.getFirst())
-                  : checked(claim, saved.getFirst());
+                  : checked(claim, saved.getFirst(), historical != null);
           try {
             return Phase.valueOf(row.state());
           } catch (IllegalArgumentException failure) {
             throw unavailable();
           }
         });
-  }
-
-  /** Saved workflow phase only; closed until its historical phase counterfactual is measured. */
-  public Phase phase(HistoricalAcceptance historical) {
-    throw unavailable();
   }
 
   public IdentityOtpCredential currentSetup(AcceptanceClaim claim) {
@@ -721,6 +733,59 @@ public final class JdbcProtectedAccountActivation {
         "SELECT body_json,effects_digest,outbox_id FROM protected_account_cleanup WHERE invite_id=? FOR UPDATE",
         (rs, i) -> new Cleanup(rs.getString(1), rs.getString(2), rs.getString(3)),
         inviteId(claim));
+  }
+
+  private void checkedUnstagedCleanup(
+      AcceptanceClaim claim, HistoricalAcceptance historical, Cleanup cleanup) {
+    if (creation == null || historical.inviteId() != inviteId(claim)) throw unavailable();
+    JsonNode body = json.read(cleanup.body(), JsonNode.class);
+    var keys = new java.util.HashSet<String>();
+    body.fieldNames().forEachRemaining(keys::add);
+    var metadata = creation.metadataWithinOwner(historical);
+    if (!keys.equals(Set.of("inviteId", "approvalId", "claimId", "attemptId", "executionId",
+            "accountId", "recoveryId", "generation", "creationProofDigest", "creationFingerprint",
+            "registrationDigest", "bootstrapIncarnation", "previousState", "outboxId"))
+        || !cleanup.body().equals(json.canonical(body))
+        || !equal(cleanup.digest(), json.digest("protected-local-cleanup/v1", body))
+        || !Long.toString(inviteId(claim)).equals(body.path("inviteId").asText())
+        || !claim.frozen().approvalId().toString().equals(body.path("approvalId").asText())
+        || !claim.claimId().toString().equals(body.path("claimId").asText())
+        || !claim.attemptId().toString().equals(body.path("attemptId").asText())
+        || !claim.executionId().toString().equals(body.path("executionId").asText())
+        || !claim.executionId().toString().equals(body.path("bootstrapIncarnation").asText())
+        || !claim.registrationDigest().equals(body.path("registrationDigest").asText())
+        || !metadata.creationFingerprint().equals(body.path("creationFingerprint").asText())
+        || !"UNSTAGED".equals(body.path("previousState").asText())
+        || !cleanup.outbox().equals(body.path("outboxId").asText())
+        || !body.path("generation").isIntegralNumber()
+        || !body.path("generation").canConvertToLong()
+        || body.path("generation").asLong() < 1
+        || claim.executionId().toString().equals(body.path("recoveryId").asText()))
+      throw unavailable();
+    canonicalUuid(body.path("recoveryId").asText());
+    canonicalUuid(cleanup.outbox());
+    String account = body.path("accountId").textValue();
+    if (account == null) {
+      if (!body.path("accountId").isNull() || !body.path("creationProofDigest").isNull())
+        throw unavailable();
+    } else {
+      canonicalUuid(account);
+      if (!body.path("creationProofDigest").isTextual()
+          || !body.path("creationProofDigest").asText().matches("[0-9a-f]{64}")
+          || count("SELECT COUNT(*) FROM admin WHERE admin_id=?", account) != 0
+          || count("SELECT COUNT(*) FROM account_inactivity WHERE identity_id=?", account) != 0)
+        throw unavailable();
+    }
+    var known = creation.createdWithinOwner(historical);
+    if (known.isPresent()) {
+      requireCreated(claim, known.get());
+      if (!Objects.equals(account, known.get().accountId())
+          || !equal(proofDigest(known.get().creationProof()), body.path("creationProofDigest").asText()))
+        throw unavailable();
+    }
+    if (jdbc.queryForObject(
+        "SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?",
+        String.class, inviteId(claim)) != null) throw unavailable();
   }
 
   private record Cleanup(String body, String digest, String outbox) {
