@@ -271,38 +271,7 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private String consultantSnapshot(String id, boolean lock) {
-    var tables = new java.util.TreeMap<String, List<String>>();
-    for (String table :
-        List.of(
-            "admin",
-            "consultant",
-            "language",
-            "consultant_topic",
-            "consultant_agency",
-            "admin_agency")) {
-      String column = table.startsWith("admin") ? "admin_id" : "consultant_id";
-      var rows =
-          jdbc.queryForList(
-              "select * from " + table + " where " + column + "=?" + (lock ? " for update" : ""),
-              id);
-      var encoded = new java.util.ArrayList<String>();
-      for (var row : rows) {
-        var normalized = new java.util.TreeMap<String, Object>();
-        row.forEach(
-            (field, value) ->
-                normalized.put(
-                    field,
-                    value instanceof java.sql.Timestamp t
-                        ? t.toInstant().toString()
-                        : value instanceof byte[] bytes
-                            ? java.util.HexFormat.of().formatHex(bytes)
-                            : value));
-        encoded.add(encode(normalized));
-      }
-      java.util.Collections.sort(encoded);
-      tables.put(table, List.copyOf(encoded));
-    }
-    return encode(tables);
+    return ConsultantProfileSqlSnapshot.capture(jdbc, id, lock, this::encode);
   }
 
   private void requireConsultantPostcondition(CheckedAccount checked, Intent intent) {

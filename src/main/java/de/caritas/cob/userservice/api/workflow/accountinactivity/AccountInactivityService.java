@@ -55,6 +55,13 @@ public class AccountInactivityService {
   private final Clock clock;
   private final AccountInactivityEffects effects;
 
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setIdentityMode(de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    this.identityMode = java.util.Objects.requireNonNull(mode);
+  }
+
   public AccountInactivityService(
       JdbcTemplate jdbc,
       PlatformTransactionManager transactionManager,
