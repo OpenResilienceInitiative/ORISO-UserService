@@ -79,11 +79,15 @@ class AccountLifecycleCallerConfigurationTest {
                     factory.registerSingleton(
                         "fixtureTransactions", mock(PlatformTransactionManager.class));
                     factory.registerSingleton("fixtureMatrix", mock(MatrixSynapseService.class));
-                    factory.registerSingleton("fixtureMatrixConfiguration", mock(MatrixConfig.class));
-                    factory.registerSingleton("fixtureAppointments", mock(AppointmentService.class));
+                    factory.registerSingleton(
+                        "fixtureMatrixConfiguration", mock(MatrixConfig.class));
+                    factory.registerSingleton(
+                        "fixtureAppointments", mock(AppointmentService.class));
                     factory.registerSingleton(
                         "fixtureTenants",
-                        mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class));
+                        mock(
+                            de.caritas.cob.userservice.api.admin.service.tenant.TenantService
+                                .class));
                     factory.registerSingleton(
                         "fixtureAgencies",
                         mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class));
