@@ -122,6 +122,7 @@ class ProtectedOtpBootstrapNativePairProof {
     var http = new RestTemplate();
     var lost = new AtomicInteger();
     var effectCalls = new AtomicInteger();
+    var observedHttp = new ArrayList<Map<String, Object>>();
     http.getInterceptors()
         .add(
             (outbound, bytes, execute) -> {
@@ -142,6 +143,14 @@ class ProtectedOtpBootstrapNativePairProof {
                         }
                       },
                       bytes);
+              if (observedHttp.size() >= 100)
+                throw new IllegalStateException("Pair observations exceed bound");
+              observedHttp.add(
+                  Map.of(
+                      "phase", nativePhase(logical.getPath()),
+                      "status", response.getStatusCode().value()));
+              Files.writeString(
+                  Path.of(required("PAIR_HTTP_WITNESS")), codec.canonical(observedHttp));
               boolean effect =
                   email
                       ? logical.getPath().contains("/send-verification-mail/")
@@ -304,6 +313,18 @@ class ProtectedOtpBootstrapNativePairProof {
                 "creatorIssuanceDouble",
                 true)));
     jdbc.execute("SHUTDOWN");
+  }
+
+  private static String nativePhase(String path) {
+    if (path.endsWith("/token")) return "token";
+    if (path.contains("/admin/realms/")) return "stock-denial";
+    if (path.contains("/owned-read")) return "owned-read";
+    if (path.contains("/oriso-protected-invitations/")) return "create";
+    if (path.contains("/fetch-otp-setup-info/")) return "prepare";
+    if (path.contains("/setup-otp-mail/")) return "email-finish";
+    if (path.contains("/send-verification-mail/")) return "email-start";
+    if (path.contains("/setup-otp/")) return "app";
+    throw new IllegalStateException("Unexpected native pair route");
   }
 
   private static String totp(String secret) throws Exception {

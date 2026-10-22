@@ -147,7 +147,7 @@ def native(kc, report):
             threading.Thread(target=code_server.serve_forever, daemon=True).start()
         receipt["native_preconditions"] = {"five_exact_links": True, "actual_human_approval": True, "smtp_configured": kind == "email", "creator_issuance_double": True}
         environment = dict(os.environ)
-        environment.update({"PAIR_KIND": kind, "PAIR_NATIVE_BASE": fixture.base, "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id, "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(), "PAIR_APPROVAL_REQUEST": lifecycle.canonical({"scope": scope}).decode(), "PAIR_APPROVAL_RESPONSE": lifecycle.canonical(approved).decode(), "PAIR_CREATE_BEARER": fixture.token("ACCOUNT_CREATE"), "PAIR_WITNESS": str(report.with_name("protected-otp-native-witness.json").resolve())})
+        environment.update({"PAIR_KIND": kind, "PAIR_NATIVE_BASE": fixture.base, "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id, "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(), "PAIR_APPROVAL_REQUEST": lifecycle.canonical({"scope": scope}).decode(), "PAIR_APPROVAL_RESPONSE": lifecycle.canonical(approved).decode(), "PAIR_CREATE_BEARER": fixture.token("ACCOUNT_CREATE"), "PAIR_WITNESS": str(report.with_name("protected-otp-native-witness.json").resolve()), "PAIR_HTTP_WITNESS": str(report.with_name("protected-otp-native-http.json").resolve())})
         if code_server:
             environment["PAIR_MAIL_CALLBACK"] = "http://127.0.0.1:" + str(code_server.server_address[1]) + "/one-delivered-code"
         for actor, (client, _) in lifecycle.ACTORS.items():
@@ -169,6 +169,12 @@ def native(kc, report):
             assert set(observed) == expected and all(value is True for value in observed.values())
             receipt["consumer_observations"] = observed
         receipt["accepted"] &= receipt.get("consumer_observations") is not None
+        http_witness = report.with_name("protected-otp-native-http.json")
+        if http_witness.is_file():
+            observed_http = json.loads(http_witness.read_text())
+            assert isinstance(observed_http, list) and len(observed_http) <= 100
+            assert all(set(row) == {"phase", "status"} and row["phase"] in {"token", "stock-denial", "create", "owned-read", "prepare", "app", "email-start", "email-finish"} and type(row["status"]) is int and 100 <= row["status"] <= 599 for row in observed_http)
+            receipt["http_observations"] = observed_http
         phase = "post-java-native-inspection"
         # Installer-only fresh fixture token; tested actor expiry/authority is never refreshed here.
         status, installer = lifecycle.call(fixture.base, "POST", "/realms/master/protocol/openid-connect/token", {"client_id": "admin-cli", "grant_type": "password", "username": "synthetic-installer", "password": lifecycle.INSTALLER}, form=True)
@@ -220,7 +226,7 @@ def main():
     parser.add_argument("mode", choices=["snapshot", "native", "finalize"])
     parser.add_argument("--keycloak", type=Path, required=True)
     args = parser.parse_args()
-    report = ROOT / "target/protected-otp-native/protected-otp-native.json"
+    report = ROOT / "target/protected-otp-native/protected-otp-native-pair.json"
     report.parent.mkdir(parents=True, exist_ok=True)
     if args.mode == "snapshot":
         save(report.with_name("protected-otp-native-before.json"), snapshot(args.keycloak.resolve()))

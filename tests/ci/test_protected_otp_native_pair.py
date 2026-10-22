@@ -51,6 +51,10 @@ class ProtectedPairEvidence(unittest.TestCase):
         self.assertIn("-Dsurefire.failIfNoSpecifiedTests=true", SOURCE.read_text())
         self.assertIn("capture_output=True, timeout=180", SOURCE.read_text())
         self.assertNotIn("continue-on-error", workflow)
+        import fnmatch
+        self.assertTrue(fnmatch.fnmatch("protected-otp-native-pair.json", "protected-otp-native-*.json"))
+        self.assertIn("target/protected-otp-native/protected-otp-native-pair.json", SOURCE.read_text())
+        self.assertIn("target/protected-otp-native/protected-otp-native-*.json", workflow)
 
 if __name__ == "__main__":
     unittest.main()

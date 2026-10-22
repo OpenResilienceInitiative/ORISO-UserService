@@ -222,7 +222,8 @@ class ProtectedOtpBootstrapTest {
   }
 
   @Test
-  void recoveredExactOwnerCanDiscardOnlyItsEncryptedSetupAfterRecipientRevocation() throws Exception {
+  void recoveredExactOwnerCanDiscardOnlyItsEncryptedSetupAfterRecipientRevocation()
+      throws Exception {
     try (var f = new Fixture()) {
       f.expectPrepare();
       var prepared = f.adapter().prepare(f.claim, f.pending);
@@ -231,11 +232,29 @@ class ProtectedOtpBootstrapTest {
       f.request.setRequestURI("/service/tenant/register/two-factor");
       f.request.removeHeader("Idempotency-Key");
       f.request.addHeader("Idempotency-Key", UUID.randomUUID().toString());
-      f.server.expect(requestTo(org.springframework.web.util.UriComponentsBuilder.fromUriString(f.issuer.base()).pathSegment("realms", "synthetic", "otp-config", "setup-otp", f.pending.username()).build().encode().toUri())).andRespond(withServerError());
-      assertEquals(ProtectedOtpBootstrap.AttemptState.UNKNOWN, f.adapter().setupApp(f.claim, "123456").state());
-      assertThrows(RuntimeException.class, () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(f.discarded())));
-      assertEquals(1, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='FROZEN'", Integer.class));
-      assertEquals(1, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
+      f.server
+          .expect(
+              requestTo(
+                  org.springframework.web.util.UriComponentsBuilder.fromUriString(f.issuer.base())
+                      .pathSegment(
+                          "realms", "synthetic", "otp-config", "setup-otp", f.pending.username())
+                      .build()
+                      .encode()
+                      .toUri()))
+          .andRespond(withServerError());
+      assertEquals(
+          ProtectedOtpBootstrap.AttemptState.UNKNOWN,
+          f.adapter().setupApp(f.claim, "123456").state());
+      assertThrows(
+          RuntimeException.class,
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(f.discarded())));
+      assertEquals(
+          1,
+          f.jdbc.queryForObject(
+              "SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='FROZEN'",
+              Integer.class));
+      assertEquals(
+          1, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
       f.server.verify();
     }
     try (var f = new Fixture()) {
@@ -246,14 +265,25 @@ class ProtectedOtpBootstrapTest {
       var discarded = f.discarded();
       assertThrows(RuntimeException.class, () -> f.adapter().discardWithinOwner(discarded));
       when(discarded.accountId()).thenReturn(UUID.randomUUID().toString());
-      assertThrows(RuntimeException.class, () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(discarded)));
-      assertEquals(1, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
+      assertThrows(
+          RuntimeException.class,
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(discarded)));
+      assertEquals(
+          1, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
       when(discarded.accountId()).thenReturn(f.pending.created().accountId());
-      f.jdbc.update("UPDATE account_invite SET token_hash=NULL,status='REVOKED',expires_at=? WHERE id=73", Timestamp.from(Instant.EPOCH));
-      assertDoesNotThrow(() -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(discarded)));
-      assertEquals(0, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
-      assertEquals(0, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap_operation", Integer.class));
-      assertDoesNotThrow(() -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(discarded)));
+      f.jdbc.update(
+          "UPDATE account_invite SET token_hash=NULL,status='REVOKED',expires_at=? WHERE id=73",
+          Timestamp.from(Instant.EPOCH));
+      assertDoesNotThrow(
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(discarded)));
+      assertEquals(
+          0, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
+      assertEquals(
+          0,
+          f.jdbc.queryForObject(
+              "SELECT COUNT(*) FROM protected_otp_bootstrap_operation", Integer.class));
+      assertDoesNotThrow(
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(discarded)));
       f.server.verify();
     }
   }
