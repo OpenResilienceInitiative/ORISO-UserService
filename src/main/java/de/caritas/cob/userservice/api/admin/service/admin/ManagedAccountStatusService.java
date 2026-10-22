@@ -14,10 +14,10 @@ import java.time.LocalDateTime;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
-import org.springframework.stereotype.Service;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.orm.jpa.JpaTransactionManager;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -144,11 +144,13 @@ public class ManagedAccountStatusService {
 
   private AccountStatus updateScoped(String id, boolean active) {
     if (TransactionSynchronizationManager.isActualTransactionActive())
-      throw new ResponseStatusException(HttpStatus.CONFLICT, "Account status requires no ambient SQL");
+      throw new ResponseStatusException(
+          HttpStatus.CONFLICT, "Account status requires no ambient SQL");
     LocalSelection selected = localWrites.execute(ignored -> selectedRows(id));
     AccountStatus before = status(id, selected.target());
     if (active) {
-      var independent = before.restrictions().stream().filter(r -> !r.equals("MANAGED_PAUSE")).toList();
+      var independent =
+          before.restrictions().stream().filter(r -> !r.equals("MANAGED_PAUSE")).toList();
       if (!independent.isEmpty()) throw new ActivationRefused(before);
       if (before.loginEnabled() == null
           || before.lifecycleRestricted() == null
@@ -156,24 +158,28 @@ public class ManagedAccountStatusService {
         throw new ResponseStatusException(
             HttpStatus.BAD_GATEWAY, "Account activation prerequisites unavailable");
     }
-    Target committed = localWrites.execute(ignored -> {
-      LocalSelection current = selectedRows(id);
-      if (!selected.rows().equals(current.rows()))
-        throw new ResponseStatusException(HttpStatus.CONFLICT, "Account status changed");
-      updatePause("admin", "admin_id", id, current.rows().admin(), !active);
-      updatePause("consultant", "consultant_id", id, current.rows().consultant(), !active);
-      return selectedRows(id).target();
-    });
+    Target committed =
+        localWrites.execute(
+            ignored -> {
+              LocalSelection current = selectedRows(id);
+              if (!selected.rows().equals(current.rows()))
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Account status changed");
+              updatePause("admin", "admin_id", id, current.rows().admin(), !active);
+              updatePause("consultant", "consultant_id", id, current.rows().consultant(), !active);
+              return selectedRows(id).target();
+            });
     // Fresh external display reads also happen after the selected local commit.
     return status(id, committed);
   }
 
   private LocalSelection selectedRows(String id) {
     var adminRows = jdbc.queryForList("select * from admin where admin_id=? for update", id);
-    var consultantRows = jdbc.queryForList("select * from consultant where consultant_id=? for update", id);
+    var consultantRows =
+        jdbc.queryForList("select * from consultant where consultant_id=? for update", id);
     if (!jdbc.queryForList("select user_id from user where user_id=? for update", id).isEmpty())
       throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-    var inactivity = jdbc.queryForList("select * from account_inactivity where identity_id=? for update", id);
+    var inactivity =
+        jdbc.queryForList("select * from account_inactivity where identity_id=? for update", id);
     if (adminRows.size() > 1 || consultantRows.size() > 1 || inactivity.size() > 1)
       throw new ResponseStatusException(HttpStatus.CONFLICT);
     var admin = adminRows.isEmpty() ? null : statusAdmin(adminRows.getFirst());
@@ -183,11 +189,13 @@ public class ManagedAccountStatusService {
     var reach = scope.current();
     if (reach.tenantId() != null && !Objects.equals(reach.tenantId(), target.tenantId()))
       throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-    if (!inactivity.isEmpty() && !Objects.equals(sqlTenant(inactivity.getFirst()), target.tenantId()))
+    if (!inactivity.isEmpty()
+        && !Objects.equals(sqlTenant(inactivity.getFirst()), target.tenantId()))
       throw new ResponseStatusException(HttpStatus.CONFLICT, "Account lifecycle owner changed");
     if (consultant != null && consultant.getDeleteDate() != null)
       throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-    if (admin != null && consultant != null
+    if (admin != null
+        && consultant != null
         && !Objects.equals(decoded(admin.getUsername()), decoded(consultant.getUsername())))
       throw new ResponseStatusException(HttpStatus.FORBIDDEN);
     return new LocalSelection(target, new LocalRows(adminRows, consultantRows, inactivity));
@@ -196,10 +204,18 @@ public class ManagedAccountStatusService {
   private void updatePause(
       String table, String column, String id, List<Map<String, Object>> rows, boolean paused) {
     if (rows.isEmpty() || sqlBoolean(rows.getFirst().get("managed_paused")) == paused) return;
-    // The names are private literals; both complete rows remain locked and unchanged since selection.
-    if (jdbc.update("update " + table + " set managed_paused=?,update_date=CURRENT_TIMESTAMP where "
-        + column + "=? and managed_paused=?", paused, id, !paused) != 1)
-      throw new ResponseStatusException(HttpStatus.CONFLICT, "Account status changed");
+    // The names are private literals; both complete rows remain locked and unchanged since
+    // selection.
+    if (jdbc.update(
+            "update "
+                + table
+                + " set managed_paused=?,update_date=CURRENT_TIMESTAMP where "
+                + column
+                + "=? and managed_paused=?",
+            paused,
+            id,
+            !paused)
+        != 1) throw new ResponseStatusException(HttpStatus.CONFLICT, "Account status changed");
   }
 
   private Admin statusAdmin(Map<String, Object> row) {
@@ -227,10 +243,17 @@ public class ManagedAccountStatusService {
         .email((String) row.get("email"))
         .managedPaused(sqlBoolean(row.get("managed_paused")))
         .absent(sqlBoolean(row.get("is_absent")))
-        .twoFactorRequired(row.get("two_factor_required") == null ? null : sqlBoolean(row.get("two_factor_required")))
-        .status(row.get("status") == null ? null : ConsultantStatus.valueOf((String) row.get("status")))
-        .deletionLifecycleState(row.get("deletion_lifecycle_state") == null ? null
-            : de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState.valueOf((String) row.get("deletion_lifecycle_state")))
+        .twoFactorRequired(
+            row.get("two_factor_required") == null
+                ? null
+                : sqlBoolean(row.get("two_factor_required")))
+        .status(
+            row.get("status") == null ? null : ConsultantStatus.valueOf((String) row.get("status")))
+        .deletionLifecycleState(
+            row.get("deletion_lifecycle_state") == null
+                ? null
+                : de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
+                    .valueOf((String) row.get("deletion_lifecycle_state")))
         .createDate(sqlDate(row.get("create_date")))
         .updateDate(sqlDate(row.get("update_date")))
         .deleteDate(sqlDate(row.get("delete_date")))
@@ -243,7 +266,9 @@ public class ManagedAccountStatusService {
 
   private static LocalDateTime sqlDate(Object value) {
     if (value == null) return null;
-    return value instanceof java.sql.Timestamp timestamp ? timestamp.toLocalDateTime() : (LocalDateTime) value;
+    return value instanceof java.sql.Timestamp timestamp
+        ? timestamp.toLocalDateTime()
+        : (LocalDateTime) value;
   }
 
   private static boolean sqlBoolean(Object value) {
