@@ -31,8 +31,11 @@ public final class ProtectedInvitationCodec {
 
   public ProtectedInvitationCodec(byte[] key, Clock clock, String realmName, String realmId) {
     json = new AccountLifecycleCodec(key);
-    if (clock == null || realmName == null || realmName.isBlank()
-        || realmId == null || realmId.isBlank()) throw invalid();
+    if (clock == null
+        || realmName == null
+        || realmName.isBlank()
+        || realmId == null
+        || realmId.isBlank()) throw invalid();
     this.key = key.clone();
     this.clock = clock;
     this.realmName = realmName;
@@ -50,7 +53,8 @@ public final class ProtectedInvitationCodec {
       String digest =
           json.digest(
               "protected-approval-request/v1",
-              Map.of("request", request, "issuerRealm", issuerRealm, "issuerSubject", issuerSubject));
+              Map.of(
+                  "request", request, "issuerRealm", issuerRealm, "issuerSubject", issuerSubject));
       return new FrozenApproval(
           approvalId, json.canonical(request), issuerRealm, issuerSubject, digest);
     } catch (RuntimeException failure) {
@@ -62,8 +66,17 @@ public final class ProtectedInvitationCodec {
     try {
       JsonNode scope = checkedScope(frozen);
       JsonNode response = json.read(responseJson, JsonNode.class);
-      fields(response, "approvalId", "scopeDigest", "state", "version", "boundAttemptId",
-          "fencedExecution", "approvalReceipt", "transitionReceipt", "approvalRequestDigest");
+      fields(
+          response,
+          "approvalId",
+          "scopeDigest",
+          "state",
+          "version",
+          "boundAttemptId",
+          "fencedExecution",
+          "approvalReceipt",
+          "transitionReceipt",
+          "approvalRequestDigest");
       String approvalId = frozen.approvalId().toString();
       String scopeDigest = hex(text(response, "scopeDigest", 64));
       if (!approvalId.equals(text(response, "approvalId", 36))
@@ -75,8 +88,16 @@ public final class ProtectedInvitationCodec {
           || !equal(frozen.requestDigest(), text(response, "approvalRequestDigest", 64)))
         throw invalid();
       JsonNode receipt = response.path("approvalReceipt");
-      fields(receipt, "approvalId", "scopeDigest", "issuerSubject", "bindingVersion",
-          "profileVersion", "validUntil", "approvalRequestDigest", "receipt");
+      fields(
+          receipt,
+          "approvalId",
+          "scopeDigest",
+          "issuerSubject",
+          "bindingVersion",
+          "profileVersion",
+          "validUntil",
+          "approvalRequestDigest",
+          "receipt");
       if (!approvalId.equals(text(receipt, "approvalId", 36))
           || !equal(scopeDigest, text(receipt, "scopeDigest", 64))
           || !frozen.issuerSubject().equals(text(receipt, "issuerSubject", 36))
@@ -89,10 +110,15 @@ public final class ProtectedInvitationCodec {
       authenticated.remove("receipt");
       String encoded = encode(json.canonical(authenticated).getBytes(StandardCharsets.UTF_8));
       String expected =
-          encoded + "." + HexFormat.of().formatHex(mac("protected-approval-receipt/v1\n" + encoded));
+          encoded
+              + "."
+              + HexFormat.of().formatHex(mac("protected-approval-receipt/v1\n" + encoded));
       if (!equal(expected, text(receipt, "receipt", 16384))) throw invalid();
       return new VerifiedApproval(
-          frozen.approvalId(), scopeDigest, frozen.requestDigest(), json.canonical(receipt),
+          frozen.approvalId(),
+          scopeDigest,
+          frozen.requestDigest(),
+          json.canonical(receipt),
           json.canonical(response));
     } catch (RuntimeException failure) {
       throw invalid();
@@ -113,7 +139,8 @@ public final class ProtectedInvitationCodec {
 
   public String statusProof(FrozenApproval frozen, TaskActorCredentials actor) {
     JsonNode scope = checkedScope(frozen);
-    if (actor == null || actor.actor() != TaskActor.SETUP
+    if (actor == null
+        || actor.actor() != TaskActor.SETUP
         || !scope.path("setupClient").asText().equals(actor.clientId())
         || !scope.path("setupSubject").asText().equals(actor.serviceSubject())) throw invalid();
     long now = clock.instant().getEpochSecond();
@@ -128,8 +155,10 @@ public final class ProtectedInvitationCodec {
     claims.put("target", "realm/" + realmId + "/protected-invitation/" + frozen.approvalId());
     claims.put("taskClient", actor.clientId());
     claims.put("taskSubject", actor.serviceSubject());
-    claims.put("payloadDigest", json.digest("protected-invitation-payload/v1",
-        json.read(statusBody(frozen), JsonNode.class)));
+    claims.put(
+        "payloadDigest",
+        json.digest(
+            "protected-invitation-payload/v1", json.read(statusBody(frozen), JsonNode.class)));
     claims.put("jti", UUID.randomUUID().toString());
     claims.put("nonce", UUID.randomUUID().toString().replace("-", ""));
     claims.put("iat", now);
@@ -141,8 +170,12 @@ public final class ProtectedInvitationCodec {
   private JsonNode checkedScope(FrozenApproval frozen) {
     try {
       if (frozen == null) throw invalid();
-      var checked = freeze(frozen.approvalId(), frozen.requestJson(), frozen.issuerRealm(),
-          frozen.issuerSubject());
+      var checked =
+          freeze(
+              frozen.approvalId(),
+              frozen.requestJson(),
+              frozen.issuerRealm(),
+              frozen.issuerSubject());
       if (!checked.requestJson().equals(frozen.requestJson())
           || !equal(checked.requestDigest(), frozen.requestDigest())) throw invalid();
       return json.read(checked.requestJson(), JsonNode.class).path("scope");
@@ -152,25 +185,42 @@ public final class ProtectedInvitationCodec {
   }
 
   private void validateScope(JsonNode scope) {
-    fields(scope, "workflowId", "inviteId", "authorizationRevision", "purpose", "recipient",
-        "protectedKind", "targetTenantIds", "tenantMode", "reservationBinding", "agencyBinding",
-        "protectedProfileId", "validUntil", "creatorClient", "creatorSubject", "setupClient",
+    fields(
+        scope,
+        "workflowId",
+        "inviteId",
+        "authorizationRevision",
+        "purpose",
+        "recipient",
+        "protectedKind",
+        "targetTenantIds",
+        "tenantMode",
+        "reservationBinding",
+        "agencyBinding",
+        "protectedProfileId",
+        "validUntil",
+        "creatorClient",
+        "creatorSubject",
+        "setupClient",
         "setupSubject");
     String workflow = uuid(text(scope, "workflowId", 36));
     text(scope, "inviteId", 255);
-    if (number(scope, "authorizationRevision") <= 0
-        || !"INVITE".equals(text(scope, "purpose", 20))) throw invalid();
+    if (number(scope, "authorizationRevision") <= 0 || !"INVITE".equals(text(scope, "purpose", 20)))
+      throw invalid();
     String recipient = text(scope, "recipient", 320);
     if (!recipient.equals(recipient.trim().toLowerCase(Locale.ROOT))
         || !recipient.matches("[^\\s@]+@[^\\s@]+")) throw invalid();
     JsonNode tenants = scope.path("targetTenantIds");
-    if (!tenants.isArray() || tenants.size() != 1 || !tenants.get(0).isIntegralNumber()
+    if (!tenants.isArray()
+        || tenants.size() != 1
+        || !tenants.get(0).isIntegralNumber()
         || !tenants.get(0).canConvertToLong()) throw invalid();
     long tenant = tenants.get(0).longValue();
     String kind = text(scope, "protectedKind", 30), mode = text(scope, "tenantMode", 20);
     if (!("PLATFORM_ADMIN".equals(kind) && tenant == 0 && "EXISTING".equals(mode))
-        && !("TENANT_ADMIN".equals(kind) && tenant > 0
-        && Set.of("EXISTING", "RESERVED_NEW").contains(mode))) throw invalid();
+        && !("TENANT_ADMIN".equals(kind)
+            && tenant > 0
+            && Set.of("EXISTING", "RESERVED_NEW").contains(mode))) throw invalid();
     if (!"backend-account-create".equals(text(scope, "creatorClient", 255))
         || !"backend-setup".equals(text(scope, "setupClient", 255))) throw invalid();
     uuid(text(scope, "creatorSubject", 36));
@@ -185,7 +235,8 @@ public final class ProtectedInvitationCodec {
     JsonNode agency = scope.path("agencyBinding");
     if (!agency.isNull()) {
       fields(agency, "agencyId", "tenantId");
-      if (number(agency, "agencyId") <= 0 || number(agency, "tenantId") != tenant
+      if (number(agency, "agencyId") <= 0
+          || number(agency, "tenantId") != tenant
           || "PLATFORM_ADMIN".equals(kind)) throw invalid();
     }
     text(scope, "protectedProfileId", 255);
@@ -229,8 +280,10 @@ public final class ProtectedInvitationCodec {
   }
 
   private static boolean equal(String left, String right) {
-    return left != null && right != null && MessageDigest.isEqual(
-        left.getBytes(StandardCharsets.UTF_8), right.getBytes(StandardCharsets.UTF_8));
+    return left != null
+        && right != null
+        && MessageDigest.isEqual(
+            left.getBytes(StandardCharsets.UTF_8), right.getBytes(StandardCharsets.UTF_8));
   }
 
   private static String encode(byte[] value) {
@@ -271,8 +324,12 @@ public final class ProtectedInvitationCodec {
     private final String receiptJson;
     private final String responseJson;
 
-    private VerifiedApproval(UUID approvalId, String scopeDigest, String requestDigest,
-        String receiptJson, String responseJson) {
+    private VerifiedApproval(
+        UUID approvalId,
+        String scopeDigest,
+        String requestDigest,
+        String receiptJson,
+        String responseJson) {
       this.approvalId = approvalId;
       this.scopeDigest = scopeDigest;
       this.requestDigest = requestDigest;
@@ -280,11 +337,25 @@ public final class ProtectedInvitationCodec {
       this.responseJson = responseJson;
     }
 
-    public UUID approvalId() { return approvalId; }
-    public String scopeDigest() { return scopeDigest; }
-    public String requestDigest() { return requestDigest; }
-    public String receiptJson() { return receiptJson; }
-    public String responseJson() { return responseJson; }
+    public UUID approvalId() {
+      return approvalId;
+    }
+
+    public String scopeDigest() {
+      return scopeDigest;
+    }
+
+    public String requestDigest() {
+      return requestDigest;
+    }
+
+    public String receiptJson() {
+      return receiptJson;
+    }
+
+    public String responseJson() {
+      return responseJson;
+    }
 
     @Override
     public String toString() {
