@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationMailOutbox;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -38,6 +39,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
@@ -95,6 +98,32 @@ public class AccountInviteService {
   private final @NonNull UnitQueue unitQueue;
   private final @NonNull InviteDelivery delivery;
   private final @NonNull ExistingAccountSetupIssuer existingAccountSetupIssuer;
+  private ProtectedInvitationIssuance protectedInvitationIssuance;
+
+  @Autowired(required = false)
+  void configureProtectedIssuance(ProtectedInvitationIssuance issuance) {
+    protectedInvitationIssuance = issuance;
+  }
+
+  private ProtectedInvitationIssuance requireProtectedIssuance() {
+    if (protectedInvitationIssuance == null) {
+      throw new AccessDeniedException("Protected invitation approval is unavailable");
+    }
+    return protectedInvitationIssuance;
+  }
+
+  private InviteSendResult sendProtected(AccountInvite invite, InviteEmailTemplate template) {
+    return sendProtected(invite, () -> template);
+  }
+
+  private InviteSendResult sendProtected(AccountInvite invite, Supplier<InviteEmailTemplate> template) {
+    return requireProtectedIssuance().send(invite, template, (current, selected) -> {
+      InviteEmailTemplate authorized = findTemplate(selected.getId());
+      Prepared prepared = delivery.prepareProtected(current, authorized, LocalDateTime.now());
+      return new ProtectedInvitationMailOutbox.Mail(prepared.rawToken(), prepared.acceptUrl(),
+          prepared.subject(), prepared.body(), authorized.getId(), authorized.getLanguage());
+    });
+  }
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand requestedCommand) {
@@ -145,6 +174,11 @@ public class AccountInviteService {
   public InviteSendResult createAndSendInvite(CreateAccountInviteCommand command, Long templateId) {
     // Before the invite exists: a refused template must not reserve ids or write a row.
     InviteEmailTemplate template = findTemplate(templateId);
+    if (command != null && delivery.protects(command.targetRole())) {
+      requireProtectedIssuance();
+      AccountInvite draft = requiresNewTransaction().execute(transaction -> createInvite(command));
+      return sendProtected(draft, template);
+    }
     Prepared prepared;
     try {
       prepared =
@@ -421,6 +455,21 @@ public class AccountInviteService {
    * audit row never waits for our own row lock; any SMTP failure restores the old link.
    */
   public InviteSendResult sendInvite(SendInviteCommand command) {
+    if (delivery.protectedModelEnabled()) {
+      AccountInvite selected = requiresNewTransaction().execute(transaction -> {
+        AccountInvite current = findAuthorizedInviteForUpdate(command.inviteId());
+        return delivery.protects(current.getTargetRole()) ? current : null;
+      });
+      if (selected != null) {
+        if (selected.getPurpose() != AccountInvitePurpose.INVITE) {
+          throw new BadRequestException("Existing-account setup links use their own delivery flow");
+        }
+        if (selected.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
+          return unitQueue.sendByHand(selected, findTemplate(command.templateId()));
+        }
+        return sendProtected(selected, () -> findTemplate(command.templateId()));
+      }
+    }
     SendClaim claim = requiresNewTransaction().execute(transaction -> claimForSend(command));
     if (claim.prepared() == null) {
       return unitQueue.sendByHand(claim.waiting(), claim.template());
@@ -1317,6 +1366,7 @@ public class AccountInviteService {
 
   public record InviteSendResult(
       AccountInvite invite, InviteEmailDelivery delivery, String rawToken, String acceptUrl) {}
+
 
   private record ResendDispatch(Prepared prepared, Long oldInviteId, ResendState oldState) {}
 

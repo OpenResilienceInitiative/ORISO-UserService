@@ -20,9 +20,13 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Renders an invite mail with a fresh link, sends it and writes the delivery audit. */
 @Slf4j
@@ -38,6 +42,33 @@ public class InviteDelivery {
   private final @NonNull InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
   private final @NonNull PlatformTransactionManager transactionManager;
+  private Environment runtimeEnvironment;
+
+  @Autowired
+  void configureRuntimeModel(Environment environment) {
+    runtimeEnvironment = environment;
+  }
+
+  boolean protectedModelEnabled() {
+    String model = runtimeEnvironment == null
+        ? "LEGACY" : runtimeEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY");
+    return switch (model) {
+      case "LEGACY" -> false;
+      case "FIVE_ACTORS" -> true;
+      default -> throw new IllegalStateException("Configure the native task identity model");
+    };
+  }
+
+  boolean protects(AccountInviteTargetRole role) {
+    return (role == AccountInviteTargetRole.TENANT_ADMIN
+        || role == AccountInviteTargetRole.PLATFORM_ADMIN) && protectedModelEnabled();
+  }
+
+  private void requireOrdinaryDelivery(AccountInvite invite) {
+    if (invite != null && protects(invite.getTargetRole())) {
+      throw new AccessDeniedException("Protected invitation delivery requires native approval");
+    }
+  }
 
   /** A rendered mail and the raw token behind its link; the invite is not changed. */
   public record Prepared(
@@ -60,6 +91,20 @@ public class InviteDelivery {
 
   /** The link target follows the role: tenant admins onboard in the Admin, others in the App. */
   public Prepared prepare(AccountInvite invite, InviteEmailTemplate template, LocalDateTime now) {
+    requireOrdinaryDelivery(invite);
+    return render(invite, template, now);
+  }
+
+  /** The private issuance callback may render only inside the owned outbox SQL transaction. */
+  Prepared prepareProtected(AccountInvite invite, InviteEmailTemplate template, LocalDateTime now) {
+    if (invite == null || !protects(invite.getTargetRole())
+        || !TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new AccessDeniedException("Protected invitation delivery requires native approval");
+    }
+    return render(invite, template, now);
+  }
+
+  private Prepared render(AccountInvite invite, InviteEmailTemplate template, LocalDateTime now) {
     String rawToken = generateToken();
     String acceptUrl = inviteAcceptUrlBuilder.buildAcceptUrl(invite.getTargetRole(), rawToken);
     String subject = AccountInviteService.render(template.getSubject(), invite, acceptUrl);
@@ -91,6 +136,7 @@ public class InviteDelivery {
       Long auditInviteId,
       boolean auditConfirmedNotSent,
       Consumer<SmtpSendException> onConfirmedNotSent) {
+    requireOrdinaryDelivery(prepared.invite());
     InviteMailSendReceipt receipt;
     try {
       receipt = send(prepared);
@@ -131,6 +177,7 @@ public class InviteDelivery {
    * handover, then the SENT audit row is stored in the same transaction.
    */
   public InviteEmailDelivery sendNow(Prepared prepared, Long auditInviteId, Runnable markSent) {
+    requireOrdinaryDelivery(prepared.invite());
     InviteMailSendReceipt receipt;
     try {
       receipt = send(prepared);
@@ -143,6 +190,7 @@ public class InviteDelivery {
   }
 
   private InviteMailSendReceipt send(Prepared prepared) {
+    requireOrdinaryDelivery(prepared.invite());
     // The dispatcher wraps the body in the branded layout and renders the link as a button.
     return inviteMailDispatchService.send(
         prepared.invite().getRecipientEmail(),
