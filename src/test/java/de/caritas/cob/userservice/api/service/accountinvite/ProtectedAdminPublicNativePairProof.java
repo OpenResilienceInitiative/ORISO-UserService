@@ -306,12 +306,13 @@ class ProtectedAdminPublicNativePairProof {
             .path("secret")
             .asText());
     String appPath = "/service/users/account-invites/" + token + "/onboarding/two-factor";
+    String enrollmentCode = totp(secret);
     var activated =
         mvc.perform(
                 post(appPath)
                     .header("Idempotency-Key", UUID.randomUUID().toString())
                     .contentType("application/json")
-                    .content(json.canonical(Map.of("otp", totp(secret)))))
+                    .content(json.canonical(Map.of("otp", enrollmentCode))))
             .andReturn()
             .getResponse();
     assertEquals(200, activated.getStatus());
@@ -338,7 +339,8 @@ class ProtectedAdminPublicNativePairProof {
     loginBody.add("scope", "openid");
     loginBody.add("username", recipient);
     loginBody.add("password", "SyntheticPublicOnly!731");
-    loginBody.add("totp", totp(secret));
+    String loginCode = totp(secret);
+    loginBody.add("totp", loginCode);
     var headers = new org.springframework.http.HttpHeaders();
     headers.setContentType(org.springframework.http.MediaType.APPLICATION_FORM_URLENCODED);
     String oidc =
@@ -346,12 +348,37 @@ class ProtectedAdminPublicNativePairProof {
             + "/realms/"
             + required("PAIR_REALM")
             + "/protocol/openid-connect";
+    var loginHttp = new RestTemplate();
+    loginHttp.setErrorHandler(new org.springframework.web.client.NoOpResponseErrorHandler());
     var login =
-        new RestTemplate()
-            .postForEntity(
-                oidc + "/token",
-                new org.springframework.http.HttpEntity<>(loginBody, headers),
-                String.class);
+        loginHttp.postForEntity(
+            oidc + "/token",
+            new org.springframework.http.HttpEntity<>(loginBody, headers),
+            String.class);
+    String loginCategory = "UNRECOGNIZED";
+    if (login.getStatusCode().value() == 200) loginCategory = "ACCEPTED";
+    else {
+      try {
+        var refusal = json.read(login.getBody(), JsonNode.class);
+        if ("invalid_grant".equals(refusal.path("error").asText()))
+          loginCategory =
+              switch (refusal.path("error_description").asText()) {
+                case "Account is not fully set up" -> "ACCOUNT_NOT_FULLY_SET_UP";
+                case "Invalid user credentials" -> "INVALID_USER_CREDENTIALS";
+                case "Missing totp" -> "MISSING_TOTP";
+                default -> "UNRECOGNIZED";
+              };
+      } catch (RuntimeException unparseable) {
+        // Only a closed category can leave this live process.
+      }
+    }
+    Files.writeString(
+        Path.of(required("PAIR_LOGIN_WITNESS")),
+        json.canonical(
+            Map.of(
+                "status", login.getStatusCode().value(),
+                "category", loginCategory,
+                "sameTotpAsEnrollment", loginCode.equals(enrollmentCode))));
     assertEquals(200, login.getStatusCode().value());
     var tokenReply = json.read(login.getBody(), JsonNode.class);
     var recipientJwt = decoder.decode(tokenReply.path("access_token").asText());

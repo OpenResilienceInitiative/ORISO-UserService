@@ -11,6 +11,17 @@ pair = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pair)
 
 class ProtectedPairEvidence(unittest.TestCase):
+    def test_login_observation_cannot_export_a_raw_response_or_coerced_status(self):
+        safe = {"status": 400, "category": "INVALID_USER_CREDENTIALS", "sameTotpAsEnrollment": True}
+        self.assertEqual(safe, pair.checked_login_observation(safe))
+        for unsafe in [dict(safe, body="Bearer secret"),
+                       dict(safe, category="raw private message"),
+                       dict(safe, status=True), dict(safe, status="400"),
+                       dict(safe, status=200), {"status": 200, "category": "ACCEPTED", "token": "secret"}]:
+            with self.subTest(fields=sorted(unsafe)):
+                with self.assertRaises(ValueError):
+                    pair.checked_login_observation(unsafe)
+
     def test_failure_observation_exports_only_closed_source_locations(self):
         raw = b"Bearer secret; SQL private-row; JdbcProtectedAccountActivation.java:120 unknown.java:456"
         observed = pair.closed_failure_frames(raw, b"ProtectedAdminOnboardingService.java:42")

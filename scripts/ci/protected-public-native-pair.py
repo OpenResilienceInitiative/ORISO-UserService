@@ -75,6 +75,15 @@ def sanitize(reports, output):
     ET.ElementTree(clean).write(output, encoding="utf-8", xml_declaration=True)
     return {**totals, "exact_method_inventory": valid, "failure_locations": sorted(set(locations)), "closed_source_failure_frames": sorted(set(frames))[:50], "closed_spring_failure_frames": list(dict.fromkeys(spring_frames))[:8], "failure_types": sorted(set(types))[:10], "accepted": valid and totals == dict(tests=1, failures=0, errors=0, skipped=0)}
 
+def checked_login_observation(value):
+    categories = {"ACCEPTED", "ACCOUNT_NOT_FULLY_SET_UP", "INVALID_USER_CREDENTIALS", "MISSING_TOTP", "UNRECOGNIZED"}
+    if (not isinstance(value, dict) or set(value) != {"status", "category", "sameTotpAsEnrollment"}
+            or type(value["status"]) is not int or not 100 <= value["status"] <= 599
+            or value["category"] not in categories or type(value["sameTotpAsEnrollment"]) is not bool
+            or (value["status"] == 200) != (value["category"] == "ACCEPTED")):
+        raise ValueError("Invalid closed native login observation")
+    return dict(value)
+
 def delivered_code(messages):
     import email
     if len(messages) != 1:
@@ -172,7 +181,8 @@ def native(kc, report):
             "PAIR_HUMAN_CLIENT": human_claims["azp"],
             "PAIR_HUMAN_TOKEN": human_bearer,
             "PAIR_WITNESS": str(report.with_name("protected-public-native-witness.json").resolve()),
-            "PAIR_HTTP_WITNESS": str(report.with_name("protected-public-native-http.json").resolve())})
+            "PAIR_HTTP_WITNESS": str(report.with_name("protected-public-native-http.json").resolve()),
+            "PAIR_LOGIN_WITNESS": str(report.with_name("protected-public-native-login.json").resolve())})
         for actor, (client, _) in lifecycle.ACTORS.items():
             environment.update({"PAIR_" + actor + "_CLIENT": client, "PAIR_" + actor + "_SECRET": "synthetic-lifecycle-" + actor, "PAIR_" + actor + "_SUBJECT": lifecycle.SUBJECTS[actor]})
         reports = ROOT / "target/surefire-reports"
@@ -201,6 +211,9 @@ def native(kc, report):
             assert isinstance(observed_http, list) and len(observed_http) <= 100
             assert all(set(row) == {"phase", "status"} and row["phase"] in {"token", "approve", "status", "create", "owned-read", "prepare", "app", "commit"} and type(row["status"]) is int and 100 <= row["status"] <= 599 for row in observed_http)
             receipt["http_observations"] = observed_http
+        login_witness = report.with_name("protected-public-native-login.json")
+        if login_witness.is_file():
+            receipt["recipient_login"] = checked_login_observation(json.loads(login_witness.read_text()))
         phase = "post-java-native-inspection"
         # Installer-only fresh fixture token; tested actor expiry/authority is never refreshed here.
         status, installer = lifecycle.call(fixture.base, "POST", "/realms/master/protocol/openid-connect/token", {"client_id": "admin-cli", "grant_type": "password", "username": "synthetic-installer", "password": lifecycle.INSTALLER}, form=True)
@@ -211,6 +224,23 @@ def native(kc, report):
         assert len(users) == 1
         user = users[0]
         credentials = fixture.admin("GET", "/users/" + user["id"] + "/credentials")
+        realm_facts = fixture.admin("GET")
+        client_facts = fixture.admin("GET", "/clients?clientId=" + human_claims["azp"])
+        assert len(client_facts) == 1
+        types = sorted(row["type"] for row in credentials)
+        assert all(value in {"password", "otp", "MAIL_OTP_CM"} for value in types)
+        receipt["recipient_login_native_facts"] = {
+            "loginWithEmailAllowed": realm_facts.get("loginWithEmailAllowed") is True,
+            "registrationEmailAsUsername": realm_facts.get("registrationEmailAsUsername") is True,
+            "verifyEmailRequired": realm_facts.get("verifyEmail") is True,
+            "otpCodeReusable": realm_facts.get("otpPolicyCodeReusable") is True,
+            "clientDirectAccessGrantsEnabled": client_facts[0].get("directAccessGrantsEnabled") is True,
+            "requiredActionCount": len(user.get("requiredActions", [])),
+            "emailVerified": user.get("emailVerified") is True,
+            "emailMatchesRecipient": user.get("email") == recipient,
+            "usernameMatchesTranscoder": user.get("username") == username.lower(),
+            "credentialTypes": types,
+        }
         selected = [row for row in credentials if row["type"] == ("MAIL_OTP_CM" if kind == "email" else "otp")]
         receipt["native_account_enabled_after_verified_2fa_commit"] = user.get("enabled") is True
         receipt["one_native_enrollment"] = len(selected) == 1
