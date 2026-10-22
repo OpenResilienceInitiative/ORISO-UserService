@@ -4,10 +4,20 @@ import static de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.Account
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixIdentifierRedactor;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixMediaClient;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixRoomClient;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
+import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import java.nio.file.Files;
@@ -18,9 +28,14 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 /** SQL/outbox proof with an explicit remote port double; not native Keycloak acceptance. */
@@ -113,6 +128,170 @@ class OrdinaryCreationWorkflowSqlTest {
         Set.of("human-admin"),
         Map.of("/human-roles/consultant", Set.of("consultant")),
         mock(OrdinaryCreationTenantResolver.class));
+  }
+
+  @Test
+  void definiteMatrixInUseForConsultantReleasesOnlyItsUncreatedEffect() {
+    matrixRegistrationRefusal(false, true);
+  }
+
+  @Test
+  void definiteMatrixInUseForAskerReleasesOnlyItsUncreatedEffect() {
+    matrixRegistrationRefusal(true, true);
+  }
+
+  @Test
+  void unknownMatrixConsultantFailureRetainsUncertainEffectWithoutCleanup() {
+    matrixRegistrationRefusal(false, false);
+  }
+
+  @Test
+  void unknownMatrixAskerFailureRetainsUncertainEffectWithoutCleanup() {
+    matrixRegistrationRefusal(true, false);
+  }
+
+  private void matrixRegistrationRefusal(boolean registration, boolean inUse) {
+    var rest = new RestTemplate();
+    var server = MockRestServiceServer.bindTo(rest).build();
+    String url = "https://matrix.fixture.invalid/_synapse/admin/v1/register";
+    server
+        .expect(requestTo(url))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess("{\"nonce\":\"fixture-nonce\"}", MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(url))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(
+            withStatus(inUse ? HttpStatus.BAD_REQUEST : HttpStatus.SERVICE_UNAVAILABLE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(inUse ? "{\"errcode\":\"M_USER_IN_USE\"}" : "{\"errcode\":\"M_UNKNOWN\"}"));
+    var config = new MatrixConfig();
+    config.setApiUrl("https://matrix.fixture.invalid");
+    config.setServerName("matrix.fixture.invalid");
+    config.setRegistrationSharedSecret("synthetic-matrix-registration-secret");
+    var matrix =
+        new MatrixSynapseService(
+            config,
+            rest,
+            new RestTemplate(),
+            mock(MatrixRoomClient.class),
+            mock(MatrixMediaClient.class),
+            mock(MatrixIdentifierRedactor.class));
+    var cleanup = mock(JdbcOwnedLifecycleEffects.CleanupOperations.class);
+    var effects = new JdbcOwnedLifecycleEffects(jdbc, manager, cleanup, codec);
+    var dispatcher = new AccountLifecycleDispatcher(remote, journal, effects, codec);
+    var coordinator = new AccountLifecycleCoordinator(remote, journal, dispatcher, codec);
+    var ordinary =
+        new OrdinaryAccountCreation(
+            coordinator,
+            journal,
+            remote,
+            effects,
+            codec,
+            matrix,
+            config,
+            mock(AppointmentService.class),
+            mock(AuthenticatedUser.class),
+            "https://issuer.example/realms/oriso",
+            Set.of("human-admin"),
+            Map.of("/human-roles/consultant", Set.of("consultant")),
+            mock(OrdinaryCreationTenantResolver.class));
+    var asker =
+        new OrdinaryRegistrationLifecycle(
+            coordinator, journal, remote, effects, matrix, config, "/human-roles/asker");
+    var dto = new UserDTO();
+    dto.setUsername(new UsernameTranscoder().encodeUsername("synthetic"));
+    dto.setPassword("synthetic-password");
+    RuntimeException failure =
+        assertThrows(
+            RuntimeException.class,
+            () -> {
+              if (registration)
+                asker.register(dto, 7L, session -> asker.createMatrixUser(session, "synthetic"));
+              else
+                ordinary.create(
+                    scope,
+                    account,
+                    pending -> ordinary.createChatAccount(pending, "synthetic", "Synthetic"));
+            });
+    server.verify(); // Both actual HTTP responses must precede every outcome assertion.
+    UUID id =
+        UUID.fromString(
+            jdbc.queryForObject("SELECT id FROM identity_lifecycle_attempt", String.class));
+    assertEquals(
+        "RECOVERY_REQUESTED",
+        jdbc.queryForObject("SELECT status FROM identity_lifecycle_attempt", String.class));
+    when(remote.recover(eq(id), any()))
+        .thenAnswer(
+            call -> {
+              RecoverRequest request = call.getArgument(1);
+              return new AttemptResult(
+                  id,
+                  "owned-account",
+                  "RECOVERY_CLAIMED",
+                  new ExecutionRef(request.recoveryId(), request.expectedGeneration() + 1),
+                  "proof",
+                  "recovery",
+                  null);
+            });
+    when(remote.compensate(eq(id), any()))
+        .thenAnswer(
+            call -> {
+              CompensateRequest request = call.getArgument(1);
+              return new AttemptResult(
+                  id,
+                  "owned-account",
+                  "COMPENSATED",
+                  request.execution(),
+                  "proof",
+                  null,
+                  "terminal");
+            });
+    dispatcher.dispatch(id);
+    if (inUse) {
+      var recoveryFailures = new ArrayList<RuntimeException>();
+      for (int step = 0; step < 2; step++) {
+        try {
+          dispatcher.dispatch(id);
+        } catch (RuntimeException unfinished) {
+          recoveryFailures.add(unfinished);
+        }
+      }
+      var rejected =
+          failure instanceof CustomValidationHttpStatusException validation ? validation : null;
+      assertAll(
+          () -> assertInstanceOf(CustomValidationHttpStatusException.class, failure),
+          () ->
+              assertEquals(HttpStatus.CONFLICT, rejected == null ? null : rejected.getHttpStatus()),
+          () ->
+              assertEquals(
+                  "USERNAME_NOT_AVAILABLE",
+                  rejected == null ? null : rejected.getCustomHttpHeaders().getFirst("X-Reason")),
+          () ->
+              assertEquals(
+                  "NO_EFFECT",
+                  jdbc.queryForObject("SELECT state FROM identity_lifecycle_effect", String.class)),
+          () ->
+              assertEquals(
+                  "COMPENSATED",
+                  jdbc.queryForObject(
+                      "SELECT status FROM identity_lifecycle_attempt", String.class)),
+          () -> assertTrue(recoveryFailures.isEmpty()));
+      verify(remote).compensate(eq(id), any());
+    } else {
+      assertInstanceOf(IllegalStateException.class, failure);
+      assertThrows(IllegalStateException.class, () -> dispatcher.dispatch(id));
+      assertEquals(
+          "STARTED",
+          jdbc.queryForObject("SELECT state FROM identity_lifecycle_effect", String.class));
+      assertEquals(
+          "LOCAL_CLEANUP_REQUESTED",
+          jdbc.queryForObject("SELECT status FROM identity_lifecycle_attempt", String.class));
+      verify(remote, never()).compensate(any(), any());
+    }
+    verifyNoInteractions(cleanup);
+    verify(remote, never()).commit(any(), any());
+    assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM local_created", Integer.class));
   }
 
   @Test

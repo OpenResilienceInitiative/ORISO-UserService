@@ -249,6 +249,14 @@ public class ConsultantImportService {
               consultantService.getConsultant(importRecord.getConsultantId());
 
           if (currentConsultant.isPresent()) {
+            if (fiveActors()
+                && (currentConsultant.get().getTenantId() == null
+                    || !java.util.Objects.equals(
+                        importRecord.getTenantId(), currentConsultant.get().getTenantId())
+                    || !java.util.Objects.equals(
+                        importRecord.getConsultantId(), currentConsultant.get().getId())))
+              throw new ImportException(
+                  "Configured import current consultant does not belong to its exact row tenant");
             UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
             if (!importRecord
                 .getUsername()

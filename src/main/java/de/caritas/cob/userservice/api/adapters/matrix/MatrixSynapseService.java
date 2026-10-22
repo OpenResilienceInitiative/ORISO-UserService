@@ -2,6 +2,9 @@ package de.caritas.cob.userservice.api.adapters.matrix;
 
 import static java.util.Objects.nonNull;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRequestDTO;
@@ -14,6 +17,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailable
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixUserInUseException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import java.net.URI;
@@ -264,6 +268,7 @@ public class MatrixSynapseService implements MatrixUserClient {
 
       return response;
     } catch (HttpClientErrorException ex) {
+      if (!reactivateReserved && isDefiniteUserInUse(ex)) throw new MatrixUserInUseException();
       if (isReservedMatrixUserId(ex)) {
         if (!reactivateReserved) {
           throw new MatrixCreateUserException(
@@ -368,6 +373,25 @@ public class MatrixSynapseService implements MatrixUserClient {
   private boolean isReservedMatrixUserId(HttpClientErrorException exception) {
     return exception.getStatusCode().value() == 400
         && exception.getResponseBodyAsString().contains("\"M_USER_IN_USE\"");
+  }
+
+  private static boolean isDefiniteUserInUse(HttpClientErrorException exception) {
+    if (exception.getStatusCode().value() != 400) return false;
+    byte[] raw = exception.getResponseBodyAsByteArray();
+    if (raw.length == 0 || raw.length > 65536) return false;
+    try {
+      var value =
+          new ObjectMapper()
+              .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+              .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+              .readTree(raw);
+      return value != null
+          && value.isObject()
+          && value.path("errcode").isTextual()
+          && "M_USER_IN_USE".equals(value.path("errcode").textValue());
+    } catch (java.io.IOException | RuntimeException unavailable) {
+      return false;
+    }
   }
 
   private ResponseEntity<MatrixCreateUserResponseDTO> reactivateDeletedUser(

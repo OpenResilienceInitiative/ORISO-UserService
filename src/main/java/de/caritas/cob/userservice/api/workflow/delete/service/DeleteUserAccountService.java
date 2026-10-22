@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAnonymousRegistryIdAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAppointmentServiceAskerAction;
@@ -85,19 +86,23 @@ public class DeleteUserAccountService {
 
     var deletionWorkflowDTO = new AskerDeletionWorkflowDTO(user, new ArrayList<>());
 
-    this.actionsRegistry
-        .buildContainerForType(AskerDeletionWorkflowDTO.class)
-        .addActionToExecute(DeleteKeycloakAskerAction.class)
-        .addActionToExecute(DeleteMatrixAskerAction.class)
-        .addActionToExecute(DeleteAskerRoomsAndSessionsAction.class)
-        .addActionToExecute(DeleteDatabaseAskerAgencyAction.class)
-        .addActionToExecute(DeleteAnonymousRegistryIdAction.class)
-        .addActionToExecute(DeleteAppointmentServiceAskerAction.class)
-        .addActionToExecute(DeleteAskerDraftMessagesAction.class)
-        .addActionToExecute(DeleteAskerEventNotificationsAction.class)
-        .addActionToExecute(DeleteAskerReplyEmailDeliveriesAction.class)
-        .addActionToExecute(DeleteDatabaseAskerAction.class)
-        .executeActions(deletionWorkflowDTO);
+    try {
+      this.actionsRegistry
+          .buildContainerForType(AskerDeletionWorkflowDTO.class)
+          .addActionToExecute(DeleteKeycloakAskerAction.class)
+          .addActionToExecute(DeleteMatrixAskerAction.class)
+          .addActionToExecute(DeleteAskerRoomsAndSessionsAction.class)
+          .addActionToExecute(DeleteDatabaseAskerAgencyAction.class)
+          .addActionToExecute(DeleteAnonymousRegistryIdAction.class)
+          .addActionToExecute(DeleteAppointmentServiceAskerAction.class)
+          .addActionToExecute(DeleteAskerDraftMessagesAction.class)
+          .addActionToExecute(DeleteAskerEventNotificationsAction.class)
+          .addActionToExecute(DeleteAskerReplyEmailDeliveriesAction.class)
+          .addActionToExecute(DeleteDatabaseAskerAction.class)
+          .executeActions(deletionWorkflowDTO);
+    } catch (ScopedIdentityCommandRequiredException denied) {
+      // The native action has recorded the refusal. Stop before any downstream effect.
+    }
 
     return deletionWorkflowDTO.getDeletionWorkflowErrors();
   }
@@ -116,19 +121,23 @@ public class DeleteUserAccountService {
 
     var deletionWorkflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
 
-    this.actionsRegistry
-        .buildContainerForType(ConsultantDeletionWorkflowDTO.class)
-        .addActionToExecute(DeleteKeycloakConsultantAction.class)
-        .addActionToExecute(DeleteMatrixConsultantAction.class)
-        .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
-        .addActionToExecute(DeleteChatAction.class)
-        .addActionToExecute(DeleteAppointmentServiceConsultantAction.class)
-        .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
-        .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
-        .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
-        .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
-        .addActionToExecute(DeleteDatabaseConsultantAction.class)
-        .executeActions(deletionWorkflowDTO);
+    try {
+      this.actionsRegistry
+          .buildContainerForType(ConsultantDeletionWorkflowDTO.class)
+          .addActionToExecute(DeleteKeycloakConsultantAction.class)
+          .addActionToExecute(DeleteMatrixConsultantAction.class)
+          .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
+          .addActionToExecute(DeleteChatAction.class)
+          .addActionToExecute(DeleteAppointmentServiceConsultantAction.class)
+          .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
+          .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
+          .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
+          .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
+          .addActionToExecute(DeleteDatabaseConsultantAction.class)
+          .executeActions(deletionWorkflowDTO);
+    } catch (ScopedIdentityCommandRequiredException denied) {
+      // The native action recorded the refusal. Keep the consultant and stop downstream effects.
+    }
 
     return deletionWorkflowDTO.getDeletionWorkflowErrors();
   }

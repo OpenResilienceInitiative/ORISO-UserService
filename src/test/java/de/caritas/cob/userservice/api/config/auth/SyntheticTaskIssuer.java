@@ -28,6 +28,7 @@ final class SyntheticTaskIssuer implements AutoCloseable {
   final HttpServer server;
   final KeyPair keys;
   String variant = "valid";
+  String adminSubject = "native-account-admin-subject";
   Map<String, String> lastForm = Map.of();
 
   SyntheticTaskIssuer() throws Exception {
@@ -92,6 +93,12 @@ final class SyntheticTaskIssuer implements AutoCloseable {
         audiences =
             List.of("tenantservice", "agencyservice", "consultingtypeservice", "userservice");
         subject = "native-setup-subject";
+      }
+      case "backend-account-admin" -> {
+        roles =
+            List.of("account-maintenance", "account-read", "otp-config-admin", "session-exchange");
+        audiences = List.of("userservice", "oriso-account-lifecycle", "oriso-otp");
+        subject = adminSubject;
       }
       case "backend-mail" -> {
         roles =
@@ -175,6 +182,34 @@ final class SyntheticTaskIssuer implements AutoCloseable {
                   "userservice",
                   "oriso-task-commands",
                   "oriso-smtp-control"));
+      case "admin-extra-role" ->
+          claims.claim(
+              "realm_access",
+              Map.of(
+                  "roles",
+                  List.of(
+                      "account-maintenance",
+                      "account-read",
+                      "otp-config-admin",
+                      "session-exchange",
+                      "realm-admin")));
+      case "admin-missing-role" ->
+          claims.claim(
+              "realm_access",
+              Map.of("roles", List.of("account-maintenance", "account-read", "otp-config-admin")));
+      case "admin-extra-audience" ->
+          claims.audience(
+              List.of("userservice", "oriso-account-lifecycle", "oriso-otp", "realm-management"));
+      case "admin-missing-audience" ->
+          claims.audience(List.of("userservice", "oriso-account-lifecycle"));
+      case "missing-issued-at" -> claims.issueTime(null);
+      case "zero-issued-at" -> claims.issueTime(new Date(0));
+      case "negative-issued-at" -> claims.issueTime(new Date(-1000));
+      case "future-issued-at" -> claims.issueTime(Date.from(Instant.now().plusSeconds(120)));
+      case "unordered-native-bounds" -> {
+        var same = Date.from(Instant.now().plusSeconds(120));
+        claims.issueTime(same).expirationTime(same);
+      }
       case "wrong-subject" -> claims.subject("human-subject");
       case "wrong-client" -> claims.claim("azp", "app");
       case "wrong-issuer" -> claims.issuer(base() + "/realms/other");

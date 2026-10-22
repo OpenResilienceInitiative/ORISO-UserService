@@ -31,6 +31,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import lombok.NonNull;
@@ -1268,12 +1269,47 @@ public class AccountInviteService {
         userId, TwoFactorGateStatus.ACTIVE, TwoFactorGateStatus.PENDING_SETUP);
   }
 
+  /** Applies a verified C enrollment only to the privately frozen invite membership. */
+  public void markTwoFactorActiveOwned(String userId, Set<Long> inviteIds) {
+    transitionTwoFactorStatus(
+        userId,
+        TwoFactorGateStatus.PENDING_SETUP,
+        TwoFactorGateStatus.ACTIVE,
+        checkedInviteIds(inviteIds));
+  }
+
+  /** Reopens only the invite membership frozen by the verified C deletion. */
+  public void markTwoFactorPendingSetupOwned(String userId, Set<Long> inviteIds) {
+    transitionTwoFactorStatus(
+        userId,
+        TwoFactorGateStatus.ACTIVE,
+        TwoFactorGateStatus.PENDING_SETUP,
+        checkedInviteIds(inviteIds));
+  }
+
+  private Set<Long> checkedInviteIds(Set<Long> inviteIds) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || inviteIds == null
+        || inviteIds.size() > 1024
+        || inviteIds.stream().anyMatch(id -> id == null || id <= 0))
+      throw new IllegalStateException(
+          "An owning transaction and frozen invite membership are required");
+    return Set.copyOf(inviteIds);
+  }
+
   private void transitionTwoFactorStatus(
       String userId, TwoFactorGateStatus from, TwoFactorGateStatus to) {
+    transitionTwoFactorStatus(userId, from, to, null);
+  }
+
+  private void transitionTwoFactorStatus(
+      String userId, TwoFactorGateStatus from, TwoFactorGateStatus to, Set<Long> inviteIds) {
     if (isBlank(userId)) {
       return;
     }
     var invites = accountInviteRepository.findAllByAcceptedByUserIdAndTwoFactorStatus(userId, from);
+    if (inviteIds != null)
+      invites = invites.stream().filter(invite -> inviteIds.contains(invite.getId())).toList();
     if (invites.isEmpty()) {
       return;
     }

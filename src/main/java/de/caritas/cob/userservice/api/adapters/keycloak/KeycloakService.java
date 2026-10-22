@@ -52,6 +52,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.port.out.ScopedAvailabilityUnavailableException;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
@@ -136,6 +138,16 @@ public class KeycloakService
   private final @NonNull KeycloakAuthClient keycloakAuthClient;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedUsernameAvailability
+      scopedUsernameAvailability;
+
+  @Autowired(required = false)
+  public void setScopedUsernameAvailability(
+      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedUsernameAvailability
+          availability) {
+    this.scopedUsernameAvailability = availability;
+  }
 
   private OutboundHttpMetrics outboundHttpMetrics;
 
@@ -270,6 +282,7 @@ public class KeycloakService
    */
   @Override
   public Optional<IdentityEmailOwner> findByEmail(String email) {
+    requireLegacyAccountAccess();
     return keycloakClient.getUsersResource().search(email, 0, Integer.MAX_VALUE).stream()
         .filter(userRepresentation -> email.equalsIgnoreCase(userRepresentation.getEmail()))
         .findFirst()
@@ -278,6 +291,7 @@ public class KeycloakService
 
   @Override
   public IdentityOtpCredential getOtpCredential(String userName) {
+    requireLegacyAccountAccess();
     var requestUrl = getOtpUrl(ENDPOINT_OTP_INFO, userName);
     var response =
         withFreshAdminTokenOnUnauthorized(
@@ -294,6 +308,7 @@ public class KeycloakService
 
   @Override
   public boolean setUpOtpCredential(String userName, String initialCode, String secret) {
+    requireLegacyAccountAccess();
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, secret, null);
     var requestUrl = getOtpUrl(ENDPOINT_OTP_SETUP, userName);
 
@@ -315,6 +330,7 @@ public class KeycloakService
 
   @Override
   public void deleteOtpCredential(String userName) {
+    requireLegacyAccountAccess();
     var requestUrl = getOtpUrl(ENDPOINT_OTP_TEARDOWN, userName);
     withFreshAdminTokenOnUnauthorized(
         "otp-delete",
@@ -323,6 +339,7 @@ public class KeycloakService
 
   @Override
   public IdentityEmailVerificationStart initiateEmailVerification(String username, String email) {
+    requireLegacyAccountAccess();
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(null, null, email);
     var requestUrl = getOtpUrl(ENDPOINT_OTP_VERIFY_EMAIL, username);
 
@@ -341,6 +358,7 @@ public class KeycloakService
 
   @Override
   public IdentityEmailVerification finishEmailVerification(String username, String initialCode) {
+    requireLegacyAccountAccess();
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, null, null);
     var requestUrl = getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);
 
@@ -395,6 +413,13 @@ public class KeycloakService
       recordRetry(operation);
       keycloakClient.refreshAdminSession();
       return request.get();
+    }
+  }
+
+  /** Scoped commands must supply a checked origin; a target-only port cannot fall back to Admin. */
+  private void requireLegacyAccountAccess() {
+    if (identityClientConfig.isFiveActorMode()) {
+      throw new ScopedIdentityCommandRequiredException();
     }
   }
 
@@ -520,6 +545,18 @@ public class KeycloakService
    * @return true if does not exist, else false
    */
   public boolean isUsernameAvailable(String username) {
+    if (identityClientConfig.isFiveActorMode()) {
+      try {
+        if (scopedUsernameAvailability == null) throw new ScopedAvailabilityUnavailableException();
+        boolean decodedAvailable =
+            scopedUsernameAvailability.available(usernameTranscoder.decodeUsername(username));
+        boolean encodedAvailable =
+            scopedUsernameAvailability.available(usernameTranscoder.encodeUsername(username));
+        return decodedAvailable && encodedAvailable;
+      } catch (RuntimeException unavailable) {
+        throw new ScopedAvailabilityUnavailableException();
+      }
+    }
     List<UserRepresentation> keycloakDecodedUserList =
         findByUsername(usernameTranscoder.decodeUsername(username));
     List<UserRepresentation> keycloakEncodedUserList =
@@ -836,6 +873,7 @@ public class KeycloakService
    */
   @Override
   public void updatePassword(final String userId, final String password) {
+    requireLegacyAccountAccess();
     resetPassword(userId, password, false);
   }
 
@@ -1010,6 +1048,8 @@ public class KeycloakService
     try {
       deleteUser(userId);
       log.debug("User {} has been removed due to rollback", userId);
+    } catch (ScopedIdentityCommandRequiredException required) {
+      throw required;
     } catch (Exception e) {
       log.error("Keycloak error: User could not be removed/rolled back: {}", userId);
     }
@@ -1022,6 +1062,7 @@ public class KeycloakService
    */
   @Override
   public void deleteUser(String userId) {
+    requireLegacyAccountAccess();
     try {
       removeUserIfPresent(userId);
     } catch (NotAuthorizedException e) {
@@ -1050,6 +1091,7 @@ public class KeycloakService
    */
   @Override
   public List<String> findAllByUserId(String userId) {
+    requireLegacyAccountAccess();
     try {
       return getUserRoles(userId).stream()
           .map(RoleRepresentation::getName)
@@ -1077,6 +1119,7 @@ public class KeycloakService
    * @return {@link List} of found users
    */
   public List<UserRepresentation> findByUsername(String username) {
+    requireLegacyAccountAccess();
     try {
       return keycloakClient.getUsersResource().search(username);
     } catch (NotAuthorizedException e) {
@@ -1112,6 +1155,7 @@ public class KeycloakService
 
   @Override
   public Optional<IdentityProfile> findById(String userId) {
+    requireLegacyAccountAccess();
     try {
       UserResource userResource = keycloakClient.getUsersResource().get(userId);
       if (userResource == null) {
@@ -1180,6 +1224,7 @@ public class KeycloakService
    */
   @Override
   public void deactivateUser(String userId) {
+    requireLegacyAccountAccess();
     var userResource = keycloakClient.getUsersResource().get(userId);
     var userRepresentation = userResource.toRepresentation();
     userRepresentation.setEnabled(false);

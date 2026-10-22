@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="20261022-identity-self-otp-local-367" author="oriso">
+    <sqlFile path="db/changelog/changeset/20261022_identity_self_otp_local_367/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
+    <rollback><sql>DROP TABLE identity_self_otp_local_enrollment;</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -70,6 +70,26 @@ class UserAccountControllerDelegate {
   private final @NonNull AgencyAdminDataProvider agencyAdminDataProvider;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
+  private de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance
+      selfLocaleMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSelfLocaleMaintenance(
+      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance
+          maintenance) {
+    this.selfLocaleMaintenance = maintenance;
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance
+      selfAppOtpMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSelfAppOtpMaintenance(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance
+          maintenance) {
+    this.selfAppOtpMaintenance = maintenance;
+  }
+
   ResponseEntity<Void> updateAbsence(AbsenceDTO absence) {
     var consultant = userAccountProvider.retrieveValidatedConsultant();
     this.consultantDataFacade.updateConsultantAbsent(consultant, absence);
@@ -173,6 +193,9 @@ class UserAccountControllerDelegate {
     if (!isOtpAllowed()) {
       return null;
     }
+    if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
+      return selfAppOtpMaintenance.readCredential();
+    }
     try {
       return identityManager.getOtpCredential(
           usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
@@ -205,15 +228,24 @@ class UserAccountControllerDelegate {
             .orElseThrow(
                 () -> new BadRequestException("Invalid payload: at least one property expected"));
 
-    Optional<Map<String, Object>> patchResponse = accountManager.patchUser(patchMap);
+    var locale = userDtoMapper.preferredLanguageOf(patchUserDTO);
+    boolean scopedLocale =
+        locale.isPresent()
+            && selfLocaleMaintenance != null
+            && selfLocaleMaintenance.isFiveActorMode();
+    Optional<Map<String, Object>> patchResponse =
+        scopedLocale
+            ? selfLocaleMaintenance.patch(
+                locale.orElseThrow(), patchMap, () -> accountManager.patchUser(patchMap))
+            : accountManager.patchUser(patchMap);
     if (patchResponse.isEmpty()) {
       throw new NotFoundException(
           "User with id %s not found in user or consultant repository", userId);
     }
 
-    userDtoMapper
-        .preferredLanguageOf(patchUserDTO)
-        .ifPresent(lang -> identityManager.changeLanguage(userId, lang));
+    if (!scopedLocale) {
+      locale.ifPresent(lang -> identityManager.changeLanguage(userId, lang));
+    }
 
     userDtoMapper
         .availableOf(patchUserDTO)
