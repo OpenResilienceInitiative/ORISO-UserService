@@ -52,7 +52,13 @@ public class TenantCreationClient {
     if (reservedTenantBootstrap == null)
       throw new IllegalStateException("Protected Tenant creation is unavailable");
     var reply = reservedTenantBootstrap.create(claim, tenant);
-    return new VerifiedTenant(reply.id(), reply.receipt(), reply.tenant(), reply.claim(), reply.attempt(), reply.execution());
+    return new VerifiedTenant(
+        reply.id(),
+        reply.receipt(),
+        reply.tenant(),
+        reply.claim(),
+        reply.attempt(),
+        reply.execution());
   }
 
   /** Authenticated result ownership only; never a generic tenant creation grant. */

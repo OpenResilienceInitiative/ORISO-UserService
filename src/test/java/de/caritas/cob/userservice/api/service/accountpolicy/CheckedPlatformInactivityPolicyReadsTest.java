@@ -58,8 +58,17 @@ class CheckedPlatformInactivityPolicyReadsTest {
                 .issuer("https://identity.example/realms/test")
                 .subject("runtime-subject")
                 .claim("azp", "backend-runtime")
-            .audience(java.util.List.of("tenantservice", "agencyservice", "appointmentservice"))
-            .claim("realm_access", java.util.Map.of("roles", java.util.List.of("runtime-policy", "matrix-agency", "matrix-agency-provision", "appointment-sync", "appointment-participant-cleanup")))
+                .audience(java.util.List.of("tenantservice", "agencyservice", "appointmentservice"))
+                .claim(
+                    "realm_access",
+                    java.util.Map.of(
+                        "roles",
+                        java.util.List.of(
+                            "runtime-policy",
+                            "matrix-agency",
+                            "matrix-agency-provision",
+                            "appointment-sync",
+                            "appointment-participant-cleanup")))
                 .issuedAt(now.minusSeconds(10))
                 .expiresAt(now.plusSeconds(60))
                 .build());

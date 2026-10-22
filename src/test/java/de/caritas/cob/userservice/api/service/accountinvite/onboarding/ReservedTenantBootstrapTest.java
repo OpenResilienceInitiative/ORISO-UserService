@@ -97,8 +97,15 @@ class ReservedTenantBootstrapTest {
                 .issuer("https://identity.example/realms/test")
                 .subject(setupSubject)
                 .claim("azp", "backend-setup")
-                .audience(java.util.List.of("tenantservice", "agencyservice", "consultingtypeservice", "userservice"))
-                .claim("realm_access", Map.of("roles", java.util.List.of("config-wizard", "invitation-reservations", "consultant-import")))
+                .audience(
+                    java.util.List.of(
+                        "tenantservice", "agencyservice", "consultingtypeservice", "userservice"))
+                .claim(
+                    "realm_access",
+                    Map.of(
+                        "roles",
+                        java.util.List.of(
+                            "config-wizard", "invitation-reservations", "consultant-import")))
                 .issuedAt(Instant.now().minusSeconds(1))
                 .expiresAt(Instant.now().plusSeconds(60))
                 .build());
@@ -146,9 +153,28 @@ class ReservedTenantBootstrapTest {
     assertThat(result.executionId()).isEqualTo(EXECUTION);
     assertThat(result.receipt()).isNotBlank();
     assertThat(result.tenant().getActive()).isTrue();
-    assertThat(result.tenant().getSettings().getTenantAdminControls().getAccountInactivitySettings().getOtherMonths()).isEqualTo(18);
-    result.tenant().getSettings().getTenantAdminControls().getAccountInactivitySettings().setOtherMonths(1);
-    assertThat(result.tenant().getSettings().getTenantAdminControls().getAccountInactivitySettings().getOtherMonths()).isEqualTo(18);
+    assertThat(
+            result
+                .tenant()
+                .getSettings()
+                .getTenantAdminControls()
+                .getAccountInactivitySettings()
+                .getOtherMonths())
+        .isEqualTo(18);
+    result
+        .tenant()
+        .getSettings()
+        .getTenantAdminControls()
+        .getAccountInactivitySettings()
+        .setOtherMonths(1);
+    assertThat(
+            result
+                .tenant()
+                .getSettings()
+                .getTenantAdminControls()
+                .getAccountInactivitySettings()
+                .getOtherMonths())
+        .isEqualTo(18);
     input.setName("changed");
     result.tenant().setName("also changed");
     assertThat(result.tenant().getName()).isEqualTo("Äctual tenant");
@@ -243,7 +269,10 @@ class ReservedTenantBootstrapTest {
     ObjectNode value = ((ObjectNode) sent.path("tenant")).deepCopy();
     value.remove("tenantIdReservationToken");
     value.put("active", true);
-    value.set("settings", JSON.readTree("{\"emailVisible\":false,\"emailRequired\":false,\"tenantAdminControls\":{\"accountInactivitySettings\":{\"askerMonths\":12,\"consultantMonths\":15,\"otherMonths\":18,\"revision\":7}}}"));
+    value.set(
+        "settings",
+        JSON.readTree(
+            "{\"emailVisible\":false,\"emailRequired\":false,\"tenantAdminControls\":{\"accountInactivitySettings\":{\"askerMonths\":12,\"consultantMonths\":15,\"otherMonths\":18,\"revision\":7}}}"));
     var fields = new TreeMap<String, Object>();
     fields.put("v", 1);
     fields.put("ownerIssuer", "https://identity.example/realms/test");
