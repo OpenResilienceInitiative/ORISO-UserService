@@ -23,6 +23,8 @@ KC_COMMIT = "a9483e4b44578f10badf70c5265a37a2c1d3d26e"
 SUITE = "de.caritas.cob.userservice.api.service.accountinvite.ProtectedAdminPublicNativePairProof"
 CASE = "realPublicPlatformInvitationStagesJpaAndCompletesNativeAppBeforeAcknowledgingActivation"
 TENANT_CASE = "realPublicTenantInvitationStagesJpaAndCompletesNativeAppBeforeAcknowledgingActivation"
+EMAIL_CASE = "realPublicPlatformInvitationStagesJpaAndCompletesNativeEmailBeforeAcknowledgingActivation"
+TENANT_EMAIL_CASE = "realPublicTenantInvitationStagesJpaAndCompletesNativeEmailBeforeAcknowledgingActivation"
 IMAGE = "quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992"
 
 def save(path, value):
@@ -41,7 +43,7 @@ def snapshot(kc):
     return {"user_commit": current, "keycloak_commit": native, "user_sources": manifest(ROOT), "keycloak_sources": manifest(kc)}
 
 def sanitize(reports, output, expected_case=CASE):
-    if expected_case not in {CASE, TENANT_CASE}:
+    if expected_case not in {CASE, TENANT_CASE, EMAIL_CASE, TENANT_EMAIL_CASE}:
         raise ValueError("Unknown public native case")
     clean = ET.Element("testsuite", name=SUITE)
     totals = dict(tests=0, failures=0, errors=0, skipped=0)
@@ -87,6 +89,14 @@ def checked_login_observation(value):
         raise ValueError("Invalid closed native login observation")
     return dict(value)
 
+def checked_email_login_observation(value):
+    if (not isinstance(value, dict) or set(value) != {"challengeStatus", "challengeType", "acceptedStatus"}
+            or value["challengeType"] != "EMAIL"
+            or any(type(value[key]) is not int or not 100 <= value[key] <= 599
+                for key in ["challengeStatus", "acceptedStatus"])):
+        raise ValueError("Invalid closed native email login observation")
+    return dict(value)
+
 def delivered_code(messages):
     import email
     if len(messages) != 1:
@@ -120,11 +130,12 @@ def native(kc, report):
     available = int(next(line.split()[1] for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemAvailable:")))
     if available < 4 * 1024 * 1024:
         raise ValueError("Four GiB headroom and two GiB reserve required")
-    kind = "app"
+    kind = os.environ.get("PAIR_KIND", "app")
     role = os.environ.get("PAIR_ROLE", "PLATFORM_ADMIN")
-    if os.environ.get("PAIR_KIND", "app") != "app" or role not in {"PLATFORM_ADMIN", "TENANT_ADMIN"}:
-        raise ValueError("Only the two fixed protected APP flows are allowed")
-    case = CASE if role == "PLATFORM_ADMIN" else TENANT_CASE
+    if kind not in {"app", "email"} or role not in {"PLATFORM_ADMIN", "TENANT_ADMIN"}:
+        raise ValueError("Only the four fixed protected onboarding flows are allowed")
+    case = {("PLATFORM_ADMIN", "app"): CASE, ("TENANT_ADMIN", "app"): TENANT_CASE,
+        ("PLATFORM_ADMIN", "email"): EMAIL_CASE, ("TENANT_ADMIN", "email"): TENANT_EMAIL_CASE}[(role, kind)]
     expected_tenant = 0 if role == "PLATFORM_ADMIN" else 17
     module = kc / "keycloak-image/account-lifecycle-spi"
     otp = kc / "keycloak-image/otp-config-spi"
@@ -190,6 +201,10 @@ def native(kc, report):
             links = fixture.admin("GET", "/clients?clientId=" + client)
             assert len(links) == 1
             assert lifecycle.SUBJECTS[actor] == fixture.admin("GET", "/clients/" + links[0]["id"] + "/service-account-user")["id"]
+        from protected_public_login import install, serve_codes
+        receipt["login_flow"] = install(fixture, ROOT / "tests/fixtures/protected-public-login-flow-7ed.json")
+        if kind == "email":
+            code_server = serve_codes(fixture.mail, delivered_code)
         native_policy = fixture.admin("GET")
         assert native_policy["otpPolicyCodeReusable"] is False
         assert native_policy["otpPolicyPeriod"] == 30 and native_policy["otpPolicyDigits"] == 6
@@ -211,7 +226,10 @@ def native(kc, report):
             "PAIR_WITNESS": str(report.with_name("protected-public-native-witness.json").resolve()),
             "PAIR_HTTP_WITNESS": str(report.with_name("protected-public-native-http.json").resolve()),
             "PAIR_LOGIN_WITNESS": str(report.with_name("protected-public-native-login.json").resolve()),
-            "PAIR_FRESH_LOGIN_WITNESS": str(report.with_name("protected-public-native-fresh-login.json").resolve())})
+            "PAIR_FRESH_LOGIN_WITNESS": str(report.with_name("protected-public-native-fresh-login.json").resolve()),
+            "PAIR_EMAIL_LOGIN_WITNESS": str(report.with_name("protected-public-native-email-login.json").resolve())})
+        if code_server:
+            environment["PAIR_MAIL_CODES"] = "http://127.0.0.1:" + str(code_server.server_address[1])
         for actor, (client, _) in lifecycle.ACTORS.items():
             environment.update({"PAIR_" + actor + "_CLIENT": client, "PAIR_" + actor + "_SECRET": "synthetic-lifecycle-" + actor, "PAIR_" + actor + "_SUBJECT": lifecycle.SUBJECTS[actor]})
         reports = ROOT / "target/surefire-reports"
@@ -238,7 +256,7 @@ def native(kc, report):
         if http_witness.is_file():
             observed_http = json.loads(http_witness.read_text())
             assert isinstance(observed_http, list) and len(observed_http) <= 100
-            assert all(set(row) == {"phase", "status"} and row["phase"] in {"token", "approve", "status", "create", "owned-read", "prepare", "app", "commit"} and type(row["status"]) is int and 100 <= row["status"] <= 599 for row in observed_http)
+            assert all(set(row) == {"phase", "status"} and row["phase"] in {"token", "approve", "status", "create", "owned-read", "prepare", "app", "email-start", "email-finish", "commit"} and type(row["status"]) is int and 100 <= row["status"] <= 599 for row in observed_http)
             receipt["http_observations"] = observed_http
         login_witness = report.with_name("protected-public-native-login.json")
         if login_witness.is_file():
@@ -246,8 +264,14 @@ def native(kc, report):
         fresh_login = report.with_name("protected-public-native-fresh-login.json")
         if fresh_login.is_file():
             receipt["recipient_fresh_login"] = checked_login_observation(json.loads(fresh_login.read_text()))
-        receipt["accepted"] &= receipt.get("recipient_login") == {"status": 400, "category": "INVALID_USER_CREDENTIALS", "sameTotpAsEnrollment": True}
-        receipt["accepted"] &= receipt.get("recipient_fresh_login") == {"status": 200, "category": "ACCEPTED", "sameTotpAsEnrollment": False}
+        if kind == "app":
+            receipt["accepted"] &= receipt.get("recipient_login") == {"status": 400, "category": "INVALID_USER_CREDENTIALS", "sameTotpAsEnrollment": True}
+            receipt["accepted"] &= receipt.get("recipient_fresh_login") == {"status": 200, "category": "ACCEPTED", "sameTotpAsEnrollment": False}
+        else:
+            email_login = report.with_name("protected-public-native-email-login.json")
+            if email_login.is_file():
+                receipt["recipient_email_login"] = checked_email_login_observation(json.loads(email_login.read_text()))
+            receipt["accepted"] &= receipt.get("recipient_email_login") == {"challengeStatus": 400, "challengeType": "EMAIL", "acceptedStatus": 200}
         phase = "post-java-native-inspection"
         # Installer-only fresh fixture token; tested actor expiry/authority is never refreshed here.
         status, installer = lifecycle.call(fixture.base, "POST", "/realms/master/protocol/openid-connect/token", {"client_id": "admin-cli", "grant_type": "password", "username": "synthetic-installer", "password": lifecycle.INSTALLER}, form=True)
@@ -283,8 +307,8 @@ def native(kc, report):
         receipt["native_target_tenant_matches"] = user.get("attributes", {}).get("tenantId") == [str(expected_tenant)]
         groups = fixture.admin("GET", "/users/" + user["id"] + "/groups")
         receipt["exact_committed_profile_group"] = [group["id"] for group in groups] == [fixture.protected_group_id if role == "PLATFORM_ADMIN" else fixture.tenant_group_id]
-        receipt["native_mail_active"] = True
-        receipt["accepted"] &= receipt["native_account_enabled_after_verified_2fa_commit"] and receipt["one_native_enrollment"] and receipt["native_mail_active"] and receipt["actual_smtp_count"] == (1 if kind == "email" else 0)
+        receipt["native_mail_active"] = kind == "app" or (len(selected) == 1 and json.loads(selected[0]["credentialData"]).get("active") is True)
+        receipt["accepted"] &= receipt["native_account_enabled_after_verified_2fa_commit"] and receipt["one_native_enrollment"] and receipt["native_mail_active"] and receipt["actual_smtp_count"] == (2 if kind == "email" else 0)
         receipt["accepted"] &= receipt["native_target_tenant_matches"] and receipt["exact_committed_profile_group"]
         phase = "complete"
     except BaseException as error:
@@ -297,6 +321,9 @@ def native(kc, report):
         try:
             if code_server:
                 code_server.shutdown(); code_server.server_close()
+                code_server.worker.join(timeout=5)
+                assert not code_server.worker.is_alive()
+            receipt["owned_code_server_removed"] = True
             BootstrapFixture.doClassCleanups()
             assert not getattr(BootstrapFixture, "tearDown_exceptions", [])
             containers = subprocess.check_output(["docker", "ps", "-aq", "--filter", "label=oriso-protected-receiver-test=true"], text=True).split()

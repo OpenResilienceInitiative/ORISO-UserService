@@ -157,7 +157,24 @@ class ProtectedAdminPublicNativePairProof {
     completePublicApp(AccountInviteTargetRole.TENANT_ADMIN);
   }
 
+  @Test
+  void realPublicPlatformInvitationStagesJpaAndCompletesNativeEmailBeforeAcknowledgingActivation()
+      throws Exception {
+    completePublicOnboarding(AccountInviteTargetRole.PLATFORM_ADMIN, true);
+  }
+
+  @Test
+  void realPublicTenantInvitationStagesJpaAndCompletesNativeEmailBeforeAcknowledgingActivation()
+      throws Exception {
+    completePublicOnboarding(AccountInviteTargetRole.TENANT_ADMIN, true);
+  }
+
   void completePublicApp(AccountInviteTargetRole role) throws Exception {
+    completePublicOnboarding(role, false);
+  }
+
+  void completePublicOnboarding(AccountInviteTargetRole role, boolean mail) throws Exception {
+    assertEquals(mail ? "email" : "app", required("PAIR_KIND"));
     assertEquals(role.name(), required("PAIR_ROLE"));
     long tenantId = role == AccountInviteTargetRole.PLATFORM_ADMIN ? 0L : 17L;
     assertEquals("true", required("GITHUB_ACTIONS"));
@@ -326,15 +343,38 @@ class ProtectedAdminPublicNativePairProof {
             .path("secret")
             .asText());
     String appPath = "/service/users/account-invites/" + token + "/onboarding/two-factor";
-    String enrollmentCode = totp(secret);
-    var activated =
-        mvc.perform(
-                post(appPath)
-                    .header("Idempotency-Key", UUID.randomUUID().toString())
-                    .contentType("application/json")
-                    .content(json.canonical(Map.of("otp", enrollmentCode))))
-            .andReturn()
-            .getResponse();
+    String enrollmentCode;
+    org.springframework.mock.web.MockHttpServletResponse activated;
+    if (mail) {
+      String emailPath = appPath + "/email";
+      String emailIntentKey = UUID.randomUUID().toString();
+      for (int retryNumber = 0; retryNumber < 2; retryNumber++) {
+        var started =
+            mvc.perform(post(emailPath).header("Idempotency-Key", emailIntentKey))
+                .andReturn()
+                .getResponse();
+        assertEquals(204, started.getStatus());
+      }
+      enrollmentCode = mailCode("enrollment", json);
+      activated =
+          mvc.perform(
+                  post(appPath)
+                      .header("Idempotency-Key", UUID.randomUUID().toString())
+                      .contentType("application/json")
+                      .content(json.canonical(Map.of("otp", enrollmentCode, "method", "EMAIL"))))
+              .andReturn()
+              .getResponse();
+    } else {
+      enrollmentCode = totp(secret);
+      activated =
+          mvc.perform(
+                  post(appPath)
+                      .header("Idempotency-Key", UUID.randomUUID().toString())
+                      .contentType("application/json")
+                      .content(json.canonical(Map.of("otp", enrollmentCode))))
+              .andReturn()
+              .getResponse();
+    }
     assertEquals(200, activated.getStatus());
     assertEquals(
         "COMMITTED",
@@ -360,7 +400,7 @@ class ProtectedAdminPublicNativePairProof {
     loginBody.add("username", recipient);
     loginBody.add("password", "SyntheticPublicOnly!731");
     String loginCode = enrollmentCode;
-    loginBody.add("totp", loginCode);
+    if (!mail) loginBody.add("totp", loginCode);
     var headers = new org.springframework.http.HttpHeaders();
     headers.setContentType(org.springframework.http.MediaType.APPLICATION_FORM_URLENCODED);
     String oidc =
@@ -376,23 +416,31 @@ class ProtectedAdminPublicNativePairProof {
             new org.springframework.http.HttpEntity<>(loginBody, headers),
             String.class);
     String loginCategory = loginCategory(login, json);
-    Files.writeString(
-        Path.of(required("PAIR_LOGIN_WITNESS")),
-        json.canonical(
-            Map.of(
-                "status", login.getStatusCode().value(),
-                "category", loginCategory,
-                "sameTotpAsEnrollment", loginCode.equals(enrollmentCode))));
+    if (!mail)
+      Files.writeString(
+          Path.of(required("PAIR_LOGIN_WITNESS")),
+          json.canonical(
+              Map.of(
+                  "status", login.getStatusCode().value(),
+                  "category", loginCategory,
+                  "sameTotpAsEnrollment", loginCode.equals(enrollmentCode))));
     assertEquals(400, login.getStatusCode().value());
-    assertEquals("INVALID_USER_CREDENTIALS", loginCategory);
-    // Native enrollment consumes this TOTP. Keep that refusal, then use a fresh code.
-    long freshDeadline = System.nanoTime() + Duration.ofSeconds(35).toNanos();
-    String freshCode = totp(secret);
-    while (freshCode.equals(enrollmentCode)) {
-      if (System.nanoTime() >= freshDeadline)
-        throw new IllegalStateException("Fresh native TOTP was not available within its bound");
-      Thread.sleep(200);
+    String freshCode;
+    if (mail) {
+      assertEquals("MISSING_TOTP", loginCategory);
+      assertEquals("EMAIL", json.read(login.getBody(), JsonNode.class).path("otpType").asText());
+      freshCode = mailCode("login", json);
+    } else {
+      assertEquals("INVALID_USER_CREDENTIALS", loginCategory);
+      // Native enrollment consumes this TOTP. Keep that refusal, then use a fresh code.
+      long freshDeadline = System.nanoTime() + Duration.ofSeconds(35).toNanos();
       freshCode = totp(secret);
+      while (freshCode.equals(enrollmentCode)) {
+        if (System.nanoTime() >= freshDeadline)
+          throw new IllegalStateException("Fresh native TOTP was not available within its bound");
+        Thread.sleep(200);
+        freshCode = totp(secret);
+      }
     }
     loginBody.set("totp", freshCode);
     var granted =
@@ -400,13 +448,22 @@ class ProtectedAdminPublicNativePairProof {
             oidc + "/token",
             new org.springframework.http.HttpEntity<>(loginBody, headers),
             String.class);
-    Files.writeString(
-        Path.of(required("PAIR_FRESH_LOGIN_WITNESS")),
-        json.canonical(
-            Map.of(
-                "status", granted.getStatusCode().value(),
-                "category", loginCategory(granted, json),
-                "sameTotpAsEnrollment", freshCode.equals(enrollmentCode))));
+    if (mail)
+      Files.writeString(
+          Path.of(required("PAIR_EMAIL_LOGIN_WITNESS")),
+          json.canonical(
+              Map.of(
+                  "challengeStatus", login.getStatusCode().value(),
+                  "challengeType", "EMAIL",
+                  "acceptedStatus", granted.getStatusCode().value())));
+    else
+      Files.writeString(
+          Path.of(required("PAIR_FRESH_LOGIN_WITNESS")),
+          json.canonical(
+              Map.of(
+                  "status", granted.getStatusCode().value(),
+                  "category", loginCategory(granted, json),
+                  "sameTotpAsEnrollment", freshCode.equals(enrollmentCode))));
     assertEquals(200, granted.getStatusCode().value());
     var tokenReply = json.read(granted.getBody(), JsonNode.class);
     var recipientJwt = decoder.decode(tokenReply.path("access_token").asText());
@@ -462,6 +519,15 @@ class ProtectedAdminPublicNativePairProof {
                 true,
                 "newRecipientLoginAfterOtpAndCommit",
                 true)));
+  }
+
+  static String mailCode(String stage, AccountLifecycleCodec json) {
+    if (!Set.of("enrollment", "login").contains(stage)) throw new IllegalArgumentException();
+    String body =
+        new RestTemplate().getForObject(required("PAIR_MAIL_CODES") + "/" + stage, String.class);
+    String code = json.read(body, JsonNode.class).path("code").asText();
+    assertTrue(code.matches("[0-9]{6}"));
+    return code;
   }
 
   static String loginCategory(
@@ -629,6 +695,8 @@ class ProtectedAdminPublicNativePairProof {
                 else if (path.endsWith("/owned-read")) phase = "owned-read";
                 else if (path.contains("/fetch-otp-setup-info/")) phase = "prepare";
                 else if (path.contains("/setup-otp/")) phase = "app";
+                else if (path.contains("/send-verification-mail/")) phase = "email-start";
+                else if (path.contains("/setup-otp-mail/")) phase = "email-finish";
                 else if (path.endsWith("/commit")) phase = "commit";
                 else if (path.matches(
                     ".*/oriso-protected-invitations/v1/approvals/[a-f0-9-]{36}/attempts/[a-f0-9-]{36}"))

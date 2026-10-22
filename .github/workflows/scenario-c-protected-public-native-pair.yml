@@ -14,6 +14,8 @@ name: Scenario C protected public administrator native pair
     - pom.xml
     - scripts/ci/protected-public-native-pair.py
     - tests/ci/test_protected_public_native_pair.py
+    - scripts/ci/protected_public_login.py
+    - tests/fixtures/protected-public-login-flow-7ed.json
     - .github/workflows/scenario-c-protected-public-native-pair.yml
 permissions:
   contents: read
@@ -27,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kind: [app]
+        kind: [app, email]
         role: [PLATFORM_ADMIN, TENANT_ADMIN]
     env:
       PAIR_KIND: ${{ matrix.kind }}
@@ -108,7 +110,7 @@ jobs:
       env:
         MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2
       run: mvn -B -ntp -q test-compile -DskipTests "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedAdminPublicNativePairProof.java"
-    - name: Run one bounded public invitation JPA and selected native APP activation flow
+    - name: Run one bounded public invitation JPA and selected native APP or email activation flow
       timeout-minutes: 10
       env:
         PROTECTED_PROOF_RESOURCE_PROFILE: github-ubuntu-24-amd64-v1

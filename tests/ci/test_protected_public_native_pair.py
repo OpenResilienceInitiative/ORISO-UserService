@@ -22,6 +22,13 @@ class ProtectedPairEvidence(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     pair.checked_login_observation(unsafe)
 
+        email = {"challengeStatus": 400, "challengeType": "EMAIL", "acceptedStatus": 200}
+        self.assertEqual(email, pair.checked_email_login_observation(email))
+        for unsafe in [dict(email, code="123456"), dict(email, challengeStatus=True),
+                       dict(email, challengeType="raw private response")]:
+            with self.assertRaises(ValueError):
+                pair.checked_email_login_observation(unsafe)
+
     def test_failure_observation_exports_only_closed_source_locations(self):
         raw = b"Bearer secret; SQL private-row; JdbcProtectedAccountActivation.java:120 unknown.java:456"
         observed = pair.closed_failure_frames(raw, b"ProtectedAdminOnboardingService.java:42")
@@ -62,6 +69,8 @@ class ProtectedPairEvidence(unittest.TestCase):
         self.assertFalse(self.proof(name="unrelated")["accepted"])
         self.assertFalse(self.proof(name=pair.TENANT_CASE)["accepted"])
         self.assertTrue(self.proof(name=pair.TENANT_CASE, expected=pair.TENANT_CASE)["accepted"])
+        self.assertTrue(self.proof(name=pair.EMAIL_CASE, expected=pair.EMAIL_CASE)["accepted"])
+        self.assertTrue(self.proof(name=pair.TENANT_EMAIL_CASE, expected=pair.TENANT_EMAIL_CASE)["accepted"])
         with self.assertRaises(ValueError):
             self.proof(name="unrelated", expected="unrelated")
 
@@ -84,7 +93,7 @@ class ProtectedPairEvidence(unittest.TestCase):
         self.assertEqual({"contents": "read"}, tree["permissions"])
         self.assertIn(pair.KC_COMMIT, workflow)
         self.assertIn(pair.IMAGE, workflow)
-        self.assertIn("[app]", workflow)
+        self.assertEqual(["app", "email"], tree["jobs"]["protected-recipient-native-pair"]["strategy"]["matrix"]["kind"])
         self.assertEqual(["PLATFORM_ADMIN", "TENANT_ADMIN"], tree["jobs"]["protected-recipient-native-pair"]["strategy"]["matrix"]["role"])
         self.assertIn("-DfailIfNoTests=true", SOURCE.read_text())
         self.assertIn("-Dsurefire.failIfNoSpecifiedTests=true", SOURCE.read_text())
