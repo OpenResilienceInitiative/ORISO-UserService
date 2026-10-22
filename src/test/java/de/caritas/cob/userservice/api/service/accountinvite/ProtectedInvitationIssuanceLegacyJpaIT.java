@@ -1,9 +1,9 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.ArgumentMatchers.any;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.TestPropertySource;
@@ -21,7 +21,9 @@ class ProtectedInvitationIssuanceLegacyJpaIT extends ProtectedInvitationIssuance
     assertThat(result.rawToken()).isNotBlank();
     verify(sender).send(any(), any(), any(), any(), any(), any(), any());
     verifyNoInteractions(approvals);
-    assertThat(jdbc.queryForObject(
-        "SELECT COUNT(*) FROM protected_invitation_authorization", Integer.class)).isZero();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT COUNT(*) FROM protected_invitation_authorization", Integer.class))
+        .isZero();
   }
 }

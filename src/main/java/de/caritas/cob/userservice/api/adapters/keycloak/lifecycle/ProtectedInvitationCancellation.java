@@ -4,7 +4,11 @@ import java.util.function.Supplier;
 
 /** Native restriction must be acknowledged before protected reservations can be reused. */
 public interface ProtectedInvitationCancellation {
-  enum Reason { REVOKED, SUPERSEDED, ISSUANCE_ABORTED }
+  enum Reason {
+    REVOKED,
+    SUPERSEDED,
+    ISSUANCE_ABORTED
+  }
 
   /**
    * Outside an ambient transaction: durably invalidate and record intent, call the receiver, then

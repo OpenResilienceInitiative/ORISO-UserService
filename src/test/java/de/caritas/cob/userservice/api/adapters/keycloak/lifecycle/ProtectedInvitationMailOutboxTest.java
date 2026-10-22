@@ -147,18 +147,40 @@ class ProtectedInvitationMailOutboxTest {
   void aForeignConnectionCannotMasqueradeAsTheMailOwningTransaction() throws Exception {
     try (var connection = jdbc.getDataSource().getConnection()) {
       connection.setAutoCommit(false);
-      var foreign = new org.springframework.jdbc.datasource.SingleConnectionDataSource(connection, true);
-      new TransactionTemplate(manager).executeWithoutResult(tx -> {
-        var bound = org.springframework.jdbc.datasource.DataSourceUtils.getConnection(foreign);
-        assertTrue(org.springframework.jdbc.datasource.DataSourceUtils.isConnectionTransactional(bound, foreign));
-        try {
-          assertFalse(bound.getAutoCommit());
-          assertEquals(1, new JdbcTemplate(foreign).queryForObject("SELECT 1", Integer.class));
-        } catch (java.sql.SQLException failure) { throw new IllegalStateException(failure); }
-        finally { org.springframework.jdbc.datasource.DataSourceUtils.releaseConnection(bound, foreign); }
-      });
-      assertThrows(IllegalArgumentException.class, () -> new ProtectedInvitationMailOutbox(
-          new JdbcTemplate(foreign), manager, journal, json, key, "native-synthetic-realm", clock, approvals, sender));
+      var foreign =
+          new org.springframework.jdbc.datasource.SingleConnectionDataSource(connection, true);
+      new TransactionTemplate(manager)
+          .executeWithoutResult(
+              tx -> {
+                var bound =
+                    org.springframework.jdbc.datasource.DataSourceUtils.getConnection(foreign);
+                assertTrue(
+                    org.springframework.jdbc.datasource.DataSourceUtils.isConnectionTransactional(
+                        bound, foreign));
+                try {
+                  assertFalse(bound.getAutoCommit());
+                  assertEquals(
+                      1, new JdbcTemplate(foreign).queryForObject("SELECT 1", Integer.class));
+                } catch (java.sql.SQLException failure) {
+                  throw new IllegalStateException(failure);
+                } finally {
+                  org.springframework.jdbc.datasource.DataSourceUtils.releaseConnection(
+                      bound, foreign);
+                }
+              });
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              new ProtectedInvitationMailOutbox(
+                  new JdbcTemplate(foreign),
+                  manager,
+                  journal,
+                  json,
+                  key,
+                  "native-synthetic-realm",
+                  clock,
+                  approvals,
+                  sender));
     }
   }
 
