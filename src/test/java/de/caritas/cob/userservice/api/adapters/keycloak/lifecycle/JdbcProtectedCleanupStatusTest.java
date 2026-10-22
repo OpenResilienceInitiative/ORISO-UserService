@@ -224,13 +224,19 @@ class JdbcProtectedCleanupStatusTest {
     // A successful no-op acknowledgement is not a released reservation.
     service().withAcknowledged(73, () -> null);
     assertTrue(service().recoveryInviteIds(100).contains(73L));
-    service().withAcknowledged(73, () -> {
-      jdbc.update("UPDATE account_invite SET active_recipient_key=NULL,tenant_id_reservation_token=NULL WHERE id=73");
-      return null;
-    });
+    service()
+        .withAcknowledged(
+            73,
+            () -> {
+              jdbc.update(
+                  "UPDATE account_invite SET active_recipient_key=NULL,tenant_id_reservation_token=NULL WHERE id=73");
+              return null;
+            });
     assertFalse(service().recoveryInviteIds(100).contains(73L));
-    assertNotNull(jdbc.queryForObject(
-        "SELECT completed_at FROM protected_invitation_cleanup_status WHERE invite_id=73", Timestamp.class));
+    assertNotNull(
+        jdbc.queryForObject(
+            "SELECT completed_at FROM protected_invitation_cleanup_status WHERE invite_id=73",
+            Timestamp.class));
     assertFalse(service().recoveryInviteIds(100).contains(73L));
   }
 
