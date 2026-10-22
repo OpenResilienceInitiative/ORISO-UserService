@@ -85,12 +85,17 @@ class ProtectedAdminOnboardingServiceTest {
     when(activation.phase(claim)).thenReturn(Phase.UNSTAGED);
     when(codec.prepare(eq(claim), eq(original), any())).thenReturn(prepared);
     when(accounts.create(prepared)).thenReturn(created);
+    when(created.accountId()).thenReturn("f6e71c6d-93f8-4a4e-8be4-e3c10994e9d1");
+    when(created.email()).thenReturn("ada@example.test");
+    when(created.firstName()).thenReturn("Ada");
+    when(created.lastName()).thenReturn("Admin");
     when(accounts.ownedRead(claim, created)).thenReturn(pending);
     when(otp.prepare(claim, pending)).thenReturn(bootstrap);
     when(inactivity.capture(anyLong(), eq(Group.OTHER))).thenReturn(policy);
     when(activation.stage(claim, pending, bootstrap, policy)).thenReturn(secret);
     var frozen = mock(ProtectedInvitationCodec.FrozenApproval.class);
     when(claim.frozen()).thenReturn(frozen);
+    when(frozen.issuerRealm()).thenReturn("synthetic-realm");
     when(frozen.requestJson())
         .thenAnswer(
             c ->
@@ -226,6 +231,45 @@ class ProtectedAdminOnboardingServiceTest {
     verify(otp).startEmail(claim);
     verify(accounts, never()).commit(any());
     verify(activation, never()).ready(any(), any());
+  }
+
+  @Test
+  void reservedTenantUsesFrozenShownDpaAndActualVerifiedTenantBeforeReservedAtomicStage() {
+    invite.setTenantIdReservationToken("9d5ba63c-cc3c-46b5-8f48-6a63de8100f4");
+    when(claim.frozen().requestJson()).thenReturn("{\"scope\":{\"protectedKind\":\"TENANT_ADMIN\",\"targetTenantIds\":[7],\"tenantMode\":\"RESERVED_NEW\",\"protectedProfileId\":\"reviewed-tenant\"}}");
+    var cmd = new RegisterTenantAdminCommand("Original tenant",null,null,true,null,null,null,null,"synthetic password",7L,invite.getTenantIdReservationToken(),null,null,null,"2030-01-01T00:00:00Z");
+    when(dpa.fetchPublishedDpa()).thenReturn(new OperatorDpaContentClient.OperatorDpa("actual displayed content","2030-01-01T00:00:00Z"));
+    var saved = new de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO().id(7L).name("Original tenant").tenantIdReservationToken(invite.getTenantIdReservationToken());
+    when(creation.findPrepared(claim)).thenReturn(java.util.Optional.empty());
+    when(creation.tenantRequest(claim)).thenReturn(java.util.Optional.empty());
+    when(creation.freezeTenantRequest(eq(claim),any())).thenReturn(saved);
+    var tenant = mock(TenantCreationClient.VerifiedTenant.class);
+    when(tenants.createReservedTenant(claim,saved)).thenReturn(tenant);
+    when(activation.stageReserved(claim,pending,bootstrap,policy,tenant)).thenReturn(secret);
+    when(created.accountId()).thenReturn("f6e71c6d-93f8-4a4e-8be4-e3c10994e9d1");
+    when(created.firstName()).thenReturn("Ada"); when(created.lastName()).thenReturn("Admin"); when(created.email()).thenReturn("ada@example.test");
+    var result = assertDoesNotThrow(() -> service.register("synthetic",cmd,original));
+    assertEquals(7L,result.tenantId());
+    var order = inOrder(creation,tenants,activation);
+    order.verify(creation).freezeTenantRequest(eq(claim),any()); order.verify(tenants).createReservedTenant(claim,saved);
+    order.verify(activation).stageReserved(claim,pending,bootstrap,policy,tenant);
+    verify(activation,never()).stage(any(),any(),any(),any());
+  }
+
+  @Test
+  void reservedTenantForwardedConsentIsServerOwnedAndNeedsNoInventedOwnVersion() {
+    invite.setTenantIdReservationToken("9d5ba63c-cc3c-46b5-8f48-6a63de8100f4"); invite.setDpaForwardedAt(LocalDateTime.ofInstant(clock.instant().minusSeconds(60),ZoneOffset.UTC));
+    when(claim.frozen().requestJson()).thenReturn("{\"scope\":{\"protectedKind\":\"TENANT_ADMIN\",\"targetTenantIds\":[7],\"tenantMode\":\"RESERVED_NEW\",\"protectedProfileId\":\"reviewed-tenant\"}}");
+    var cmd = new RegisterTenantAdminCommand("Original tenant",null,null,false,null,null,null,null,"synthetic password",7L,invite.getTenantIdReservationToken());
+    var saved = new de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO().id(7L).name("Original tenant").tenantIdReservationToken(invite.getTenantIdReservationToken());
+    when(creation.findPrepared(claim)).thenReturn(java.util.Optional.empty()); when(creation.tenantRequest(claim)).thenReturn(java.util.Optional.empty());
+    when(creation.freezeTenantRequest(eq(claim),any())).thenReturn(saved);
+    var tenant = mock(TenantCreationClient.VerifiedTenant.class); when(tenants.createReservedTenant(claim,saved)).thenReturn(tenant);
+    when(activation.stageReserved(claim,pending,bootstrap,policy,tenant)).thenReturn(secret);
+    assertNotNull(assertDoesNotThrow(() -> service.register("synthetic",cmd,original)));
+    var dto = org.mockito.ArgumentCaptor.forClass(de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO.class);
+    verify(creation).freezeTenantRequest(eq(claim),dto.capture()); assertNull(dto.getValue().getOnboardingDpaAcceptance());
+    verifyNoInteractions(dpa);
   }
 
   private void complete(boolean email) {

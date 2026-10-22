@@ -8,6 +8,8 @@ CREATE TABLE protected_account_creation (
     creation_fingerprint VARCHAR(64) NOT NULL,
     account_id VARCHAR(36) NULL,
     created_checkpoint TEXT NULL,
+    tenant_request_json TEXT NULL,
+    tenant_request_digest VARCHAR(64) NULL,
     state VARCHAR(24) NOT NULL,
     created_at TIMESTAMP(6) NOT NULL,
     updated_at TIMESTAMP(6) NOT NULL,

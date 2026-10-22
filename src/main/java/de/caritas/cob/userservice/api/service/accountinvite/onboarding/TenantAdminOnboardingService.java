@@ -857,7 +857,7 @@ public class TenantAdminOnboardingService {
     return null;
   }
 
-  private static void validateRegistration(RegisterTenantAdminCommand command) {
+  static void validateRegistration(RegisterTenantAdminCommand command) {
     if (command == null) {
       throw new BadRequestException("Request body is required");
     }
@@ -922,7 +922,7 @@ public class TenantAdminOnboardingService {
     return atIndex > 0 ? email.substring(0, atIndex) : email;
   }
 
-  private static MultilingualTenantDTO buildTenantDto(
+  static MultilingualTenantDTO buildTenantDto(
       AccountInvite invite,
       RegisterTenantAdminCommand command,
       OnboardingDpaAcceptanceDTO dpaAcceptance) {
@@ -949,7 +949,7 @@ public class TenantAdminOnboardingService {
    * signature (U9). The signer is the tenant-admin account just created — not the technical user
    * carrying the call — and the version is the operator DPA that was rendered to them.
    */
-  private static OnboardingDpaAcceptanceDTO buildDpaAcceptance(
+  static OnboardingDpaAcceptanceDTO buildDpaAcceptance(
       RegisterTenantAdminCommand command, Admin admin, OperatorDpa operatorDpa) {
     return new OnboardingDpaAcceptanceDTO()
         .accepted(true)
@@ -1022,7 +1022,17 @@ public class TenantAdminOnboardingService {
       String tenantIdReservationToken,
       String legalName,
       String contactEmail,
-      String contactPhone) {
+      String contactPhone,
+      String dpaVersion) {
+
+    /** Existing legacy callers keep their original constructor and consent semantics. */
+    public RegisterTenantAdminCommand(String organisationName, String subdomain, String address,
+        boolean dpaAccepted, String dpaSignerName, String dpaSignerPosition, String dpaSignerEmail,
+        String dpaSignerOrganisation, String password, Long reservedTenantId,
+        String tenantIdReservationToken, String legalName, String contactEmail, String contactPhone) {
+      this(organisationName,subdomain,address,dpaAccepted,dpaSignerName,dpaSignerPosition,dpaSignerEmail,
+          dpaSignerOrganisation,password,reservedTenantId,tenantIdReservationToken,legalName,contactEmail,contactPhone,null);
+    }
 
     /** A registration without the optional sender block. */
     public RegisterTenantAdminCommand(
@@ -1057,7 +1067,11 @@ public class TenantAdminOnboardingService {
 
   /** The created (inactive) tenant plus the TOTP setup material for the 2FA step. */
   public record TenantAdminRegistrationResult(
-      Long tenantId, String totpSecret, String totpQrCodeBase64) {}
+      Long tenantId, String totpSecret, String totpQrCodeBase64, String phase) {
+    public TenantAdminRegistrationResult(Long tenantId, String totpSecret, String totpQrCodeBase64) {
+      this(tenantId,totpSecret,totpQrCodeBase64,null);
+    }
+  }
 
   /**
    * The sign link created for the authorised signer (raw token embedded — show/copy, never log)

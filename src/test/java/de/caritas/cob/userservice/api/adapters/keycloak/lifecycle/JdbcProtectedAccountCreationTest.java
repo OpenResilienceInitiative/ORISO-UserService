@@ -38,7 +38,8 @@ class JdbcProtectedAccountCreationTest {
   private AcceptanceClaim claim;
 
   @BeforeEach
-  void actualOwningDatabaseAndFrozenNativeVector() throws Exception {
+  void actualOwningDatabaseAndFrozenNativeVector(org.junit.jupiter.api.TestInfo info) throws Exception {
+    boolean reserved = info.getTestMethod().orElseThrow().getName().startsWith("reservedTenant");
     var source = new JdbcDataSource();
     source.setURL("jdbc:h2:mem:creation-" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1");
     jdbc = new JdbcTemplate(source);
@@ -76,7 +77,7 @@ class JdbcProtectedAccountCreationTest {
             vector.path("realmName").asText(),
             vector.path("realmId").asText(),
             vector.path("realmIssuer").asText());
-    var av = vector.path("approvalVector");
+    var av = reserved ? json.read(Files.readString(Path.of("src/test/resources/scenario-c/protected-approval-reserved-v1.json")), JsonNode.class) : vector.path("approvalVector");
     var frozen =
         approvals.freeze(
             UUID.fromString(av.path("approvalId").asText()),
@@ -84,9 +85,9 @@ class JdbcProtectedAccountCreationTest {
             av.path("issuerRealm").asText(),
             av.path("issuerSubject").asText());
     jdbc.update(
-        "INSERT INTO account_invite VALUES(73,'TENANT_ADMIN',7,'ada@example.test','INVITE','EMAIL_SENT',?,?,NULL,NULL)",
+        "INSERT INTO account_invite VALUES(73,'TENANT_ADMIN',7,'ada@example.test','INVITE','EMAIL_SENT',?,?,?,?)",
         Timestamp.from(Instant.parse("2030-01-02T03:04:05Z")),
-        TOKEN);
+        TOKEN, reserved ? 11L : null, reserved ? av.path("syntheticReservationToken").asText() : null);
     journal = new JdbcProtectedInvitationJournal(jdbc, manager, approvals, json, clock);
     journal.propose(73, frozen);
     journal.recordReady(
@@ -285,6 +286,53 @@ class JdbcProtectedAccountCreationTest {
                 accounts,
                 json,
                 clock));
+  }
+
+  @Test
+  void reservedTenantOriginalServerDtoAndVersionSurviveRestartWithoutCapabilityOrPasswordAtRest() {
+    assertTrue(assertDoesNotThrow(() -> owner().findPrepared(claim)).isEmpty());
+    assertDoesNotThrow(() -> owner().prepare(claim, prepared()));
+    assertTrue(owner().findPrepared(claim).isPresent());
+    assertTrue(owner().tenantRequest(claim).isEmpty());
+    var original = tenantRequest();
+    var frozen = assertDoesNotThrow(() -> owner().freezeTenantRequest(claim, original));
+    assertEquals("Original tenant", frozen.getName());
+    String stored = jdbc.queryForObject("SELECT tenant_request_json FROM protected_account_creation", String.class);
+    assertFalse(stored.contains(original.getTenantIdReservationToken()));
+    assertFalse(stored.contains(account().password()));
+    original.setName("later caller mutation");
+    var resumed = owner().tenantRequest(claim).orElseThrow();
+    assertEquals("Original tenant", resumed.getName());
+    assertEquals("2030-01-01T00:00:00Z", resumed.getOnboardingDpaAcceptance().getDpaVersion());
+    assertEquals(tenantRequest().getTenantIdReservationToken(), resumed.getTenantIdReservationToken());
+    assertDoesNotThrow(() -> owner().freezeTenantRequest(claim, tenantRequest()));
+    var newlyPublished = tenantRequest(); newlyPublished.getOnboardingDpaAcceptance().setDpaVersion("2030-01-02T00:00:00Z");
+    assertThrows(IllegalStateException.class, () -> owner().freezeTenantRequest(claim, newlyPublished));
+    assertEquals(stored, jdbc.queryForObject("SELECT tenant_request_json FROM protected_account_creation", String.class));
+  }
+
+  @Test
+  void reservedTenantRequestRequiresTheSameHeldPairAndAuthenticOriginalFullBody() {
+    assertDoesNotThrow(() -> owner().prepare(claim, prepared()));
+    assertDoesNotThrow(() -> owner().freezeTenantRequest(claim, tenantRequest()));
+    var foreign = tenantRequest(); foreign.setId(99L);
+    assertThrows(IllegalStateException.class, () -> owner().freezeTenantRequest(claim, foreign));
+    String cap = tenantRequest().getTenantIdReservationToken();
+    jdbc.update("UPDATE account_invite SET tenant_id_reservation_token=? WHERE id=73", UUID.randomUUID().toString());
+    assertThrows(RuntimeException.class, () -> owner().tenantRequest(claim));
+    jdbc.update("UPDATE account_invite SET tenant_id_reservation_token=? WHERE id=73", cap);
+    String stored = jdbc.queryForObject("SELECT tenant_request_json FROM protected_account_creation", String.class);
+    var altered = (com.fasterxml.jackson.databind.node.ObjectNode) json.read(stored, JsonNode.class);
+    altered.put("name", "other SQL body");
+    jdbc.update("UPDATE protected_account_creation SET tenant_request_json=? WHERE invite_id=73", json.canonical(altered));
+    assertThrows(IllegalStateException.class, () -> owner().tenantRequest(claim));
+    assertEquals(1, count("protected_account_creation"));
+  }
+
+  private de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO tenantRequest() {
+    String cap = jdbc.queryForObject("SELECT tenant_id_reservation_token FROM account_invite WHERE id=73", String.class);
+    return new de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO().id(7L).name("Original tenant").tenantIdReservationToken(cap).adminEmails(java.util.List.of("ada@example.test"))
+        .onboardingDpaAcceptance(new de.caritas.cob.userservice.tenantadminservice.generated.web.model.OnboardingDpaAcceptanceDTO().accepted(true).dpaVersion("2030-01-01T00:00:00Z").signerUserId("f6e71c6d-93f8-4a4e-8be4-e3c10994e9d1").signerUsername("enc.synthetic"));
   }
 
   private JdbcProtectedAccountCreation owner() {
