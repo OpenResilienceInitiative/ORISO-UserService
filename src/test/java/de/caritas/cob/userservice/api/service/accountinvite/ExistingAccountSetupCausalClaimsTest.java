@@ -153,6 +153,8 @@ class ExistingAccountSetupCausalClaimsTest {
                       .id("ordinary-admin-11")
                       .type(Admin.AdminType.AGENCY)
                       .tenantId(42L)
+                      .firstName("Existing")
+                      .lastName("Admin")
                       .username("existing@example.test")
                       .email("existing@example.test")
                       .build()));
