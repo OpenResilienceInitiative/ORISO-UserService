@@ -85,6 +85,10 @@ class HumanAdminAccountMaintenanceTest {
     jdbc.execute(
         "create table consultant(consultant_id varchar(36) primary key,tenant_id bigint,username varchar(255),first_name varchar(255),last_name varchar(255),email varchar(255),delete_date timestamp,update_date timestamp,managed_paused boolean not null,is_absent boolean not null default false,two_factor_required boolean,status varchar(11),deletion_lifecycle_state varchar(32),create_date timestamp)");
     jdbc.execute("create table user(user_id varchar(36) primary key,tenant_id bigint)");
+    jdbc.execute("create table language(consultant_id varchar(36),language_code varchar(2))");
+    jdbc.execute("create table consultant_topic(consultant_id varchar(36),topic_id bigint,agency_id bigint)");
+    jdbc.execute("create table consultant_agency(consultant_id varchar(36),agency_id bigint)");
+    jdbc.execute("create table admin_agency(admin_id varchar(36),agency_id bigint)");
     jdbc.update(
         "insert into admin(admin_id,tenant_id,username,type,first_name,last_name,email,managed_paused,update_date) values(?,7,'original-admin','TENANT','Old','Name','old@example.test',true,?)",
         ACCOUNT,
@@ -545,10 +549,19 @@ class HumanAdminAccountMaintenanceTest {
 
   @Test
   void actualPublicConsultantEditUsesScopedProfileAndCommitsLocalDataAfterNativeAck() {
-    jdbc.update("delete from admin where admin_id=?", ACCOUNT);
+    for (String scenario : List.of("single", "dual", "unknown", "changed-body", "rollback", "drift", "foreign-secondary", "replay")) {
+      server.reset();
+      actualSchemaAndValidatedHumanFixture();
+      runActualConsultantEdit(scenario);
+    }
+  }
+
+  private void runActualConsultantEdit(String scenario) {
+    if (!Set.of("dual", "foreign-secondary").contains(scenario)) jdbc.update("delete from admin where admin_id=?", ACCOUNT);
     jdbc.update(
         "insert into consultant(consultant_id,tenant_id,username,first_name,last_name,email,managed_paused,status) values(?,7,'original-admin','Old','Name','old@example.test',true,'CREATED')",
         ACCOUNT);
+    if ("foreign-secondary".equals(scenario)) jdbc.update("update admin set tenant_id=8 where admin_id=?", ACCOUNT);
     human.setRoles(Set.of(UserRole.TENANT_ADMIN.getValue()));
     human.setGrantedAuthorities(
         Set.of(Authority.AuthorityValue.TENANT_ADMIN, Authority.AuthorityValue.USER_ADMIN));
@@ -595,6 +608,7 @@ class HumanAdminAccountMaintenanceTest {
     adapter.setHumanAdminMaintenance(service);
     var consultants = mock(de.caritas.cob.userservice.api.service.ConsultantService.class);
     when(consultants.getConsultant(ACCOUNT)).thenAnswer(ignored -> Optional.of(localConsultant()));
+    var failWrite = new java.util.concurrent.atomic.AtomicBoolean("rollback".equals(scenario));
     when(consultants.saveConsultant(any()))
         .thenAnswer(
             invocation -> {
@@ -602,6 +616,7 @@ class HumanAdminAccountMaintenanceTest {
                   org.springframework.transaction.support.TransactionSynchronizationManager
                       .isActualTransactionActive());
               de.caritas.cob.userservice.api.model.Consultant updated = invocation.getArgument(0);
+              if (failWrite.getAndSet(false)) throw new IllegalStateException("synthetic local callback failure");
               jdbc.update(
                   "update consultant set first_name=?,last_name=?,email=?,is_absent=?,update_date=? where consultant_id=?",
                   updated.getFirstName(),
@@ -640,9 +655,6 @@ class HumanAdminAccountMaintenanceTest {
     var publicEdit =
         (de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService)
             proxy.getProxy();
-    readReply();
-    server.expect(requestTo(URL + "/profile")).andRespond(profileReceipt(null));
-    readReply(true);
     var dto =
         new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO()
             .firstname("New")
@@ -650,6 +662,44 @@ class HumanAdminAccountMaintenanceTest {
             .email("new@example.test")
             .formalLanguage(true)
             .absent(true);
+    if ("foreign-secondary".equals(scenario)) {
+      assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto));
+      assertEquals(0, jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
+      server.verify();
+      return;
+    }
+    readReply();
+    var frozen = new AtomicReference<String>();
+    var mutation = server.expect(requestTo(URL + "/profile"))
+        .andExpect(r -> frozen.set(((MockClientHttpRequest) r).getBodyAsString()));
+    boolean unknown = Set.of("unknown", "changed-body").contains(scenario);
+    if (unknown) mutation.andRespond(withException(new IOException("synthetic lost profile response")));
+    else mutation.andRespond(profileReceipt("drift".equals(scenario)
+        ? () -> jdbc.update("update consultant set is_absent=true where consultant_id=?", ACCOUNT) : null));
+    if (!unknown && !"drift".equals(scenario)) readReply(true);
+    if ("drift".equals(scenario)) {
+      assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto));
+      assertEquals("Old", jdbc.queryForObject("select first_name from consultant where consultant_id=?", String.class, ACCOUNT));
+      assertEquals(true, jdbc.queryForObject("select is_absent from consultant where consultant_id=?", Boolean.class, ACCOUNT));
+      assertEquals("FROZEN", jdbc.queryForObject("select status from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+      server.verify();
+      return;
+    }
+    if (unknown || "rollback".equals(scenario)) {
+      assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto));
+      assertEquals("Old", jdbc.queryForObject("select first_name from consultant where consultant_id=?", String.class, ACCOUNT));
+      assertEquals(false, jdbc.queryForObject("select is_absent from consultant where consultant_id=?", Boolean.class, ACCOUNT));
+      assertEquals(unknown ? "FROZEN" : "ACKNOWLEDGED", jdbc.queryForObject("select status from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+      if ("changed-body".equals(scenario)) {
+        dto.setAbsent(false);
+        assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto));
+        dto.setAbsent(true);
+      }
+      if (unknown) server.expect(requestTo(URL + "/profile"))
+          .andExpect(r -> assertEquals(frozen.get(), ((MockClientHttpRequest) r).getBodyAsString()))
+          .andRespond(profileReceipt(null));
+      readReply(true);
+    }
     var updated = assertDoesNotThrow(() -> publicEdit.updateConsultant(ACCOUNT, dto));
     assertEquals("New", updated.getFirstName());
     assertTrue(updated.isAbsent());
@@ -671,6 +721,18 @@ class HumanAdminAccountMaintenanceTest {
             "select status from general_admin_identity_intent where operation_id=?",
             String.class,
             OPERATION));
+    assertNotNull(jdbc.queryForObject("select applied_json from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+    if ("dual".equals(scenario)) {
+      assertEquals("New", jdbc.queryForObject("select first_name from admin where admin_id=?", String.class, ACCOUNT));
+      assertEquals(true, jdbc.queryForObject("select managed_paused from admin where admin_id=?", Boolean.class, ACCOUNT));
+    }
+    if ("replay".equals(scenario)) {
+      assertEquals("New", assertDoesNotThrow(() -> publicEdit.updateConsultant(ACCOUNT, dto)).getFirstName());
+      verify(consultants, times(1)).saveConsultant(any());
+      jdbc.update("update consultant set is_absent=false where consultant_id=?", ACCOUNT);
+      assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto));
+      verify(consultants, times(1)).saveConsultant(any());
+    }
     server.verify();
   }
 
@@ -702,7 +764,7 @@ class HumanAdminAccountMaintenanceTest {
     var factors = assertDoesNotThrow(() -> service.factorStatus(ACCOUNT));
     assertEquals(new HumanAdminMaintenanceTransport.FactorStatus(true, false), factors);
     server.verify();
-    for (String malformed : List.of("missing", "extra", "string", "null", "secret", "top-extra")) {
+    for (String malformed : List.of("missing", "omitted", "extra", "string", "null", "secret", "top-extra")) {
       server.reset();
       factorReply(malformed);
       assertThrows(RuntimeException.class, () -> service.factorStatus(ACCOUNT), malformed);
@@ -763,6 +825,7 @@ class HumanAdminAccountMaintenanceTest {
               var factors =
                   body.putObject("twoFactor").put("configured", true).put("active", false);
               if ("missing".equals(malformed)) factors.remove("active");
+          if ("omitted".equals(malformed)) body.remove("twoFactor");
               if ("extra".equals(malformed)) factors.put("credentialId", "forbidden");
               if ("string".equals(malformed)) factors.put("configured", "true");
               if ("null".equals(malformed)) body.putNull("twoFactor");
