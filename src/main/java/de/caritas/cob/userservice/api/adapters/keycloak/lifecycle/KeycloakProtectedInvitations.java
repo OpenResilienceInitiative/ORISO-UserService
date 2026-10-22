@@ -42,9 +42,11 @@ public final class KeycloakProtectedInvitations {
     try {
       URI server = URI.create(authServer);
       if (!("http".equalsIgnoreCase(server.getScheme())
-          || "https".equalsIgnoreCase(server.getScheme()))
-          || server.getHost() == null || server.getRawUserInfo() != null
-          || server.getRawQuery() != null || server.getRawFragment() != null) throw invalid();
+              || "https".equalsIgnoreCase(server.getScheme()))
+          || server.getHost() == null
+          || server.getRawUserInfo() != null
+          || server.getRawQuery() != null
+          || server.getRawFragment() != null) throw invalid();
       this.authServer = server;
     } catch (RuntimeException failure) {
       throw invalid();
@@ -71,16 +73,25 @@ public final class KeycloakProtectedInvitations {
 
   private VerifiedApproval call(
       FrozenApproval frozen, HttpMethod method, String suffix, String body, HttpHeaders headers) {
-    var uri = UriComponentsBuilder.fromUri(authServer).pathSegment(
-        "realms", codec.realmName(), "oriso-protected-invitations", "v1", "approvals",
-        frozen.approvalId().toString());
+    var uri =
+        UriComponentsBuilder.fromUri(authServer)
+            .pathSegment(
+                "realms",
+                codec.realmName(),
+                "oriso-protected-invitations",
+                "v1",
+                "approvals",
+                frozen.approvalId().toString());
     if (!suffix.isEmpty()) uri.pathSegment(suffix);
     try {
-      var response = http.exchange(uri.build().encode().toUri(), method,
-          new HttpEntity<>(body.getBytes(StandardCharsets.UTF_8), headers), byte[].class);
+      var response =
+          http.exchange(
+              uri.build().encode().toUri(),
+              method,
+              new HttpEntity<>(body.getBytes(StandardCharsets.UTF_8), headers),
+              byte[].class);
       int status = response.getStatusCode().value();
-      if (status != 200 && !(method == HttpMethod.PUT && status == 201))
-        throw new RemoteFailure(0);
+      if (status != 200 && !(method == HttpMethod.PUT && status == 201)) throw new RemoteFailure(0);
       return codec.verifyAuthorized(frozen, response.getBody());
     } catch (RestClientResponseException failure) {
       throw new RemoteFailure(failure.getStatusCode().value());
@@ -90,9 +101,12 @@ public final class KeycloakProtectedInvitations {
   }
 
   private static HttpHeaders headers(String bearer) {
-    if (bearer == null || bearer.isBlank() || bearer.length() > 65536
-        || bearer.codePoints().anyMatch(c -> Character.isWhitespace(c) || Character.isISOControl(c)))
-      throw invalid();
+    if (bearer == null
+        || bearer.isBlank()
+        || bearer.length() > 65536
+        || bearer
+            .codePoints()
+            .anyMatch(c -> Character.isWhitespace(c) || Character.isISOControl(c))) throw invalid();
     var headers = new HttpHeaders();
     headers.setContentType(MediaType.APPLICATION_JSON);
     headers.setAccept(List.of(MediaType.APPLICATION_JSON));
