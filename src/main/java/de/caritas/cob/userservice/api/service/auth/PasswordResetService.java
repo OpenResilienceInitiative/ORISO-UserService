@@ -206,7 +206,9 @@ public class PasswordResetService {
           redisFailure.getClass().getSimpleName());
       return false;
     }
-    if (claim.isEmpty()) {
+    if (claim.isEmpty()
+        || claim.get().expiresAt() == null
+        || !claim.get().expiresAt().isAfter(Instant.now())) {
       return false;
     }
 
