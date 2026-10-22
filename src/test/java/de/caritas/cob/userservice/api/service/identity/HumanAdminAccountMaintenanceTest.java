@@ -680,10 +680,24 @@ class HumanAdminAccountMaintenanceTest {
     assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
     assertEquals(new AdminScope.Tenant(7L), actualScope.current());
     assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.admin(ACCOUNT)));
-    service = new HumanAdminAccountMaintenance(
-        mode, human, actualScope, jdbc, transactions, request,
-        new KeycloakHumanAdminMaintenance(http, actors, broker, codec,
-            "https://internal-auth.example.test", "test", "realm-1"), CLOCK, ISSUER);
+    service =
+        new HumanAdminAccountMaintenance(
+            mode,
+            human,
+            actualScope,
+            jdbc,
+            transactions,
+            request,
+            new KeycloakHumanAdminMaintenance(
+                http,
+                actors,
+                broker,
+                codec,
+                "https://internal-auth.example.test",
+                "test",
+                "realm-1"),
+            CLOCK,
+            ISSUER);
     factorReply(null);
     var factors = assertDoesNotThrow(() -> service.factorStatus(ACCOUNT));
     assertEquals(new HumanAdminMaintenanceTransport.FactorStatus(true, false), factors);
@@ -717,7 +731,10 @@ class HumanAdminAccountMaintenanceTest {
     readReply();
     factorReply(null);
     var result = assertDoesNotThrow(() -> status.read(ACCOUNT));
-    assertEquals(new de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService.TwoFactor(true, true, false), result.twoFactor());
+    assertEquals(
+        new de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService
+            .TwoFactor(true, true, false),
+        result.twoFactor());
     verifyNoInteractions(
         org.springframework.test.util.ReflectionTestUtils.getField(status, "profiles"),
         org.springframework.test.util.ReflectionTestUtils.getField(status, "factors"));
@@ -725,30 +742,37 @@ class HumanAdminAccountMaintenanceTest {
   }
 
   private void factorReply(String malformed) {
-    server.expect(requestTo(URL + "/read"))
+    server
+        .expect(requestTo(URL + "/read"))
         .andExpect(method(HttpMethod.POST))
         .andExpect(header("Authorization", "Bearer synthetic-checked-admin"))
         .andExpect(header("X-ORISO-Human-Authorization", "Bearer synthetic-current-human"))
-        .andExpect(r -> {
-          assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
-          JsonNode body = json.readTree(((MockClientHttpRequest) r).getBodyAsString());
-          assertEquals(Set.of("target", "include"), fieldNames(body));
-          assertEquals("TWO_FACTOR_STATUS_V1", body.path("include").textValue());
-          verifyProof(r.getHeaders().getFirst("X-ORISO-Task-Context"), "read", body);
-        })
-        .andRespond(r -> {
-          var body = projection(false);
-          var factors = body.putObject("twoFactor").put("configured", true).put("active", false);
-          if ("missing".equals(malformed)) factors.remove("active");
-          if ("extra".equals(malformed)) factors.put("credentialId", "forbidden");
-          if ("string".equals(malformed)) factors.put("configured", "true");
-          if ("null".equals(malformed)) body.putNull("twoFactor");
-          if ("secret".equals(malformed)) factors.put("secret", "synthetic-never-allowed");
-          if ("top-extra".equals(malformed)) body.put("provider", "forbidden");
-          var reply = withSuccess(codec.canonical(body), MediaType.APPLICATION_JSON).createResponse(r);
-          reply.getHeaders().setCacheControl("no-store");
-          return reply;
-        });
+        .andExpect(
+            r -> {
+              assertFalse(
+                  org.springframework.transaction.support.TransactionSynchronizationManager
+                      .isActualTransactionActive());
+              JsonNode body = json.readTree(((MockClientHttpRequest) r).getBodyAsString());
+              assertEquals(Set.of("target", "include"), fieldNames(body));
+              assertEquals("TWO_FACTOR_STATUS_V1", body.path("include").textValue());
+              verifyProof(r.getHeaders().getFirst("X-ORISO-Task-Context"), "read", body);
+            })
+        .andRespond(
+            r -> {
+              var body = projection(false);
+              var factors =
+                  body.putObject("twoFactor").put("configured", true).put("active", false);
+              if ("missing".equals(malformed)) factors.remove("active");
+              if ("extra".equals(malformed)) factors.put("credentialId", "forbidden");
+              if ("string".equals(malformed)) factors.put("configured", "true");
+              if ("null".equals(malformed)) body.putNull("twoFactor");
+              if ("secret".equals(malformed)) factors.put("secret", "synthetic-never-allowed");
+              if ("top-extra".equals(malformed)) body.put("provider", "forbidden");
+              var reply =
+                  withSuccess(codec.canonical(body), MediaType.APPLICATION_JSON).createResponse(r);
+              reply.getHeaders().setCacheControl("no-store");
+              return reply;
+            });
   }
 
   private de.caritas.cob.userservice.api.model.Consultant localConsultant() {
