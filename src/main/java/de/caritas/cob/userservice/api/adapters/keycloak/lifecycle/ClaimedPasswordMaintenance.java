@@ -40,7 +40,7 @@ public final class ClaimedPasswordMaintenance {
   private final @NonNull String publicIssuer;
   private final @NonNull String realmName;
   private final @NonNull String realmId;
-  private final @NonNull Map<String, ProfileSelector> profiles;
+  private final @NonNull Map<String, List<ProfileSelector>> profiles;
 
   /**
    * Reviewed mounted selectors are data; the native receiver independently checks actual
@@ -63,6 +63,13 @@ public final class ClaimedPasswordMaintenance {
             .equals(Set.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN"))
         || actors.require(TaskPurpose.ACCOUNT_MAINTENANCE).actor() != TaskActor.ACCOUNT_ADMIN)
       throw new ScopedIdentityCommandRequiredException();
+    for (var entry : profiles.entrySet()) {
+      var candidates = entry.getValue();
+      if (candidates == null || candidates.isEmpty() || candidates.size() > 20
+          || new HashSet<>(candidates).size() != candidates.size()) throw unavailable();
+      String expectedKind = Set.of("TENANT_ADMIN", "PLATFORM_ADMIN").contains(entry.getKey()) ? "PROTECTED" : "ORDINARY";
+      if (candidates.stream().anyMatch(candidate -> candidate == null || !expectedKind.equals(candidate.kind()))) throw unavailable();
+    }
   }
 
   public String existingSetupRequestDigest(
@@ -276,7 +283,7 @@ public final class ClaimedPasswordMaintenance {
     origin.put("kind", "PASSWORD_RESET").put("workflowId", b.claim().toString());
     for (String field : List.of("humanSubject", "humanIssuer", "humanClient", "humanAuthority"))
       origin.putNull(field);
-    var profile = profiles.get(local.kind());
+    var profile = profiles.get(local.kind()).getFirst();
     var workflow = codec.read("{}", ObjectNode.class);
     workflow
         .put("v", 1)
@@ -339,7 +346,7 @@ public final class ClaimedPasswordMaintenance {
     if (found.isEmpty()) return null;
     var row = found.getFirst();
     var workflow = codec.read(row.workflow(), JsonNode.class);
-    var profile = profiles.get(b.accountKind());
+    var profile = profiles.get(b.accountKind()).getFirst();
     if (!b.username().equals(workflow.path("expectedUsername").textValue())
         || !b.emailDigest().equals(workflow.path("expectedEmailDigest").textValue())
         || !b.claim().toString().equals(workflow.path("claimId").textValue())

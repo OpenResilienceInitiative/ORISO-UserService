@@ -194,6 +194,8 @@ class UserSelfPasswordScenarioCBoundaryTest {
     final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
     final AtomicInteger effects = new AtomicInteger();
     final Long tenant;
+    final String ownedKind;
+    final boolean ownsConsultant;
     final String operation = UUID.randomUUID().toString();
     final AccountLifecycleCodec codec = new AccountLifecycleCodec(KEY);
     final TaskActorCredentials actor =
@@ -210,6 +212,8 @@ class UserSelfPasswordScenarioCBoundaryTest {
 
     Fixture(boolean five, boolean installed, Long tenant, String kind, boolean dual) {
       this.tenant = tenant;
+      this.ownedKind = kind;
+      this.ownsConsultant = dual || "CONSULTANT".equals(kind);
       var source =
           new DriverManagerDataSource(
               "jdbc:h2:mem:password-"
@@ -411,8 +415,10 @@ class UserSelfPasswordScenarioCBoundaryTest {
                     StandardCharsets.UTF_8),
                 JsonNode.class);
         Arrays.fill(key, (byte) 0);
-        assertEquals("CONSULTANT", plain.path("localSetup").path("kind").textValue());
-        assertTrue(plain.path("localSetup").path("passwordChangeRequired").booleanValue());
+        assertEquals(ownedKind, plain.path("localSetup").path("kind").textValue());
+        if (ownsConsultant)
+          assertTrue(plain.path("localSetup").path("passwordChangeRequired").booleanValue());
+        else assertTrue(plain.path("localSetup").path("passwordChangeRequired").isNull());
         return plain.path("body");
       } catch (java.security.GeneralSecurityException failure) {
         throw new AssertionError("Private password intent could not be verified");

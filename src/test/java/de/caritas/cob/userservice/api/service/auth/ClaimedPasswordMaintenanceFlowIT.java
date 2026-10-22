@@ -227,6 +227,39 @@ class ClaimedPasswordMaintenanceFlowIT {
     }
   }
 
+  @Test
+  void reviewedCatalogReadsEveryCandidateAndFreezesOnlyTheUniqueMatch() throws Exception {
+    try (var f = new Fixture()) {
+      f.candidateCatalog = true; f.restartAdapter(); String token = f.requestLink();
+      assertThatCode(() -> assertThat(f.service.confirmPasswordReset(token, "fixture-new-password!42")).isTrue()).doesNotThrowAnyException();
+      assertThat(f.effects).isEqualTo(1);
+      assertThat(f.readCandidates).containsExactlyInAnyOrder("reviewed-wrong", "reviewed-consultant");
+      assertThat(f.jdbc.queryForObject("select workflow_json from identity_claimed_password_intent", String.class)).contains("reviewed-consultant").doesNotContain("reviewed-wrong");
+    }
+  }
+
+  @Test
+  void ambiguousCatalogRefusesBeforeAnyNativePasswordMutation() throws Exception {
+    try (var f = new Fixture()) {
+      f.candidateCatalog = true; f.ambiguousCatalog = true; f.restartAdapter(); String token = f.requestLink();
+      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42")).isInstanceOf(RuntimeException.class);
+      assertThat(f.effects).isZero(); assertThat(f.required()).isTrue(); assertThat(f.phase()).isEqualTo("PREPARED");
+    }
+  }
+
+  @Test
+  void unknownFrozenCatalogIntentNeverReselectsWhenCandidateOrderChanges() throws Exception {
+    try (var f = new Fixture()) {
+      f.candidateCatalog = true; f.restartAdapter(); String token = f.requestLink(); f.loseReply = true;
+      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42")).isInstanceOf(RuntimeException.class);
+      assertThat(f.effects).isEqualTo(1); String envelope = f.envelope();
+      f.reverseCatalog = true; f.restartAdapter(); f.readCandidates.clear();
+      assertThatCode(() -> assertThat(f.service.confirmPasswordReset(token, "fixture-new-password!42")).isTrue()).doesNotThrowAnyException();
+      assertThat(f.effects).isEqualTo(1); assertThat(f.envelope()).isEqualTo(envelope);
+      assertThat(f.readCandidates).containsExactly("reviewed-consultant");
+    }
+  }
+
   private static final class Fixture implements AutoCloseable {
     final AccountLifecycleCodec codec = new AccountLifecycleCodec(new byte[32]);
     final DriverManagerDataSource source =
@@ -282,6 +315,8 @@ class ClaimedPasswordMaintenanceFlowIT {
     String resetUrl, savedReply;
     int effects;
     boolean loseReply, corruptReceipt, failSetupCompletion, expiredAbsent, foreignUsername;
+    boolean candidateCatalog, ambiguousCatalog, reverseCatalog;
+    final Set<String> readCandidates = new HashSet<>();
 
     Fixture() throws Exception {
       connection.afterPropertiesSet();
@@ -336,6 +371,12 @@ class ClaimedPasswordMaintenanceFlowIT {
                       JsonNode.class);
               String reply;
               if (exchange.getRequestURI().getPath().endsWith("/read")) {
+                String candidate = body.path("workflow").path("profileId").textValue();
+                readCandidates.add(candidate);
+                if (candidateCatalog && "reviewed-wrong".equals(candidate) && !ambiguousCatalog) {
+                  exchange.sendResponseHeaders(403, -1); return;
+                }
+
                 if (savedReply == null && expiredAbsent) {
                   exchange.sendResponseHeaders(400, -1);
                   return;
@@ -411,15 +452,20 @@ class ClaimedPasswordMaintenanceFlowIT {
     }
 
     void restartAdapter() {
-      var profiles = new HashMap<String, ClaimedPasswordMaintenance.ProfileSelector>();
+      var profiles = new HashMap<String, List<ClaimedPasswordMaintenance.ProfileSelector>>();
       for (String kind :
           Set.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN"))
         profiles.put(
             kind,
-            new ClaimedPasswordMaintenance.ProfileSelector(
+            List.of(new ClaimedPasswordMaintenance.ProfileSelector(
                 kind.endsWith("ADMIN") && !kind.equals("AGENCY_ADMIN") ? "PROTECTED" : "ORDINARY",
                 "reviewed-" + kind.toLowerCase(Locale.ROOT),
-                1));
+                1)));
+      if (candidateCatalog) {
+        var reviewed = profiles.get("CONSULTANT").getFirst();
+        var wrong = new ClaimedPasswordMaintenance.ProfileSelector("ORDINARY", "reviewed-wrong", 7);
+        profiles.put("CONSULTANT", reverseCatalog ? List.of(reviewed, wrong) : List.of(wrong, reviewed));
+      }
       updater.setClaimedPasswordMaintenance(
           new ClaimedPasswordMaintenance(
               mode,
