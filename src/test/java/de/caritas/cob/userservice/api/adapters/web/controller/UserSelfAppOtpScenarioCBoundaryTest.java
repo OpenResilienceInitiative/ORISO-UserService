@@ -37,6 +37,8 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -696,6 +698,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     final RestTemplate http = new RestTemplate();
     final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
     final KeycloakClient nativeClient = mock(KeycloakClient.class);
+    final AccountManaging accounts = mock(AccountManaging.class);
     final UserController controller = mock(UserController.class, CALLS_REAL_METHODS);
     final UserTwoFactorAuthControllerDelegate delegate;
     String operation = UUID.randomUUID().toString();
@@ -802,6 +805,16 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                 nativeService,
                 nativeService,
                 transcoder);
+        when(accounts.patchUser(anyMap())).thenAnswer(invocation -> {
+          assertTrue(fiveActors);
+          assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+          Map<String, Object> patch = invocation.getArgument(0);
+          assertEquals(Set.of("id", "email"), patch.keySet());
+          assertEquals(ACCOUNT, patch.get("id"));
+          assertEquals(PENDING_EMAIL, patch.get("email"));
+          assertEquals(1, jdbc.update("update user set email=? where user_id=? and tenant_id=7 and delete_date is null", patch.get("email"), patch.get("id")));
+          return Optional.of(patch);
+        });
         var policy = mock(IdentityPolicy.class);
         when(policy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(true);
         delegate =
@@ -809,7 +822,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                 human,
                 policy,
                 identity,
-                mock(AccountManaging.class),
+                accounts,
                 inviteService,
                 new UserDtoMapper(policy),
                 transcoder);
