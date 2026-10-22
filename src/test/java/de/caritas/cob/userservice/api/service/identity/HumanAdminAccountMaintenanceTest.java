@@ -315,7 +315,7 @@ class HumanAdminAccountMaintenanceTest {
   void sameAccountAdminConsultantRequiresOneCurrentTenantAndOneProfilePostcondition() {
     human.setRoles(Set.of(UserRole.TENANT_ADMIN.getValue()));
     jdbc.update(
-        "insert into consultant values(?,7,'original-admin','Old','Name','old@example.test',null,?,true)",
+        "insert into consultant(consultant_id,tenant_id,username,first_name,last_name,email,delete_date,update_date,managed_paused) values(?,7,'original-admin','Old','Name','old@example.test',null,?,true)",
         ACCOUNT,
         java.sql.Timestamp.from(CLOCK.instant()));
     var actualScope = actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
@@ -376,7 +376,7 @@ class HumanAdminAccountMaintenanceTest {
     assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
     jdbc.update("delete from admin where admin_id=?", ACCOUNT);
     jdbc.update(
-        "insert into consultant values(?,7,'original-admin','Old','Name','old@example.test',null,?,true)",
+        "insert into consultant(consultant_id,tenant_id,username,first_name,last_name,email,delete_date,update_date,managed_paused) values(?,7,'original-admin','Old','Name','old@example.test',null,?,true)",
         ACCOUNT,
         java.sql.Timestamp.from(CLOCK.instant()));
     var actualScope = actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
