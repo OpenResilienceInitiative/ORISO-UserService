@@ -119,6 +119,11 @@ public final class ProtectedInvitationRestrictionCodec {
             .encodeToString(mac("protected-invitation-proof/v1\n" + encoded));
   }
 
+  /** Fixed reducing status read only; closed until the HTTP counterfactual is measured. */
+  public String cleanupStatusProof(FrozenCancellation cancellation, TaskActorCredentials actor) {
+    return null;
+  }
+
   public VerifiedRestriction verify(
       FrozenCancellation cancellation, byte[] responseBytes, boolean statusReconciliation) {
     try {

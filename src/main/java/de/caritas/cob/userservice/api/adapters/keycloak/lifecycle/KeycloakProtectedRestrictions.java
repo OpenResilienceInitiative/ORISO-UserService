@@ -27,6 +27,7 @@ public final class KeycloakProtectedRestrictions {
   private final ProtectedInvitationCodec approvals;
   private final ProtectedInvitationRestrictionCodec restrictions;
   private final URI authServer;
+  private final ProtectedCleanupStatusCodec cleanup;
 
   public KeycloakProtectedRestrictions(
       RestTemplate http,
@@ -36,6 +37,19 @@ public final class KeycloakProtectedRestrictions {
       ProtectedInvitationRestrictionCodec restrictions,
       String authServer,
       String realmName) {
+    this(http, actors, broker, approvals, restrictions, authServer, realmName, null);
+  }
+
+  public KeycloakProtectedRestrictions(
+      RestTemplate http,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      ProtectedInvitationCodec approvals,
+      ProtectedInvitationRestrictionCodec restrictions,
+      String authServer,
+      String realmName,
+      ProtectedCleanupStatusCodec cleanup) {
+    this.cleanup = cleanup;
     this.http = Objects.requireNonNull(http);
     this.actors = Objects.requireNonNull(actors);
     this.broker = Objects.requireNonNull(broker);
@@ -71,6 +85,15 @@ public final class KeycloakProtectedRestrictions {
     var actor = actors.require(TaskPurpose.INVITE_RESERVATIONS);
     String proof = approvals.statusProof(frozen.approval(), actor);
     return call(frozen, "status", body, proof, true);
+  }
+
+  /** Independent native terminal read; never calls cancel, recover or compensate. */
+  public ProtectedCleanupStatusCodec.VerifiedFinalStatus cleanupStatus(
+      FrozenCancellation frozen,
+      VerifiedRestriction original,
+      ProtectedAccountCodec.VerifiedRecovery recovery,
+      AccountLifecycleDtos.LocalOutcome local) {
+    return null;
   }
 
   private VerifiedRestriction call(
