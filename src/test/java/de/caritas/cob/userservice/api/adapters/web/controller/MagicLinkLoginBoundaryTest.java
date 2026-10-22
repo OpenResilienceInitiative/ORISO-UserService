@@ -30,7 +30,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-/** Actual public mapping, JSON validation, delegate and advice; only session production is mocked. */
+/**
+ * Actual public mapping, JSON validation, delegate and advice; only session production is mocked.
+ */
 class MagicLinkLoginBoundaryTest {
 
   private final MagicLinkLoginService sessions = mock(MagicLinkLoginService.class);
@@ -63,8 +65,7 @@ class MagicLinkLoginBoundaryTest {
 
   @Test
   void firstRequestPreservesTheExistingSnakeCaseSessionContract() throws Exception {
-    when(sessions.consumeMagicLink("link"))
-        .thenReturn(Optional.of(session()));
+    when(sessions.consumeMagicLink("link")).thenReturn(Optional.of(session()));
 
     consume("{\"token\":\"link\"}")
         .andExpect(status().isOk())
@@ -76,8 +77,7 @@ class MagicLinkLoginBoundaryTest {
 
   @Test
   void codeContinuationKeepsTheSameLinkAndForwardsOnlyItsSixDigits() throws Exception {
-    when(sessions.consumeMagicLink("link", "123456"))
-        .thenReturn(Optional.of(session()));
+    when(sessions.consumeMagicLink("link", "123456")).thenReturn(Optional.of(session()));
 
     consume("{\"token\":\"link\",\"otp\":\"123456\"}")
         .andExpect(status().isOk())
@@ -89,16 +89,14 @@ class MagicLinkLoginBoundaryTest {
   @Test
   void malformedCodesAreRefusedBeforeClaimingAnyLink() throws Exception {
     for (String code : new String[] {"", "12345", "1234567", "１２３４５６", " 123456", "abcdef"}) {
-      consume("{\"token\":\"link\",\"otp\":\"" + code + "\"}")
-          .andExpect(status().isBadRequest());
+      consume("{\"token\":\"link\",\"otp\":\"" + code + "\"}").andExpect(status().isBadRequest());
       verifyNoInteractions(sessions);
     }
   }
 
   @Test
   void blankLinkIsRefusedBeforeCallingTheSessionProducer() throws Exception {
-    consume("{\"token\":\" \",\"otp\":\"123456\"}")
-        .andExpect(status().isBadRequest());
+    consume("{\"token\":\" \",\"otp\":\"123456\"}").andExpect(status().isBadRequest());
     verifyNoInteractions(sessions);
   }
 
@@ -111,15 +109,16 @@ class MagicLinkLoginBoundaryTest {
     consume("{\"token\":\"link\"}")
         .andExpect(status().isBadRequest())
         .andExpect(header().string("Cache-Control", "no-store"))
-        .andExpect(content().json(
-            "{\"error\":\"invalid_grant\",\"error_description\":\"Missing totp\",\"otpType\":\"APP\"}",
-            org.springframework.test.json.JsonCompareMode.STRICT));
+        .andExpect(
+            content()
+                .json(
+                    "{\"error\":\"invalid_grant\",\"error_description\":\"Missing totp\",\"otpType\":\"APP\"}",
+                    org.springframework.test.json.JsonCompareMode.STRICT));
   }
 
   @Test
   void emailChallengePreservesItsCountdown() throws Exception {
-    when(sessions.consumeMagicLink("link"))
-        .thenThrow(new MagicLinkChallenge("EMAIL", 30, 400));
+    when(sessions.consumeMagicLink("link")).thenThrow(new MagicLinkChallenge("EMAIL", 30, 400));
 
     consume("{\"token\":\"link\"}")
         .andExpect(status().isBadRequest())
@@ -130,8 +129,7 @@ class MagicLinkLoginBoundaryTest {
 
   @Test
   void emailRateLimitRetainsTheChallengeAndRetryTime() throws Exception {
-    when(sessions.consumeMagicLink("link"))
-        .thenThrow(new MagicLinkChallenge("EMAIL", 60, 429));
+    when(sessions.consumeMagicLink("link")).thenThrow(new MagicLinkChallenge("EMAIL", 60, 429));
 
     consume("{\"token\":\"link\"}")
         .andExpect(status().isTooManyRequests())
@@ -143,8 +141,7 @@ class MagicLinkLoginBoundaryTest {
 
   @Test
   void invalidFactorDoesNotExposeSessionOrProviderDetails() throws Exception {
-    when(sessions.consumeMagicLink("link", "123456"))
-        .thenReturn(Optional.empty());
+    when(sessions.consumeMagicLink("link", "123456")).thenReturn(Optional.empty());
 
     consume("{\"token\":\"link\",\"otp\":\"123456\"}")
         .andExpect(status().isBadRequest())
@@ -155,8 +152,11 @@ class MagicLinkLoginBoundaryTest {
 
   private ResultActions consume(String body) {
     return assertDoesNotThrow(
-        () -> mvc.perform(post("/users/magic-link/consume")
-            .contentType(MediaType.APPLICATION_JSON).content(body)));
+        () ->
+            mvc.perform(
+                post("/users/magic-link/consume")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body)));
   }
 
   private static IdentitySession session() {

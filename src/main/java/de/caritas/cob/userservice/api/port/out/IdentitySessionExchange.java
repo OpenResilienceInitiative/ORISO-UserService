@@ -24,7 +24,8 @@ public interface IdentitySessionExchange {
       super("Magic-link verification required");
       if (!("APP".equals(otpType) || "EMAIL".equals(otpType))
           || resendAvailableInSeconds != null && resendAvailableInSeconds < 0
-          || status != 400 && status != 429) {
+          || status != 400 && status != 429
+          || status == 429 && !"EMAIL".equals(otpType)) {
         throw new IllegalArgumentException("Invalid magic-link challenge");
       }
       this.otpType = otpType;
