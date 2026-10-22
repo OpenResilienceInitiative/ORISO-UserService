@@ -58,6 +58,7 @@ jobs:
           floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationCodecTest'] = 14
           floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedInvitationsTest'] = 10
           floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationJournalTest'] = 19
+          floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationMailSecretsTest'] = 10
 
           def git(*args):
               return subprocess.check_output(['git', *args]).decode().strip()
@@ -199,7 +200,7 @@ jobs:
           if not stable:
               raise SystemExit('Missing or changed full source/resource manifest')
           PY
-      - name: Export a formatting proposal for the six owned protected approval sources
+      - name: Export a formatting proposal for the eight owned protected approval sources
         if: failure()
         shell: bash
         run: |
@@ -210,12 +211,14 @@ jobs:
           protected_http_tests=src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/KeycloakProtectedInvitationsTest.java
           protected_journal=src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/JdbcProtectedInvitationJournal.java
           protected_journal_tests=src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/JdbcProtectedInvitationJournalTest.java
-          trap 'git restore --source=HEAD -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" "$protected_journal" "$protected_journal_tests"' EXIT
+          protected_mail=src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/ProtectedInvitationMailSecrets.java
+          protected_mail_tests=src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/ProtectedInvitationMailSecretsTest.java
+          trap 'git restore --source=HEAD -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" "$protected_journal" "$protected_journal_tests" "$protected_mail" "$protected_mail_tests"' EXIT
           ./mvnw -B -ntp -q spotless:apply \
-            "-DspotlessFiles=$GITHUB_WORKSPACE/$protected_codec|$GITHUB_WORKSPACE/$protected_tests|$GITHUB_WORKSPACE/$protected_transport|$GITHUB_WORKSPACE/$protected_http_tests|$GITHUB_WORKSPACE/$protected_journal|$GITHUB_WORKSPACE/$protected_journal_tests"
-          git diff --binary -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" "$protected_journal" "$protected_journal_tests" \
+            "-DspotlessFiles=$GITHUB_WORKSPACE/$protected_codec|$GITHUB_WORKSPACE/$protected_tests|$GITHUB_WORKSPACE/$protected_transport|$GITHUB_WORKSPACE/$protected_http_tests|$GITHUB_WORKSPACE/$protected_journal|$GITHUB_WORKSPACE/$protected_journal_tests|$GITHUB_WORKSPACE/$protected_mail|$GITHUB_WORKSPACE/$protected_mail_tests"
+          git diff --binary -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" "$protected_journal" "$protected_journal_tests" "$protected_mail" "$protected_mail_tests" \
             > target/scenario-c-caller-proof/protected-format.patch
-          git restore --source=HEAD -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" "$protected_journal" "$protected_journal_tests"
+          git restore --source=HEAD -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" "$protected_journal" "$protected_journal_tests" "$protected_mail" "$protected_mail_tests"
           trap - EXIT
           git diff --exit-code
       - name: Upload complete caller proof, including diagnostic RED evidence

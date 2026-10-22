@@ -1,0 +1,24 @@
+{
+  "syntheticPublicKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "metadata": {
+    "v": 1,
+    "realmId": "native-synthetic-realm",
+    "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+    "workflowId": "f09e4bce-89bd-40cb-86eb-2ed8cf481290",
+    "inviteId": 73,
+    "authorizationRevision": 1,
+    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+    "tokenHash": "ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0",
+    "payloadDigest": "afe1235cdd4415b14d49c1808751cb80e5397c65429daafa2d89adb5203551ae"
+  },
+  "mail": {
+    "rawToken": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "acceptUrl": "https://admin.example.test/admin/tenant-onboarding/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "subject": "Willkommen, Äda",
+    "body": "Ihre Einladung: https://admin.example.test/admin/tenant-onboarding/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "templateId": 5,
+    "language": "de"
+  },
+  "derivedEncryptionKeyHex": "dfff8de12bc0e77ae8f686fbbd90e66984303efd8acf003e2673f9822844fc13"
+}
