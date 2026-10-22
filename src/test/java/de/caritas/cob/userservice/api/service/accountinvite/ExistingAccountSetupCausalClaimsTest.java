@@ -43,6 +43,19 @@ class ExistingAccountSetupCausalClaimsTest {
     assertThrows(
         ScopedIdentityCommandRequiredException.class, f.passwords.lastHandle::checkedClaim);
     verifyNoInteractions(f.identities, f.roles, f.requirement);
+
+    var unsupported = new Fixture();
+    unsupported.passwords.supported = false;
+    assertThrows(ScopedIdentityCommandRequiredException.class,
+        () -> unsupported.service.confirm(Fixture.TOKEN, "new-one"));
+    assertEquals("PENDING", unsupported.phase());
+    assertEquals(0, unsupported.jdbc.queryForObject("select count(*) from identity_setup_password_claim", Integer.class));
+    var ambient = new Fixture();
+    new org.springframework.transaction.support.TransactionTemplate(ambient.transactions)
+        .executeWithoutResult(status -> assertThrows(ScopedIdentityCommandRequiredException.class,
+            () -> ambient.service.confirm(Fixture.TOKEN, "new-one")));
+    assertEquals("PENDING", ambient.phase());
+    assertEquals(0, ambient.jdbc.queryForObject("select count(*) from identity_setup_password_claim", Integer.class));
   }
 
   @Test
@@ -233,6 +246,7 @@ class ExistingAccountSetupCausalClaimsTest {
     ExistingAccountSetupService.ClaimedSetup lastHandle;
     int supportChecks;
     boolean unknownOnce;
+    boolean supported = true;
 
     @Override
     public boolean requiresCausalPasswordClaims() {
@@ -242,6 +256,7 @@ class ExistingAccountSetupCausalClaimsTest {
     @Override
     public void requireExistingSetupPasswordSupport() {
       supportChecks++;
+      if (!supported) throw new ScopedIdentityCommandRequiredException();
     }
 
     @Override
