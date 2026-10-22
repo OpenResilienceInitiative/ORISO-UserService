@@ -108,14 +108,13 @@ class ProtectedAccountCodecTest {
   void opaqueGetterFixturesStillRequireAuthenticApprovalAndExactClaimShape() {
     var forged = claim();
     var good = forged.approval();
-    when(forged.approval())
-        .thenReturn(
-            new ProtectedInvitationCodec.VerifiedApproval(
-                good.approvalId(),
-                "0".repeat(64),
-                good.requestDigest(),
-                good.receiptJson(),
-                good.responseJson()));
+    var changedApproval = mock(ProtectedInvitationCodec.VerifiedApproval.class);
+    when(changedApproval.approvalId()).thenReturn(good.approvalId());
+    when(changedApproval.scopeDigest()).thenReturn("0".repeat(64));
+    when(changedApproval.requestDigest()).thenReturn(good.requestDigest());
+    when(changedApproval.receiptJson()).thenReturn(good.receiptJson());
+    when(changedApproval.responseJson()).thenReturn(good.responseJson());
+    when(forged.approval()).thenReturn(changedApproval);
     assertThrows(
         IllegalArgumentException.class,
         () -> codec.prepare(forged, vector.path("registration"), account()));
