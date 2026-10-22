@@ -39,7 +39,11 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
   void publicCReportsOccupiedRawUsernameThroughBothExactSelectors() {
     var fixture = new Fixture(true);
     fixture.install(name -> !NAME.equals(name));
-    assertEquals(409, fixture.controller.usernameAvailability(NAME).getStatusCode().value());
+    assertEquals(
+        409,
+        assertDoesNotThrow(() -> fixture.controller.usernameAvailability(NAME))
+            .getStatusCode()
+            .value());
     assertEquals(List.of(NAME, ENCODED), fixture.calls);
     verifyNoInteractions(fixture.nativeClient);
   }
@@ -48,7 +52,11 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
   void publicCReportsOccupiedEncodedUsernameThroughBothExactSelectors() {
     var fixture = new Fixture(true);
     fixture.install(name -> !ENCODED.equals(name));
-    assertEquals(409, fixture.controller.usernameAvailability(ENCODED).getStatusCode().value());
+    assertEquals(
+        409,
+        assertDoesNotThrow(() -> fixture.controller.usernameAvailability(ENCODED))
+            .getStatusCode()
+            .value());
     assertEquals(List.of(NAME, ENCODED), fixture.calls);
     verifyNoInteractions(fixture.nativeClient);
   }
@@ -57,7 +65,11 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
   void publicCReportsAvailableOnlyAfterBothExactSelectorsConfirm() {
     var fixture = new Fixture(true);
     fixture.install(name -> true);
-    assertEquals(204, fixture.controller.usernameAvailability(NAME).getStatusCode().value());
+    assertEquals(
+        204,
+        assertDoesNotThrow(() -> fixture.controller.usernameAvailability(NAME))
+            .getStatusCode()
+            .value());
     assertEquals(List.of(NAME, ENCODED), fixture.calls);
     verifyNoInteractions(fixture.nativeClient);
   }
