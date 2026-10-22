@@ -126,7 +126,8 @@ public final class AccountLifecycleCodec {
   }
 
   String existingSetupPasswordRequestDigest(
-      de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims.Binding binding, String password) {
+      de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims.Binding binding,
+      String password) {
     return new ClaimedPasswordRequestDigests(this).existingSetup(binding, password);
   }
 
@@ -143,18 +144,29 @@ public final class AccountLifecycleCodec {
     return new ClaimedPasswordRequestDigests(this).localAccounts(independentlyCheckedOwnedRows);
   }
 
-  String passwordResetReadProof(String realmName, String realmId, String accountId,
-      de.caritas.cob.userservice.api.config.auth.TaskActorCredentials actor, JsonNode body) {
+  String passwordResetReadProof(
+      String realmName,
+      String realmId,
+      String accountId,
+      de.caritas.cob.userservice.api.config.auth.TaskActorCredentials actor,
+      JsonNode body) {
     return maintenanceProof("password-reset.read", realmName, realmId, accountId, actor, body);
   }
 
-  String passwordResetMutationProof(String realmName, String realmId, String accountId,
-      de.caritas.cob.userservice.api.config.auth.TaskActorCredentials actor, JsonNode body) {
+  String passwordResetMutationProof(
+      String realmName,
+      String realmId,
+      String accountId,
+      de.caritas.cob.userservice.api.config.auth.TaskActorCredentials actor,
+      JsonNode body) {
     return maintenanceProof("password-reset", realmName, realmId, accountId, actor, body);
   }
 
-  String verifyMaintenancePasswordResetReceipt(String reply, String realmId,
-      de.caritas.cob.userservice.api.config.auth.TaskActorCredentials actor, JsonNode frozen) {
+  String verifyMaintenancePasswordResetReceipt(
+      String reply,
+      String realmId,
+      de.caritas.cob.userservice.api.config.auth.TaskActorCredentials actor,
+      JsonNode frozen) {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "password-reset", "UPDATED");
   }
 
@@ -979,7 +991,14 @@ public final class AccountLifecycleCodec {
       String accountId,
       TaskActorCredentials actor,
       Object body) {
-    if (!java.util.Set.of("read", "delete", "locale", "self-password", "password-reset.read", "password-reset").contains(command)
+    if (!java.util.Set.of(
+                "read",
+                "delete",
+                "locale",
+                "self-password",
+                "password-reset.read",
+                "password-reset")
+            .contains(command)
         || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
       throw new IllegalArgumentException("Invalid maintenance proof binding");
     long now = clock.instant().getEpochSecond();
