@@ -148,17 +148,41 @@ jobs:
 
           def test_phase(phase, selector, seconds):
               assert not (root / 'target/surefire-reports').exists(), 'Stale test report directory'
-              argv = [*common, 'test', '-Dtest=' + selector]
+              selected = selector.split(',')
+              assert len(selected) == len(set(selected)), 'Duplicate selected test class'
+              batches = [selected] if phase != 'focused' else [selected[n::3] for n in range(3) if selected[n::3]]
+              merged = proof / 'focused-merged-reports'
               if phase == 'focused':
-                  # Reclaim classloaders between suites within the existing 192m/600s limits.
-                  # Run every selected class once, with a single concurrent fork.
-                  argv += ['-DforkCount=1', '-DreuseForks=false']
-              (proof / (phase + '-command.json')).write_text(json.dumps(argv, indent=2) + '\n')
-              status = execute(argv, proof / (phase + '.log'), seconds)
+                  merged.mkdir()
+              statuses = []
+              for index, batch in enumerate(batches):
+                  argv = [*common, 'test', '-Dtest=' + ','.join(batch)]
+                  label = phase
+                  if phase == 'focused':
+                      # Fresh classloaders and disjoint bounded batches; no product-test retry.
+                      argv += ['-DforkCount=1', '-DreuseForks=false']
+                      label += '-batch-' + str(index)
+                  (proof / (label + '-command.json')).write_text(json.dumps(argv, indent=2) + '\n')
+                  status = execute(argv, proof / (label + '.log'), seconds)
+                  statuses.append({'classes': batch, 'exitCode': status, 'limitSeconds': seconds})
+                  assert snapshot() == inputs, 'Source or resource changed during Maven'
+                  if phase == 'focused':
+                      reports = root / 'target/surefire-reports'
+                      if reports.exists():
+                          destination = proof / label / 'surefire-reports'
+                          destination.parent.mkdir(parents=True)
+                          shutil.move(str(reports), str(destination))
+                          for report in destination.glob('TEST-*.xml'):
+                              assert not (merged / report.name).exists(), 'Duplicate test suite across batches'
+                              shutil.copy2(report, merged / report.name)
+              status = next((item['exitCode'] for item in statuses if item['exitCode']), 0)
+              (proof / (phase + '-executions.json')).write_text(json.dumps(statuses, indent=2) + '\n')
+              if phase == 'focused':
+                  shutil.move(str(merged), str(root / 'target/surefire-reports'))
               valid = inventory(phase, status)
               assert snapshot() == inputs, 'Source or resource changed during Maven'
               if status or not valid:
-                  # An expected diagnostic RED remains a failed job; setup/compile failures are not product RED.
+                  # Every batch remains in the aggregate; a later pass cannot hide an earlier failure.
                   raise SystemExit(status or 1)
 
           test_phase('regression', target_class + '#' + target_method, 600)

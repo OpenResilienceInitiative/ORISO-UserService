@@ -3,10 +3,13 @@ package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
+import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
+import de.caritas.cob.userservice.api.adapters.persistence.password.JdbcExistingSetupPasswordClaims;
 import de.caritas.cob.userservice.api.config.auth.*;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import java.time.Clock;
 import java.util.*;
@@ -158,6 +161,83 @@ public class AccountLifecycleCallerConfiguration {
         transport,
         Clock.systemUTC(),
         publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm());
+  }
+
+  @Bean
+  SelfPasswordMaintenance selfPasswordMaintenance(
+      IdentityClientConfig identities,
+      AuthenticatedUser user,
+      jakarta.servlet.http.HttpServletRequest request,
+      JdbcTemplate jdbc,
+      PlatformTransactionManager manager,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      @Qualifier("keycloakRestTemplate") RestTemplate http,
+      KeycloakConfig keycloak) {
+    String publicServer = keycloak.getAuthServerUrl();
+    String internalServer =
+        environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
+    if (publicServer == null
+        || publicServer.isBlank()
+        || internalServer == null
+        || internalServer.isBlank()) throw invalid();
+    return new SelfPasswordMaintenance(
+        identities,
+        user,
+        request,
+        jdbc,
+        manager,
+        actors,
+        broker,
+        codec,
+        http,
+        Clock.systemUTC(),
+        internalServer,
+        publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm(),
+        keycloak.getRealm(),
+        required("KEYCLOAK_REALM_INTERNAL_ID"));
+  }
+
+  @Bean
+  SelfLocaleMaintenance selfLocaleMaintenance(
+      IdentityClientConfig identities,
+      AuthenticatedUser user,
+      jakarta.servlet.http.HttpServletRequest request,
+      JdbcTemplate jdbc,
+      PlatformTransactionManager manager,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      @Qualifier("keycloakRestTemplate") RestTemplate http,
+      KeycloakConfig keycloak) {
+    String publicServer = keycloak.getAuthServerUrl();
+    String internalServer =
+        environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
+    if (publicServer == null
+        || publicServer.isBlank()
+        || internalServer == null
+        || internalServer.isBlank()) throw invalid();
+    return new SelfLocaleMaintenance(
+        identities,
+        user,
+        request,
+        jdbc,
+        manager,
+        actors,
+        broker,
+        codec,
+        http,
+        Clock.systemUTC(),
+        internalServer,
+        publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm(),
+        keycloak.getRealm(),
+        required("KEYCLOAK_REALM_INTERNAL_ID"));
+  }
+
+  @Bean
+  JdbcExistingSetupPasswordClaims existingSetupPasswordClaims(JdbcTemplate jdbc) {
+    return new JdbcExistingSetupPasswordClaims(jdbc, Clock.systemUTC());
   }
 
   @Bean

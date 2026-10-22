@@ -84,20 +84,49 @@ class RequiredCiContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             scope = dict(root=root, proof=root, common=["./mvnw"], inputs={},
-                         snapshot=lambda: {}, json=json,
-                         inventory=lambda phase, status: status == 0,
+                         snapshot=lambda: {}, json=json, shutil=__import__("shutil"),
+                         inventory=lambda phase, status: (__import__("shutil").rmtree(root / "target/surefire-reports", ignore_errors=True) or status == 0),
                          execute=lambda argv, log, seconds: calls.append((argv, seconds)) or 0)
             exec(compile(ast.Module(body=[phase], type_ignores=[]), "caller-test-phase", "exec"), scope)
-            scope["test_phase"]("focused", "FirstTest,SecondTest", 600)
+            scope["test_phase"]("focused", "FirstTest,SecondTest,ThirdTest,FourthTest,FifthTest,SixthTest,SeventhTest", 600)
             scope["test_phase"]("regression", "EncodingTest#originalCase", 600)
-        self.assertEqual(
-            ["./mvnw", "test", "-Dtest=FirstTest,SecondTest", "-DforkCount=1", "-DreuseForks=false"],
-            calls[0][0])
-        self.assertEqual(["./mvnw", "test", "-Dtest=EncodingTest#originalCase"], calls[1][0])
-        self.assertEqual([600, 600], [seconds for _, seconds in calls])
+        selected = []
+        self.assertEqual(4, len(calls))
+        for argv, _ in calls[:3]:
+            self.assertEqual(["-DforkCount=1", "-DreuseForks=false"], argv[-2:])
+            selected.extend(argv[2].removeprefix("-Dtest=").split(","))
+        self.assertCountEqual(["FirstTest", "SecondTest", "ThirdTest", "FourthTest", "FifthTest", "SixthTest", "SeventhTest"], selected)
+        self.assertEqual(len(selected), len(set(selected)))
+        self.assertEqual(["./mvnw", "test", "-Dtest=EncodingTest#originalCase"], calls[3][0])
+        self.assertEqual([600] * 4, [seconds for _, seconds in calls])
         self.assertEqual(30, job["timeout-minutes"])
         self.assertEqual("-Xmx512m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2",
                          job["env"]["JAVA_TOOL_OPTIONS"])
+
+    def test_caller_focused_batches_keep_all_failures_without_retry_or_short_circuit(self):
+        document = yaml.safe_load((ROOT / ".github/workflows/scenario-c-caller-proof.yml").read_text())
+        source = next(step["run"] for step in document["jobs"]["caller-proof"]["steps"]
+                      if "def test_phase(" in step.get("run", ""))
+        module = ast.parse(source.split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0])
+        phase = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "test_phase")
+        calls, outcomes = [], []
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            def execute(argv, log, seconds):
+                calls.append((argv, seconds))
+                return 1 if len(calls) == 1 else 0
+            scope = dict(root=root, proof=root, common=["./mvnw"], inputs={}, snapshot=lambda: {},
+                         json=json, shutil=__import__("shutil"), execute=execute,
+                         inventory=lambda name, status: outcomes.append((name, status)) or False)
+            exec(compile(ast.Module(body=[phase], type_ignores=[]), "caller-test-phase", "exec"), scope)
+            with self.assertRaises(SystemExit) as raised:
+                scope["test_phase"]("focused", "A,B,C,D,E,F", 600)
+            self.assertEqual(1, raised.exception.code)
+        self.assertEqual(3, len(calls), "A product failure must not prevent other disjoint selected classes from running")
+        self.assertEqual([("focused", 1)], outcomes, "A later successful batch must never hide an earlier failure")
+        selected = [name for argv, _ in calls for name in argv[2].removeprefix("-Dtest=").split(",")]
+        self.assertCountEqual(["A", "B", "C", "D", "E", "F"], selected)
+        self.assertEqual(len(selected), len(set(selected)), "No product-test retry")
 
     def test_required_runner_rejects_skipped_tests_and_counts_only_executed_tests(self):
         runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
