@@ -1320,6 +1320,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     String emailStartOperation;
     final AtomicInteger nativeExecutions = new AtomicInteger();
     boolean attachInviteDuringCallback;
+    long currentTenant = 7L;
+    boolean protectedAccount;
     boolean tamperReceipt;
     String savedEmailReply;
     String savedEmailWire;
@@ -1359,6 +1361,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
             "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512),email varchar(320))");
         jdbc.update(
             "insert into user values(?,?,null,'ordinary','original@oriso.org')", ACCOUNT, 7L);
+        jdbc.execute(
+            "create table admin(admin_id varchar(36) primary key,tenant_id bigint,type varchar(6),email varchar(320))");
         jdbc.execute(
             "create table account_invite(id bigint primary key,accepted_by_user_id varchar(36),two_factor_status varchar(32),write_count int)");
         jdbc.update("insert into account_invite values(1,?,'PENDING_SETUP',0)", ACCOUNT);
@@ -1499,6 +1503,53 @@ class UserSelfAppOtpScenarioCBoundaryTest {
         jdbc.execute("SHUTDOWN");
         throw failure;
       }
+    }
+
+    void protectedAdmin(long tenant, String type) {
+      currentTenant = tenant;
+      protectedAccount = true;
+      jdbc.update("delete from user where user_id=?", ACCOUNT);
+      jdbc.update("insert into admin values(?,?,?,'original@oriso.org')", ACCOUNT, tenant, type);
+      jdbc.execute("alter table account_invite add tenant_id bigint");
+      jdbc.execute("alter table account_invite add target_role varchar(32)");
+      jdbc.execute("alter table account_invite add purpose varchar(16)");
+      jdbc.execute("alter table account_invite add provisioning_status varchar(32)");
+      jdbc.update(
+          "update account_invite set tenant_id=?,target_role=?,purpose='INVITE',provisioning_status='COMPLETED' where id=1",
+          tenant,
+          "SUPER".equals(type) ? "PLATFORM_ADMIN" : "TENANT_ADMIN");
+      jdbc.execute(
+          "create table protected_invitation_acceptance(invite_id bigint primary key,claim_id varchar(36),attempt_id varchar(36),execution_id varchar(36),account_id varchar(36))");
+      jdbc.execute(
+          "create table protected_account_activation(invite_id bigint primary key,claim_id varchar(36),attempt_id varchar(36),execution_id varchar(36),account_id varchar(36),state varchar(32),native_commit_receipt clob)");
+      String claim = UUID.randomUUID().toString();
+      String attempt = UUID.randomUUID().toString();
+      String execution = UUID.randomUUID().toString();
+      // These are private local commit facts, not proof of native permission. HTTP is captured.
+      jdbc.update(
+          "insert into protected_invitation_acceptance values(1,?,?,?,?)",
+          claim,
+          attempt,
+          execution,
+          ACCOUNT);
+      jdbc.update(
+          "insert into protected_account_activation values(1,?,?,?,?,'COMMITTED','fixture-local-verified-receipt')",
+          claim,
+          attempt,
+          execution,
+          ACCOUNT);
+      human.setTenantId(tenant);
+      var previous = ((JwtAuthenticationToken) request.getUserPrincipal()).getToken();
+      var jwt =
+          Jwt.withTokenValue("fixture-human")
+              .headers(headers -> headers.putAll(previous.getHeaders()))
+              .claims(claims -> claims.putAll(previous.getClaims()))
+              .claim("tenantId", Long.toString(tenant))
+              .build();
+      var authentication =
+          new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_USER")));
+      request.setUserPrincipal(authentication);
+      SecurityContextHolder.getContext().setAuthentication(authentication);
     }
 
     void humanExpiry(Instant deadline) {
@@ -1652,7 +1703,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                 return withSuccess(
                         "{\"id\":\""
                             + ACCOUNT
-                            + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""
+                            + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\""
+                            + currentTenant
+                            + "\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""
                             + "a".repeat(64)
                             + "\"}",
                         MediaType.APPLICATION_JSON)
@@ -1713,7 +1766,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                   outcome.put("ownerSubject", ADMIN);
                   outcome.put("intentDigest", codec.digest("otp-intent", materialized));
                   outcome.put("previousState", "a".repeat(64));
-                  outcome.put("tenantId", "7");
+                  outcome.put("tenantId", Long.toString(currentTenant));
                   outcome.put(
                       "originDigest",
                       codec.digest("otp-origin", body.path("target").path("origin")));
@@ -1817,7 +1870,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                 return withSuccess(
                         "{\"id\":\""
                             + ACCOUNT
-                            + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""
+                            + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\""
+                            + currentTenant
+                            + "\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""
                             + "c".repeat(64)
                             + "\"}",
                         MediaType.APPLICATION_JSON)
@@ -1876,7 +1931,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                   payload.put("ownerSubject", ADMIN);
                   payload.put("intentDigest", codec.digest("otp-intent", materialized));
                   payload.put("previousState", "c".repeat(64));
-                  payload.put("tenantId", "7");
+                  payload.put("tenantId", Long.toString(currentTenant));
                   payload.put(
                       "originDigest",
                       codec.digest("otp-origin", body.path("target").path("origin")));
@@ -1948,7 +2003,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                 return withSuccess(
                         "{\"id\":\""
                             + ACCOUNT
-                            + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""
+                            + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\""
+                            + currentTenant
+                            + "\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""
                             + "a".repeat(64)
                             + "\"}",
                         MediaType.APPLICATION_JSON)
@@ -2018,7 +2075,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                 outcome.put("ownerSubject", ADMIN);
                 outcome.put("intentDigest", codec.digest("otp-intent", materialized));
                 outcome.put("previousState", "a".repeat(64));
-                outcome.put("tenantId", "7");
+                outcome.put("tenantId", Long.toString(currentTenant));
                 outcome.put(
                     "originDigest", codec.digest("otp-origin", body.path("target").path("origin")));
                 outcome.put("status", status);
@@ -2134,7 +2191,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                 return withSuccess(
                         "{\"id\":\""
                             + ACCOUNT
-                            + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""
+                            + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\""
+                            + currentTenant
+                            + "\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""
                             + "a".repeat(64)
                             + "\"}",
                         MediaType.APPLICATION_JSON)
@@ -2178,7 +2237,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                   facts.put("ownerSubject", ADMIN);
                   facts.put("intentDigest", codec.digest("otp-intent", materialized));
                   facts.put("previousState", "a".repeat(64));
-                  facts.put("tenantId", "7");
+                  facts.put("tenantId", Long.toString(currentTenant));
                   facts.put(
                       "originDigest",
                       codec.digest("otp-origin", body.path("target").path("origin")));
@@ -2219,6 +2278,11 @@ class UserSelfAppOtpScenarioCBoundaryTest {
         String audience,
         String method) {
       assertEquals("Bearer fixture-human", headers.getFirst("X-ORISO-Human-Authorization"));
+      if (protectedAccount)
+        assertEquals(
+            "PROTECTED_ACCOUNT_OPERATIONS_V1",
+            body.path("target").path("origin").path("humanAuthority").textValue());
+      else assertTrue(body.path("target").path("origin").path("humanAuthority").isNull());
       String machine = headers.getFirst("Authorization");
       assertNotNull(machine);
       assertTrue(machine.startsWith("Bearer "));
