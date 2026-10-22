@@ -340,9 +340,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.expectEmail(false, false);
       assertEquals(
           204,
-          fixture
-              .controller
-              .startTwoFactorAuthByEmailSetup(fixture.email())
+          assertDoesNotThrow(
+                  () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()))
               .getStatusCode()
               .value());
       assertEquals("ACKNOWLEDGED", fixture.status());
@@ -409,9 +408,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.expectEmail(false, false);
       assertEquals(
           204,
-          fixture
-              .controller
-              .startTwoFactorAuthByEmailSetup(fixture.email())
+          assertDoesNotThrow(
+                  () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()))
               .getStatusCode()
               .value());
       String original = fixture.envelope();
