@@ -126,19 +126,20 @@ class UserSelfPasswordScenarioCBoundaryTest {
 
   @Test
   void unsignedOrForgedPolicy400KeepsTheActualSelfPasswordIntentFrozen() {
-    for (int status : List.of(400, 403, 409)) for (int refusal : List.of(1, 3)) {
-      try (var f = new Fixture(true, true)) {
-        f.policyResponse = refusal;
-        f.policyStatus = status;
-        f.expectNative();
-        assertThrows(
-            ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
-        assertEquals("FROZEN", f.status());
-        assertEquals(0, f.clears());
-        assertEquals(0, f.effects.get());
-        f.server.verify();
+    for (int status : List.of(400, 403, 409))
+      for (int refusal : List.of(1, 3)) {
+        try (var f = new Fixture(true, true)) {
+          f.policyResponse = refusal;
+          f.policyStatus = status;
+          f.expectNative();
+          assertThrows(
+              ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
+          assertEquals("FROZEN", f.status());
+          assertEquals(0, f.clears());
+          assertEquals(0, f.effects.get());
+          f.server.verify();
+        }
       }
-    }
   }
 
   @Test
@@ -146,10 +147,13 @@ class UserSelfPasswordScenarioCBoundaryTest {
     try (var f = new Fixture(true, true)) {
       f.policyResponse = 2;
       f.expectNative();
-      var refused = assertThrows(BadRequestException.class, () -> f.controller.updatePassword(f.password()));
+      var refused =
+          assertThrows(BadRequestException.class, () -> f.controller.updatePassword(f.password()));
       assertTrue(refused instanceof SelfPasswordMaintenance.VerifiedTerminal);
       assertEquals(400, ((SelfPasswordMaintenance.VerifiedTerminal) refused).status());
-      assertEquals(UUID.fromString(f.operation), ((SelfPasswordMaintenance.VerifiedTerminal) refused).operationId());
+      assertEquals(
+          UUID.fromString(f.operation),
+          ((SelfPasswordMaintenance.VerifiedTerminal) refused).operationId());
       assertEquals("REJECTED", f.status());
       String terminal =
           f.jdbc.queryForObject("select receipt from identity_self_password_intent", String.class);
@@ -176,7 +180,9 @@ class UserSelfPasswordScenarioCBoundaryTest {
         var refused = assertThrows(expected, () -> f.controller.updatePassword(f.password()));
         assertTrue(refused instanceof SelfPasswordMaintenance.VerifiedTerminal);
         assertEquals(status, ((SelfPasswordMaintenance.VerifiedTerminal) refused).status());
-        assertEquals(UUID.fromString(f.operation), ((SelfPasswordMaintenance.VerifiedTerminal) refused).operationId());
+        assertEquals(
+            UUID.fromString(f.operation),
+            ((SelfPasswordMaintenance.VerifiedTerminal) refused).operationId());
         assertEquals("REFUSED", f.status());
         assertThrows(expected, () -> f.controller.updatePassword(f.password()));
         assertEquals(0, f.effects.get());
@@ -253,13 +259,25 @@ class UserSelfPasswordScenarioCBoundaryTest {
   void boundedSelfSecretSweepKeepsOriginalDeadlineAndNonsecretUnknownAudit() {
     try (var f = new Fixture(true, true)) {
       f.expectNative(true);
-      assertThrows(ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
-      String metadata = f.jdbc.queryForObject("select metadata_json from identity_self_password_intent", String.class);
-      long deadline = f.jdbc.queryForObject("select authority_valid_until from identity_self_password_intent", Long.class);
+      assertThrows(
+          ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
+      String metadata =
+          f.jdbc.queryForObject(
+              "select metadata_json from identity_self_password_intent", String.class);
+      long deadline =
+          f.jdbc.queryForObject(
+              "select authority_valid_until from identity_self_password_intent", Long.class);
       for (int i = 0; i < 101; i++) {
         String operation = UUID.randomUUID().toString();
-        f.jdbc.update("insert into identity_self_password_intent select ?,realm_id,account_id,tenant_id,owner_client,owner_subject,request_digest,target_json,authority_valid_until,metadata_json,intent_envelope,status,receipt,updated_at from identity_self_password_intent where operation_id=?", operation, f.operation);
-        if (i == 100) f.jdbc.update("update identity_self_password_intent set authority_valid_until=? where operation_id=?", f.now.get().plusSeconds(30 * 86400).getEpochSecond(), operation);
+        f.jdbc.update(
+            "insert into identity_self_password_intent select ?,realm_id,account_id,tenant_id,owner_client,owner_subject,request_digest,target_json,authority_valid_until,metadata_json,intent_envelope,status,receipt,updated_at from identity_self_password_intent where operation_id=?",
+            operation,
+            f.operation);
+        if (i == 100)
+          f.jdbc.update(
+              "update identity_self_password_intent set authority_valid_until=? where operation_id=?",
+              f.now.get().plusSeconds(30 * 86400).getEpochSecond(),
+              operation);
       }
       assertEquals(0, f.maintenance.expireSecretCustody());
       f.now.set(f.now.get().plusSeconds(9 * 86400));
@@ -267,12 +285,35 @@ class UserSelfPasswordScenarioCBoundaryTest {
       assertEquals(1, f.maintenance.expireSecretCustody());
       assertEquals(0, f.maintenance.expireSecretCustody());
       assertEquals("EXPIRED_UNKNOWN", f.status());
-      assertEquals(metadata, f.jdbc.queryForObject("select metadata_json from identity_self_password_intent where operation_id=?", String.class, f.operation));
-      assertEquals(deadline, f.jdbc.queryForObject("select authority_valid_until from identity_self_password_intent where operation_id=?", Long.class, f.operation));
-      assertTrue(f.jdbc.queryForObject("select intent_digest from identity_self_password_intent where operation_id=?", String.class, f.operation).matches("[0-9a-f]{64}"));
-      assertEquals(1, f.jdbc.queryForObject("select count(*) from identity_self_password_intent where intent_envelope is not null", Integer.class));
+      assertEquals(
+          metadata,
+          f.jdbc.queryForObject(
+              "select metadata_json from identity_self_password_intent where operation_id=?",
+              String.class,
+              f.operation));
+      assertEquals(
+          deadline,
+          f.jdbc.queryForObject(
+              "select authority_valid_until from identity_self_password_intent where operation_id=?",
+              Long.class,
+              f.operation));
+      assertTrue(
+          f.jdbc
+              .queryForObject(
+                  "select intent_digest from identity_self_password_intent where operation_id=?",
+                  String.class,
+                  f.operation)
+              .matches("[0-9a-f]{64}"));
+      assertEquals(
+          1,
+          f.jdbc.queryForObject(
+              "select count(*) from identity_self_password_intent where intent_envelope is not null",
+              Integer.class));
       assertThrows(RuntimeException.class, () -> f.controller.updatePassword(f.password()));
-      assertEquals(102, f.jdbc.queryForObject("select count(*) from identity_self_password_intent", Integer.class));
+      assertEquals(
+          102,
+          f.jdbc.queryForObject(
+              "select count(*) from identity_self_password_intent", Integer.class));
       assertEquals(0, f.clears());
       f.server.verify();
     }
@@ -286,12 +327,22 @@ class UserSelfPasswordScenarioCBoundaryTest {
     final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
     final AtomicInteger effects = new AtomicInteger();
     SelfPasswordMaintenance maintenance;
-    final java.util.concurrent.atomic.AtomicReference<Instant> now = new java.util.concurrent.atomic.AtomicReference<>(Instant.now());
-    final Clock clock = new Clock() {
-      public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
-      public Clock withZone(java.time.ZoneId zone) { return this; }
-      public Instant instant() { return now.get(); }
-    };
+    final java.util.concurrent.atomic.AtomicReference<Instant> now =
+        new java.util.concurrent.atomic.AtomicReference<>(Instant.now());
+    final Clock clock =
+        new Clock() {
+          public java.time.ZoneId getZone() {
+            return java.time.ZoneOffset.UTC;
+          }
+
+          public Clock withZone(java.time.ZoneId zone) {
+            return this;
+          }
+
+          public Instant instant() {
+            return now.get();
+          }
+        };
     int policyResponse;
     int policyStatus = 400;
     final Long tenant;
@@ -440,7 +491,8 @@ class UserSelfPasswordScenarioCBoundaryTest {
               new UsernameTranscoder());
       delegate.setPasswordIdentityConfig(mode);
       if (installed) {
-        maintenance = new SelfPasswordMaintenance(
+        maintenance =
+            new SelfPasswordMaintenance(
                 mode,
                 human,
                 request,

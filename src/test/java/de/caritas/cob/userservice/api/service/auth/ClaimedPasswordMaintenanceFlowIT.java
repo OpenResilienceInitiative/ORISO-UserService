@@ -444,7 +444,15 @@ class ClaimedPasswordMaintenanceFlowIT {
       }
       assertThat(f.adapter.expireSecretCustody()).isZero();
       var store = new RedisOneTimeTokenStore(f.redis, f.prefix);
-      var held = store.claimPasswordReset(token, f.jdbc.queryForObject("select request_digest from identity_claimed_password_intent where claim_id=?", String.class, originalId)).orElseThrow();
+      var held =
+          store
+              .claimPasswordReset(
+                  token,
+                  f.jdbc.queryForObject(
+                      "select request_digest from identity_claimed_password_intent where claim_id=?",
+                      String.class,
+                      originalId))
+              .orElseThrow();
       f.now.set(f.now.get().plusSeconds(9 * 86400));
       assertThat(f.adapter.expireSecretCustody()).isEqualTo(100);
       assertThat(f.adapter.expireSecretCustody()).isEqualTo(1);
@@ -472,7 +480,8 @@ class ClaimedPasswordMaintenanceFlowIT {
                   String.class,
                   originalId))
           .isEqualTo(digest);
-      store.finishPasswordResetClaim(held, true); // Late custody ACK is data and cannot rebind the expired SQL command.
+      store.finishPasswordResetClaim(
+          held, true); // Late custody ACK is data and cannot rebind the expired SQL command.
       assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
           .isInstanceOf(RuntimeException.class);
       assertThat(f.effects).isEqualTo(1);
@@ -484,8 +493,10 @@ class ClaimedPasswordMaintenanceFlowIT {
   }
 
   @Test
-  void actualResetSupportsEveryOwnedKindAndLegitimateAdministratorConsultantPair() throws Exception {
-    for (String kind : List.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")) {
+  void actualResetSupportsEveryOwnedKindAndLegitimateAdministratorConsultantPair()
+      throws Exception {
+    for (String kind :
+        List.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")) {
       for (boolean dual : kind.endsWith("ADMIN") ? List.of(false, true) : List.of(false)) {
         try (var f = new Fixture(kind, dual)) {
           String token = f.requestLink();
@@ -709,10 +720,17 @@ class ClaimedPasswordMaintenanceFlowIT {
       ownedTenant = "PLATFORM_ADMIN".equals(kind) ? 0 : 42;
       ownsConsultant = "CONSULTANT".equals(kind) || dual;
       if (!ownsConsultant) jdbc.update("delete from consultant where consultant_id=?", ACCOUNT);
-      else jdbc.update("update consultant set tenant_id=? where consultant_id=?", ownedTenant, ACCOUNT);
+      else
+        jdbc.update(
+            "update consultant set tenant_id=? where consultant_id=?", ownedTenant, ACCOUNT);
       if ("USER".equals(kind)) {
-        jdbc.update("insert into user values(?,?,?,'Original@Example.org',?,?,null,'ACTIVE')", ACCOUNT, ownedTenant, sqlUsername,
-            Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 12, 0)), Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 13, 0)));
+        jdbc.update(
+            "insert into user values(?,?,?,'Original@Example.org',?,?,null,'ACTIVE')",
+            ACCOUNT,
+            ownedTenant,
+            sqlUsername,
+            Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 12, 0)),
+            Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 13, 0)));
         var model = new de.caritas.cob.userservice.api.model.User();
         model.setUserId(ACCOUNT);
         model.setTenantId(ownedTenant);
@@ -720,13 +738,31 @@ class ClaimedPasswordMaintenanceFlowIT {
         model.setEmail("Original@Example.org");
         when(users.findUserByUsername(anyString())).thenReturn(Optional.of(model));
       } else if (kind.endsWith("ADMIN")) {
-        String type = switch (kind) { case "AGENCY_ADMIN" -> "AGENCY"; case "TENANT_ADMIN" -> "TENANT"; default -> "SUPER"; };
-        jdbc.update("insert into admin values(?,?,?,'Original@Example.org',?,?,?,false)", ACCOUNT, ownedTenant, sqlUsername,
-            Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 12, 0)), Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 13, 0)), type);
-        var admin = de.caritas.cob.userservice.api.model.Admin.builder().id(ACCOUNT).tenantId(ownedTenant)
-            .username(sqlUsername).email("Original@Example.org").type(de.caritas.cob.userservice.api.model.Admin.AdminType.valueOf(type)).build();
+        String type =
+            switch (kind) {
+              case "AGENCY_ADMIN" -> "AGENCY";
+              case "TENANT_ADMIN" -> "TENANT";
+              default -> "SUPER";
+            };
+        jdbc.update(
+            "insert into admin values(?,?,?,'Original@Example.org',?,?,?,false)",
+            ACCOUNT,
+            ownedTenant,
+            sqlUsername,
+            Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 12, 0)),
+            Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 13, 0)),
+            type);
+        var admin =
+            de.caritas.cob.userservice.api.model.Admin.builder()
+                .id(ACCOUNT)
+                .tenantId(ownedTenant)
+                .username(sqlUsername)
+                .email("Original@Example.org")
+                .type(de.caritas.cob.userservice.api.model.Admin.AdminType.valueOf(type))
+                .build();
         when(admins.findForSignIn(anyString())).thenReturn(Optional.of(admin));
-        ReflectionTestUtils.setField(service, "passwordResetAdminFrontendBaseUrl", "https://admin.example.org");
+        ReflectionTestUtils.setField(
+            service, "passwordResetAdminFrontendBaseUrl", "https://admin.example.org");
       }
     }
 
@@ -888,9 +924,12 @@ class ClaimedPasswordMaintenanceFlowIT {
     }
 
     String requestLink() {
-      service.requestPasswordReset("testuser", "en", ownedKind.endsWith("ADMIN")
-          ? de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication.ADMIN
-          : de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication.APP);
+      service.requestPasswordReset(
+          "testuser",
+          "en",
+          ownedKind.endsWith("ADMIN")
+              ? de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication.ADMIN
+              : de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication.APP);
       assertThat(resetUrl).isNotNull();
       return resetUrl.substring(resetUrl.indexOf("token=") + 6);
     }
@@ -931,7 +970,10 @@ class ClaimedPasswordMaintenanceFlowIT {
       else if ("AGENCY_ADMIN".equals(ownedKind)) {
         roles.add("restricted-agency-admin").add("user-admin");
         if (ownsConsultant) roles.add("consultant");
-      } else roles.add("consultant"); // Protected receiver-double roles are data; native separately proves its exact installed profile.
+      } else
+        roles.add(
+            "consultant"); // Protected receiver-double roles are data; native separately proves its
+      // exact installed profile.
       return codec.canonical(value);
     }
 

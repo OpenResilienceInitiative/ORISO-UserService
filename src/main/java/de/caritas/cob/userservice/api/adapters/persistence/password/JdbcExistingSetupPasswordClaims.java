@@ -124,7 +124,8 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
             require(binding.expiresAt().plusDays(7).isAfter(LocalDateTime.now(clock)));
             return java.util.Optional.of(saved.claim(binding));
           }
-          if (rows.isEmpty() || !Set.of("FROZEN", "UNKNOWN", "REFUSED").contains(rows.getFirst().status()))
+          if (rows.isEmpty()
+              || !Set.of("FROZEN", "UNKNOWN", "REFUSED").contains(rows.getFirst().status()))
             return java.util.Optional.empty();
           var saved = rows.getFirst();
           require(saved.bindingMatches(binding) && saved.requestDigest().equals(requestDigest));
@@ -199,15 +200,16 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
 
   @Override
   public void refuseWithinOwner(Claim claim) {
-    owned(() -> {
-      var exact = recoverWithinOwner(claim.binding(), claim.requestDigest());
-      require(exact.isPresent() && exact.get().equals(claim));
-      var saved = lockSaved(claim.binding().inviteId()).getFirst();
-      if ("REFUSED".equals(saved.status())) return null;
-      require(Set.of("FROZEN", "UNKNOWN").contains(saved.status()));
-      changePhase(claim, "REFUSED");
-      return null;
-    });
+    owned(
+        () -> {
+          var exact = recoverWithinOwner(claim.binding(), claim.requestDigest());
+          require(exact.isPresent() && exact.get().equals(claim));
+          var saved = lockSaved(claim.binding().inviteId()).getFirst();
+          if ("REFUSED".equals(saved.status())) return null;
+          require(Set.of("FROZEN", "UNKNOWN").contains(saved.status()));
+          changePhase(claim, "REFUSED");
+          return null;
+        });
   }
 
   @Override

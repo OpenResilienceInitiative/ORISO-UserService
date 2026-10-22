@@ -60,43 +60,71 @@ public final class SelfPasswordMaintenance {
   public sealed interface VerifiedTerminal
       permits VerifiedBadRequest, VerifiedForbidden, VerifiedConflict {
     UUID operationId();
+
     int status();
   }
 
-  public static final class VerifiedBadRequest extends BadRequestException implements VerifiedTerminal {
+  public static final class VerifiedBadRequest extends BadRequestException
+      implements VerifiedTerminal {
     private final UUID operationId;
+
     private VerifiedBadRequest(UUID operationId) {
       super("Password change rejected");
       this.operationId = operationId;
     }
-    public UUID operationId() { return operationId; }
-    public int status() { return 400; }
+
+    public UUID operationId() {
+      return operationId;
+    }
+
+    public int status() {
+      return 400;
+    }
   }
 
-  public static final class VerifiedForbidden extends ForbiddenException implements VerifiedTerminal {
+  public static final class VerifiedForbidden extends ForbiddenException
+      implements VerifiedTerminal {
     private final UUID operationId;
+
     private VerifiedForbidden(UUID operationId) {
       super("Password change refused");
       this.operationId = operationId;
     }
-    public UUID operationId() { return operationId; }
-    public int status() { return 403; }
+
+    public UUID operationId() {
+      return operationId;
+    }
+
+    public int status() {
+      return 403;
+    }
   }
 
   public static final class VerifiedConflict extends ConflictException implements VerifiedTerminal {
     private final UUID operationId;
+
     private VerifiedConflict(UUID operationId) {
       super("Password change refused");
       this.operationId = operationId;
     }
-    public UUID operationId() { return operationId; }
-    public int status() { return 409; }
+
+    public UUID operationId() {
+      return operationId;
+    }
+
+    public int status() {
+      return 409;
+    }
   }
 
   private RuntimeException verifiedTerminal(Intent row, TaskActorCredentials actor) {
     var metadata = codec.read(row.metadata, JsonNode.class);
-    var wrapper = codec.read(codec.utf8(codec.openSelfPasswordIntent(metadata, row.envelope)), JsonNode.class);
-    var proof = codec.verifyMaintenanceNoEffectReceipt(row.receipt, realmId, actor, wrapper.path("body"), "self-password");
+    var wrapper =
+        codec.read(
+            codec.utf8(codec.openSelfPasswordIntent(metadata, row.envelope)), JsonNode.class);
+    var proof =
+        codec.verifyMaintenanceNoEffectReceipt(
+            row.receipt, realmId, actor, wrapper.path("body"), "self-password");
     var operation = UUID.fromString(row.operation);
     return switch (proof.status()) {
       case 400 -> new VerifiedBadRequest(operation);
@@ -179,7 +207,8 @@ public final class SelfPasswordMaintenance {
         throw unavailable();
       }
       var terminal = transaction(() -> findChecked(self, frozen.operation, digest, actor));
-      if (terminal == null || !Set.of("REJECTED", "REFUSED").contains(terminal.status)) throw unavailable();
+      if (terminal == null || !Set.of("REJECTED", "REFUSED").contains(terminal.status))
+        throw unavailable();
       throw verifiedTerminal(terminal, actor);
     } catch (ConflictException | ForbiddenException refused) {
       throw refused;
@@ -369,8 +398,8 @@ public final class SelfPasswordMaintenance {
         || !codec.canonical(target(self, row.operation)).equals(row.target))
       throw new ConflictException("Password intent does not match its original request");
     if (row.expires <= 0
-        || !Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED", "REJECTED", "REFUSED").contains(row.status))
-      throw unavailable();
+        || !Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED", "REJECTED", "REFUSED")
+            .contains(row.status)) throw unavailable();
     if ("PREPARED".equals(row.status)
         && (row.metadata != null || row.envelope != null || row.receipt != null))
       throw unavailable();
@@ -390,7 +419,8 @@ public final class SelfPasswordMaintenance {
               codec.verifyMaintenanceNoEffectReceipt(
                   row.receipt, realmId, actor, wrapper.path("body"), "self-password");
           if (("REJECTED".equals(row.status) && proof.status() != 400)
-              || ("REFUSED".equals(row.status) && !Set.of(403, 409).contains(proof.status()))) throw unavailable();
+              || ("REFUSED".equals(row.status) && !Set.of(403, 409).contains(proof.status())))
+            throw unavailable();
         }
       } catch (IllegalArgumentException invalidPrivateIntent) {
         throw unavailable();
@@ -562,11 +592,14 @@ public final class SelfPasswordMaintenance {
           || reply.getBody().length() > 32768) throw unavailable();
       return reply.getBody();
     } catch (HttpStatusCodeException refused) {
-      if ("self-password".equals(command) && Set.of(400, 403, 409).contains(refused.getStatusCode().value())) {
+      if ("self-password".equals(command)
+          && Set.of(400, 403, 409).contains(refused.getStatusCode().value())) {
         String reply = refused.getResponseBodyAsString();
         if (reply == null || reply.length() > 32768) throw unavailable();
         var outer = codec.read(reply, JsonNode.class);
-        if (!outer.path("status").isIntegralNumber() || outer.path("status").intValue() != refused.getStatusCode().value()) throw unavailable();
+        if (!outer.path("status").isIntegralNumber()
+            || outer.path("status").intValue() != refused.getStatusCode().value())
+          throw unavailable();
         throw new DefiniteRejection(reply);
       }
       throw unavailable();

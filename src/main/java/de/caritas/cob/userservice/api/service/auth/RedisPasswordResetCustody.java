@@ -176,7 +176,8 @@ final class RedisPasswordResetCustody {
         || !actual.claimId().equals(claim.claimId())
         || actual.version() != claim.version()
         || !actual.requestDigest().equals(claim.requestDigest())
-        || !Set.of("FROZEN", "ACKNOWLEDGED", "REJECTED", "REFUSED").contains(actual.status())) throw invalid();
+        || !Set.of("FROZEN", "ACKNOWLEDGED", "REJECTED", "REFUSED").contains(actual.status()))
+      throw invalid();
   }
 
   void requireFresh(PasswordResetClaim claim) {
@@ -302,7 +303,8 @@ final class RedisPasswordResetCustody {
     long expiry = positive(value, "expires"), until = positive(value, "recoverUntil");
     if (until != expiry + RECOVERY_RETENTION.toMillis()) throw invalid();
     if (binding(text(value, "binding")).expiresAt().toEpochMilli() != expiry) throw invalid();
-    if (!Set.of("ISSUED", "FROZEN", "REJECTED", "ACKNOWLEDGED", "REFUSED").contains(text(value, "status"))
+    if (!Set.of("ISSUED", "FROZEN", "REJECTED", "ACKNOWLEDGED", "REFUSED")
+            .contains(text(value, "status"))
         || !Set.of("PENDING", "ATTEMPTED", "SENT", "UNKNOWN").contains(text(value, "delivery")))
       throw invalid();
     return value;
