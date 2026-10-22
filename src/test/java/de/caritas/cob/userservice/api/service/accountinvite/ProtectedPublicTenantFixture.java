@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiCont
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantCreationClient;
+import de.caritas.cob.userservice.api.service.accountpolicy.TaskContextProof;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -119,8 +120,8 @@ class ProtectedPublicTenantFixture {
                 receipt.put("bootstrapAttemptId", UUID.randomUUID().toString());
                 receipt.put("tenantId", 17);
                 receipt.put(
-                    "requestDigest", json.digest("tenant-held-bootstrap-request/v1", command));
-                receipt.put("resultDigest", json.digest("tenant-held-bootstrap-result/v1", result));
+                    "requestDigest", tenantDigest("tenant-held-bootstrap-request/v1", command));
+                receipt.put("resultDigest", tenantDigest("tenant-held-bootstrap-result/v1", result));
                 receipt.put("state", "COMPLETE");
                 String payload =
                     Base64.getUrlEncoder()
@@ -154,5 +155,21 @@ class ProtectedPublicTenantFixture {
               });
     }
     return http;
+  }
+
+  // The receiving Tenant contract omits null object fields; lifecycle JSON preserves them.
+  private static String tenantDigest(String domain, JsonNode value) {
+    try {
+      var mac = Mac.getInstance("HmacSHA256");
+      mac.init(
+          new SecretKeySpec(
+              Base64.getDecoder()
+                  .decode(ProtectedAdminPublicNativePairProof.required("PAIR_CONTEXT_KEY_B64")),
+              "HmacSHA256"));
+      mac.update((domain + "\n").getBytes(StandardCharsets.UTF_8));
+      return HexFormat.of().formatHex(mac.doFinal(TaskContextProof.canonical(value)));
+    } catch (Exception unavailable) {
+      throw new IllegalStateException("Synthetic Tenant digest unavailable");
+    }
   }
 }

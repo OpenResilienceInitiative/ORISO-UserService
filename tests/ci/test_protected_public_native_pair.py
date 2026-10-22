@@ -29,6 +29,13 @@ class ProtectedPairEvidence(unittest.TestCase):
             with self.assertRaises(ValueError):
                 pair.checked_email_login_observation(unsafe)
 
+    def test_registration_status_observation_cannot_export_messages(self):
+        self.assertEqual(502, pair.registration_status(b"PROTECTED_PUBLIC_REGISTRATION_STATUS=502\nBearer secret"))
+        self.assertIsNone(pair.registration_status(b"unrelated private message"))
+        for raw in [b"PROTECTED_PUBLIC_REGISTRATION_STATUS=502 secret", b"PROTECTED_PUBLIC_REGISTRATION_STATUS=true", b"PROTECTED_PUBLIC_REGISTRATION_STATUS=502\nPROTECTED_PUBLIC_REGISTRATION_STATUS=200"]:
+            with self.assertRaises(ValueError):
+                pair.registration_status(raw)
+
     def test_failure_observation_exports_only_closed_source_locations(self):
         raw = b"Bearer secret; SQL private-row; JdbcProtectedAccountActivation.java:120 ProtectedPublicTenantFixture.java:81 unknown.java:456"
         observed = pair.closed_failure_frames(raw, b"ProtectedAdminOnboardingService.java:42")

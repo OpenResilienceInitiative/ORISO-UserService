@@ -368,14 +368,28 @@ class ProtectedAdminPublicNativePairProof {
 
     String key = UUID.randomUUID().toString();
     String registrationPath = "/service/users/account-invites/" + token + "/onboarding/register";
-    var reply =
+    var registration =
         mvc.perform(
                 post(registrationPath)
                     .header("Idempotency-Key", key)
                     .contentType("application/json")
                     .content(raw))
-            .andReturn()
-            .getResponse();
+            .andReturn();
+    var reply = registration.getResponse();
+    System.out.println("PROTECTED_PUBLIC_REGISTRATION_STATUS=" + reply.getStatus());
+    if (registration.getResolvedException() != null)
+      Arrays.stream(registration.getResolvedException().getStackTrace())
+          .filter(
+              frame ->
+                  frame.getFileName() != null
+                      && Set.of(
+                              "ProtectedAdminOnboardingService.java",
+                              "ReservedTenantBootstrap.java",
+                              "TenantCreationClient.java",
+                              "JdbcProtectedAccountActivation.java")
+                          .contains(frame.getFileName()))
+          .limit(8)
+          .forEach(frame -> System.out.println(frame.getFileName() + ":" + frame.getLineNumber()));
     assertEquals(200, reply.getStatus());
     var registered = json.read(reply.getContentAsString(), JsonNode.class);
     assertEquals("PENDING_2FA_ACTIVATION", registered.path("phase").asText());

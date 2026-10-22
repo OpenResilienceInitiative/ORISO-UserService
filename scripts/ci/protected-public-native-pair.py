@@ -82,6 +82,15 @@ def sanitize(reports, output, expected_case=CASE):
     ET.ElementTree(clean).write(output, encoding="utf-8", xml_declaration=True)
     return {**totals, "exact_method_inventory": valid, "failure_locations": sorted(set(locations)), "closed_source_failure_frames": sorted(set(frames))[:50], "closed_spring_failure_frames": list(dict.fromkeys(spring_frames))[:8], "failure_types": sorted(set(types))[:10], "accepted": valid and totals == dict(tests=1, failures=0, errors=0, skipped=0)}
 
+def registration_status(stdout):
+    lines = [line for line in stdout.decode("utf-8", errors="replace").splitlines()
+             if line.startswith("PROTECTED_PUBLIC_REGISTRATION_STATUS=")]
+    if not lines:
+        return None
+    if len(lines) != 1 or not re.fullmatch(r"PROTECTED_PUBLIC_REGISTRATION_STATUS=[1-5][0-9]{2}", lines[0]):
+        raise ValueError("Invalid closed registration status observation")
+    return int(lines[0].split("=", 1)[1])
+
 def checked_login_observation(value):
     categories = {"ACCEPTED", "ACCOUNT_NOT_FULLY_SET_UP", "INVALID_USER_CREDENTIALS", "MISSING_TOTP", "UNRECOGNIZED"}
     if (not isinstance(value, dict) or set(value) != {"status", "category", "sameTotpAsEnrollment"}
@@ -259,6 +268,7 @@ def native(kc, report):
         result = sanitize(reports, report.with_suffix(".xml"), case)
         receipt.update(result)
         receipt["closed_source_failure_frames"] = sorted(set(result["closed_source_failure_frames"] + closed_failure_frames(child.stdout, child.stderr)))[:50]
+        receipt["registration_status"] = registration_status(child.stdout)
         receipt["executed"] = result["tests"]
         receipt["java_exit"] = child.returncode
         receipt["accepted"] = result["accepted"] and child.returncode == 0
