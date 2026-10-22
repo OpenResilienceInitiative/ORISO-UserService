@@ -401,6 +401,14 @@ class HumanAdminAccountMaintenanceTest {
 
   @Test
   void actualGenericStatusAdapterRequiresThePrivateCurrentHumanSqlReadBeforeNative() {
+    human.setRoles(Set.of(UserRole.TENANT_ADMIN.getValue()));
+    var actualScope = actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
+    assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
+    assertEquals(new AdminScope.Tenant(7L), actualScope.current());
+    assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.admin(ACCOUNT)));
+    service = new HumanAdminAccountMaintenance(mode, human, actualScope, jdbc, transactions,
+        request, new KeycloakHumanAdminMaintenance(http, actors, broker, codec,
+            "https://internal-auth.example.test", "test", "realm-1"), CLOCK, ISSUER);
     var legacy = mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient.class);
     var users = mock(org.keycloak.admin.client.resource.UsersResource.class);
     var user = mock(org.keycloak.admin.client.resource.UserResource.class);
