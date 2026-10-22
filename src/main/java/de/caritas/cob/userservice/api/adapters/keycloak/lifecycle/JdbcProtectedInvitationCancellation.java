@@ -144,6 +144,11 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
         });
   }
 
+  /** Authenticated saved fence data only; cleanup-required acknowledgements cannot release. */
+  public VerifiedRestriction verifiedRestriction(long inviteId) {
+    throw unavailable();
+  }
+
   private Row row(long inviteId, FrozenApproval proposal) {
     var found =
         jdbc.query(

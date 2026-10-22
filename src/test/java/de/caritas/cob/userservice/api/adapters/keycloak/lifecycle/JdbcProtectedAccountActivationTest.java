@@ -356,8 +356,9 @@ class JdbcProtectedAccountActivationTest {
     jdbc.update("DELETE FROM protected_invitation_acceptance");
     jdbc.update("DELETE FROM protected_invitation_authorization");
     jdbc.update(
-        "UPDATE account_invite SET tenant_id_reservation_token=?",
-        vector.path("syntheticReservationToken").asText());
+        "UPDATE account_invite SET tenant_id_reservation_token=?,agency_id=?",
+        vector.path("syntheticReservationToken").asText(),
+        vector.path("request").path("scope").path("agencyBinding").path("agencyId").longValue());
     var frozen =
         approvals.freeze(
             UUID.fromString(vector.path("approvalId").asText()),
