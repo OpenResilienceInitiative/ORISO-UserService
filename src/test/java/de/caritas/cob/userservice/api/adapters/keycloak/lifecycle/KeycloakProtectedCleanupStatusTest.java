@@ -36,6 +36,7 @@ class KeycloakProtectedCleanupStatusTest {
   private final JsonNode vector = resource("protected-cleanup-status-v1.json");
   private final JsonNode recoveryVector = resource("protected-account-recovery-v1.json");
   private final Clock clock = Clock.fixed(Instant.parse("2029-01-01T00:00:00Z"), ZoneOffset.UTC);
+  private final Clock readClock = Clock.fixed(Instant.parse("2031-01-01T00:00:00Z"), ZoneOffset.UTC);
   private final ProtectedInvitationCodec approvals =
       new ProtectedInvitationCodec(
           key, clock, account.path("realmName").asText(), account.path("realmId").asText());
@@ -52,7 +53,7 @@ class KeycloakProtectedCleanupStatusTest {
           approvals,
           json,
           key,
-          clock,
+          readClock,
           account.path("realmId").asText(),
           account.path("realmIssuer").asText());
   private final ProtectedCleanupStatusCodec cleanup =
@@ -219,8 +220,8 @@ class KeycloakProtectedCleanupStatusTest {
     assertEquals(
         UUID.fromString(value.path("jti").asText()).toString(), value.path("jti").asText());
     assertTrue(value.path("nonce").asText().matches("[0-9a-f]{32}"));
-    assertEquals(clock.instant().getEpochSecond(), value.path("iat").longValue());
-    assertEquals(clock.instant().getEpochSecond() + 60, value.path("exp").longValue());
+    assertEquals(readClock.instant().getEpochSecond(), value.path("iat").longValue());
+    assertEquals(readClock.instant().getEpochSecond() + 60, value.path("exp").longValue());
     try {
       Mac mac = Mac.getInstance("HmacSHA256");
       mac.init(new SecretKeySpec(key, "HmacSHA256"));
