@@ -308,31 +308,46 @@ class JdbcProtectedInvitationCancellationTest {
     assertEquals(1, intents());
     assertEquals("ACKNOWLEDGED", state());
     pendingFixture();
-    jdbc.update("INSERT INTO account_invite(id,target_role,purpose,status,expires_at,update_date) VALUES(74,'COUNSELLOR','INVITE','EXPIRED',?,?)",Timestamp.from(before.instant()),Timestamp.from(before.instant()));
-    jdbc.update("INSERT INTO account_invite(id,target_role,purpose,status,expires_at,update_date) VALUES(75,'PLATFORM_ADMIN','INVITE','EXPIRED',?,?)",Timestamp.from(before.instant()),Timestamp.from(before.instant()));
-    jdbc.update("INSERT INTO account_invite(id,target_role,purpose,status,expires_at,update_date) VALUES(76,'TENANT_ADMIN','INVITE','ACCEPTED',?,?)",Timestamp.from(before.instant()),Timestamp.from(before.instant()));
-    assertEquals(java.util.List.of(75L),service().pendingInviteIds(100));
-    assertEquals(0,releases.get());
+    jdbc.update(
+        "INSERT INTO account_invite(id,target_role,purpose,status,expires_at,update_date) VALUES(74,'COUNSELLOR','INVITE','EXPIRED',?,?)",
+        Timestamp.from(before.instant()),
+        Timestamp.from(before.instant()));
+    jdbc.update(
+        "INSERT INTO account_invite(id,target_role,purpose,status,expires_at,update_date) VALUES(75,'PLATFORM_ADMIN','INVITE','EXPIRED',?,?)",
+        Timestamp.from(before.instant()),
+        Timestamp.from(before.instant()));
+    jdbc.update(
+        "INSERT INTO account_invite(id,target_role,purpose,status,expires_at,update_date) VALUES(76,'TENANT_ADMIN','INVITE','ACCEPTED',?,?)",
+        Timestamp.from(before.instant()),
+        Timestamp.from(before.instant()));
+    assertEquals(java.util.List.of(75L), service().pendingInviteIds(100));
+    assertEquals(0, releases.get());
     verify(receiver).cancel(any());
   }
 
   @Test
   void unknownRestrictionsMoveBehindOlderMissingIntentsAndTheRecoveryPageIsBounded() {
     when(receiver.cancel(any())).thenThrow(new KeycloakProtectedInvitations.RemoteFailure(0));
-    assertThrows(KeycloakProtectedInvitations.RemoteFailure.class,()->service().cancel(73,Reason.REVOKED,this::invalidate));
-    assertEquals("PENDING",state());
+    assertThrows(
+        KeycloakProtectedInvitations.RemoteFailure.class,
+        () -> service().cancel(73, Reason.REVOKED, this::invalidate));
+    assertEquals("PENDING", state());
     pendingFixture();
-    jdbc.update("INSERT INTO account_invite(id,target_role,purpose,status,expires_at,update_date) VALUES(75,'TENANT_ADMIN','INVITE','SUPERSEDED',?,?)",Timestamp.from(before.instant()),Timestamp.from(before.instant()));
-    assertEquals(java.util.List.of(75L,73L),service().pendingInviteIds(100));
-    assertEquals(java.util.List.of(75L),service().pendingInviteIds(1));
-    assertThrows(IllegalArgumentException.class,()->service().pendingInviteIds(0));
-    assertThrows(IllegalArgumentException.class,()->service().pendingInviteIds(101));
-    assertEquals(0,releases.get());
+    jdbc.update(
+        "INSERT INTO account_invite(id,target_role,purpose,status,expires_at,update_date) VALUES(75,'TENANT_ADMIN','INVITE','SUPERSEDED',?,?)",
+        Timestamp.from(before.instant()),
+        Timestamp.from(before.instant()));
+    assertEquals(java.util.List.of(75L, 73L), service().pendingInviteIds(100));
+    assertEquals(java.util.List.of(75L), service().pendingInviteIds(1));
+    assertThrows(IllegalArgumentException.class, () -> service().pendingInviteIds(0));
+    assertThrows(IllegalArgumentException.class, () -> service().pendingInviteIds(101));
+    assertEquals(0, releases.get());
   }
 
-  private void pendingFixture(){
+  private void pendingFixture() {
     jdbc.execute("ALTER TABLE account_invite ADD update_date TIMESTAMP NULL");
-    jdbc.update("UPDATE account_invite SET update_date=? WHERE id=73",Timestamp.from(before.instant()));
+    jdbc.update(
+        "UPDATE account_invite SET update_date=? WHERE id=73", Timestamp.from(before.instant()));
   }
 
   private JdbcProtectedInvitationCancellation service() {

@@ -5,13 +5,13 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
-import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationJournal;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationCancellation;
-import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedRestrictions;
-import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationRestrictionCodec;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationJournal;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedInvitations;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedRestrictions;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationCodec;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationMailOutbox;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationRestrictionCodec;
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -160,33 +160,56 @@ public class ProtectedInvitationIssuanceConfiguration {
 
   @Bean
   ProtectedInvitationRestrictionCodec protectedInvitationRestrictionCodec(
-      ProtectedInvitationCodec codec,AccountLifecycleCodec json,
-      ProtectedInvitationProfiles profiles,KeycloakConfig keycloak){
-    String issuer=keycloak.getAuthServerUrl().replaceAll("/+$","")+"/realms/"+keycloak.getRealm();
-    return new ProtectedInvitationRestrictionCodec(codec,json,key(),Clock.systemUTC(),profiles.realmId(),issuer);
+      ProtectedInvitationCodec codec,
+      AccountLifecycleCodec json,
+      ProtectedInvitationProfiles profiles,
+      KeycloakConfig keycloak) {
+    String issuer =
+        keycloak.getAuthServerUrl().replaceAll("/+$", "") + "/realms/" + keycloak.getRealm();
+    return new ProtectedInvitationRestrictionCodec(
+        codec, json, key(), Clock.systemUTC(), profiles.realmId(), issuer);
   }
 
   @Bean
   KeycloakProtectedRestrictions keycloakProtectedRestrictions(
-      @Qualifier("keycloakRestTemplate") RestTemplate http,TaskActorConfiguration actors,
-      TaskActorTokenBroker broker,ProtectedInvitationCodec codec,
-      ProtectedInvitationRestrictionCodec restrictions,KeycloakConfig keycloak){
-    String server=environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL",keycloak.getAuthServerUrl());
-    return new KeycloakProtectedRestrictions(http,actors,broker,codec,restrictions,server,keycloak.getRealm());
+      @Qualifier("keycloakRestTemplate") RestTemplate http,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      ProtectedInvitationCodec codec,
+      ProtectedInvitationRestrictionCodec restrictions,
+      KeycloakConfig keycloak) {
+    String server =
+        environment.getProperty(
+            "ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", keycloak.getAuthServerUrl());
+    return new KeycloakProtectedRestrictions(
+        http, actors, broker, codec, restrictions, server, keycloak.getRealm());
   }
 
   @Bean
   JdbcProtectedInvitationCancellation protectedInvitationCancellation(
-      JdbcTemplate jdbc,PlatformTransactionManager manager,JdbcProtectedInvitationJournal journal,
-      ProtectedInvitationRestrictionCodec restrictions,AccountLifecycleCodec json,
-      KeycloakProtectedRestrictions receiver,ProtectedInvitationIssuance issuance,
-      AccountInviteRepository invites,EntityManager entityManager){
-    return new JdbcProtectedInvitationCancellation(jdbc,manager,journal,restrictions,json,receiver,
-        id->{
-          var invite=invites.findById(id).orElseThrow(ProtectedInvitationIssuanceConfiguration::invalid);
+      JdbcTemplate jdbc,
+      PlatformTransactionManager manager,
+      JdbcProtectedInvitationJournal journal,
+      ProtectedInvitationRestrictionCodec restrictions,
+      AccountLifecycleCodec json,
+      KeycloakProtectedRestrictions receiver,
+      ProtectedInvitationIssuance issuance,
+      AccountInviteRepository invites,
+      EntityManager entityManager) {
+    return new JdbcProtectedInvitationCancellation(
+        jdbc,
+        manager,
+        journal,
+        restrictions,
+        json,
+        receiver,
+        id -> {
+          var invite =
+              invites.findById(id).orElseThrow(ProtectedInvitationIssuanceConfiguration::invalid);
           entityManager.refresh(invite);
           return issuance.restrictionProposal(invite);
-        },Clock.systemUTC());
+        },
+        Clock.systemUTC());
   }
 
   private byte[] key() {

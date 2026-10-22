@@ -155,54 +155,71 @@ public final class JdbcProtectedInvitationJournal {
   }
 
   RestrictionProposal requestRestriction(long inviteId, Supplier<FrozenApproval> missingProposal) {
-    if(!TransactionSynchronizationManager.isActualTransactionActive())throw unavailable();
-    Invite invite=lockInvite(inviteId);
-    var found=rows(inviteId);
-    if(found.size()>1)throw unavailable();
-    FrozenApproval proposal=found.isEmpty()?missingProposal.get():found.get(0).proposal();
-    requireCurrent(inviteId,invite,proposal,false);
-    String known=null;
-    if(found.isEmpty()){
-      JsonNode scope=scope(proposal);Timestamp now=Timestamp.from(clock.instant());
-      jdbc.update("INSERT INTO protected_invitation_authorization"
-          +" (approval_id,invite_id,workflow_id,authorization_revision,request_json,issuer_realm,"
-          +"issuer_subject,request_digest,state,response_json,created_at,updated_at)"
-          +" VALUES (?,?,?,?,?,?,?,?, 'CANCEL_REQUESTED',NULL,?,?)",
-          proposal.approvalId().toString(),inviteId,scope.path("workflowId").asText(),
-          scope.path("authorizationRevision").longValue(),proposal.requestJson(),
-          proposal.issuerRealm(),proposal.issuerSubject(),proposal.requestDigest(),now,now);
-    }else{
-      Row row=found.get(0);
-      if(!Set.of("APPROVAL_REQUESTED","READY","CANCEL_REQUESTED").contains(row.state()))throw unavailable();
-      if(row.response()!=null){
-        JsonNode response=json.read(row.response(),JsonNode.class);
-        if(!response.path("scopeDigest").isTextual())throw unavailable();
-        known=response.path("scopeDigest").textValue();
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+    Invite invite = lockInvite(inviteId);
+    var found = rows(inviteId);
+    if (found.size() > 1) throw unavailable();
+    FrozenApproval proposal = found.isEmpty() ? missingProposal.get() : found.get(0).proposal();
+    requireCurrent(inviteId, invite, proposal, false);
+    String known = null;
+    if (found.isEmpty()) {
+      JsonNode scope = scope(proposal);
+      Timestamp now = Timestamp.from(clock.instant());
+      jdbc.update(
+          "INSERT INTO protected_invitation_authorization"
+              + " (approval_id,invite_id,workflow_id,authorization_revision,request_json,issuer_realm,"
+              + "issuer_subject,request_digest,state,response_json,created_at,updated_at)"
+              + " VALUES (?,?,?,?,?,?,?,?, 'CANCEL_REQUESTED',NULL,?,?)",
+          proposal.approvalId().toString(),
+          inviteId,
+          scope.path("workflowId").asText(),
+          scope.path("authorizationRevision").longValue(),
+          proposal.requestJson(),
+          proposal.issuerRealm(),
+          proposal.issuerSubject(),
+          proposal.requestDigest(),
+          now,
+          now);
+    } else {
+      Row row = found.get(0);
+      if (!Set.of("APPROVAL_REQUESTED", "READY", "CANCEL_REQUESTED").contains(row.state()))
+        throw unavailable();
+      if (row.response() != null) {
+        JsonNode response = json.read(row.response(), JsonNode.class);
+        if (!response.path("scopeDigest").isTextual()) throw unavailable();
+        known = response.path("scopeDigest").textValue();
       }
-      jdbc.update("UPDATE protected_invitation_authorization SET state='CANCEL_REQUESTED',updated_at=? WHERE approval_id=?",
-          Timestamp.from(clock.instant()),proposal.approvalId().toString());
+      jdbc.update(
+          "UPDATE protected_invitation_authorization SET state='CANCEL_REQUESTED',updated_at=? WHERE approval_id=?",
+          Timestamp.from(clock.instant()),
+          proposal.approvalId().toString());
     }
-    return new RestrictionProposal(proposal,known);
+    return new RestrictionProposal(proposal, known);
   }
 
-  record RestrictionProposal(FrozenApproval approval,String knownScopeDigest){
-    @Override public String toString(){return "RestrictionProposal[redacted]";}
+  record RestrictionProposal(FrozenApproval approval, String knownScopeDigest) {
+    @Override
+    public String toString() {
+      return "RestrictionProposal[redacted]";
+    }
   }
 
   FrozenApproval lockedRestrictionProposal(long inviteId) {
-    if(!TransactionSynchronizationManager.isActualTransactionActive())throw unavailable();
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     lockInvite(inviteId);
-    var found=rows(inviteId);
-    if(found.size()>1)throw unavailable();
-    return found.isEmpty()?null:found.get(0).proposal();
+    var found = rows(inviteId);
+    if (found.size() > 1) throw unavailable();
+    return found.isEmpty() ? null : found.get(0).proposal();
   }
 
-  void requireRestrictedInvite(long inviteId,FrozenApproval proposal,boolean acknowledged) {
-    Invite invite=lockInvite(inviteId);
-    Row saved=row(inviteId);
-    if(!"CANCEL_REQUESTED".equals(saved.state()) || !saved.proposal().equals(proposal)
-        || !Set.of("REVOKED","EXPIRED","SUPERSEDED").contains(invite.status()))throw unavailable();
-    requireCurrent(inviteId,invite,proposal,false,acknowledged);
+  void requireRestrictedInvite(long inviteId, FrozenApproval proposal, boolean acknowledged) {
+    Invite invite = lockInvite(inviteId);
+    Row saved = row(inviteId);
+    if (!"CANCEL_REQUESTED".equals(saved.state())
+        || !saved.proposal().equals(proposal)
+        || !Set.of("REVOKED", "EXPIRED", "SUPERSEDED").contains(invite.status()))
+      throw unavailable();
+    requireCurrent(inviteId, invite, proposal, false, acknowledged);
   }
 
   private Invite lockInvite(long id) {
@@ -258,19 +275,23 @@ public final class JdbcProtectedInvitationJournal {
   }
 
   private void requireCurrent(long inviteId, Invite invite, FrozenApproval proposal) {
-    requireCurrent(inviteId,invite,proposal,true);
+    requireCurrent(inviteId, invite, proposal, true);
   }
 
-  private void requireCurrent(long inviteId, Invite invite, FrozenApproval proposal,boolean live) {
-    requireCurrent(inviteId,invite,proposal,live,false);
+  private void requireCurrent(long inviteId, Invite invite, FrozenApproval proposal, boolean live) {
+    requireCurrent(inviteId, invite, proposal, live, false);
   }
 
-  private void requireCurrent(long inviteId, Invite invite, FrozenApproval proposal,boolean live,boolean released) {
+  private void requireCurrent(
+      long inviteId, Invite invite, FrozenApproval proposal, boolean live, boolean released) {
     JsonNode scope = scope(proposal);
     Instant deadline = Instant.parse(scope.path("validUntil").asText());
     if (!Long.toString(inviteId).equals(scope.path("inviteId").asText())
         || !"INVITE".equals(invite.purpose())
-        || !(live?Set.of("DRAFT", "EMAIL_SENT"):Set.of("DRAFT","EMAIL_SENT","EXPIRED","REVOKED","SUPERSEDED")).contains(invite.status())
+        || !(live
+                ? Set.of("DRAFT", "EMAIL_SENT")
+                : Set.of("DRAFT", "EMAIL_SENT", "EXPIRED", "REVOKED", "SUPERSEDED"))
+            .contains(invite.status())
         || !scope.path("protectedKind").asText().equals(invite.role())
         || invite.tenant() == null
         || scope.path("targetTenantIds").get(0).longValue() != invite.tenant()
@@ -285,8 +306,9 @@ public final class JdbcProtectedInvitationJournal {
             || agency.path("agencyId").longValue() != invite.agency()
             || agency.path("tenantId").longValue() != invite.tenant()) throw unavailable();
     if (invite.reservation() == null) {
-      if(released && "RESERVED_NEW".equals(scope.path("tenantMode").asText())
-          && scope.path("reservationBinding").isObject())return;
+      if (released
+          && "RESERVED_NEW".equals(scope.path("tenantMode").asText())
+          && scope.path("reservationBinding").isObject()) return;
       if (!"EXISTING".equals(scope.path("tenantMode").asText())
           || !scope.path("reservationBinding").isNull()) throw unavailable();
     } else {

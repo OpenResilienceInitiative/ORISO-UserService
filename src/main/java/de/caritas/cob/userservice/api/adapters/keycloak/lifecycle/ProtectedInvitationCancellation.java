@@ -1,7 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 
-import java.util.function.Supplier;
 import java.util.List;
+import java.util.function.Supplier;
 
 /** Native restriction must be acknowledged before protected reservations can be reused. */
 public interface ProtectedInvitationCancellation {

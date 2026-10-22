@@ -133,9 +133,14 @@ class ProtectedInvitationCancellationRoutingJpaIT extends ProtectedInvitationIss
     expired.setExpiresAt(LocalDateTime.now().minusDays(1));
     invites.saveAndFlush(expired);
     unknownCancellation(expired.getId(), Reason.ISSUANCE_ABORTED);
-    when(cancellation.pendingInviteIds(100)).thenAnswer(call -> invites.findById(expired.getId())
-        .filter(current -> current.getStatus() == AccountInviteStatus.EXPIRED)
-        .map(current -> List.of(current.getId())).orElse(List.of()));
+    when(cancellation.pendingInviteIds(100))
+        .thenAnswer(
+            call ->
+                invites
+                    .findById(expired.getId())
+                    .filter(current -> current.getStatus() == AccountInviteStatus.EXPIRED)
+                    .map(current -> List.of(current.getId()))
+                    .orElse(List.of()));
 
     assertThatThrownBy(service::expireElapsedInvites)
         .isInstanceOf(KeycloakProtectedInvitations.RemoteFailure.class);
