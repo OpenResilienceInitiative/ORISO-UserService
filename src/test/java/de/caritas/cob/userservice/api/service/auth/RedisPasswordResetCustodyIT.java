@@ -15,28 +15,45 @@ import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers
 class RedisPasswordResetCustodyIT {
-  @Container static final GenericContainer<?> REDIS =
+  @Container
+  static final GenericContainer<?> REDIS =
       new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
+
   private LettuceConnectionFactory connection;
   private StringRedisTemplate redis;
   private String prefix;
   private RedisOneTimeTokenStore first, second;
   private final String digest = "a".repeat(64);
 
-  @BeforeEach void before() {
+  @BeforeEach
+  void before() {
     connection = new LettuceConnectionFactory(REDIS.getHost(), REDIS.getMappedPort(6379));
     connection.afterPropertiesSet();
-    redis = new StringRedisTemplate(connection); redis.afterPropertiesSet();
+    redis = new StringRedisTemplate(connection);
+    redis.afterPropertiesSet();
     prefix = "test:reset:" + UUID.randomUUID() + ":";
     first = new RedisOneTimeTokenStore(redis, prefix);
     second = new RedisOneTimeTokenStore(redis, prefix);
   }
-  @AfterEach void after() { redis.delete(redis.keys(prefix + "*")); connection.destroy(); }
+
+  @AfterEach
+  void after() {
+    redis.delete(redis.keys(prefix + "*"));
+    connection.destroy();
+  }
+
   private PasswordResetBinding binding() {
-    return new PasswordResetBinding(UUID.randomUUID(), "00000000-0000-4000-8000-000000000001",
-        1L, "enc.original", "CONSULTANT", "2026-10-22T12:00:00", "b".repeat(64),
+    return new PasswordResetBinding(
+        UUID.randomUUID(),
+        "00000000-0000-4000-8000-000000000001",
+        1L,
+        "enc.original",
+        "CONSULTANT",
+        "2026-10-22T12:00:00",
+        "b".repeat(64),
         Instant.ofEpochMilli(Instant.now().plusSeconds(120).toEpochMilli()));
   }
+
   private PasswordResetBinding sent(String token) {
     var binding = binding();
     assertThatCode(() -> first.storePasswordReset(token, binding)).doesNotThrowAnyException();
@@ -44,7 +61,9 @@ class RedisPasswordResetCustodyIT {
     first.passwordResetDelivery(binding, "SENT");
     return binding;
   }
-  @Test void originalIssuanceAndStableClaimSurviveReplicaReplacement() {
+
+  @Test
+  void originalIssuanceAndStableClaimSurviveReplicaReplacement() {
     var binding = sent("token");
     var claim = second.claimPasswordReset("token", digest).orElseThrow();
     assertThat(claim.binding()).isEqualTo(binding);
@@ -54,39 +73,73 @@ class RedisPasswordResetCustodyIT {
     first.requirePasswordResetClaim(claim);
     assertThat(claim.toString()).doesNotContain(binding.subjectId(), digest);
   }
-  @Test void unsentIssuanceCannotClaimButLostSmtpResponseDoesNotStrandReceivedToken() {
+
+  @Test
+  void unsentIssuanceCannotClaimButLostSmtpResponseDoesNotStrandReceivedToken() {
     var binding = binding();
     assertThatCode(() -> first.storePasswordReset("token", binding)).doesNotThrowAnyException();
     assertThat(first.claimPasswordReset("token", digest)).isEmpty();
     first.passwordResetDelivery(binding, "ATTEMPTED");
     first.passwordResetDelivery(binding, "UNKNOWN");
-    assertThat(second.claimPasswordReset("token", digest).orElseThrow().delivery()).isEqualTo("UNKNOWN");
+    assertThat(second.claimPasswordReset("token", digest).orElseThrow().delivery())
+        .isEqualTo("UNKNOWN");
   }
-  @Test void crashAfterMailBeforeSuccessMarkKeepsOnlyExactAttemptedOriginalMailbox() {
+
+  @Test
+  void crashAfterMailBeforeSuccessMarkKeepsOnlyExactAttemptedOriginalMailbox() {
     var binding = binding();
     assertThatCode(() -> first.storePasswordReset("token", binding)).doesNotThrowAnyException();
     first.passwordResetDelivery(binding, "ATTEMPTED");
     var claimed = second.claimPasswordReset("token", digest).orElseThrow();
     assertThat(claimed.delivery()).isEqualTo("ATTEMPTED");
     assertThat(claimed.binding().recipientDigest()).isEqualTo(binding.recipientDigest());
-    assertThatThrownBy(() -> second.passwordResetDelivery(new PasswordResetBinding(
-        binding.workflowId(), binding.subjectId(), binding.tenantId(), binding.username(),
-        binding.accountKind(), binding.accountVersion(), "c".repeat(64), binding.expiresAt()), "SENT"))
+    assertThatThrownBy(
+            () ->
+                second.passwordResetDelivery(
+                    new PasswordResetBinding(
+                        binding.workflowId(),
+                        binding.subjectId(),
+                        binding.tenantId(),
+                        binding.username(),
+                        binding.accountKind(),
+                        binding.accountVersion(),
+                        "c".repeat(64),
+                        binding.expiresAt()),
+                    "SENT"))
         .isInstanceOf(IllegalStateException.class);
   }
-  @Test void concurrentChangedPasswordsCannotBothOwnTheSameClaim() throws Exception {
+
+  @Test
+  void concurrentChangedPasswordsCannotBothOwnTheSameClaim() throws Exception {
     sent("token");
     var pool = Executors.newFixedThreadPool(2);
     try {
       var start = new CountDownLatch(1);
-      var one = pool.submit(() -> { start.await(); return first.claimPasswordReset("token", digest); });
-      var two = pool.submit(() -> { start.await(); return second.claimPasswordReset("token", "c".repeat(64)); });
+      var one =
+          pool.submit(
+              () -> {
+                start.await();
+                return first.claimPasswordReset("token", digest);
+              });
+      var two =
+          pool.submit(
+              () -> {
+                start.await();
+                return second.claimPasswordReset("token", "c".repeat(64));
+              });
       start.countDown();
-      assertThat(List.of(one.get(10, TimeUnit.SECONDS), two.get(10, TimeUnit.SECONDS)).stream()
-          .filter(Optional::isPresent).count()).isEqualTo(1);
-    } finally { pool.shutdownNow(); }
+      assertThat(
+              List.of(one.get(10, TimeUnit.SECONDS), two.get(10, TimeUnit.SECONDS)).stream()
+                  .filter(Optional::isPresent)
+                  .count())
+          .isEqualTo(1);
+    } finally {
+      pool.shutdownNow();
+    }
   }
-  @Test void definiteRejectionAdvancesVersionWithoutExtendingOriginalExpiry() {
+
+  @Test
+  void definiteRejectionAdvancesVersionWithoutExtendingOriginalExpiry() {
     var binding = sent("token");
     var initial = first.claimPasswordReset("token", digest).orElseThrow();
     second.finishPasswordResetClaim(initial, false);
@@ -94,18 +147,24 @@ class RedisPasswordResetCustodyIT {
     assertThat(retry.claimId()).isEqualTo(initial.claimId());
     assertThat(retry.version()).isEqualTo(2);
     assertThat(retry.binding()).isEqualTo(binding);
-    assertThatThrownBy(() -> first.requirePasswordResetClaim(initial)).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> first.requirePasswordResetClaim(initial))
+        .isInstanceOf(IllegalStateException.class);
   }
-  @Test void acknowledgementCannotBeChangedOrReplayedWithAnotherPassword() {
+
+  @Test
+  void acknowledgementCannotBeChangedOrReplayedWithAnotherPassword() {
     sent("token");
     var initial = first.claimPasswordReset("token", digest).orElseThrow();
     second.finishPasswordResetClaim(initial, true);
     var replay = first.claimPasswordReset("token", digest).orElseThrow();
     assertThat(replay.status()).isEqualTo("ACKNOWLEDGED");
     assertThat(second.claimPasswordReset("token", "c".repeat(64))).isEmpty();
-    assertThatThrownBy(() -> first.finishPasswordResetClaim(initial, false)).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> first.finishPasswordResetClaim(initial, false))
+        .isInstanceOf(IllegalStateException.class);
   }
-  @Test void newIssuanceRevokesUnclaimedOldTokenButPreservesExactUnknownCustody() {
+
+  @Test
+  void newIssuanceRevokesUnclaimedOldTokenButPreservesExactUnknownCustody() {
     sent("old");
     sent("new");
     assertThat(first.claimPasswordReset("old", digest)).isEmpty();

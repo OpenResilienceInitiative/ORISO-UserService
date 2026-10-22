@@ -37,9 +37,16 @@ public interface OneTimeTokenStore {
   }
 
   record PasswordResetClaim(
-      PasswordResetBinding binding, java.util.UUID claimId, long version,
-      String requestDigest, String status, String delivery) {
-    @Override public String toString() { return "PasswordResetClaim[redacted]"; }
+      PasswordResetBinding binding,
+      java.util.UUID claimId,
+      long version,
+      String requestDigest,
+      String status,
+      String delivery) {
+    @Override
+    public String toString() {
+      return "PasswordResetClaim[redacted]";
+    }
   }
 
   record TokenClaim(String subjectId, Instant expiresAt) {}
