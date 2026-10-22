@@ -399,9 +399,10 @@ class KeycloakIdentitySessionExchangeTest {
     org.mockito.Mockito.lenient()
         .when(lifecycleCodec.getObject())
         .thenReturn(new AccountLifecycleCodec(new byte[32]));
+    var checkedActor = checkedSessionActor();
     org.mockito.Mockito.lenient()
         .when(broker.issueCheckedSessionExchange())
-        .thenReturn(checkedSessionActor());
+        .thenReturn(checkedActor);
     var result =
         new KeycloakIdentitySessionExchange(
             http, identityClientConfig, jwtDecoder, taskActors, broker, lifecycleCodec);
