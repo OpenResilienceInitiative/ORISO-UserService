@@ -456,125 +456,322 @@ public final class ProtectedAccountCodec {
     }
   }
 
-  // Recovery API is inert until the hosted assertion counterfactual is qualified.
+  /** Durable original metadata only; neither the account body nor password is retained. */
   public String checkpointPrepared(PreparedCreation prepared) {
-    throw invalid();
+    require(prepared);
+    if (prepared.body == null || prepared.account == null) throw invalid();
+    ObjectNode saved = nodes.createObjectNode();
+    saved.put("v", 1);
+    saved.put("realmName", realmName);
+    saved.put("realmId", realmId);
+    saved.put("approvalId", prepared.approvalId.toString());
+    saved.put("claimId", prepared.claimId.toString());
+    saved.put("attemptId", prepared.attemptId.toString());
+    saved.put("executionId", prepared.executionId.toString());
+    saved.set("scope", prepared.scope.deepCopy());
+    saved.set("acceptance", prepared.acceptance.deepCopy());
+    saved.set("approvalReceipt", prepared.receipt.deepCopy());
+    saved.put("issuerSubject", prepared.issuerSubject);
+    saved.put("scopeDigest", prepared.scopeDigest);
+    saved.put("creationFingerprint", prepared.fingerprint);
+    saved.put("validUntil", prepared.validUntil.toString());
+    String encoded = encode(json.canonical(saved).getBytes(StandardCharsets.UTF_8));
+    String checkpoint = encoded + "." + HexFormat.of().formatHex(mac("protected-prepared-checkpoint/v1\n" + encoded));
+    if (checkpoint.length() > 16384) throw invalid();
+    return checkpoint;
   }
 
+  /** Historical intent data may survive expiry, without obtaining a create/activation handle. */
   public PreparedMetadata restorePrepared(AcceptanceClaim claim, String checkpoint) {
-    throw invalid();
+    try {
+      if (claim == null || claim.frozen() == null || claim.approval() == null || claim.journalVersion() != 1) throw invalid();
+      JsonNode saved = decode(checkpoint, "protected-prepared-checkpoint/v1", true);
+      fields(saved, "v", "realmName", "realmId", "approvalId", "claimId", "attemptId", "executionId",
+          "scope", "acceptance", "approvalReceipt", "issuerSubject", "scopeDigest", "creationFingerprint", "validUntil");
+      JsonNode original = json.read(approvals.approvalBody(claim.frozen()), JsonNode.class).path("scope");
+      if (number(saved, "v") != 1 || !realmName.equals(text(saved, "realmName", 255))
+          || !realmId.equals(text(saved, "realmId", 255)) || !realmId.equals(claim.frozen().issuerRealm())
+          || !claim.frozen().approvalId().equals(uuid(text(saved, "approvalId", 36)))
+          || !claim.claimId().equals(uuid(text(saved, "claimId", 36)))
+          || !claim.attemptId().equals(uuid(text(saved, "attemptId", 36)))
+          || !claim.executionId().equals(uuid(text(saved, "executionId", 36)))
+          || !original.equals(saved.path("scope"))
+          || !claim.frozen().issuerSubject().equals(text(saved, "issuerSubject", 36))
+          || !equal(claim.approval().scopeDigest(), text(saved, "scopeDigest", 64))
+          || !claim.approval().approvalId().equals(claim.frozen().approvalId())
+          || !equal(claim.approval().requestDigest(), claim.frozen().requestDigest())
+          || !json.canonical(saved.path("approvalReceipt")).equals(claim.approval().receiptJson())
+          || !text(original, "validUntil", 30).equals(text(saved, "validUntil", 30))) throw invalid();
+      JsonNode acceptance = saved.path("acceptance");
+      fields(acceptance, "workflowId", "inviteId", "authorizationRevision", "claimId", "journalVersion");
+      if (!text(original, "workflowId", 36).equals(text(acceptance, "workflowId", 36))
+          || !text(original, "inviteId", 255).equals(text(acceptance, "inviteId", 255))
+          || number(original, "authorizationRevision") != number(acceptance, "authorizationRevision")
+          || !claim.claimId().equals(uuid(text(acceptance, "claimId", 36)))
+          || number(acceptance, "journalVersion") != 1) throw invalid();
+      return new PreparedMetadata(this, new PreparedCreation(this, claim.frozen().approvalId(),
+          claim.claimId(), claim.attemptId(), claim.executionId(), original, acceptance,
+          saved.path("approvalReceipt"), claim.frozen().issuerSubject(), hex(text(saved, "scopeDigest", 64)),
+          hex(text(saved, "creationFingerprint", 64)), null, null, Instant.parse(text(saved, "validUntil", 30))));
+    } catch (RuntimeException failure) { throw invalid(); }
   }
 
-  public PreparedRecovery prepareRecovery(
-      PreparedMetadata metadata, long expectedGeneration, UUID recoveryId) {
-    throw invalid();
+  public PreparedRecovery prepareRecovery(PreparedMetadata metadata, long expectedGeneration, UUID recoveryId) {
+    if (metadata == null || metadata.owner != this || expectedGeneration < 0
+        || expectedGeneration == Long.MAX_VALUE || recoveryId == null) throw invalid();
+    return new PreparedRecovery(this, metadata.prepared, expectedGeneration, recoveryId);
   }
 
   public byte[] recoverBody(PreparedRecovery recovery) {
-    throw invalid();
+    requireRecovery(recovery);
+    return recoveryBytes(recoveryBody(recovery));
   }
 
   public String recoverProof(PreparedRecovery recovery, TaskActorCredentials actor) {
-    throw invalid();
+    requireRecovery(recovery);
+    return cleanupProof(recovery.prepared, actor, "creation-recover", recoveryBody(recovery));
   }
 
   public VerifiedRecovery verifyRecovery(PreparedRecovery recovery, byte[] response) {
-    throw invalid();
+    try {
+      requireRecovery(recovery);
+      JsonNode result = recoveryResult(recovery, response);
+      String state = text(result, "state", 20);
+      boolean absent = "ABANDONED".equals(state);
+      if (!Set.of("RECOVERY_CLAIMED", "ABANDONED", "COMPENSATED").contains(state)) throw invalid();
+      String accountId = absent ? null : text(result, "accountId", 255);
+      JsonNode creation = null;
+      if (absent) {
+        if (!result.path("accountId").isNull() || !result.path("creationProof").isNull()) throw invalid();
+      } else creation = recoveryCreation(recovery.prepared, accountId, text(result, "creationProof", 16384));
+      String savedReceipt = text(result, "recoveryReceipt", 16000);
+      JsonNode nativeRecovery = nativeRecoveryReceipt(recovery, savedReceipt, "recovery-receipt",
+          absent ? "ABANDONED" : "RECOVERY_CLAIMED", "recover",
+          json.digest("protected-invitation-payload/v1", recoveryBody(recovery)), accountId, creation);
+      if (absent) {
+        JsonNode terminal = nativeRecoveryReceipt(recovery, text(result, "terminalReceipt", 16000),
+            "terminal-receipt", "ABANDONED", "abandon",
+            json.digest("protected-invitation-payload/v1", recoveryBody(recovery)), null, null);
+        sameNativeProfile(nativeRecovery, terminal);
+      } else if ("COMPENSATED".equals(state)) {
+        // A lost cleanup reply can be reconciled through recover. This authentic
+        // terminal data still cannot pass verifyCompensated without the exact localCleanup digest.
+        JsonNode terminal = nativeRecoveryReceipt(recovery, text(result, "terminalReceipt", 16000),
+            "terminal-receipt", "COMPENSATED", "compensate", null, accountId, creation);
+        sameNativeProfile(nativeRecovery, terminal);
+      } else if (!result.path("terminalReceipt").isNull()) throw invalid();
+      return new VerifiedRecovery(this, recovery, result, nativeRecovery);
+    } catch (RuntimeException failure) { throw invalid(); }
   }
 
   public byte[] compensateBody(VerifiedRecovery recovery, LocalOutcome local) {
-    throw invalid();
+    requireRecovery(recovery);
+    return recoveryBytes(compensation(recovery, local));
   }
 
-  public String compensateProof(
-      VerifiedRecovery recovery, LocalOutcome local, TaskActorCredentials actor) {
-    throw invalid();
+  public String compensateProof(VerifiedRecovery recovery, LocalOutcome local, TaskActorCredentials actor) {
+    requireRecovery(recovery);
+    return cleanupProof(recovery.prepared.prepared, actor, "compensate", compensation(recovery, local));
   }
 
-  public VerifiedCleanup verifyCompensated(
-      VerifiedRecovery recovery, LocalOutcome local, byte[] response) {
-    throw invalid();
+  /** Authenticated native cleanup data; root must separately verify the approval status ACK. */
+  public VerifiedCleanup verifyCompensated(VerifiedRecovery recovery, LocalOutcome local, byte[] response) {
+    try {
+      requireRecovery(recovery);
+      ObjectNode exactBody = compensation(recovery, local);
+      JsonNode result = recoveryResult(recovery.prepared, response);
+      String state = "ABANDONED".equals(recovery.state()) ? "ABANDONED" : "COMPENSATED";
+      if (!state.equals(text(result, "state", 20))
+          || !result.path("accountId").equals(recovery.result.path("accountId"))
+          || !result.path("creationProof").equals(recovery.result.path("creationProof"))
+          || !equal(text(result, "recoveryReceipt", 16000), text(recovery.result, "recoveryReceipt", 16000))) throw invalid();
+      String terminal = text(result, "terminalReceipt", 16000);
+      if ("ABANDONED".equals(state)) {
+        if (!equal(terminal, text(recovery.result, "terminalReceipt", 16000))) throw invalid();
+      } else {
+        JsonNode payload = nativeRecoveryReceipt(recovery.prepared, terminal, "terminal-receipt", state,
+            "compensate", json.digest("protected-invitation-payload/v1", exactBody), recovery.accountId(), null);
+        sameNativeProfile(recovery.nativeRecovery, payload);
+      }
+      return new VerifiedCleanup(recovery.accountId(), state, terminal);
+    } catch (RuntimeException failure) { throw invalid(); }
+  }
+
+  private ObjectNode recoveryBody(PreparedRecovery recovery) {
+    PreparedCreation original = recovery.prepared;
+    ObjectNode body = nodes.createObjectNode();
+    body.set("approvalReceipt", original.receipt.deepCopy());
+    body.put("scopeDigest", original.scopeDigest);
+    body.put("authorizationRevision", number(original.scope, "authorizationRevision"));
+    body.put("creationFingerprint", original.fingerprint);
+    body.set("acceptanceClaim", original.acceptance.deepCopy());
+    body.put("expectedGeneration", recovery.expectedGeneration);
+    body.put("recoveryId", recovery.recoveryId.toString());
+    return body;
+  }
+
+  private ObjectNode compensation(VerifiedRecovery recovery, LocalOutcome local) {
+    if (local == null) throw invalid();
+    PreparedCreation original = recovery.prepared.prepared;
+    ObjectNode body = nodes.createObjectNode();
+    body.set("approvalReceipt", original.receipt.deepCopy());
+    body.put("scopeDigest", original.scopeDigest);
+    body.put("authorizationRevision", number(original.scope, "authorizationRevision"));
+    body.put("creationFingerprint", original.fingerprint);
+    body.set("execution", recovery.result.path("execution").deepCopy());
+    body.set("accountId", recovery.result.path("accountId").deepCopy());
+    body.set("creationProof", recovery.result.path("creationProof").deepCopy());
+    body.set("localCleanup", json.read(json.canonical(local), JsonNode.class));
+    return body;
+  }
+
+  private JsonNode recoveryResult(PreparedRecovery recovery, byte[] response) {
+    if (response == null || response.length > 65536) throw invalid();
+    JsonNode result = json.read(json.utf8(response), JsonNode.class);
+    fields(result, "attemptId", "accountId", "state", "execution", "creationProof", "recoveryReceipt", "terminalReceipt");
+    fields(result.path("execution"), "executionId", "generation");
+    if (!recovery.attemptId().equals(uuid(text(result, "attemptId", 36)))
+        || !recovery.recoveryId.equals(uuid(text(result.path("execution"), "executionId", 36)))
+        || number(result.path("execution"), "generation") != recovery.expectedGeneration + 1) throw invalid();
+    return result;
+  }
+
+  private JsonNode recoveryCreation(PreparedCreation original, String accountId, String proof) {
+    JsonNode value = decode(proof, "creation-proof", false);
+    fields(value, "v", "realmName", "realmId", "attemptId", "accountId", "ownerClient", "ownerSubject",
+        "scope", "initialGroupId", "initialRoleFingerprint", "creationFingerprint");
+    if (number(value, "v") != 1 || !realmName.equals(text(value, "realmName", 255))
+        || !realmId.equals(text(value, "realmId", 255))
+        || !original.attemptId.equals(uuid(text(value, "attemptId", 36)))
+        || !accountId.equals(text(value, "accountId", 255))
+        || !text(original.scope, "creatorClient", 255).equals(text(value, "ownerClient", 255))
+        || !text(original.scope, "creatorSubject", 36).equals(text(value, "ownerSubject", 36))
+        || !equal(original.fingerprint, text(value, "creationFingerprint", 64))) throw invalid();
+    checkedInternalScope(original, value.path("scope"));
+    text(value, "initialGroupId", 512); hex(text(value, "initialRoleFingerprint", 64));
+    return value;
+  }
+
+  private JsonNode nativeRecoveryReceipt(PreparedRecovery recovery, String envelope, String domain,
+      String state, String operation, String digest, String accountId, JsonNode creation) {
+    if (envelope.getBytes(StandardCharsets.UTF_8).length > 16000) throw invalid();
+    JsonNode value = decode(envelope, domain, true);
+    fields(value, "realmId", "attemptId", "accountId", "ownerClient", "ownerSubject", "scope",
+        "creationFingerprint", "groupId", "roleFingerprint", "state", "generation", "executionId", "operation", "commandDigest");
+    PreparedCreation original = recovery.prepared;
+    String scopeString = text(value, "scope", 16384);
+    JsonNode scope = json.read(scopeString, JsonNode.class);
+    if (!json.canonical(scope).equals(scopeString)) throw invalid();
+    checkedInternalScope(original, scope);
+    if (!realmId.equals(text(value, "realmId", 255))
+        || !original.attemptId.equals(uuid(text(value, "attemptId", 36)))
+        || !nullableEquals(value.path("accountId"), accountId)
+        || !text(original.scope, "creatorClient", 255).equals(text(value, "ownerClient", 255))
+        || !text(original.scope, "creatorSubject", 36).equals(text(value, "ownerSubject", 36))
+        || !equal(original.fingerprint, text(value, "creationFingerprint", 64))
+        || !state.equals(text(value, "state", 20)) || !operation.equals(text(value, "operation", 20))
+        || number(value, "generation") != recovery.expectedGeneration + 1
+        || !recovery.recoveryId.equals(uuid(text(value, "executionId", 36)))
+        || digest != null && !equal(digest, text(value, "commandDigest", 64))) throw invalid();
+    text(value, "groupId", 512); hex(text(value, "roleFingerprint", 64)); hex(text(value, "commandDigest", 64));
+    if (creation != null && (!json.canonical(creation.path("scope")).equals(scopeString)
+        || !text(creation, "initialGroupId", 512).equals(text(value, "groupId", 512))
+        || !equal(text(creation, "initialRoleFingerprint", 64), text(value, "roleFingerprint", 64)))) throw invalid();
+    return value;
+  }
+
+  private void sameNativeProfile(JsonNode left, JsonNode right) {
+    for (String field : Set.of("realmId", "attemptId", "accountId", "ownerClient", "ownerSubject", "scope",
+        "creationFingerprint", "groupId", "roleFingerprint", "generation", "executionId")) {
+      if (!left.path(field).equals(right.path(field))) throw invalid();
+    }
+  }
+
+  private byte[] recoveryBytes(JsonNode value) {
+    byte[] raw = json.canonical(value).getBytes(StandardCharsets.UTF_8);
+    if (raw.length > 65536) throw invalid();
+    return raw;
+  }
+
+  private String cleanupProof(PreparedCreation original, TaskActorCredentials actor, String operation, JsonNode body) {
+    if (actor == null) throw invalid();
+    if (actor.actor() == TaskActor.ACCOUNT_CREATE) return proof(original, actor, operation, "POST", body);
+    if (actor.actor() != TaskActor.ACCOUNT_ADMIN || !"backend-account-admin".equals(actor.clientId())) throw invalid();
+    uuid(actor.serviceSubject());
+    long now = clock.instant().getEpochSecond();
+    Map<String, Object> claims = new TreeMap<>();
+    claims.put("iss", "userservice"); claims.put("aud", "oriso-protected-invitations");
+    claims.put("purpose", "ACCOUNT_MAINTENANCE"); claims.put("actor", "ACCOUNT_ADMIN");
+    claims.put("operation", "protected-account." + operation); claims.put("method", "POST");
+    claims.put("realm", realmName);
+    claims.put("target", "realm/" + realmId + "/protected-invitation/" + original.approvalId + "/account-attempt/" + original.attemptId);
+    claims.put("taskClient", actor.clientId()); claims.put("taskSubject", actor.serviceSubject());
+    claims.put("payloadDigest", json.digest("protected-invitation-payload/v1", body));
+    claims.put("jti", UUID.randomUUID().toString()); claims.put("nonce", UUID.randomUUID().toString().replace("-", ""));
+    claims.put("iat", now); claims.put("exp", now + 60);
+    String encoded = encode(json.canonical(claims).getBytes(StandardCharsets.UTF_8));
+    return encoded + "." + encode(mac("protected-invitation-proof/v1\n" + encoded));
+  }
+
+  private void requireRecovery(PreparedRecovery value) {
+    if (value == null || value.owner != this) throw invalid();
+  }
+
+  private void requireRecovery(VerifiedRecovery value) {
+    if (value == null || value.owner != this) throw invalid();
   }
 
   public static final class PreparedMetadata {
-    private PreparedMetadata() {}
-
-    public UUID approvalId() {
-      return null;
-    }
-
-    public UUID attemptId() {
-      return null;
-    }
-
-    public String creationFingerprint() {
-      return null;
-    }
+    private final ProtectedAccountCodec owner;
+    private final PreparedCreation prepared;
+    private PreparedMetadata(ProtectedAccountCodec owner, PreparedCreation prepared) { this.owner = owner; this.prepared = prepared; }
+    public UUID approvalId() { return prepared.approvalId; }
+    public UUID attemptId() { return prepared.attemptId; }
+    public String creationFingerprint() { return prepared.fingerprint; }
+    @Override public String toString() { return "ProtectedPreparedMetadata[redacted]"; }
   }
 
   public static final class PreparedRecovery {
-    private PreparedRecovery() {}
-
-    public UUID approvalId() {
-      return null;
+    private final ProtectedAccountCodec owner;
+    private final PreparedCreation prepared;
+    private final long expectedGeneration;
+    private final UUID recoveryId;
+    private PreparedRecovery(ProtectedAccountCodec owner, PreparedCreation prepared, long expectedGeneration, UUID recoveryId) {
+      this.owner = owner; this.prepared = prepared; this.expectedGeneration = expectedGeneration; this.recoveryId = recoveryId;
     }
-
-    public UUID attemptId() {
-      return null;
-    }
-
-    public UUID recoveryId() {
-      return null;
-    }
+    public UUID approvalId() { return prepared.approvalId; }
+    public UUID attemptId() { return prepared.attemptId; }
+    public UUID recoveryId() { return recoveryId; }
+    @Override public String toString() { return "ProtectedPreparedRecovery[redacted]"; }
   }
 
   public static final class VerifiedRecovery {
-    private VerifiedRecovery() {}
-
-    public UUID approvalId() {
-      return null;
+    private final ProtectedAccountCodec owner;
+    private final PreparedRecovery prepared;
+    private final JsonNode result, nativeRecovery;
+    private VerifiedRecovery(ProtectedAccountCodec owner, PreparedRecovery prepared, JsonNode result, JsonNode nativeRecovery) {
+      this.owner = owner; this.prepared = prepared; this.result = result.deepCopy(); this.nativeRecovery = nativeRecovery.deepCopy();
     }
-
-    public UUID attemptId() {
-      return null;
-    }
-
-    public UUID executionId() {
-      return null;
-    }
-
-    public long generation() {
-      return 0;
-    }
-
-    public String state() {
-      return null;
-    }
-
-    public String accountId() {
-      return null;
-    }
-
-    public String creationProof() {
-      return null;
-    }
+    public UUID approvalId() { return prepared.approvalId(); }
+    public UUID attemptId() { return prepared.attemptId(); }
+    public UUID executionId() { return prepared.recoveryId; }
+    public long generation() { return prepared.expectedGeneration + 1; }
+    public String state() { return result.path("state").textValue(); }
+    public String accountId() { return result.path("accountId").textValue(); }
+    public String creationProof() { return result.path("creationProof").textValue(); }
+    @Override public String toString() { return "ProtectedVerifiedRecovery[redacted]"; }
   }
 
   /** Verified native cleanup data only; an approval status ACK remains independently required. */
   public static final class VerifiedCleanup {
-    private VerifiedCleanup() {}
-
-    public String accountId() {
-      return null;
+    private final String accountId, state, terminalReceipt;
+    private VerifiedCleanup(String accountId, String state, String terminalReceipt) {
+      this.accountId = accountId; this.state = state; this.terminalReceipt = terminalReceipt;
     }
-
-    public String state() {
-      return null;
-    }
-
-    public String terminalReceipt() {
-      return null;
-    }
+    public String accountId() { return accountId; }
+    public String state() { return state; }
+    public String terminalReceipt() { return terminalReceipt; }
+    @Override public String toString() { return "ProtectedVerifiedCleanup[redacted]"; }
   }
 
   private void checkedInternalScope(PreparedCreation prepared, JsonNode value) {
@@ -953,19 +1150,19 @@ public final class ProtectedAccountCodec {
     }
 
     public String email() {
-      throw invalid();
+      return prepared.account.email();
     }
 
     public String firstName() {
-      throw invalid();
+      return prepared.account.firstName();
     }
 
     public String lastName() {
-      throw invalid();
+      return prepared.account.lastName();
     }
 
     public String preferredLanguage() {
-      throw invalid();
+      return prepared.account.preferredLanguage();
     }
 
     public String accountId() {
