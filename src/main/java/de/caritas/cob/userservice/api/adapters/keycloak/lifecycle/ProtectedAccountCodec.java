@@ -457,9 +457,18 @@ public final class ProtectedAccountCodec {
   }
 
   /** Terminal reconciliation is read-only and cannot submit an activation command. */
-  public byte[] consumedStatusBody(VerifiedCreated created) { throw invalid(); }
-  public String consumedStatusProof(VerifiedCreated created, TaskActorCredentials actor) { throw invalid(); }
-  public VerifiedCommitted verifyConsumedStatus(VerifiedCreated created, LocalOutcome local, byte[] response) { throw invalid(); }
+  public byte[] consumedStatusBody(VerifiedCreated created) {
+    throw invalid();
+  }
+
+  public String consumedStatusProof(VerifiedCreated created, TaskActorCredentials actor) {
+    throw invalid();
+  }
+
+  public VerifiedCommitted verifyConsumedStatus(
+      VerifiedCreated created, LocalOutcome local, byte[] response) {
+    throw invalid();
+  }
 
   /** Durable original metadata only; neither the account body nor password is retained. */
   public String checkpointPrepared(PreparedCreation prepared) {
