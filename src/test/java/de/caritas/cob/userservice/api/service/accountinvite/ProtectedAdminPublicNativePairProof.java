@@ -178,6 +178,8 @@ class ProtectedAdminPublicNativePairProof {
                     "src/main/resources/db/changelog/changeset/20260916_account_inactivity/migrate.sql"))
             .split(";")[0]);
     String recipient = required("PAIR_RECIPIENT");
+    long adminsBefore = admins.count();
+    assertTrue(admins.findAllByEmailIgnoreCase(recipient).isEmpty());
     when(identityEmailOwnerLookup.findByEmail(recipient)).thenReturn(Optional.empty());
     when(platformPolicy.capture())
         .thenReturn(
@@ -324,7 +326,10 @@ class ProtectedAdminPublicNativePairProof {
     assertEquals(
         "COMPLETED",
         json.read(resolved.getContentAsString(), JsonNode.class).path("phase").asText());
-    assertEquals(1, admins.count());
+    assertEquals(adminsBefore + 1, admins.count());
+    assertEquals(
+        List.of(account),
+        admins.findAllByEmailIgnoreCase(recipient).stream().map(admin -> admin.getId()).toList());
     assertEquals(
         1, jdbc.queryForObject("SELECT COUNT(*) FROM protected_account_creation", Integer.class));
     var loginBody = new org.springframework.util.LinkedMultiValueMap<String, String>();
