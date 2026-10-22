@@ -748,8 +748,7 @@ public final class ProtectedOtpBootstrap {
                 if (!command.path("username").equals(sentCommand.path("username"))
                     || !command
                         .path("bootstrapReceipt")
-                        .equals(sentCommand.path("bootstrapReceipt")))
-                  throw unavailable();
+                        .equals(sentCommand.path("bootstrapReceipt"))) throw unavailable();
               }
               var body = command.putObject("body");
               var target = body.putObject("target");
@@ -769,8 +768,7 @@ public final class ProtectedOtpBootstrap {
                   codec.digest("otp-bootstrap-state/v1", result.path("bootstrapReceipt").asText()));
               if (email) {
                 if (!target.equals(sentCommand.path("body").path("target"))
-                    || !body
-                        .path("expectedState")
+                    || !body.path("expectedState")
                         .equals(sentCommand.path("body").path("expectedState")))
                   throw unavailable();
                 body.set("emailStartOperationId", sentCommand.path("body").path("operationId"));
