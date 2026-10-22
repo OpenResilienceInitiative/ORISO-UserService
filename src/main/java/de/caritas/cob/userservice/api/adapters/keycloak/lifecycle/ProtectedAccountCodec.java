@@ -205,6 +205,153 @@ public final class ProtectedAccountCodec {
     }
   }
 
+  public String checkpoint(VerifiedCreated created) {
+    require(created);
+    var prepared = created.prepared;
+    ObjectNode saved = nodes.createObjectNode();
+    saved.put("v", 1);
+    saved.put("realmName", realmName);
+    saved.put("realmId", realmId);
+    saved.put("approvalId", prepared.approvalId.toString());
+    saved.put("claimId", prepared.claimId.toString());
+    saved.put("attemptId", prepared.attemptId.toString());
+    saved.put("executionId", prepared.executionId.toString());
+    saved.set("scope", prepared.scope.deepCopy());
+    saved.set("acceptance", prepared.acceptance.deepCopy());
+    saved.set("approvalReceipt", prepared.receipt.deepCopy());
+    saved.put("issuerSubject", prepared.issuerSubject);
+    saved.put("scopeDigest", prepared.scopeDigest);
+    saved.put("creationFingerprint", prepared.fingerprint);
+    ObjectNode profile = nodes.createObjectNode();
+    profile.put("username", prepared.account.username());
+    profile.put("email", prepared.account.email());
+    profile.put("firstName", prepared.account.firstName());
+    profile.put("lastName", prepared.account.lastName());
+    profile.put("preferredLanguage", prepared.account.preferredLanguage());
+    profile.put("passwordTemporary", prepared.account.passwordTemporary());
+    saved.set("profile", profile);
+    saved.put("validUntil", prepared.validUntil.toString());
+    saved.put("accountId", created.accountId);
+    saved.put("creationProof", created.creationProof);
+    String encoded = encode(json.canonical(saved).getBytes(StandardCharsets.UTF_8));
+    String checkpoint =
+        encoded
+            + "."
+            + HexFormat.of().formatHex(mac("protected-created-checkpoint/v1\n" + encoded));
+    if (checkpoint.length() > 16384) throw invalid();
+    return checkpoint;
+  }
+
+  public VerifiedCreated restore(AcceptanceClaim claim, String checkpoint) {
+    try {
+      if (claim == null || claim.frozen() == null || claim.approval() == null) throw invalid();
+      JsonNode saved = decode(checkpoint, "protected-created-checkpoint/v1", true);
+      fields(
+          saved,
+          "v",
+          "realmName",
+          "realmId",
+          "approvalId",
+          "claimId",
+          "attemptId",
+          "executionId",
+          "scope",
+          "acceptance",
+          "approvalReceipt",
+          "issuerSubject",
+          "scopeDigest",
+          "creationFingerprint",
+          "profile",
+          "validUntil",
+          "accountId",
+          "creationProof");
+      JsonNode original =
+          json.read(approvals.approvalBody(claim.frozen()), JsonNode.class).path("scope");
+      if (number(saved, "v") != 1
+          || !realmName.equals(text(saved, "realmName", 255))
+          || !realmId.equals(text(saved, "realmId", 255))
+          || !realmId.equals(claim.frozen().issuerRealm())
+          || !claim.frozen().approvalId().equals(uuid(text(saved, "approvalId", 36)))
+          || !claim.claimId().equals(uuid(text(saved, "claimId", 36)))
+          || !claim.attemptId().equals(uuid(text(saved, "attemptId", 36)))
+          || !claim.executionId().equals(uuid(text(saved, "executionId", 36)))
+          || claim.journalVersion() != 1
+          || !original.equals(saved.path("scope"))
+          || !claim.frozen().issuerSubject().equals(text(saved, "issuerSubject", 36))
+          || !equal(claim.approval().scopeDigest(), text(saved, "scopeDigest", 64))
+          || !json.canonical(saved.path("approvalReceipt")).equals(claim.approval().receiptJson())
+          || !text(original, "validUntil", 30).equals(text(saved, "validUntil", 30)))
+        throw invalid();
+      JsonNode acceptance = saved.path("acceptance");
+      fields(
+          acceptance,
+          "workflowId",
+          "inviteId",
+          "authorizationRevision",
+          "claimId",
+          "journalVersion");
+      if (!text(original, "workflowId", 36).equals(text(acceptance, "workflowId", 36))
+          || !text(original, "inviteId", 255).equals(text(acceptance, "inviteId", 255))
+          || number(original, "authorizationRevision")
+              != number(acceptance, "authorizationRevision")
+          || !claim.claimId().equals(uuid(text(acceptance, "claimId", 36)))
+          || number(acceptance, "journalVersion") != 1) throw invalid();
+      JsonNode profile = saved.path("profile");
+      fields(
+          profile,
+          "username",
+          "email",
+          "firstName",
+          "lastName",
+          "preferredLanguage",
+          "passwordTemporary");
+      AccountCreation account =
+          new AccountCreation(
+              text(profile, "username", 255),
+              text(profile, "email", 255),
+              optionalText(profile, "firstName", 255),
+              optionalText(profile, "lastName", 255),
+              optionalText(profile, "preferredLanguage", 20),
+              null,
+              bool(profile, "passwordTemporary"));
+      if (!account.email().equals(text(original, "recipient", 320))) throw invalid();
+      var prepared =
+          new PreparedCreation(
+              this,
+              claim.frozen().approvalId(),
+              claim.claimId(),
+              claim.attemptId(),
+              claim.executionId(),
+              original,
+              acceptance,
+              saved.path("approvalReceipt"),
+              claim.frozen().issuerSubject(),
+              text(saved, "scopeDigest", 64),
+              hex(text(saved, "creationFingerprint", 64)),
+              account,
+              null,
+              Instant.parse(text(saved, "validUntil", 30)));
+      ObjectNode response = nodes.createObjectNode();
+      response.put("attemptId", prepared.attemptId.toString());
+      response.put("accountId", text(saved, "accountId", 255));
+      response.put("state", "OPEN");
+      response.set("execution", execution(prepared.executionId));
+      response.put("creationProof", text(saved, "creationProof", 16384));
+      response.putNull("recoveryReceipt");
+      response.putNull("terminalReceipt");
+      return verifyCreated(prepared, json.canonical(response).getBytes(StandardCharsets.UTF_8));
+    } catch (RuntimeException failure) {
+      throw invalid();
+    }
+  }
+
+  private static String optionalText(JsonNode value, String name, int limit) {
+    JsonNode field = value.path(name);
+    if (field.isNull()) return null;
+    if (!field.isTextual() || field.textValue().length() > limit) throw invalid();
+    return field.textValue();
+  }
+
   public byte[] ownedReadBody(VerifiedCreated created) {
     require(created);
     return json.canonical(existingBody(created)).getBytes(StandardCharsets.UTF_8);
@@ -682,6 +829,18 @@ public final class ProtectedAccountCodec {
 
     public UUID executionId() {
       return prepared.executionId;
+    }
+
+    public String email() {
+      return prepared.account.email();
+    }
+
+    public String firstName() {
+      return prepared.account.firstName();
+    }
+
+    public String lastName() {
+      return prepared.account.lastName();
     }
 
     public String accountId() {

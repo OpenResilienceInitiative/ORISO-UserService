@@ -161,6 +161,19 @@ public final class JdbcProtectedInvitationJournal {
         });
   }
 
+  <T> T withRecipientInvite(long inviteId, Supplier<T> action) {
+    if (action == null) throw unavailable();
+    return local.execute(
+        tx -> {
+          Invite invite = lockInvite(inviteId);
+          Row row = row(inviteId);
+          if (!"READY".equals(row.state()) || row.response() == null) throw unavailable();
+          requireCurrent(inviteId, invite, row.proposal(), true, false, true);
+          codec.verifyAuthorized(row.proposal(), row.response());
+          return action.get();
+        });
+  }
+
   RestrictionProposal requestRestriction(long inviteId, Supplier<FrozenApproval> missingProposal) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     Invite invite = lockInvite(inviteId);
@@ -291,13 +304,25 @@ public final class JdbcProtectedInvitationJournal {
 
   private void requireCurrent(
       long inviteId, Invite invite, FrozenApproval proposal, boolean live, boolean released) {
+    requireCurrent(inviteId, invite, proposal, live, released, false);
+  }
+
+  private void requireCurrent(
+      long inviteId,
+      Invite invite,
+      FrozenApproval proposal,
+      boolean live,
+      boolean released,
+      boolean recipient) {
     JsonNode scope = scope(proposal);
     Instant deadline = Instant.parse(scope.path("validUntil").asText());
     if (!Long.toString(inviteId).equals(scope.path("inviteId").asText())
         || !"INVITE".equals(invite.purpose())
-        || !(live
-                ? Set.of("DRAFT", "EMAIL_SENT")
-                : Set.of("DRAFT", "EMAIL_SENT", "EXPIRED", "REVOKED", "SUPERSEDED"))
+        || !(recipient
+                ? Set.of("EMAIL_SENT", "ACCEPTED")
+                : live
+                    ? Set.of("DRAFT", "EMAIL_SENT")
+                    : Set.of("DRAFT", "EMAIL_SENT", "EXPIRED", "REVOKED", "SUPERSEDED"))
             .contains(invite.status())
         || !scope.path("protectedKind").asText().equals(invite.role())
         || invite.tenant() == null

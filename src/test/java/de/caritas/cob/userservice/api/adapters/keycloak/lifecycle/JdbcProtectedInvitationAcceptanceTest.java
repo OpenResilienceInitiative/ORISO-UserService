@@ -113,6 +113,36 @@ class JdbcProtectedInvitationAcceptanceTest {
   }
 
   @Test
+  void aCurrentTokenResumesTheSameDurableClaimWithoutTheOriginalPassword() {
+    var first = restart().claim(73, TOKEN_HASH, registration);
+    var resumed = restart().resume(73, TOKEN_HASH);
+    assertEquals(first.claimId(), resumed.claimId());
+    assertEquals(first.attemptId(), resumed.attemptId());
+    assertEquals(first.executionId(), resumed.executionId());
+    assertEquals(first.registrationDigest(), resumed.registrationDigest());
+    assertThrows(RuntimeException.class, () -> restart().resume(73, "d".repeat(64)));
+    jdbc.update("UPDATE account_invite SET status='REVOKED' WHERE id=73");
+    assertThrows(RuntimeException.class, () -> restart().resume(73, TOKEN_HASH));
+  }
+
+  @Test
+  void acceptedResumeRequiresTheExactAccountRecordedByTheOwningRegistration() {
+    var first = restart().claim(73, TOKEN_HASH, registration);
+    jdbc.execute("ALTER TABLE account_invite ADD COLUMN accepted_by_user_id VARCHAR(36)");
+    jdbc.execute("ALTER TABLE protected_invitation_acceptance ADD COLUMN account_id VARCHAR(36)");
+    String account = "af0907cd-9d2d-4524-a6d8-9c83eb110dad";
+    jdbc.update("UPDATE account_invite SET status='ACCEPTED',accepted_by_user_id=?", account);
+    jdbc.update("UPDATE protected_invitation_acceptance SET account_id=?", account);
+    assertEquals(first.claimId(), restart().resume(73, TOKEN_HASH).claimId());
+    jdbc.update("UPDATE account_invite SET accepted_by_user_id=?", UUID.randomUUID().toString());
+    assertThrows(RuntimeException.class, () -> restart().resume(73, TOKEN_HASH));
+    jdbc.update(
+        "UPDATE account_invite SET accepted_by_user_id=?,recipient_email='other@example.test'",
+        account);
+    assertThrows(RuntimeException.class, () -> restart().resume(73, TOKEN_HASH));
+  }
+
+  @Test
   void anotherRegistrationCannotReplaceTheFirstClaim() {
     var first = assertDoesNotThrow(() -> restart().claim(73, TOKEN_HASH, registration));
     var changed = registration.deepCopy();

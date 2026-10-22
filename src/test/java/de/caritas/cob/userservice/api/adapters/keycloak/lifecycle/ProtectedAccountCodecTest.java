@@ -470,6 +470,31 @@ class ProtectedAccountCodecTest {
     assertFalse(String.valueOf(failure.getMessage()).contains(created.creationProof()));
   }
 
+  @Test
+  void aPersistedOwnedCheckpointResumesWithoutPasswordAndCannotMoveToAnotherClaim() {
+    var originalClaim = claim();
+    var original =
+        codec.verifyCreated(
+            codec.prepare(originalClaim, vector.path("registration"), account()),
+            bytes(vector.path("createdResponse")));
+    String saved = codec.checkpoint(original);
+    String payload =
+        new String(Base64.getUrlDecoder().decode(saved.split("\\.")[0]), StandardCharsets.UTF_8);
+    assertFalse(payload.contains(account().password()));
+    assertFalse(payload.contains("\"password\":"));
+    var restored = codec.restore(originalClaim, saved);
+    assertEquals(original.accountId(), restored.accountId());
+    assertEquals(original.creationProof(), restored.creationProof());
+    assertEquals(parse(codec.ownedReadBody(original)), parse(codec.ownedReadBody(restored)));
+    assertEquals(
+        parse(codec.commitBody(original, local())), parse(codec.commitBody(restored, local())));
+    clock.now = Instant.parse("2030-01-03T00:00:00Z");
+    assertNotNull(codec.restore(originalClaim, saved));
+    when(originalClaim.claimId()).thenReturn(UUID.randomUUID());
+    assertThrows(IllegalArgumentException.class, () -> codec.restore(originalClaim, saved));
+    assertThrows(IllegalArgumentException.class, () -> codec.restore(originalClaim, saved + "x"));
+  }
+
   private ProtectedAccountCodec.PreparedCreation prepared() {
     var value = codec.prepare(claim(), vector.path("registration"), account());
     assertNotNull(value, "Prepared protected creation is unavailable");

@@ -106,7 +106,59 @@ public final class JdbcProtectedInvitationAcceptance {
               uuid(saved.claimId()),
               uuid(saved.attemptId()),
               uuid(saved.executionId()),
-              saved.digest());
+              saved.digest(),
+              tokenHash);
+        });
+  }
+
+  public AcceptanceClaim resume(long inviteId, String tokenHash) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || inviteId < 1
+        || tokenHash == null
+        || !tokenHash.matches("[0-9a-f]{64}")) throw unavailable();
+    return journal.withRecipientInvite(
+        inviteId,
+        () -> {
+          var invites =
+              jdbc.query(
+                  "SELECT status,token_hash FROM account_invite WHERE id=?",
+                  (rs, index) -> new String[] {rs.getString("status"), rs.getString("token_hash")},
+                  inviteId);
+          if (invites.size() != 1 || !equal(tokenHash, invites.getFirst()[1])) throw unavailable();
+          FrozenApproval frozen = journal.pending(inviteId);
+          String response =
+              jdbc.queryForObject(
+                  "SELECT response_json FROM protected_invitation_authorization WHERE invite_id=? AND state='READY'",
+                  String.class,
+                  inviteId);
+          VerifiedApproval approval = approvals.verifyAuthorized(frozen, response);
+          var found = rows(inviteId);
+          if (found.size() != 1) throw unavailable();
+          var saved = found.getFirst();
+          if (!frozen.approvalId().toString().equals(saved.approvalId())
+              || saved.version() != 1
+              || !saved.digest().matches("[0-9a-f]{64}")) throw unavailable();
+          if ("ACCEPTED".equals(invites.getFirst()[0])) {
+            String accepted =
+                jdbc.queryForObject(
+                    "SELECT accepted_by_user_id FROM account_invite WHERE id=?",
+                    String.class,
+                    inviteId);
+            String owned =
+                jdbc.queryForObject(
+                    "SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?",
+                    String.class,
+                    inviteId);
+            if (owned == null || !uuid(owned).toString().equals(accepted)) throw unavailable();
+          }
+          return new AcceptanceClaim(
+              frozen,
+              approval,
+              uuid(saved.claimId()),
+              uuid(saved.attemptId()),
+              uuid(saved.executionId()),
+              saved.digest(),
+              tokenHash);
         });
   }
 
@@ -166,6 +218,7 @@ public final class JdbcProtectedInvitationAcceptance {
     private final UUID attemptId;
     private final UUID executionId;
     private final String registrationDigest;
+    private final String tokenHash;
 
     private AcceptanceClaim(
         FrozenApproval frozen,
@@ -173,13 +226,15 @@ public final class JdbcProtectedInvitationAcceptance {
         UUID claimId,
         UUID attemptId,
         UUID executionId,
-        String registrationDigest) {
+        String registrationDigest,
+        String tokenHash) {
       this.frozen = frozen;
       this.approval = approval;
       this.claimId = claimId;
       this.attemptId = attemptId;
       this.executionId = executionId;
       this.registrationDigest = registrationDigest;
+      this.tokenHash = tokenHash;
     }
 
     public FrozenApproval frozen() {
@@ -208,6 +263,10 @@ public final class JdbcProtectedInvitationAcceptance {
 
     public String registrationDigest() {
       return registrationDigest;
+    }
+
+    String tokenHash() {
+      return tokenHash;
     }
 
     @Override
