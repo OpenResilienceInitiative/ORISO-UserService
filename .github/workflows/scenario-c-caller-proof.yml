@@ -60,7 +60,7 @@ jobs:
           floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedCleanupStatusCodecTest'] = 3
           floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedCleanupStatusTest'] = 3
           floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedCleanupStatusTest'] = 6
-          floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationCancellationTest'] = 18
+          floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationCancellationTest'] = 19
           floors['de.caritas.cob.userservice.api.service.accountinvite.ProtectedInvitationIssuanceConfigurationTest'] = 5
           floors['de.caritas.cob.userservice.api.service.accountinvite.ProtectedInvitationIssuanceOutboxJpaIT'] = 7
           floors['de.caritas.cob.userservice.api.service.accountinvite.ProtectedInvitationRecoverySweepTest'] = 5

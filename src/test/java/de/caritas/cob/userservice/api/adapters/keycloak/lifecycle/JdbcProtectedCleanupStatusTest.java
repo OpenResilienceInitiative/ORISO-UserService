@@ -240,15 +240,16 @@ class JdbcProtectedCleanupStatusTest {
         RuntimeException.class,
         () -> service().withAcknowledged(73, () -> released.incrementAndGet()));
     assertEquals(0, released.get());
-    when(receiver.cleanupStatus(any(), any(), any(), any()))
-        .thenAnswer(
+    doAnswer(
             call ->
                 cleanup.verify(
                     call.getArgument(0),
                     call.getArgument(1),
                     call.getArgument(2),
                     call.getArgument(3),
-                    bytes(vector.path("absent"))));
+                    bytes(vector.path("absent"))))
+        .when(receiver)
+        .cleanupStatus(any(), any(), any(), any());
     assertDoesNotThrow(() -> service().refreshAfterCleanup(73, abandoned, local()));
     assertEquals(1, service().withAcknowledged(73, () -> released.incrementAndGet()));
     assertEquals(1, released.get());

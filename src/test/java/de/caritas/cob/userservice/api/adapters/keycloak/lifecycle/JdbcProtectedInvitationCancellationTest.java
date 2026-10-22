@@ -333,6 +333,33 @@ class JdbcProtectedInvitationCancellationTest {
   }
 
   @Test
+  void aSavedRestrictionAckWithAnUnreleasedEmailKeySurvivesThePostAckCrashWindow() {
+    pendingFixture();
+    jdbc.update("UPDATE account_invite SET active_recipient_key='ada@example.test' WHERE id=73");
+    when(receiver.cancel(any())).thenAnswer(call -> expired(call.getArgument(0)));
+    service().cancel(73, Reason.REVOKED, this::invalidate);
+    assertEquals("ACKNOWLEDGED", state());
+    assertEquals(
+        "ada@example.test",
+        jdbc.queryForObject(
+            "SELECT active_recipient_key FROM account_invite WHERE id=73", String.class));
+
+    // A fresh owner has the persisted ACK, but the original foreground caller never released.
+    assertEquals(java.util.List.of(73L), service().pendingInviteIds(100));
+    service()
+        .withAcknowledged(
+            73,
+            () -> {
+              assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+              jdbc.update("UPDATE account_invite SET active_recipient_key=NULL WHERE id=73");
+              return null;
+            });
+    assertEquals(java.util.List.of(), service().pendingInviteIds(100));
+    assertEquals("ACKNOWLEDGED", state());
+    verify(receiver).cancel(any());
+  }
+
+  @Test
   void unknownRestrictionsMoveBehindOlderMissingIntentsAndTheRecoveryPageIsBounded() {
     when(receiver.cancel(any())).thenThrow(new KeycloakProtectedInvitations.RemoteFailure(0));
     assertThrows(
@@ -626,6 +653,7 @@ class JdbcProtectedInvitationCancellationTest {
   private void pendingFixture() {
     jdbc.execute("ALTER TABLE account_invite ADD update_date TIMESTAMP NULL");
     jdbc.execute("ALTER TABLE account_invite ADD superseded_by_invite_id BIGINT NULL");
+    jdbc.execute("ALTER TABLE account_invite ADD active_recipient_key VARCHAR(255) NULL");
     jdbc.update(
         "UPDATE account_invite SET update_date=? WHERE id=73", Timestamp.from(before.instant()));
   }
