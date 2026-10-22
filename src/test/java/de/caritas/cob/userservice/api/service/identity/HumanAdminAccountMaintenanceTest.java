@@ -911,11 +911,14 @@ class HumanAdminAccountMaintenanceTest {
               "select native_receipt from general_admin_identity_intent where operation_id=?",
               String.class,
               OPERATION));
-      assertThrows(
-          status == 403
-              ? de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class
-              : de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
-          () -> service.updateAdminProfile(ACCOUNT, desired()));
+      if (status == 403)
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+            () -> service.updateAdminProfile(ACCOUNT, desired()));
+      else
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+            () -> service.updateAdminProfile(ACCOUNT, desired()));
       server.verify();
       server.reset();
       String next = "81000000-0000-4000-8000-000000000008";
