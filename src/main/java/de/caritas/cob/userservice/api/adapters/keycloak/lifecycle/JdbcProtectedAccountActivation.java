@@ -144,8 +144,13 @@ public final class JdbcProtectedAccountActivation {
                   json.canonical(
                       tenantReceipt == null
                           ? Map.of("admin", adminSnapshot(id), "inactivity", inactivitySnapshot(id))
-                          : Map.of("admin", adminSnapshot(id), "inactivity", inactivitySnapshot(id),
-                              "tenantBootstrapReceipt", tenantReceipt)),
+                          : Map.of(
+                              "admin",
+                              adminSnapshot(id),
+                              "inactivity",
+                              inactivitySnapshot(id),
+                              "tenantBootstrapReceipt",
+                              tenantReceipt)),
                   JsonNode.class);
           String effectJson = json.canonical(effects);
           String digest = json.digest("protected-local-registration/v1", effects);
