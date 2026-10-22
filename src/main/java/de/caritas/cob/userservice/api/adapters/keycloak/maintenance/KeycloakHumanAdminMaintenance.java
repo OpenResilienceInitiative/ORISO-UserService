@@ -88,12 +88,25 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
       JsonNode shape = codec.read(raw, JsonNode.class);
       var fields = new HashSet<String>();
       shape.fieldNames().forEachRemaining(fields::add);
-      if (!shape.isObject() || !fields.equals(Set.of("id", "username", "email", "firstName",
-          "lastName", "enabled", "emailVerified", "tenantId", "preferredLanguage",
-          "effectiveRoles", "passwordChangeRequired", "state"))) throw invalid();
+      if (!shape.isObject()
+          || !fields.equals(
+              Set.of(
+                  "id",
+                  "username",
+                  "email",
+                  "firstName",
+                  "lastName",
+                  "enabled",
+                  "emailVerified",
+                  "tenantId",
+                  "preferredLanguage",
+                  "effectiveRoles",
+                  "passwordChangeRequired",
+                  "state"))) throw invalid();
       for (String field : List.of("id", "username", "state"))
         if (!shape.path(field).isTextual()) throw invalid();
-      for (String field : List.of("email", "firstName", "lastName", "tenantId", "preferredLanguage"))
+      for (String field :
+          List.of("email", "firstName", "lastName", "tenantId", "preferredLanguage"))
         if (!shape.path(field).isNull() && !shape.path(field).isTextual()) throw invalid();
       for (String field : List.of("enabled", "emailVerified", "passwordChangeRequired"))
         if (!shape.path(field).isBoolean()) throw invalid();
