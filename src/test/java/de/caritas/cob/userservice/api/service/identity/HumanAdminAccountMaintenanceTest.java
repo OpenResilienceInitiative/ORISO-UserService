@@ -316,32 +316,54 @@ class HumanAdminAccountMaintenanceTest {
     human.setRoles(Set.of(UserRole.TENANT_ADMIN.getValue()));
     jdbc.update(
         "insert into consultant values(?,7,'original-admin','Old','Name','old@example.test',null,?,true)",
-        ACCOUNT, java.sql.Timestamp.from(CLOCK.instant()));
+        ACCOUNT,
+        java.sql.Timestamp.from(CLOCK.instant()));
     var actualScope = actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
     assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
     assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.admin(ACCOUNT)));
     assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.counsellor(ACCOUNT)));
     jdbc.update("update consultant set tenant_id=8 where consultant_id=?", ACCOUNT);
-    assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
         () -> actualScope.assertMay(AdminScope.Target.counsellor(ACCOUNT)));
     jdbc.update("update consultant set tenant_id=7 where consultant_id=?", ACCOUNT);
-    service = new HumanAdminAccountMaintenance(mode, human, actualScope, jdbc, transactions,
-        request, new KeycloakHumanAdminMaintenance(http, actors, broker, codec,
-            "https://internal-auth.example.test", "test", "realm-1"), CLOCK, ISSUER);
+    service =
+        new HumanAdminAccountMaintenance(
+            mode,
+            human,
+            actualScope,
+            jdbc,
+            transactions,
+            request,
+            new KeycloakHumanAdminMaintenance(
+                http,
+                actors,
+                broker,
+                codec,
+                "https://internal-auth.example.test",
+                "test",
+                "realm-1"),
+            CLOCK,
+            ISSUER);
     readReply();
     server.expect(requestTo(URL + "/profile")).andRespond(profileReceipt(null));
     readReply(true);
     assertDoesNotThrow(() -> service.updateAdminProfile(ACCOUNT, desired()));
     assertEquals("New", jdbc.queryForObject("select first_name from admin", String.class));
     assertEquals("New", jdbc.queryForObject("select first_name from consultant", String.class));
-    assertEquals("new@example.test", jdbc.queryForObject("select email from consultant", String.class));
+    assertEquals(
+        "new@example.test", jdbc.queryForObject("select email from consultant", String.class));
     assertEquals(true, jdbc.queryForObject("select managed_paused from consultant", Boolean.class));
-    assertEquals("APPLIED", jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
+    assertEquals(
+        "APPLIED",
+        jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
     server.verify();
     jdbc.update("update consultant set tenant_id=8 where consultant_id=?", ACCOUNT);
     assertThrows(RuntimeException.class, () -> service.read(ACCOUNT));
-    jdbc.update("update consultant set tenant_id=7,delete_date=? where consultant_id=?",
-        java.sql.Timestamp.from(CLOCK.instant()), ACCOUNT);
+    jdbc.update(
+        "update consultant set tenant_id=7,delete_date=? where consultant_id=?",
+        java.sql.Timestamp.from(CLOCK.instant()),
+        ACCOUNT);
     assertThrows(RuntimeException.class, () -> service.read(ACCOUNT));
     server.verify();
   }
@@ -523,23 +545,36 @@ class HumanAdminAccountMaintenanceTest {
     var adminRows = mock(AdminRepository.class);
     when(adminRows.findById(ACCOUNT)).thenAnswer(ignored -> Optional.of(localAdmin(type)));
     var consultantRows = mock(ConsultantRepository.class);
-    when(consultantRows.findById(ACCOUNT)).thenAnswer(ignored -> {
-      var rows = jdbc.queryForList("select * from consultant where consultant_id=?", ACCOUNT);
-      if (rows.isEmpty()) return Optional.empty();
-      var row = rows.getFirst();
-      var deleted = (java.sql.Timestamp) row.get("delete_date");
-      return Optional.of(de.caritas.cob.userservice.api.model.Consultant.builder()
-          .id(ACCOUNT).tenantId(((Number) row.get("tenant_id")).longValue())
-          .username((String) row.get("username"))
-          .firstName((String) row.get("first_name"))
-          .lastName((String) row.get("last_name"))
-          .email((String) row.get("email"))
-          .deleteDate(deleted == null ? null : deleted.toLocalDateTime()).build());
-    });
-    var actual = new AdminScope(human, adminRows, mock(AdminAgencyRepository.class),
-        consultantRows, mock(ConsultantAgencyRepository.class),
-        mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
-        mock(UserRepository.class), mock(SessionRepository.class), mock(UserAgencyRepository.class));
+    when(consultantRows.findById(ACCOUNT))
+        .thenAnswer(
+            ignored -> {
+              var rows =
+                  jdbc.queryForList("select * from consultant where consultant_id=?", ACCOUNT);
+              if (rows.isEmpty()) return Optional.empty();
+              var row = rows.getFirst();
+              var deleted = (java.sql.Timestamp) row.get("delete_date");
+              return Optional.of(
+                  de.caritas.cob.userservice.api.model.Consultant.builder()
+                      .id(ACCOUNT)
+                      .tenantId(((Number) row.get("tenant_id")).longValue())
+                      .username((String) row.get("username"))
+                      .firstName((String) row.get("first_name"))
+                      .lastName((String) row.get("last_name"))
+                      .email((String) row.get("email"))
+                      .deleteDate(deleted == null ? null : deleted.toLocalDateTime())
+                      .build());
+            });
+    var actual =
+        new AdminScope(
+            human,
+            adminRows,
+            mock(AdminAgencyRepository.class),
+            consultantRows,
+            mock(ConsultantAgencyRepository.class),
+            mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
+            mock(UserRepository.class),
+            mock(SessionRepository.class),
+            mock(UserAgencyRepository.class));
     org.springframework.test.util.ReflectionTestUtils.setField(actual, "multitenancyEnabled", true);
     return actual;
   }
