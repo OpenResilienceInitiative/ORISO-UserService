@@ -205,42 +205,79 @@ class HumanAdminAccountMaintenanceTest {
       for (boolean put : List.of(false, true)) {
         server.reset();
         actualSchemaAndValidatedHumanFixture();
-        var type = agency
-            ? de.caritas.cob.userservice.api.model.Admin.AdminType.AGENCY
-            : de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT;
+        var type =
+            agency
+                ? de.caritas.cob.userservice.api.model.Admin.AdminType.AGENCY
+                : de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT;
         jdbc.update("update admin set type=? where admin_id=?", type.name(), ACCOUNT);
-        human.setGrantedAuthorities(Set.of(agency
-            ? Authority.AuthorityValue.USER_ADMIN : Authority.AuthorityValue.TENANT_ADMIN));
-        request.setUserPrincipal(authentication("synthetic-current-human", ISSUER, HUMAN, "admin", 7L));
+        human.setGrantedAuthorities(
+            Set.of(
+                agency
+                    ? Authority.AuthorityValue.USER_ADMIN
+                    : Authority.AuthorityValue.TENANT_ADMIN));
+        request.setUserPrincipal(
+            authentication("synthetic-current-human", ISSUER, HUMAN, "admin", 7L));
         request.setMethod(put ? "PUT" : "PATCH");
-        request.setRequestURI("/service/useradmin/" + (agency ? "agencyadmins/" : "tenantadmins/") + ACCOUNT);
+        request.setRequestURI(
+            "/service/useradmin/" + (agency ? "agencyadmins/" : "tenantadmins/") + ACCOUNT);
         assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
         human.setRoles(Set.of(UserRole.TENANT_ADMIN.getValue()));
         var scopeRows = mock(AdminRepository.class);
         when(scopeRows.findById(ACCOUNT)).thenAnswer(ignored -> Optional.of(localAdmin(type)));
-        var actualScope = new AdminScope(human, scopeRows, mock(AdminAgencyRepository.class),
-            mock(ConsultantRepository.class), mock(ConsultantAgencyRepository.class),
-            mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
-            mock(UserRepository.class), mock(SessionRepository.class), mock(UserAgencyRepository.class));
-        org.springframework.test.util.ReflectionTestUtils.setField(actualScope, "multitenancyEnabled", true);
+        var actualScope =
+            new AdminScope(
+                human,
+                scopeRows,
+                mock(AdminAgencyRepository.class),
+                mock(ConsultantRepository.class),
+                mock(ConsultantAgencyRepository.class),
+                mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
+                mock(UserRepository.class),
+                mock(SessionRepository.class),
+                mock(UserAgencyRepository.class));
+        org.springframework.test.util.ReflectionTestUtils.setField(
+            actualScope, "multitenancyEnabled", true);
         assertEquals(new AdminScope.Tenant(7L), actualScope.current());
         assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.admin(ACCOUNT)));
         jdbc.update("update admin set tenant_id=8 where admin_id=?", ACCOUNT);
-        assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
             () -> actualScope.assertMay(AdminScope.Target.admin(ACCOUNT)));
         jdbc.update("update admin set tenant_id=7 where admin_id=?", ACCOUNT);
         assertEquals(7L, localAdmin(type).getTenantId());
-        service = new HumanAdminAccountMaintenance(mode, human, actualScope, jdbc, transactions,
-            request, new KeycloakHumanAdminMaintenance(http, actors, broker, codec,
-                "https://internal-auth.example.test", "test", "realm-1"), CLOCK, ISSUER);
+        service =
+            new HumanAdminAccountMaintenance(
+                mode,
+                human,
+                actualScope,
+                jdbc,
+                transactions,
+                request,
+                new KeycloakHumanAdminMaintenance(
+                    http,
+                    actors,
+                    broker,
+                    codec,
+                    "https://internal-auth.example.test",
+                    "test",
+                    "realm-1"),
+                CLOCK,
+                ISSUER);
         var generic = mock(IdentityProfileUpdater.class);
         var repository = mock(AdminRepository.class);
-        var retrieve = mock(de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService.class);
+        var retrieve =
+            mock(
+                de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService
+                    .class);
         when(retrieve.findAdmin(ACCOUNT, type)).thenAnswer(ignored -> localAdmin(type));
-        var api = new de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService(
-            generic,
-            mock(de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator.class),
-            repository, retrieve);
+        var api =
+            new de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService(
+                generic,
+                mock(
+                    de.caritas.cob.userservice.api.admin.service.consultant.validation
+                        .UserAccountInputValidator.class),
+                repository,
+                retrieve);
         api.setScopedAdminMaintenance(mode, service);
         readReply();
         server.expect(requestTo(URL + "/profile")).andRespond(profileReceipt(null));
@@ -248,24 +285,36 @@ class HumanAdminAccountMaintenanceTest {
         de.caritas.cob.userservice.api.model.Admin result;
         if (put && agency) {
           var dto = new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO();
-          dto.setFirstname("New");dto.setLastname("Name");dto.setEmail("new@example.test");
+          dto.setFirstname("New");
+          dto.setLastname("Name");
+          dto.setEmail("new@example.test");
           result = api.updateAgencyAdmin(ACCOUNT, dto);
         } else if (put) {
           var dto = new de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO();
-          dto.setTenantId(7);dto.setFirstname("New");dto.setLastname("Name");dto.setEmail("new@example.test");
+          dto.setTenantId(7);
+          dto.setFirstname("New");
+          dto.setLastname("Name");
+          dto.setEmail("new@example.test");
           result = api.updateTenantAdmin(ACCOUNT, dto);
         } else {
           var dto = new de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO();
-          dto.setFirstname("New");dto.setLastname("Name");dto.setEmail("new@example.test");
+          dto.setFirstname("New");
+          dto.setLastname("Name");
+          dto.setEmail("new@example.test");
           result = agency ? api.patchAgencyAdmin(ACCOUNT, dto) : api.patchTenantAdmin(ACCOUNT, dto);
         }
-        assertEquals("New", jdbc.queryForObject("select first_name from admin where admin_id=?", String.class, ACCOUNT));
+        assertEquals(
+            "New",
+            jdbc.queryForObject(
+                "select first_name from admin where admin_id=?", String.class, ACCOUNT));
         assertNotNull(result);
         assertEquals("New", result.getFirstName());
         assertTrue(result.isManagedPaused());
         assertEquals(7L, result.getTenantId());
         assertEquals("original-admin", result.getUsername());
-        assertEquals("APPLIED", jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
+        assertEquals(
+            "APPLIED",
+            jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
         verifyNoInteractions(generic);
         verify(repository, never()).save(any());
         server.verify();
@@ -357,8 +406,9 @@ class HumanAdminAccountMaintenanceTest {
     human.setGrantedAuthorities(Set.of());
     assertThrows(RuntimeException.class, () -> service.read(ACCOUNT));
     human.setGrantedAuthorities(Set.of(Authority.AuthorityValue.TENANT_ADMIN));
-    request.setUserPrincipal(new JwtAuthenticationToken(
-        authentication("synthetic-current-human", ISSUER, HUMAN, "admin", 7L).getToken()));
+    request.setUserPrincipal(
+        new JwtAuthenticationToken(
+            authentication("synthetic-current-human", ISSUER, HUMAN, "admin", 7L).getToken()));
     assertFalse(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
     assertThrows(RuntimeException.class, () -> service.read(ACCOUNT));
     request.setUserPrincipal(
@@ -449,12 +499,15 @@ class HumanAdminAccountMaintenanceTest {
       de.caritas.cob.userservice.api.model.Admin.AdminType type) {
     var row = jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT);
     return de.caritas.cob.userservice.api.model.Admin.builder()
-        .id(ACCOUNT).tenantId(((Number) row.get("tenant_id")).longValue())
-        .username((String) row.get("username")).type(type)
+        .id(ACCOUNT)
+        .tenantId(((Number) row.get("tenant_id")).longValue())
+        .username((String) row.get("username"))
+        .type(type)
         .firstName((String) row.get("first_name"))
         .lastName((String) row.get("last_name"))
         .email((String) row.get("email"))
-        .managedPaused((Boolean) row.get("managed_paused")).build();
+        .managedPaused((Boolean) row.get("managed_paused"))
+        .build();
   }
 
   private HumanAdminAccountMaintenance service(HumanAdminMaintenanceTransport transport) {
