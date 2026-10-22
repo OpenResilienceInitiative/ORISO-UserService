@@ -18,10 +18,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Clock;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import lombok.NonNull;
@@ -62,23 +64,23 @@ public final class SelfAppOtpMaintenance {
   }
 
   public boolean startEmail(String pendingEmail) {
-    return execute(null, null, pendingEmail, () -> {}, Operation.EMAIL_START);
+    return execute(null, null, pendingEmail, ids -> {}, Operation.EMAIL_START);
   }
 
-  public boolean finishEmail(String code, Consumer<String> applyEmailAndInvite) {
-    return execute(code, null, null, () -> {}, Operation.EMAIL_FINISH, applyEmailAndInvite);
+  public boolean finishEmail(String code, BiConsumer<String, Set<Long>> applyEmailAndInvite) {
+    return execute(code, null, null, ids -> {}, Operation.EMAIL_FINISH, applyEmailAndInvite);
   }
 
-  public boolean delete(Runnable markPending) {
+  public boolean delete(Consumer<Set<Long>> markPending) {
     return execute(null, null, null, markPending, Operation.DELETE);
   }
 
-  public boolean setup(String initialCode, String secret, Runnable markActive) {
+  public boolean setup(String initialCode, String secret, Consumer<Set<Long>> markActive) {
     return execute(initialCode, secret, null, markActive, Operation.APP);
   }
 
   private boolean execute(
-      String initialCode, String secret, String pendingEmail, Runnable markActive, Operation kind) {
+      String initialCode, String secret, String pendingEmail, Consumer<Set<Long>> markActive, Operation kind) {
     return execute(initialCode, secret, pendingEmail, markActive, kind, null);
   }
 
@@ -86,9 +88,9 @@ public final class SelfAppOtpMaintenance {
       String initialCode,
       String secret,
       String pendingEmail,
-      Runnable markActive,
+      Consumer<Set<Long>> markActive,
       Operation kind,
-      Consumer<String> applyEmailAndInvite) {
+      BiConsumer<String, Set<Long>> applyEmailAndInvite) {
     if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
       throw unavailable();
     if ((kind == Operation.APP && (!text(initialCode, 128) || !text(secret, 4096)))
@@ -103,16 +105,23 @@ public final class SelfAppOtpMaintenance {
     String operation = operationId();
     var actor = actors.require(TaskPurpose.OTP);
     if (!canonicalUuid(actor.serviceSubject())) throw unavailable();
+    var relevantRequest =
+        kind == Operation.DELETE
+            ? Map.of("operation", "otp.delete")
+            : kind == Operation.EMAIL_START
+                ? Map.of("email", pendingEmail)
+                : kind == Operation.EMAIL_FINISH
+                    ? Map.of("otp", initialCode)
+                    : Map.of("otp", initialCode, "secret", secret);
     String requestDigest =
         codec.digest(
             "oriso/user-maintenance-intent/request/v1",
-            kind == Operation.DELETE
-                ? Map.of("operation", "otp.delete")
-                : kind == Operation.EMAIL_START
-                    ? Map.of("email", pendingEmail)
-                    : kind == Operation.EMAIL_FINISH
-                        ? Map.of("otp", initialCode)
-                        : Map.of("otp", initialCode, "secret", secret));
+            Map.of(
+                "subject", self.account,
+                "idempotencyKey", operation,
+                "method", request.getMethod(),
+                "path", request.getRequestURI(),
+                "request", relevantRequest));
     // Check actual local ownership before even the token HTTP call, outside every RPC lock.
     CheckedIntent checked =
         transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
@@ -307,9 +316,9 @@ public final class SelfAppOtpMaintenance {
       TaskActorCredentials actor,
       String envelope,
       AccountLifecycleCodec.VerifiedSelfAppOutcome outcome,
-      Runnable markActive,
+      Consumer<Set<Long>> markActive,
       Operation kind,
-      Consumer<String> applyEmailAndInvite) {
+      BiConsumer<String, Set<Long>> applyEmailAndInvite) {
     var current = findChecked(self, operation, digest, actor, kind);
     if (current == null || !Objects.equals(envelope, current.row.envelope)) throw unavailable();
     if (terminal(current.row.status)) {
@@ -331,6 +340,7 @@ public final class SelfAppOtpMaintenance {
               : legacyLocalEffect(kind, command, nowLocal);
       // A historical native ACK cannot reapply an older local enrollment or pointer.
       if (apply) {
+        var inviteIds = ownedInviteIds(command.has("localState") ? command.path("localState") : nowLocal);
         if (kind == Operation.EMAIL_START) {
           var pending =
               jdbc.queryForList(
@@ -350,15 +360,15 @@ public final class SelfAppOtpMaintenance {
           if (!outcome.belongsToEmailStart(delivered.operation)
               || !outcome.sameEmailIdentity(delivered.outcome)
               || applyEmailAndInvite == null) throw unavailable();
-          applyEmailAndInvite.accept(delivered.email);
+          applyEmailAndInvite.accept(delivered.email, inviteIds);
           clearPending(self, delivered.operation);
           appliedEnrollment(self, operation);
         } else if (kind == Operation.DELETE) {
-          markActive.run();
+          markActive.accept(inviteIds);
           var pending = command.path("localState").path("pendingEmailStartOperationId");
           if (!pending.isNull()) clearPending(self, pending.textValue());
         } else {
-          markActive.run();
+          markActive.accept(inviteIds);
           appliedEnrollment(self, operation);
         }
       }
@@ -405,6 +415,19 @@ public final class SelfAppOtpMaintenance {
       invite.put("status", (String) row.get("two_factor_status"));
     }
     return value;
+  }
+
+  private Set<Long> ownedInviteIds(JsonNode local) {
+    var ids = new HashSet<Long>();
+    for (var invite : local.path("invites")) {
+      try {
+        long id = Long.parseLong(invite.path("id").textValue());
+        if (id <= 0 || !ids.add(id)) throw unavailable();
+      } catch (NumberFormatException malformed) {
+        throw unavailable();
+      }
+    }
+    return Set.copyOf(ids);
   }
 
   private boolean legacyLocalEffect(Operation kind, JsonNode command, JsonNode current) {

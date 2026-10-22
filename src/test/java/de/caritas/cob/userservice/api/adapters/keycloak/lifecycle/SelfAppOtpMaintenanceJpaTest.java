@@ -209,8 +209,8 @@ class SelfAppOtpMaintenanceJpaTest {
                 .setup(
                     CODE,
                     SECRET,
-                    () -> {
-                      activate();
+                    inviteIds -> {
+                      activate(inviteIds);
                       entityManager.flush();
                       assertEquals(
                           "ACTIVE",
@@ -317,8 +317,8 @@ class SelfAppOtpMaintenanceJpaTest {
             owner(transactions)
                 .finishEmail(
                     CODE,
-                    email -> {
-                      applyEmail(email);
+                    (email, inviteIds) -> {
+                      applyEmail(email, inviteIds);
                       entityManager.flush();
                       assertEquals(
                           PENDING_EMAIL,
@@ -420,7 +420,7 @@ class SelfAppOtpMaintenanceJpaTest {
         emailStart);
   }
 
-  private void applyEmail(String email) {
+  private void applyEmail(String email, Set<Long> inviteIds) {
     assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
     assertEquals(PENDING_EMAIL, email);
     var transcoder = new UsernameTranscoder();
@@ -439,7 +439,7 @@ class SelfAppOtpMaintenanceJpaTest {
             mock(AppointmentService.class),
             mock(PatchConsultantSaga.class));
     assertTrue(accounts.patchUser(Map.of("id", ACCOUNT, "email", email)).isPresent());
-    activate();
+    activate(inviteIds);
   }
 
   private void prepareDeliveredEmail() {
@@ -594,9 +594,9 @@ class SelfAppOtpMaintenanceJpaTest {
         REALM);
   }
 
-  private void activate() {
+  private void activate(Set<Long> inviteIds) {
     assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-    inviteService.markTwoFactorActive(ACCOUNT);
+    inviteService.markTwoFactorActiveOwned(ACCOUNT, inviteIds);
     activations.incrementAndGet();
   }
 

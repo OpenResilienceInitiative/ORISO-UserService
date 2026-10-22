@@ -72,13 +72,13 @@ class UserTwoFactorAuthControllerDelegate {
       boolean valid =
           selfAppOtpMaintenance.finishEmail(
               tan,
-              pendingEmail -> {
+              (pendingEmail, inviteIds) -> {
                 if (accountManager
                     .patchUser(userDtoMapper.mapOf(pendingEmail, authenticatedUser))
                     .isEmpty())
                   throw new de.caritas.cob.userservice.api.exception.httpresponses
                       .ServiceUnavailableException("Local email completion unavailable");
-                accountInviteService.markTwoFactorActive(authenticatedUser.getUserId());
+                accountInviteService.markTwoFactorActiveOwned(authenticatedUser.getUserId(), inviteIds);
               });
       return valid ? ResponseEntity.noContent().build() : ResponseEntity.badRequest().build();
     }
@@ -110,7 +110,7 @@ class UserTwoFactorAuthControllerDelegate {
           selfAppOtpMaintenance.setup(
               oneTimePasswordDTO.getOtp(),
               oneTimePasswordDTO.getSecret(),
-              () -> accountInviteService.markTwoFactorActive(authenticatedUser.getUserId()));
+              inviteIds -> accountInviteService.markTwoFactorActiveOwned(authenticatedUser.getUserId(), inviteIds));
       return valid ? ResponseEntity.ok().build() : ResponseEntity.badRequest().build();
     }
 
@@ -131,7 +131,7 @@ class UserTwoFactorAuthControllerDelegate {
     if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
       boolean deleted =
           selfAppOtpMaintenance.delete(
-              () -> accountInviteService.markTwoFactorPendingSetup(authenticatedUser.getUserId()));
+              inviteIds -> accountInviteService.markTwoFactorPendingSetupOwned(authenticatedUser.getUserId(), inviteIds));
       return deleted ? ResponseEntity.ok().build() : ResponseEntity.badRequest().build();
     }
     identityManager.deleteOneTimePassword(
