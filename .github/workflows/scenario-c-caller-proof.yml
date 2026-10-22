@@ -56,6 +56,7 @@ jobs:
           floors['de.caritas.cob.userservice.api.config.auth.FiveActorTokenBoundaryTest'] = 33
           floors['de.caritas.cob.userservice.api.service.AccountInactivityRoleChangeTest'] = 1
           floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationCodecTest'] = 14
+          floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedInvitationsTest'] = 10
 
           def git(*args):
               return subprocess.check_output(['git', *args]).decode().strip()
@@ -197,19 +198,21 @@ jobs:
           if not stable:
               raise SystemExit('Missing or changed full source/resource manifest')
           PY
-      - name: Export a formatting proposal for the two owned protected approval sources
+      - name: Export a formatting proposal for the four owned protected approval sources
         if: failure()
         shell: bash
         run: |
           set -euo pipefail
           protected_codec=src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/ProtectedInvitationCodec.java
           protected_tests=src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/ProtectedInvitationCodecTest.java
-          trap 'git restore --source=HEAD -- "$protected_codec" "$protected_tests"' EXIT
+          protected_transport=src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/KeycloakProtectedInvitations.java
+          protected_http_tests=src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/KeycloakProtectedInvitationsTest.java
+          trap 'git restore --source=HEAD -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests"' EXIT
           ./mvnw -B -ntp -q spotless:apply \
-            "-DspotlessFiles=$GITHUB_WORKSPACE/$protected_codec|$GITHUB_WORKSPACE/$protected_tests"
-          git diff --binary -- "$protected_codec" "$protected_tests" \
+            "-DspotlessFiles=$GITHUB_WORKSPACE/$protected_codec|$GITHUB_WORKSPACE/$protected_tests|$GITHUB_WORKSPACE/$protected_transport|$GITHUB_WORKSPACE/$protected_http_tests"
+          git diff --binary -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" \
             > target/scenario-c-caller-proof/protected-format.patch
-          git restore --source=HEAD -- "$protected_codec" "$protected_tests"
+          git restore --source=HEAD -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests"
           trap - EXIT
           git diff --exit-code
       - name: Upload complete caller proof, including diagnostic RED evidence
