@@ -26,6 +26,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
+import java.util.Optional;
 import java.util.UUID;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,6 +44,7 @@ class JdbcProtectedAccountActivationTest {
   private final Policy policy = new Policy(12, 4, clock.instant());
   private final ProtectedAccountCodec accounts = mock(ProtectedAccountCodec.class);
   private final ProtectedOtpBootstrap otp = mock(ProtectedOtpBootstrap.class);
+  private final JdbcProtectedAccountCreation creation = mock(JdbcProtectedAccountCreation.class);
   private final AdminRepository admins = mock(AdminRepository.class);
   private final AccountInactivityEnrollmentService inactivity =
       mock(AccountInactivityEnrollmentService.class);
@@ -508,6 +510,194 @@ class JdbcProtectedAccountActivationTest {
     assertEquals(
         "still-owned",
         jdbc.queryForObject("SELECT active_recipient_key FROM account_invite", String.class));
+  }
+
+  @Test
+  void recoveredCreateWithLostReplyAndNoLocalStageCanRecordOnlyItsEmptyCleanup() {
+    var recovered = recovery();
+    emptyCustody();
+    var historical = acceptanceAt(clock).historical(73);
+    var cleanup = assertDoesNotThrow(() -> activationWithCustody().discard(historical, recovered));
+    assertEquals(cleanup, activationWithCustody().discard(historical, recovered));
+    assertEquals(1, count("protected_account_cleanup"));
+    assertEquals(0, count("protected_account_activation"));
+    assertEquals(0, count("admin"));
+    assertEquals(0, count("account_inactivity"));
+    assertNull(
+        jdbc.queryForObject(
+            "SELECT account_id FROM protected_invitation_acceptance", String.class));
+    verify(accounts, times(2)).checkRecovery(any(), same(recovered));
+    verify(otp, times(1)).discardWithinOwner(any());
+    assertThrows(RuntimeException.class, () -> activationWithCustody().phase(claim));
+  }
+
+  @Test
+  void verifiedAbandonedCreateCanRecordEmptyCleanupWithoutInventingAnAccount() {
+    var recovered = recovery();
+    when(recovered.state()).thenReturn("ABANDONED");
+    when(recovered.accountId()).thenReturn(null);
+    when(recovered.creationProof()).thenReturn(null);
+    emptyCustody();
+    doAnswer(
+            call -> {
+              JdbcProtectedAccountActivation.VerifiedDiscard discarded = call.getArgument(0);
+              assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+              assertNull(discarded.accountId());
+              assertEquals(recovered.executionId(), discarded.recoveryId());
+              return null;
+            })
+        .when(otp)
+        .discardWithinOwner(any());
+    var historical = acceptanceAt(clock).historical(73);
+    var cleanup = assertDoesNotThrow(() -> activationWithCustody().discard(historical, recovered));
+    assertEquals(cleanup, activationWithCustody().discard(historical, recovered));
+    assertEquals(1, count("protected_account_cleanup"));
+    assertEquals(0, count("admin"));
+    assertEquals(0, count("protected_account_activation"));
+    verify(otp, times(1)).discardWithinOwner(any());
+    assertFalse(
+        jdbc.queryForObject("SELECT body_json FROM protected_account_cleanup", String.class)
+            .contains(ACCOUNT));
+  }
+
+  @Test
+  void emptyCleanupCannotBypassOriginalCustodyOrDeleteAnUnownedLocalAccount() {
+    var recovered = recovery();
+    emptyCustody();
+    var historical = acceptanceAt(clock).historical(73);
+    doThrow(new IllegalArgumentException("Synthetic foreign native recovery"))
+        .when(accounts)
+        .checkRecovery(any(), same(recovered));
+    assertThrows(
+        RuntimeException.class, () -> activationWithCustody().discard(historical, recovered));
+    assertEquals(0, count("protected_account_cleanup"));
+    verifyNoInteractions(otp);
+    doNothing().when(accounts).checkRecovery(any(), same(recovered));
+    jdbc.update("INSERT INTO admin(admin_id) VALUES(?)", ACCOUNT);
+    assertThrows(
+        RuntimeException.class, () -> activationWithCustody().discard(historical, recovered));
+    assertEquals(1, count("admin"));
+    assertEquals(0, count("protected_account_cleanup"));
+    verifyNoInteractions(otp);
+  }
+
+  @Test
+  void expiredPendingActivationCanBeRestrictedOnlyInsideCancellationWithoutReleasingItsOwnership() {
+    restart().stage(claim, pending, prepared, policy);
+    jdbc.update("UPDATE account_invite SET active_recipient_key='still-owned'");
+    Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
+    var historical = acceptanceAt(late).historical(73);
+    assertDoesNotThrow(
+        () ->
+            journalAt(late)
+                .cancel(73, () -> activationAt(late).restrictExpiredWithinOwner(historical)));
+    assertEquals("EXPIRED", jdbc.queryForObject("SELECT status FROM account_invite", String.class));
+    assertNull(jdbc.queryForObject("SELECT token_hash FROM account_invite", String.class));
+    assertEquals(
+        "still-owned",
+        jdbc.queryForObject("SELECT active_recipient_key FROM account_invite", String.class));
+    assertEquals(
+        ACCOUNT,
+        jdbc.queryForObject("SELECT accepted_by_user_id FROM account_invite", String.class));
+    assertEquals("WAITING_OTP", state());
+    assertEquals(1, count("admin"));
+    assertEquals(1, count("account_inactivity"));
+    assertEquals(
+        "CANCEL_REQUESTED",
+        jdbc.queryForObject("SELECT state FROM protected_invitation_authorization", String.class));
+    verify(otp, never()).discardWithinOwner(any());
+  }
+
+  @Test
+  void pendingRestrictionRefusesForeignSqlOwnerEarlyDeadlineDriftAndCommittedAccount() {
+    restart().stage(claim, pending, prepared, policy);
+    var historical = acceptanceAt(clock).historical(73);
+    assertThrows(RuntimeException.class, () -> restart().restrictExpiredWithinOwner(historical));
+    assertThrows(
+        RuntimeException.class,
+        () -> journal.cancel(73, () -> restart().restrictExpiredWithinOwner(historical)));
+    assertEquals(
+        "ACCEPTED", jdbc.queryForObject("SELECT status FROM account_invite", String.class));
+    Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
+    var afterDeadline = acceptanceAt(late).historical(73);
+    var other = new JdbcDataSource();
+    other.setURL("jdbc:h2:mem:" + UUID.randomUUID());
+    var foreign =
+        new org.springframework.transaction.support.TransactionTemplate(
+            new DataSourceTransactionManager(other));
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            foreign.executeWithoutResult(
+                tx -> activationAt(late).restrictExpiredWithinOwner(afterDeadline)));
+    jdbc.update("UPDATE admin SET email='changed@example.test'");
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            journalAt(late)
+                .cancel(73, () -> activationAt(late).restrictExpiredWithinOwner(afterDeadline)));
+    jdbc.update("UPDATE admin SET email='ada@example.test'");
+    var completed = completion();
+    allowCompletion(completed);
+    var ready = restart().ready(claim, completed);
+    restart().acknowledge(ready, committed(ready.outcome()));
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            journalAt(late)
+                .cancel(73, () -> activationAt(late).restrictExpiredWithinOwner(afterDeadline)));
+    assertEquals("COMMITTED", state());
+    assertEquals(
+        "ACCEPTED", jdbc.queryForObject("SELECT status FROM account_invite", String.class));
+  }
+
+  @Test
+  void historicalPhaseDistinguishesPendingAndCommittedWithoutGrantingLiveRecipientAccess() {
+    var before = acceptanceAt(clock).historical(73);
+    assertEquals(
+        JdbcProtectedAccountActivation.Phase.UNSTAGED,
+        assertDoesNotThrow(() -> restart().phase(before)));
+    restart().stage(claim, pending, prepared, policy);
+    Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
+    var pendingHistory = acceptanceAt(late).historical(73);
+    clearInvocations(otp);
+    assertEquals(
+        JdbcProtectedAccountActivation.Phase.WAITING_OTP,
+        assertDoesNotThrow(() -> activationAt(late).phase(pendingHistory)));
+    assertThrows(RuntimeException.class, () -> acceptanceAt(late).resume(73, TOKEN));
+    verifyNoInteractions(otp);
+    var complete = completion();
+    allowCompletion(complete);
+    var ready = restart().ready(claim, complete);
+    clearInvocations(otp);
+    assertEquals(
+        JdbcProtectedAccountActivation.Phase.READY,
+        assertDoesNotThrow(() -> activationAt(late).phase(pendingHistory)));
+    var saved = activationAt(late).historicalReady(pendingHistory);
+    activationAt(late).acknowledge(saved, committed(ready.outcome()));
+    assertEquals(
+        JdbcProtectedAccountActivation.Phase.COMMITTED,
+        assertDoesNotThrow(() -> activationAt(late).phase(pendingHistory)));
+    verifyNoInteractions(otp);
+  }
+
+  private void emptyCustody() {
+    var metadata = mock(ProtectedAccountCodec.PreparedMetadata.class);
+    when(metadata.approvalId()).thenReturn(claim.frozen().approvalId());
+    when(metadata.attemptId()).thenReturn(claim.attemptId());
+    when(metadata.creationFingerprint()).thenReturn("f".repeat(64));
+    when(creation.metadataWithinOwner(any()))
+        .thenAnswer(
+            call -> {
+              assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+              return metadata;
+            });
+    when(creation.createdWithinOwner(any())).thenReturn(Optional.empty());
+  }
+
+  private JdbcProtectedAccountActivation activationWithCustody() {
+    return new JdbcProtectedAccountActivation(
+        jdbc, manager, journal, accounts, json, otp, admins, inactivity, clock, creation);
   }
 
   private VerifiedRecovery recovery() {

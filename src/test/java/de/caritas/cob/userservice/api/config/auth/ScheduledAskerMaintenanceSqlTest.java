@@ -192,7 +192,8 @@ class ScheduledAskerMaintenanceSqlTest {
     Fixture(TaskActorConfiguration actors, TaskActorTokenBroker broker) throws Exception {
       this.actors = actors;
       this.broker = broker;
-      source.setURL("jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1");
+      source.setURL(
+          "jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;NON_KEYWORDS=USER;DB_CLOSE_DELAY=-1");
       jdbc = new JdbcTemplate(source);
       transactions = new DataSourceTransactionManager(source);
       jdbc.execute(
