@@ -152,7 +152,11 @@ public final class JdbcProtectedInvitationAcceptance {
 
   /** Saved terminal-status custody cannot authorize creation or a new activation. */
   HistoricalAcceptance historicalWithinOwner(long inviteId) {
-    throw unavailable();
+    if (inviteId < 1
+        || !TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !TransactionSynchronizationManager.hasResource(jdbc.getDataSource())) throw unavailable();
+    return readHistorical(inviteId);
   }
 
   /** Saved terminal-status custody cannot authorize creation or a new activation. */
@@ -161,6 +165,10 @@ public final class JdbcProtectedInvitationAcceptance {
         || TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()
         || !TransactionSynchronizationManager.getResourceMap().isEmpty()) throw unavailable();
+    return readHistorical(inviteId);
+  }
+
+  private HistoricalAcceptance readHistorical(long inviteId) {
     return journal.withHistoricalInvite(
         inviteId,
         () -> {

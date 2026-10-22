@@ -114,15 +114,18 @@ public final class KeycloakAccountLifecycleCommands implements IdentityProvision
       Object request,
       Class<T> responseType) {
     var actor = actors.require(purpose);
-    var token =
-        broker.issue(purpose); // no direct login, legacy credential or alternate-actor fallback
+    String bearer = switch (purpose) {
+      case ACCOUNT_PROVISIONING -> broker.issueCheckedProvisioning(purpose).accessToken();
+      case ACCOUNT_MAINTENANCE -> broker.issueCheckedMaintenance(purpose).accessToken();
+      default -> throw new IllegalArgumentException("Unsupported account lifecycle purpose");
+    };
     String body = codec.canonical(request);
     if (body.getBytes(StandardCharsets.UTF_8).length > 65536)
       throw new IllegalArgumentException("Account lifecycle request exceeds limit");
     var headers = new HttpHeaders();
     headers.setContentType(MediaType.APPLICATION_JSON);
     headers.setAccept(java.util.List.of(MediaType.APPLICATION_JSON));
-    headers.setBearerAuth(token.accessToken());
+    headers.setBearerAuth(bearer);
     headers.setCacheControl("no-store");
     headers.set(
         "X-ORISO-Task-Context",

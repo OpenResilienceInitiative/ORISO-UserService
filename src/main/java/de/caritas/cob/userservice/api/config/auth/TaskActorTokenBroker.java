@@ -41,7 +41,14 @@ public class TaskActorTokenBroker {
 
   /** Only checked account-creation transports may obtain this private result. */
   public VerifiedProvisioningToken issueCheckedProvisioning(TaskPurpose purpose) {
-    throw provisioningUnavailable();
+    if (purpose != TaskPurpose.ACCOUNT_PROVISIONING) throw provisioningUnavailable();
+    try {
+      var binding = configuration.require(purpose);
+      if (binding.actor() != TaskActor.ACCOUNT_CREATE) throw provisioningUnavailable();
+      return new VerifiedProvisioningToken(requestBoundNativeToken(binding));
+    } catch (RuntimeException failure) {
+      throw provisioningUnavailable();
+    }
   }
 
   private static IllegalStateException provisioningUnavailable() {
@@ -100,20 +107,24 @@ public class TaskActorTokenBroker {
     try {
       var binding = configuration.require(purpose);
       if (binding.actor() != TaskActor.ACCOUNT_ADMIN) throw checkedUnavailable();
-      var issued = requestNativeToken(binding);
-      var issuedAt = issued.token.getIssuedAt();
-      var expiresAt = issued.token.getExpiresAt();
-      var now = Instant.now();
-      if (issuedAt == null
-          || expiresAt == null
-          || issuedAt.getEpochSecond() <= 0
-          || expiresAt.getEpochSecond() <= issuedAt.getEpochSecond()
-          || issuedAt.isAfter(now)
-          || expiresAt.getEpochSecond() <= now.getEpochSecond()) throw checkedUnavailable();
-      return new VerifiedMaintenanceToken(purpose, issued);
+      return new VerifiedMaintenanceToken(purpose, requestBoundNativeToken(binding));
     } catch (RuntimeException failure) {
       throw checkedUnavailable();
     }
+  }
+
+  private NativeToken requestBoundNativeToken(TaskActorCredentials binding) {
+    var issued = requestNativeToken(binding);
+    var issuedAt = issued.token.getIssuedAt();
+    var expiresAt = issued.token.getExpiresAt();
+    var now = Instant.now();
+    if (issuedAt == null
+        || expiresAt == null
+        || issuedAt.getEpochSecond() <= 0
+        || expiresAt.getEpochSecond() <= issuedAt.getEpochSecond()
+        || issuedAt.isAfter(now)
+        || expiresAt.getEpochSecond() <= now.getEpochSecond()) throw checkedUnavailable();
+    return issued;
   }
 
   private NativeToken requestNativeToken(TaskActorCredentials binding) {

@@ -100,7 +100,7 @@ class KeycloakAccountLifecycleCommandsTest {
                 MediaType.APPLICATION_JSON));
     assertEquals(receipt, transport.create(id, request));
     server.verify();
-    verify(broker).issue(TaskPurpose.ACCOUNT_PROVISIONING);
+    verify(broker).issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING);
   }
 
   @Test
@@ -187,9 +187,9 @@ class KeycloakAccountLifecycleCommandsTest {
 
   private void credentials() {
     when(actors.require(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(owner);
-    when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
-        .thenReturn(
-            new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_CREATE, "public-test-bearer", 60));
+    var checked = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+    when(checked.accessToken()).thenReturn("public-test-bearer");
+    when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(checked);
   }
 
   private String url() {
