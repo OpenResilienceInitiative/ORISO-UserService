@@ -52,7 +52,8 @@ public final class ProtectedInvitationRecoverySweep {
     var lease = acquired.get();
     try {
       var ids = new LinkedHashSet<>(cancellation.recoveryInviteIds(PAGE));
-      if (ids.size() > PAGE) throw new IllegalStateException("Protected recovery page exceeds limit");
+      if (ids.size() > PAGE)
+        throw new IllegalStateException("Protected recovery page exceeds limit");
       int pending = 0;
       for (Long id : ids) {
         if (!lease.claimedUntil().isAfter(LocalDateTime.now(clock))) break;
@@ -65,12 +66,16 @@ public final class ProtectedInvitationRecoverySweep {
         }
       }
       if (lease.claimedUntil().isAfter(LocalDateTime.now(clock))) invites.expireElapsedInvites();
-      if (pending > 0) LOG.warn("Protected invitation recovery retained {} pending account(s)", pending);
+      if (pending > 0)
+        LOG.warn("Protected invitation recovery retained {} pending account(s)", pending);
     } catch (RuntimeException failure) {
       LOG.warn("Protected invitation recovery remains pending");
     } finally {
-      try { claims.release(lease); }
-      catch (RuntimeException failure) { LOG.warn("Protected invitation recovery lease remains pending"); }
+      try {
+        claims.release(lease);
+      } catch (RuntimeException failure) {
+        LOG.warn("Protected invitation recovery lease remains pending");
+      }
     }
   }
 }
