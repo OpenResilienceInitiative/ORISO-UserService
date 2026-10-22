@@ -42,6 +42,18 @@ def snapshot(kc):
     return {"user_commit": actual, "keycloak_commit": native, "user_sources": manifest(ROOT), "keycloak_sources": manifest(kc)}
 
 
+def fixture_installer_expired(bearer, now):
+    # Fixture scheduling only, never authentication or tested actor authority.
+    parts = bearer.split(".")
+    if len(parts) != 3:
+        raise ValueError("Invalid private fixture installer lifetime")
+    claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+    expiry = claims.get("exp")
+    if not isinstance(expiry, int) or isinstance(expiry, bool) or expiry <= 0:
+        raise ValueError("Invalid private fixture installer lifetime")
+    return expiry <= now + 5
+
+
 def save(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
@@ -229,11 +241,31 @@ def native(kc, report):
         receipt["executed"] = result["tests"]
         receipt["java_exit"] = child.returncode
         receipt["accepted"] = result["accepted"] and child.returncode == 0
-        credentials = fixture.admin("GET", "/users/" + fixture.account_id + "/credentials")
+        phase = "post-java-native-inspection"
+        expired_installer = fixture_installer_expired(fixture.installer, time.time())
+        receipt["fixture_installer_actual_expiry_requires_refresh"] = expired_installer
+        if expired_installer:
+            status, issued = lifecycle.call(fixture.base, "POST", "/realms/master/protocol/openid-connect/token",
+                {"client_id": "admin-cli", "grant_type": "password", "username": "synthetic-installer",
+                 "password": lifecycle.INSTALLER}, form=True)
+            receipt["fixture_installer_refresh_http_status"] = status
+            assert status == 200
+            fixture.installer = issued["access_token"]
+            assert not fixture_installer_expired(fixture.installer, time.time())
+        status, credentials = lifecycle.call(fixture.base, "GET",
+            "/admin/realms/" + lifecycle.REALM + "/users/" + fixture.account_id + "/credentials",
+            token=fixture.installer)
+        receipt["native_credential_inspection_http_status"] = status
+        assert status == 200
+
         if kind == "email":
             receipt["single_native_mail_credential"] = len([c for c in credentials if c["type"] == "MAIL_OTP_CM"]) == 1
             receipt["single_actual_smtp"] = len(UserPair.mail.messages) == 1
-            native_user = fixture.admin("GET", "/users/" + fixture.account_id)
+            status, native_user = lifecycle.call(fixture.base, "GET",
+                "/admin/realms/" + lifecycle.REALM + "/users/" + fixture.account_id,
+                token=fixture.installer)
+            receipt["native_user_inspection_http_status"] = status
+            assert status == 200
             mail = [c for c in credentials if c["type"] == "MAIL_OTP_CM"]
             receipt["native_email_finished"] = native_user.get("email") == "pair-pending@oriso.org" and native_user.get("emailVerified") is True
             receipt["native_mail_active"] = len(mail) == 1 and json.loads(mail[0]["credentialData"])["active"] is True

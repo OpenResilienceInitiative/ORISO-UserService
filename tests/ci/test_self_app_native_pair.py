@@ -56,6 +56,18 @@ class SelfAppNativePairEvidenceTest(unittest.TestCase):
         for messages in ([], [b"Content-Type: text/plain\n\nnone"], [b"Content-Type: text/plain\n\n654321 and 123456"], [b"one", b"two"]):
             with self.subTest(count=len(messages)), self.assertRaises(ValueError): PROOF.delivered_code(messages)
 
+    def test_only_fixture_installer_lifetime_can_trigger_preemptive_refresh(self):
+        import base64
+        import json
+        def token(expiry):
+            encoded = base64.urlsafe_b64encode(json.dumps({"exp": expiry}).encode()).decode().rstrip("=")
+            return "fixture." + encoded + ".native-signature"
+        self.assertTrue(PROOF.fixture_installer_expired(token(90), 100))
+        self.assertFalse(PROOF.fixture_installer_expired(token(200), 100))
+        for value in [None, "200", True, -1]:
+            with self.assertRaises(ValueError):
+                PROOF.fixture_installer_expired(token(value), 100)
+
     def test_native_workflow_has_read_only_pins_required_builds_and_bounded_cleanup(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/scenario-c-self-app-native-pair.yml").read_text())
         self.assertEqual({"contents": "read"}, workflow["permissions"])
