@@ -528,7 +528,9 @@ class PasswordResetServiceTest {
   @Test
   void causalIssuanceBindsTheActualMailboxBeforeTheActualMailAttempt() {
     when(identityPasswordUpdater.requiresCausalPasswordClaims()).thenReturn(true);
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
+    User causalUser = validUser();
+    causalUser.setUserId("00000000-0000-4000-8000-000000000001");
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(causalUser));
     when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
     var binding =

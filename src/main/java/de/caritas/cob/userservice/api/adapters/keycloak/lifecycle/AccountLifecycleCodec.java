@@ -125,6 +125,47 @@ public final class AccountLifecycleCodec {
         .open(independentlyCheckedOwnedMetadata, envelope);
   }
 
+  String existingSetupPasswordRequestDigest(
+      de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims.Binding binding, String password) {
+    return new ClaimedPasswordRequestDigests(this).existingSetup(binding, password);
+  }
+
+  String passwordResetRequestDigest(
+      de.caritas.cob.userservice.api.service.auth.PasswordResetBinding binding, String password) {
+    return new ClaimedPasswordRequestDigests(this).reset(binding, password);
+  }
+
+  String passwordResetRecipientDigest(String exactEmail) {
+    return new ClaimedPasswordRequestDigests(this).recipient(exactEmail);
+  }
+
+  String claimedPasswordLocalAccountVersion(JsonNode independentlyCheckedOwnedRows) {
+    return new ClaimedPasswordRequestDigests(this).localAccounts(independentlyCheckedOwnedRows);
+  }
+
+  String passwordResetReadProof(String realmName, String realmId, String accountId,
+      de.caritas.cob.userservice.api.config.auth.TaskActorCredentials actor, JsonNode body) {
+    return maintenanceProof("password-reset.read", realmName, realmId, accountId, actor, body);
+  }
+
+  String passwordResetMutationProof(String realmName, String realmId, String accountId,
+      de.caritas.cob.userservice.api.config.auth.TaskActorCredentials actor, JsonNode body) {
+    return maintenanceProof("password-reset", realmName, realmId, accountId, actor, body);
+  }
+
+  String verifyMaintenancePasswordResetReceipt(String reply, String realmId,
+      de.caritas.cob.userservice.api.config.auth.TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "password-reset", "UPDATED");
+  }
+
+  String sealClaimedPasswordIntent(JsonNode metadata, byte[] frozenWrapper) {
+    return new ClaimedPasswordIntentCodec(this, this::mac).seal(metadata, frozenWrapper);
+  }
+
+  byte[] openClaimedPasswordIntent(JsonNode metadata, String envelope) {
+    return new ClaimedPasswordIntentCodec(this, this::mac).open(metadata, envelope);
+  }
+
   /** Immutable data only; construction is deliberately private and grants no workflow authority. */
   private record SelfAppMetadata(
       int v,
@@ -938,7 +979,7 @@ public final class AccountLifecycleCodec {
       String accountId,
       TaskActorCredentials actor,
       Object body) {
-    if (!java.util.Set.of("read", "delete", "locale", "self-password").contains(command)
+    if (!java.util.Set.of("read", "delete", "locale", "self-password", "password-reset.read", "password-reset").contains(command)
         || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
       throw new IllegalArgumentException("Invalid maintenance proof binding");
     long now = clock.instant().getEpochSecond();
