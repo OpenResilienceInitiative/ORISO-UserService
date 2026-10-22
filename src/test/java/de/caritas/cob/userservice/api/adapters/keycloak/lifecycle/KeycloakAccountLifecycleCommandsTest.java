@@ -70,8 +70,11 @@ class KeycloakAccountLifecycleCommandsTest {
         .thenThrow(new IllegalStateException("Generic native issuance remains closed"));
     var identity = codec.identity(scope, account);
     var request = new CreateRequest(identity, execution, account);
-    var receipt = new AttemptResult(id, "account", "OPEN", execution, proof(identity, "account"), null, null);
-    server.expect(requestTo(url())).andExpect(method(HttpMethod.PUT))
+    var receipt =
+        new AttemptResult(id, "account", "OPEN", execution, proof(identity, "account"), null, null);
+    server
+        .expect(requestTo(url()))
+        .andExpect(method(HttpMethod.PUT))
         .andExpect(header("Authorization", "Bearer public-test-checked"))
         .andRespond(withSuccess(codec.canonical(receipt), MediaType.APPLICATION_JSON));
     assertEquals(receipt, assertDoesNotThrow(() -> transport.create(id, request)));
