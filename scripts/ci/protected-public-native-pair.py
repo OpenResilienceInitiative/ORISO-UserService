@@ -166,13 +166,17 @@ def native(kc, report):
             links = fixture.admin("GET", "/clients?clientId=" + client)
             assert len(links) == 1
             assert lifecycle.SUBJECTS[actor] == fixture.admin("GET", "/clients/" + links[0]["id"] + "/service-account-user")["id"]
+        native_policy = fixture.admin("GET")
+        assert native_policy["otpPolicyCodeReusable"] is False
+        assert native_policy["otpPolicyPeriod"] == 30 and native_policy["otpPolicyDigits"] == 6
+        assert native_policy["otpPolicyAlgorithm"] == "HmacSHA1"
         human_bearer = fixture.human(record=False)
         human_claims = json.loads(base64.urlsafe_b64decode(human_bearer.split(".")[1] + "=" * (-len(human_bearer.split(".")[1]) % 4)))
         assert human_claims["azp"] == "protected-human-web"
         recipient = "public-" + uuid.uuid4().hex + "@fixture.invalid"
         receipt["native_preconditions"] = {"five_exact_links": True,
             "actual_current_human_userinfo_session_client_tenant_grants": True,
-            "real_checked_creator_and_admin_broker": True}
+            "real_checked_creator_and_admin_broker": True, "actual_single_use_totp_policy": True}
         environment = dict(os.environ)
         environment.update({"PAIR_KIND": kind, "PAIR_NATIVE_BASE": fixture.base,
             "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id,
@@ -182,7 +186,8 @@ def native(kc, report):
             "PAIR_HUMAN_TOKEN": human_bearer,
             "PAIR_WITNESS": str(report.with_name("protected-public-native-witness.json").resolve()),
             "PAIR_HTTP_WITNESS": str(report.with_name("protected-public-native-http.json").resolve()),
-            "PAIR_LOGIN_WITNESS": str(report.with_name("protected-public-native-login.json").resolve())})
+            "PAIR_LOGIN_WITNESS": str(report.with_name("protected-public-native-login.json").resolve()),
+            "PAIR_FRESH_LOGIN_WITNESS": str(report.with_name("protected-public-native-fresh-login.json").resolve())})
         for actor, (client, _) in lifecycle.ACTORS.items():
             environment.update({"PAIR_" + actor + "_CLIENT": client, "PAIR_" + actor + "_SECRET": "synthetic-lifecycle-" + actor, "PAIR_" + actor + "_SUBJECT": lifecycle.SUBJECTS[actor]})
         reports = ROOT / "target/surefire-reports"
@@ -214,6 +219,11 @@ def native(kc, report):
         login_witness = report.with_name("protected-public-native-login.json")
         if login_witness.is_file():
             receipt["recipient_login"] = checked_login_observation(json.loads(login_witness.read_text()))
+        fresh_login = report.with_name("protected-public-native-fresh-login.json")
+        if fresh_login.is_file():
+            receipt["recipient_fresh_login"] = checked_login_observation(json.loads(fresh_login.read_text()))
+        receipt["accepted"] &= receipt.get("recipient_login") == {"status": 400, "category": "INVALID_USER_CREDENTIALS", "sameTotpAsEnrollment": True}
+        receipt["accepted"] &= receipt.get("recipient_fresh_login") == {"status": 200, "category": "ACCEPTED", "sameTotpAsEnrollment": False}
         phase = "post-java-native-inspection"
         # Installer-only fresh fixture token; tested actor expiry/authority is never refreshed here.
         status, installer = lifecycle.call(fixture.base, "POST", "/realms/master/protocol/openid-connect/token", {"client_id": "admin-cli", "grant_type": "password", "username": "synthetic-installer", "password": lifecycle.INSTALLER}, form=True)

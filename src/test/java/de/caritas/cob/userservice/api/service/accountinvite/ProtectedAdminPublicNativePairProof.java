@@ -339,7 +339,7 @@ class ProtectedAdminPublicNativePairProof {
     loginBody.add("scope", "openid");
     loginBody.add("username", recipient);
     loginBody.add("password", "SyntheticPublicOnly!731");
-    String loginCode = totp(secret);
+    String loginCode = enrollmentCode;
     loginBody.add("totp", loginCode);
     var headers = new org.springframework.http.HttpHeaders();
     headers.setContentType(org.springframework.http.MediaType.APPLICATION_FORM_URLENCODED);
@@ -355,23 +355,7 @@ class ProtectedAdminPublicNativePairProof {
             oidc + "/token",
             new org.springframework.http.HttpEntity<>(loginBody, headers),
             String.class);
-    String loginCategory = "UNRECOGNIZED";
-    if (login.getStatusCode().value() == 200) loginCategory = "ACCEPTED";
-    else {
-      try {
-        var refusal = json.read(login.getBody(), JsonNode.class);
-        if ("invalid_grant".equals(refusal.path("error").asText()))
-          loginCategory =
-              switch (refusal.path("error_description").asText()) {
-                case "Account is not fully set up" -> "ACCOUNT_NOT_FULLY_SET_UP";
-                case "Invalid user credentials" -> "INVALID_USER_CREDENTIALS";
-                case "Missing totp" -> "MISSING_TOTP";
-                default -> "UNRECOGNIZED";
-              };
-      } catch (RuntimeException unparseable) {
-        // Only a closed category can leave this live process.
-      }
-    }
+    String loginCategory = loginCategory(login, json);
     Files.writeString(
         Path.of(required("PAIR_LOGIN_WITNESS")),
         json.canonical(
@@ -379,8 +363,32 @@ class ProtectedAdminPublicNativePairProof {
                 "status", login.getStatusCode().value(),
                 "category", loginCategory,
                 "sameTotpAsEnrollment", loginCode.equals(enrollmentCode))));
-    assertEquals(200, login.getStatusCode().value());
-    var tokenReply = json.read(login.getBody(), JsonNode.class);
+    assertEquals(400, login.getStatusCode().value());
+    assertEquals("INVALID_USER_CREDENTIALS", loginCategory);
+    // Native enrollment consumes this TOTP. Keep that refusal, then use a fresh code.
+    long freshDeadline = System.nanoTime() + Duration.ofSeconds(35).toNanos();
+    String freshCode = totp(secret);
+    while (freshCode.equals(enrollmentCode)) {
+      if (System.nanoTime() >= freshDeadline)
+        throw new IllegalStateException("Fresh native TOTP was not available within its bound");
+      Thread.sleep(200);
+      freshCode = totp(secret);
+    }
+    loginBody.set("totp", freshCode);
+    var granted =
+        loginHttp.postForEntity(
+            oidc + "/token",
+            new org.springframework.http.HttpEntity<>(loginBody, headers),
+            String.class);
+    Files.writeString(
+        Path.of(required("PAIR_FRESH_LOGIN_WITNESS")),
+        json.canonical(
+            Map.of(
+                "status", granted.getStatusCode().value(),
+                "category", loginCategory(granted, json),
+                "sameTotpAsEnrollment", freshCode.equals(enrollmentCode))));
+    assertEquals(200, granted.getStatusCode().value());
+    var tokenReply = json.read(granted.getBody(), JsonNode.class);
     var recipientJwt = decoder.decode(tokenReply.path("access_token").asText());
     assertEquals(account, recipientJwt.getSubject());
     assertEquals("0", recipientJwt.getClaimAsString("tenantId"));
@@ -426,6 +434,28 @@ class ProtectedAdminPublicNativePairProof {
                 true,
                 "newRecipientLoginAfterOtpAndCommit",
                 true)));
+  }
+
+  static String loginCategory(
+      org.springframework.http.ResponseEntity<String> login, AccountLifecycleCodec json) {
+    String loginCategory = "UNRECOGNIZED";
+    if (login.getStatusCode().value() == 200) loginCategory = "ACCEPTED";
+    else {
+      try {
+        var refusal = json.read(login.getBody(), JsonNode.class);
+        if ("invalid_grant".equals(refusal.path("error").asText()))
+          loginCategory =
+              switch (refusal.path("error_description").asText()) {
+                case "Account is not fully set up" -> "ACCOUNT_NOT_FULLY_SET_UP";
+                case "Invalid user credentials" -> "INVALID_USER_CREDENTIALS";
+                case "Missing totp" -> "MISSING_TOTP";
+                default -> "UNRECOGNIZED";
+              };
+      } catch (RuntimeException unparseable) {
+        // Only a closed category can leave this live process.
+      }
+    }
+    return loginCategory;
   }
 
   static String totp(String secret) throws Exception {
