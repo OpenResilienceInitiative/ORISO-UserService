@@ -236,25 +236,42 @@ class JdbcProtectedCleanupStatusTest {
 
   @Test
   void alreadyRestrictedPendingHistorySkipsAcceptedExpiryButCommittedLocalRowsRefuse() {
-    var history=acceptance.historical(73);
-    var activation=mock(JdbcProtectedAccountActivation.class);
-    String original=jdbc.queryForObject("SELECT response_json FROM protected_invitation_cancellation",String.class);
+    var history = acceptance.historical(73);
+    var activation = mock(JdbcProtectedAccountActivation.class);
+    String original =
+        jdbc.queryForObject(
+            "SELECT response_json FROM protected_invitation_cancellation", String.class);
     clearInvocations(receiver);
-    assertDoesNotThrow(()->service().cancelPendingActivation(history,activation));
-    assertEquals(original,jdbc.queryForObject("SELECT response_json FROM protected_invitation_cancellation",String.class));
-    verifyNoInteractions(activation,receiver);
+    assertDoesNotThrow(() -> service().cancelPendingActivation(history, activation));
+    assertEquals(
+        original,
+        jdbc.queryForObject(
+            "SELECT response_json FROM protected_invitation_cancellation", String.class));
+    verifyNoInteractions(activation, receiver);
     // An already invalidated original may predate its durable cancellation row after an old crash.
     jdbc.update("DELETE FROM protected_invitation_cancellation WHERE invite_id=73");
     jdbc.update("UPDATE protected_invitation_authorization SET state='READY' WHERE invite_id=73");
-    assertDoesNotThrow(()->service().cancelPendingActivation(history,activation));
-    assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM protected_invitation_cancellation",Integer.class));
+    assertDoesNotThrow(() -> service().cancelPendingActivation(history, activation));
+    assertEquals(
+        1,
+        jdbc.queryForObject(
+            "SELECT COUNT(*) FROM protected_invitation_cancellation", Integer.class));
     verify(receiver).cancel(any());
     verifyNoInteractions(activation);
     clearInvocations(receiver);
-    jdbc.update("INSERT INTO protected_account_activation(invite_id,claim_id,attempt_id,execution_id,account_id,state,created_checkpoint,local_effects_json,local_effects_digest,local_outbox_id,created_at,updated_at) VALUES(73,?,?,?,?,'COMMITTED','not-needed-for-closed-guard','{}',?,?,?,?)",
-        account.path("claimId").asText(),account.path("attemptId").asText(),account.path("executionId").asText(),account.path("createdResponse").path("accountId").asText(),"f".repeat(64),UUID.randomUUID().toString(),Timestamp.from(before.instant()),Timestamp.from(before.instant()));
-    assertThrows(RuntimeException.class,()->service().cancelPendingActivation(history,activation));
-    verifyNoInteractions(receiver,activation);
+    jdbc.update(
+        "INSERT INTO protected_account_activation(invite_id,claim_id,attempt_id,execution_id,account_id,state,created_checkpoint,local_effects_json,local_effects_digest,local_outbox_id,created_at,updated_at) VALUES(73,?,?,?,?,'COMMITTED','not-needed-for-closed-guard','{}',?,?,?,?)",
+        account.path("claimId").asText(),
+        account.path("attemptId").asText(),
+        account.path("executionId").asText(),
+        account.path("createdResponse").path("accountId").asText(),
+        "f".repeat(64),
+        UUID.randomUUID().toString(),
+        Timestamp.from(before.instant()),
+        Timestamp.from(before.instant()));
+    assertThrows(
+        RuntimeException.class, () -> service().cancelPendingActivation(history, activation));
+    verifyNoInteractions(receiver, activation);
   }
 
   private JdbcProtectedInvitationCancellation service() {

@@ -16,15 +16,17 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.*;
 
-/** Real JPA public release/email reuse; independent final native proof is the explicit port double. */
-@TestPropertySource(properties="TASK_IDENTITY_MODEL=FIVE_ACTORS")
+/**
+ * Real JPA public release/email reuse; independent final native proof is the explicit port double.
+ */
+@TestPropertySource(properties = "TASK_IDENTITY_MODEL=FIVE_ACTORS")
 class ProtectedInvitationRecipientKeyReleaseJpaIT extends ProtectedInvitationIssuanceJpaFixture {
   @MockitoBean ProtectedInvitationCancellation cancellation;
 
   @Test
   void pendingAcceptedEmailKeyStaysHeldUntilVerifiedReleaseThenActualEmailCanBeInvitedAgain() {
-    var original=service.createInvite(command());
-    String held=original.getActiveRecipientKey();
+    var original = service.createInvite(command());
+    String held = original.getActiveRecipientKey();
     original.setStatus(AccountInviteStatus.EXPIRED);
     original.setExpiresAt(LocalDateTime.now().minusDays(1).withNano(0));
     original.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
@@ -32,49 +34,73 @@ class ProtectedInvitationRecipientKeyReleaseJpaIT extends ProtectedInvitationIss
     original.setTokenHash(null);
     invites.saveAndFlush(original);
     assertThat(held).isNotBlank();
-    var finalProof=new AtomicBoolean();var insideAck=new AtomicBoolean();
+    var finalProof = new AtomicBoolean();
+    var insideAck = new AtomicBoolean();
     when(cancellation.pendingInviteIds(100)).thenReturn(List.of(original.getId()));
-    doAnswer(call->{
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      transaction().executeWithoutResult(tx->((Runnable)call.getArgument(2)).run());return null;
-    }).when(cancellation).cancel(eq(original.getId()),eq(ProtectedInvitationCancellation.Reason.ISSUANCE_ABORTED),any());
-    when(cancellation.withAcknowledged(eq(original.getId()),any())).thenAnswer(call->{
-      if(!finalProof.get())throw new KeycloakProtectedInvitations.RemoteFailure(0);
-      insideAck.set(true);
-      try{return transaction().execute(tx->((Supplier<?>)call.getArgument(1)).get());}
-      finally{insideAck.set(false);}
-    });
-    when(tenantIds.release(17L)).thenAnswer(call->{assertTrue(insideAck.get());return true;});
-    assertThrows(KeycloakProtectedInvitations.RemoteFailure.class,service::expireElapsedInvites);
-    assertThat(invites.findById(original.getId()).orElseThrow().getActiveRecipientKey()).isEqualTo(held);
-    assertThatThrownBy(()->service.createInvite(command())).isInstanceOf(RuntimeException.class);
-    verify(tenantIds,never()).release(17L);
+    doAnswer(
+            call -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              transaction().executeWithoutResult(tx -> ((Runnable) call.getArgument(2)).run());
+              return null;
+            })
+        .when(cancellation)
+        .cancel(
+            eq(original.getId()),
+            eq(ProtectedInvitationCancellation.Reason.ISSUANCE_ABORTED),
+            any());
+    when(cancellation.withAcknowledged(eq(original.getId()), any()))
+        .thenAnswer(
+            call -> {
+              if (!finalProof.get()) throw new KeycloakProtectedInvitations.RemoteFailure(0);
+              insideAck.set(true);
+              try {
+                return transaction().execute(tx -> ((Supplier<?>) call.getArgument(1)).get());
+              } finally {
+                insideAck.set(false);
+              }
+            });
+    when(tenantIds.release(17L))
+        .thenAnswer(
+            call -> {
+              assertTrue(insideAck.get());
+              return true;
+            });
+    assertThrows(KeycloakProtectedInvitations.RemoteFailure.class, service::expireElapsedInvites);
+    assertThat(invites.findById(original.getId()).orElseThrow().getActiveRecipientKey())
+        .isEqualTo(held);
+    assertThatThrownBy(() -> service.createInvite(command())).isInstanceOf(RuntimeException.class);
+    verify(tenantIds, never()).release(17L);
     assertThat(invites.count()).isEqualTo(1);
 
     finalProof.set(true);
     assertDoesNotThrow(service::expireElapsedInvites);
-    var released=invites.findById(original.getId()).orElseThrow();
+    var released = invites.findById(original.getId()).orElseThrow();
     assertThat(released.getTenantIdReservationToken()).isNull();
     assertThat(released.getActiveRecipientKey()).isNull();
     assertThat(released.getTokenHash()).isNull();
-    var next=assertDoesNotThrow(()->service.createInvite(command()));
+    var next = assertDoesNotThrow(() -> service.createInvite(command()));
     assertThat(next.getId()).isNotEqualTo(original.getId());
     assertThat(next.getActiveRecipientKey()).isEqualTo(held);
     assertThat(invites.count()).isEqualTo(2);
     verify(tenantIds).release(17L);
-    verifyNoInteractions(sender,approvals);
+    verifyNoInteractions(sender, approvals);
   }
 
   @Test
   void stalePendingDiscoveryNeverReleasesTheEmailKeyOfAnUnexpiredProtectedInvite() {
-    var live=service.createInvite(command());
+    var live = service.createInvite(command());
     when(cancellation.pendingInviteIds(100)).thenReturn(List.of(live.getId()));
     assertDoesNotThrow(service::expireElapsedInvites);
-    assertThat(invites.findById(live.getId()).orElseThrow().getActiveRecipientKey()).isEqualTo(live.getActiveRecipientKey());
-    assertThatThrownBy(()->service.createInvite(command())).isInstanceOf(RuntimeException.class);
-    verify(cancellation,never()).withAcknowledged(anyLong(),any());
-    verify(tenantIds,never()).release(17L);
+    assertThat(invites.findById(live.getId()).orElseThrow().getActiveRecipientKey())
+        .isEqualTo(live.getActiveRecipientKey());
+    assertThatThrownBy(() -> service.createInvite(command())).isInstanceOf(RuntimeException.class);
+    verify(cancellation, never()).withAcknowledged(anyLong(), any());
+    verify(tenantIds, never()).release(17L);
   }
 
-  private TransactionTemplate transaction(){var tx=new TransactionTemplate(transactions);tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);return tx;}
+  private TransactionTemplate transaction() {
+    var tx = new TransactionTemplate(transactions);
+    tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    return tx;
+  }
 }

@@ -214,15 +214,28 @@ public final class JdbcProtectedAccountCreation {
   PreparedRecovery recoveryWithinOwner(
       JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical, long expectedGeneration) {
     owningSql();
-    if(historical==null || historical.inviteId()!=inviteId(historical.claim())
-        || expectedGeneration<0 || expectedGeneration==Long.MAX_VALUE) throw unavailable();
-    var claim=historical.claim();
-    return owned(claim,true,()->{
-      Row saved=checked(claim,one(rows(claim)));
-      var ids=jdbc.queryForList("SELECT recovery_id FROM protected_account_recovery WHERE invite_id=? AND expected_generation=? FOR UPDATE",String.class,inviteId(claim),expectedGeneration);
-      if(ids.size()!=1) throw unavailable();
-      return accounts.prepareRecovery(accounts.restorePrepared(claim,saved.prepared()),expectedGeneration,uuid(ids.getFirst()));
-    });
+    if (historical == null
+        || historical.inviteId() != inviteId(historical.claim())
+        || expectedGeneration < 0
+        || expectedGeneration == Long.MAX_VALUE) throw unavailable();
+    var claim = historical.claim();
+    return owned(
+        claim,
+        true,
+        () -> {
+          Row saved = checked(claim, one(rows(claim)));
+          var ids =
+              jdbc.queryForList(
+                  "SELECT recovery_id FROM protected_account_recovery WHERE invite_id=? AND expected_generation=? FOR UPDATE",
+                  String.class,
+                  inviteId(claim),
+                  expectedGeneration);
+          if (ids.size() != 1) throw unavailable();
+          return accounts.prepareRecovery(
+              accounts.restorePrepared(claim, saved.prepared()),
+              expectedGeneration,
+              uuid(ids.getFirst()));
+        });
   }
 
   public Optional<PreparedMetadata> findPrepared(AcceptanceClaim claim) {

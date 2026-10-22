@@ -57,19 +57,42 @@ public final class ProtectedAdminOnboardingService {
       OperatorDpaContentClient dpa,
       TenantCreationClient tenants,
       Clock clock) {
-    this(invites,actors,acceptance,codec,creation,accounts,otp,activation,inactivity,usernames,
-        profiles,dpa,tenants,clock,null,null);
+    this(
+        invites,
+        actors,
+        acceptance,
+        codec,
+        creation,
+        accounts,
+        otp,
+        activation,
+        inactivity,
+        usernames,
+        profiles,
+        dpa,
+        tenants,
+        clock,
+        null,
+        null);
   }
 
   public ProtectedAdminOnboardingService(
-      AccountInviteService invites, TaskActorConfiguration actors,
-      JdbcProtectedInvitationAcceptance acceptance, ProtectedAccountCodec codec,
-      JdbcProtectedAccountCreation creation, KeycloakProtectedAccounts accounts,
-      ProtectedOtpBootstrap otp, JdbcProtectedAccountActivation activation,
-      AccountInactivityEnrollmentService inactivity, UsernameTranscoder usernames,
-      ProtectedInvitationProfiles profiles, OperatorDpaContentClient dpa,
-      TenantCreationClient tenants, Clock clock,
-      ProtectedAccountRecovery recovery, JdbcProtectedInvitationCancellation cancellation) {
+      AccountInviteService invites,
+      TaskActorConfiguration actors,
+      JdbcProtectedInvitationAcceptance acceptance,
+      ProtectedAccountCodec codec,
+      JdbcProtectedAccountCreation creation,
+      KeycloakProtectedAccounts accounts,
+      ProtectedOtpBootstrap otp,
+      JdbcProtectedAccountActivation activation,
+      AccountInactivityEnrollmentService inactivity,
+      UsernameTranscoder usernames,
+      ProtectedInvitationProfiles profiles,
+      OperatorDpaContentClient dpa,
+      TenantCreationClient tenants,
+      Clock clock,
+      ProtectedAccountRecovery recovery,
+      JdbcProtectedInvitationCancellation cancellation) {
     this.recovery = recovery;
     this.cancellation = cancellation;
     this.invites = Objects.requireNonNull(invites);
