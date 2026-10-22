@@ -933,12 +933,13 @@ public class AccountInviteService {
             if (current.getStatus() != AccountInviteStatus.SUPERSEDED) {
               throw new BadRequestException("The cancellation state changed");
             }
-            // An interrupted resend retains its capability until its original deadline. A live
-            // source or a replacement recorded while the native RPC was in flight still owns it.
+            // An interrupted resend retains its address and capability until its original deadline.
+            // A live source or a replacement recorded during the native RPC still owns them.
             if (current.getExpiresAt() == null
                 || current.getExpiresAt().isAfter(now)
                 || current.getSupersededByInviteId() != null
-                || current.getTenantIdReservationToken() == null) return null;
+                || current.getTenantIdReservationToken() == null
+                    && current.getActiveRecipientKey() == null) return null;
           } else if (current.getStatus() != AccountInviteStatus.EXPIRED
               && current.getStatus() != AccountInviteStatus.REVOKED) {
             throw new BadRequestException("The cancellation state changed");

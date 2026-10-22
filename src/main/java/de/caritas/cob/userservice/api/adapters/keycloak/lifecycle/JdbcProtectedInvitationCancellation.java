@@ -402,8 +402,10 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
             + " WHERE i.target_role IN ('TENANT_ADMIN','PLATFORM_ADMIN') AND i.purpose='INVITE'"
             + " AND i.status IN ('EXPIRED','REVOKED','SUPERSEDED')"
             + " AND (c.invite_id IS NULL OR c.state='PENDING'"
-            + " OR (c.state='ACKNOWLEDGED' AND i.status='SUPERSEDED'"
-            + " AND i.superseded_by_invite_id IS NULL AND i.tenant_id_reservation_token IS NOT NULL AND i.expires_at<=?))"
+            + " OR (c.state='ACKNOWLEDGED' AND ("
+            + " (i.status IN ('REVOKED','EXPIRED') AND (i.active_recipient_key IS NOT NULL OR i.tenant_id_reservation_token IS NOT NULL))"
+            + " OR (i.status='SUPERSEDED' AND i.superseded_by_invite_id IS NULL"
+            + " AND (i.active_recipient_key IS NOT NULL OR i.tenant_id_reservation_token IS NOT NULL) AND i.expires_at<=?))))"
             + " ORDER BY COALESCE(c.updated_at,i.update_date,i.expires_at),i.id LIMIT ?",
         Long.class,
         Timestamp.from(clock.instant()),
