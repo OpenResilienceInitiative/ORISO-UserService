@@ -46,7 +46,7 @@ class CleanupPairControls(unittest.TestCase):
         self.assertIn('coordinator.reconcileTerminal(73)', java)
         self.assertIn('restarted.withAcknowledged', java)
         self.assertNotIn('mock(ProtectedAccountRecovery.class)', java)
-        self.assertEqual('f3c2f0cf7ca3ce852dc15625e216921e11c8e1b9', proof.KC_COMMIT)
+        self.assertEqual('a9483e4b44578f10badf70c5265a37a2c1d3d26e', proof.KC_COMMIT)
 
 
 if __name__ == '__main__':
