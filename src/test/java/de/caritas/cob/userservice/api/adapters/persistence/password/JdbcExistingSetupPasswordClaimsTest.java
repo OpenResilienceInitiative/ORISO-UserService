@@ -137,12 +137,15 @@ class JdbcExistingSetupPasswordClaimsTest {
         });
     assertEquals("COMPLETED", f.invitePhase());
     assertEquals("ACKNOWLEDGED", f.journalPhase());
-    var afterDeadline = new JdbcExistingSetupPasswordClaims(
-        f.jdbc, Clock.fixed(Instant.parse("2026-10-24T00:00:00Z"), ZoneOffset.UTC));
-    Claim historical = assertDoesNotThrow(
-        () -> f.tx.execute(status -> afterDeadline.claimWithinOwner(f.binding, DIGEST)));
+    var afterDeadline =
+        new JdbcExistingSetupPasswordClaims(
+            f.jdbc, Clock.fixed(Instant.parse("2026-10-24T00:00:00Z"), ZoneOffset.UTC));
+    Claim historical =
+        assertDoesNotThrow(
+            () -> f.tx.execute(status -> afterDeadline.claimWithinOwner(f.binding, DIGEST)));
     assertEquals(first, historical);
-    assertThrows(IllegalStateException.class,
+    assertThrows(
+        IllegalStateException.class,
         () -> f.tx.execute(status -> afterDeadline.claimWithinOwner(f.binding, CHANGED)));
     assertEquals("ACKNOWLEDGED", f.journalPhase());
     assertThrows(
