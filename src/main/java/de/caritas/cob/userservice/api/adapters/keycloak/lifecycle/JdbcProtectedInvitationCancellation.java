@@ -64,7 +64,7 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
                 journal.requireRestrictedInvite(
                     inviteId, current.frozen().approval(), "ACKNOWLEDGED".equals(current.state()));
                 if ("ACKNOWLEDGED".equals(current.state())) checkedAck(current);
-                else touch(inviteId);
+                touch(inviteId);
                 return current;
               }
               var original =
@@ -170,7 +170,18 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
 
   @Override
   public List<Long> pendingInviteIds(int limit) {
-    return List.of();
+    if (limit < 1 || limit > 100) throw new IllegalArgumentException("Invalid protected recovery page");
+    if (TransactionSynchronizationManager.isActualTransactionActive())
+      throw new IllegalStateException("Protected recovery discovery requires completed local SQL");
+    return jdbc.queryForList(
+        "SELECT i.id FROM account_invite i LEFT JOIN protected_invitation_cancellation c ON c.invite_id=i.id"
+            + " WHERE i.target_role IN ('TENANT_ADMIN','PLATFORM_ADMIN') AND i.purpose='INVITE'"
+            + " AND i.status IN ('EXPIRED','REVOKED','SUPERSEDED')"
+            + " AND (c.invite_id IS NULL OR c.state='PENDING'"
+            + " OR (c.state='ACKNOWLEDGED' AND i.status='SUPERSEDED'"
+            + " AND i.superseded_by_invite_id IS NULL AND i.tenant_id_reservation_token IS NOT NULL AND i.expires_at<=?))"
+            + " ORDER BY COALESCE(c.updated_at,i.update_date,i.expires_at),i.id LIMIT ?",
+        Long.class,Timestamp.from(clock.instant()),limit);
   }
 
   private VerifiedRestriction checkedAck(Row row) {
@@ -185,7 +196,7 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
 
   private void touch(long inviteId) {
     jdbc.update(
-        "UPDATE protected_invitation_cancellation SET updated_at=? WHERE invite_id=? AND state='PENDING'",
+        "UPDATE protected_invitation_cancellation SET updated_at=? WHERE invite_id=? AND state IN ('PENDING','ACKNOWLEDGED')",
         Timestamp.from(clock.instant()),
         inviteId);
   }

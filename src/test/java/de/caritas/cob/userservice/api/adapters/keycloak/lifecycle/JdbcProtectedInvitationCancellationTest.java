@@ -129,13 +129,14 @@ class JdbcProtectedInvitationCancellationTest {
     assertThrows(
         KeycloakProtectedInvitations.RemoteFailure.class,
         () -> service().cancel(73, Reason.REVOKED, this::invalidate));
-    when(receiver.cancel(any()))
-        .thenAnswer(
+    doAnswer(
             call -> {
               FrozenCancellation f = call.getArgument(0);
               assertEquals(first.get(), f);
               return expired(f);
-            });
+            })
+        .when(receiver)
+        .cancel(any());
     service()
         .cancel(
             73, Reason.REVOKED, () -> fail("A saved intent already invalidated the local invite"));
@@ -346,6 +347,7 @@ class JdbcProtectedInvitationCancellationTest {
 
   private void pendingFixture() {
     jdbc.execute("ALTER TABLE account_invite ADD update_date TIMESTAMP NULL");
+    jdbc.execute("ALTER TABLE account_invite ADD superseded_by_invite_id BIGINT NULL");
     jdbc.update(
         "UPDATE account_invite SET update_date=? WHERE id=73", Timestamp.from(before.instant()));
   }
