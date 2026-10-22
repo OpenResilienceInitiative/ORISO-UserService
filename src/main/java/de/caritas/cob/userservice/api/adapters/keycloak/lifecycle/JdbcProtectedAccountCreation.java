@@ -148,6 +148,11 @@ public final class JdbcProtectedAccountCreation {
         });
   }
 
+  /** Historical SQL evidence can request reducing recovery only, never creation. */
+  public PreparedRecovery recovery(JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical, long expectedGeneration) {
+    throw unavailable();
+  }
+
   private <T> T owned(AcceptanceClaim claim, Supplier<T> action) {
     long invite = inviteId(claim);
     return journal.withRecipientInvite(

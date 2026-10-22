@@ -144,6 +144,16 @@ class JdbcProtectedAccountCreationTest {
     assertEquals(first.attemptId(), replay.attemptId());
     assertEquals(1, count("protected_account_recovery"));
     assertArrayEquals(accounts.recoverBody(first), accounts.recoverBody(replay));
+    jdbc.update("UPDATE account_invite SET status='REVOKED',token_hash=NULL WHERE id=73");
+    var historical = assertDoesNotThrow(() -> acceptance.historical(73));
+    var reducing = assertDoesNotThrow(() -> owner().recovery(historical, 0));
+    assertEquals(first.recoveryId(), reducing.recoveryId());
+    assertArrayEquals(accounts.recoverBody(first), accounts.recoverBody(reducing));
+    assertThrows(IllegalStateException.class, () -> owner().metadata(claim));
+    assertThrows(IllegalStateException.class, () -> owner().recovery(claim, 0));
+    jdbc.update("UPDATE protected_invitation_acceptance SET execution_id=? WHERE invite_id=73", UUID.randomUUID().toString());
+    assertThrows(IllegalStateException.class, () -> owner().recovery(historical, 0));
+    assertEquals(1, count("protected_account_recovery"));
     assertThrows(IllegalArgumentException.class, () -> owner().recovery(claim, -1));
     assertThrows(IllegalArgumentException.class, () -> owner().recovery(claim, Long.MAX_VALUE));
   }
