@@ -349,7 +349,7 @@ public final class SelfPasswordMaintenance {
       local.put("updateDate", updated.toString());
       local.put(
           "passwordChangeRequired",
-          required instanceof Boolean b ? b : ((Number) required).intValue() != 0);
+          required instanceof Boolean b ? b.booleanValue() : ((Number) required).intValue() != 0);
     }
     return local;
   }
