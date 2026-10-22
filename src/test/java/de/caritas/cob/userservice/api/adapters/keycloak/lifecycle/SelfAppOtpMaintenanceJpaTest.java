@@ -9,6 +9,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
+import de.caritas.cob.userservice.api.AccountManager;
+import de.caritas.cob.userservice.api.UserServiceMapper;
+import de.caritas.cob.userservice.api.PatchConsultantSaga;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.config.auth.SelfAppSignedIssuer;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -81,7 +88,10 @@ class SelfAppOtpMaintenanceJpaTest {
   private MockHttpServletRequest request;
   private IdentityClientConfig mode;
   private AccountInviteService inviteService;
-  private final String operation = UUID.randomUUID().toString();
+  private String operation = UUID.randomUUID().toString();
+  private String emailStart;
+  private static final String PENDING_EMAIL = "pending@fixture.invalid";
+  private static final String CREDENTIAL = "55555555-5555-4555-8555-555555555555";
   private final AtomicInteger activations = new AtomicInteger();
   private final AtomicInteger nativeCalls = new AtomicInteger();
   private final AccountLifecycleCodec codec = new AccountLifecycleCodec(KEY);
@@ -93,11 +103,14 @@ class SelfAppOtpMaintenanceJpaTest {
     assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
     issuer = new SelfAppSignedIssuer(ADMIN);
     jdbc = new JdbcTemplate(source);
+    jdbc.execute("drop table if exists identity_self_otp_pending_email");
     jdbc.execute("drop table if exists identity_self_app_otp_intent");
     new ResourceDatabasePopulator(
             new ClassPathResource(
                 "db/changelog/changeset/20261022_identity_self_app_otp_367/migrate.sql"))
         .execute(source);
+    new ResourceDatabasePopulator(new ClassPathResource(
+        "db/changelog/changeset/20261022_identity_self_otp_email_367/migrate.sql")).execute(source);
     users.findById(ACCOUNT).ifPresent(users::delete);
     var user = new User(ACCOUNT, null, "ordinary", "ordinary@fixture.invalid", false);
     user.setTenantId(7L);
@@ -271,6 +284,171 @@ class SelfAppOtpMaintenanceJpaTest {
     assertEquals(0, activations.get());
     assertEquals(1, nativeCalls.get());
     server.verify();
+  }
+
+  @Test
+  void actualJpaLinkedEmailPointerInviteAndReceiptCommitTogether() {
+    prepareDeliveredEmail();
+    expectLinkedFinish(false, false);
+    assertTrue(owner(transactions).finishEmail(CODE, this::applyEmail));
+    assertEquals("ACKNOWLEDGED", status());
+    assertEquals(PENDING_EMAIL, users.findById(ACCOUNT).orElseThrow().getEmail());
+    assertEquals(TwoFactorGateStatus.ACTIVE, invite().getTwoFactorStatus());
+    assertEquals(0, pendingCount());
+    assertTrue(owner(transactions).finishEmail(CODE, this::applyEmail));
+    assertEquals(1, activations.get());
+    server.verify();
+  }
+
+  @Test
+  void actualJpaLinkedEmailFlushRollbackKeepsPointerAndFrozenCommandForExactRecovery() {
+    prepareDeliveredEmail();
+    expectLinkedFinish(false, true);
+    assertThrows(RuntimeException.class, () -> owner(transactions).finishEmail(CODE, email -> {
+      applyEmail(email);
+      entityManager.flush();
+      assertEquals(PENDING_EMAIL, jdbc.queryForObject("select email from user where user_id=?", String.class, ACCOUNT));
+      assertEquals("ACTIVE", jdbc.queryForObject("select two_factor_status from account_invite where id=?", String.class, inviteId));
+      throw new IllegalStateException("Fixture rollback after real email and invite flush");
+    }));
+    assertEquals("FROZEN", status());
+    assertEquals("ordinary@fixture.invalid", users.findById(ACCOUNT).orElseThrow().getEmail());
+    assertEquals(TwoFactorGateStatus.PENDING_SETUP, invite().getTwoFactorStatus());
+    assertEquals(1, pendingCount());
+    assertNull(jdbc.queryForObject("select receipt from identity_self_app_otp_intent where operation_id=?", String.class, operation));
+    String frozen = envelope();
+    assertTrue(owner(transactions).finishEmail(CODE, this::applyEmail));
+    assertEquals(frozen, envelope());
+    assertEquals("ACKNOWLEDGED", status());
+    assertEquals(PENDING_EMAIL, users.findById(ACCOUNT).orElseThrow().getEmail());
+    assertEquals(TwoFactorGateStatus.ACTIVE, invite().getTwoFactorStatus());
+    assertEquals(0, pendingCount());
+    server.verify();
+  }
+
+  @Test
+  void actualJpaLinkedEmailCommittedReplyLossResolvesFreshAckWithoutReapplyingDomain() {
+    prepareDeliveredEmail();
+    expectLinkedFinish(false, false);
+    var uncertain = new PlatformTransactionManager() {
+      private boolean failed;
+      public TransactionStatus getTransaction(TransactionDefinition definition) { return transactions.getTransaction(definition); }
+      public void commit(TransactionStatus status) {
+        boolean terminal = jdbc.queryForObject("select count(*) from identity_self_app_otp_intent where operation_id=? and status='ACKNOWLEDGED'", Integer.class, operation) == 1;
+        transactions.commit(status);
+        if (terminal && !failed) { failed = true; throw new IllegalStateException("Fixture lost owning email commit acknowledgement"); }
+      }
+      public void rollback(TransactionStatus status) { transactions.rollback(status); }
+    };
+    assertTrue(owner(uncertain).finishEmail(CODE, this::applyEmail));
+    assertTrue(owner(transactions).finishEmail(CODE, this::applyEmail));
+    assertEquals("ACKNOWLEDGED", status());
+    assertEquals(PENDING_EMAIL, users.findById(ACCOUNT).orElseThrow().getEmail());
+    assertEquals(TwoFactorGateStatus.ACTIVE, invite().getTwoFactorStatus());
+    assertEquals(0, pendingCount());
+    assertEquals(1, activations.get());
+    server.verify();
+  }
+
+  @Test
+  void actualJpaLinkedInvalidCodeCommitsTerminalReceiptWithoutChangingEmailPointerOrInvite() {
+    prepareDeliveredEmail();
+    expectLinkedFinish(true, false);
+    assertFalse(owner(transactions).finishEmail(CODE, this::applyEmail));
+    assertFalse(owner(transactions).finishEmail(CODE, this::applyEmail));
+    assertEquals("TERMINAL_REFUSAL", status());
+    assertEquals(401, jdbc.queryForObject("select native_status from identity_self_app_otp_intent where operation_id=?", Integer.class, operation));
+    assertEquals("ordinary@fixture.invalid", users.findById(ACCOUNT).orElseThrow().getEmail());
+    assertEquals(TwoFactorGateStatus.PENDING_SETUP, invite().getTwoFactorStatus());
+    assertEquals(1, pendingCount());
+    assertEquals(0, activations.get());
+    server.verify();
+  }
+
+  private int pendingCount() {
+    return jdbc.queryForObject("select count(*) from identity_self_otp_pending_email where account_id=? and start_operation_id=?", Integer.class, ACCOUNT, emailStart);
+  }
+
+  private void applyEmail(String email) {
+    assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+    assertEquals(PENDING_EMAIL, email);
+    var transcoder = new UsernameTranscoder();
+    var accounts = new AccountManager(mock(ConsultantRepository.class), mock(AdminRepository.class), users,
+        new UserServiceMapper(transcoder), transcoder, mock(AgencyService.class), mock(TenantService.class),
+        mock(ConsultantAgencyRepository.class), human, mock(SessionRepository.class), mock(AppointmentService.class), mock(PatchConsultantSaga.class));
+    assertTrue(accounts.patchUser(Map.of("id", ACCOUNT, "email", email)).isPresent());
+    activate();
+  }
+
+  private void prepareDeliveredEmail() {
+    request.setRequestURI("/service/users/2fa/email");
+    expectProjection();
+    var sent = new AtomicInteger();
+    server.expect(ExpectedCount.twice(), requestTo(issuer.issuer()+"/otp-config/send-verification-mail/ordinary"))
+        .andExpect(method(HttpMethod.PUT)).andRespond(outbound -> {
+          assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+          var body = codec.read(((MockClientHttpRequest) outbound).getBodyAsString(), ObjectNode.class);
+          int status = sent.getAndIncrement() == 0 ? 202 : 200;
+          return withStatus(status == 202 ? HttpStatus.ACCEPTED : HttpStatus.OK)
+              .body(emailReply(body, status, true)).contentType(MediaType.APPLICATION_JSON).createResponse(outbound);
+        });
+    assertTrue(owner(transactions).startEmail(PENDING_EMAIL));
+    server.verify(); server.reset();
+    emailStart = operation;
+    assertEquals(1, pendingCount());
+    assertEquals("ordinary@fixture.invalid", users.findById(ACCOUNT).orElseThrow().getEmail());
+    assertEquals(TwoFactorGateStatus.PENDING_SETUP, invite().getTwoFactorStatus());
+    operation = UUID.randomUUID().toString();
+    request.removeHeader("Idempotency-Key"); request.addHeader("Idempotency-Key", operation); request.setMethod("POST");
+  }
+
+  private void expectProjection() {
+    server.expect(requestTo(issuer.issuer()+"/oriso-account-maintenance/v1/accounts/"+ACCOUNT+"/read"))
+        .andExpect(method(HttpMethod.POST)).andRespond(outbound -> {
+          assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+          assertEquals("PREPARED", status());
+          return withSuccess("{\"id\":\""+ACCOUNT+"\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""+"a".repeat(64)+"\"}", MediaType.APPLICATION_JSON).createResponse(outbound);
+        });
+  }
+
+  private void expectLinkedFinish(boolean invalid, boolean twice) {
+    expectProjection();
+    server.expect(twice ? ExpectedCount.twice() : ExpectedCount.once(), requestTo(issuer.issuer()+"/otp-config/setup-otp-mail/ordinary"))
+        .andExpect(method(HttpMethod.POST)).andRespond(outbound -> {
+          assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+          assertEquals("FROZEN", status());
+          assertEquals(1, pendingCount());
+          assertEquals("ordinary@fixture.invalid", users.findById(ACCOUNT).orElseThrow().getEmail());
+          assertEquals(TwoFactorGateStatus.PENDING_SETUP, invite().getTwoFactorStatus());
+          var body=codec.read(((MockClientHttpRequest)outbound).getBodyAsString(), ObjectNode.class);
+          assertEquals(emailStart, body.path("emailStartOperationId").textValue());
+          assertEquals(CODE, body.path("otp").path("initialCode").textValue());
+          return withStatus(invalid ? HttpStatus.UNAUTHORIZED : HttpStatus.CREATED)
+              .body(emailReply(body, invalid ? 401 : 201, false)).contentType(MediaType.APPLICATION_JSON).createResponse(outbound);
+        });
+  }
+
+  private String emailReply(ObjectNode body, int status, boolean start) {
+    var materialized=body.deepCopy(); materialized.put("username", "ordinary");
+    var result=codec.read(start ? (status==202 ? "{\"info\":\"OTP mail pending\"}" : "{\"info\":\"OTP mail sent\"}")
+        : status==401 ? "{\"error\":\"invalid_grant\",\"error_description\":\"Invalid code\"}" : "{\"info\":\"OTP setup created\"}", JsonNode.class);
+    var saved=codec.read("{}", ObjectNode.class);
+    saved.put("realmId", REALM);saved.put("accountId", ACCOUNT);saved.put("operationId", operation);
+    saved.put("operation", start ? "otp.email-start" : "otp.email-finish");
+    saved.put("ownerClient", "backend-account-admin");saved.put("ownerSubject", ADMIN);
+    saved.put("intentDigest",codec.digest("otp-intent", materialized));saved.put("previousState", "a".repeat(64));
+    saved.put("tenantId","7");saved.put("originDigest",codec.digest("otp-origin",body.path("target").path("origin")));
+    saved.put("status",status);saved.put("resultDigest",codec.digest("otp-result",result));
+    var credential=saved.putObject("emailCredential");credential.put("credentialId",CREDENTIAL);
+    credential.put("generation",(start ? "b" : "c").repeat(64));
+    credential.put("destinationDigest",codec.digest("otp-email-destination",codec.read("\""+PENDING_EMAIL+"\"",JsonNode.class)));
+    if(start) { saved.put("authorityValidUntil",body.path("authorityValidUntil").longValue());saved.put("deliveryState",status==202 ? "READY" : "SENT"); }
+    else saved.put("emailStartOperationId",emailStart);
+    String encoded=Base64.getUrlEncoder().withoutPadding().encodeToString(codec.canonical(saved).getBytes(StandardCharsets.UTF_8));
+    var reply=codec.read("{}", ObjectNode.class);reply.put("operationId",operation);reply.put("accountId",ACCOUNT);reply.put("status",status);
+    reply.set("result",result);reply.put("receipt",encoded+"."+HexFormat.of().formatHex(mac("otp-operation-receipt\n"+encoded)));
+    if(start)reply.put("deliveryState",status==202 ? "READY" : "SENT");
+    return codec.canonical(reply);
   }
 
   private SelfAppOtpMaintenance owner(PlatformTransactionManager manager) {

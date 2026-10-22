@@ -265,7 +265,7 @@ class SelfAppBoundaryEvidenceTest(unittest.TestCase):
 
     def test_six_public_assertions_require_actual_missing_service_and_legacy_control(self):
         proof = self.proof()
-        self.assertEqual(25, len(proof.CASES))
+        self.assertEqual(27, len(proof.CASES))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             suite = ET.Element("testsuite", name=proof.SUITE)
@@ -278,7 +278,7 @@ class SelfAppBoundaryEvidenceTest(unittest.TestCase):
             path = root / "TEST-app.xml"
             ET.ElementTree(suite).write(path)
             result = proof.sanitize(root, root / "clean.xml")
-            self.assertEqual(21, result["failures"])
+            self.assertEqual(23, result["failures"])
             self.assertTrue(result["adapter_behavior_red"])
             self.assertFalse(result["all_passed"])
             ET.SubElement(control, "failure", type="org.opentest4j.AssertionFailedError")
@@ -306,11 +306,11 @@ class SelfAppBoundaryEvidenceTest(unittest.TestCase):
 
 
 class SelfAppJpaEvidenceTest(unittest.TestCase):
-    def test_actual_jpa_four_cases_require_known_success_control_and_no_skips(self):
+    def test_actual_jpa_eight_cases_require_known_success_control_and_no_skips(self):
         proof = importlib.util.module_from_spec(SPEC)
         SPEC.loader.exec_module(proof)
         proof.select_slice("app-jpa")
-        self.assertEqual(4, len(proof.CASES))
+        self.assertEqual(8, len(proof.CASES))
         for kind in ("green", "failure", "skipped", "error", "missing", "control-failure"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)

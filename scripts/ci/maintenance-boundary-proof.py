@@ -91,6 +91,8 @@ def select_slice(name):
             "publicLinkedEmailFinishInvalidMacCannotChangeEmailPointerOrInvite",
             "publicLinkedEmailFinishMissingIntentOrForeignDomainRefusesBeforeAnyNativeFinish",
             "missingScopedEmailFinishKeepsActualCGuardAndLegacyInvalidCodeWorking",
+            "publicEmailStartAcknowledgedRetryAfterOriginalExpiryReturnsSavedOutcomeWithoutResend",
+            "publicLinkedEmailTerminalRefusalAfterOriginalExpiryReturnsSaved400WithoutAnotherAttempt",
             "publicEmailStartAcknowledgesOnlyVerifiedSentAndKeepsPendingRecipientEncrypted",
             "publicEmailStartLostReplyNewOwnerReplaysFrozenRecipientAndOriginalExpiry",
             "publicEmailStartSameIdCannotReplaceTheCompletePendingDestination",
@@ -117,11 +119,17 @@ def select_slice(name):
             "actualJpaActivationFlushFailureRollsBackInviteAndReceiptThenExactOwnerRetryRecovers",
             "actualJpaCommittedReplyLossResolvesFreshReceiptWithoutSecondDomainCallback",
             "actualJpaInvalidNativeCodeCommitsTerminalRefusalAndNeverMarksInviteActive",
+            "actualJpaLinkedEmailPointerInviteAndReceiptCommitTogether",
+            "actualJpaLinkedEmailFlushRollbackKeepsPointerAndFrozenCommandForExactRecovery",
+            "actualJpaLinkedEmailCommittedReplyLossResolvesFreshAckWithoutReapplyingDomain",
+            "actualJpaLinkedInvalidCodeCommitsTerminalReceiptWithoutChangingEmailPointerOrInvite",
         }
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfAppOtpMaintenance",
             "de/caritas/cob/userservice/api/service/accountinvite/AccountInviteService",
             "de/caritas/cob/userservice/api/model/User",
+            "de/caritas/cob/userservice/api/AccountManager",
+            "de/caritas/cob/userservice/api/UserServiceMapper",
             "de/caritas/cob/userservice/api/model/AccountInvite",
             "de/caritas/cob/userservice/api/port/out/AccountInviteRepository",
         ]

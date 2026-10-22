@@ -649,6 +649,48 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
+  void publicEmailStartAcknowledgedRetryAfterOriginalExpiryReturnsSavedOutcomeWithoutResend() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.prepareDeliveredEmail();
+      fixture.operation = fixture.emailStartOperation;
+      fixture.request.removeHeader("Idempotency-Key");
+      fixture.request.addHeader("Idempotency-Key", fixture.operation);
+      fixture.request.setMethod("PUT");
+      String cipher = fixture.envelope();
+      fixture.installOwner(fixture.afterOriginalExpiry());
+      assertEquals(204, assertDoesNotThrow(() -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email())).getStatusCode().value());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals(cipher, fixture.envelope());
+      assertEquals(fixture.emailStartOperation, fixture.pendingEmailOperation());
+      assertEquals("original@oriso.org", fixture.currentEmail());
+      assertEquals("PENDING_SETUP", fixture.inviteStatus());
+      assertEquals(1, fixture.nativeExecutions.get());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void publicLinkedEmailTerminalRefusalAfterOriginalExpiryReturnsSaved400WithoutAnotherAttempt() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.prepareDeliveredEmail();
+      fixture.expectEmailFinish(false, true, false);
+      assertEquals(400, fixture.controller.finishTwoFactorAuthByEmailSetup(CODE).getStatusCode().value());
+      assertEquals("TERMINAL_REFUSAL", fixture.status());
+      String cipher = fixture.envelope();
+      fixture.installOwner(fixture.afterOriginalExpiry());
+      assertEquals(400, assertDoesNotThrow(() -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE)).getStatusCode().value());
+      assertEquals(cipher, fixture.envelope());
+      assertEquals("TERMINAL_REFUSAL", fixture.status());
+      assertEquals(fixture.emailStartOperation, fixture.pendingEmailOperation());
+      assertEquals("original@oriso.org", fixture.currentEmail());
+      assertEquals("PENDING_SETUP", fixture.inviteStatus());
+      assertEquals(0, fixture.domainWrites());
+      assertEquals(2, fixture.nativeExecutions.get());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
   void missingScopedEmailFinishKeepsActualCGuardAndLegacyInvalidCodeWorking() throws Exception {
     try (var fixture = new Fixture(true, false)) {
       fixture.request.setMethod("POST");
@@ -852,7 +894,16 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       }
     }
 
-    void installOwner() {
+    Clock afterOriginalExpiry() {
+      long deadline = jdbc.queryForObject("select authority_valid_until from identity_self_app_otp_intent where operation_id=?", Long.class, operation);
+      var jwt = ((JwtAuthenticationToken) request.getUserPrincipal()).getToken();
+      assertTrue(deadline + 1 < jwt.getExpiresAt().getEpochSecond(), "Original machine bound must expire before the actual human");
+      return Clock.fixed(Instant.ofEpochSecond(deadline + 1), java.time.ZoneOffset.UTC);
+    }
+
+    void installOwner() { installOwner(Clock.systemUTC()); }
+
+    void installOwner(Clock currentClock) {
       delegate.setSelfAppOtpMaintenance(
           new SelfAppOtpMaintenance(
               mode,
@@ -864,7 +915,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
               issuer.broker(),
               codec,
               http,
-              Clock.systemUTC(),
+              currentClock,
               issuer.base(),
               "synthetic",
               REALM_ID));
