@@ -543,6 +543,91 @@ class HumanAdminAccountMaintenanceTest {
     }
   }
 
+  @Test
+  void actualPublicConsultantEditUsesScopedProfileAndCommitsLocalDataAfterNativeAck() {
+    jdbc.update("delete from admin where admin_id=?", ACCOUNT);
+    jdbc.update(
+        "insert into consultant(consultant_id,tenant_id,username,first_name,last_name,email,managed_paused,status) values(?,7,'original-admin','Old','Name','old@example.test',true,'CREATED')",
+        ACCOUNT);
+    human.setRoles(Set.of(UserRole.TENANT_ADMIN.getValue()));
+    human.setGrantedAuthorities(
+        Set.of(Authority.AuthorityValue.TENANT_ADMIN, Authority.AuthorityValue.USER_ADMIN));
+    request.setUserPrincipal(authentication("synthetic-current-human", ISSUER, HUMAN, "admin", 7L));
+    request.setMethod("PUT");
+    request.setRequestURI("/service/useradmin/consultants/" + ACCOUNT);
+    var actualScope = actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
+    assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
+    assertEquals(new AdminScope.Tenant(7L), actualScope.current());
+    assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.counsellor(ACCOUNT)));
+    jdbc.update("update consultant set tenant_id=8 where consultant_id=?", ACCOUNT);
+    assertThrows(RuntimeException.class, () -> actualScope.assertMay(AdminScope.Target.counsellor(ACCOUNT)));
+    jdbc.update("update consultant set tenant_id=7 where consultant_id=?", ACCOUNT);
+    service =
+        new HumanAdminAccountMaintenance(
+            mode, human, actualScope, jdbc, transactions, request,
+            new KeycloakHumanAdminMaintenance(http, actors, broker, codec,
+                "https://internal-auth.example.test", "test", "realm-1"), CLOCK, ISSUER);
+    var adapter =
+        new de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService(
+            human,
+            mock(de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator.class),
+            mode,
+            mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient.class),
+            mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakMapper.class),
+            mock(de.caritas.cob.userservice.api.helper.UserHelper.class),
+            mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient.class));
+    adapter.setHumanAdminMaintenance(service);
+    var consultants = mock(de.caritas.cob.userservice.api.service.ConsultantService.class);
+    when(consultants.getConsultant(ACCOUNT)).thenAnswer(ignored -> Optional.of(localConsultant()));
+    when(consultants.saveConsultant(any())).thenAnswer(invocation -> {
+      assertTrue(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+      de.caritas.cob.userservice.api.model.Consultant updated = invocation.getArgument(0);
+      jdbc.update("update consultant set first_name=?,last_name=?,email=?,is_absent=?,update_date=? where consultant_id=?",
+          updated.getFirstName(), updated.getLastName(), updated.getEmail(), updated.isAbsent(),
+          java.sql.Timestamp.valueOf(updated.getUpdateDate()), ACCOUNT);
+      return updated;
+    });
+    var updater = new de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService(
+        adapter, adapter, consultants,
+        mock(de.caritas.cob.userservice.api.service.ConsultantPublicSlugService.class),
+        mock(de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator.class),
+        mock(MatrixUserClient.class),
+        mock(de.caritas.cob.userservice.api.service.appointment.AppointmentService.class),
+        mock(SessionRepository.class),
+        mock(de.caritas.cob.userservice.api.service.notification.EventNotificationService.class),
+        mock(de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator.class),
+        new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver());
+    updater.setScopedAdminMaintenance(mode, service);
+    var proxy = new org.springframework.aop.framework.ProxyFactory(updater);
+    proxy.setProxyTargetClass(true);
+    proxy.addAdvice(new org.springframework.transaction.interceptor.TransactionInterceptor(
+        transactions, new org.springframework.transaction.annotation.AnnotationTransactionAttributeSource()));
+    var publicEdit = (de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService) proxy.getProxy();
+    readReply();
+    server.expect(requestTo(URL + "/profile")).andRespond(profileReceipt(null));
+    readReply(true);
+    var dto = new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO()
+        .firstname("New").lastname("Name").email("new@example.test").formalLanguage(true).absent(true);
+    var updated = assertDoesNotThrow(() -> publicEdit.updateConsultant(ACCOUNT, dto));
+    assertEquals("New", updated.getFirstName());
+    assertTrue(updated.isAbsent());
+    assertEquals("New", jdbc.queryForObject("select first_name from consultant where consultant_id=?", String.class, ACCOUNT));
+    assertEquals(true, jdbc.queryForObject("select is_absent from consultant where consultant_id=?", Boolean.class, ACCOUNT));
+    assertEquals(true, jdbc.queryForObject("select managed_paused from consultant where consultant_id=?", Boolean.class, ACCOUNT));
+    assertEquals("APPLIED", jdbc.queryForObject("select status from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+    server.verify();
+  }
+
+  private de.caritas.cob.userservice.api.model.Consultant localConsultant() {
+    var row = jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT);
+    return de.caritas.cob.userservice.api.model.Consultant.builder()
+        .id(ACCOUNT).tenantId(((Number) row.get("tenant_id")).longValue())
+        .username((String) row.get("username")).firstName((String) row.get("first_name"))
+        .lastName((String) row.get("last_name")).email((String) row.get("email"))
+        .managedPaused((Boolean) row.get("managed_paused")).absent((Boolean) row.get("is_absent"))
+        .build();
+  }
+
   private de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService
       actualStatusService(AdminScope actualScope, boolean changeSqlDuringExternalRead)
           throws Exception {

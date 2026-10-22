@@ -60,6 +60,20 @@ public class ConsultantUpdateService {
       consultantTopicAgencyCompatibilityValidator;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+  private de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+      scopedMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setScopedAdminMaintenance(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      @org.springframework.lang.Nullable
+          de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+              maintenance) {
+    this.identityMode = Objects.requireNonNull(mode);
+    this.scopedMaintenance = maintenance;
+  }
+
   /**
    * Updates the basic data of consultant with given id.
    *
