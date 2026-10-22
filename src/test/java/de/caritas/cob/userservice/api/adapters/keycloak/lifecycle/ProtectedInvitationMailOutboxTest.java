@@ -118,6 +118,7 @@ class ProtectedInvitationMailOutboxTest {
     enqueue();
     assertEquals("READY", state());
     String sealed = saved("sealed_mail");
+    assertThrows(RuntimeException.class, () -> outbox.sentTemplateId(73));
     assertFalse(sealed.contains(mail.rawToken()));
     assertFalse(sealed.contains(mail.acceptUrl()));
     assertFalse(sealed.contains(mail.body()));
@@ -139,18 +140,34 @@ class ProtectedInvitationMailOutboxTest {
             any());
     assertEquals(sealed, saved("sealed_mail"));
     assertEquals("SENT", state());
+    assertEquals(mail.templateId(), restart(clock).sentTemplateId(73));
   }
 
   @Test
   void boundedLargeUtf8MailReachesTheSenderWithoutWideningTheProofReader() {
-    mail = new ProtectedInvitationMailOutbox.Mail(mail.rawToken(), mail.acceptUrl(), mail.subject(), "Ä".repeat(40_000), mail.templateId(), null);
+    mail =
+        new ProtectedInvitationMailOutbox.Mail(
+            mail.rawToken(),
+            mail.acceptUrl(),
+            mail.subject(),
+            "Ä".repeat(40_000),
+            mail.templateId(),
+            null);
     String snapshot = json.canonical(mail);
     assertTrue(snapshot.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 65_536);
     assertThrows(IllegalArgumentException.class, () -> json.read(snapshot, JsonNode.class));
     enqueue();
     assertEquals("READY", state());
     assertNotNull(assertDoesNotThrow(() -> restart(clock).dispatch(73)));
-    verify(sender).send(eq("ada@example.test"), eq(mail.subject()), eq(mail.body()), eq(mail.acceptUrl()), eq(7L), isNull(), any());
+    verify(sender)
+        .send(
+            eq("ada@example.test"),
+            eq(mail.subject()),
+            eq(mail.body()),
+            eq(mail.acceptUrl()),
+            eq(7L),
+            isNull(),
+            any());
     assertEquals("SENT", state());
   }
 

@@ -59,38 +59,54 @@ public final class ProtectedInvitationMailOutbox {
   /** The token supplier must flush the actual invite in this same owning SQL transaction. */
   public void enqueue(long inviteId, Supplier<Mail> prepareAndPersistToken) {
     if (prepareAndPersistToken == null) throw unavailable(false);
-    journal.withReadyInvite(inviteId, () -> {
-      requireOwningSql();
-      var existing = rows(inviteId, true);
-      if (!existing.isEmpty()) {
-        Row row = existing.get(0);
-        if (!Set.of("READY", "SENDING", "SENT", "UNKNOWN", "FAILED_NO_EFFECT").contains(row.state()))
-          throw unavailable(false);
-        Checked checked = checked(inviteId, row);
-        requireToken(inviteId, checked.metadata());
-        return null;
-      }
-      Mail mail = Objects.requireNonNull(prepareAndPersistToken.get());
-      // The callback may only install the token/status, never drift the approved target tuple.
-      journal.withReadyInvite(inviteId, () -> null);
-      var frozen = journal.pending(inviteId);
-      JsonNode scope = json.read(frozen.requestJson(), JsonNode.class).path("scope");
-      JsonNode response = savedResponse(inviteId);
-      Invite invite = invite(inviteId);
-      Metadata metadata = new Metadata(
-          1, realmId, frozen.approvalId().toString(), scope.path("workflowId").asText(),
-          inviteId, scope.path("authorizationRevision").longValue(),
-          response.path("scopeDigest").asText(), frozen.requestDigest(), invite.tokenHash(),
-          json.digest("protected-invitation-mail-payload/v1", mail));
-      String sealed = secrets.seal(metadata, json.canonical(mail));
-      requireToken(inviteId, metadata);
-      Timestamp now = Timestamp.from(clock.instant());
-      if (jdbc.update("INSERT INTO protected_invitation_mail_outbox"
-          + " (invite_id,approval_id,metadata_json,sealed_mail,state,sent_at,created_at,updated_at)"
-          + " VALUES (?,?,?,?,'READY',NULL,?,?)", inviteId, metadata.approvalId(),
-          json.canonical(metadata), sealed, now, now) != 1) throw unavailable(false);
-      return null;
-    });
+    journal.withReadyInvite(
+        inviteId,
+        () -> {
+          requireOwningSql();
+          var existing = rows(inviteId, true);
+          if (!existing.isEmpty()) {
+            Row row = existing.get(0);
+            if (!Set.of("READY", "SENDING", "SENT", "UNKNOWN", "FAILED_NO_EFFECT")
+                .contains(row.state())) throw unavailable(false);
+            Checked checked = checked(inviteId, row);
+            requireToken(inviteId, checked.metadata());
+            return null;
+          }
+          Mail mail = Objects.requireNonNull(prepareAndPersistToken.get());
+          // The callback may only install the token/status, never drift the approved target tuple.
+          journal.withReadyInvite(inviteId, () -> null);
+          var frozen = journal.pending(inviteId);
+          JsonNode scope = json.read(frozen.requestJson(), JsonNode.class).path("scope");
+          JsonNode response = savedResponse(inviteId);
+          Invite invite = invite(inviteId);
+          Metadata metadata =
+              new Metadata(
+                  1,
+                  realmId,
+                  frozen.approvalId().toString(),
+                  scope.path("workflowId").asText(),
+                  inviteId,
+                  scope.path("authorizationRevision").longValue(),
+                  response.path("scopeDigest").asText(),
+                  frozen.requestDigest(),
+                  invite.tokenHash(),
+                  json.digest("protected-invitation-mail-payload/v1", mail));
+          String sealed = secrets.seal(metadata, json.canonical(mail));
+          requireToken(inviteId, metadata);
+          Timestamp now = Timestamp.from(clock.instant());
+          if (jdbc.update(
+                  "INSERT INTO protected_invitation_mail_outbox"
+                      + " (invite_id,approval_id,metadata_json,sealed_mail,state,sent_at,created_at,updated_at)"
+                      + " VALUES (?,?,?,?,'READY',NULL,?,?)",
+                  inviteId,
+                  metadata.approvalId(),
+                  json.canonical(metadata),
+                  sealed,
+                  now,
+                  now)
+              != 1) throw unavailable(false);
+          return null;
+        });
   }
 
   public InviteMailSendReceipt dispatch(long inviteId) {
@@ -98,30 +114,45 @@ public final class ProtectedInvitationMailOutbox {
     Row observed = only(rows(inviteId, false));
     // This is a historical SMTP receipt, not a new invitation authorization.
     if ("SENT".equals(observed.state())) return historical(inviteId, observed);
-    if (!"READY".equals(observed.state())) throw unavailable("FAILED_NO_EFFECT".equals(observed.state()));
+    if (!"READY".equals(observed.state()))
+      throw unavailable("FAILED_NO_EFFECT".equals(observed.state()));
     var frozen = journal.pending(inviteId);
     var verified = approvals.reconcile(frozen);
     journal.recordReady(frozen.approvalId(), verified);
-    Claimed claim = journal.withReadyInvite(inviteId, () -> {
-      requireOwningSql();
-      Row row = only(rows(inviteId, true));
-      if (!"READY".equals(row.state())) throw unavailable(false);
-      Checked checked = checked(inviteId, row);
-      requireToken(inviteId, checked.metadata());
-      Invite invite = invite(inviteId);
-      if (jdbc.update("UPDATE protected_invitation_mail_outbox SET state='SENDING',updated_at=?"
-          + " WHERE invite_id=? AND state='READY'", Timestamp.from(clock.instant()), inviteId) != 1)
-        throw unavailable(false);
-      return new Claimed(checked.mail(), invite);
-    });
+    Claimed claim =
+        journal.withReadyInvite(
+            inviteId,
+            () -> {
+              requireOwningSql();
+              Row row = only(rows(inviteId, true));
+              if (!"READY".equals(row.state())) throw unavailable(false);
+              Checked checked = checked(inviteId, row);
+              requireToken(inviteId, checked.metadata());
+              Invite invite = invite(inviteId);
+              if (jdbc.update(
+                      "UPDATE protected_invitation_mail_outbox SET state='SENDING',updated_at=?"
+                          + " WHERE invite_id=? AND state='READY'",
+                      Timestamp.from(clock.instant()),
+                      inviteId)
+                  != 1) throw unavailable(false);
+              return new Claimed(checked.mail(), invite);
+            });
     InviteMailSendReceipt receipt;
     try {
       Mail mail = claim.mail();
       Invite invite = claim.invite();
-      receipt = sender.send(invite.recipient(), mail.subject(), mail.body(), mail.acceptUrl(),
-          invite.tenant(), mail.language(),
-          InviteMailOrigin.of(invite.reservation() == null ? invite.tenant() : null, Purpose.ACCOUNT_INVITE));
-      if (receipt == null || receipt.sentAt() == null
+      receipt =
+          sender.send(
+              invite.recipient(),
+              mail.subject(),
+              mail.body(),
+              mail.acceptUrl(),
+              invite.tenant(),
+              mail.language(),
+              InviteMailOrigin.of(
+                  invite.reservation() == null ? invite.tenant() : null, Purpose.ACCOUNT_INVITE));
+      if (receipt == null
+          || receipt.sentAt() == null
           || !invite.recipient().equals(receipt.recipientEmail())) throw unavailable(false);
     } catch (RuntimeException failure) {
       boolean noEffect = failure instanceof SmtpSendException smtp && smtp.isConfirmedNotSent();
@@ -129,12 +160,17 @@ public final class ProtectedInvitationMailOutbox {
       throw unavailable(noEffect);
     }
     try {
-      acknowledgement.executeWithoutResult(tx -> {
-        requireOwningSql();
-        if (jdbc.update("UPDATE protected_invitation_mail_outbox SET state='SENT',sent_at=?,updated_at=?"
-            + " WHERE invite_id=? AND state='SENDING'", Timestamp.from(receipt.sentAt()),
-            Timestamp.from(clock.instant()), inviteId) != 1) throw unavailable(false);
-      });
+      acknowledgement.executeWithoutResult(
+          tx -> {
+            requireOwningSql();
+            if (jdbc.update(
+                    "UPDATE protected_invitation_mail_outbox SET state='SENT',sent_at=?,updated_at=?"
+                        + " WHERE invite_id=? AND state='SENDING'",
+                    Timestamp.from(receipt.sentAt()),
+                    Timestamp.from(clock.instant()),
+                    inviteId)
+                != 1) throw unavailable(false);
+          });
     } catch (RuntimeException uncertainAcknowledgement) {
       // The commit may have succeeded. Never turn this into a second SMTP attempt.
       throw unavailable(false);
@@ -142,15 +178,25 @@ public final class ProtectedInvitationMailOutbox {
     return receipt;
   }
 
+  /** Historical audit data only; this projection cannot prepare or release a mail. */
+  public long sentTemplateId(long inviteId) {
+    Row row = only(rows(inviteId, false));
+    if (!"SENT".equals(row.state()) || row.sentAt() == null) throw unavailable(false);
+    return checked(inviteId, row).mail().templateId();
+  }
+
   private void recordFailure(long inviteId, boolean noEffect) {
     try {
-      acknowledgement.executeWithoutResult(tx -> {
-        requireOwningSql();
-        jdbc.update(
-          "UPDATE protected_invitation_mail_outbox SET state=?,updated_at=?"
-              + " WHERE invite_id=? AND state='SENDING'",
-          noEffect ? "FAILED_NO_EFFECT" : "UNKNOWN", Timestamp.from(clock.instant()), inviteId);
-      });
+      acknowledgement.executeWithoutResult(
+          tx -> {
+            requireOwningSql();
+            jdbc.update(
+                "UPDATE protected_invitation_mail_outbox SET state=?,updated_at=?"
+                    + " WHERE invite_id=? AND state='SENDING'",
+                noEffect ? "FAILED_NO_EFFECT" : "UNKNOWN",
+                Timestamp.from(clock.instant()),
+                inviteId);
+          });
     } catch (RuntimeException ignored) {
       // A retained SENDING row also forbids retransmission after uncertain persistence.
     }
@@ -160,7 +206,8 @@ public final class ProtectedInvitationMailOutbox {
     if (row.sentAt() == null) throw unavailable(false);
     checked(inviteId, row);
     var frozen = journal.pending(inviteId);
-    String recipient = json.read(frozen.requestJson(), JsonNode.class).path("scope").path("recipient").asText();
+    String recipient =
+        json.read(frozen.requestJson(), JsonNode.class).path("scope").path("recipient").asText();
     return new InviteMailSendReceipt(recipient, row.sentAt());
   }
 
@@ -197,27 +244,46 @@ public final class ProtectedInvitationMailOutbox {
   }
 
   private JsonNode savedResponse(long inviteId) {
-    String response = jdbc.queryForObject("SELECT response_json FROM protected_invitation_authorization WHERE invite_id=?", String.class, inviteId);
+    String response =
+        jdbc.queryForObject(
+            "SELECT response_json FROM protected_invitation_authorization WHERE invite_id=?",
+            String.class,
+            inviteId);
     return json.read(response, JsonNode.class);
   }
 
   private Invite invite(long inviteId) {
-    var found = jdbc.query("SELECT recipient_email,tenant_id,tenant_id_reservation_token,token_hash,status"
-        + " FROM account_invite WHERE id=?", (rs, index) -> new Invite(
-            rs.getString("recipient_email"), rs.getObject("tenant_id", Long.class),
-            rs.getString("tenant_id_reservation_token"), rs.getString("token_hash"), rs.getString("status")), inviteId);
+    var found =
+        jdbc.query(
+            "SELECT recipient_email,tenant_id,tenant_id_reservation_token,token_hash,status"
+                + " FROM account_invite WHERE id=?",
+            (rs, index) ->
+                new Invite(
+                    rs.getString("recipient_email"),
+                    rs.getObject("tenant_id", Long.class),
+                    rs.getString("tenant_id_reservation_token"),
+                    rs.getString("token_hash"),
+                    rs.getString("status")),
+            inviteId);
     if (found.size() != 1) throw unavailable(false);
     return found.get(0);
   }
 
   private java.util.List<Row> rows(long inviteId, boolean lock) {
-    return jdbc.query("SELECT approval_id,metadata_json,sealed_mail,state,sent_at"
-        + " FROM protected_invitation_mail_outbox WHERE invite_id=?" + (lock ? " FOR UPDATE" : ""),
+    return jdbc.query(
+        "SELECT approval_id,metadata_json,sealed_mail,state,sent_at"
+            + " FROM protected_invitation_mail_outbox WHERE invite_id=?"
+            + (lock ? " FOR UPDATE" : ""),
         (rs, index) -> {
           Timestamp sent = rs.getTimestamp("sent_at");
-          return new Row(rs.getString("approval_id"), rs.getString("metadata_json"),
-              rs.getString("sealed_mail"), rs.getString("state"), sent == null ? null : sent.toInstant());
-        }, inviteId);
+          return new Row(
+              rs.getString("approval_id"),
+              rs.getString("metadata_json"),
+              rs.getString("sealed_mail"),
+              rs.getString("state"),
+              sent == null ? null : sent.toInstant());
+        },
+        inviteId);
   }
 
   private static Row only(java.util.List<Row> rows) {
@@ -231,8 +297,8 @@ public final class ProtectedInvitationMailOutbox {
       throw unavailable(false);
     var connection = DataSourceUtils.getConnection(source);
     try {
-      if (!DataSourceUtils.isConnectionTransactional(connection, source) || connection.getAutoCommit())
-        throw unavailable(false);
+      if (!DataSourceUtils.isConnectionTransactional(connection, source)
+          || connection.getAutoCommit()) throw unavailable(false);
     } catch (java.sql.SQLException unavailableConnection) {
       throw unavailable(false);
     } finally {
@@ -252,23 +318,39 @@ public final class ProtectedInvitationMailOutbox {
       this.confirmedNotSent = confirmedNotSent;
     }
 
-    public boolean confirmedNotSent() { return confirmedNotSent; }
+    public boolean confirmedNotSent() {
+      return confirmedNotSent;
+    }
   }
 
-  private record Row(String approvalId, String metadata, String sealed, String state, Instant sentAt) {
-    @Override public String toString() { return "ProtectedMailRow[redacted]"; }
+  private record Row(
+      String approvalId, String metadata, String sealed, String state, Instant sentAt) {
+    @Override
+    public String toString() {
+      return "ProtectedMailRow[redacted]";
+    }
   }
 
-  private record Invite(String recipient, Long tenant, String reservation, String tokenHash, String status) {
-    @Override public String toString() { return "ProtectedMailInvite[redacted]"; }
+  private record Invite(
+      String recipient, Long tenant, String reservation, String tokenHash, String status) {
+    @Override
+    public String toString() {
+      return "ProtectedMailInvite[redacted]";
+    }
   }
 
   private record Checked(Metadata metadata, Mail mail) {
-    @Override public String toString() { return "CheckedProtectedMail[redacted]"; }
+    @Override
+    public String toString() {
+      return "CheckedProtectedMail[redacted]";
+    }
   }
 
   private record Claimed(Mail mail, Invite invite) {
-    @Override public String toString() { return "ClaimedProtectedMail[redacted]"; }
+    @Override
+    public String toString() {
+      return "ClaimedProtectedMail[redacted]";
+    }
   }
 
   public record Mail(
