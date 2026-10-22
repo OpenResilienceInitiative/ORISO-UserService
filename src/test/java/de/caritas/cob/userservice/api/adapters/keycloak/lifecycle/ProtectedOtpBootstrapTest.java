@@ -41,22 +41,42 @@ class ProtectedOtpBootstrapTest {
     try (var f = new Fixture()) {
       f.expectPrepare();
       var prepared = assertDoesNotThrow(() -> f.adapter().prepare(f.claim, f.pending));
-      assertFalse(prepared.toString().contains("synthetic-setup-secret"));
+      assertFalse(prepared.toString().contains("SyntheticSetupSecret1234567890"));
       assertThrows(RuntimeException.class, () -> f.adapter().currentSetup(f.claim));
       var credential =
           new TransactionTemplate(f.manager)
               .execute(tx -> f.adapter().stagePrepared(f.claim, prepared));
       assertNotNull(credential);
-      assertEquals("synthetic-setup-secret", credential.secret());
+      assertEquals("SyntheticSetupSecret1234567890", credential.secret());
       assertFalse(credential.setup());
-      assertEquals("synthetic-setup-secret", f.adapter().currentSetup(f.claim).secret());
+      assertEquals("SyntheticSetupSecret1234567890", f.adapter().currentSetup(f.claim).secret());
       assertEquals(
           1, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
       String saved = f.jdbc.queryForList("SELECT * FROM protected_otp_bootstrap").toString();
-      assertFalse(saved.contains("synthetic-setup-secret"));
+      assertFalse(saved.contains("SyntheticSetupSecret1234567890"));
       assertFalse(saved.contains(f.pending.username()));
       assertFalse(saved.contains("Bearer"));
       assertThrows(RuntimeException.class, () -> f.adapter().stagePrepared(f.claim, prepared));
+      f.server.verify();
+      f.request.setRequestURI("/service/tenant/register/code");
+      f.request.removeHeader("Idempotency-Key");
+      f.request.addHeader("Idempotency-Key", "48706e6f-c812-47fc-98fb-20b5ece608a2");
+      f.expectApp();
+      var attempt = assertDoesNotThrow(() -> f.adapter().setupApp(f.claim, "123456"));
+      assertEquals(ProtectedOtpBootstrap.AttemptState.COMPLETE, attempt.state());
+      var completion = attempt.completion();
+      assertEquals(f.claim.claimId(), completion.claimId());
+      assertEquals(f.claim.attemptId(), completion.attemptId());
+      assertEquals(f.claim.executionId(), completion.executionId());
+      assertEquals(f.claim.executionId(), completion.bootstrapIncarnation());
+      assertEquals(f.pending.created().accountId(), completion.accountId());
+      assertEquals(completion.receipt(), f.adapter().completed(f.claim).receipt());
+      assertFalse(completion.toString().contains("123456"));
+      assertFalse(completion.receipt().contains("SyntheticSetupSecret1234567890"));
+      assertEquals(1, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='ACKNOWLEDGED'", Integer.class));
+      String intents = f.jdbc.queryForList("SELECT * FROM protected_otp_bootstrap_operation").toString();
+      assertFalse(intents.contains("SyntheticSetupSecret1234567890"));
+      assertFalse(intents.contains("123456"));
       f.server.verify();
     }
   }
@@ -84,6 +104,21 @@ class ProtectedOtpBootstrapTest {
     }
   }
 
+  @Test
+  void anUnrelatedOwningTransactionCannotCommitTheSetupJournal() throws Exception {
+    try (var f = new Fixture()) {
+      f.expectPrepare();
+      var prepared = assertDoesNotThrow(() -> f.adapter().prepare(f.claim, f.pending));
+      var foreign = new JdbcDataSource();
+      foreign.setURL("jdbc:h2:mem:" + UUID.randomUUID());
+      assertThrows(RuntimeException.class, () -> new TransactionTemplate(new DataSourceTransactionManager(foreign))
+          .execute(tx -> f.adapter().stagePrepared(f.claim, prepared)));
+      assertEquals("PREPARED", f.jdbc.queryForObject("SELECT state FROM protected_otp_bootstrap", String.class));
+      assertThrows(RuntimeException.class, () -> f.adapter().currentSetup(f.claim));
+      f.server.verify();
+    }
+  }
+
   private static final class Fixture implements AutoCloseable {
     private static final String ADMIN = "032d47ad-8156-47b8-a8ce-17ae1970e046";
     private final Clock clock = Clock.systemUTC();
@@ -99,6 +134,8 @@ class ProtectedOtpBootstrapTest {
     private final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
     private final AcceptanceClaim claim;
     private final PendingOwnedAccount pending;
+    private ObjectNode prepareFacts;
+    private String prepareReceipt;
 
     Fixture() throws Exception {
       request.addHeader("Idempotency-Key", "6edf02c1-7a04-4e19-99aa-fd5bc479ba15");
@@ -271,7 +308,8 @@ class ProtectedOtpBootstrapTest {
                     Base64.getUrlEncoder()
                         .withoutPadding()
                         .encodeToString(json.canonical(receipt).getBytes(StandardCharsets.UTF_8));
-                String sealed = nativeReceipt(key, encoded);
+                String sealed = nativeReceipt(key, "otp-bootstrap-prepare/v1", encoded);
+            prepareFacts = receipt.deepCopy(); prepareReceipt = sealed;
                 String result =
                     json.canonical(
                         Map.of(
@@ -280,7 +318,7 @@ class ProtectedOtpBootstrapTest {
                                 "otpSetup",
                                 false,
                                 "otpSecret",
-                                "synthetic-setup-secret",
+                                "SyntheticSetupSecret1234567890",
                                 "otpSecretQrCode",
                                 "synthetic-qr"),
                             "bootstrapReceipt",
@@ -291,7 +329,32 @@ class ProtectedOtpBootstrapTest {
               });
     }
 
-    private static String nativeReceipt(byte[] key, String encoded) {
+    void expectApp() {
+      server.expect(requestTo(org.springframework.web.util.UriComponentsBuilder.fromUriString(issuer.base()).pathSegment("realms", "synthetic", "otp-config", "setup-otp", pending.username()).build().encode().toUri()))
+          .andExpect(method(HttpMethod.PUT)).andExpect(header("X-ORISO-OTP-Bootstrap", prepareReceipt))
+          .andRespond(req -> {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+            assertNull(req.getHeaders().getFirst("X-ORISO-Human-Authorization"));
+            var actual = (org.springframework.mock.http.client.MockClientHttpRequest) req;
+            JsonNode body = json.read(actual.getBodyAsString(), JsonNode.class);
+            assertEquals("123456", body.path("otp").path("initialCode").asText());
+            assertEquals("SyntheticSetupSecret1234567890", body.path("otp").path("secret").asText());
+            assertEquals("INVITATION", body.path("target").path("origin").path("kind").asText());
+            assertEquals(json.digest("otp-bootstrap-state/v1", prepareReceipt), body.path("expectedState").asText());
+            assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='FROZEN'", Integer.class));
+            ObjectNode materialized = body.deepCopy(); materialized.put("username", pending.username()); materialized.put("bootstrapReceipt", prepareReceipt);
+            var facts = prepareFacts.deepCopy(); facts.put("state", "COMPLETE");
+            facts.set("operationId", body.path("operationId")); facts.put("intentDigest", json.digest("otp-bootstrap-intent/v1", materialized));
+            facts.put("status", 201); var nativeResult = Map.of("info", "OTP credential created"); facts.put("resultDigest", json.digest("otp-result", nativeResult));
+            String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(json.canonical(facts).getBytes(StandardCharsets.UTF_8));
+            String receipt = nativeReceipt(key, "otp-bootstrap-complete/v1", encoded);
+            return withCreatedEntity(java.net.URI.create("/synthetic"))
+                .body(json.canonical(Map.of("status", 201, "result", nativeResult, "receipt", receipt)))
+                .contentType(MediaType.APPLICATION_JSON).createResponse(req);
+          });
+    }
+
+    private static String nativeReceipt(byte[] key, String domain, String encoded) {
       try {
         javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
         mac.init(new javax.crypto.spec.SecretKeySpec(key, "HmacSHA256"));
@@ -300,7 +363,7 @@ class ProtectedOtpBootstrapTest {
             + HexFormat.of()
                 .formatHex(
                     mac.doFinal(
-                        ("otp-bootstrap-prepare/v1\n" + encoded).getBytes(StandardCharsets.UTF_8)));
+                        (domain + "\n" + encoded).getBytes(StandardCharsets.UTF_8)));
       } catch (java.security.GeneralSecurityException failure) {
         throw new IllegalStateException(failure);
       }
