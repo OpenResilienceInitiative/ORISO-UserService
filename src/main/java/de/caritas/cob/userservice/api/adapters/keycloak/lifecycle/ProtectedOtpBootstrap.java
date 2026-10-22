@@ -312,6 +312,11 @@ public final class ProtectedOtpBootstrap {
         });
   }
 
+  /** Pure owning-SQL current setup read; no remote operation is permitted here. */
+  public IdentityOtpCredential currentSetupWithinOwner(AcceptanceClaim claim) {
+    throw unavailable();
+  }
+
   private PreparedBootstrap prepared(AcceptanceClaim claim, JsonNode metadata, String result) {
     if (metadata.path("authorityValidUntil").asLong() <= clock.instant().getEpochSecond())
       throw unavailable();

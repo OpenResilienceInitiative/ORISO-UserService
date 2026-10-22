@@ -58,6 +58,7 @@ class ProtectedOtpBootstrapTest {
       assertFalse(saved.contains("Bearer"));
       assertThrows(RuntimeException.class, () -> f.adapter().stagePrepared(f.claim, prepared));
       f.server.verify();
+      f.server.reset();
       f.request.setRequestURI("/service/tenant/register/code");
       f.request.removeHeader("Idempotency-Key");
       f.request.addHeader("Idempotency-Key", "48706e6f-c812-47fc-98fb-20b5ece608a2");
@@ -125,6 +126,20 @@ class ProtectedOtpBootstrapTest {
           "PREPARED",
           f.jdbc.queryForObject("SELECT state FROM protected_otp_bootstrap", String.class));
       assertThrows(RuntimeException.class, () -> f.adapter().currentSetup(f.claim));
+      f.server.verify();
+    }
+  }
+
+  @Test
+  void theExactOwningTransactionCanReadCommittedSetupWithoutAnotherRemoteRequest() throws Exception {
+    try (var f = new Fixture()) {
+      f.expectPrepare();
+      var prepared = assertDoesNotThrow(() -> f.adapter().prepare(f.claim, f.pending));
+      new TransactionTemplate(f.manager).executeWithoutResult(tx -> f.adapter().stagePrepared(f.claim, prepared));
+      var setup = assertDoesNotThrow(() -> new TransactionTemplate(f.manager)
+          .execute(tx -> f.adapter().currentSetupWithinOwner(f.claim)));
+      assertNotNull(setup);
+      assertEquals("SyntheticSetupSecret1234567890", setup.secret());
       f.server.verify();
     }
   }
