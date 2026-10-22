@@ -4,9 +4,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.*;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordDTO;
@@ -42,6 +44,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.RestTemplate;
@@ -72,6 +75,53 @@ class UserSelfPasswordScenarioCBoundaryTest {
         assertFalse(stored.contains(secret));
       assertEquals(200, f.controller.updatePassword(f.password()).getStatusCode().value());
       assertEquals(1, f.clears());
+      verifyNoInteractions(f.legacy);
+      f.server.verify();
+    }
+    try (var unassigned = new Fixture(true, true, null)) {
+      unassigned.expectNative();
+      assertEquals(
+          200, unassigned.controller.updatePassword(unassigned.password()).getStatusCode().value());
+      JsonNode metadata =
+          unassigned.codec.read(
+              unassigned.jdbc.queryForObject(
+                  "select metadata_json from identity_self_password_intent where operation_id=?",
+                  String.class,
+                  unassigned.operation),
+              JsonNode.class);
+      assertTrue(metadata.has("tenantId"));
+      assertTrue(metadata.get("tenantId").isNull());
+      assertEquals("ACKNOWLEDGED", unassigned.status());
+      assertEquals(1, unassigned.clears());
+      unassigned.server.verify();
+    }
+  }
+
+  @Test
+  void unsupportedOuterEnvelopeVersionCannotResumeUnknownPasswordOrClearSetup() {
+    try (var f = new Fixture(true, true)) {
+      f.expectNative(true);
+      assertThrows(
+          ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
+      assertEquals("FROZEN", f.status());
+      assertEquals(0, f.clears());
+      assertEquals(1, f.effects.get());
+      String saved =
+          f.jdbc.queryForObject(
+              "select intent_envelope from identity_self_password_intent where operation_id=?",
+              String.class,
+              f.operation);
+      var envelope = f.codec.read(saved, ObjectNode.class);
+      envelope.put("v", 4294967297L);
+      f.jdbc.update(
+          "update identity_self_password_intent set intent_envelope=? where operation_id=?",
+          f.codec.canonical(envelope),
+          f.operation);
+      assertThrows(
+          ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
+      assertEquals("FROZEN", f.status());
+      assertEquals(0, f.clears());
+      assertEquals(1, f.effects.get());
       verifyNoInteractions(f.legacy);
       f.server.verify();
     }
@@ -117,6 +167,7 @@ class UserSelfPasswordScenarioCBoundaryTest {
     final RestTemplate http = new RestTemplate();
     final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
     final AtomicInteger effects = new AtomicInteger();
+    final Long tenant;
     final String operation = UUID.randomUUID().toString();
     final AccountLifecycleCodec codec = new AccountLifecycleCodec(KEY);
     final TaskActorCredentials actor =
@@ -124,6 +175,11 @@ class UserSelfPasswordScenarioCBoundaryTest {
             TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "fixture-secret", SUBJECT);
 
     Fixture(boolean five, boolean installed) {
+      this(five, installed, 7L);
+    }
+
+    Fixture(boolean five, boolean installed, Long tenant) {
+      this.tenant = tenant;
       var source =
           new DriverManagerDataSource(
               "jdbc:h2:mem:password-"
@@ -137,7 +193,7 @@ class UserSelfPasswordScenarioCBoundaryTest {
       jdbc.update(
           "insert into consultant values(?,?,null,'ordinary',true,?,0)",
           ACCOUNT,
-          7L,
+          tenant,
           java.sql.Timestamp.from(Instant.parse("2026-01-01T00:00:00Z")));
       jdbc.execute(
           "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512))");
@@ -150,18 +206,18 @@ class UserSelfPasswordScenarioCBoundaryTest {
               Set.of("consultant"),
               "fixture-human",
               Set.of("ROLE_CONSULTANT"));
-      human.setTenantId(7L);
+      human.setTenantId(tenant);
       var request = new MockHttpServletRequest("PUT", "/service/users/password/change");
-      var jwt =
+      var jwtBuilder =
           Jwt.withTokenValue("fixture-human")
               .header("alg", "RS256")
               .subject(ACCOUNT)
               .issuer("https://public.identity.test/realms/fixture")
               .claim("azp", "app")
-              .claim("tenantId", "7")
               .issuedAt(Instant.now().minusSeconds(10))
-              .expiresAt(Instant.now().plusSeconds(600))
-              .build();
+              .expiresAt(Instant.now().plusSeconds(600));
+      if (tenant != null) jwtBuilder.claim("tenantId", tenant.toString());
+      var jwt = jwtBuilder.build();
       request.setUserPrincipal(
           new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_CONSULTANT"))));
       request.addHeader("Authorization", "Bearer fixture-human");
@@ -310,6 +366,10 @@ class UserSelfPasswordScenarioCBoundaryTest {
     }
 
     void expectNative() {
+      expectNative(false);
+    }
+
+    void expectNative(boolean unknownFirst) {
       String endpoint =
           "https://internal.identity.test/realms/fixture/oriso-account-maintenance/v1/accounts/"
               + ACCOUNT;
@@ -331,7 +391,7 @@ class UserSelfPasswordScenarioCBoundaryTest {
                 read.put("lastName", null);
                 read.put("enabled", true);
                 read.put("emailVerified", false);
-                read.put("tenantId", "7");
+                read.put("tenantId", tenant == null ? null : tenant.toString());
                 read.put("preferredLanguage", null);
                 read.put("effectiveRoles", List.of("consultant"));
                 read.put("passwordChangeRequired", true);
@@ -340,7 +400,9 @@ class UserSelfPasswordScenarioCBoundaryTest {
                     .createResponse(out);
               });
       server
-          .expect(requestTo(endpoint + "/self-password"))
+          .expect(
+              unknownFirst ? ExpectedCount.between(1, 2) : ExpectedCount.once(),
+              requestTo(endpoint + "/self-password"))
           .andExpect(method(HttpMethod.POST))
           .andExpect(header("Authorization", "Bearer fixture-admin"))
           .andRespond(
@@ -348,7 +410,9 @@ class UserSelfPasswordScenarioCBoundaryTest {
                 assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
                 assertEquals("FROZEN", status());
                 assertEquals(0, clears());
-                effects.incrementAndGet();
+                int nativeAttempt = effects.incrementAndGet();
+                if (unknownFirst && nativeAttempt == 1)
+                  return withStatus(HttpStatus.SERVICE_UNAVAILABLE).createResponse(out);
                 JsonNode body =
                     codec.read(((MockClientHttpRequest) out).getBodyAsString(), JsonNode.class);
                 assertEquals(CURRENT, body.path("change").path("currentPassword").textValue());
@@ -370,7 +434,7 @@ class UserSelfPasswordScenarioCBoundaryTest {
                 facts.put("ownerSubject", SUBJECT);
                 facts.put("intentDigest", codec.digest("maintenance-intent", body));
                 facts.put("previousState", body.path("expectedState").textValue());
-                facts.put("tenantId", "7");
+                facts.put("tenantId", tenant == null ? null : tenant.toString());
                 facts.put(
                     "originDigest",
                     codec.digest("maintenance-origin", body.path("target").path("origin")));

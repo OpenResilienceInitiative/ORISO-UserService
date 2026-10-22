@@ -153,7 +153,8 @@ def select_slice(name):
         CASES = {LEGACY,
                  "publicPasswordFreezesEncryptedIntentAndClearsSetupOnlyAfterVerifiedNativeOldPasswordReceipt",
                  "missingScopedPasswordOwnerRefusesBeforeLegacyOrSetupMutation",
-                 "samePasswordConflictKeepsExistingSetupRequirementAndDoesNotCallIdentity"}
+                 "samePasswordConflictKeepsExistingSetupRequirementAndDoesNotCallIdentity",
+                 "unsupportedOuterEnvelopeVersionCannotResumeUnknownPasswordOrClearSetup"}
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/adapters/web/controller/UserController",
             "de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate",

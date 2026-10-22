@@ -168,18 +168,18 @@ class DeletionBoundaryEvidenceTest(unittest.TestCase):
 
 
 class PasswordBoundaryEvidenceTest(unittest.TestCase):
-    def test_real_four_case_inventory_requires_legacy_and_scope_controls(self):
+    def test_real_five_case_password_inventory_requires_legacy_and_scope_controls(self):
         proof = importlib.util.module_from_spec(SPEC)
         SPEC.loader.exec_module(proof)
         proof.select_slice("password")
-        self.assertEqual(4, len(proof.CASES))
+        self.assertEqual(5, len(proof.CASES))
         self.assertEqual(3, len(proof.CONTROLS))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             suite = ET.Element("testsuite", name=proof.SUITE)
             for name in proof.CASES:
                 row = ET.SubElement(suite, "testcase", classname=proof.SUITE, name=name)
-                if name not in proof.CONTROLS:
+                if name == "unsupportedOuterEnvelopeVersionCannotResumeUnknownPasswordOrClearSetup":
                     ET.SubElement(row, "failure", type="org.opentest4j.AssertionFailedError")
             path = root / "TEST-password.xml"
             ET.ElementTree(suite).write(path)
