@@ -1,0 +1,428 @@
+package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.*;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos.AccountCreation;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationAcceptance.AcceptanceClaim;
+import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
+import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService;
+import de.caritas.cob.userservice.api.service.accountinvite.*;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.TenantAdminRegistrationResult;
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.util.Objects;
+import java.util.Set;
+import org.springframework.http.HttpStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.server.ResponseStatusException;
+
+/** Public recipient coordinator; all effect authority comes from checked private owners. */
+public final class ProtectedAdminOnboardingService {
+  private final AccountInviteService invites;
+  private final TaskActorConfiguration actors;
+  private final JdbcProtectedInvitationAcceptance acceptance;
+  private final ProtectedAccountCodec codec;
+  private final JdbcProtectedAccountCreation creation;
+  private final KeycloakProtectedAccounts accounts;
+  private final ProtectedOtpBootstrap otp;
+  private final JdbcProtectedAccountActivation activation;
+  private final AccountInactivityEnrollmentService inactivity;
+  private final UsernameTranscoder usernames;
+  private final ProtectedInvitationProfiles profiles;
+  private final OperatorDpaContentClient dpa;
+  private final TenantCreationClient tenants;
+  private final Clock clock;
+  private final ProtectedAccountRecovery recovery;
+  private final JdbcProtectedInvitationCancellation cancellation;
+  private final ObjectMapper nodes = new ObjectMapper();
+
+  public ProtectedAdminOnboardingService(
+      AccountInviteService invites,
+      TaskActorConfiguration actors,
+      JdbcProtectedInvitationAcceptance acceptance,
+      ProtectedAccountCodec codec,
+      JdbcProtectedAccountCreation creation,
+      KeycloakProtectedAccounts accounts,
+      ProtectedOtpBootstrap otp,
+      JdbcProtectedAccountActivation activation,
+      AccountInactivityEnrollmentService inactivity,
+      UsernameTranscoder usernames,
+      ProtectedInvitationProfiles profiles,
+      OperatorDpaContentClient dpa,
+      TenantCreationClient tenants,
+      Clock clock) {
+    this(
+        invites,
+        actors,
+        acceptance,
+        codec,
+        creation,
+        accounts,
+        otp,
+        activation,
+        inactivity,
+        usernames,
+        profiles,
+        dpa,
+        tenants,
+        clock,
+        null,
+        null);
+  }
+
+  public ProtectedAdminOnboardingService(
+      AccountInviteService invites,
+      TaskActorConfiguration actors,
+      JdbcProtectedInvitationAcceptance acceptance,
+      ProtectedAccountCodec codec,
+      JdbcProtectedAccountCreation creation,
+      KeycloakProtectedAccounts accounts,
+      ProtectedOtpBootstrap otp,
+      JdbcProtectedAccountActivation activation,
+      AccountInactivityEnrollmentService inactivity,
+      UsernameTranscoder usernames,
+      ProtectedInvitationProfiles profiles,
+      OperatorDpaContentClient dpa,
+      TenantCreationClient tenants,
+      Clock clock,
+      ProtectedAccountRecovery recovery,
+      JdbcProtectedInvitationCancellation cancellation) {
+    this.recovery = recovery;
+    this.cancellation = cancellation;
+    this.invites = Objects.requireNonNull(invites);
+    this.actors = Objects.requireNonNull(actors);
+    this.acceptance = Objects.requireNonNull(acceptance);
+    this.codec = Objects.requireNonNull(codec);
+    this.creation = Objects.requireNonNull(creation);
+    this.accounts = Objects.requireNonNull(accounts);
+    this.otp = Objects.requireNonNull(otp);
+    this.activation = Objects.requireNonNull(activation);
+    this.inactivity = Objects.requireNonNull(inactivity);
+    this.usernames = Objects.requireNonNull(usernames);
+    this.profiles = Objects.requireNonNull(profiles);
+    this.dpa = Objects.requireNonNull(dpa);
+    this.tenants = Objects.requireNonNull(tenants);
+    this.clock = Objects.requireNonNull(clock);
+  }
+
+  public TenantAdminRegistrationResult register(
+      String token, RegisterTenantAdminCommand command, JsonNode originalRequest) {
+    outsideSql();
+    TenantAdminOnboardingService.validateRegistration(command);
+    if (originalRequest == null || !originalRequest.isObject()) throw unavailable();
+    AccountInvite invite = current(token);
+    AcceptanceClaim claim =
+        acceptance.claim(invite.getId(), AccountInviteService.hash(token), originalRequest);
+    JsonNode scope = checkedScope(invite, claim);
+    var phase = activation.phase(claim);
+    if (phase == JdbcProtectedAccountActivation.Phase.WAITING_OTP)
+      return result(invite, activation.currentSetup(claim));
+    if (phase == JdbcProtectedAccountActivation.Phase.COMMITTED)
+      return new TenantAdminRegistrationResult(invite.getTenantId(), null, null, "COMPLETED");
+    if (phase == JdbcProtectedAccountActivation.Phase.READY) {
+      finish(claim, otp.completed(claim));
+      return new TenantAdminRegistrationResult(invite.getTenantId(), null, null, "COMPLETED");
+    }
+    if (phase != JdbcProtectedAccountActivation.Phase.UNSTAGED) throw unavailable();
+    boolean reserved = "RESERVED_NEW".equals(scope.path("tenantMode").asText());
+    if (!reserved && !"EXISTING".equals(scope.path("tenantMode").asText())) throw unavailable();
+    if (reserved) {
+      if (invite.getTargetRole() != AccountInviteTargetRole.TENANT_ADMIN
+          || invite.getTenantId() <= 0
+          || command.reservedTenantId() == null
+          || !invite.getTenantId().equals(command.reservedTenantId())
+          || blank(command.organisationName())
+          || blank(invite.getTenantIdReservationToken())
+          || !invite.getTenantIdReservationToken().equals(command.tenantIdReservationToken()))
+        throw unavailable();
+      if (creation.findPrepared(claim).isEmpty()) validateConsent(invite, command);
+    }
+    String email = invite.getRecipientEmail();
+    String first =
+        blank(invite.getFirstName())
+            ? email.substring(0, email.indexOf('@'))
+            : invite.getFirstName();
+    String last = blank(invite.getLastName()) ? "Admin" : invite.getLastName();
+    var prepared =
+        codec.prepare(
+            claim,
+            originalRequest,
+            new AccountCreation(
+                usernames.encodeUsername(email),
+                email,
+                first,
+                last,
+                "de",
+                command.password(),
+                false));
+    // The original opaque metadata is durably committed before this first native RPC.
+    creation.prepare(claim, prepared);
+    var created = accounts.create(prepared);
+    creation.recordCreated(claim, created);
+    var pending = accounts.ownedRead(claim, created);
+    var bootstrap = otp.prepare(claim, pending);
+    if (reserved) {
+      var tenantRequest =
+          creation
+              .tenantRequest(claim)
+              .orElseGet(
+                  () -> {
+                    var signer =
+                        Admin.builder()
+                            .id(created.accountId())
+                            .username(created.email())
+                            .email(created.email())
+                            .firstName(created.firstName())
+                            .lastName(created.lastName())
+                            .build();
+                    var signature =
+                        command.dpaAccepted()
+                            ? TenantAdminOnboardingService.buildDpaAcceptance(
+                                command,
+                                signer,
+                                new OperatorDpaContentClient.OperatorDpa(
+                                    null, command.dpaVersion()))
+                            : null;
+                    return creation.freezeTenantRequest(
+                        claim,
+                        TenantAdminOnboardingService.buildTenantDto(invite, command, signature));
+                  });
+      // The opaque saved claim is data; refresh the current phase before the fixed Tenant RPC.
+      if (activation.phase(claim) != JdbcProtectedAccountActivation.Phase.UNSTAGED)
+        throw unavailable();
+      var tenant = tenants.createReservedTenant(claim, tenantRequest);
+      var policy =
+          inactivity.capture(invite.getTenantId(), AccountInactivityEnrollmentService.Group.OTHER);
+      return result(invite, activation.stageReserved(claim, pending, bootstrap, policy, tenant));
+    }
+    var policy =
+        inactivity.capture(invite.getTenantId(), AccountInactivityEnrollmentService.Group.OTHER);
+    return result(invite, activation.stage(claim, pending, bootstrap, policy));
+  }
+
+  private void validateConsent(AccountInvite invite, RegisterTenantAdminCommand command) {
+    if (!command.dpaAccepted()) {
+      if (invite.getDpaForwardedAt() == null && invite.getDpaSignedAt() == null)
+        throw unavailable();
+      return;
+    }
+    var published = dpa.fetchPublishedDpa();
+    if (published == null
+        || blank(published.version())
+        || blank(command.dpaVersion())
+        || !published.version().equals(command.dpaVersion())) throw unavailable();
+  }
+
+  public Resolved resolve(String token) {
+    outsideSql();
+    AccountInvite invite = current(token);
+    if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
+      var claim = resumed(invite, token);
+      var phase = activation.phase(claim);
+      if (phase == JdbcProtectedAccountActivation.Phase.WAITING_OTP)
+        return new Resolved(
+            invite,
+            activation.currentSetup(claim),
+            null,
+            null,
+            null,
+            true,
+            "PENDING_2FA_ACTIVATION");
+      if (phase == JdbcProtectedAccountActivation.Phase.COMMITTED)
+        return new Resolved(invite, null, null, null, null, true, "COMPLETED");
+      if (phase == JdbcProtectedAccountActivation.Phase.READY)
+        return new Resolved(invite, null, null, null, null, true, "PENDING_2FA_ACTIVATION");
+      throw unavailable();
+    }
+    boolean existing =
+        invite.getTargetRole() == AccountInviteTargetRole.PLATFORM_ADMIN
+            || blank(invite.getTenantIdReservationToken());
+    if (existing) return new Resolved(invite, null, null, null, null, true, null);
+    var lookup = dpa.lookupPublishedDpa();
+    return new Resolved(
+        invite,
+        null,
+        lookup.content(),
+        lookup.dpa() == null ? null : lookup.dpa().version(),
+        lookup.reason(),
+        false,
+        null);
+  }
+
+  public void setupApp(String token, String code) {
+    outsideSql();
+    var invite = accepted(token);
+    var claim = resumed(invite, token);
+    complete(claim, otp.setupApp(claim, code));
+  }
+
+  /**
+   * Internal exact historical ownership reconciliation; no public request may select this route.
+   */
+  public void reconcileTerminal(long inviteId) {
+    outsideSql();
+    if (!actors.isEnabled() || inviteId < 1 || recovery == null || cancellation == null)
+      throw unavailable();
+    var historical = acceptance.historical(inviteId);
+    if (historical == null || historical.inviteId() != inviteId) throw unavailable();
+    var phase = activation.phase(historical);
+    if (phase == null) throw unavailable();
+    if (phase == JdbcProtectedAccountActivation.Phase.COMMITTED) return;
+    if (phase == JdbcProtectedAccountActivation.Phase.READY) {
+      var ready = activation.historicalReady(historical);
+      if (ready == null) throw unavailable();
+      ProtectedAccountCodec.VerifiedCommitted committed = null;
+      try {
+        committed = recovery.consumedStatus(ready.created(), ready.outcome());
+      } catch (KeycloakProtectedAccounts.RemoteFailure pending) {
+        // A failed status read is uncertain. Only a native reducing ACK may fence the owner.
+      }
+      if (committed != null) {
+        activation.acknowledge(ready, committed);
+        return;
+      }
+    }
+    cancellation.cancelPendingActivation(historical, activation);
+    var restricted = cancellation.verifiedRestriction(inviteId);
+    if (restricted == null) throw unavailable();
+    // Restriction can invalidate the current token; reacquire data-only custody after that commit.
+    historical = acceptance.historical(inviteId);
+    if (historical == null || historical.inviteId() != inviteId) throw unavailable();
+    long expected = 0;
+    try {
+      var response = nodes.readTree(restricted.responseJson());
+      if (!response.path("boundAttemptId").isNull()) {
+        var generation = response.path("fencedExecution").path("generation");
+        if (!generation.isIntegralNumber()
+            || !generation.canConvertToLong()
+            || generation.longValue() < 1
+            || generation.longValue() == Long.MAX_VALUE) throw unavailable();
+        expected = generation.longValue();
+      } else if (!response.path("fencedExecution").isNull()) throw unavailable();
+    } catch (java.io.IOException malformed) {
+      throw unavailable();
+    }
+    var prepared = creation.recovery(historical, expected);
+    var claimed = recovery.recover(prepared);
+    var local = activation.discard(historical, claimed);
+    recovery.compensate(claimed, local);
+    cancellation.refreshAfterCleanup(inviteId, claimed, local);
+  }
+
+  public void startEmail(String token) {
+    outsideSql();
+    var invite = accepted(token);
+    var claim = resumed(invite, token);
+    var attempt = otp.startEmail(claim);
+    // READY or unknown SMTP delivery cannot be represented as a delivered message.
+    if (attempt == null || attempt.state() == null || !"SENT".equals(attempt.state().name()))
+      throw unavailable();
+  }
+
+  public void finishEmail(String token, String code) {
+    outsideSql();
+    var invite = accepted(token);
+    var claim = resumed(invite, token);
+    complete(claim, otp.finishEmail(claim, code));
+  }
+
+  private void complete(AcceptanceClaim claim, ProtectedOtpBootstrap.BootstrapAttempt attempt) {
+    if (attempt == null
+        || attempt.state() != ProtectedOtpBootstrap.AttemptState.COMPLETE
+        || attempt.completion() == null) throw unavailable();
+    finish(claim, attempt.completion());
+  }
+
+  private void finish(AcceptanceClaim claim, ProtectedOtpBootstrap.Completion completion) {
+    var ready = activation.ready(claim, completion);
+    var committed = accounts.commit(ready);
+    activation.acknowledge(ready, committed);
+  }
+
+  private AcceptanceClaim resumed(AccountInvite invite, String token) {
+    var claim = acceptance.resume(invite.getId(), AccountInviteService.hash(token));
+    checkedScope(invite, claim);
+    return claim;
+  }
+
+  private JsonNode checkedScope(AccountInvite invite, AcceptanceClaim claim) {
+    try {
+      if (claim == null
+          || claim.frozen() == null
+          || !profiles.realmId().equals(claim.frozen().issuerRealm())) throw unavailable();
+      var scope = nodes.readTree(claim.frozen().requestJson()).path("scope");
+      if (!invite.getTargetRole().name().equals(scope.path("protectedKind").asText())
+          || !profiles
+              .profileIds()
+              .get(invite.getTargetRole())
+              .equals(scope.path("protectedProfileId").asText())
+          || !scope.path("targetTenantIds").isArray()
+          || scope.path("targetTenantIds").size() != 1
+          || !scope.path("targetTenantIds").get(0).isIntegralNumber()
+          || scope.path("targetTenantIds").get(0).longValue() != invite.getTenantId())
+        throw unavailable();
+      return scope;
+    } catch (java.io.IOException failure) {
+      throw unavailable();
+    }
+  }
+
+  private AccountInvite accepted(String token) {
+    var invite = current(token);
+    if (invite.getStatus() != AccountInviteStatus.ACCEPTED) throw unavailable();
+    return invite;
+  }
+
+  private AccountInvite current(String token) {
+    if (!actors.isEnabled() || blank(token)) throw unavailable();
+    var invite = invites.findInviteByToken(token);
+    if (invite == null
+        || invite.getId() == null
+        || invite.getTenantId() == null
+        || !Set.of(AccountInviteTargetRole.TENANT_ADMIN, AccountInviteTargetRole.PLATFORM_ADMIN)
+            .contains(invite.getTargetRole())
+        || invite.getPurpose() != AccountInvitePurpose.INVITE
+        || !Set.of(AccountInviteStatus.EMAIL_SENT, AccountInviteStatus.ACCEPTED)
+            .contains(invite.getStatus())) throw unavailable();
+    if (invite.getExpiresAt() == null || !invite.getExpiresAt().isAfter(LocalDateTime.now(clock)))
+      throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
+    return invite;
+  }
+
+  private static TenantAdminRegistrationResult result(
+      AccountInvite invite, IdentityOtpCredential secret) {
+    if (secret == null || blank(secret.secret())) throw unavailable();
+    return new TenantAdminRegistrationResult(
+        invite.getTenantId(), secret.secret(), secret.secretQrCode(), "PENDING_2FA_ACTIVATION");
+  }
+
+  private static boolean blank(String value) {
+    return value == null || value.isBlank();
+  }
+
+  private static void outsideSql() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()
+        || !TransactionSynchronizationManager.getResourceMap().isEmpty()) throw unavailable();
+  }
+
+  private static ResponseStatusException unavailable() {
+    return new ResponseStatusException(
+        HttpStatus.SERVICE_UNAVAILABLE, "Protected administrator onboarding unavailable");
+  }
+
+  public record Resolved(
+      AccountInvite invite,
+      IdentityOtpCredential twoFactor,
+      String dpaContent,
+      String dpaVersion,
+      OperatorDpaContentClient.DpaUnavailableReason dpaUnavailableReason,
+      boolean joinsExistingTenant,
+      String phase) {}
+}

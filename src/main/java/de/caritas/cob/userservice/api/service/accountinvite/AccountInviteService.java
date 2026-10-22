@@ -660,7 +660,6 @@ public class AccountInviteService {
             old.setSupersededByUserId(authenticatedUser.getUserId());
             old.setUpdateDate(now);
           }
-          old.setActiveRecipientKey(null);
           old.setTokenHash(null);
           accountInviteRepository.saveAndFlush(old);
         });
@@ -703,6 +702,8 @@ public class AccountInviteService {
                       .createDate(now)
                       .updateDate(now)
                       .build();
+              old.setActiveRecipientKey(null);
+              accountInviteRepository.saveAndFlush(old);
               next = save(next);
               old.setSupersededByInviteId(next.getId());
               old.setTenantIdReservationToken(null);
@@ -932,12 +933,13 @@ public class AccountInviteService {
             if (current.getStatus() != AccountInviteStatus.SUPERSEDED) {
               throw new BadRequestException("The cancellation state changed");
             }
-            // An interrupted resend retains its capability until its original deadline. A live
-            // source or a replacement recorded while the native RPC was in flight still owns it.
+            // An interrupted resend retains its address and capability until its original deadline.
+            // A live source or a replacement recorded during the native RPC still owns them.
             if (current.getExpiresAt() == null
                 || current.getExpiresAt().isAfter(now)
                 || current.getSupersededByInviteId() != null
-                || current.getTenantIdReservationToken() == null) return null;
+                || current.getTenantIdReservationToken() == null
+                    && current.getActiveRecipientKey() == null) return null;
           } else if (current.getStatus() != AccountInviteStatus.EXPIRED
               && current.getStatus() != AccountInviteStatus.REVOKED) {
             throw new BadRequestException("The cancellation state changed");
@@ -964,6 +966,7 @@ public class AccountInviteService {
             Reason.REVOKED,
             () -> {
               AccountInvite current = findAuthorizedInviteForUpdate(inviteId);
+              String heldRecipientKey = current.getActiveRecipientKey();
               if (current.getStatus() == AccountInviteStatus.ACCEPTED)
                 throw inviteAlreadyAccepted();
               if (current.getStatus() != AccountInviteStatus.REVOKED) {
@@ -976,7 +979,8 @@ public class AccountInviteService {
                 if (current.getStatus() != AccountInviteStatus.REVOKED)
                   throw inviteAlreadyAccepted();
               }
-              current.setActiveRecipientKey(null);
+              // The shared legacy bulk update clears this key; retain it in the same locked SQL.
+              current.setActiveRecipientKey(heldRecipientKey);
               current.setTokenHash(null);
               accountInviteRepository.saveAndFlush(current);
             });
@@ -997,6 +1001,7 @@ public class AccountInviteService {
   private void releaseProtectedReservation(AccountInvite current, LocalDateTime now) {
     ledger.releaseUnneeded(current, now);
     current.setTenantIdReservationToken(null);
+    current.setActiveRecipientKey(null);
     accountInviteRepository.saveAndFlush(current);
   }
 
@@ -1030,6 +1035,7 @@ public class AccountInviteService {
 
   /** Conditional, so an accept or revoke that landed after the read is never written over. */
   private boolean expireAndReleaseNumbers(AccountInvite invite, LocalDateTime now) {
+    String heldRecipientKey = invite.getActiveRecipientKey();
     if (InviteRowHold.orBusy(
             () ->
                 accountInviteRepository.expireWhileStatusIn(
@@ -1043,8 +1049,10 @@ public class AccountInviteService {
     if (delivery.protects(invite.getTargetRole())) {
       // The root pending coordinator records/retries its exact reducing intent outside SQL.
       AccountInvite current = findInvite(invite.getId());
+      current.setActiveRecipientKey(heldRecipientKey);
       current.setTokenHash(null);
       accountInviteRepository.saveAndFlush(current);
+      invite.setActiveRecipientKey(heldRecipientKey);
       invite.setTokenHash(null);
       return true;
     }

@@ -53,7 +53,7 @@ class ProtectedInvitationCancellationRoutingJpaIT extends ProtectedInvitationIss
 
     var invalid = invites.findById(draft.getId()).orElseThrow();
     assertThat(invalid.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
-    assertThat(invalid.getActiveRecipientKey()).isNull();
+    assertThat(invalid.getActiveRecipientKey()).isEqualTo(draft.getActiveRecipientKey());
     assertThat(invalid.getTokenHash()).isNull();
     assertThat(invalid.getTenantIdReservationToken())
         .isEqualTo(draft.getTenantIdReservationToken());
@@ -119,7 +119,7 @@ class ProtectedInvitationCancellationRoutingJpaIT extends ProtectedInvitationIss
     var invalid = invites.findById(old.getId()).orElseThrow();
     assertThat(invalid.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
     assertThat(invalid.getTokenHash()).isNull();
-    assertThat(invalid.getActiveRecipientKey()).isNull();
+    assertThat(invalid.getActiveRecipientKey()).isEqualTo(old.getActiveRecipientKey());
     assertThat(invites.count()).isEqualTo(1);
     assertThat(invalid.getTenantIdReservationToken()).isEqualTo(old.getTenantIdReservationToken());
     assertThat(releases.count()).isZero();

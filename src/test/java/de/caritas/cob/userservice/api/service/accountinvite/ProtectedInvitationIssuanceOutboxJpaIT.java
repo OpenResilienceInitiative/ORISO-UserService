@@ -39,6 +39,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  */
 @TestPropertySource(properties = "TASK_IDENTITY_MODEL=FIVE_ACTORS")
 class ProtectedInvitationIssuanceOutboxJpaIT extends ProtectedInvitationIssuanceJpaFixture {
+  @org.springframework.test.context.bean.override.mockito.MockitoBean
+  de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationCancellation
+      cancellation;
+
   @Autowired AccountLifecycleCodec json;
   @Autowired ProtectedInvitationCodec codec;
 
@@ -203,6 +207,62 @@ class ProtectedInvitationIssuanceOutboxJpaIT extends ProtectedInvitationIssuance
     assertThat(proposal(saved.getId())).isEqualTo(original);
     verify(approvals).approve(any(), anyString());
     verify(sender).send(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void acknowledgedResendTransfersExactlyOneHeldKeyAndCapabilityThenReplaysTheSameSentMail() {
+    approveAndReconcile();
+    when(sender.send(any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(new InviteMailSendReceipt(RECIPIENT, Instant.now()));
+    var first = service.createAndSendInvite(command(), template.getId());
+    var acknowledged = new java.util.concurrent.atomic.AtomicBoolean();
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              new org.springframework.transaction.support.TransactionTemplate(transactions)
+                  .executeWithoutResult(tx -> ((Runnable) call.getArgument(2)).run());
+              acknowledged.set(true);
+              return null;
+            })
+        .when(cancellation)
+        .cancel(
+            org.mockito.ArgumentMatchers.eq(first.invite().getId()),
+            org.mockito.ArgumentMatchers.eq(
+                de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+                    .ProtectedInvitationCancellation.Reason.SUPERSEDED),
+            any());
+    when(cancellation.withAcknowledged(
+            org.mockito.ArgumentMatchers.eq(first.invite().getId()), any()))
+        .thenAnswer(
+            call -> {
+              assertThat(acknowledged.get()).isTrue();
+              return new org.springframework.transaction.support.TransactionTemplate(transactions)
+                  .execute(tx -> ((java.util.function.Supplier<?>) call.getArgument(1)).get());
+            });
+    var command =
+        new AccountInviteService.SendInviteCommand(first.invite().getId(), template.getId());
+    var replacement = service.resendInvite(command);
+    var retry = service.resendInvite(command);
+    assertThat(retry.invite().getId()).isEqualTo(replacement.invite().getId());
+    assertThat(invites.count()).isEqualTo(2);
+    var retired = invites.findById(first.invite().getId()).orElseThrow();
+    var current = invites.findById(replacement.invite().getId()).orElseThrow();
+    assertThat(retired.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
+    assertThat(retired.getSupersededByInviteId()).isEqualTo(current.getId());
+    assertThat(retired.getActiveRecipientKey()).isNull();
+    assertThat(retired.getTenantIdReservationToken()).isNull();
+    assertThat(retired.getTokenHash()).isNull();
+    assertThat(current.getActiveRecipientKey()).isEqualTo(RECIPIENT);
+    assertThat(current.getTenantIdReservationToken())
+        .isEqualTo(first.invite().getTenantIdReservationToken());
+    assertThat(current.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(replacement.delivery().getStatus()).isEqualTo(InviteEmailDeliveryStatus.SENT);
+    assertThat(replacement.rawToken()).isNull();
+    assertThat(replacement.acceptUrl()).isNull();
+    verify(sender, org.mockito.Mockito.times(2))
+        .send(any(), any(), any(), any(), any(), any(), any());
+    verify(approvals, org.mockito.Mockito.times(2)).approve(any(), anyString());
+    verify(tenantIds, org.mockito.Mockito.never()).release(17L);
   }
 
   private void approveAndReconcile() {
