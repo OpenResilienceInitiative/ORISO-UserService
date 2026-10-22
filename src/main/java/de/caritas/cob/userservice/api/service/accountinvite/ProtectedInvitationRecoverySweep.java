@@ -41,7 +41,9 @@ public final class ProtectedInvitationRecoverySweep {
     this.clock = Objects.requireNonNull(clock);
   }
 
-  /** Configured worker boundary; runtime identity context remains closed until its tracer passes. */
+  /**
+   * Configured worker boundary; runtime identity context remains closed until its tracer passes.
+   */
   public ProtectedInvitationRecoverySweep(
       TaskActorConfiguration actors,
       ScheduledTaskClaimService claims,

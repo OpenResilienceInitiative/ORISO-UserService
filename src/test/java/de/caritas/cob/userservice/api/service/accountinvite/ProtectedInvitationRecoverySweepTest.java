@@ -104,34 +104,69 @@ class ProtectedInvitationRecoverySweepTest {
     var authentication = mock(de.caritas.cob.userservice.api.port.out.IdentityAuthentication.class);
     var tenant = mock(de.caritas.cob.userservice.api.tenant.TenantContextProvider.class);
     when(identity.isFiveActorMode()).thenReturn(true);
-    when(identity.taskAccessToken(de.caritas.cob.userservice.api.config.auth.TaskPurpose.INVITE_RESERVATIONS))
+    when(identity.taskAccessToken(
+            de.caritas.cob.userservice.api.config.auth.TaskPurpose.INVITE_RESERVATIONS))
         .thenReturn("synthetic-current-setup-memory-only");
-    doAnswer(call -> {
-      de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(0L);
-      return null;
-    }).when(tenant).setTechnicalContextIfMultiTenancyIsEnabled();
+    doAnswer(
+            call -> {
+              de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(0L);
+              return null;
+            })
+        .when(tenant)
+        .setTechnicalContextIfMultiTenancyIsEnabled();
     when(cancellation.recoveryInviteIds(100)).thenReturn(List.of(73L));
-    doAnswer(call -> {
-      assertTrue(de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext.get().isEmpty());
-      assertTrue(de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext.offered().isEmpty());
-      return null;
-    }).when(coordinator).reconcileTerminal(73);
-    when(invites.expireElapsedInvites()).thenAnswer(call -> {
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      assertEquals(0L, de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant());
-      assertTrue(de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext.get().isEmpty());
-      assertEquals("synthetic-current-setup-memory-only",
-          de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext.offered().orElse(null));
-      return 0;
-    });
+    doAnswer(
+            call -> {
+              assertTrue(
+                  de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext
+                      .get()
+                      .isEmpty());
+              assertTrue(
+                  de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext
+                      .offered()
+                      .isEmpty());
+              return null;
+            })
+        .when(coordinator)
+        .reconcileTerminal(73);
+    when(invites.expireElapsedInvites())
+        .thenAnswer(
+            call -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              assertEquals(
+                  0L, de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant());
+              assertTrue(
+                  de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext
+                      .get()
+                      .isEmpty());
+              assertEquals(
+                  "synthetic-current-setup-memory-only",
+                  de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext
+                      .offered()
+                      .orElse(null));
+              return 0;
+            });
     try {
-      new ProtectedInvitationRecoverySweep(actors, claims, cancellation, coordinator, invites, clock,
-          identity, authentication, tenant).retryPending();
-      verify(identity).taskAccessToken(de.caritas.cob.userservice.api.config.auth.TaskPurpose.INVITE_RESERVATIONS);
+      new ProtectedInvitationRecoverySweep(
+              actors,
+              claims,
+              cancellation,
+              coordinator,
+              invites,
+              clock,
+              identity,
+              authentication,
+              tenant)
+          .retryPending();
+      verify(identity)
+          .taskAccessToken(
+              de.caritas.cob.userservice.api.config.auth.TaskPurpose.INVITE_RESERVATIONS);
       verifyNoInteractions(authentication);
       verify(claims).release(lease);
       assertNull(de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant());
-      assertTrue(de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext.offered().isEmpty());
+      assertTrue(
+          de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext.offered()
+              .isEmpty());
     } finally {
       de.caritas.cob.userservice.api.tenant.TenantContext.clear();
     }
