@@ -232,7 +232,8 @@ class KeycloakProtectedAccountsTest {
     try {
       assertThrows(IllegalStateException.class, () -> transport.create(prepared));
       assertThrows(IllegalStateException.class, () -> transport.ownedRead(claim, created));
-      assertThrows(IllegalStateException.class, () -> transport.commit(mock(ReadyActivation.class)));
+      assertThrows(
+          IllegalStateException.class, () -> transport.commit(mock(ReadyActivation.class)));
       verifyNoInteractions(actors, broker, codec);
     } finally {
       TransactionSynchronizationManager.setActualTransactionActive(false);

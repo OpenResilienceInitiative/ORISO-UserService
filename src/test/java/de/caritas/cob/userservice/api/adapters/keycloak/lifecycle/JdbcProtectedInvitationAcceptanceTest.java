@@ -134,8 +134,7 @@ class JdbcProtectedInvitationAcceptanceTest {
     jdbc.update("UPDATE account_invite SET status='ACCEPTED',accepted_by_user_id=?", account);
     jdbc.update("UPDATE protected_invitation_acceptance SET account_id=?", account);
     assertEquals(first.claimId(), restart().resume(73, TOKEN_HASH).claimId());
-    var replay =
-        assertDoesNotThrow(() -> restart().claim(73, TOKEN_HASH, registration.deepCopy()));
+    var replay = assertDoesNotThrow(() -> restart().claim(73, TOKEN_HASH, registration.deepCopy()));
     assertEquals(first.claimId(), replay.claimId());
     assertEquals(first.attemptId(), replay.attemptId());
     var changed = registration.deepCopy();
