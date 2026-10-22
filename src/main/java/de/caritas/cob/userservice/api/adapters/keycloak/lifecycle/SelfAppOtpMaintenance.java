@@ -42,7 +42,7 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
-/** Owned ordinary SELF OTP reads, enrollment and removal; runtime registration remains separate. */
+/** Owned SELF OTP reads, enrollment and removal; runtime registration remains separate. */
 @RequiredArgsConstructor
 public final class SelfAppOtpMaintenance {
   private final @NonNull IdentityClientConfig mode;
@@ -796,15 +796,8 @@ public final class SelfAppOtpMaintenance {
   }
 
   private void lockedDomain(Self self) {
-    if (!TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
-    var rows =
-        jdbc.queryForList(
-            "select tenant_id,delete_date from user where user_id=? for update", self.account);
-    if (rows.size() != 1) throw forbidden();
-    var row = rows.getFirst();
-    Object tenant = row.get("tenant_id");
-    Long actual = tenant == null ? null : ((Number) tenant).longValue();
-    if (row.get("delete_date") != null || !Objects.equals(self.tenant, actual)) throw forbidden();
+    if (new SelfOtpAccountOwner(jdbc).require(self.account, self.tenant) != self.kind)
+      throw forbidden();
   }
 
   private Intent find(String operation) {
@@ -896,7 +889,8 @@ public final class SelfAppOtpMaintenance {
         client,
         tenantId,
         jwt.getTokenValue(),
-        jwt.getExpiresAt().getEpochSecond());
+        jwt.getExpiresAt().getEpochSecond(),
+        transaction(() -> new SelfOtpAccountOwner(jdbc).require(account, tenantId)));
   }
 
   private String operationId() {
@@ -917,7 +911,8 @@ public final class SelfAppOtpMaintenance {
     origin.put("humanIssuer", self.issuer);
     origin.put("humanClient", self.client);
     origin.put("workflowId", operation);
-    origin.putNull("humanAuthority");
+    if (self.kind == SelfOtpAccountOwner.Kind.ORDINARY) origin.putNull("humanAuthority");
+    else origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
     return value;
   }
 
@@ -986,7 +981,13 @@ public final class SelfAppOtpMaintenance {
   }
 
   private record Self(
-      String account, String issuer, String client, Long tenant, String bearer, long expires) {
+      String account,
+      String issuer,
+      String client,
+      Long tenant,
+      String bearer,
+      long expires,
+      SelfOtpAccountOwner.Kind kind) {
     @Override
     public String toString() {
       return "Self[redacted]";
