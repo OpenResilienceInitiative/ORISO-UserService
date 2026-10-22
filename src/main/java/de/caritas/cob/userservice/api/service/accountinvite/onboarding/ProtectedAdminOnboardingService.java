@@ -299,9 +299,10 @@ public final class ProtectedAdminOnboardingService {
       var response = nodes.readTree(restricted.responseJson());
       if (!response.path("boundAttemptId").isNull()) {
         var generation = response.path("fencedExecution").path("generation");
-        if (!generation.isIntegralNumber() || !generation.canConvertToLong()
-            || generation.longValue() < 1 || generation.longValue() == Long.MAX_VALUE)
-          throw unavailable();
+        if (!generation.isIntegralNumber()
+            || !generation.canConvertToLong()
+            || generation.longValue() < 1
+            || generation.longValue() == Long.MAX_VALUE) throw unavailable();
         expected = generation.longValue();
       } else if (!response.path("fencedExecution").isNull()) throw unavailable();
     } catch (java.io.IOException malformed) {

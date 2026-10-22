@@ -206,12 +206,15 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
         || !current.executionId().equals(expected.executionId())
         || !same(current.registrationDigest(), expected.registrationDigest())
         || !Objects.equals(current.tokenHash(), expected.tokenHash())) throw unavailable();
-    var phases = jdbc.queryForList(
-        "SELECT state FROM protected_account_activation WHERE invite_id=? FOR UPDATE",
-        String.class, historical.inviteId());
+    var phases =
+        jdbc.queryForList(
+            "SELECT state FROM protected_account_activation WHERE invite_id=? FOR UPDATE",
+            String.class,
+            historical.inviteId());
     if (phases.size() > 1 || phases.contains("COMMITTED")) throw unavailable();
-    String state = jdbc.queryForObject(
-        "SELECT status FROM account_invite WHERE id=?", String.class, historical.inviteId());
+    String state =
+        jdbc.queryForObject(
+            "SELECT status FROM account_invite WHERE id=?", String.class, historical.inviteId());
     if (!Set.of("ACCEPTED", "EXPIRED", "REVOKED", "SUPERSEDED").contains(state))
       throw unavailable();
     return state;
@@ -222,7 +225,8 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
     cancel(inviteId, reason, invalidateLocalInvite, () -> {});
   }
 
-  private void cancel(long inviteId, Reason reason, Runnable invalidateLocalInvite, Runnable currentOwnerGuard) {
+  private void cancel(
+      long inviteId, Reason reason, Runnable invalidateLocalInvite, Runnable currentOwnerGuard) {
     if (TransactionSynchronizationManager.isActualTransactionActive())
       throw new IllegalStateException(
           "Protected cancellation requires a completed local transaction");

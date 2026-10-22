@@ -227,9 +227,11 @@ class JdbcProtectedCleanupStatusTest {
               assertNotNull(saved);
               assertEquals(recovered.executionId(), saved.recoveryId());
             });
-    assertThrows(RuntimeException.class,
-        () -> new TransactionTemplate(manager).executeWithoutResult(
-            tx -> creation.recoveryWithinOwner(history, 2)));
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            new TransactionTemplate(manager)
+                .executeWithoutResult(tx -> creation.recoveryWithinOwner(history, 2)));
     assertEquals(
         1, jdbc.queryForObject("SELECT COUNT(*) FROM protected_account_recovery", Integer.class));
     assertThrows(RuntimeException.class, () -> creation.recoveryWithinOwner(history, 1));
