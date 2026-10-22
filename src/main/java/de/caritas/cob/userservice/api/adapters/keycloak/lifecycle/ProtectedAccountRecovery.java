@@ -91,7 +91,25 @@ public final class ProtectedAccountRecovery {
 
   public ProtectedAccountCodec.VerifiedCommitted consumedStatus(
       ProtectedAccountCodec.VerifiedCreated created, LocalOutcome local) {
-    throw invalid();
+    outsideSql();
+    Objects.requireNonNull(created); Objects.requireNonNull(local);
+    var actor = actors.require(TaskPurpose.INVITE_RESERVATIONS);
+    if (actor == null || actor.actor() != TaskActor.SETUP || !"backend-setup".equals(actor.clientId())) throw invalid();
+    byte[] body = codec.consumedStatusBody(created);
+    String proof = codec.consumedStatusProof(created, actor);
+    var token = broker.issue(TaskPurpose.INVITE_RESERVATIONS);
+    if (token.actor() != TaskActor.SETUP || token.accessToken() == null || token.accessToken().isBlank()) throw invalid();
+    URI route = UriComponentsBuilder.fromUri(authServer).pathSegment("realms", realmName, "oriso-protected-invitations", "v1", "approvals", created.approvalId().toString(), "status").build().encode().toUri();
+    var headers = new HttpHeaders(); headers.setBearerAuth(token.accessToken());
+    headers.setContentType(MediaType.APPLICATION_JSON); headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+    headers.set("X-ORISO-Task-Context", proof);
+    try {
+      var response = http.exchange(route, HttpMethod.POST, new HttpEntity<>(body, headers), byte[].class);
+      if (response.getStatusCode().value() != 200 || response.getBody() == null) throw new KeycloakProtectedAccounts.RemoteFailure(response.getStatusCode().value());
+      try { return Objects.requireNonNull(codec.verifyConsumedStatus(created, local, response.getBody())); }
+      catch (RuntimeException invalid) { throw new KeycloakProtectedAccounts.RemoteFailure(0); }
+    } catch (RestClientResponseException failure) { throw new KeycloakProtectedAccounts.RemoteFailure(failure.getStatusCode().value()); }
+    catch (RestClientException failure) { throw new KeycloakProtectedAccounts.RemoteFailure(0); }
   }
 
   private TaskActorCredentials cleanupActor() {
