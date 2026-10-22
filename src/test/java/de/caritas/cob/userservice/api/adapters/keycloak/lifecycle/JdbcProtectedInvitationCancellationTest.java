@@ -352,10 +352,19 @@ class JdbcProtectedInvitationCancellationTest {
   }
 
   @Test
-  void acknowledgedBoundCleanupRemainsDiscoverableWithoutReleasingFromItsOriginalReceipt() throws Exception {
+  void acknowledgedBoundCleanupRemainsDiscoverableWithoutReleasingFromItsOriginalReceipt()
+      throws Exception {
     recoveryFixture();
-    when(receiver.cancel(any())).thenAnswer(call -> restrictions.verify(call.getArgument(0),
-        terminals.path("expiredBound").toString().getBytes(java.nio.charset.StandardCharsets.UTF_8), true));
+    when(receiver.cancel(any()))
+        .thenAnswer(
+            call ->
+                restrictions.verify(
+                    call.getArgument(0),
+                    terminals
+                        .path("expiredBound")
+                        .toString()
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    true));
     service().cancel(73, Reason.REVOKED, this::invalidate);
     assertTrue(service().verifiedRestriction(73).cleanupRequired());
     assertEquals(java.util.List.of(73L), service().recoveryInviteIds(100));
@@ -364,7 +373,8 @@ class JdbcProtectedInvitationCancellationTest {
   }
 
   @Test
-  void readyLostReplyAndExpiredPendingAcceptanceStayVisibleButCommittedAndLivePendingDoNot() throws Exception {
+  void readyLostReplyAndExpiredPendingAcceptanceStayVisibleButCommittedAndLivePendingDoNot()
+      throws Exception {
     recoveryFixture();
     activation(75, "READY", Instant.parse("2031-01-01T00:00:00Z"));
     activation(76, "WAITING_OTP", before.instant());
@@ -376,7 +386,8 @@ class JdbcProtectedInvitationCancellationTest {
   }
 
   @Test
-  void durableLastAttemptMovesOneUnknownBehindTheFollowingAccountAcrossWorkerRestart() throws Exception {
+  void durableLastAttemptMovesOneUnknownBehindTheFollowingAccountAcrossWorkerRestart()
+      throws Exception {
     recoveryFixture();
     activation(75, "READY", before.instant());
     activation(76, "READY", before.instant());
@@ -384,30 +395,54 @@ class JdbcProtectedInvitationCancellationTest {
     service().touchRecovery(75);
     assertEquals(java.util.List.of(76L, 75L), service().recoveryInviteIds(100));
     assertEquals(java.util.List.of(76L), service().recoveryInviteIds(1));
-    assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM protected_invitation_cleanup_status WHERE invite_id=75", Integer.class));
+    assertEquals(
+        1,
+        jdbc.queryForObject(
+            "SELECT COUNT(*) FROM protected_invitation_cleanup_status WHERE invite_id=75",
+            Integer.class));
     assertThrows(IllegalArgumentException.class, () -> service().recoveryInviteIds(0));
     assertThrows(IllegalArgumentException.class, () -> service().recoveryInviteIds(101));
-    new TransactionTemplate(manager).executeWithoutResult(tx ->
-        assertThrows(IllegalStateException.class, () -> service().recoveryInviteIds(100)));
+    new TransactionTemplate(manager)
+        .executeWithoutResult(
+            tx ->
+                assertThrows(IllegalStateException.class, () -> service().recoveryInviteIds(100)));
     verifyNoInteractions(receiver);
   }
 
   private void recoveryFixture() throws Exception {
     pendingFixture();
     jdbc.execute("ALTER TABLE account_invite ADD provisioning_status VARCHAR(32) NULL");
-    for (String migration : new String[] {"20261022_protected_invitation_acceptance_367",
-        "20261022_protected_account_activation_367", "20261022_protected_invitation_cleanup_status_367"})
-      for (String sql : Files.readString(Path.of("src/main/resources/db/changelog/changeset", migration, "migrate.sql")).split(";"))
-        if (!sql.isBlank()) jdbc.execute(sql);
+    for (String migration :
+        new String[] {
+          "20261022_protected_invitation_acceptance_367",
+          "20261022_protected_account_activation_367",
+          "20261022_protected_invitation_cleanup_status_367"
+        })
+      for (String sql :
+          Files.readString(
+                  Path.of("src/main/resources/db/changelog/changeset", migration, "migrate.sql"))
+              .split(";")) if (!sql.isBlank()) jdbc.execute(sql);
   }
 
   private void activation(long id, String state, Instant expiry) {
-    jdbc.update("INSERT INTO account_invite(id,target_role,tenant_id,purpose,status,provisioning_status,expires_at,update_date) VALUES(?,'TENANT_ADMIN',7,'INVITE','ACCEPTED','IN_PROGRESS',?,?)",
-        id, Timestamp.from(expiry), Timestamp.from(before.instant()));
+    jdbc.update(
+        "INSERT INTO account_invite(id,target_role,tenant_id,purpose,status,provisioning_status,expires_at,update_date) VALUES(?,'TENANT_ADMIN',7,'INVITE','ACCEPTED','IN_PROGRESS',?,?)",
+        id,
+        Timestamp.from(expiry),
+        Timestamp.from(before.instant()));
     // Discovery facts only: these SQL rows mint no private claim, recovery or native authority.
-    jdbc.update("INSERT INTO protected_account_activation(invite_id,claim_id,attempt_id,execution_id,account_id,state,created_checkpoint,local_effects_json,local_effects_digest,local_outbox_id,created_at,updated_at) VALUES(?,?,?,?,?,?,'synthetic-not-authority','{}',?,?,?,?)",
-        id, UUID.randomUUID().toString(), UUID.randomUUID().toString(), UUID.randomUUID().toString(), UUID.randomUUID().toString(), state,
-        "a".repeat(64), UUID.randomUUID().toString(), Timestamp.from(before.instant()), Timestamp.from(before.instant()));
+    jdbc.update(
+        "INSERT INTO protected_account_activation(invite_id,claim_id,attempt_id,execution_id,account_id,state,created_checkpoint,local_effects_json,local_effects_digest,local_outbox_id,created_at,updated_at) VALUES(?,?,?,?,?,?,'synthetic-not-authority','{}',?,?,?,?)",
+        id,
+        UUID.randomUUID().toString(),
+        UUID.randomUUID().toString(),
+        UUID.randomUUID().toString(),
+        UUID.randomUUID().toString(),
+        state,
+        "a".repeat(64),
+        UUID.randomUUID().toString(),
+        Timestamp.from(before.instant()),
+        Timestamp.from(before.instant()));
   }
 
   private void pendingFixture() {

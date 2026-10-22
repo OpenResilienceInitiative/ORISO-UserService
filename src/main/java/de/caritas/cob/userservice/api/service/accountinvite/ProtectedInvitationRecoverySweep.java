@@ -8,9 +8,13 @@ import java.time.Clock;
 
 /** Bounded replica-neutral retry of original protected ownership; no public cleanup endpoint. */
 public final class ProtectedInvitationRecoverySweep {
-  public ProtectedInvitationRecoverySweep(TaskActorConfiguration actors,
-      ScheduledTaskClaimService claims, JdbcProtectedInvitationCancellation cancellation,
-      ProtectedAdminOnboardingService coordinator, AccountInviteService invites, Clock clock) {}
+  public ProtectedInvitationRecoverySweep(
+      TaskActorConfiguration actors,
+      ScheduledTaskClaimService claims,
+      JdbcProtectedInvitationCancellation cancellation,
+      ProtectedAdminOnboardingService coordinator,
+      AccountInviteService invites,
+      Clock clock) {}
 
   public void retryPending() {}
 }

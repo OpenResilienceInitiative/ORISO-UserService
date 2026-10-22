@@ -222,7 +222,9 @@ public final class ProtectedAdminOnboardingService {
     complete(claim, otp.setupApp(claim, code));
   }
 
-  /** Internal exact historical ownership reconciliation; no public request may select this route. */
+  /**
+   * Internal exact historical ownership reconciliation; no public request may select this route.
+   */
   public void reconcileTerminal(long inviteId) {
     throw unavailable();
   }
