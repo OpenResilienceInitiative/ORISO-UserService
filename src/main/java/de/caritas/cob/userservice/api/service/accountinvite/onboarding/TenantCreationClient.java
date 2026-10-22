@@ -40,7 +40,7 @@ public class TenantCreationClient {
   private final @NonNull TenantAdminServiceApiControllerFactory
       tenantAdminServiceApiControllerFactory;
 
-  @org.springframework.beans.factory.annotation.Autowired
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
   private ReservedTenantBootstrap reservedTenantBootstrap;
 
   /** Exact protected held operation; the private SQL claim is checked before authentication. */
@@ -49,7 +49,10 @@ public class TenantCreationClient {
               .AcceptanceClaim
           claim,
       MultilingualTenantDTO tenant) {
-    return null;
+    if (reservedTenantBootstrap == null)
+      throw new IllegalStateException("Protected Tenant creation is unavailable");
+    var reply = reservedTenantBootstrap.create(claim, tenant);
+    return new VerifiedTenant(reply.id(), reply.receipt(), reply.tenant(), reply.claim(), reply.attempt(), reply.execution());
   }
 
   /** Authenticated result ownership only; never a generic tenant creation grant. */
@@ -70,7 +73,7 @@ public class TenantCreationClient {
         java.util.UUID execution) {
       this.id = id;
       this.proof = proof;
-      this.value = value;
+      this.value = ReservedTenantBootstrap.copy(value);
       this.claim = claim;
       this.attempt = attempt;
       this.execution = execution;
@@ -85,7 +88,7 @@ public class TenantCreationClient {
     }
 
     public MultilingualTenantDTO tenant() {
-      return null;
+      return ReservedTenantBootstrap.copy(value);
     }
 
     public java.util.UUID claimId() {
