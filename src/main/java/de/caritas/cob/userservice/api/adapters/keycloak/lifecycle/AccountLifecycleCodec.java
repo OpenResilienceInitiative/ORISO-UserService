@@ -847,7 +847,38 @@ public final class AccountLifecycleCodec {
       String realmName,
       String realmId,
       JsonNode command) {
-    return "";
+    try {
+      long now = clock.instant().getEpochSecond();
+      if (actor == null || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN
+          || actor.purpose() != TaskPurpose.SESSION_EXCHANGE
+          || actor.validatedJwtIssuedAt() <= 0 || actor.validatedJwtIssuedAt() > now
+          || actor.validatedJwtExpiresAt() <= now
+          || actor.validatedJwtExpiresAt() <= actor.validatedJwtIssuedAt()
+          || realmName == null || realmName.isBlank() || realmName.length() > 255
+          || realmId == null || !realmId.matches("[A-Za-z0-9._-]{1,255}")) throw new IllegalStateException();
+      intentFields(command, java.util.Set.of("version","workflowId","targetUserId","tenantId","clientId","expiresAt","claimDigest"));
+      String workflow = intentUuid(command,"workflowId");
+      intentUuid(command,"targetUserId");
+      if (!command.path("version").isIntegralNumber() || command.path("version").intValue() != 1
+          || !command.path("version").canConvertToInt() || !"app".equals(intentText(command,"clientId",255))
+          || !command.path("expiresAt").isIntegralNumber() || !command.path("expiresAt").canConvertToLong()
+          || command.path("expiresAt").longValue() <= now || command.path("expiresAt").longValue()-now > 900
+          || !intentText(command,"claimDigest",64).matches("[0-9a-f]{64}")) throw new IllegalStateException();
+      JsonNode tenant = command.get("tenantId");
+      if (!tenant.isNull() && (!tenant.isIntegralNumber() || !tenant.canConvertToLong() || tenant.longValue()<0))
+        throw new IllegalStateException();
+      Map<String,Object> claims = new TreeMap<>();
+      claims.put("iss","userservice"); claims.put("aud","oriso-session-exchange");
+      claims.put("purpose","SESSION_EXCHANGE"); claims.put("operation","session.magic-link.exchange");
+      claims.put("method","POST"); claims.put("actor","ACCOUNT_ADMIN"); claims.put("realm",realmName);
+      claims.put("target","realm/"+realmId+"/magic-link/"+workflow);
+      claims.put("taskClient",actor.clientId()); claims.put("taskSubject",actor.subject());
+      claims.put("payloadDigest",digest("magic-link-command/v1",command));
+      claims.put("jti",UUID.randomUUID().toString()); claims.put("nonce",UUID.randomUUID().toString().replace("-",""));
+      claims.put("iat",now); claims.put("exp",Math.min(Math.min(now+30,actor.validatedJwtExpiresAt()),command.path("expiresAt").longValue()));
+      String encoded = encode(canonical(claims).getBytes(StandardCharsets.UTF_8));
+      return encoded+"."+encode(mac("magic-link-proof/v1\n"+encoded));
+    } catch (RuntimeException invalid) { throw new IllegalStateException("Claimed session proof unavailable"); }
   }
 
   public String digest(String domain, Object value) {

@@ -59,7 +59,57 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
 
   @Override
   public Optional<IdentitySession> exchangeMagicLink(ClaimedMagicLink claim) {
-    return Optional.empty();
+    try {
+      if (!taskActors.isEnabled() || claim == null || !"app".equals(keycloakAppClientId)
+          || org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+        return Optional.empty();
+      claim.requireCurrent();
+      var actor = broker.issueCheckedSessionExchange();
+      claim.requireCurrent();
+      var codec = lifecycleCodec.getObject();
+      var body = new java.util.TreeMap<String,Object>();
+      body.put("version",1); body.put("workflowId",claim.workflowId().toString());
+      body.put("targetUserId",claim.targetUserId()); body.put("tenantId",claim.tenantId());
+      body.put("clientId","app"); body.put("expiresAt",claim.expiresAt().getEpochSecond());
+      body.put("claimDigest",claim.claimDigest());
+      var command = codec.read(codec.canonical(body),com.fasterxml.jackson.databind.JsonNode.class);
+      String url = identityClientConfig.getOpenIdConnectUrl(TOKEN_ENDPOINT_PATH);
+      var endpoint = java.net.URI.create(url);
+      if (!("http".equals(endpoint.getScheme()) || "https".equals(endpoint.getScheme()))
+          || endpoint.getHost() == null || endpoint.getUserInfo() != null || endpoint.getFragment() != null
+          || !url.equals(actor.issuer()+"/protocol/openid-connect/token")) return Optional.empty();
+      HttpHeaders headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+      headers.setBearerAuth(actor.accessToken());
+      headers.set("X-ORISO-Task-Context",codec.magicLinkProof(actor,realmName,realmId,command));
+      MultiValueMap<String,String> form = new KeycloakAuthClient.SensitiveKeycloakFormData();
+      form.add("client_id","app"); form.add("grant_type","password");
+      form.add("oriso_magic_command",codec.canonical(command));
+      claim.requireCurrent();
+      var response = restTemplate.postForEntity(url,new HttpEntity<>(form,headers),KeycloakLoginResponseDTO.class);
+      if (response.getStatusCode().value()!=200 || response.getBody()==null) return Optional.empty();
+      var value = response.getBody();
+      if (isBlank(value.getAccessToken()) || isBlank(value.getRefreshToken())
+          || !"Bearer".equals(value.getTokenType()) || value.getExpiresIn()<=0 || value.getRefreshExpiresIn()<0)
+        return Optional.empty();
+      var jwt = jwtDecoder.decode(value.getAccessToken());
+      Object subject = jwt.getClaims().get("sub"), client = jwt.getClaims().get("azp"), sid = jwt.getClaims().get("sid");
+      if (!(subject instanceof String) || !claim.targetUserId().equals(subject)
+          || !"app".equals(client) || !(sid instanceof String sessionId)
+          || !java.util.UUID.fromString(sessionId).toString().equals(sessionId)
+          || !sessionId.equals(value.getSessionState()) || jwt.getIssuer()==null
+          || !actor.issuer().equals(jwt.getIssuer().toString())
+          || jwt.getIssuedAt()==null || jwt.getIssuedAt().isAfter(Instant.now())
+          || jwt.getExpiresAt()==null || !jwt.getExpiresAt().isAfter(Instant.now())) return Optional.empty();
+      Object tenant = jwt.getClaims().get("tenantId");
+      if (claim.tenantId()==null ? jwt.getClaims().containsKey("tenantId")
+          : !(tenant instanceof String) || !Long.toString(claim.tenantId()).equals(tenant)) return Optional.empty();
+      claim.requireCurrent();
+      return Optional.of(toIdentitySession(value));
+    } catch (RuntimeException unavailable) {
+      // Decoder/provider diagnostics may contain private native bodies. No fallback or raw logging.
+      return Optional.empty();
+    }
   }
 
   @Value("${keycloak.config.admin-client-id}")
@@ -76,6 +126,7 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
 
   @Override
   public Optional<IdentitySession> exchangeForUser(String identityUserId) {
+    if (taskActors.isEnabled()) return Optional.empty();
     String adminToken = loginAdminForToken();
     if (isBlank(adminToken)) {
       return Optional.empty();
