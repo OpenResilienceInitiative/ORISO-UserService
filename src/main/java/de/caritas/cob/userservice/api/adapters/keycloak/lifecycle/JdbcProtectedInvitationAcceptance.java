@@ -56,8 +56,7 @@ public final class JdbcProtectedInvitationAcceptance {
                   "SELECT status,token_hash FROM account_invite WHERE id=?",
                   (rs, index) -> new String[] {rs.getString("status"), rs.getString("token_hash")},
                   inviteId);
-          if (invites.size() != 1
-              || !equal(tokenHash, invites.getFirst()[1])) throw unavailable();
+          if (invites.size() != 1 || !equal(tokenHash, invites.getFirst()[1])) throw unavailable();
           FrozenApproval frozen = journal.pending(inviteId);
           String response =
               jdbc.queryForObject(
