@@ -457,44 +457,124 @@ public final class ProtectedAccountCodec {
   }
 
   // Recovery API is inert until the hosted assertion counterfactual is qualified.
-  public String checkpointPrepared(PreparedCreation prepared) { throw invalid(); }
-  public PreparedMetadata restorePrepared(AcceptanceClaim claim, String checkpoint) { throw invalid(); }
-  public PreparedRecovery prepareRecovery(PreparedMetadata metadata, long expectedGeneration, UUID recoveryId) { throw invalid(); }
-  public byte[] recoverBody(PreparedRecovery recovery) { throw invalid(); }
-  public String recoverProof(PreparedRecovery recovery, TaskActorCredentials actor) { throw invalid(); }
-  public VerifiedRecovery verifyRecovery(PreparedRecovery recovery, byte[] response) { throw invalid(); }
-  public byte[] compensateBody(VerifiedRecovery recovery, LocalOutcome local) { throw invalid(); }
-  public String compensateProof(VerifiedRecovery recovery, LocalOutcome local, TaskActorCredentials actor) { throw invalid(); }
-  public VerifiedCleanup verifyCompensated(VerifiedRecovery recovery, LocalOutcome local, byte[] response) { throw invalid(); }
+  public String checkpointPrepared(PreparedCreation prepared) {
+    throw invalid();
+  }
+
+  public PreparedMetadata restorePrepared(AcceptanceClaim claim, String checkpoint) {
+    throw invalid();
+  }
+
+  public PreparedRecovery prepareRecovery(
+      PreparedMetadata metadata, long expectedGeneration, UUID recoveryId) {
+    throw invalid();
+  }
+
+  public byte[] recoverBody(PreparedRecovery recovery) {
+    throw invalid();
+  }
+
+  public String recoverProof(PreparedRecovery recovery, TaskActorCredentials actor) {
+    throw invalid();
+  }
+
+  public VerifiedRecovery verifyRecovery(PreparedRecovery recovery, byte[] response) {
+    throw invalid();
+  }
+
+  public byte[] compensateBody(VerifiedRecovery recovery, LocalOutcome local) {
+    throw invalid();
+  }
+
+  public String compensateProof(
+      VerifiedRecovery recovery, LocalOutcome local, TaskActorCredentials actor) {
+    throw invalid();
+  }
+
+  public VerifiedCleanup verifyCompensated(
+      VerifiedRecovery recovery, LocalOutcome local, byte[] response) {
+    throw invalid();
+  }
 
   public static final class PreparedMetadata {
     private PreparedMetadata() {}
-    public UUID approvalId() { return null; }
-    public UUID attemptId() { return null; }
-    public String creationFingerprint() { return null; }
+
+    public UUID approvalId() {
+      return null;
+    }
+
+    public UUID attemptId() {
+      return null;
+    }
+
+    public String creationFingerprint() {
+      return null;
+    }
   }
+
   public static final class PreparedRecovery {
     private PreparedRecovery() {}
-    public UUID approvalId() { return null; }
-    public UUID attemptId() { return null; }
-    public UUID recoveryId() { return null; }
+
+    public UUID approvalId() {
+      return null;
+    }
+
+    public UUID attemptId() {
+      return null;
+    }
+
+    public UUID recoveryId() {
+      return null;
+    }
   }
+
   public static final class VerifiedRecovery {
     private VerifiedRecovery() {}
-    public UUID approvalId() { return null; }
-    public UUID attemptId() { return null; }
-    public UUID executionId() { return null; }
-    public long generation() { return 0; }
-    public String state() { return null; }
-    public String accountId() { return null; }
-    public String creationProof() { return null; }
+
+    public UUID approvalId() {
+      return null;
+    }
+
+    public UUID attemptId() {
+      return null;
+    }
+
+    public UUID executionId() {
+      return null;
+    }
+
+    public long generation() {
+      return 0;
+    }
+
+    public String state() {
+      return null;
+    }
+
+    public String accountId() {
+      return null;
+    }
+
+    public String creationProof() {
+      return null;
+    }
   }
+
   /** Verified native cleanup data only; an approval status ACK remains independently required. */
   public static final class VerifiedCleanup {
     private VerifiedCleanup() {}
-    public String accountId() { return null; }
-    public String state() { return null; }
-    public String terminalReceipt() { return null; }
+
+    public String accountId() {
+      return null;
+    }
+
+    public String state() {
+      return null;
+    }
+
+    public String terminalReceipt() {
+      return null;
+    }
   }
 
   private void checkedInternalScope(PreparedCreation prepared, JsonNode value) {
@@ -872,10 +952,21 @@ public final class ProtectedAccountCodec {
       return prepared.executionId;
     }
 
-    public String email() { throw invalid(); }
-    public String firstName() { throw invalid(); }
-    public String lastName() { throw invalid(); }
-    public String preferredLanguage() { throw invalid(); }
+    public String email() {
+      throw invalid();
+    }
+
+    public String firstName() {
+      throw invalid();
+    }
+
+    public String lastName() {
+      throw invalid();
+    }
+
+    public String preferredLanguage() {
+      throw invalid();
+    }
 
     public String accountId() {
       return accountId;

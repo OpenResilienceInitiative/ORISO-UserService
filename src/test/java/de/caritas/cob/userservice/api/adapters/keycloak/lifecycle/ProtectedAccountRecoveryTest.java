@@ -1,8 +1,8 @@
 package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
 import static org.mockito.AdditionalMatchers.aryEq;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.*;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
@@ -18,7 +18,10 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.RestTemplate;
 
-/** Real RestTemplate request boundary; opaque codec handles are explicit doubles, not native evidence. */
+/**
+ * Real RestTemplate request boundary; opaque codec handles are explicit doubles, not native
+ * evidence.
+ */
 class ProtectedAccountRecoveryTest {
   private final RestTemplate http = new RestTemplate();
   private final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
@@ -30,27 +33,49 @@ class ProtectedAccountRecoveryTest {
   private final VerifiedCleanup cleaned = mock(VerifiedCleanup.class);
   private final UUID approval = UUID.fromString("7f56c348-9785-4c78-b905-3d008dd42482");
   private final UUID attempt = UUID.fromString("39fe99aa-fd8e-44c8-9b48-71ea6cc09d38");
-  private final LocalOutcome local = new LocalOutcome(1, UUID.fromString("d82d3425-977c-4cba-ae9d-4f02de29a5ab"), "d".repeat(64));
-  private final byte[] body = "{\"synthetic\":\"exact-memory-request\"}".getBytes(StandardCharsets.UTF_8);
-  private final byte[] response = "{\"synthetic\":\"exact-response\"}".getBytes(StandardCharsets.UTF_8);
+  private final LocalOutcome local =
+      new LocalOutcome(1, UUID.fromString("d82d3425-977c-4cba-ae9d-4f02de29a5ab"), "d".repeat(64));
+  private final byte[] body =
+      "{\"synthetic\":\"exact-memory-request\"}".getBytes(StandardCharsets.UTF_8);
+  private final byte[] response =
+      "{\"synthetic\":\"exact-response\"}".getBytes(StandardCharsets.UTF_8);
   private ProtectedAccountRecovery transport;
 
   @BeforeEach
   void bindings() {
     lenient().when(codec.realmName()).thenReturn("oriso");
-    lenient().when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(new TaskActorCredentials(TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "synthetic-only", "091b8cef-09a8-4e5b-a244-6be3db4b7bee"));
-    lenient().when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_ADMIN, "public-synthetic-admin", 60));
+    lenient()
+        .when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE))
+        .thenReturn(
+            new TaskActorCredentials(
+                TaskActor.ACCOUNT_ADMIN,
+                "backend-account-admin",
+                "synthetic-only",
+                "091b8cef-09a8-4e5b-a244-6be3db4b7bee"));
+    lenient()
+        .when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))
+        .thenReturn(
+            new TaskActorTokenBroker.TaskToken(
+                TaskActor.ACCOUNT_ADMIN, "public-synthetic-admin", 60));
     lenient().when(prepared.approvalId()).thenReturn(approval);
     lenient().when(prepared.attemptId()).thenReturn(attempt);
     lenient().when(recovered.approvalId()).thenReturn(approval);
     lenient().when(recovered.attemptId()).thenReturn(attempt);
     lenient().when(codec.recoverBody(prepared)).thenReturn(body);
     lenient().when(codec.compensateBody(recovered, local)).thenReturn(body);
-    lenient().when(codec.recoverProof(eq(prepared), any())).thenReturn("public-synthetic-recovery-proof");
-    lenient().when(codec.compensateProof(eq(recovered), eq(local), any())).thenReturn("public-synthetic-cleanup-proof");
+    lenient()
+        .when(codec.recoverProof(eq(prepared), any()))
+        .thenReturn("public-synthetic-recovery-proof");
+    lenient()
+        .when(codec.compensateProof(eq(recovered), eq(local), any()))
+        .thenReturn("public-synthetic-cleanup-proof");
     lenient().when(codec.verifyRecovery(eq(prepared), aryEq(response))).thenReturn(recovered);
-    lenient().when(codec.verifyCompensated(eq(recovered), eq(local), aryEq(response))).thenReturn(cleaned);
-    transport = new ProtectedAccountRecovery(http, actors, broker, codec, "https://auth.example.test", "oriso");
+    lenient()
+        .when(codec.verifyCompensated(eq(recovered), eq(local), aryEq(response)))
+        .thenReturn(cleaned);
+    transport =
+        new ProtectedAccountRecovery(
+            http, actors, broker, codec, "https://auth.example.test", "oriso");
     clearInvocations(actors, broker, codec);
   }
 
@@ -78,22 +103,37 @@ class ProtectedAccountRecoveryTest {
       assertThrows(IllegalStateException.class, () -> transport.recover(prepared));
       assertThrows(IllegalStateException.class, () -> transport.compensate(recovered, local));
       verifyNoInteractions(actors, broker, codec);
-    } finally { TransactionSynchronizationManager.setActualTransactionActive(false); }
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
   }
 
   @Test
   void anotherTaskActorCannotSelectTheCleanupTransport() {
-    when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(new TaskActorCredentials(TaskActor.MAIL, "backend-mail", "synthetic", UUID.randomUUID().toString()));
+    when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE))
+        .thenReturn(
+            new TaskActorCredentials(
+                TaskActor.MAIL, "backend-mail", "synthetic", UUID.randomUUID().toString()));
     assertThrows(IllegalArgumentException.class, () -> transport.recover(prepared));
     verifyNoInteractions(broker);
-    when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(new TaskActorCredentials(TaskActor.ACCOUNT_ADMIN, "foreign-client", "synthetic", UUID.randomUUID().toString()));
+    when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE))
+        .thenReturn(
+            new TaskActorCredentials(
+                TaskActor.ACCOUNT_ADMIN,
+                "foreign-client",
+                "synthetic",
+                UUID.randomUUID().toString()));
     assertThrows(IllegalArgumentException.class, () -> transport.recover(prepared));
   }
 
   @Test
   void unconfirmedOrMalformedSuccessCannotProduceRecoveryAuthority() {
-    server.expect(requestTo(url("recover"))).andRespond(withStatus(HttpStatus.ACCEPTED).body(response));
-    var failure = assertThrows(KeycloakProtectedAccounts.RemoteFailure.class, () -> transport.recover(prepared));
+    server
+        .expect(requestTo(url("recover")))
+        .andRespond(withStatus(HttpStatus.ACCEPTED).body(response));
+    var failure =
+        assertThrows(
+            KeycloakProtectedAccounts.RemoteFailure.class, () -> transport.recover(prepared));
     assertEquals(202, failure.status());
     verify(codec, never()).verifyRecovery(any(), any());
     server.verify();
@@ -101,35 +141,71 @@ class ProtectedAccountRecoveryTest {
 
   @Test
   void a200WithRejectedNativeReceiptRemainsUnknownWithNoRawResponseOrCause() {
-    doThrow(new IllegalArgumentException("synthetic-private-response")).when(codec).verifyRecovery(eq(prepared), aryEq(response));
+    doThrow(new IllegalArgumentException("synthetic-private-response"))
+        .when(codec)
+        .verifyRecovery(eq(prepared), aryEq(response));
     expect("recover", "public-synthetic-recovery-proof");
-    var failure = assertThrows(KeycloakProtectedAccounts.RemoteFailure.class, () -> transport.recover(prepared));
-    assertEquals(0, failure.status()); assertNull(failure.getCause());
-    assertFalse(failure.toString().contains("synthetic-private-response")); server.verify();
+    var failure =
+        assertThrows(
+            KeycloakProtectedAccounts.RemoteFailure.class, () -> transport.recover(prepared));
+    assertEquals(0, failure.status());
+    assertNull(failure.getCause());
+    assertFalse(failure.toString().contains("synthetic-private-response"));
+    server.verify();
   }
 
   @Test
   void providerFailuresExposeOnlyObservedStatusAndNeverReceiverBody() {
-    server.expect(requestTo(url("compensate"))).andRespond(withStatus(HttpStatus.CONFLICT).body("synthetic-private-password"));
-    var failure = assertThrows(KeycloakProtectedAccounts.RemoteFailure.class, () -> transport.compensate(recovered, local));
-    assertEquals(409, failure.status()); assertNull(failure.getCause());
-    assertFalse(failure.toString().contains("synthetic-private-password")); server.verify();
+    server
+        .expect(requestTo(url("compensate")))
+        .andRespond(withStatus(HttpStatus.CONFLICT).body("synthetic-private-password"));
+    var failure =
+        assertThrows(
+            KeycloakProtectedAccounts.RemoteFailure.class,
+            () -> transport.compensate(recovered, local));
+    assertEquals(409, failure.status());
+    assertNull(failure.getCause());
+    assertFalse(failure.toString().contains("synthetic-private-password"));
+    server.verify();
   }
 
   @Test
   void configuredRealmAndServerCannotRedirectAPrivateRecoveryHandle() {
-    for (String bad : new String[] {"https://user:password@auth.example.test", "https://auth.example.test/?target=foreign", "file:/tmp/receiver", "https://auth.example.test/#fragment"}) {
-      assertThrows(IllegalArgumentException.class, () -> new ProtectedAccountRecovery(http, actors, broker, codec, bad, "oriso"));
+    for (String bad :
+        new String[] {
+          "https://user:password@auth.example.test",
+          "https://auth.example.test/?target=foreign",
+          "file:/tmp/receiver",
+          "https://auth.example.test/#fragment"
+        }) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> new ProtectedAccountRecovery(http, actors, broker, codec, bad, "oriso"));
     }
-    assertThrows(IllegalArgumentException.class, () -> new ProtectedAccountRecovery(http, actors, broker, codec, "https://auth.example.test", "foreign"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new ProtectedAccountRecovery(
+                http, actors, broker, codec, "https://auth.example.test", "foreign"));
     verifyNoInteractions(broker, actors);
   }
 
   private void expect(String suffix, String proof) {
-    server.expect(requestTo(url(suffix))).andExpect(method(HttpMethod.POST))
+    server
+        .expect(requestTo(url(suffix)))
+        .andExpect(method(HttpMethod.POST))
         .andExpect(header("Authorization", "Bearer public-synthetic-admin"))
-        .andExpect(header("X-ORISO-Task-Context", proof)).andExpect(content().bytes(body))
+        .andExpect(header("X-ORISO-Task-Context", proof))
+        .andExpect(content().bytes(body))
         .andRespond(withSuccess(response, MediaType.APPLICATION_JSON));
   }
-  private String url(String suffix) { return "https://auth.example.test/realms/oriso/oriso-protected-invitations/v1/approvals/" + approval + "/attempts/" + attempt + "/" + suffix; }
+
+  private String url(String suffix) {
+    return "https://auth.example.test/realms/oriso/oriso-protected-invitations/v1/approvals/"
+        + approval
+        + "/attempts/"
+        + attempt
+        + "/"
+        + suffix;
+  }
 }
