@@ -277,6 +277,51 @@ class UserMaintenanceSecretIntentCodecTest {
             .parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"));
   }
 
+  @Test
+  void frozenLocalAccountKindsRemainPrivateWithoutChangingTheNativeCommand() throws Exception {
+    var vector = ordinaryVector();
+    var codec = vectorCodec();
+    for (String kind : List.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")) {
+      var metadata = (ObjectNode) vector.path("metadata").deepCopy();
+      var command = codec.read(vector.path("canonical_plaintext_utf8").textValue(), ObjectNode.class);
+      var origin = (ObjectNode) command.path("body").path("target").path("origin");
+      if (kind.equals("TENANT_ADMIN") || kind.equals("PLATFORM_ADMIN"))
+        origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
+      metadata.put("originDigest", codec.digest("otp-origin", origin));
+      var nativeBody = command.path("body").deepCopy();
+      var local = command.putObject("localAccount");
+      local.put("kind", kind);
+      local.put("consultant", kind.endsWith("ADMIN"));
+      local.putNull("email");
+      local.putNull("consultantEmail");
+      byte[] bytes = codec.canonical(command).getBytes(StandardCharsets.UTF_8);
+      String encrypted = codec.sealSelfAppIntent(metadata, bytes);
+      assertArrayEquals(bytes, codec.openSelfAppIntent(metadata, encrypted));
+      assertEquals(
+          nativeBody,
+          codec.read(codec.utf8(codec.openSelfAppIntent(metadata, encrypted)), JsonNode.class).path("body"));
+      assertFalse(encrypted.contains("localAccount"));
+    }
+  }
+
+  @Test
+  void localAccountSnapshotRejectsUnknownKindsAuthorityDriftAndUnneededEmailData() throws Exception {
+    var vector = ordinaryVector();
+    var codec = vectorCodec();
+    for (String local : List.of(
+        "{}",
+        "{\"kind\":\"SUPPORT\",\"consultant\":false,\"email\":null,\"consultantEmail\":null}",
+        "{\"kind\":\"TENANT_ADMIN\",\"consultant\":false,\"email\":null,\"consultantEmail\":null}",
+        "{\"kind\":\"USER\",\"consultant\":true,\"email\":null,\"consultantEmail\":null}",
+        "{\"kind\":\"USER\",\"consultant\":\"false\",\"email\":null,\"consultantEmail\":null}",
+        "{\"kind\":\"USER\",\"consultant\":false,\"email\":\"unneeded@oriso.org\",\"consultantEmail\":null}",
+        "{\"kind\":\"USER\",\"consultant\":false,\"email\":null,\"consultantEmail\":null,\"authority\":true}")) {
+      var command = codec.read(vector.path("canonical_plaintext_utf8").textValue(), ObjectNode.class);
+      command.set("localAccount", codec.read(local, JsonNode.class));
+      refuses(() -> codec.sealSelfAppIntent(vector.path("metadata"), codec.canonical(command).getBytes(StandardCharsets.UTF_8)));
+    }
+  }
+
   private void refuses(org.junit.jupiter.api.function.Executable operation) {
     var error = assertThrows(IllegalArgumentException.class, operation);
     assertEquals("Invalid owned secret intent", error.getMessage());

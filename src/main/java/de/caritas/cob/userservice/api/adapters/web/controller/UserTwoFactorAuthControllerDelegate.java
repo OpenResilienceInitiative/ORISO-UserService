@@ -80,7 +80,10 @@ class UserTwoFactorAuthControllerDelegate {
                       .ServiceUnavailableException("Local email completion unavailable");
                 accountInviteService.markTwoFactorActiveOwned(
                     authenticatedUser.getUserId(), inviteIds);
-              });
+              },
+              inviteIds ->
+                  accountInviteService.markTwoFactorActiveOwned(
+                      authenticatedUser.getUserId(), inviteIds));
       return valid ? ResponseEntity.noContent().build() : ResponseEntity.badRequest().build();
     }
 

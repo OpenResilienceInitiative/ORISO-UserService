@@ -1324,6 +1324,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     long currentTenant = 7L;
     boolean protectedAccount;
     boolean tamperReceipt;
+    Runnable beforeEmailReceipt = () -> {};
     String savedEmailReply;
     String savedEmailWire;
     String savedAppReply;
@@ -1510,7 +1511,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
 
     void protectedAdmin(long tenant, String type) {
       currentTenant = tenant;
-      protectedAccount = true;
+      protectedAccount = !"AGENCY".equals(type);
       jdbc.update("delete from user where user_id=?", ACCOUNT);
       jdbc.update("insert into admin values(?,?,?,'original@oriso.org')", ACCOUNT, tenant, type);
       jdbc.execute("alter table account_invite add tenant_id bigint");
@@ -1630,9 +1631,11 @@ class UserSelfAppOtpScenarioCBoundaryTest {
 
     String currentEmail() {
       return jdbc.queryForObject(
-          protectedAccount
+          jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT) == 1
               ? "select email from admin where admin_id=?"
-              : "select email from user where user_id=?",
+              : jdbc.queryForObject("select count(*) from user where user_id=?", Integer.class, ACCOUNT) == 1
+                  ? "select email from user where user_id=?"
+                  : "select email from consultant where consultant_id=?",
           String.class,
           ACCOUNT);
     }
@@ -1984,6 +1987,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                     throw new ResourceAccessException(
                         "Fixture actual native linked finish reply lost");
                 } else assertEquals(frozen.get(), wire);
+                beforeEmailReceipt.run();
                 return withStatus(invalid ? HttpStatus.UNAUTHORIZED : HttpStatus.CREATED)
                     .body(response.get())
                     .contentType(MediaType.APPLICATION_JSON)

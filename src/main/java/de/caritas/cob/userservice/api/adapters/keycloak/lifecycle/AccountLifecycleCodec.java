@@ -223,11 +223,10 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     byte[] snapshot = bytes.clone();
     String raw = utf8(snapshot);
     JsonNode value = read(raw, JsonNode.class);
-    intentFields(
-        value,
-        value.has("localState")
-            ? java.util.Set.of("username", "body", "localState")
-            : java.util.Set.of("username", "body"));
+    var fields = new java.util.HashSet<>(java.util.Set.of("username", "body"));
+    if (value.has("localState")) fields.add("localState");
+    if (value.has("localAccount")) fields.add("localAccount");
+    intentFields(value, fields);
     if (value.has("localState")) selfOtpLocalState(value.path("localState"));
     intentText(value, "username", 512);
     JsonNode body = value.path("body");
@@ -273,6 +272,8 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       throw invalidSecretIntent();
     intentText(origin, "humanClient", 512);
     intentText(origin, "humanIssuer", 2048);
+    if (value.has("localAccount"))
+      selfOtpLocalAccount(value.path("localAccount"), origin, emailFinish);
     JsonNode otp = body.path("otp");
     if ("otp.delete".equals(metadata.command())) {
       if (!otp.isNull()) throw invalidSecretIntent();
@@ -319,6 +320,27 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
               .contains(intentText(invite, "status", 32))) throw invalidSecretIntent();
       previous = current;
     }
+  }
+
+  private void selfOtpLocalAccount(JsonNode value, JsonNode origin, boolean emailFinish) {
+    intentFields(value, java.util.Set.of("kind", "consultant", "email", "consultantEmail"));
+    String kind = intentText(value, "kind", 32);
+    if (!java.util.Set.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")
+            .contains(kind)
+        || !value.path("consultant").isBoolean()) throw invalidSecretIntent();
+    boolean admin = !java.util.Set.of("USER", "CONSULTANT").contains(kind);
+    boolean protectedAccount = java.util.Set.of("TENANT_ADMIN", "PLATFORM_ADMIN").contains(kind);
+    if (protectedAccount != !origin.path("humanAuthority").isNull()
+        || (value.path("consultant").booleanValue() && !admin)) throw invalidSecretIntent();
+    for (String field : java.util.List.of("email", "consultantEmail")) {
+      var email = value.path(field);
+      if (!email.isNull()
+          && (!emailFinish || !email.isTextual() || email.textValue().length() > 320
+              || email.textValue().chars().anyMatch(c -> c < 32 || c == 127)))
+        throw invalidSecretIntent();
+    }
+    if (!value.path("consultant").booleanValue() && !value.path("consultantEmail").isNull())
+      throw invalidSecretIntent();
   }
 
   private byte[] selfAppCipher(int mode, SelfAppMetadata metadata, byte[] nonce, byte[] input) {

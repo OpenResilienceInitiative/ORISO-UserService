@@ -151,7 +151,14 @@ public final class SelfAppOtpMaintenance {
   }
 
   public boolean finishEmail(String code, BiConsumer<String, Set<Long>> applyEmailAndInvite) {
-    return execute(code, null, null, ids -> {}, Operation.EMAIL_FINISH, applyEmailAndInvite);
+    return finishEmail(code, applyEmailAndInvite, ids -> { throw unavailable(); });
+  }
+
+  public boolean finishEmail(
+      String code,
+      BiConsumer<String, Set<Long>> applyEmailAndInvite,
+      Consumer<Set<Long>> markAdminInvites) {
+    return execute(code, null, null, markAdminInvites, Operation.EMAIL_FINISH, applyEmailAndInvite);
   }
 
   public boolean delete(Consumer<Set<Long>> markPending) {
@@ -388,6 +395,12 @@ public final class SelfAppOtpMaintenance {
     command.put("username", projection.path("username").textValue());
     command.set("body", body);
     command.set("localState", localState(self));
+    var owner = new SelfAccountOwner(jdbc).require(self.account, self.tenant);
+    var local = command.putObject("localAccount");
+    local.put("kind", owner.kind().name());
+    local.put("consultant", owner.consultant());
+    local.put("email", kind == Operation.EMAIL_FINISH ? owner.email() : null);
+    local.put("consultantEmail", kind == Operation.EMAIL_FINISH ? owner.consultantEmail() : null);
     var metadata = metadata(current.row, projection.path("state").textValue(), kind);
     String envelope =
         codec.sealSelfAppIntent(
@@ -455,7 +468,23 @@ public final class SelfAppOtpMaintenance {
           if (!outcome.belongsToEmailStart(delivered.operation)
               || !outcome.sameEmailIdentity(delivered.outcome)
               || applyEmailAndInvite == null) throw unavailable();
-          applyEmailAndInvite.accept(delivered.email, inviteIds);
+          var owners = new SelfAccountOwner(jdbc);
+          var before = owners.require(self.account, self.tenant);
+          if (command.has("localAccount")) {
+            var original = command.path("localAccount");
+            if (!Objects.equals(before.email(), original.path("email").textValue())
+                || !Objects.equals(
+                    before.consultantEmail(), original.path("consultantEmail").textValue()))
+              throw unavailable();
+          }
+          if (self.kind.admin()) {
+            owners.replaceAdminEmail(self.account, self.tenant, before, delivered.email);
+            markActive.accept(inviteIds);
+          } else applyEmailAndInvite.accept(delivered.email, inviteIds);
+          var after = owners.require(self.account, self.tenant);
+          if (!Objects.equals(after.email(), delivered.email)
+              || (after.consultant()
+                  && !Objects.equals(after.consultantEmail(), delivered.email))) throw unavailable();
           clearPending(self, delivered.operation);
           appliedEnrollment(self, operation);
         } else if (kind == Operation.DELETE) {
@@ -593,6 +622,13 @@ public final class SelfAppOtpMaintenance {
           || !state.matches("[a-f0-9]{64}")
           || !codec.canonical(metadata(row, state, kind)).equals(row.metadata)
           || !row.metadata.equals(codec.canonical(metadata))) throw unavailable();
+      var command =
+          codec.read(codec.utf8(codec.openSelfAppIntent(metadata, row.envelope)), JsonNode.class);
+      if (command.has("localAccount")) {
+        var local = command.path("localAccount");
+        if (!self.kind.name().equals(local.path("kind").textValue())
+            || self.consultant != local.path("consultant").booleanValue()) throw unavailable();
+      } else if (self.kind != SelfAccountOwner.Kind.USER || self.consultant) throw unavailable();
       if ("FROZEN".equals(row.status)) {
         if (row.receipt != null || row.nativeStatus != null) throw unavailable();
       } else if (row.receipt == null
@@ -796,7 +832,8 @@ public final class SelfAppOtpMaintenance {
   }
 
   private void lockedDomain(Self self) {
-    if (new SelfAccountOwner(jdbc).require(self.account, self.tenant) != self.kind)
+    var current = new SelfAccountOwner(jdbc).require(self.account, self.tenant);
+    if (current.kind() != self.kind || current.consultant() != self.consultant)
       throw forbidden();
   }
 
@@ -883,6 +920,7 @@ public final class SelfAppOtpMaintenance {
     else if (tenant instanceof Integer value && value >= 0) tenantId = value.longValue();
     else throw forbidden();
     if (!Objects.equals(tenantId, authenticatedUser.getTenantId())) throw forbidden();
+    var owner = transaction(() -> new SelfAccountOwner(jdbc).require(account, tenantId));
     return new Self(
         account,
         issuer,
@@ -890,7 +928,8 @@ public final class SelfAppOtpMaintenance {
         tenantId,
         jwt.getTokenValue(),
         jwt.getExpiresAt().getEpochSecond(),
-        transaction(() -> new SelfAccountOwner(jdbc).require(account, tenantId)));
+        owner.kind(),
+        owner.consultant());
   }
 
   private String operationId() {
@@ -987,7 +1026,8 @@ public final class SelfAppOtpMaintenance {
       Long tenant,
       String bearer,
       long expires,
-      SelfAccountOwner.Kind kind) {
+      SelfAccountOwner.Kind kind,
+      boolean consultant) {
     @Override
     public String toString() {
       return "Self[redacted]";

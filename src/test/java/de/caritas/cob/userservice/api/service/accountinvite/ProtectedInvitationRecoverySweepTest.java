@@ -5,13 +5,19 @@ import static org.mockito.Mockito.*;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationCancellation;
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
+import de.caritas.cob.userservice.api.scheduler.ScheduledLogger;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.ProtectedAdminOnboardingService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.*;
 import java.util.*;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.aop.support.AopUtils;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.EnableAspectJAutoProxy;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -37,6 +43,43 @@ class ProtectedInvitationRecoverySweepTest {
         .when(claims.tryClaimLease(lease.taskName(), Duration.ofMinutes(5)))
         .thenReturn(Optional.of(lease));
   }
+
+  @Test
+  void actualSchedulingAspectCanRegisterTheWorkerAndRecordItsRuntimeSignals() {
+    when(actors.isEnabled()).thenReturn(false);
+    var metrics = new SimpleMeterRegistry();
+    new ApplicationContextRunner()
+        .withUserConfiguration(SchedulingProxy.class)
+        .withBean(MeterRegistry.class, () -> metrics)
+        .withBean(ScheduledLogger.class, () -> new ScheduledLogger(metrics))
+        .withBean(ProtectedInvitationRecoverySweep.class, this::sweep)
+        .run(
+            context -> {
+              assertNull(context.getStartupFailure());
+              var actual = context.getBean(ProtectedInvitationRecoverySweep.class);
+              assertTrue(AopUtils.isAopProxy(actual));
+              actual.retryPending();
+              String task = "ProtectedInvitationRecoverySweep.retryPending()";
+              assertEquals(
+                  1.0,
+                  metrics
+                      .get("userservice.scheduler.executions")
+                      .tags("task", task, "outcome", "success")
+                      .counter()
+                      .count());
+              assertEquals(
+                  1L,
+                  metrics
+                      .get("userservice.scheduler.duration")
+                      .tags("task", task, "outcome", "success")
+                      .timer()
+                      .count());
+              verifyNoInteractions(claims, cancellation, coordinator, invites);
+            });
+  }
+
+  @EnableAspectJAutoProxy(proxyTargetClass = true)
+  static class SchedulingProxy {}
 
   @Test
   void oneOwnedBoundedPageReconcilesOutsideSqlAndReleasesOnlyItsExactLease() {

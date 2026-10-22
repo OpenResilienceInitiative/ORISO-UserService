@@ -124,6 +124,108 @@ class UserSelfProtectedOtpScenarioCBoundaryTest {
   }
 
   @Test
+  void currentAgencyAdminEmailUpdatesActualAdminWithOrdinaryNativeSelfAuthority() throws Exception {
+    completedProtectedEmail(7L, "AGENCY");
+  }
+
+  @Test
+  void sharedAdminConsultantEmailCommitsBothLocalDomainsWithTheOwnedInvite() throws Exception {
+    try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
+      fixture.protectedAdmin(7L, "TENANT");
+      fixture.jdbc.update(
+          "insert into consultant values(?,7,null,'ordinary','secondary@oriso.org')", ACCOUNT);
+      fixture.prepareDeliveredEmail();
+      fixture.expectEmailFinish(false, false, false);
+      assertEquals(
+          204,
+          fixture.controller.finishTwoFactorAuthByEmailSetup("123456").getStatusCode().value());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals("pending@oriso.org", fixture.currentEmail());
+      assertEquals(
+          "pending@oriso.org",
+          fixture.jdbc.queryForObject("select email from consultant", String.class));
+      assertEquals("ACTIVE", fixture.inviteStatus());
+      assertEquals(1, fixture.domainWrites());
+      verifyNoInteractions(fixture.accounts, fixture.nativeClient);
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void concurrentAdminEmailChangeKeepsUnknownIntentAndDoesNotOverwriteNewerSql() throws Exception {
+    try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
+      fixture.protectedAdmin(7L, "TENANT");
+      fixture.prepareDeliveredEmail();
+      String delivery = fixture.pendingEmailOperation();
+      fixture.beforeEmailReceipt =
+          () -> fixture.jdbc.update("update admin set email='newer@oriso.org'");
+      fixture.expectEmailFinish(false, false, false);
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> fixture.controller.finishTwoFactorAuthByEmailSetup("123456"));
+      assertEquals("FROZEN", fixture.status());
+      assertEquals("newer@oriso.org", fixture.currentEmail());
+      assertEquals(delivery, fixture.pendingEmailOperation());
+      assertEquals("PENDING_SETUP", fixture.inviteStatus());
+      assertEquals(0, fixture.domainWrites());
+      verifyNoInteractions(fixture.accounts, fixture.nativeClient);
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void failedOwnedInviteWriteRollsBackBothAdminEmailsAndKeepsTheFrozenReceiptPending()
+      throws Exception {
+    try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
+      fixture.protectedAdmin(7L, "TENANT");
+      fixture.jdbc.update(
+          "insert into consultant values(?,7,null,'ordinary','secondary@oriso.org')", ACCOUNT);
+      fixture.prepareDeliveredEmail();
+      String delivery = fixture.pendingEmailOperation();
+      fixture.jdbc.execute("alter table account_invite add constraint frozen_invite_write check(write_count=0)");
+      fixture.expectEmailFinish(false, false, false);
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> fixture.controller.finishTwoFactorAuthByEmailSetup("123456"));
+      assertEquals("FROZEN", fixture.status());
+      assertEquals("original@oriso.org", fixture.currentEmail());
+      assertEquals(
+          "secondary@oriso.org",
+          fixture.jdbc.queryForObject("select email from consultant", String.class));
+      assertEquals(delivery, fixture.pendingEmailOperation());
+      assertEquals("PENDING_SETUP", fixture.inviteStatus());
+      assertEquals(0, fixture.domainWrites());
+      verifyNoInteractions(fixture.accounts, fixture.nativeClient);
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void unknownSelfOperationCannotReplayUnderAChangedSqlDomainWithTheSameUuid() throws Exception {
+    try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
+      fixture.expectNative(true, false);
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> fixture.controller.activateTwoFactorAuthByApp(fixture.dto()));
+      assertEquals("FROZEN", fixture.status());
+      assertEquals(1, fixture.nativeExecutions.get());
+      fixture.server.reset();
+      fixture.jdbc.update("delete from user");
+      fixture.jdbc.update(
+          "insert into consultant values(?,7,null,'ordinary','original@oriso.org')", ACCOUNT);
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> fixture.controller.activateTwoFactorAuthByApp(fixture.dto()));
+      assertEquals("FROZEN", fixture.status());
+      assertEquals("PENDING_SETUP", fixture.inviteStatus());
+      assertEquals(1, fixture.nativeExecutions.get());
+      assertEquals(0, fixture.domainWrites());
+      verifyNoInteractions(fixture.accounts, fixture.nativeClient);
+      fixture.server.verify();
+    }
+  }
+
+  @Test
   void rejectedProtectedEmailCodeKeepsAdminEmailAndTheOriginalDeliveryPointer() throws Exception {
     try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
       fixture.protectedAdmin(7L, "TENANT");
