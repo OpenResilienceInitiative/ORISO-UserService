@@ -117,7 +117,8 @@ class ProtectedOtpBootstrapNativePairProof {
             "Fixture");
     var acceptance =
         new JdbcProtectedInvitationAcceptance(jdbc, manager, journal, approvals, codec, clock);
-    var claim = acceptance.claim(73, "c".repeat(64), registration);
+    var registrationJson = codec.read(codec.canonical(registration), JsonNode.class);
+    var claim = acceptance.claim(73, "c".repeat(64), registrationJson);
     var http = new RestTemplate();
     var lost = new AtomicInteger();
     var effectCalls = new AtomicInteger();
@@ -227,7 +228,7 @@ class ProtectedOtpBootstrapNativePairProof {
     var bridge =
         new KeycloakProtectedAccounts(
             http, actors, creatorBroker, accountCodec, logicalBase, realm);
-    var created = bridge.create(accountCodec.prepare(claim, registration, account));
+    var created = bridge.create(accountCodec.prepare(claim, registrationJson, account));
     var pending = bridge.ownedRead(claim, created);
     assertEquals(username.toLowerCase(Locale.ROOT), pending.username());
     var request = new MockHttpServletRequest("POST", "/service/tenant/register");
@@ -246,7 +247,7 @@ class ProtectedOtpBootstrapNativePairProof {
             realm,
             realmId);
     var prepared = adapter.prepare(claim, pending);
-    var material =
+    de.caritas.cob.userservice.api.identity.IdentityOtpCredential material =
         new TransactionTemplate(manager).execute(tx -> adapter.stagePrepared(claim, prepared));
     assertNotNull(material);
     assertFalse(material.secret().isBlank());
@@ -280,11 +281,10 @@ class ProtectedOtpBootstrapNativePairProof {
     assertEquals(ProtectedOtpBootstrap.AttemptState.COMPLETE, result.state());
     assertNotNull(result.completion());
     assertEquals(created.accountId(), result.completion().accountId());
-    assertEquals(
-        result.completion().receipt(),
-        new TransactionTemplate(manager)
-            .execute(tx -> adapter.completedWithinOwner(claim))
-            .receipt());
+    ProtectedOtpBootstrap.Completion completed =
+        new TransactionTemplate(manager).execute(tx -> adapter.completedWithinOwner(claim));
+    assertNotNull(completed);
+    assertEquals(result.completion().receipt(), completed.receipt());
     assertEquals(
         email ? 2 : 1,
         jdbc.queryForObject(
