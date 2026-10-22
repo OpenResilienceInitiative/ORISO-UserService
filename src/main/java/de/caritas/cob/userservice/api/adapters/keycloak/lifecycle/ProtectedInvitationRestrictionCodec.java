@@ -121,7 +121,22 @@ public final class ProtectedInvitationRestrictionCodec {
 
   /** Fixed reducing status read only; closed until the HTTP counterfactual is measured. */
   public String cleanupStatusProof(FrozenCancellation cancellation, TaskActorCredentials actor) {
-    return null;
+    JsonNode scope = checked(cancellation);
+    if (actor == null || actor.actor() != TaskActor.SETUP
+        || !scope.path("setupClient").asText().equals(actor.clientId())
+        || !scope.path("setupSubject").asText().equals(actor.serviceSubject())) throw invalid();
+    long now = clock.instant().getEpochSecond();
+    Map<String,Object> claims = new TreeMap<>();
+    claims.put("iss","userservice");claims.put("aud","oriso-protected-invitations");
+    claims.put("purpose","INVITE_RESERVATIONS");claims.put("operation","protected-invitation.cleanup-status");
+    claims.put("method","GET");claims.put("actor","SETUP");claims.put("realm",approvals.realmName());
+    claims.put("target","realm/"+realmId+"/protected-invitation/"+cancellation.approval().approvalId());
+    claims.put("taskClient",actor.clientId());claims.put("taskSubject",actor.serviceSubject());
+    claims.put("payloadDigest",json.digest("protected-invitation-payload/v1",json.read("{}",JsonNode.class)));
+    claims.put("jti",UUID.randomUUID().toString());claims.put("nonce",UUID.randomUUID().toString().replace("-",""));
+    claims.put("iat",now);claims.put("exp",now+60);
+    String encoded=encode(json.canonical(claims));
+    return encoded+"."+Base64.getUrlEncoder().withoutPadding().encodeToString(mac("protected-invitation-proof/v1\n"+encoded));
   }
 
   public VerifiedRestriction verify(

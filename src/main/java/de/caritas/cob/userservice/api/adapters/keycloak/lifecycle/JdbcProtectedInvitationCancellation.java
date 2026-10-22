@@ -28,6 +28,10 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
   private final Function<Long, FrozenApproval> missingProposal;
   private final Clock clock;
   private final TransactionTemplate local;
+  private final ProtectedCleanupStatusCodec cleanup;
+  private final ProtectedAccountCodec accounts;
+  private final JdbcProtectedInvitationAcceptance acceptance;
+  private final JdbcProtectedAccountCreation creation;
 
   public JdbcProtectedInvitationCancellation(
       JdbcTemplate jdbc,
@@ -38,15 +42,7 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
       KeycloakProtectedRestrictions receiver,
       Function<Long, FrozenApproval> missingProposal,
       Clock clock) {
-    ProtectedInvitationSqlOwner.require(jdbc, manager);
-    this.jdbc = jdbc;
-    this.journal = Objects.requireNonNull(journal);
-    this.restrictions = Objects.requireNonNull(restrictions);
-    this.json = Objects.requireNonNull(json);
-    this.receiver = Objects.requireNonNull(receiver);
-    this.missingProposal = Objects.requireNonNull(missingProposal);
-    this.clock = Objects.requireNonNull(clock);
-    local = new TransactionTemplate(manager);
+    this(jdbc,manager,journal,restrictions,json,receiver,missingProposal,clock,null,null,null,null);
   }
 
   public JdbcProtectedInvitationCancellation(
@@ -62,7 +58,19 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
       ProtectedAccountCodec accounts,
       JdbcProtectedInvitationAcceptance acceptance,
       JdbcProtectedAccountCreation creation) {
-    this(jdbc, manager, journal, restrictions, json, receiver, missingProposal, clock);
+    ProtectedInvitationSqlOwner.require(jdbc, manager);
+    this.jdbc = jdbc;
+    this.journal = Objects.requireNonNull(journal);
+    this.restrictions = Objects.requireNonNull(restrictions);
+    this.json = Objects.requireNonNull(json);
+    this.receiver = Objects.requireNonNull(receiver);
+    this.missingProposal = Objects.requireNonNull(missingProposal);
+    this.clock = Objects.requireNonNull(clock);
+    local = new TransactionTemplate(manager);
+    journal.requireOwner(jdbc,manager);
+    boolean configured=cleanup!=null;
+    if(configured!=(accounts!=null)||configured!=(acceptance!=null)||configured!=(creation!=null)) throw unavailable();
+    this.cleanup=cleanup;this.accounts=accounts;this.acceptance=acceptance;this.creation=creation;
   }
 
   /**
@@ -72,6 +80,52 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
       long inviteId,
       ProtectedAccountCodec.VerifiedRecovery recovery,
       AccountLifecycleDtos.LocalOutcome localOutcome) {
+    requireOutsideRecoverySql();
+    requireCleanup();
+    if(inviteId<1 || recovery==null || localOutcome==null) throw unavailable();
+    long expected=recovery.generation()-1;
+    if(expected<0 || expected==Long.MAX_VALUE) throw unavailable();
+    String recovered=json.utf8(accounts.recoveryResponse(recovery));
+    String outcome=json.canonical(localOutcome);
+    Row before=local.execute(tx->{
+      Row current=acknowledged(inviteId);
+      var checked=authenticateRecovery(inviteId,expected,recovered);
+      if(!checked.executionId().equals(recovery.executionId())) throw unavailable();
+      StatusRow prior=statusRow(inviteId);
+      if(prior!=null && prior.finalStatus()!=null) {
+        checkedFinal(inviteId,current,prior);
+        if(!same(prior.recovery(),recovered)||!same(prior.localOutcome(),outcome)) throw unavailable();
+      }
+      return current;
+    });
+    if(before==null) throw unavailable();
+    var original=checkedAck(before);
+    var remote=receiver.cleanupStatus(before.frozen(),original,recovery,localOutcome);
+    if(remote==null) throw unavailable();
+    String independent=cleanup.verify(before.frozen(),original,recovery,localOutcome,
+        remote.responseJson().getBytes(StandardCharsets.UTF_8)).responseJson();
+    local.executeWithoutResult(tx->{
+      Row current=acknowledged(inviteId);
+      if(!before.frozen().equals(current.frozen())||!same(before.response(),current.response())) throw unavailable();
+      var again=authenticateRecovery(inviteId,expected,recovered);
+      cleanup.verify(current.frozen(),checkedAck(current),again,localOutcome,independent.getBytes(StandardCharsets.UTF_8));
+      StatusRow prior=statusRow(inviteId);
+      if(prior!=null && prior.finalStatus()!=null) {
+        checkedFinal(inviteId,current,prior);
+        if(!same(prior.recovery(),recovered)||!same(prior.localOutcome(),outcome)) throw unavailable();
+      }
+      Timestamp now=Timestamp.from(clock.instant());
+      if(prior==null) jdbc.update("INSERT INTO protected_invitation_cleanup_status(invite_id,original_ack_json,recovery_json,local_outcome_json,final_status_json,expected_generation,recovery_id,last_attempt_at) VALUES(?,?,?,?,?,?,?,?)",
+          inviteId,current.response(),recovered,outcome,independent,expected,again.executionId().toString(),now);
+      else if(jdbc.update("UPDATE protected_invitation_cleanup_status SET original_ack_json=?,recovery_json=?,local_outcome_json=?,final_status_json=?,expected_generation=?,recovery_id=?,last_attempt_at=? WHERE invite_id=?",
+          current.response(),recovered,outcome,independent,expected,again.executionId().toString(),now,inviteId)!=1) throw unavailable();
+    });
+  }
+
+  /** Reducing coordinator only: current accepted activation or already restricted original intent. */
+  public void cancelPendingActivation(
+      JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical,
+      JdbcProtectedAccountActivation activation) {
     throw unavailable();
   }
 
@@ -93,6 +147,7 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
                 touch(inviteId);
                 return current;
               }
+              invalidateLocalInvite.run();
               var original =
                   journal.requestRestriction(inviteId, () -> missingProposal.apply(inviteId));
               FrozenCancellation frozen =
@@ -111,7 +166,6 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
                   frozen.bodyJson(),
                   now,
                   now);
-              invalidateLocalInvite.run();
               journal.requireRestrictedInvite(inviteId, frozen.approval(), false);
               return new Row(frozen, "PENDING", null);
             });
@@ -165,7 +219,10 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
           Row current = row(inviteId, proposal);
           if (current == null || !"ACKNOWLEDGED".equals(current.state())) throw unavailable();
           journal.requireRestrictedInvite(inviteId, current.frozen().approval(), true);
-          if (checkedAck(current).cleanupRequired()) throw unavailable();
+          if (checkedAck(current).cleanupRequired()) {
+            requireCleanup();
+            checkedFinal(inviteId,current,statusRow(inviteId));
+          }
           return releaseOrTransfer.get();
         });
   }
@@ -287,6 +344,54 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
         || TransactionSynchronizationManager.isSynchronizationActive()
         || !TransactionSynchronizationManager.getResourceMap().isEmpty())
       throw new IllegalStateException("Protected recovery requires completed local SQL");
+  }
+
+  private void requireCleanup() {
+    if(cleanup==null||accounts==null||acceptance==null||creation==null) throw unavailable();
+  }
+
+  private Row acknowledged(long inviteId) {
+    FrozenApproval proposal=journal.lockedRestrictionProposal(inviteId);
+    Row current=row(inviteId,proposal);
+    if(current==null||!"ACKNOWLEDGED".equals(current.state())) throw unavailable();
+    journal.requireRestrictedInvite(inviteId,current.frozen().approval(),true);
+    checkedAck(current);
+    return current;
+  }
+
+  private ProtectedAccountCodec.VerifiedRecovery authenticateRecovery(long inviteId,long expected,String response) {
+    requireCleanup();
+    var history=acceptance.historicalWithinOwner(inviteId);
+    var saved=creation.recoveryWithinOwner(history,expected);
+    return accounts.verifyRecovery(saved,response.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private void checkedFinal(long inviteId,Row current,StatusRow saved) {
+    if(saved==null||saved.originalAck()==null||saved.recovery()==null||saved.localOutcome()==null
+        ||saved.finalStatus()==null||saved.expected()==null||saved.expected()<0
+        ||saved.expected()==Long.MAX_VALUE||saved.recoveryId()==null
+        ||!same(current.response(),saved.originalAck())) throw unavailable();
+    var recovered=authenticateRecovery(inviteId,saved.expected(),saved.recovery());
+    if(!recovered.executionId().toString().equals(saved.recoveryId())
+        ||recovered.generation()!=saved.expected()+1) throw unavailable();
+    var local=json.read(saved.localOutcome(),AccountLifecycleDtos.LocalOutcome.class);
+    if(!same(json.canonical(local),saved.localOutcome())) throw unavailable();
+    cleanup.verify(current.frozen(),checkedAck(current),recovered,local,saved.finalStatus().getBytes(StandardCharsets.UTF_8));
+  }
+
+  private StatusRow statusRow(long inviteId) {
+    var rows=jdbc.query("SELECT original_ack_json,recovery_json,local_outcome_json,final_status_json,expected_generation,recovery_id FROM protected_invitation_cleanup_status WHERE invite_id=? FOR UPDATE",
+      (rs,index)->new StatusRow(rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getObject(5,Long.class),rs.getString(6)),inviteId);
+    if(rows.size()>1) throw unavailable();
+    return rows.isEmpty()?null:rows.getFirst();
+  }
+
+  private record StatusRow(String originalAck,String recovery,String localOutcome,String finalStatus,Long expected,String recoveryId) {
+    @Override public String toString(){return "ProtectedFinalStatus[redacted]";}
+  }
+
+  private static boolean same(String left,String right) {
+    return left!=null&&right!=null&&java.security.MessageDigest.isEqual(left.getBytes(StandardCharsets.UTF_8),right.getBytes(StandardCharsets.UTF_8));
   }
 
   private VerifiedRestriction checkedAck(Row row) {

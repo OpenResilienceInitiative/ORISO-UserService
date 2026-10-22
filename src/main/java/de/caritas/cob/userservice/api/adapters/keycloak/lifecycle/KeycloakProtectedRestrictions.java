@@ -93,7 +93,31 @@ public final class KeycloakProtectedRestrictions {
       VerifiedRestriction original,
       ProtectedAccountCodec.VerifiedRecovery recovery,
       AccountLifecycleDtos.LocalOutcome local) {
-    return null;
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()
+        || !TransactionSynchronizationManager.getResourceMap().isEmpty())
+      throw new IllegalStateException("Cleanup status requires completed local SQL");
+    if (cleanup == null || frozen == null || original == null || recovery == null || local == null)
+      throw invalid();
+    var actor = actors.require(TaskPurpose.INVITE_RESERVATIONS);
+    String proof = restrictions.cleanupStatusProof(frozen,actor);
+    var token = broker.issue(TaskPurpose.INVITE_RESERVATIONS);
+    String bearer=token.accessToken();
+    if (token.actor()!=de.caritas.cob.userservice.api.config.auth.TaskActor.SETUP
+        || bearer==null || bearer.isBlank() || bearer.length()>65536
+        || bearer.codePoints().anyMatch(c->Character.isWhitespace(c)||Character.isISOControl(c)))
+      throw invalid();
+    var headers=new HttpHeaders();headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+    headers.setCacheControl("no-store");headers.setBearerAuth(bearer);headers.set("X-ORISO-Task-Context",proof);
+    var uri=UriComponentsBuilder.fromUri(authServer).pathSegment("realms",approvals.realmName(),
+        "oriso-protected-invitations","v1","approvals",frozen.approval().approvalId().toString(),"cleanup-status").build().encode().toUri();
+    try {
+      var response=http.exchange(uri,HttpMethod.GET,new HttpEntity<Void>(headers),byte[].class);
+      if(response.getStatusCode().value()!=200) throw new KeycloakProtectedInvitations.RemoteFailure(response.getStatusCode().value());
+      try { return cleanup.verify(frozen,original,recovery,local,response.getBody()); }
+      catch(RuntimeException invalid){ throw new KeycloakProtectedInvitations.RemoteFailure(0); }
+    } catch(RestClientResponseException failure){ throw new KeycloakProtectedInvitations.RemoteFailure(failure.getStatusCode().value()); }
+    catch(RestClientException failure){ throw new KeycloakProtectedInvitations.RemoteFailure(0); }
   }
 
   private VerifiedRestriction call(
