@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAc
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -94,6 +95,29 @@ class KeycloakServiceScenarioCModeTest {
                 IllegalStateException.class,
                 () -> service.finishEmailVerification("actual-target", "123456")));
     verifyNoInteractions(nativeClient);
+  }
+
+  @Test
+  void fiveActorsRollbackPropagatesScopedCommandDemandBeforeNativeCleanup() {
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class, () -> service.rollbackUser("target"));
+    verify(user, never()).remove();
+    verifyNoInteractions(nativeClient);
+  }
+
+  @Test
+  void legacyRollbackRetainsExistingSuccessfulNativeRemoval() {
+    when(config.isFiveActorMode()).thenReturn(false);
+    assertDoesNotThrow(() -> service.rollbackUser("target"));
+    verify(user).remove();
+  }
+
+  @Test
+  void legacyRollbackRetainsExistingBestEffortNativeFailure() {
+    when(config.isFiveActorMode()).thenReturn(false);
+    doThrow(new IllegalStateException("Synthetic legacy native failure")).when(user).remove();
+    assertDoesNotThrow(() -> service.rollbackUser("target"));
+    verify(user).remove();
   }
 
   @Test
