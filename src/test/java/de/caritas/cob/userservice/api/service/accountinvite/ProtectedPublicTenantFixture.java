@@ -121,7 +121,8 @@ class ProtectedPublicTenantFixture {
                 receipt.put("tenantId", 17);
                 receipt.put(
                     "requestDigest", tenantDigest("tenant-held-bootstrap-request/v1", command));
-                receipt.put("resultDigest", tenantDigest("tenant-held-bootstrap-result/v1", result));
+                receipt.put(
+                    "resultDigest", tenantDigest("tenant-held-bootstrap-result/v1", result));
                 receipt.put("state", "COMPLETE");
                 String payload =
                     Base64.getUrlEncoder()
