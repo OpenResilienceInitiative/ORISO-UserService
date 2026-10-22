@@ -60,6 +60,11 @@ public final class SelfAppOtpMaintenance {
     return mode.isFiveActorMode();
   }
 
+  /** Signature-only next public mutation diagnostic; no deletion effect is implemented here. */
+  public boolean delete(Runnable markPending) {
+    return false;
+  }
+
   public boolean setup(String initialCode, String secret, Runnable markActive) {
     if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
       throw unavailable();

@@ -51,6 +51,8 @@ jobs:
         \necho \"$RUNNER_TEMP/apache-maven-3.9.14/bin\" >> \"$GITHUB_PATH\"\n"
     - name: Verify nonsecret evidence gates without JVM or native fixtures
       run: python -m unittest discover -s tests/ci -p test_maintenance_boundary_proof.py -v
+    - name: Install exact existing CI YAML parser dependency
+      run: python -m pip install --disable-pip-version-check PyYAML==6.0.3
     - name: Check native pair proof fail-closed offline controls
       run: python -m unittest discover -s tests/ci -p test_self_app_native_pair.py -v
     - name: Require committed formatting for actual native-pair test

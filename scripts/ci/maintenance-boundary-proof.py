@@ -72,6 +72,10 @@ def select_slice(name):
             "publicAppSetupInvalidNativeCodeCommitsTerminalRefusalBeforeReturningPublic400",
             "publicAppSetupInvalidMacKeepsFrozenOwnershipAndCannotActivateInvite",
             "publicAppSetupMissingIntentAndForeignCurrentDomainRefuseBeforePrivateRowOrRpc",
+            "publicAppDeleteFreezesOwnedIntentAndMarksPendingOnlyAfterVerifiedReceipt",
+            "publicAppDeleteLostReplyNewOwnerReplaysFrozenDeleteWithoutSecondGateTransition",
+            "publicAppDeleteInvalidReceiptRetainsActiveGateAndFrozenOwnership",
+            "missingScopedDeleteKeepsActualCGuardAndLegacyDeleteRemainsWorking",
         }
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/adapters/web/controller/UserController",
@@ -168,7 +172,9 @@ def select_slice(name):
         TEST_CLASS = SUITE.replace(".", "/")
 
     CONTROLS = {LEGACY}
-    if name == "locale":
+    if name == "app":
+        CONTROLS.add("missingScopedDeleteKeepsActualCGuardAndLegacyDeleteRemainsWorking")
+    elif name == "locale":
         CONTROLS.add("domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract")
     elif name == "availability":
         CONTROLS.add("legacyUnknownAvailabilityKeepsItsExistingHintResponse")

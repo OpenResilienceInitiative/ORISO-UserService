@@ -106,6 +106,11 @@ class UserTwoFactorAuthControllerDelegate {
   }
 
   ResponseEntity<Void> deactivateTwoFactorAuthByApp() {
+    if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
+      boolean deleted = selfAppOtpMaintenance.delete(
+          () -> accountInviteService.markTwoFactorPendingSetup(authenticatedUser.getUserId()));
+      return deleted ? ResponseEntity.ok().build() : ResponseEntity.badRequest().build();
+    }
     identityManager.deleteOneTimePassword(
         usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
     accountInviteService.markTwoFactorPendingSetup(authenticatedUser.getUserId());
