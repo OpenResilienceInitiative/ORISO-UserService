@@ -80,9 +80,8 @@ final class ProtectedInvitationMailSecrets {
           || !envelope.equals(canonical.canonical(value))) throw unavailable();
       byte[] nonce = decode(text(value, "nonce", 16));
       byte[] ciphertext = decode(text(value, "ciphertext", MAX_ENVELOPE_BYTES));
-      if (nonce.length != 12
-          || ciphertext.length < 16
-          || ciphertext.length > MAX_MAIL_BYTES + 16) throw unavailable();
+      if (nonce.length != 12 || ciphertext.length < 16 || ciphertext.length > MAX_MAIL_BYTES + 16)
+        throw unavailable();
       derived = derive(independentlyCheckedMetadata);
       plaintext =
           cipher(Cipher.DECRYPT_MODE, derived, nonce, independentlyCheckedMetadata)
@@ -115,7 +114,10 @@ final class ProtectedInvitationMailSecrets {
     uuid(metadata.workflowId());
     for (String digest :
         new String[] {
-          metadata.scopeDigest(), metadata.requestDigest(), metadata.tokenHash(), metadata.payloadDigest()
+          metadata.scopeDigest(),
+          metadata.requestDigest(),
+          metadata.tokenHash(),
+          metadata.payloadDigest()
         }) {
       if (digest == null || !digest.matches("[0-9a-f]{64}")) throw unavailable();
     }
@@ -130,10 +132,15 @@ final class ProtectedInvitationMailSecrets {
         || value.path("templateId").longValue() <= 0) throw unavailable();
     String token = text(value, "rawToken", 43);
     if (decode(token).length != 32
-        || !equal(metadata.tokenHash(), HexFormat.of().formatHex(
-            MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8))))
-        || !equal(metadata.payloadDigest(), canonical.digest("protected-invitation-mail-payload/v1", value)))
-      throw unavailable();
+        || !equal(
+            metadata.tokenHash(),
+            HexFormat.of()
+                .formatHex(
+                    MessageDigest.getInstance("SHA-256")
+                        .digest(token.getBytes(StandardCharsets.UTF_8))))
+        || !equal(
+            metadata.payloadDigest(),
+            canonical.digest("protected-invitation-mail-payload/v1", value))) throw unavailable();
     String url = text(value, "acceptUrl", 8192);
     var uri = java.net.URI.create(url);
     if (!("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))
