@@ -332,7 +332,8 @@ class ProtectedOtpBootstrapTest {
           0, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
       assertEquals(
           0,
-          f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap_operation", Integer.class));
+          f.jdbc.queryForObject(
+              "SELECT COUNT(*) FROM protected_otp_bootstrap_operation", Integer.class));
       assertDoesNotThrow(
           () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(verifiedRecovery)));
       f.server.verify();
