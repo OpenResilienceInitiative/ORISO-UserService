@@ -52,11 +52,15 @@ class ProtectedAccountRecoveryTest {
                 "backend-account-admin",
                 "synthetic-only",
                 "091b8cef-09a8-4e5b-a244-6be3db4b7bee"));
+    var token = mock(TaskActorTokenBroker.VerifiedMaintenanceToken.class);
+    lenient().when(token.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
+    lenient().when(token.purpose()).thenReturn(TaskPurpose.ACCOUNT_MAINTENANCE);
+    lenient().when(token.clientId()).thenReturn("backend-account-admin");
+    lenient().when(token.subject()).thenReturn("091b8cef-09a8-4e5b-a244-6be3db4b7bee");
+    lenient().when(token.accessToken()).thenReturn("public-synthetic-admin");
     lenient()
-        .when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))
-        .thenReturn(
-            new TaskActorTokenBroker.TaskToken(
-                TaskActor.ACCOUNT_ADMIN, "public-synthetic-admin", 60));
+        .when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE))
+        .thenReturn(token);
     lenient().when(prepared.approvalId()).thenReturn(approval);
     lenient().when(prepared.attemptId()).thenReturn(attempt);
     lenient().when(recovered.approvalId()).thenReturn(approval);
@@ -84,7 +88,8 @@ class ProtectedAccountRecoveryTest {
     expect("recover", "public-synthetic-recovery-proof");
     assertSame(recovered, assertDoesNotThrow(() -> transport.recover(prepared)));
     verify(codec).verifyRecovery(eq(prepared), aryEq(response));
-    verify(broker).issue(TaskPurpose.ACCOUNT_MAINTENANCE);
+    verify(broker).issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
+    verify(broker, never()).issue(TaskPurpose.ACCOUNT_MAINTENANCE);
     server.verify();
   }
 

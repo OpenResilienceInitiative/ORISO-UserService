@@ -1192,10 +1192,83 @@ public final class ProtectedOtpBootstrap {
     return found;
   }
 
-  /** Pure exact-owner cleanup, unavailable until its recovery counterfactual is qualified. */
+  /** Pure cleanup authorized only by the account owner's private verified recovery handle. */
   public void discardWithinOwner(JdbcProtectedAccountActivation.VerifiedDiscard discarded) {
     owningSql();
-    throw unavailable();
+    if (discarded == null
+        || discarded.inviteId() < 1
+        || discarded.claimId() == null
+        || discarded.attemptId() == null
+        || discarded.executionId() == null
+        || discarded.accountId() == null
+        || !discarded.executionId().equals(discarded.bootstrapIncarnation())) throw unavailable();
+    uuid(discarded.accountId());
+    var rows =
+        jdbc.queryForList(
+            "SELECT * FROM protected_otp_bootstrap WHERE invite_id=? FOR UPDATE",
+            discarded.inviteId());
+    var operations =
+        jdbc.queryForList(
+            "SELECT public_intent_id FROM protected_otp_bootstrap_operation WHERE invite_id=? FOR UPDATE",
+            discarded.inviteId());
+    // An unknown old RPC requires independent native fence resolution, never a guessed ACK.
+    if (!operations.isEmpty() || rows.size() > 1) throw unavailable();
+    if (rows.isEmpty()) return;
+    var saved = rows.getFirst();
+    if (!discarded.claimId().toString().equals(saved.get("claim_id"))
+        || !Set.of("PREPARED", "FROZEN").contains(saved.get("state"))) throw unavailable();
+    String raw = (String) saved.get("metadata_json");
+    var metadata = codec.read(raw, JsonNode.class);
+    fields(metadata, METADATA);
+    for (String name : METADATA) {
+      if (Set.of("v", "authorizationRevision", "journalVersion", "authorityValidUntil")
+          .contains(name)) {
+        if (!metadata.path(name).isIntegralNumber()
+            || !metadata.path(name).canConvertToLong()
+            || metadata.path(name).asLong() < 1) throw unavailable();
+      } else if (!metadata.path(name).isTextual() || metadata.path(name).asText().isBlank())
+        throw unavailable();
+    }
+    if (!raw.equals(codec.canonical(metadata))
+        || !Set.of(1, 2).contains(metadata.path("v").asInt())
+        || !realmId.equals(metadata.path("realmId").asText())
+        || !Long.toString(discarded.inviteId()).equals(metadata.path("inviteId").asText())
+        || !discarded.claimId().toString().equals(metadata.path("claimId").asText())
+        || !discarded.attemptId().toString().equals(metadata.path("attemptId").asText())
+        || !discarded.executionId().toString().equals(metadata.path("executionId").asText())
+        || !discarded.accountId().equals(metadata.path("accountId").asText())
+        || metadata.path("journalVersion").asLong() != 1
+        || !"otp.bootstrap-read".equals(metadata.path("command").asText())
+        || !"REQUEST".equals(metadata.path("representation").asText())) throw unavailable();
+    var actor = actors.require(TaskPurpose.OTP);
+    if (actor.actor() != TaskActor.ACCOUNT_ADMIN
+        || !actor.clientId().equals(metadata.path("ownerClient").asText())
+        || !actor.serviceSubject().equals(metadata.path("ownerSubject").asText()))
+      throw unavailable();
+    var command =
+        codec.read(open(metadata, (String) saved.get("request_envelope")), JsonNode.class);
+    fields(command, Set.of("target", "username", "otp"));
+    if (!discarded.accountId().equals(command.path("target").path("accountId").asText())
+        || !codec
+            .digest("otp-bootstrap-origin/v1", command.path("target"))
+            .equals(metadata.path("originDigest").asText())) throw unavailable();
+    if (saved.get("result_envelope") != null) {
+      var result =
+          codec.read(
+              open(resultMetadata(metadata), (String) saved.get("result_envelope")),
+              JsonNode.class);
+      fields(result, Set.of("otpInfo", "bootstrapReceipt", "authorityValidUntil"));
+      var facts = preparedFacts(metadata, result.path("bootstrapReceipt").asText());
+      if (!result.path("authorityValidUntil").isIntegralNumber()
+          || !result.path("authorityValidUntil").equals(facts.path("authorityValidUntil")))
+        throw unavailable();
+    } else if (!"PREPARED".equals(saved.get("state"))) throw unavailable();
+    if (jdbc.update(
+            "DELETE FROM protected_otp_bootstrap WHERE invite_id=? AND claim_id=? AND metadata_json=?",
+            discarded.inviteId(),
+            discarded.claimId().toString(),
+            raw)
+        != 1) throw unavailable();
   }
 
   /** Reconstruct opaque success only from the independently checked committed private journal. */

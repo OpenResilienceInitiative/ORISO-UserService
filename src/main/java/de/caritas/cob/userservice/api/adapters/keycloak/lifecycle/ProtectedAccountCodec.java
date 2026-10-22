@@ -694,6 +694,31 @@ public final class ProtectedAccountCodec {
     return new PreparedRecovery(this, metadata.prepared, expectedGeneration, recoveryId);
   }
 
+  /** Pure original-metadata comparison; this never grants cleanup or releases ownership. */
+  public void checkRecovery(PreparedMetadata metadata, VerifiedRecovery recovery) {
+    if (metadata == null || metadata.owner != this) throw invalid();
+    requireRecovery(recovery);
+    var original = metadata.prepared;
+    var recovered = recovery.prepared.prepared;
+    if (!original.approvalId.equals(recovered.approvalId)
+        || !original.claimId.equals(recovered.claimId)
+        || !original.attemptId.equals(recovered.attemptId)
+        || !original.executionId.equals(recovered.executionId)
+        || !original.scope.equals(recovered.scope)
+        || !original.acceptance.equals(recovered.acceptance)
+        || !original.receipt.equals(recovered.receipt)
+        || !original.issuerSubject.equals(recovered.issuerSubject)
+        || !equal(original.scopeDigest, recovered.scopeDigest)
+        || !equal(original.fingerprint, recovered.fingerprint)
+        || !original.validUntil.equals(recovered.validUntil)) throw invalid();
+  }
+
+  /** Authenticated native result data only, for exact durable terminal re-verification. */
+  public byte[] recoveryResponse(VerifiedRecovery recovery) {
+    requireRecovery(recovery);
+    return recoveryBytes(recovery.result);
+  }
+
   public byte[] recoverBody(PreparedRecovery recovery) {
     requireRecovery(recovery);
     return recoveryBytes(recoveryBody(recovery));
