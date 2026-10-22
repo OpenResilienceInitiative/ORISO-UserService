@@ -137,6 +137,19 @@ public final class ProtectedInvitationCodec {
     return json.canonical(body);
   }
 
+  public String approvalBody(FrozenApproval frozen) {
+    checkedScope(frozen);
+    return frozen.requestJson();
+  }
+
+  public VerifiedApproval verifyAuthorized(FrozenApproval frozen, byte[] responseBytes) {
+    return verifyAuthorized(frozen, json.utf8(responseBytes));
+  }
+
+  String realmName() {
+    return realmName;
+  }
+
   public String statusProof(FrozenApproval frozen, TaskActorCredentials actor) {
     JsonNode scope = checkedScope(frozen);
     if (actor == null
