@@ -171,11 +171,13 @@ public final class AccountLifecycleCodec {
     String route =
         deletion
             ? "otp-config/delete-otp"
-            : emailStart ? "otp-config/send-verification-mail"
+            : emailStart
+                ? "otp-config/send-verification-mail"
                 : emailFinish ? "otp-config/setup-otp-mail" : "otp-config/setup-otp";
     if (!operationId.equals(workflowId)
         || !(deletion || emailStart || emailFinish || "otp.app-setup".equals(operation))
-        || !(deletion ? "DELETE" : emailFinish ? "POST" : "PUT").equals(intentText(value, "method", 16))
+        || !(deletion ? "DELETE" : emailFinish ? "POST" : "PUT")
+            .equals(intentText(value, "method", 16))
         || !route.equals(intentText(value, "route", 128))
         || !"FROZEN_HTTP_V1".equals(intentText(value, "representation", 64)))
       throw invalidSecretIntent();
@@ -224,7 +226,8 @@ public final class AccountLifecycleCodec {
             ? java.util.Set.of(
                 "target", "operationId", "expectedState", "otp", "authorityValidUntil")
             : emailFinish
-                ? java.util.Set.of("target", "operationId", "expectedState", "otp", "emailStartOperationId")
+                ? java.util.Set.of(
+                    "target", "operationId", "expectedState", "otp", "emailStartOperationId")
                 : java.util.Set.of("target", "operationId", "expectedState", "otp"));
     if (emailFinish) intentUuid(body, "emailStartOperationId");
     if (emailStart
@@ -267,7 +270,8 @@ public final class AccountLifecycleCodec {
         intentText(otp, "email", 320);
       } else if (emailFinish) {
         if (!intentText(otp, "initialCode", 8).matches("[0-9]{6,8}")
-            || !otp.get("secret").isNull() || !otp.get("email").isNull()) throw invalidSecretIntent();
+            || !otp.get("secret").isNull()
+            || !otp.get("email").isNull()) throw invalidSecretIntent();
       } else {
         intentText(otp, "initialCode", 128);
         intentText(otp, "secret", 4096);
@@ -392,10 +396,21 @@ public final class AccountLifecycleCodec {
   }
 
   String selfLinkedEmailFinishOtpProof(
-      String realmName, String realmId, String accountId, TaskActorCredentials actor,
-      JsonNode materialized, long authorityValidUntil) {
-    return selfOtpProof(realmName, realmId, accountId, actor, materialized,
-        authorityValidUntil, "otp.email-finish", "POST");
+      String realmName,
+      String realmId,
+      String accountId,
+      TaskActorCredentials actor,
+      JsonNode materialized,
+      long authorityValidUntil) {
+    return selfOtpProof(
+        realmName,
+        realmId,
+        accountId,
+        actor,
+        materialized,
+        authorityValidUntil,
+        "otp.email-finish",
+        "POST");
   }
 
   private String selfOtpProof(
@@ -443,7 +458,8 @@ public final class AccountLifecycleCodec {
       this(status, receipt, null, 0, null);
     }
 
-    private VerifiedSelfAppOutcome(int status, String receipt, JsonNode credential, long expiry, String emailStartOperation) {
+    private VerifiedSelfAppOutcome(
+        int status, String receipt, JsonNode credential, long expiry, String emailStartOperation) {
       this.status = status;
       this.receipt = receipt;
       this.emailCredential = credential == null ? null : credential.deepCopy();
@@ -456,9 +472,13 @@ public final class AccountLifecycleCodec {
     }
 
     boolean sameEmailIdentity(VerifiedSelfAppOutcome other) {
-      return other != null && emailCredential != null && other.emailCredential != null
+      return other != null
+          && emailCredential != null
+          && other.emailCredential != null
           && emailCredential.path("credentialId").equals(other.emailCredential.path("credentialId"))
-          && emailCredential.path("destinationDigest").equals(other.emailCredential.path("destinationDigest"));
+          && emailCredential
+              .path("destinationDigest")
+              .equals(other.emailCredential.path("destinationDigest"));
     }
 
     boolean sameEmailDelivery(VerifiedSelfAppOutcome other) {
@@ -561,17 +581,23 @@ public final class AccountLifecycleCodec {
       expected.set("emailCredential", credential);
       if (!saved.equals(read(canonical(expected), JsonNode.class))
           || !utf8(payload).equals(canonical(expected))) throw invalidSecretIntent();
-      return new VerifiedSelfAppOutcome(status, receipt, credential, expiry, body.path("operationId").textValue());
+      return new VerifiedSelfAppOutcome(
+          status, receipt, credential, expiry, body.path("operationId").textValue());
     } catch (RuntimeException failure) {
       throw invalidSecretIntent();
     }
   }
 
   VerifiedSelfAppOutcome verifySelfLinkedEmailFinishOtpReceipt(
-      String reply, String realmId, TaskActorCredentials actor, JsonNode frozenCommand,
+      String reply,
+      String realmId,
+      TaskActorCredentials actor,
+      JsonNode frozenCommand,
       VerifiedSelfAppOutcome deliveredStart) {
-    if (deliveredStart == null || deliveredStart.status() != 200
-        || !deliveredStart.belongsToEmailStart(frozenCommand.path("body").path("emailStartOperationId").textValue()))
+    if (deliveredStart == null
+        || deliveredStart.status() != 200
+        || !deliveredStart.belongsToEmailStart(
+            frozenCommand.path("body").path("emailStartOperationId").textValue()))
       throw invalidSecretIntent();
     return verifySelfOtpReceipt(reply, realmId, actor, frozenCommand, false, deliveredStart);
   }
@@ -586,8 +612,12 @@ public final class AccountLifecycleCodec {
   }
 
   private VerifiedSelfAppOutcome verifySelfOtpReceipt(
-      String reply, String realmId, TaskActorCredentials actor, JsonNode frozenCommand,
-      boolean deletion, VerifiedSelfAppOutcome deliveredStart) {
+      String reply,
+      String realmId,
+      TaskActorCredentials actor,
+      JsonNode frozenCommand,
+      boolean deletion,
+      VerifiedSelfAppOutcome deliveredStart) {
     boolean linkedFinish = deliveredStart != null;
     try {
       if (reply == null
@@ -608,7 +638,8 @@ public final class AccountLifecycleCodec {
       if ((!linkedFinish && status == 200) || (!deletion && status == 201)) {
         intentFields(nativeResult, java.util.Set.of("info"));
         if (linkedFinish) {
-          if (!"OTP setup created".equals(intentText(nativeResult, "info", 512))) throw invalidSecretIntent();
+          if (!"OTP setup created".equals(intentText(nativeResult, "info", 512)))
+            throw invalidSecretIntent();
         } else intentText(nativeResult, "info", 512);
       } else if (!deletion && status == 401) {
         intentFields(nativeResult, java.util.Set.of("error", "error_description"));
@@ -628,7 +659,9 @@ public final class AccountLifecycleCodec {
       expected.put("realmId", realmId);
       expected.put("accountId", target.path("accountId").textValue());
       expected.put("operationId", body.path("operationId").textValue());
-      expected.put("operation", deletion ? "otp.delete" : linkedFinish ? "otp.email-finish" : "otp.app-setup");
+      expected.put(
+          "operation",
+          deletion ? "otp.delete" : linkedFinish ? "otp.email-finish" : "otp.app-setup");
       expected.put("ownerClient", actor.clientId());
       expected.put("ownerSubject", actor.serviceSubject());
       var materialized = ((ObjectNode) body).deepCopy();
@@ -642,15 +675,18 @@ public final class AccountLifecycleCodec {
       if (linkedFinish) {
         expected.put("emailStartOperationId", intentUuid(body, "emailStartOperationId"));
         JsonNode credential = saved.path("emailCredential");
-        intentFields(credential, java.util.Set.of("credentialId", "generation", "destinationDigest"));
+        intentFields(
+            credential, java.util.Set.of("credentialId", "generation", "destinationDigest"));
         intentUuid(credential, "credentialId");
         intentDigest(credential, "generation");
         intentDigest(credential, "destinationDigest");
         expected.set("emailCredential", credential);
-        var outcome = new VerifiedSelfAppOutcome(status, receipt, credential, 0,
-            body.path("emailStartOperationId").textValue());
+        var outcome =
+            new VerifiedSelfAppOutcome(
+                status, receipt, credential, 0, body.path("emailStartOperationId").textValue());
         if (!outcome.sameEmailIdentity(deliveredStart)) throw invalidSecretIntent();
-        if (!saved.equals(expected) || !utf8(payload).equals(canonical(expected))) throw invalidSecretIntent();
+        if (!saved.equals(expected) || !utf8(payload).equals(canonical(expected)))
+          throw invalidSecretIntent();
         return outcome;
       }
       if (!saved.equals(expected) || !utf8(payload).equals(canonical(expected)))

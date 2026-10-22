@@ -73,9 +73,11 @@ class UserTwoFactorAuthControllerDelegate {
           selfAppOtpMaintenance.finishEmail(
               tan,
               pendingEmail -> {
-                if (accountManager.patchUser(userDtoMapper.mapOf(pendingEmail, authenticatedUser)).isEmpty())
-                  throw new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
-                      "Local email completion unavailable");
+                if (accountManager
+                    .patchUser(userDtoMapper.mapOf(pendingEmail, authenticatedUser))
+                    .isEmpty())
+                  throw new de.caritas.cob.userservice.api.exception.httpresponses
+                      .ServiceUnavailableException("Local email completion unavailable");
                 accountInviteService.markTwoFactorActive(authenticatedUser.getUserId());
               });
       return valid ? ResponseEntity.noContent().build() : ResponseEntity.badRequest().build();

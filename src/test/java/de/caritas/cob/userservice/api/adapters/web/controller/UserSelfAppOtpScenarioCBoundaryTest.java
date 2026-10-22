@@ -805,16 +805,23 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                 nativeService,
                 nativeService,
                 transcoder);
-        when(accounts.patchUser(anyMap())).thenAnswer(invocation -> {
-          assertTrue(fiveActors);
-          assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-          Map<String, Object> patch = invocation.getArgument(0);
-          assertEquals(Set.of("id", "email"), patch.keySet());
-          assertEquals(ACCOUNT, patch.get("id"));
-          assertEquals(PENDING_EMAIL, patch.get("email"));
-          assertEquals(1, jdbc.update("update user set email=? where user_id=? and tenant_id=7 and delete_date is null", patch.get("email"), patch.get("id")));
-          return Optional.of(patch);
-        });
+        when(accounts.patchUser(anyMap()))
+            .thenAnswer(
+                invocation -> {
+                  assertTrue(fiveActors);
+                  assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+                  Map<String, Object> patch = invocation.getArgument(0);
+                  assertEquals(Set.of("id", "email"), patch.keySet());
+                  assertEquals(ACCOUNT, patch.get("id"));
+                  assertEquals(PENDING_EMAIL, patch.get("email"));
+                  assertEquals(
+                      1,
+                      jdbc.update(
+                          "update user set email=? where user_id=? and tenant_id=7 and delete_date is null",
+                          patch.get("email"),
+                          patch.get("id")));
+                  return Optional.of(patch);
+                });
         var policy = mock(IdentityPolicy.class);
         when(policy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(true);
         delegate =

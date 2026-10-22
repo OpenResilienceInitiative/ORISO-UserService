@@ -22,8 +22,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.Supplier;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpEntity;
@@ -83,14 +83,20 @@ public final class SelfAppOtpMaintenance {
   }
 
   private boolean execute(
-      String initialCode, String secret, String pendingEmail, Runnable markActive, Operation kind,
+      String initialCode,
+      String secret,
+      String pendingEmail,
+      Runnable markActive,
+      Operation kind,
       Consumer<String> applyEmailAndInvite) {
     if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
       throw unavailable();
     if ((kind == Operation.APP && (!text(initialCode, 128) || !text(secret, 4096)))
         || (kind == Operation.EMAIL_START && !text(pendingEmail, 320))
-        || (kind == Operation.EMAIL_FINISH && (!text(initialCode, 8)
-            || !initialCode.matches("[0-9]{6,8}") || applyEmailAndInvite == null))
+        || (kind == Operation.EMAIL_FINISH
+            && (!text(initialCode, 8)
+                || !initialCode.matches("[0-9]{6,8}")
+                || applyEmailAndInvite == null))
         || markActive == null)
       throw new BadRequestException("A complete app OTP request is required");
     var self = actualSelf(kind);
@@ -104,8 +110,9 @@ public final class SelfAppOtpMaintenance {
                 ? Map.of("operation", "otp.delete")
                 : kind == Operation.EMAIL_START
                     ? Map.of("email", pendingEmail)
-                    : kind == Operation.EMAIL_FINISH ? Map.of("otp", initialCode)
-                    : Map.of("otp", initialCode, "secret", secret));
+                    : kind == Operation.EMAIL_FINISH
+                        ? Map.of("otp", initialCode)
+                        : Map.of("otp", initialCode, "secret", secret));
     // Check actual local ownership before even the token HTTP call, outside every RPC lock.
     CheckedIntent checked =
         transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
@@ -160,13 +167,16 @@ public final class SelfAppOtpMaintenance {
           codec.read(
               codec.utf8(codec.openSelfAppIntent(frozen.metadata, frozen.row.envelope)),
               JsonNode.class);
-      var delivered = kind == Operation.EMAIL_FINISH
-          ? transaction(() -> deliveredEmail(self, actor)) : null;
-      if (delivered != null && !delivered.operation.equals(command.path("body").path("emailStartOperationId").textValue()))
-        throw unavailable();
+      var delivered =
+          kind == Operation.EMAIL_FINISH ? transaction(() -> deliveredEmail(self, actor)) : null;
+      if (delivered != null
+          && !delivered.operation.equals(
+              command.path("body").path("emailStartOperationId").textValue())) throw unavailable();
       var reply = invoke(self, frozen.row, actor, command, kind);
       if (kind == Operation.EMAIL_FINISH) {
-        outcome = codec.verifySelfLinkedEmailFinishOtpReceipt(reply.body, realmId, actor, command, delivered.outcome);
+        outcome =
+            codec.verifySelfLinkedEmailFinishOtpReceipt(
+                reply.body, realmId, actor, command, delivered.outcome);
         if (outcome.status() != reply.status) throw unavailable();
       } else if (kind == Operation.EMAIL_START) {
         var first = codec.verifySelfEmailStartOtpReceipt(reply.body, realmId, actor, command);
@@ -326,11 +336,14 @@ public final class SelfAppOtpMaintenance {
       } else if (kind == Operation.EMAIL_FINISH) {
         var delivered = deliveredEmail(self, actor);
         if (!outcome.belongsToEmailStart(delivered.operation)
-            || !outcome.sameEmailIdentity(delivered.outcome) || applyEmailAndInvite == null)
-          throw unavailable();
+            || !outcome.sameEmailIdentity(delivered.outcome)
+            || applyEmailAndInvite == null) throw unavailable();
         applyEmailAndInvite.accept(delivered.email);
-        if (jdbc.update("delete from identity_self_otp_pending_email where account_id=? and start_operation_id=?",
-            self.account, delivered.operation) != 1) throw unavailable();
+        if (jdbc.update(
+                "delete from identity_self_otp_pending_email where account_id=? and start_operation_id=?",
+                self.account,
+                delivered.operation)
+            != 1) throw unavailable();
       } else markActive.run();
     }
     if (jdbc.update(
@@ -357,7 +370,12 @@ public final class SelfAppOtpMaintenance {
   }
 
   private CheckedIntent checked(
-      Self self, Intent row, String digest, TaskActorCredentials actor, Operation kind, boolean sentReference) {
+      Self self,
+      Intent row,
+      String digest,
+      TaskActorCredentials actor,
+      Operation kind,
+      boolean sentReference) {
     if (!realmId.equals(row.realm)
         || !realmName.equals(row.realmName)
         || !self.account.equals(row.account)
@@ -368,7 +386,9 @@ public final class SelfAppOtpMaintenance {
         || !codec.canonical(target(self, row.operation)).equals(row.target))
       throw new ConflictException("The app OTP operation does not match its original request");
     if (row.expiry <= clock.instant().getEpochSecond()
-        && !(sentReference && kind == Operation.EMAIL_START && "ACKNOWLEDGED".equals(row.status)
+        && !(sentReference
+            && kind == Operation.EMAIL_START
+            && "ACKNOWLEDGED".equals(row.status)
             && Integer.valueOf(200).equals(row.nativeStatus))) throw unavailable();
     JsonNode metadata = null;
     if ("PREPARED".equals(row.status)) {
@@ -390,31 +410,44 @@ public final class SelfAppOtpMaintenance {
       } else if (row.receipt == null
           || row.nativeStatus == null
           || ("ACKNOWLEDGED".equals(row.status)
-              ? !(kind == Operation.APP || kind == Operation.EMAIL_FINISH ? Set.of(200, 201) : Set.of(200)).contains(row.nativeStatus)
-              : kind != Operation.APP && kind != Operation.EMAIL_FINISH || row.nativeStatus != 401)) throw unavailable();
+              ? !(kind == Operation.APP || kind == Operation.EMAIL_FINISH
+                      ? Set.of(200, 201)
+                      : Set.of(200))
+                  .contains(row.nativeStatus)
+              : kind != Operation.APP && kind != Operation.EMAIL_FINISH || row.nativeStatus != 401))
+        throw unavailable();
     } else throw unavailable();
     return new CheckedIntent(row, metadata);
   }
 
   private DeliveredEmail deliveredEmail(Self self, TaskActorCredentials actor) {
     lockedDomain(self);
-    var pending = jdbc.queryForList(
-        "select start_operation_id from identity_self_otp_pending_email where account_id=? for update",
-        String.class, self.account);
+    var pending =
+        jdbc.queryForList(
+            "select start_operation_id from identity_self_otp_pending_email where account_id=? for update",
+            String.class,
+            self.account);
     if (pending.size() != 1 || !canonicalUuid(pending.getFirst())) throw unavailable();
     var start = find(pending.getFirst());
-    if (start == null || !"ACKNOWLEDGED".equals(start.status)
+    if (start == null
+        || !"ACKNOWLEDGED".equals(start.status)
         || !Integer.valueOf(200).equals(start.nativeStatus)) throw unavailable();
     var checked = checked(self, start, start.requestDigest, actor, Operation.EMAIL_START, true);
-    var command = codec.read(codec.utf8(codec.openSelfAppIntent(checked.metadata, checked.row.envelope)), JsonNode.class);
+    var command =
+        codec.read(
+            codec.utf8(codec.openSelfAppIntent(checked.metadata, checked.row.envelope)),
+            JsonNode.class);
     String email = command.path("body").path("otp").path("email").textValue();
     if (!text(email, 320)) throw unavailable();
     var result = codec.read("{}", ObjectNode.class);
-    result.put("operationId", start.operation); result.put("accountId", self.account);
-    result.put("status", 200); result.put("deliveryState", "SENT");
+    result.put("operationId", start.operation);
+    result.put("accountId", self.account);
+    result.put("status", 200);
+    result.put("deliveryState", "SENT");
     result.set("result", codec.read("{\"info\":\"OTP mail sent\"}", JsonNode.class));
     result.put("receipt", start.receipt);
-    var outcome = codec.verifySelfEmailStartOtpReceipt(codec.canonical(result), realmId, actor, command);
+    var outcome =
+        codec.verifySelfEmailStartOtpReceipt(codec.canonical(result), realmId, actor, command);
     if (outcome.status() != 200) throw unavailable();
     return new DeliveredEmail(start.operation, email, outcome);
   }
@@ -523,9 +556,10 @@ public final class SelfAppOtpMaintenance {
                 ? codec.selfEmailStartOtpProof(
                     realmName, realmId, self.account, actor, materialized, expiry)
                 : kind == Operation.EMAIL_FINISH
-                    ? codec.selfLinkedEmailFinishOtpProof(realmName, realmId, self.account, actor, materialized, expiry)
+                    ? codec.selfLinkedEmailFinishOtpProof(
+                        realmName, realmId, self.account, actor, materialized, expiry)
                     : codec.selfAppOtpProof(
-                    realmName, realmId, self.account, actor, materialized, expiry));
+                        realmName, realmId, self.account, actor, materialized, expiry));
     var uri =
         UriComponentsBuilder.fromUriString(authServer)
             .pathSegment(
@@ -751,8 +785,12 @@ public final class SelfAppOtpMaintenance {
     }
   }
 
-  private record DeliveredEmail(String operation, String email, AccountLifecycleCodec.VerifiedSelfAppOutcome outcome) {
-    @Override public String toString() { return "DeliveredEmail[redacted]"; }
+  private record DeliveredEmail(
+      String operation, String email, AccountLifecycleCodec.VerifiedSelfAppOutcome outcome) {
+    @Override
+    public String toString() {
+      return "DeliveredEmail[redacted]";
+    }
   }
 
   private record Self(
