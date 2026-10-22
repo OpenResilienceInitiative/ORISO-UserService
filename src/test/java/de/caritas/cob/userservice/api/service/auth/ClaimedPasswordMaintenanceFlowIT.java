@@ -511,6 +511,23 @@ class ClaimedPasswordMaintenanceFlowIT {
     }
   }
 
+  @Test
+  void actualAppConsultantResetUsesItsCoherentAdministratorPrimaryWithoutCallerKind() throws Exception {
+    for (String kind : List.of("AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")) {
+      try (var f = new Fixture(kind, true)) {
+        f.service.requestPasswordReset("testuser", "en");
+        assertThat(f.resetUrl).isNotNull();
+        String token = f.resetUrl.substring(f.resetUrl.indexOf("token=") + 6);
+        assertThat(f.service.confirmPasswordReset(token, "fixture-new-password!42")).isTrue();
+        assertThat(f.effects).isEqualTo(1);
+        assertThat(f.required()).isFalse();
+        assertThat(f.phase()).isEqualTo("ACKNOWLEDGED");
+        assertThat(f.readCandidates).containsExactly("reviewed-" + kind.toLowerCase(Locale.ROOT));
+        verifyNoInteractions(f.legacy);
+      }
+    }
+  }
+
   private static final class Fixture implements AutoCloseable {
     final AccountLifecycleCodec codec = new AccountLifecycleCodec(new byte[32]);
     final DriverManagerDataSource source =
@@ -723,6 +740,14 @@ class ClaimedPasswordMaintenanceFlowIT {
       else
         jdbc.update(
             "update consultant set tenant_id=? where consultant_id=?", ownedTenant, ACCOUNT);
+      if (ownsConsultant) {
+        var model = new Consultant();
+        model.setId(ACCOUNT);
+        model.setTenantId(ownedTenant);
+        model.setUsername(sqlUsername);
+        model.setEmail("Original@Example.org");
+        when(consultants.findConsultantForSignIn(anyString())).thenReturn(Optional.of(model));
+      }
       if ("USER".equals(kind)) {
         jdbc.update(
             "insert into user values(?,?,?,'Original@Example.org',?,?,null,'ACTIVE')",
@@ -757,6 +782,8 @@ class ClaimedPasswordMaintenanceFlowIT {
                 .id(ACCOUNT)
                 .tenantId(ownedTenant)
                 .username(sqlUsername)
+                .firstName("Fixture")
+                .lastName("Administrator")
                 .email("Original@Example.org")
                 .type(de.caritas.cob.userservice.api.model.Admin.AdminType.valueOf(type))
                 .build();
