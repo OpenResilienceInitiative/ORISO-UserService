@@ -25,7 +25,9 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Public sweep/JPA boundary; native restriction acknowledgement is the explicit external double. */
+/**
+ * Public sweep/JPA boundary; native restriction acknowledgement is the explicit external double.
+ */
 @TestPropertySource(properties = "TASK_IDENTITY_MODEL=FIVE_ACTORS")
 class ProtectedInvitationSupersededExpiryJpaIT extends ProtectedInvitationIssuanceJpaFixture {
   @MockitoBean ProtectedInvitationCancellation cancellation;
@@ -139,12 +141,15 @@ class ProtectedInvitationSupersededExpiryJpaIT extends ProtectedInvitationIssuan
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
               inAcknowledgement.set(true);
               try {
-                return transaction().execute(
-                    tx -> {
-                      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-                      assertThat(TransactionSynchronizationManager.hasResource(source)).isTrue();
-                      return ((Supplier<?>) call.getArgument(1)).get();
-                    });
+                return transaction()
+                    .execute(
+                        tx -> {
+                          assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                              .isTrue();
+                          assertThat(TransactionSynchronizationManager.hasResource(source))
+                              .isTrue();
+                          return ((Supplier<?>) call.getArgument(1)).get();
+                        });
               } finally {
                 inAcknowledgement.set(false);
               }

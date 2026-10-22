@@ -48,15 +48,37 @@ public final class JdbcProtectedInvitationAcceptance {
       this.registrationDigest = registrationDigest;
     }
 
-    public FrozenApproval frozen() { return frozen; }
-    public VerifiedApproval approval() { return approval; }
-    public UUID claimId() { return claimId; }
-    public UUID attemptId() { return attemptId; }
-    public UUID executionId() { return executionId; }
-    public long journalVersion() { return 1; }
-    public String registrationDigest() { return registrationDigest; }
+    public FrozenApproval frozen() {
+      return frozen;
+    }
+
+    public VerifiedApproval approval() {
+      return approval;
+    }
+
+    public UUID claimId() {
+      return claimId;
+    }
+
+    public UUID attemptId() {
+      return attemptId;
+    }
+
+    public UUID executionId() {
+      return executionId;
+    }
+
+    public long journalVersion() {
+      return 1;
+    }
+
+    public String registrationDigest() {
+      return registrationDigest;
+    }
 
     @Override
-    public String toString() { return "ProtectedAcceptanceClaim[redacted]"; }
+    public String toString() {
+      return "ProtectedAcceptanceClaim[redacted]";
+    }
   }
 }
