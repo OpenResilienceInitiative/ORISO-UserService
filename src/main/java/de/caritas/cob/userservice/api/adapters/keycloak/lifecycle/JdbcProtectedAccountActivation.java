@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedI
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedAccounts.PendingOwnedAccount;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCommitted;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCreated;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedRecovery;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedOtpBootstrap.Completion;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedOtpBootstrap.PreparedBootstrap;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
@@ -40,6 +41,7 @@ public final class JdbcProtectedAccountActivation {
   private final AdminRepository admins;
   private final AccountInactivityEnrollmentService inactivity;
   private final Clock clock;
+  private final JdbcProtectedAccountCreation creation;
 
   public JdbcProtectedAccountActivation(
       JdbcTemplate jdbc,
@@ -51,6 +53,20 @@ public final class JdbcProtectedAccountActivation {
       AdminRepository admins,
       AccountInactivityEnrollmentService inactivity,
       Clock clock) {
+    this(jdbc, manager, journal, accounts, json, otp, admins, inactivity, clock, null);
+  }
+
+  public JdbcProtectedAccountActivation(
+      JdbcTemplate jdbc,
+      PlatformTransactionManager manager,
+      JdbcProtectedInvitationJournal journal,
+      ProtectedAccountCodec accounts,
+      AccountLifecycleCodec json,
+      ProtectedOtpBootstrap otp,
+      AdminRepository admins,
+      AccountInactivityEnrollmentService inactivity,
+      Clock clock,
+      JdbcProtectedAccountCreation creation) {
     ProtectedInvitationSqlOwner.require(jdbc, manager);
     journal.requireOwner(jdbc, manager);
     this.jdbc = jdbc;
@@ -61,6 +77,7 @@ public final class JdbcProtectedAccountActivation {
     this.admins = Objects.requireNonNull(admins);
     this.inactivity = Objects.requireNonNull(inactivity);
     this.clock = Objects.requireNonNull(clock);
+    this.creation = creation;
   }
 
   public IdentityOtpCredential stage(
@@ -231,6 +248,12 @@ public final class JdbcProtectedAccountActivation {
           var saved = rows(claim);
           if (saved.isEmpty()) return Phase.UNSTAGED;
           if (saved.size() != 1) throw unavailable();
+          if ("LOCAL_CLEANED".equals(saved.getFirst().state())) {
+            var cleanup = cleanupRows(claim);
+            if (cleanup.size() != 1) throw unavailable();
+            checkedCleanup(claim, saved.getFirst(), cleanup.getFirst());
+            return Phase.LOCAL_CLEANED;
+          }
           var row =
               Set.of("READY", "COMMITTED").contains(saved.getFirst().state())
                   ? historicallyChecked(claim, saved.getFirst())
@@ -427,6 +450,159 @@ public final class JdbcProtectedAccountActivation {
     }
   }
 
+  public LocalOutcome discard(AcceptanceClaim claim, VerifiedRecovery recovery) {
+    outsideSql();
+    return discardOwned(claim, recovery);
+  }
+
+  public LocalOutcome discard(HistoricalAcceptance historical, VerifiedRecovery recovery) {
+    outsideSql();
+    if (historical == null) throw unavailable();
+    return discardOwned(historical.claim(), recovery);
+  }
+
+  private LocalOutcome discardOwned(AcceptanceClaim claim, VerifiedRecovery recovery) {
+    if (recovery == null) throw unavailable();
+    return owned(
+        claim,
+        true,
+        () -> {
+          Row row = one(claim);
+          VerifiedCreated original = accounts.restore(claim, row.checkpoint());
+          requireCreated(claim, original);
+          if (!Set.of("RECOVERY_CLAIMED", "COMPENSATED").contains(recovery.state())
+              || recovery.generation() < 1
+              || recovery.executionId() == null
+              || !claim.frozen().approvalId().equals(recovery.approvalId())
+              || !claim.attemptId().equals(recovery.attemptId())
+              || !row.accountId().equals(recovery.accountId())
+              || !row.accountId().equals(original.accountId())
+              || !equal(original.creationProof(), recovery.creationProof())) throw unavailable();
+          var previous = cleanupRows(claim);
+          if (!previous.isEmpty()) {
+            if (previous.size() != 1 || !"LOCAL_CLEANED".equals(row.state())) throw unavailable();
+            JsonNode body = checkedCleanup(claim, row, previous.getFirst());
+            if (!recovery.executionId().toString().equals(body.path("recoveryId").asText())
+                || recovery.generation() != body.path("generation").asLong(-1)
+                || !equal(
+                    proofDigest(recovery.creationProof()),
+                    body.path("creationProofDigest").asText())) throw unavailable();
+            return previous.getFirst().outcome();
+          }
+          if (!Set.of("WAITING_OTP", "READY").contains(row.state())) throw unavailable();
+          checked(claim, row, true);
+          if ("READY".equals(row.state())) historicallyChecked(claim, row);
+          UUID incarnation =
+              row.otpIncarnation() == null
+                  ? claim.executionId()
+                  : UUID.fromString(canonicalUuid(row.otpIncarnation()));
+          UUID outbox = UUID.randomUUID();
+          var body =
+              json.read(
+                  json.canonical(
+                      Map.ofEntries(
+                          Map.entry("inviteId", Long.toString(inviteId(claim))),
+                          Map.entry("approvalId", claim.frozen().approvalId().toString()),
+                          Map.entry("claimId", claim.claimId().toString()),
+                          Map.entry("attemptId", claim.attemptId().toString()),
+                          Map.entry("executionId", claim.executionId().toString()),
+                          Map.entry("accountId", row.accountId()),
+                          Map.entry("recoveryId", recovery.executionId().toString()),
+                          Map.entry("generation", recovery.generation()),
+                          Map.entry("creationProofDigest", proofDigest(recovery.creationProof())),
+                          Map.entry("registrationEffectsDigest", row.digest()),
+                          Map.entry("bootstrapIncarnation", incarnation.toString()),
+                          Map.entry("previousState", row.state()),
+                          Map.entry("outboxId", outbox.toString()))),
+                  JsonNode.class);
+          String digest = json.digest("protected-local-cleanup/v1", body);
+          otp.discardWithinOwner(
+              new VerifiedDiscard(
+                  inviteId(claim),
+                  claim.claimId(),
+                  claim.attemptId(),
+                  claim.executionId(),
+                  row.accountId(),
+                  incarnation,
+                  recovery.executionId(),
+                  recovery.generation()));
+          if (jdbc.update("DELETE FROM account_inactivity WHERE identity_id=?", row.accountId())
+                  != 1
+              || jdbc.update("DELETE FROM admin WHERE admin_id=?", row.accountId()) != 1)
+            throw unavailable();
+          Timestamp now = Timestamp.from(clock.instant());
+          jdbc.update(
+              "INSERT INTO protected_account_cleanup (invite_id,body_json,effects_digest,outbox_id,created_at) VALUES (?,?,?,?,?)",
+              inviteId(claim),
+              json.canonical(body),
+              digest,
+              outbox.toString(),
+              now);
+          if (jdbc.update(
+                  "UPDATE protected_account_activation SET state='LOCAL_CLEANED',updated_at=? WHERE invite_id=? AND state=?",
+                  now,
+                  inviteId(claim),
+                  row.state())
+              != 1) throw unavailable();
+          return new LocalOutcome(1, outbox, digest);
+        });
+  }
+
+  private String proofDigest(String proof) {
+    if (proof == null || proof.isBlank() || proof.length() > 16384) throw unavailable();
+    return json.digest("protected-local-cleanup-creation/v1", Map.of("creationProof", proof));
+  }
+
+  private JsonNode checkedCleanup(AcceptanceClaim claim, Row row, Cleanup cleanup) {
+    JsonNode body = json.read(cleanup.body(), JsonNode.class);
+    JsonNode effects = json.read(row.effects(), JsonNode.class);
+    VerifiedCreated original = accounts.restore(claim, row.checkpoint());
+    requireCreated(claim, original);
+    String incarnation =
+        row.otpIncarnation() == null
+            ? claim.executionId().toString()
+            : canonicalUuid(row.otpIncarnation());
+    if (!equal(cleanup.digest(), json.digest("protected-local-cleanup/v1", body))
+        || !equal(row.digest(), json.digest("protected-local-registration/v1", effects))
+        || !claim.claimId().toString().equals(row.claimId())
+        || !claim.attemptId().toString().equals(row.attemptId())
+        || !claim.executionId().toString().equals(row.executionId())
+        || !row.accountId().equals(original.accountId())
+        || !equal(proofDigest(original.creationProof()), body.path("creationProofDigest").asText())
+        || !incarnation.equals(body.path("bootstrapIncarnation").asText())
+        || !Long.toString(inviteId(claim)).equals(body.path("inviteId").asText())
+        || !claim.frozen().approvalId().toString().equals(body.path("approvalId").asText())
+        || !claim.claimId().toString().equals(body.path("claimId").asText())
+        || !claim.attemptId().toString().equals(body.path("attemptId").asText())
+        || !claim.executionId().toString().equals(body.path("executionId").asText())
+        || !row.accountId().equals(body.path("accountId").asText())
+        || !equal(row.digest(), body.path("registrationEffectsDigest").asText())
+        || !cleanup.outbox().equals(body.path("outboxId").asText())
+        || !Set.of("WAITING_OTP", "READY").contains(body.path("previousState").asText())
+        || count("SELECT COUNT(*) FROM admin WHERE admin_id=?", row.accountId()) != 0
+        || count("SELECT COUNT(*) FROM account_inactivity WHERE identity_id=?", row.accountId())
+            != 0) throw unavailable();
+    return body;
+  }
+
+  private java.util.List<Cleanup> cleanupRows(AcceptanceClaim claim) {
+    return jdbc.query(
+        "SELECT body_json,effects_digest,outbox_id FROM protected_account_cleanup WHERE invite_id=? FOR UPDATE",
+        (rs, i) -> new Cleanup(rs.getString(1), rs.getString(2), rs.getString(3)),
+        inviteId(claim));
+  }
+
+  private record Cleanup(String body, String digest, String outbox) {
+    LocalOutcome outcome() {
+      return new LocalOutcome(1, UUID.fromString(outbox), digest);
+    }
+
+    @Override
+    public String toString() {
+      return "ProtectedCleanup[redacted]";
+    }
+  }
+
   /** Only this account-effects owner can authorize removal of its exact encrypted OTP rows. */
   public static final class VerifiedDiscard {
     private final long inviteId;
@@ -435,6 +611,8 @@ public final class JdbcProtectedAccountActivation {
     private final UUID executionId;
     private final String accountId;
     private final UUID bootstrapIncarnation;
+    private final UUID recoveryId;
+    private final long recoveryGeneration;
 
     private VerifiedDiscard(
         long inviteId,
@@ -442,13 +620,17 @@ public final class JdbcProtectedAccountActivation {
         UUID attemptId,
         UUID executionId,
         String accountId,
-        UUID bootstrapIncarnation) {
+        UUID bootstrapIncarnation,
+        UUID recoveryId,
+        long recoveryGeneration) {
       this.inviteId = inviteId;
       this.claimId = claimId;
       this.attemptId = attemptId;
       this.executionId = executionId;
       this.accountId = accountId;
       this.bootstrapIncarnation = bootstrapIncarnation;
+      this.recoveryId = recoveryId;
+      this.recoveryGeneration = recoveryGeneration;
     }
 
     public long inviteId() {
@@ -473,6 +655,14 @@ public final class JdbcProtectedAccountActivation {
 
     public UUID bootstrapIncarnation() {
       return bootstrapIncarnation;
+    }
+
+    public UUID recoveryId() {
+      return recoveryId;
+    }
+
+    public long recoveryGeneration() {
+      return recoveryGeneration;
     }
 
     @Override
@@ -599,6 +789,10 @@ public final class JdbcProtectedAccountActivation {
   }
 
   private Row checked(AcceptanceClaim claim, Row row) {
+    return checked(claim, row, false);
+  }
+
+  private Row checked(AcceptanceClaim claim, Row row, boolean reducing) {
     if (!claim.claimId().toString().equals(row.claimId())
         || !claim.attemptId().toString().equals(row.attemptId())
         || !claim.executionId().toString().equals(row.executionId())) throw unavailable();
@@ -618,7 +812,9 @@ public final class JdbcProtectedAccountActivation {
             "SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?",
             String.class,
             inviteId(claim));
-    if (!"ACCEPTED".equals(invite.get("status"))
+    if (!(reducing
+            ? Set.of("ACCEPTED", "EXPIRED", "REVOKED", "SUPERSEDED").contains(invite.get("status"))
+            : "ACCEPTED".equals(invite.get("status")))
         || !row.accountId().equals(invite.get("accepted_by_user_id"))
         || !row.accountId().equals(account)) throw unavailable();
     return row;

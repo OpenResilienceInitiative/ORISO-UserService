@@ -224,6 +224,35 @@ class JdbcProtectedInvitationAcceptanceTest {
     assertEquals(0, rows());
   }
 
+  @Test
+  void historicalStatusCustodyRequiresTheExactWritableOwnerAndKeepsErasedTokensNonLive() {
+    var first = restart().claim(73, TOKEN_HASH, registration);
+    jdbc.update("UPDATE account_invite SET status='REVOKED',token_hash=NULL WHERE id=73");
+    jdbc.update("UPDATE protected_invitation_authorization SET state='CANCEL_REQUESTED'");
+    assertThrows(RuntimeException.class, () -> restart().historicalWithinOwner(73));
+    var foreign = new JdbcDataSource();
+    foreign.setURL("jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1");
+    var foreignSql = new TransactionTemplate(new DataSourceTransactionManager(foreign));
+    assertThrows(
+        RuntimeException.class,
+        () -> foreignSql.execute(tx -> restart().historicalWithinOwner(73)));
+    var readOnly = new TransactionTemplate(manager);
+    readOnly.setReadOnly(true);
+    assertThrows(
+        RuntimeException.class, () -> readOnly.execute(tx -> restart().historicalWithinOwner(73)));
+    var owner = new TransactionTemplate(manager);
+    var history =
+        assertDoesNotThrow(() -> owner.execute(tx -> restart().historicalWithinOwner(73)));
+    assertNotNull(history);
+    assertEquals(73, history.inviteId());
+    assertEquals(first.claimId(), history.claim().claimId());
+    assertEquals(first.attemptId(), history.claim().attemptId());
+    assertNull(history.claim().tokenHash());
+    assertThrows(RuntimeException.class, () -> owner.execute(tx -> restart().historical(73)));
+    assertThrows(RuntimeException.class, () -> restart().resume(73, TOKEN_HASH));
+    assertEquals(1, rows());
+  }
+
   private JdbcProtectedInvitationAcceptance restart() {
     return new JdbcProtectedInvitationAcceptance(jdbc, manager, journal, codec, json, clock);
   }

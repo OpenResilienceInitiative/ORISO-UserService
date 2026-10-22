@@ -62,11 +62,12 @@ class KeycloakProtectedAccountsTest {
                 "backend-account-create",
                 "synthetic-only",
                 "c6c2db59-43dc-49ad-8589-16e91673ce2c"));
+    var checkedCreator = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+    lenient().when(checkedCreator.actor()).thenReturn(TaskActor.ACCOUNT_CREATE);
+    lenient().when(checkedCreator.accessToken()).thenReturn("public-synthetic-creator");
     lenient()
-        .when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
-        .thenReturn(
-            new TaskActorTokenBroker.TaskToken(
-                TaskActor.ACCOUNT_CREATE, "public-synthetic-creator", 60));
+        .when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING))
+        .thenReturn(checkedCreator);
     lenient().when(prepared.approvalId()).thenReturn(APPROVAL);
     lenient().when(prepared.claimId()).thenReturn(CLAIM);
     lenient().when(prepared.attemptId()).thenReturn(ATTEMPT);
@@ -97,6 +98,27 @@ class KeycloakProtectedAccountsTest {
         new KeycloakProtectedAccounts(
             http, actors, broker, codec, "https://auth.example.test", "oriso");
     clearInvocations(actors, broker, codec);
+  }
+
+  @Test
+  void protectedCreationUsesTheCheckedCreatorWhileGenericIssuanceStaysClosed() {
+    var checked = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+    when(checked.actor()).thenReturn(TaskActor.ACCOUNT_CREATE);
+    when(checked.accessToken()).thenReturn("public-synthetic-checked");
+    when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(checked);
+    when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
+        .thenThrow(new IllegalStateException("Generic native issuance remains closed"));
+    server
+        .expect(requestTo(url()))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(header("Authorization", "Bearer public-synthetic-checked"))
+        .andRespond(
+            withStatus(HttpStatus.CREATED)
+                .body(createdResponse)
+                .contentType(MediaType.APPLICATION_JSON));
+    assertSame(created, assertDoesNotThrow(() -> transport.create(prepared)));
+    verify(broker).issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING);
+    server.verify();
   }
 
   @Test
@@ -282,10 +304,9 @@ class KeycloakProtectedAccountsTest {
 
   @Test
   void anotherBrokerActorCannotUseTheCreatorTransport() {
-    when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
-        .thenReturn(
-            new TaskActorTokenBroker.TaskToken(
-                TaskActor.ACCOUNT_ADMIN, "public-synthetic-admin", 60));
+    var foreign = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+    when(foreign.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
+    when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(foreign);
     assertThrows(IllegalArgumentException.class, () -> transport.create(prepared));
     server.verify();
   }

@@ -124,7 +124,7 @@ public final class KeycloakProtectedAccounts {
 
   private byte[] call(
       UUID approval, UUID attempt, String suffix, HttpMethod method, byte[] body, String proof) {
-    var token = broker.issue(TaskPurpose.ACCOUNT_PROVISIONING);
+    var token = broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING);
     if (token.actor() != TaskActor.ACCOUNT_CREATE
         || token.accessToken() == null
         || token.accessToken().isBlank()) throw invalid();

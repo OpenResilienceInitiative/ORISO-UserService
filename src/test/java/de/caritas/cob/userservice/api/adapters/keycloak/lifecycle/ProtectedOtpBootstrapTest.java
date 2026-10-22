@@ -93,6 +93,56 @@ class ProtectedOtpBootstrapTest {
   }
 
   @Test
+  void protectedEmailStartsOnlyFromCommittedSetupAndResolvesTheExactForegroundDelivery()
+      throws Exception {
+    try (var f = new Fixture()) {
+      f.expectPrepare();
+      var prepared = f.adapter().prepare(f.claim, f.pending);
+      new TransactionTemplate(f.manager)
+          .executeWithoutResult(tx -> f.adapter().stagePrepared(f.claim, prepared));
+      f.server.verify();
+      f.server.reset();
+      f.request.setRequestURI("/service/tenant/register/two-factor/email");
+      f.request.removeHeader("Idempotency-Key");
+      f.request.addHeader("Idempotency-Key", "d9d2cb4c-68bb-44e4-8e4c-a1fbc38e4afd");
+      f.expectEmailStart(202);
+      f.expectEmailStart(200);
+      var sent = assertDoesNotThrow(() -> f.adapter().startEmail(f.claim));
+      assertEquals(ProtectedOtpBootstrap.AttemptState.SENT, sent.state());
+      assertThrows(RuntimeException.class, sent::completion);
+      assertEquals(
+          1,
+          f.jdbc.queryForObject(
+              "SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='ACKNOWLEDGED'",
+              Integer.class));
+      String rows =
+          f.jdbc.queryForList("SELECT * FROM protected_otp_bootstrap_operation").toString();
+      assertFalse(rows.contains("ada@example.test"));
+      assertFalse(rows.contains("Bearer"));
+      f.server.verify();
+      f.server.reset();
+      f.request.setRequestURI("/service/tenant/register/two-factor");
+      f.request.removeHeader("Idempotency-Key");
+      f.request.addHeader("Idempotency-Key", "ff1e6ffb-3bec-4133-a498-ae4330720bef");
+      f.expectEmailFinish();
+      var completed = assertDoesNotThrow(() -> f.adapter().finishEmail(f.claim, "123456"));
+      assertEquals(ProtectedOtpBootstrap.AttemptState.COMPLETE, completed.state());
+      assertEquals(f.pending.created().accountId(), completed.completion().accountId());
+      assertEquals(
+          completed.completion().receipt(),
+          new TransactionTemplate(f.manager)
+              .execute(tx -> f.adapter().completedWithinOwner(f.claim))
+              .receipt());
+      assertEquals(
+          2,
+          f.jdbc.queryForObject(
+              "SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='ACKNOWLEDGED'",
+              Integer.class));
+      f.server.verify();
+    }
+  }
+
+  @Test
   void anotherDataSourceCannotOwnTheBootstrapJournal() throws Exception {
     try (var f = new Fixture()) {
       var foreign = new JdbcDataSource();
@@ -171,6 +221,75 @@ class ProtectedOtpBootstrapTest {
     }
   }
 
+  @Test
+  void recoveredExactOwnerCanDiscardOnlyItsEncryptedSetupAfterRecipientRevocation()
+      throws Exception {
+    try (var f = new Fixture()) {
+      f.expectPrepare();
+      var prepared = f.adapter().prepare(f.claim, f.pending);
+      var owner = new TransactionTemplate(f.manager);
+      owner.executeWithoutResult(tx -> f.adapter().stagePrepared(f.claim, prepared));
+      f.server.verify();
+      f.server.reset();
+      f.request.setRequestURI("/service/tenant/register/two-factor");
+      f.request.removeHeader("Idempotency-Key");
+      f.request.addHeader("Idempotency-Key", UUID.randomUUID().toString());
+      f.server
+          .expect(
+              requestTo(
+                  org.springframework.web.util.UriComponentsBuilder.fromUriString(f.issuer.base())
+                      .pathSegment(
+                          "realms", "synthetic", "otp-config", "setup-otp", f.pending.username())
+                      .build()
+                      .encode()
+                      .toUri()))
+          .andRespond(withServerError());
+      assertEquals(
+          ProtectedOtpBootstrap.AttemptState.UNKNOWN,
+          f.adapter().setupApp(f.claim, "123456").state());
+      assertThrows(
+          RuntimeException.class,
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(f.discarded())));
+      assertEquals(
+          1,
+          f.jdbc.queryForObject(
+              "SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='FROZEN'",
+              Integer.class));
+      assertEquals(
+          1, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
+      f.server.verify();
+    }
+    try (var f = new Fixture()) {
+      f.expectPrepare();
+      var prepared = f.adapter().prepare(f.claim, f.pending);
+      var owner = new TransactionTemplate(f.manager);
+      owner.executeWithoutResult(tx -> f.adapter().stagePrepared(f.claim, prepared));
+      var discarded = f.discarded();
+      assertThrows(RuntimeException.class, () -> f.adapter().discardWithinOwner(discarded));
+      when(discarded.accountId()).thenReturn(UUID.randomUUID().toString());
+      assertThrows(
+          RuntimeException.class,
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(discarded)));
+      assertEquals(
+          1, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
+      when(discarded.accountId()).thenReturn(f.pending.created().accountId());
+      f.jdbc.update(
+          "UPDATE account_invite SET token_hash=NULL,status='REVOKED',expires_at=? WHERE id=73",
+          Timestamp.from(Instant.EPOCH));
+      assertDoesNotThrow(
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(discarded)));
+      assertEquals(
+          0, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
+      assertEquals(
+          0,
+          f.jdbc.queryForObject(
+              "SELECT COUNT(*) FROM protected_otp_bootstrap_operation", Integer.class));
+      assertDoesNotThrow(
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(discarded)));
+      f.server.verify();
+    }
+  }
+
   private static final class Fixture implements AutoCloseable {
     private static final String ADMIN = "032d47ad-8156-47b8-a8ce-17ae1970e046";
     private final Clock clock = Clock.systemUTC();
@@ -188,6 +307,7 @@ class ProtectedOtpBootstrapTest {
     private final PendingOwnedAccount pending;
     private ObjectNode prepareFacts;
     private String prepareReceipt;
+    private String emailStartOperation;
 
     Fixture() throws Exception {
       request.addHeader("Idempotency-Key", "6edf02c1-7a04-4e19-99aa-fd5bc479ba15");
@@ -276,10 +396,11 @@ class ProtectedOtpBootstrapTest {
               av.path("request").path("scope").path("creatorSubject").asText());
       when(creators.require(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(creator);
       var broker = mock(TaskActorTokenBroker.class);
-      when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
-          .thenReturn(
-              new TaskActorTokenBroker.TaskToken(
-                  TaskActor.ACCOUNT_CREATE, "synthetic-creator-bearer", 60));
+      var checkedCreator = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+      when(checkedCreator.actor()).thenReturn(TaskActor.ACCOUNT_CREATE);
+      when(checkedCreator.accessToken()).thenReturn("synthetic-creator-bearer");
+      when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING))
+          .thenReturn(checkedCreator);
       server
           .expect(
               requestTo(
@@ -298,6 +419,17 @@ class ProtectedOtpBootstrapTest {
               .ownedRead(claim, created);
       server.verify();
       server.reset();
+    }
+
+    JdbcProtectedAccountActivation.VerifiedDiscard discarded() {
+      var discarded = mock(JdbcProtectedAccountActivation.VerifiedDiscard.class);
+      when(discarded.inviteId()).thenReturn(73L);
+      when(discarded.claimId()).thenReturn(claim.claimId());
+      when(discarded.attemptId()).thenReturn(claim.attemptId());
+      when(discarded.executionId()).thenReturn(claim.executionId());
+      when(discarded.bootstrapIncarnation()).thenReturn(claim.executionId());
+      when(discarded.accountId()).thenReturn(pending.created().accountId());
+      return discarded;
     }
 
     ProtectedOtpBootstrap adapter() {
@@ -388,6 +520,131 @@ class ProtectedOtpBootstrapTest {
                             "authorityValidUntil",
                             deadline));
                 return withSuccess(result, MediaType.APPLICATION_JSON).createResponse(req);
+              });
+    }
+
+    void expectEmailStart(int status) {
+      server
+          .expect(
+              requestTo(
+                  org.springframework.web.util.UriComponentsBuilder.fromUriString(issuer.base())
+                      .pathSegment(
+                          "realms",
+                          "synthetic",
+                          "otp-config",
+                          "send-verification-mail",
+                          pending.username())
+                      .build()
+                      .encode()
+                      .toUri()))
+          .andExpect(method(HttpMethod.PUT))
+          .andExpect(header("X-ORISO-OTP-Bootstrap", prepareReceipt))
+          .andRespond(
+              req -> {
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                assertNull(req.getHeaders().getFirst("X-ORISO-Human-Authorization"));
+                var actual = (org.springframework.mock.http.client.MockClientHttpRequest) req;
+                JsonNode body = json.read(actual.getBodyAsString(), JsonNode.class);
+                assertEquals("ada@example.test", body.path("otp").path("email").asText());
+                if (emailStartOperation == null)
+                  emailStartOperation = body.path("operationId").asText();
+                assertEquals(emailStartOperation, body.path("operationId").asText());
+                assertTrue(body.path("otp").path("initialCode").isNull());
+                assertEquals(
+                    1,
+                    jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state IN ('FROZEN','READY')",
+                        Integer.class));
+                ObjectNode materialized = body.deepCopy();
+                materialized.put("username", pending.username());
+                materialized.put("bootstrapReceipt", prepareReceipt);
+                var facts = prepareFacts.deepCopy();
+                facts.put("state", status == 202 ? "READY" : "SENT");
+                facts.set("operationId", body.path("operationId"));
+                facts.put("intentDigest", json.digest("otp-bootstrap-intent/v1", materialized));
+                facts.put("status", status);
+                var result = Map.of("info", status == 202 ? "OTP mail pending" : "OTP mail sent");
+                facts.put("resultDigest", json.digest("otp-result", result));
+                facts.set("deliveryValidUntil", body.path("authorityValidUntil"));
+                var binding = facts.putObject("emailCredential");
+                binding.put("credentialId", "fdc1c21c-0e0b-48c1-8b82-49d03b24bfec");
+                binding.put("generation", "a".repeat(64));
+                binding.put(
+                    "destinationDigest", json.digest("otp-email-destination", "ada@example.test"));
+                String encoded =
+                    Base64.getUrlEncoder()
+                        .withoutPadding()
+                        .encodeToString(json.canonical(facts).getBytes(StandardCharsets.UTF_8));
+                return withStatus(org.springframework.http.HttpStatus.valueOf(status))
+                    .body(
+                        json.canonical(
+                            Map.of(
+                                "status",
+                                status,
+                                "deliveryState",
+                                status == 202 ? "READY" : "SENT",
+                                "result",
+                                result,
+                                "receipt",
+                                nativeReceipt(key, "otp-bootstrap-email-start/v1", encoded))))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .createResponse(req);
+              });
+    }
+
+    void expectEmailFinish() {
+      server
+          .expect(
+              requestTo(
+                  org.springframework.web.util.UriComponentsBuilder.fromUriString(issuer.base())
+                      .pathSegment(
+                          "realms", "synthetic", "otp-config", "setup-otp-mail", pending.username())
+                      .build()
+                      .encode()
+                      .toUri()))
+          .andExpect(method(HttpMethod.POST))
+          .andExpect(header("X-ORISO-OTP-Bootstrap", prepareReceipt))
+          .andRespond(
+              req -> {
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                assertNull(req.getHeaders().getFirst("X-ORISO-Human-Authorization"));
+                var actual = (org.springframework.mock.http.client.MockClientHttpRequest) req;
+                JsonNode body = json.read(actual.getBodyAsString(), JsonNode.class);
+                assertEquals(emailStartOperation, body.path("emailStartOperationId").asText());
+                assertEquals("123456", body.path("otp").path("initialCode").asText());
+                assertTrue(body.path("otp").path("secret").isNull());
+                assertTrue(body.path("otp").path("email").isNull());
+                assertEquals(
+                    1,
+                    jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='FROZEN'",
+                        Integer.class));
+                ObjectNode materialized = body.deepCopy();
+                materialized.put("username", pending.username());
+                materialized.put("bootstrapReceipt", prepareReceipt);
+                var facts = prepareFacts.deepCopy();
+                facts.put("state", "COMPLETE");
+                facts.set("operationId", body.path("operationId"));
+                facts.put("intentDigest", json.digest("otp-bootstrap-intent/v1", materialized));
+                facts.put("status", 201);
+                var result = Map.of("info", "OTP mail verified");
+                facts.put("resultDigest", json.digest("otp-result", result));
+                String encoded =
+                    Base64.getUrlEncoder()
+                        .withoutPadding()
+                        .encodeToString(json.canonical(facts).getBytes(StandardCharsets.UTF_8));
+                return withCreatedEntity(java.net.URI.create("/synthetic"))
+                    .body(
+                        json.canonical(
+                            Map.of(
+                                "status",
+                                201,
+                                "result",
+                                result,
+                                "receipt",
+                                nativeReceipt(key, "otp-bootstrap-complete/v1", encoded))))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .createResponse(req);
               });
     }
 

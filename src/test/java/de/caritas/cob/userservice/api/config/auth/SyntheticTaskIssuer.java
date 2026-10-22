@@ -94,6 +94,11 @@ final class SyntheticTaskIssuer implements AutoCloseable {
             List.of("tenantservice", "agencyservice", "consultingtypeservice", "userservice");
         subject = "native-setup-subject";
       }
+      case "backend-account-create" -> {
+        roles = List.of("account-provisioning", "account-read");
+        audiences = List.of("userservice", "oriso-account-lifecycle");
+        subject = "native-account-create-subject";
+      }
       case "backend-account-admin" -> {
         roles =
             List.of("account-maintenance", "account-read", "otp-config-admin", "session-exchange");
@@ -153,6 +158,16 @@ final class SyntheticTaskIssuer implements AutoCloseable {
                       "realm-admin")));
       case "missing-role" ->
           claims.claim("realm_access", Map.of("roles", List.of("config-wizard")));
+      case "create-extra-role" ->
+          claims.claim(
+              "realm_access",
+              Map.of(
+                  "roles", List.of("account-provisioning", "account-read", "account-maintenance")));
+      case "create-missing-role" ->
+          claims.claim("realm_access", Map.of("roles", List.of("account-read")));
+      case "create-extra-audience" ->
+          claims.audience(List.of("userservice", "oriso-account-lifecycle", "oriso-otp"));
+      case "create-missing-audience" -> claims.audience(List.of("oriso-account-lifecycle"));
       case "wrong-audience" -> claims.audience(List.of("account"));
       case "extra-audience" ->
           claims.audience(
