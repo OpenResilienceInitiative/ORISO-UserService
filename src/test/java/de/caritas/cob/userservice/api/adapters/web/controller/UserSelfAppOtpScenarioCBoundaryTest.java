@@ -94,10 +94,15 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.jdbc.update("update account_invite set two_factor_status='ACTIVE' where id=1");
       fixture.expectDelete(false);
       org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(fixture.controller)
-          .setControllerAdvice(new de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler())
+          .setControllerAdvice(
+              new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+                  .ApiResponseEntityExceptionHandler())
           .build()
-          .perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/users/2fa"))
-          .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+          .perform(
+              org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete(
+                  "/users/2fa"))
+          .andExpect(
+              org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
       assertEquals("ACKNOWLEDGED", fixture.status());
       assertEquals("PENDING_SETUP", fixture.inviteStatus());
       assertEquals(1, fixture.domainWrites());
@@ -111,11 +116,16 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.prepareDeliveredEmail();
       fixture.expectEmailFinish(false, false, false);
       org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(fixture.controller)
-          .setControllerAdvice(new de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler())
+          .setControllerAdvice(
+              new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+                  .ApiResponseEntityExceptionHandler())
           .build()
-          .perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(
-              "/users/2fa/email/validate/" + CODE))
-          .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNoContent());
+          .perform(
+              org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(
+                  "/users/2fa/email/validate/" + CODE))
+          .andExpect(
+              org.springframework.test.web.servlet.result.MockMvcResultMatchers.status()
+                  .isNoContent());
       assertEquals("ACKNOWLEDGED", fixture.status());
       assertEquals(PENDING_EMAIL, fixture.currentEmail());
       assertEquals("ACTIVE", fixture.inviteStatus());
