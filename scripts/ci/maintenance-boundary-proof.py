@@ -95,6 +95,7 @@ def select_slice(name):
             "publicLinkedEmailTerminalRefusalAfterOriginalExpiryReturnsSaved400WithoutAnotherAttempt",
             "publicDeleteAfterSentEmailClearsOnlyOriginalPendingPointerWithVerifiedAck",
             "publicDeleteInvalidReceiptCannotClearSentPendingEmailPointer",
+            "publicLostDeleteAckCannotReopenInviteOrClearPointerOfLaterEnrollment",
             "publicEmailStartAcknowledgesOnlyVerifiedSentAndKeepsPendingRecipientEncrypted",
             "publicEmailStartLostReplyNewOwnerReplaysFrozenRecipientAndOriginalExpiry",
             "publicEmailStartSameIdCannotReplaceTheCompletePendingDestination",

@@ -538,7 +538,11 @@ class UserSelfAppOtpNativePairProof {
       if (email) {
         String callback = required("PAIR_MAIL_CALLBACK");
         assertTrue(callback.matches("http://127\\.0\\.0\\.1:[0-9]+/one-delivered-code"));
-        String deliveredCode = http.getForObject(callback, String.class);
+        var callbackFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        callbackFactory.setConnectTimeout(5000);
+        callbackFactory.setReadTimeout(5000);
+        String deliveredCode =
+            new RestTemplate(callbackFactory).getForObject(callback, String.class);
         assertTrue(
             deliveredCode != null && deliveredCode.matches("[0-9]{6}"),
             "One actual SMTP-delivered code required");

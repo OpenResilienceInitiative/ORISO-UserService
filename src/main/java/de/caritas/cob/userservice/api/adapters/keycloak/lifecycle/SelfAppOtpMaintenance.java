@@ -366,16 +366,6 @@ public final class SelfAppOtpMaintenance {
 
   private CheckedIntent checked(
       Self self, Intent row, String digest, TaskActorCredentials actor, Operation kind) {
-    return checked(self, row, digest, actor, kind, false);
-  }
-
-  private CheckedIntent checked(
-      Self self,
-      Intent row,
-      String digest,
-      TaskActorCredentials actor,
-      Operation kind,
-      boolean sentReference) {
     if (!realmId.equals(row.realm)
         || !realmName.equals(row.realmName)
         || !self.account.equals(row.account)
@@ -385,11 +375,8 @@ public final class SelfAppOtpMaintenance {
         || !digest.equals(row.requestDigest)
         || !codec.canonical(target(self, row.operation)).equals(row.target))
       throw new ConflictException("The app OTP operation does not match its original request");
-    if (row.expiry <= clock.instant().getEpochSecond()
-        && !(sentReference
-            && kind == Operation.EMAIL_START
-            && "ACKNOWLEDGED".equals(row.status)
-            && Integer.valueOf(200).equals(row.nativeStatus))) throw unavailable();
+    // A terminal result is owned historical data; expiry never grants another native effect.
+    if (row.expiry <= clock.instant().getEpochSecond() && !terminal(row.status)) throw unavailable();
     JsonNode metadata = null;
     if ("PREPARED".equals(row.status)) {
       if (row.pending
@@ -432,7 +419,7 @@ public final class SelfAppOtpMaintenance {
     if (start == null
         || !"ACKNOWLEDGED".equals(start.status)
         || !Integer.valueOf(200).equals(start.nativeStatus)) throw unavailable();
-    var checked = checked(self, start, start.requestDigest, actor, Operation.EMAIL_START, true);
+    var checked = checked(self, start, start.requestDigest, actor, Operation.EMAIL_START);
     var command =
         codec.read(
             codec.utf8(codec.openSelfAppIntent(checked.metadata, checked.row.envelope)),

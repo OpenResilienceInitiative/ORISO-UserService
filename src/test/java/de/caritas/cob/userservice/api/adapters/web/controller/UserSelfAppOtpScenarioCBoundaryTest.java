@@ -749,6 +749,57 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
+  void publicLostDeleteAckCannotReopenInviteOrClearPointerOfLaterEnrollment() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.request.setMethod("DELETE");
+      fixture.jdbc.update("update account_invite set two_factor_status='ACTIVE' where id=1");
+      String oldDelete = fixture.operation;
+      fixture.expectDelete(true, "ACTIVE", 1);
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> fixture.controller.deactivateTwoFactorAuthByApp());
+      assertEquals("FROZEN", fixture.status());
+      String originalCipher = fixture.envelope();
+      fixture.server.verify();
+      fixture.server.reset();
+      // The later enrollment has its own public request and verified native receipt. Its local
+      // setup prerequisite is seeded, then the real invite service performs its ACTIVE transition.
+      fixture.operation = UUID.randomUUID().toString();
+      fixture.request.removeHeader("Idempotency-Key");
+      fixture.request.addHeader("Idempotency-Key", fixture.operation);
+      fixture.request.setMethod("PUT");
+      fixture.jdbc.update("update account_invite set two_factor_status='PENDING_SETUP' where id=1");
+      fixture.expectNative(false, false);
+      assertEquals(
+          200,
+          fixture.controller.activateTwoFactorAuthByApp(fixture.dto()).getStatusCode().value());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals("ACTIVE", fixture.inviteStatus());
+      assertEquals(1, fixture.domainWrites());
+      fixture.server.verify();
+      fixture.server.reset();
+      String laterPending = UUID.randomUUID().toString();
+      fixture.jdbc.update(
+          "insert into identity_self_otp_pending_email(account_id,start_operation_id) values(?,?)",
+          ACCOUNT,
+          laterPending);
+      fixture.operation = oldDelete;
+      fixture.request.removeHeader("Idempotency-Key");
+      fixture.request.addHeader("Idempotency-Key", oldDelete);
+      fixture.request.setMethod("DELETE");
+      fixture.expectSavedDelete();
+      assertEquals(200, fixture.controller.deactivateTwoFactorAuthByApp().getStatusCode().value());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals(originalCipher, fixture.envelope());
+      assertEquals("ACTIVE", fixture.inviteStatus());
+      assertEquals(laterPending, fixture.pendingEmailOperation());
+      assertEquals(1, fixture.domainWrites());
+      assertEquals(2, fixture.nativeExecutions.get());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
   void missingScopedEmailFinishKeepsActualCGuardAndLegacyInvalidCodeWorking() throws Exception {
     try (var fixture = new Fixture(true, false)) {
       fixture.request.setMethod("POST");
@@ -805,6 +856,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     String emailStartOperation;
     final AtomicInteger nativeExecutions = new AtomicInteger();
     boolean tamperReceipt;
+    String savedDeleteReply;
+    String savedDeleteWire;
 
     Fixture(boolean fiveActors, boolean scopedService) throws Exception {
       this.fiveActors = fiveActors;
@@ -1465,6 +1518,24 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     }
 
     void expectDelete(boolean lostReply, String initialGate) {
+      expectDelete(lostReply, initialGate, lostReply ? 2 : 1);
+    }
+
+    void expectSavedDelete() {
+      assertNotNull(savedDeleteReply);
+      assertNotNull(savedDeleteWire);
+      server.expect(requestTo(issuer.issuer() + "/otp-config/delete-otp/ordinary"))
+          .andExpect(method(HttpMethod.DELETE)).andRespond(outbound -> {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+            assertEquals(savedDeleteWire, ((MockClientHttpRequest) outbound).getBodyAsString());
+            var materialized = codec.read(savedDeleteWire, ObjectNode.class);
+            materialized.put("username", "ordinary");
+            checkProof(outbound.getHeaders(), materialized, "otp.delete", "OTP", "oriso-otp", "DELETE");
+            return withSuccess(savedDeleteReply, MediaType.APPLICATION_JSON).createResponse(outbound);
+          });
+    }
+
+    void expectDelete(boolean lostReply, String initialGate, int requests) {
       server
           .expect(
               requestTo(
@@ -1488,7 +1559,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       var response = new AtomicReference<String>();
       server
           .expect(
-              lostReply ? ExpectedCount.twice() : ExpectedCount.once(),
+              ExpectedCount.times(requests),
               requestTo(issuer.issuer() + "/otp-config/delete-otp/ordinary"))
           .andExpect(method(HttpMethod.DELETE))
           .andRespond(
@@ -1544,6 +1615,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                           + HexFormat.of().formatHex(mac("otp-operation-receipt\n" + encoded))
                           + (tamperReceipt ? "x" : ""));
                   response.set(codec.canonical(reply));
+                  savedDeleteReply = response.get();
+                  savedDeleteWire = wire;
                   nativeExecutions.incrementAndGet();
                   if (lostReply)
                     throw new ResourceAccessException("Fixture lost committed delete reply");
