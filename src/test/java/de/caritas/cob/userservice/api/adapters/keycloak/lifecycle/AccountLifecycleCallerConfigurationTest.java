@@ -64,13 +64,17 @@ class AccountLifecycleCallerConfigurationTest {
     var broker = mock(TaskActorTokenBroker.class);
     var jdbc = mock(JdbcTemplate.class);
     new ApplicationContextRunner()
-        .withInitializer(context -> context.getEnvironment().merge(valid()))
+        .withInitializer(
+            context -> {
+              context.getEnvironment().merge(valid());
+              context.addBeanFactoryPostProcessor(
+                  factory -> factory.registerSingleton("fixtureKeycloakConfiguration", keycloak));
+            })
         .withPropertyValues(
             "ORISO_ACCOUNT_LIFECYCLE_ENABLED=true",
             "ORISO_ACCOUNT_LIFECYCLE_REALM=fixture",
             "KEYCLOAK_REALM_INTERNAL_ID=22222222-2222-4222-8222-222222222222")
         .withUserConfiguration(AccountLifecycleCallerConfiguration.class)
-        .withBean(KeycloakConfig.class, () -> keycloak)
         .withBean("keycloakRestTemplate", RestTemplate.class, () -> http)
         .withBean(TaskActorConfiguration.class, () -> actors)
         .withBean(TaskActorTokenBroker.class, () -> broker)

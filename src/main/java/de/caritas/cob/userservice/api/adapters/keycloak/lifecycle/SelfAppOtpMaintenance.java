@@ -871,8 +871,7 @@ public final class SelfAppOtpMaintenance {
         || jwt.getExpiresAt().getEpochSecond() <= now) throw forbidden();
     String issuer = jwt.getIssuer().toString();
     String client = jwt.getClaimAsString("azp");
-    if (!(authServer.replaceAll("/+$", "") + "/realms/" + realmName).equals(issuer)
-        || !text(client, 255)) throw forbidden();
+    if (!humanIssuer.equals(issuer) || !text(client, 255)) throw forbidden();
     Object tenant = jwt.getClaims().get("tenantId");
     Long tenantId;
     if (tenant == null && !jwt.getClaims().containsKey("tenantId")) tenantId = null;

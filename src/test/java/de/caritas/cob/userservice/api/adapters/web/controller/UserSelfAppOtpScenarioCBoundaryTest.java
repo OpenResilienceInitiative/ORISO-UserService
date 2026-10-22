@@ -418,6 +418,32 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
+  void publicEmailIdempotencyBindsTheCompleteEmailFieldBeforeNormalization() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.request.setRequestURI("/service/users/2fa/email");
+      fixture.expectEmail(false, false);
+      assertEquals(
+          204,
+          fixture
+              .controller
+              .startTwoFactorAuthByEmailSetup(fixture.email())
+              .getStatusCode()
+              .value());
+      var changed = new EmailDTO();
+      changed.setEmail(PENDING_EMAIL);
+      assertThrows(
+          ConflictException.class,
+          () -> fixture.controller.startTwoFactorAuthByEmailSetup(changed));
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals(fixture.operation, fixture.pendingEmailOperation());
+      assertEquals("original@oriso.org", fixture.currentEmail());
+      assertEquals(1, fixture.nativeExecutions.get());
+      assertEquals(0, fixture.domainWrites());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
   void publicEmailStartLostReplyNewOwnerReplaysFrozenRecipientAndOriginalExpiry() throws Exception {
     try (var fixture = new Fixture(true, true)) {
       fixture.request.setRequestURI("/service/users/2fa/email");
