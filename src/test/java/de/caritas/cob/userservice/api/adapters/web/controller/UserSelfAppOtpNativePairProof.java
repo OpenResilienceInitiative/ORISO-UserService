@@ -11,24 +11,24 @@ import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakCustomCon
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance;
 import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
-import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
-import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
+import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
-import de.caritas.cob.userservice.api.facade.userdata.*;
-import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.in.Messaging;
-import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.DecryptionService;
-import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.config.auth.*;
+import de.caritas.cob.userservice.api.facade.userdata.*;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
+import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.*;
+import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.accountinvite.*;
+import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -254,9 +254,9 @@ class UserSelfAppOtpNativePairProof {
                             ? "native-read-http"
                             : logical.getPath().contains("/otp-config/fetch-otp-setup-info/")
                                 ? "native-otp-read-http"
-                            : logical.getPath().endsWith("/token")
-                                ? "native-token-http"
-                                : "native-stock-http",
+                                : logical.getPath().endsWith("/token")
+                                    ? "native-token-http"
+                                    : "native-stock-http",
                     response.getStatusCode().value());
                 if (mutation
                     && (finishingEmail.get()
@@ -431,7 +431,8 @@ class UserSelfAppOtpNativePairProof {
               new UsernameTranscoder());
       var controller = mock(UserController.class, CALLS_REAL_METHODS);
       ReflectionTestUtils.setField(controller, "userTwoFactorAuthControllerDelegate", delegate);
-      var owner = new SelfAppOtpMaintenance(
+      var owner =
+          new SelfAppOtpMaintenance(
               mode,
               human,
               request,
@@ -454,12 +455,26 @@ class UserSelfAppOtpNativePairProof {
       var partialData = new UserDataResponseDTO();
       partialData.setUserRoles(Set.of("user"));
       when(provider.retrieveData(user)).thenReturn(partialData);
-      var readDelegate = new UserAccountControllerDelegate(
-          users, human, mock(DecryptionService.class), mock(ConsultantDataFacade.class),
-          identity, legacy, accounts, mock(Messaging.class), mock(ConsultantDtoMapper.class),
-          new UserDtoMapper(identity), mock(ConsultantService.class), mock(ConsultantUpdateService.class),
-          mock(ConsultantDataProvider.class), provider, mock(VideoChatConfig.class),
-          mock(KeycloakUserDataProvider.class), mock(AgencyAdminDataProvider.class), new UsernameTranscoder());
+      var readDelegate =
+          new UserAccountControllerDelegate(
+              users,
+              human,
+              mock(DecryptionService.class),
+              mock(ConsultantDataFacade.class),
+              identity,
+              legacy,
+              accounts,
+              mock(Messaging.class),
+              mock(ConsultantDtoMapper.class),
+              new UserDtoMapper(identity),
+              mock(ConsultantService.class),
+              mock(ConsultantUpdateService.class),
+              mock(ConsultantDataProvider.class),
+              provider,
+              mock(VideoChatConfig.class),
+              mock(KeycloakUserDataProvider.class),
+              mock(AgencyAdminDataProvider.class),
+              new UsernameTranscoder());
       readDelegate.setSelfAppOtpMaintenance(owner);
       ReflectionTestUtils.setField(controller, "userAccountControllerDelegate", readDelegate);
       String mutationPath = request.getRequestURI();
@@ -473,7 +488,9 @@ class UserSelfAppOtpNativePairProof {
       assertNotNull(setupSecret);
       assertFalse(setupSecret.isBlank());
       assertNotNull(setupRead.getBody().getTwoFactorAuth().getQrCode());
-      assertEquals(0, jdbc.queryForObject("select count(*) from identity_self_app_otp_intent", Integer.class));
+      assertEquals(
+          0,
+          jdbc.queryForObject("select count(*) from identity_self_app_otp_intent", Integer.class));
       assertEquals(0, activationCalls.get());
       phase("public-self-read", 200);
       request.setMethod("PUT");
@@ -702,7 +719,8 @@ class UserSelfAppOtpNativePairProof {
           assertFalse(allStored.contains(secret), "No delivered secret or bearer at rest");
         phase("public-success", 204);
       }
-      int intentCount = jdbc.queryForObject("select count(*) from identity_self_app_otp_intent", Integer.class);
+      int intentCount =
+          jdbc.queryForObject("select count(*) from identity_self_app_otp_intent", Integer.class);
       int writesBeforeRead = activationCalls.get();
       request.setMethod("GET");
       request.setRequestURI("/service/users/data");
@@ -710,10 +728,14 @@ class UserSelfAppOtpNativePairProof {
       var activeRead = assertDoesNotThrow(() -> controller.getUserData());
       assertEquals(200, activeRead.getStatusCode().value());
       assertTrue(activeRead.getBody().getTwoFactorAuth().getIsActive());
-      assertEquals(email ? de.caritas.cob.userservice.api.adapters.web.dto.OtpType.EMAIL
-          : de.caritas.cob.userservice.api.adapters.web.dto.OtpType.APP,
+      assertEquals(
+          email
+              ? de.caritas.cob.userservice.api.adapters.web.dto.OtpType.EMAIL
+              : de.caritas.cob.userservice.api.adapters.web.dto.OtpType.APP,
           activeRead.getBody().getTwoFactorAuth().getType());
-      assertEquals(intentCount, jdbc.queryForObject("select count(*) from identity_self_app_otp_intent", Integer.class));
+      assertEquals(
+          intentCount,
+          jdbc.queryForObject("select count(*) from identity_self_app_otp_intent", Integer.class));
       assertEquals(writesBeforeRead, activationCalls.get());
       phase("public-self-read-active", 200);
       verifyNoInteractions(legacy);

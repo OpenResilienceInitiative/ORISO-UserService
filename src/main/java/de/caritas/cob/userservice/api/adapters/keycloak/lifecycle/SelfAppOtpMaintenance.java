@@ -67,7 +67,11 @@ public final class SelfAppOtpMaintenance {
     if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
       throw unavailable();
     var self = actualSelf("GET", Set.of("/users/data", "/service/users/data"));
-    transaction(() -> { lockedDomain(self); return true; });
+    transaction(
+        () -> {
+          lockedDomain(self);
+          return true;
+        });
     try {
       var actor = actors.require(TaskPurpose.OTP);
       if (!canonicalUuid(actor.serviceSubject())) throw unavailable();
@@ -80,14 +84,28 @@ public final class SelfAppOtpMaintenance {
       materialized.putNull("otp");
       var headers = headers(self, token);
       headers.set("X-ORISO-Account-Target", codec.canonical(target));
-      headers.set("X-ORISO-Task-Context", codec.selfReadOtpProof(
-          realmName, realmId, self.account, actor, materialized,
-          Math.min(self.expires, token.validatedJwtExpiresAt())));
+      headers.set(
+          "X-ORISO-Task-Context",
+          codec.selfReadOtpProof(
+              realmName,
+              realmId,
+              self.account,
+              actor,
+              materialized,
+              Math.min(self.expires, token.validatedJwtExpiresAt())));
       if (TransactionSynchronizationManager.isActualTransactionActive()
           || self.expires <= clock.instant().getEpochSecond()) throw unavailable();
-      var uri = UriComponentsBuilder.fromUriString(authServer)
-          .pathSegment("realms", realmName, "otp-config", "fetch-otp-setup-info",
-              projection.path("username").textValue()).build().encode().toUri();
+      var uri =
+          UriComponentsBuilder.fromUriString(authServer)
+              .pathSegment(
+                  "realms",
+                  realmName,
+                  "otp-config",
+                  "fetch-otp-setup-info",
+                  projection.path("username").textValue())
+              .build()
+              .encode()
+              .toUri();
       var response = http.exchange(uri, HttpMethod.GET, new HttpEntity<>(headers), String.class);
       if (response.getStatusCode().value() != 200) throw unavailable();
       return SelfOtpReadWire.credential(codec, response.getBody());
@@ -790,7 +808,8 @@ public final class SelfAppOtpMaintenance {
   }
 
   private Self actualSelf(Operation kind) {
-    return actualSelf(kind.method,
+    return actualSelf(
+        kind.method,
         kind == Operation.EMAIL_START || kind == Operation.EMAIL_FINISH
             ? Set.of("/service/users/2fa/email", "/users/2fa/email")
             : Set.of("/service/users/2fa/app", "/users/2fa/app"));

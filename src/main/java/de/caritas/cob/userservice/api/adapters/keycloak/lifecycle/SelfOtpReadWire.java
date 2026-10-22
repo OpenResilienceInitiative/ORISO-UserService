@@ -11,16 +11,31 @@ import java.util.Set;
 final class SelfOtpReadWire {
   private SelfOtpReadWire() {}
 
-  static JsonNode projection(AccountLifecycleCodec codec, String reply, String account, Long tenant) {
+  static JsonNode projection(
+      AccountLifecycleCodec codec, String reply, String account, Long tenant) {
     if (reply == null || reply.length() > 65536) throw unavailable();
     var value = codec.read(reply, JsonNode.class);
-    if (!names(value).equals(Set.of(
-            "id", "username", "email", "firstName", "lastName", "enabled", "emailVerified",
-            "tenantId", "preferredLanguage", "effectiveRoles", "passwordChangeRequired", "state"))
+    if (!names(value)
+            .equals(
+                Set.of(
+                    "id",
+                    "username",
+                    "email",
+                    "firstName",
+                    "lastName",
+                    "enabled",
+                    "emailVerified",
+                    "tenantId",
+                    "preferredLanguage",
+                    "effectiveRoles",
+                    "passwordChangeRequired",
+                    "state"))
         || !account.equals(value.path("id").textValue())
-        || !(tenant == null ? value.path("tenantId").isNull()
+        || !(tenant == null
+            ? value.path("tenantId").isNull()
             : tenant.toString().equals(value.path("tenantId").textValue()))
-        || !value.path("enabled").isBoolean() || !value.path("enabled").booleanValue()
+        || !value.path("enabled").isBoolean()
+        || !value.path("enabled").booleanValue()
         || !text(value.path("username").textValue(), 255)
         || !value.path("state").isTextual()
         || !value.path("state").textValue().matches("[a-f0-9]{64}")) throw unavailable();
@@ -40,8 +55,8 @@ final class SelfOtpReadWire {
         || (!setup && (secret == null || kind != null))
         || (setup && !Set.of("APP", "EMAIL").contains(kind == null ? "" : kind))
         || (setup && "APP".equals(kind) && secret != null)) throw unavailable();
-    return new IdentityOtpCredential(setup, secret, qr,
-        kind == null ? null : IdentityOtpType.valueOf(kind));
+    return new IdentityOtpCredential(
+        setup, secret, qr, kind == null ? null : IdentityOtpType.valueOf(kind));
   }
 
   private static Set<String> names(JsonNode value) {
@@ -58,7 +73,9 @@ final class SelfOtpReadWire {
   }
 
   private static boolean text(String value, int maximum) {
-    return value != null && !value.isBlank() && value.length() <= maximum
+    return value != null
+        && !value.isBlank()
+        && value.length() <= maximum
         && value.chars().noneMatch(c -> c < 32 || c == 127);
   }
 

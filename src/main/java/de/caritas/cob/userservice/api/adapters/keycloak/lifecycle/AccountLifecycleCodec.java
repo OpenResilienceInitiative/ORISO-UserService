@@ -390,10 +390,14 @@ public final class AccountLifecycleCodec {
   }
 
   String selfReadOtpProof(
-      String realmName, String realmId, String accountId, TaskActorCredentials actor,
-      JsonNode materialized, long authorityValidUntil) {
-    return selfOtpProof(realmName, realmId, accountId, actor, materialized,
-        authorityValidUntil, "otp.read", "GET");
+      String realmName,
+      String realmId,
+      String accountId,
+      TaskActorCredentials actor,
+      JsonNode materialized,
+      long authorityValidUntil) {
+    return selfOtpProof(
+        realmName, realmId, accountId, actor, materialized, authorityValidUntil, "otp.read", "GET");
   }
 
   String selfDeleteOtpProof(
