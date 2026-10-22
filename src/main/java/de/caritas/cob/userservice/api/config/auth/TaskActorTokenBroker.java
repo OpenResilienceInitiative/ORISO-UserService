@@ -41,7 +41,14 @@ public class TaskActorTokenBroker {
 
   /** Only checked account-creation transports may obtain this private result. */
   public VerifiedProvisioningToken issueCheckedProvisioning(TaskPurpose purpose) {
-    throw provisioningUnavailable();
+    if (purpose != TaskPurpose.ACCOUNT_PROVISIONING) throw provisioningUnavailable();
+    try {
+      var binding = configuration.require(purpose);
+      if (binding.actor() != TaskActor.ACCOUNT_CREATE) throw provisioningUnavailable();
+      return new VerifiedProvisioningToken(requestBoundNativeToken(binding));
+    } catch (RuntimeException failure) {
+      throw provisioningUnavailable();
+    }
   }
 
   private static IllegalStateException provisioningUnavailable() {
@@ -93,32 +100,40 @@ public class TaskActorTokenBroker {
     }
   }
 
-  /** Only the private claimed Magic Link transport may obtain this finite session result. */
+  /** Only the claimed Magic Link transport may obtain the finite session-purpose result. */
   public VerifiedMaintenanceToken issueCheckedSessionExchange() {
-    throw checkedUnavailable();
+    return issueCheckedAdminPurpose(TaskPurpose.SESSION_EXCHANGE);
   }
 
   /** Only the finite checked maintenance/OTP workflow may obtain this private result. */
   public VerifiedMaintenanceToken issueCheckedMaintenance(TaskPurpose purpose) {
     if (purpose != TaskPurpose.ACCOUNT_MAINTENANCE && purpose != TaskPurpose.OTP)
       throw checkedUnavailable();
+    return issueCheckedAdminPurpose(purpose);
+  }
+
+  private VerifiedMaintenanceToken issueCheckedAdminPurpose(TaskPurpose purpose) {
     try {
       var binding = configuration.require(purpose);
       if (binding.actor() != TaskActor.ACCOUNT_ADMIN) throw checkedUnavailable();
-      var issued = requestNativeToken(binding);
-      var issuedAt = issued.token.getIssuedAt();
-      var expiresAt = issued.token.getExpiresAt();
-      var now = Instant.now();
-      if (issuedAt == null
-          || expiresAt == null
-          || issuedAt.getEpochSecond() <= 0
-          || expiresAt.getEpochSecond() <= issuedAt.getEpochSecond()
-          || issuedAt.isAfter(now)
-          || expiresAt.getEpochSecond() <= now.getEpochSecond()) throw checkedUnavailable();
-      return new VerifiedMaintenanceToken(purpose, issued);
+      return new VerifiedMaintenanceToken(purpose, requestBoundNativeToken(binding));
     } catch (RuntimeException failure) {
       throw checkedUnavailable();
     }
+  }
+
+  private NativeToken requestBoundNativeToken(TaskActorCredentials binding) {
+    var issued = requestNativeToken(binding);
+    var issuedAt = issued.token.getIssuedAt();
+    var expiresAt = issued.token.getExpiresAt();
+    var now = Instant.now();
+    if (issuedAt == null
+        || expiresAt == null
+        || issuedAt.getEpochSecond() <= 0
+        || expiresAt.getEpochSecond() <= issuedAt.getEpochSecond()
+        || issuedAt.isAfter(now)
+        || expiresAt.getEpochSecond() <= now.getEpochSecond()) throw checkedUnavailable();
+    return issued;
   }
 
   private NativeToken requestNativeToken(TaskActorCredentials binding) {
