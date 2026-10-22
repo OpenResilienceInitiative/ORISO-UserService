@@ -151,7 +151,9 @@ class JdbcProtectedAccountCreationTest {
     assertArrayEquals(accounts.recoverBody(first), accounts.recoverBody(reducing));
     assertThrows(IllegalStateException.class, () -> owner().metadata(claim));
     assertThrows(IllegalStateException.class, () -> owner().recovery(claim, 0));
-    jdbc.update("UPDATE protected_invitation_acceptance SET execution_id=? WHERE invite_id=73", UUID.randomUUID().toString());
+    jdbc.update(
+        "UPDATE protected_invitation_acceptance SET execution_id=? WHERE invite_id=73",
+        UUID.randomUUID().toString());
     assertThrows(IllegalStateException.class, () -> owner().recovery(historical, 0));
     assertEquals(1, count("protected_account_recovery"));
     assertThrows(IllegalArgumentException.class, () -> owner().recovery(claim, -1));

@@ -471,39 +471,77 @@ public final class ProtectedAccountCodec {
 
   public String consumedStatusProof(VerifiedCreated created, TaskActorCredentials actor) {
     require(created);
-    if (actor == null || actor.actor() != TaskActor.SETUP
+    if (actor == null
+        || actor.actor() != TaskActor.SETUP
         || !text(created.prepared.scope, "setupClient", 255).equals(actor.clientId())
-        || !text(created.prepared.scope, "setupSubject", 36).equals(actor.serviceSubject())) throw invalid();
+        || !text(created.prepared.scope, "setupSubject", 36).equals(actor.serviceSubject()))
+      throw invalid();
     long now = clock.instant().getEpochSecond();
-    Map<String,Object> claims = new TreeMap<>();
-    claims.put("iss", "userservice"); claims.put("aud", "oriso-protected-invitations");
-    claims.put("purpose", "INVITE_RESERVATIONS"); claims.put("operation", "protected-invitation.status");
-    claims.put("method", "POST"); claims.put("actor", "SETUP"); claims.put("realm", realmName);
+    Map<String, Object> claims = new TreeMap<>();
+    claims.put("iss", "userservice");
+    claims.put("aud", "oriso-protected-invitations");
+    claims.put("purpose", "INVITE_RESERVATIONS");
+    claims.put("operation", "protected-invitation.status");
+    claims.put("method", "POST");
+    claims.put("actor", "SETUP");
+    claims.put("realm", realmName);
     claims.put("target", "realm/" + realmId + "/protected-invitation/" + created.approvalId());
-    claims.put("taskClient", actor.clientId()); claims.put("taskSubject", actor.serviceSubject());
-    claims.put("payloadDigest", json.digest("protected-invitation-payload/v1", json.read(json.utf8(consumedStatusBody(created)), JsonNode.class)));
-    claims.put("jti", UUID.randomUUID().toString()); claims.put("nonce", UUID.randomUUID().toString().replace("-", ""));
-    claims.put("iat", now); claims.put("exp", now + 60);
+    claims.put("taskClient", actor.clientId());
+    claims.put("taskSubject", actor.serviceSubject());
+    claims.put(
+        "payloadDigest",
+        json.digest(
+            "protected-invitation-payload/v1",
+            json.read(json.utf8(consumedStatusBody(created)), JsonNode.class)));
+    claims.put("jti", UUID.randomUUID().toString());
+    claims.put("nonce", UUID.randomUUID().toString().replace("-", ""));
+    claims.put("iat", now);
+    claims.put("exp", now + 60);
     String encoded = encode(json.canonical(claims).getBytes(StandardCharsets.UTF_8));
     return encoded + "." + encode(mac("protected-invitation-proof/v1\n" + encoded));
   }
 
-  public VerifiedCommitted verifyConsumedStatus(VerifiedCreated created, LocalOutcome local, byte[] response) {
+  public VerifiedCommitted verifyConsumedStatus(
+      VerifiedCreated created, LocalOutcome local, byte[] response) {
     try {
       require(created);
       JsonNode value = json.read(json.utf8(response), JsonNode.class);
-      fields(value, "approvalId", "scopeDigest", "state", "version", "boundAttemptId", "fencedExecution", "approvalReceipt", "transitionReceipt", "approvalRequestDigest");
+      fields(
+          value,
+          "approvalId",
+          "scopeDigest",
+          "state",
+          "version",
+          "boundAttemptId",
+          "fencedExecution",
+          "approvalReceipt",
+          "transitionReceipt",
+          "approvalRequestDigest");
       if (!created.approvalId().equals(uuid(text(value, "approvalId", 36)))
           || !equal(created.prepared.scopeDigest, text(value, "scopeDigest", 64))
-          || !"CONSUMED".equals(text(value, "state", 20)) || number(value, "version") < 0
+          || !"CONSUMED".equals(text(value, "state", 20))
+          || number(value, "version") < 0
           || !created.attemptId().equals(uuid(text(value, "boundAttemptId", 36)))
           || !value.path("fencedExecution").isNull()
           || !equal(approvalRequestDigest(created), text(value, "approvalRequestDigest", 64))
-          || !equal(json.canonical(created.prepared.receipt), json.canonical(value.path("approvalReceipt")))) throw invalid();
+          || !equal(
+              json.canonical(created.prepared.receipt),
+              json.canonical(value.path("approvalReceipt")))) throw invalid();
       JsonNode wrapper = value.path("transitionReceipt");
-      fields(wrapper, "operation", "state", "approvalId", "scopeDigest", "boundAttemptId", "accountId", "terminalReceipt", "receipt");
-      JsonNode authenticated = decode(text(wrapper, "receipt", 16384), "protected-approval-consume/v1", true);
-      ObjectNode unsigned = wrapper.deepCopy(); unsigned.remove("receipt");
+      fields(
+          wrapper,
+          "operation",
+          "state",
+          "approvalId",
+          "scopeDigest",
+          "boundAttemptId",
+          "accountId",
+          "terminalReceipt",
+          "receipt");
+      JsonNode authenticated =
+          decode(text(wrapper, "receipt", 16384), "protected-approval-consume/v1", true);
+      ObjectNode unsigned = wrapper.deepCopy();
+      unsigned.remove("receipt");
       if (!equal(json.canonical(unsigned), json.canonical(authenticated))
           || !"protected-invitation.consume".equals(text(wrapper, "operation", 64))
           || !"CONSUMED".equals(text(wrapper, "state", 20))
@@ -511,18 +549,33 @@ public final class ProtectedAccountCodec {
           || !equal(created.prepared.scopeDigest, text(wrapper, "scopeDigest", 64))
           || !created.attemptId().equals(uuid(text(wrapper, "boundAttemptId", 36)))
           || !created.accountId().equals(text(wrapper, "accountId", 255))) throw invalid();
-      // Existing verifier independently authenticates all14 native terminal fields and original commit body.
+      // Existing verifier independently authenticates all14 native terminal fields and original
+      // commit body.
       var result = nodes.createObjectNode();
-      result.put("attemptId", created.attemptId().toString()); result.put("accountId", created.accountId());
-      result.put("state", "COMMITTED"); result.set("execution", execution(created.executionId()));
-      result.put("creationProof", created.creationProof()); result.putNull("recoveryReceipt");
+      result.put("attemptId", created.attemptId().toString());
+      result.put("accountId", created.accountId());
+      result.put("state", "COMMITTED");
+      result.set("execution", execution(created.executionId()));
+      result.put("creationProof", created.creationProof());
+      result.putNull("recoveryReceipt");
       result.put("terminalReceipt", text(wrapper, "terminalReceipt", 16384));
-      return verifyCommitted(created, local, json.canonical(result).getBytes(StandardCharsets.UTF_8));
-    } catch (RuntimeException failure) { throw invalid(); }
+      return verifyCommitted(
+          created, local, json.canonical(result).getBytes(StandardCharsets.UTF_8));
+    } catch (RuntimeException failure) {
+      throw invalid();
+    }
   }
 
   private String approvalRequestDigest(VerifiedCreated created) {
-    return json.digest("protected-approval-request/v1", Map.of("request", Map.of("scope", created.prepared.scope), "issuerRealm", realmId, "issuerSubject", created.prepared.issuerSubject));
+    return json.digest(
+        "protected-approval-request/v1",
+        Map.of(
+            "request",
+            Map.of("scope", created.prepared.scope),
+            "issuerRealm",
+            realmId,
+            "issuerSubject",
+            created.prepared.issuerSubject));
   }
 
   /** Durable original metadata only; neither the account body nor password is retained. */

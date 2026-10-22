@@ -56,7 +56,10 @@ public class TenantAdminOnboardingController {
   @org.springframework.beans.factory.annotation.Autowired
   void protectedOnboarding(
       de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration actors,
-      org.springframework.beans.factory.ObjectProvider<de.caritas.cob.userservice.api.service.accountinvite.onboarding.ProtectedAdminOnboardingService> coordinator,
+      org.springframework.beans.factory.ObjectProvider<
+              de.caritas.cob.userservice.api.service.accountinvite.onboarding
+                  .ProtectedAdminOnboardingService>
+          coordinator,
       jakarta.servlet.http.HttpServletRequest request) {
     // Inert receiving seam until the hosted public-route counterfactual executes.
   }
