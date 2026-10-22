@@ -55,6 +55,11 @@ public final class HumanAdminAccountMaintenance {
           .enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES)
           .disable(com.fasterxml.jackson.databind.MapperFeature.ALLOW_COERCION_OF_SCALARS);
 
+  /** Root supplies only the already validated immutable lifecycle group map. */
+  public void configureReviewedOrdinaryGroups(java.util.Map<String, Set<String>> groups) {
+    Objects.requireNonNull(groups);
+  }
+
   public HumanAdminAccountMaintenance(
       IdentityClientConfig mode,
       AuthenticatedUser actor,

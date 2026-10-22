@@ -566,6 +566,16 @@ class HumanAdminAccountMaintenanceTest {
     }
   }
 
+
+  @Test
+  void actualPublicConsultantRoleAndProfileUseOneAtomicReviewedCommand() {
+    for (String scenario : List.of("roles-add", "roles-remove", "roles-unknown", "roles-replay", "roles-missing", "roles-preserve")) {
+      server.reset();
+      actualSchemaAndValidatedHumanFixture();
+      runActualConsultantEdit(scenario);
+    }
+  }
+
   private void runActualConsultantEdit(String scenario) {
     if (!Set.of("dual", "foreign-secondary").contains(scenario))
       jdbc.update("delete from admin where admin_id=?", ACCOUNT);
@@ -606,6 +616,11 @@ class HumanAdminAccountMaintenanceTest {
                 "realm-1"),
             CLOCK,
             ISSUER);
+    boolean roleEdit = scenario.startsWith("roles-");
+    if (roleEdit && !"roles-missing".equals(scenario))
+      service.configureReviewedOrdinaryGroups(Map.of(
+          "/human-roles/test-consultant-basic", Set.of("consultant"),
+          "/human-roles/test-consultant-chat", Set.of("consultant", "group-chat-consultant")));
     var adapter =
         new de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService(
             human,
@@ -675,6 +690,13 @@ class HumanAdminAccountMaintenanceTest {
             .email("new@example.test")
             .formalLanguage(true)
             .absent(true);
+    if (roleEdit) dto.setIsGroupchatConsultant(!"roles-remove".equals(scenario));
+    if ("roles-missing".equals(scenario)) {
+      assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto));
+      assertEquals(0, jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
+      server.verify();
+      return;
+    }
     if ("foreign-secondary".equals(scenario)) {
       assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto));
       assertEquals(
@@ -683,30 +705,42 @@ class HumanAdminAccountMaintenanceTest {
       server.verify();
       return;
     }
-    readReply();
+    List<String> originalRoles = "roles-preserve".equals(scenario)
+        ? List.of("consultant", "tenant-admin")
+        : "roles-remove".equals(scenario) ? List.of("consultant", "group-chat-consultant") : List.of("consultant");
+    List<String> desiredRoles = "roles-remove".equals(scenario)
+        ? List.of("consultant") : List.of("consultant", "group-chat-consultant");
+    String command = roleEdit ? "ordinary-profile" : "profile";
+    readReply(false, roleEdit ? originalRoles : null);
+    if ("roles-preserve".equals(scenario)) {
+      assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto));
+      assertEquals("Old", jdbc.queryForObject("select first_name from consultant where consultant_id=?", String.class, ACCOUNT));
+      server.verify();
+      return;
+    }
     var frozen = new AtomicReference<String>();
     var mutation =
         server
-            .expect(requestTo(URL + "/profile"))
+            .expect(requestTo(URL + "/" + command))
             .andExpect(r -> frozen.set(((MockClientHttpRequest) r).getBodyAsString()));
-    boolean unknown = Set.of("unknown", "changed-body").contains(scenario);
+    boolean unknown = Set.of("unknown", "changed-body", "roles-unknown").contains(scenario);
     if (unknown)
       mutation.andRespond(withException(new IOException("synthetic lost profile response")));
     else
       mutation.andRespond(
-          profileReceipt(
+          profileReceipt(command, roleEdit ? ("roles-remove".equals(scenario) ? "/human-roles/test-consultant-basic" : "/human-roles/test-consultant-chat") : null,
               "drift".equals(scenario)
                   ? () ->
                       jdbc.update(
                           "update consultant set is_absent=true where consultant_id=?", ACCOUNT)
                   : null));
-    if (!unknown && !"drift".equals(scenario)) readReply(true);
+    if (!unknown && !"drift".equals(scenario)) readReply(true, roleEdit ? desiredRoles : null);
     if (unknown)
       server
-          .expect(requestTo(URL + "/profile"))
+          .expect(requestTo(URL + "/" + command))
           .andExpect(r -> assertEquals(frozen.get(), ((MockClientHttpRequest) r).getBodyAsString()))
-          .andRespond(profileReceipt(null));
-    if (unknown || "rollback".equals(scenario)) readReply(true);
+          .andRespond(profileReceipt(command, roleEdit ? "/human-roles/test-consultant-chat" : null, null));
+    if (unknown || "rollback".equals(scenario)) readReply(true, roleEdit ? desiredRoles : null);
     if ("drift".equals(scenario)) {
       assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto));
       assertEquals(
@@ -784,7 +818,7 @@ class HumanAdminAccountMaintenanceTest {
           jdbc.queryForObject(
               "select managed_paused from admin where admin_id=?", Boolean.class, ACCOUNT));
     }
-    if ("replay".equals(scenario)) {
+    if (Set.of("replay", "roles-replay").contains(scenario)) {
       assertEquals(
           "New",
           assertDoesNotThrow(() -> publicEdit.updateConsultant(ACCOUNT, dto)).getFirstName());
@@ -794,6 +828,66 @@ class HumanAdminAccountMaintenanceTest {
       verify(consultants, times(1)).saveConsultant(any());
     }
     server.verify();
+  }
+
+  @Test
+  void onlySignedBoundNoEffectReleasesTheOriginalFrozenProfileAfterAnAuthenticatedFence() {
+    for (String scenario : List.of("unsigned403", "unsigned409", "wrong-mac", "foreign-intent", "signed403", "signed409")) {
+      server.reset();
+      actualSchemaAndValidatedHumanFixture();
+      var actualScope = actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
+      assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
+      assertEquals(new AdminScope.Tenant(7L), actualScope.current());
+      assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.admin(ACCOUNT)));
+      service = new HumanAdminAccountMaintenance(mode, human, actualScope, jdbc, transactions, request,
+          new KeycloakHumanAdminMaintenance(http, actors, broker, codec, "https://internal-auth.example.test", "test", "realm-1"), CLOCK, ISSUER);
+      int status = scenario.endsWith("403") ? 403 : 409;
+      readReply();
+      server.expect(requestTo(URL + "/profile")).andRespond(noEffectReply(status, scenario));
+      assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, desired()));
+      boolean signed = scenario.startsWith("signed");
+      assertEquals(signed ? "NO_EFFECT" : "FROZEN", jdbc.queryForObject(
+          "select status from general_admin_identity_intent where operation_id=?", String.class, OPERATION), scenario);
+      assertEquals("Old", jdbc.queryForObject("select first_name from admin where admin_id=?", String.class, ACCOUNT));
+      server.verify();
+      if (!signed) continue;
+      assertNotNull(jdbc.queryForObject("select native_receipt from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+      assertThrows(status == 403 ? de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class : de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+          () -> service.updateAdminProfile(ACCOUNT, desired()));
+      server.verify();
+      server.reset();
+      String next = "81000000-0000-4000-8000-000000000008";
+      request.removeHeader("Idempotency-Key"); request.addHeader("Idempotency-Key", next);
+      readReply();
+      server.expect(requestTo(URL + "/profile")).andRespond(profileReceipt("profile", null, null, next));
+      readReply(true);
+      assertDoesNotThrow(() -> service.updateAdminProfile(ACCOUNT, desired()));
+      assertEquals("APPLIED", jdbc.queryForObject("select status from general_admin_identity_intent where operation_id=?", String.class, next));
+      assertEquals("NO_EFFECT", jdbc.queryForObject("select status from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+      server.verify();
+    }
+  }
+
+  private ResponseCreator noEffectReply(int status, String scenario) {
+    return request -> {
+      try {
+        assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+        JsonNode body = json.readTree(((MockClientHttpRequest) request).getBodyAsString());
+        verifyProof(request.getHeaders().getFirst("X-ORISO-Task-Context"), "profile", body);
+        var outcome = new TreeMap<String, Object>();
+        outcome.put("realmId", "realm-1"); outcome.put("accountId", ACCOUNT); outcome.put("operationId", OPERATION);
+        outcome.put("command", "profile"); outcome.put("ownerClient", actor.clientId()); outcome.put("ownerSubject", SUBJECT);
+        outcome.put("intentDigest", "foreign-intent".equals(scenario) ? "b".repeat(64) : digest("maintenance-intent", body));
+        outcome.put("previousState", body.path("expectedState").textValue()); outcome.put("tenantId", "7");
+        outcome.put("originDigest", digest("maintenance-origin", body.path("target").path("origin")));
+        outcome.put("result", "NO_EFFECT"); outcome.put("status", status);
+        String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
+        String receipt = encoded + "." + ("wrong-mac".equals(scenario) ? "0".repeat(64) : mac("maintenance-no-effect-receipt/v1\n" + encoded));
+        String reply = scenario.startsWith("unsigned") ? "{\"status\":" + status + "}" : codec.canonical(Map.of("operationId", OPERATION, "accountId", ACCOUNT, "result", "NO_EFFECT", "status", status, "receipt", receipt));
+        var response = withStatus(org.springframework.http.HttpStatus.valueOf(status)).contentType(MediaType.APPLICATION_JSON).body(reply).createResponse(request);
+        response.getHeaders().setCacheControl("no-store"); return response;
+      } catch (Exception failure) { throw new IOException(failure); }
+    };
   }
 
   @Test
@@ -1277,6 +1371,10 @@ class HumanAdminAccountMaintenanceTest {
   }
 
   private void readReply(boolean applied) {
+    readReply(applied, null);
+  }
+
+  private void readReply(boolean applied, List<String> roles) {
     server
         .expect(requestTo(URL + "/read"))
         .andExpect(method(HttpMethod.POST))
@@ -1301,6 +1399,10 @@ class HumanAdminAccountMaintenanceTest {
         .andRespond(
             r -> {
               var projection = projection(applied);
+              if (roles != null) {
+                var values = projection.putArray("effectiveRoles");
+                roles.forEach(values::add);
+              }
               var response =
                   withSuccess(codec.canonical(projection), MediaType.APPLICATION_JSON)
                       .createResponse(r);
@@ -1327,22 +1429,37 @@ class HumanAdminAccountMaintenanceTest {
   }
 
   private ResponseCreator profileReceipt(Runnable beforeReply) {
+    return profileReceipt("profile", null, beforeReply);
+  }
+
+  private ResponseCreator profileReceipt(String command, String group, Runnable beforeReply) {
+    return profileReceipt(command, group, beforeReply, OPERATION);
+  }
+
+  private ResponseCreator profileReceipt(String command, String group, Runnable beforeReply, String operation) {
     return request -> {
       try {
         assertFalse(
             org.springframework.transaction.support.TransactionSynchronizationManager
                 .isActualTransactionActive());
         JsonNode body = json.readTree(((MockClientHttpRequest) request).getBodyAsString());
-        verifyProof(request.getHeaders().getFirst("X-ORISO-Task-Context"), "profile", body);
-        assertEquals(OPERATION, body.path("operationId").textValue());
+        verifyProof(request.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
+        assertEquals(operation, body.path("operationId").textValue());
         assertEquals("a".repeat(64), body.path("expectedState").textValue());
-        assertEquals(Set.of("firstName", "lastName", "email"), fieldNames(body.path("change")));
-        assertEquals("new@example.test", body.path("change").path("email").textValue());
+        JsonNode profile = body.path("change");
+        if (group != null) {
+          assertEquals("ordinary-profile", command);
+          assertEquals(Set.of("group", "profile"), fieldNames(profile));
+          assertEquals(group, profile.path("group").textValue());
+          profile = profile.path("profile");
+        }
+        assertEquals(Set.of("firstName", "lastName", "email"), fieldNames(profile));
+        assertEquals("new@example.test", profile.path("email").textValue());
         var outcome = new TreeMap<String, Object>();
         outcome.put("realmId", "realm-1");
         outcome.put("accountId", ACCOUNT);
-        outcome.put("operationId", OPERATION);
-        outcome.put("command", "profile");
+        outcome.put("operationId", operation);
+        outcome.put("command", command);
         outcome.put("ownerClient", actor.clientId());
         outcome.put("ownerSubject", SUBJECT);
         outcome.put("intentDigest", digest("maintenance-intent", body));
@@ -1362,7 +1479,7 @@ class HumanAdminAccountMaintenanceTest {
                     codec.canonical(
                         Map.of(
                             "operationId",
-                            OPERATION,
+                            operation,
                             "accountId",
                             ACCOUNT,
                             "result",

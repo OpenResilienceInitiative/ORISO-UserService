@@ -1010,7 +1010,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       String accountId,
       TaskActorCredentials actor,
       Object body) {
-    if (!java.util.Set.of("read", "delete", "locale", "profile", "email").contains(command)
+    if (!java.util.Set.of("read", "delete", "locale", "profile", "email", "ordinary-profile").contains(command)
         || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
       throw new IllegalArgumentException("Invalid maintenance proof binding");
     long now = clock.instant().getEpochSecond();
@@ -1068,9 +1068,17 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "profile", "UPDATED");
   }
 
+  public String claimedInactivityDeletionRowDigest(JsonNode exactOwnedRow) {
+    throw new IllegalArgumentException("Invalid owned inactivity deletion row");
+  }
+
+  public String claimedInactivityRowDigest(JsonNode exactOwnedRow) {
+    throw new IllegalArgumentException("Invalid owned inactivity row");
+  }
+
   public String verifyMaintenanceOrdinaryProfileReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
-    throw new IllegalArgumentException("Checked ordinary profile receipt is unavailable");
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "ordinary-profile", "UPDATED");
   }
 
   public String verifyMaintenanceEmailReceipt(
