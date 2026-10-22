@@ -42,7 +42,7 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
-/** Owned ordinary SELF app enrollment and removal; runtime registration remains separate. */
+/** Owned ordinary SELF OTP reads, enrollment and removal; runtime registration remains separate. */
 @RequiredArgsConstructor
 public final class SelfAppOtpMaintenance {
   private final @NonNull IdentityClientConfig mode;
@@ -63,9 +63,37 @@ public final class SelfAppOtpMaintenance {
     return mode.isFiveActorMode();
   }
 
-  /** Signature seam for the actual current-user read; no read capability is implemented yet. */
   public de.caritas.cob.userservice.api.identity.IdentityOtpCredential readCredential() {
-    throw unavailable();
+    if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
+      throw unavailable();
+    var self = actualSelf("GET", Set.of("/users/data", "/service/users/data"));
+    transaction(() -> { lockedDomain(self); return true; });
+    try {
+      var actor = actors.require(TaskPurpose.OTP);
+      if (!canonicalUuid(actor.serviceSubject())) throw unavailable();
+      var target = target(self, UUID.randomUUID().toString());
+      var projection = readProjection(self, target, actor);
+      var token = machine(self, actor, TaskPurpose.OTP);
+      var materialized = codec.read("{}", ObjectNode.class);
+      materialized.set("target", target);
+      materialized.put("username", projection.path("username").textValue());
+      materialized.putNull("otp");
+      var headers = headers(self, token);
+      headers.set("X-ORISO-Account-Target", codec.canonical(target));
+      headers.set("X-ORISO-Task-Context", codec.selfReadOtpProof(
+          realmName, realmId, self.account, actor, materialized,
+          Math.min(self.expires, token.validatedJwtExpiresAt())));
+      if (TransactionSynchronizationManager.isActualTransactionActive()
+          || self.expires <= clock.instant().getEpochSecond()) throw unavailable();
+      var uri = UriComponentsBuilder.fromUriString(authServer)
+          .pathSegment("realms", realmName, "otp-config", "fetch-otp-setup-info",
+              projection.path("username").textValue()).build().encode().toUri();
+      var response = http.exchange(uri, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+      if (response.getStatusCode().value() != 200) throw unavailable();
+      return SelfOtpReadWire.credential(codec, response.getBody());
+    } catch (RuntimeException unknown) {
+      throw unavailable();
+    }
   }
 
   public boolean startEmail(String pendingEmail) {
@@ -585,8 +613,13 @@ public final class SelfAppOtpMaintenance {
   }
 
   private JsonNode read(Self self, Intent row, TaskActorCredentials actor) {
+    outsideLocks(self, row);
+    return readProjection(self, codec.read(row.target, JsonNode.class), actor);
+  }
+
+  private JsonNode readProjection(Self self, JsonNode target, TaskActorCredentials actor) {
     var body = codec.read("{}", ObjectNode.class);
-    body.set("target", codec.read(row.target, JsonNode.class));
+    body.set("target", target);
     var token = machine(self, actor, TaskPurpose.ACCOUNT_MAINTENANCE);
     var headers = headers(self, token);
     headers.set(
@@ -594,7 +627,8 @@ public final class SelfAppOtpMaintenance {
         codec.maintenanceProof("read", realmName, realmId, self.account, actor, body));
     JsonNode projection;
     try {
-      outsideLocks(self, row);
+      if (TransactionSynchronizationManager.isActualTransactionActive()
+          || self.expires <= clock.instant().getEpochSecond()) throw unavailable();
       String reply =
           http.exchange(
                   UriComponentsBuilder.fromUriString(authServer)
@@ -613,33 +647,7 @@ public final class SelfAppOtpMaintenance {
                   new HttpEntity<>(codec.canonical(body), headers),
                   String.class)
               .getBody();
-      if (reply == null || reply.length() > 65536) throw unavailable();
-      projection = codec.read(reply, JsonNode.class);
-      var names = new java.util.HashSet<String>();
-      projection.fieldNames().forEachRemaining(names::add);
-      if (!names.equals(
-              Set.of(
-                  "id",
-                  "username",
-                  "email",
-                  "firstName",
-                  "lastName",
-                  "enabled",
-                  "emailVerified",
-                  "tenantId",
-                  "preferredLanguage",
-                  "effectiveRoles",
-                  "passwordChangeRequired",
-                  "state"))
-          || !self.account.equals(projection.path("id").textValue())
-          || !(self.tenant == null
-              ? projection.path("tenantId").isNull()
-              : self.tenant.toString().equals(projection.path("tenantId").textValue()))
-          || !projection.path("enabled").isBoolean()
-          || !projection.path("enabled").booleanValue()
-          || !text(projection.path("username").textValue(), 255)
-          || !projection.path("state").isTextual()
-          || !projection.path("state").textValue().matches("[a-f0-9]{64}")) throw unavailable();
+      projection = SelfOtpReadWire.projection(codec, reply, self.account, self.tenant);
     } catch (RuntimeException unknown) {
       throw unavailable();
     }
@@ -782,13 +790,17 @@ public final class SelfAppOtpMaintenance {
   }
 
   private Self actualSelf(Operation kind) {
+    return actualSelf(kind.method,
+        kind == Operation.EMAIL_START || kind == Operation.EMAIL_FINISH
+            ? Set.of("/service/users/2fa/email", "/users/2fa/email")
+            : Set.of("/service/users/2fa/app", "/users/2fa/app"));
+  }
+
+  private Self actualSelf(String method, Set<String> paths) {
     if (!(request.getUserPrincipal() instanceof JwtAuthenticationToken authentication)
         || !authentication.isAuthenticated()
-        || !kind.method.equals(request.getMethod())
-        || !(kind == Operation.EMAIL_START || kind == Operation.EMAIL_FINISH
-                ? Set.of("/service/users/2fa/email", "/users/2fa/email")
-                : Set.of("/service/users/2fa/app", "/users/2fa/app"))
-            .contains(request.getRequestURI())) throw forbidden();
+        || !method.equals(request.getMethod())
+        || !paths.contains(request.getRequestURI())) throw forbidden();
     var jwt = authentication.getToken();
     String authorization = request.getHeader("Authorization");
     String account = jwt.getSubject();

@@ -37,6 +37,7 @@ SLICE = "adapter"
 COMPILED_CLASSES = [
     "de/caritas/cob/userservice/api/adapters/keycloak/KeycloakService",
     "de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec",
+    "de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfOtpReadWire",
 ]
 TEST_CLASS = (
     "de/caritas/cob/userservice/api/adapters/keycloak/KeycloakServiceScenarioCModeTest"

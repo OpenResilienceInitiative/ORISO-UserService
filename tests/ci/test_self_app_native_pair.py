@@ -56,6 +56,16 @@ class SelfAppNativePairEvidenceTest(unittest.TestCase):
         for messages in ([], [b"Content-Type: text/plain\n\nnone"], [b"Content-Type: text/plain\n\n654321 and 123456"], [b"one", b"two"]):
             with self.subTest(count=len(messages)), self.assertRaises(ValueError): PROOF.delivered_code(messages)
 
+    def test_actual_public_read_pair_requires_both_states_and_two_original_native_gets(self):
+        rows = [{"phase": "public-self-read", "status": 200},
+                {"phase": "public-self-read-active", "status": 200},
+                {"phase": "native-otp-read-http", "status": 200},
+                {"phase": "native-otp-read-http", "status": 200}]
+        self.assertTrue(PROOF.public_self_reads_complete(rows))
+        for candidate in [None, [], rows[:-1], rows[1:], rows + [rows[0]],
+                          [dict(row, status=503) for row in rows]]:
+            self.assertFalse(PROOF.public_self_reads_complete(candidate))
+
     def test_only_fixture_installer_lifetime_can_trigger_preemptive_refresh(self):
         import base64
         import json

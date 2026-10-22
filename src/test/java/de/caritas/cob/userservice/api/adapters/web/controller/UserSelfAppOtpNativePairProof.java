@@ -12,6 +12,16 @@ import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecyc
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance;
 import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
+import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
+import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
+import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
+import de.caritas.cob.userservice.api.config.VideoChatConfig;
+import de.caritas.cob.userservice.api.facade.userdata.*;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.DecryptionService;
+import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.config.auth.*;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -60,6 +70,9 @@ class UserSelfAppOtpNativePairProof {
                 "machine-signed",
                 "stock-denied",
                 "public-first-call",
+                "public-self-read",
+                "public-self-read-active",
+                "native-otp-read-http",
                 "public-after-first-call",
                 "original-deadline-expired",
                 "public-retry",
@@ -239,6 +252,8 @@ class UserSelfAppOtpNativePairProof {
                         ? email ? "native-email-http" : "native-app-http"
                         : logical.getPath().endsWith("/read")
                             ? "native-read-http"
+                            : logical.getPath().contains("/otp-config/fetch-otp-setup-info/")
+                                ? "native-otp-read-http"
                             : logical.getPath().endsWith("/token")
                                 ? "native-token-http"
                                 : "native-stock-http",
@@ -416,11 +431,7 @@ class UserSelfAppOtpNativePairProof {
               new UsernameTranscoder());
       var controller = mock(UserController.class, CALLS_REAL_METHODS);
       ReflectionTestUtils.setField(controller, "userTwoFactorAuthControllerDelegate", delegate);
-      var dto = new OneTimePasswordDTO();
-      dto.setSecret("JBSWY3DPEHPK3PXP");
-      dto.setOtp(currentCode());
-      delegate.setSelfAppOtpMaintenance(
-          new SelfAppOtpMaintenance(
+      var owner = new SelfAppOtpMaintenance(
               mode,
               human,
               request,
@@ -433,7 +444,44 @@ class UserSelfAppOtpNativePairProof {
               Clock.systemUTC(),
               "http://maintenance-human-fixture.invalid",
               realm,
-              realmId));
+              realmId);
+      delegate.setSelfAppOtpMaintenance(owner);
+      var users = mock(UserAccountService.class);
+      var user = new User();
+      user.setUserId(account);
+      when(users.retrieveValidatedUser()).thenReturn(user);
+      var provider = mock(AskerDataProvider.class);
+      var partialData = new UserDataResponseDTO();
+      partialData.setUserRoles(Set.of("user"));
+      when(provider.retrieveData(user)).thenReturn(partialData);
+      var readDelegate = new UserAccountControllerDelegate(
+          users, human, mock(DecryptionService.class), mock(ConsultantDataFacade.class),
+          identity, legacy, accounts, mock(Messaging.class), mock(ConsultantDtoMapper.class),
+          new UserDtoMapper(identity), mock(ConsultantService.class), mock(ConsultantUpdateService.class),
+          mock(ConsultantDataProvider.class), provider, mock(VideoChatConfig.class),
+          mock(KeycloakUserDataProvider.class), mock(AgencyAdminDataProvider.class), new UsernameTranscoder());
+      readDelegate.setSelfAppOtpMaintenance(owner);
+      ReflectionTestUtils.setField(controller, "userAccountControllerDelegate", readDelegate);
+      String mutationPath = request.getRequestURI();
+      request.setMethod("GET");
+      request.setRequestURI("/service/users/data");
+      request.removeHeader("Idempotency-Key");
+      var setupRead = assertDoesNotThrow(() -> controller.getUserData());
+      assertEquals(200, setupRead.getStatusCode().value());
+      assertFalse(setupRead.getBody().getTwoFactorAuth().getIsActive());
+      String setupSecret = setupRead.getBody().getTwoFactorAuth().getSecret();
+      assertNotNull(setupSecret);
+      assertFalse(setupSecret.isBlank());
+      assertNotNull(setupRead.getBody().getTwoFactorAuth().getQrCode());
+      assertEquals(0, jdbc.queryForObject("select count(*) from identity_self_app_otp_intent", Integer.class));
+      assertEquals(0, activationCalls.get());
+      phase("public-self-read", 200);
+      request.setMethod("PUT");
+      request.setRequestURI(mutationPath);
+      request.addHeader("Idempotency-Key", operation);
+      var dto = new OneTimePasswordDTO();
+      dto.setSecret(setupSecret);
+      dto.setOtp(currentCode(setupSecret));
       var emailDto = new de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO();
       emailDto.setEmail(pendingEmail);
       inPublicCall.set(true);
@@ -654,6 +702,20 @@ class UserSelfAppOtpNativePairProof {
           assertFalse(allStored.contains(secret), "No delivered secret or bearer at rest");
         phase("public-success", 204);
       }
+      int intentCount = jdbc.queryForObject("select count(*) from identity_self_app_otp_intent", Integer.class);
+      int writesBeforeRead = activationCalls.get();
+      request.setMethod("GET");
+      request.setRequestURI("/service/users/data");
+      request.removeHeader("Idempotency-Key");
+      var activeRead = assertDoesNotThrow(() -> controller.getUserData());
+      assertEquals(200, activeRead.getStatusCode().value());
+      assertTrue(activeRead.getBody().getTwoFactorAuth().getIsActive());
+      assertEquals(email ? de.caritas.cob.userservice.api.adapters.web.dto.OtpType.EMAIL
+          : de.caritas.cob.userservice.api.adapters.web.dto.OtpType.APP,
+          activeRead.getBody().getTwoFactorAuth().getType());
+      assertEquals(intentCount, jdbc.queryForObject("select count(*) from identity_self_app_otp_intent", Integer.class));
+      assertEquals(writesBeforeRead, activationCalls.get());
+      phase("public-self-read-active", 200);
       verifyNoInteractions(legacy);
     } finally {
       SecurityContextHolder.clearContext();
@@ -667,9 +729,9 @@ class UserSelfAppOtpNativePairProof {
     return headers;
   }
 
-  private static String currentCode() throws Exception {
+  private static String currentCode(String secret) throws Exception {
     var mac = Mac.getInstance("HmacSHA1");
-    mac.init(new SecretKeySpec("JBSWY3DPEHPK3PXP".getBytes(StandardCharsets.UTF_8), "HmacSHA1"));
+    mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA1"));
     byte[] value =
         mac.doFinal(ByteBuffer.allocate(8).putLong(Instant.now().getEpochSecond() / 30).array());
     int at = value[value.length - 1] & 15;

@@ -42,6 +42,13 @@ def snapshot(kc):
     return {"user_commit": actual, "keycloak_commit": native, "user_sources": manifest(ROOT), "keycloak_sources": manifest(kc)}
 
 
+def public_self_reads_complete(observed):
+    return (isinstance(observed, list)
+            and observed.count({"phase": "public-self-read", "status": 200}) == 1
+            and observed.count({"phase": "public-self-read-active", "status": 200}) == 1
+            and observed.count({"phase": "native-otp-read-http", "status": 200}) == 2)
+
+
 def fixture_installer_expired(bearer, now):
     # Fixture scheduling only, never authentication or tested actor authority.
     parts = bearer.split(".")
@@ -129,6 +136,8 @@ def native(kc, report):
             "adapters/web/controller/UserController", "adapters/web/controller/UserTwoFactorAuthControllerDelegate",
             "adapters/keycloak/lifecycle/SelfAppOtpMaintenance", "adapters/keycloak/lifecycle/AccountLifecycleCodec",
             "config/auth/TaskActorTokenBroker", "IdentityManager", "service/accountinvite/AccountInviteService",
+            "adapters/web/controller/UserAccountControllerDelegate", "adapters/web/mapping/UserDtoMapper",
+            "adapters/keycloak/lifecycle/SelfOtpReadWire",
         ]],
     ]
     if not all((ROOT / name).is_file() for name in compiled_paths):
@@ -240,7 +249,8 @@ def native(kc, report):
             receipt["public_phases"] = observed
         receipt["executed"] = result["tests"]
         receipt["java_exit"] = child.returncode
-        receipt["accepted"] = result["accepted"] and child.returncode == 0
+        receipt["public_self_read_before_and_after"] = public_self_reads_complete(receipt.get("public_phases"))
+        receipt["accepted"] = result["accepted"] and child.returncode == 0 and receipt["public_self_read_before_and_after"]
         phase = "post-java-native-inspection"
         expired_installer = fixture_installer_expired(fixture.installer, time.time())
         receipt["fixture_installer_actual_expiry_requires_refresh"] = expired_installer
