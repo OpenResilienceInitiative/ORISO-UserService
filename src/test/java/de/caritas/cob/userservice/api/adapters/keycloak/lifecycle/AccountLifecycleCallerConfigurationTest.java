@@ -43,11 +43,16 @@ class AccountLifecycleCallerConfigurationTest {
               assertEquals(0, context.getBeansOfType(OrdinaryAccountCreation.class).size());
               assertEquals(0, context.getBeansOfType(AccountLifecycleRetryScheduler.class).size());
               assertEquals(0, context.getBeansOfType(SelfAppOtpMaintenance.class).size());
+              assertEquals(0, context.getBeansOfType(SelfPasswordMaintenance.class).size());
+              assertEquals(0, context.getBeansOfType(
+                  de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance.class).size());
+              assertEquals(0, context.getBeansOfType(
+                  de.caritas.cob.userservice.api.adapters.persistence.password.JdbcExistingSetupPasswordClaims.class).size());
             });
   }
 
-  @Test
-  void enabledCallerGraphInstallsThePublicSelfOtpOwnerWithoutMakingAnRpc() {
+  private void withEnabledCallerGraph(
+      java.util.function.Consumer<org.springframework.context.ApplicationContext> assertions) {
     var actors = mock(TaskActorConfiguration.class);
     when(actors.require(any(TaskPurpose.class)))
         .thenReturn(
@@ -106,6 +111,17 @@ class AccountLifecycleCallerConfigurationTest {
         .run(
             context -> {
               assertNull(context.getStartupFailure());
+              assertions.accept(context);
+              verify(jdbc, atLeastOnce()).getDataSource();
+              verifyNoMoreInteractions(jdbc);
+              verifyNoInteractions(http, broker, source);
+            });
+  }
+
+  @Test
+  void enabledCallerGraphInstallsThePublicSelfOtpOwnerWithoutMakingAnRpc() {
+    withEnabledCallerGraph(
+        context -> {
               assertEquals(1, context.getBeansOfType(OrdinaryAccountCreation.class).size());
               assertEquals(
                   1,
@@ -116,10 +132,19 @@ class AccountLifecycleCallerConfigurationTest {
                   1,
                   context.getBeansOfType(HumanAdminAccountMaintenance.class).size(),
                   "The actual opt-in caller graph must register scoped public Admin maintenance");
-              verify(jdbc).getDataSource();
-              verifyNoMoreInteractions(jdbc);
-              verifyNoInteractions(http, broker, source);
-            });
+        });
+  }
+
+  @Test
+  void enabledCallerGraphAlsoInstallsPasswordLocaleAndOwnedSetupClaims() {
+    withEnabledCallerGraph(
+        context ->
+            assertAll(
+                () -> assertEquals(1, context.getBeansOfType(SelfPasswordMaintenance.class).size()),
+                () -> assertEquals(1, context.getBeansOfType(
+                    de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance.class).size()),
+                () -> assertEquals(1, context.getBeansOfType(
+                    de.caritas.cob.userservice.api.adapters.persistence.password.JdbcExistingSetupPasswordClaims.class).size())));
   }
 
   @Test

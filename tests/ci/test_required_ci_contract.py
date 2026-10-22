@@ -1,5 +1,7 @@
 import os
 import copy
+import ast
+import json
 import yaml
 from pathlib import Path
 import re
@@ -70,6 +72,33 @@ def assert_native_ownership(excluded, mariadb_workflow, caller_workflow):
 
 
 class RequiredCiContractTest(unittest.TestCase):
+    def test_composed_caller_recycles_classloaders_without_raising_resource_limits(self):
+        document = yaml.safe_load((ROOT / ".github/workflows/scenario-c-caller-proof.yml").read_text())
+        job = document["jobs"]["caller-proof"]
+        source = next(step["run"] for step in job["steps"]
+                      if "def test_phase(" in step.get("run", ""))
+        module = ast.parse(source.split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0])
+        phase = next(node for node in module.body
+                     if isinstance(node, ast.FunctionDef) and node.name == "test_phase")
+        calls = []
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            scope = dict(root=root, proof=root, common=["./mvnw"], inputs={},
+                         snapshot=lambda: {}, json=json,
+                         inventory=lambda phase, status: status == 0,
+                         execute=lambda argv, log, seconds: calls.append((argv, seconds)) or 0)
+            exec(compile(ast.Module(body=[phase], type_ignores=[]), "caller-test-phase", "exec"), scope)
+            scope["test_phase"]("focused", "FirstTest,SecondTest", 600)
+            scope["test_phase"]("regression", "EncodingTest#originalCase", 600)
+        self.assertEqual(
+            ["./mvnw", "test", "-Dtest=FirstTest,SecondTest", "-DforkCount=1", "-DreuseForks=false"],
+            calls[0][0])
+        self.assertEqual(["./mvnw", "test", "-Dtest=EncodingTest#originalCase"], calls[1][0])
+        self.assertEqual([600, 600], [seconds for _, seconds in calls])
+        self.assertEqual(30, job["timeout-minutes"])
+        self.assertEqual("-Xmx512m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2",
+                         job["env"]["JAVA_TOOL_OPTIONS"])
+
     def test_required_runner_rejects_skipped_tests_and_counts_only_executed_tests(self):
         runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
         with tempfile.TemporaryDirectory() as temp_dir:
