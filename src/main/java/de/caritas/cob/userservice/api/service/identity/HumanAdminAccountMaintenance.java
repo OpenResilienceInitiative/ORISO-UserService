@@ -427,9 +427,16 @@ public final class HumanAdminAccountMaintenance {
               if (r.getString("admin_id") == null) {
                 if (secondary == null) return null;
                 if (secondary.deleted != null) throw forbidden();
-                return new AdminRow(secondary.account, secondary.tenant, secondary.username,
-                    "CONSULTANT", secondary.firstName, secondary.lastName, secondary.email,
-                    secondary.updated, null);
+                return new AdminRow(
+                    secondary.account,
+                    secondary.tenant,
+                    secondary.username,
+                    "CONSULTANT",
+                    secondary.firstName,
+                    secondary.lastName,
+                    secondary.email,
+                    secondary.updated,
+                    null);
               }
               return new AdminRow(
                   r.getString("admin_id"),
@@ -465,8 +472,10 @@ public final class HumanAdminAccountMaintenance {
             || !Objects.equals(row.tenant, secondary.tenant)
             || !decodedUsername(row.username).equals(decodedUsername(secondary.username))))
       throw forbidden();
-    scope.assertMay("CONSULTANT".equals(row.type)
-        ? AdminScope.Target.counsellor(account) : AdminScope.Target.admin(account));
+    scope.assertMay(
+        "CONSULTANT".equals(row.type)
+            ? AdminScope.Target.counsellor(account)
+            : AdminScope.Target.admin(account));
     if (secondary != null) scope.assertMay(AdminScope.Target.counsellor(account));
     return row;
   }
