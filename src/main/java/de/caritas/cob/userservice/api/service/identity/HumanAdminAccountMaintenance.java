@@ -96,6 +96,10 @@ public final class HumanAdminAccountMaintenance {
     }
   }
 
+  public HumanAdminMaintenanceTransport.FactorStatus factorStatus(String accountId) {
+    throw unavailable();
+  }
+
   public de.caritas.cob.userservice.api.model.Admin updateAdminProfile(
       String accountId, IdentityProfileUpdate profile) {
     requireOutsideSql();

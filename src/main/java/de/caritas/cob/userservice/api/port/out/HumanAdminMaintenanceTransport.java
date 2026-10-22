@@ -33,6 +33,14 @@ public interface HumanAdminMaintenanceTransport {
 
   Projection read(CheckedAccount account);
 
+  record FactorStatus(boolean configured, boolean active) {}
+
+  record FactorProjection(Projection account, FactorStatus twoFactor) {}
+
+  default FactorProjection factorStatus(CheckedAccount account) {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
   String profileRequestDigest(
       CheckedAccount account, IdentityProfileUpdate profile, UUID operation);
 

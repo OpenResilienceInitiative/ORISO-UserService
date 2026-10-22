@@ -41,6 +41,17 @@ public class ManagedAccountStatusService {
   private JdbcTemplate jdbc;
   private TransactionTemplate localWrites;
 
+  private de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+      scopedMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setHumanAdminMaintenance(
+      @org.springframework.lang.Nullable
+          de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+              maintenance) {
+    scopedMaintenance = maintenance;
+  }
+
   @org.springframework.beans.factory.annotation.Autowired
   public void setScopedLocalWrites(
       IdentityClientConfig mode, JdbcTemplate jdbc, PlatformTransactionManager manager) {
