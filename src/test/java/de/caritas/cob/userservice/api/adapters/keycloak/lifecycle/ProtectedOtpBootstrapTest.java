@@ -247,9 +247,12 @@ class ProtectedOtpBootstrapTest {
       assertEquals(
           ProtectedOtpBootstrap.AttemptState.UNKNOWN,
           f.adapter().setupApp(f.claim, "123456").state());
+      var unfenced = f.discarded();
+      when(unfenced.recoveryId()).thenReturn(null);
+      when(unfenced.recoveryGeneration()).thenReturn(0L);
       assertThrows(
           RuntimeException.class,
-          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(f.discarded())));
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(unfenced)));
       assertEquals(
           1,
           f.jdbc.queryForObject(
@@ -286,6 +289,64 @@ class ProtectedOtpBootstrapTest {
               "SELECT COUNT(*) FROM protected_otp_bootstrap_operation", Integer.class));
       assertDoesNotThrow(
           () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(discarded)));
+      f.server.verify();
+    }
+  }
+
+  @Test
+  void aVerifiedNativeFenceResolvesUnknownCiphertextWithoutInventingAnAcknowledgement()
+      throws Exception {
+    try (var f = new Fixture()) {
+      f.expectPrepare();
+      var prepared = f.adapter().prepare(f.claim, f.pending);
+      var owner = new TransactionTemplate(f.manager);
+      owner.executeWithoutResult(tx -> f.adapter().stagePrepared(f.claim, prepared));
+      f.server.verify();
+      f.server.reset();
+      f.request.setRequestURI("/service/tenant/register/two-factor");
+      f.request.removeHeader("Idempotency-Key");
+      f.request.addHeader("Idempotency-Key", UUID.randomUUID().toString());
+      f.server
+          .expect(
+              requestTo(
+                  org.springframework.web.util.UriComponentsBuilder.fromUriString(f.issuer.base())
+                      .pathSegment(
+                          "realms", "synthetic", "otp-config", "setup-otp", f.pending.username())
+                      .build()
+                      .encode()
+                      .toUri()))
+          .andRespond(withServerError());
+      assertEquals(
+          ProtectedOtpBootstrap.AttemptState.UNKNOWN,
+          f.adapter().setupApp(f.claim, "123456").state());
+      assertEquals(
+          1,
+          f.jdbc.queryForObject(
+              "SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='FROZEN'",
+              Integer.class));
+      // Root private capability contract double; native fence is proved separately.
+      var verifiedRecovery = f.discarded();
+      assertDoesNotThrow(
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(verifiedRecovery)));
+      assertEquals(
+          0, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
+      assertEquals(
+          0,
+          f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap_operation", Integer.class));
+      assertDoesNotThrow(
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(verifiedRecovery)));
+      f.server.verify();
+    }
+    try (var f = new Fixture()) {
+      var abandoned = f.discarded();
+      when(abandoned.accountId()).thenReturn(null);
+      when(abandoned.recoveryGeneration()).thenReturn(1L);
+      assertDoesNotThrow(
+          () ->
+              new TransactionTemplate(f.manager)
+                  .executeWithoutResult(tx -> f.adapter().discardWithinOwner(abandoned)));
+      assertEquals(
+          0, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
       f.server.verify();
     }
   }
@@ -428,6 +489,8 @@ class ProtectedOtpBootstrapTest {
       when(discarded.executionId()).thenReturn(claim.executionId());
       when(discarded.bootstrapIncarnation()).thenReturn(claim.executionId());
       when(discarded.accountId()).thenReturn(pending.created().accountId());
+      when(discarded.recoveryId()).thenReturn(UUID.randomUUID());
+      when(discarded.recoveryGeneration()).thenReturn(2L);
       return discarded;
     }
 

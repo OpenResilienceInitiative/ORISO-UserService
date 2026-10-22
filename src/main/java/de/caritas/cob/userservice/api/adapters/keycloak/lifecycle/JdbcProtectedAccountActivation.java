@@ -296,6 +296,8 @@ public final class JdbcProtectedAccountActivation {
     private final UUID executionId;
     private final String accountId;
     private final UUID bootstrapIncarnation;
+    private final UUID recoveryId;
+    private final long recoveryGeneration;
 
     private VerifiedDiscard(
         long inviteId,
@@ -303,13 +305,17 @@ public final class JdbcProtectedAccountActivation {
         UUID attemptId,
         UUID executionId,
         String accountId,
-        UUID bootstrapIncarnation) {
+        UUID bootstrapIncarnation,
+        UUID recoveryId,
+        long recoveryGeneration) {
       this.inviteId = inviteId;
       this.claimId = claimId;
       this.attemptId = attemptId;
       this.executionId = executionId;
       this.accountId = accountId;
       this.bootstrapIncarnation = bootstrapIncarnation;
+      this.recoveryId = recoveryId;
+      this.recoveryGeneration = recoveryGeneration;
     }
 
     public long inviteId() {
@@ -334,6 +340,14 @@ public final class JdbcProtectedAccountActivation {
 
     public UUID bootstrapIncarnation() {
       return bootstrapIncarnation;
+    }
+
+    public UUID recoveryId() {
+      return recoveryId;
+    }
+
+    public long recoveryGeneration() {
+      return recoveryGeneration;
     }
 
     @Override
