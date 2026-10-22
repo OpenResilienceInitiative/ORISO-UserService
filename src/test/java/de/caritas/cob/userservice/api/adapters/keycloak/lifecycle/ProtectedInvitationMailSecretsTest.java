@@ -16,7 +16,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class ProtectedInvitationMailSecretsTest {
-  private final byte[] key = HexFormat.of().parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+  private final byte[] key =
+      HexFormat.of().parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
   private final AccountLifecycleCodec json = new AccountLifecycleCodec(key);
   private ProtectedInvitationMailSecrets secrets;
   private ProtectedInvitationMailSecrets.Metadata metadata;
@@ -25,8 +26,13 @@ class ProtectedInvitationMailSecretsTest {
 
   @BeforeEach
   void vector() throws Exception {
-    vector = json.read(Files.readString(Path.of("src/test/resources/scenario-c/protected-mail-v1.json")), JsonNode.class);
-    metadata = json.read(json.canonical(vector.path("metadata")), ProtectedInvitationMailSecrets.Metadata.class);
+    vector =
+        json.read(
+            Files.readString(Path.of("src/test/resources/scenario-c/protected-mail-v1.json")),
+            JsonNode.class);
+    metadata =
+        json.read(
+            json.canonical(vector.path("metadata")), ProtectedInvitationMailSecrets.Metadata.class);
     mail = json.canonical(vector.path("mail"));
     secrets = new ProtectedInvitationMailSecrets(key, metadata.realmId());
   }
@@ -40,18 +46,26 @@ class ProtectedInvitationMailSecretsTest {
     JsonNode envelope = json.read(sealed, JsonNode.class);
     assertEquals(12, Base64.getUrlDecoder().decode(envelope.path("nonce").asText()).length);
     Cipher independent = Cipher.getInstance("AES/GCM/NoPadding");
-    independent.init(Cipher.DECRYPT_MODE,
-        new SecretKeySpec(HexFormat.of().parseHex(vector.path("derivedEncryptionKeyHex").asText()), "AES"),
+    independent.init(
+        Cipher.DECRYPT_MODE,
+        new SecretKeySpec(
+            HexFormat.of().parseHex(vector.path("derivedEncryptionKeyHex").asText()), "AES"),
         new GCMParameterSpec(128, Base64.getUrlDecoder().decode(envelope.path("nonce").asText())));
     independent.updateAAD(json.canonical(metadata).getBytes(StandardCharsets.UTF_8));
-    assertEquals(mail, new String(independent.doFinal(Base64.getUrlDecoder().decode(envelope.path("ciphertext").asText())), StandardCharsets.UTF_8));
+    assertEquals(
+        mail,
+        new String(
+            independent.doFinal(
+                Base64.getUrlDecoder().decode(envelope.path("ciphertext").asText())),
+            StandardCharsets.UTF_8));
   }
 
   @Test
   void reconstructedWorkerOpensExactlyTheOriginalUtf8Payload() {
     String sealed = secrets.seal(metadata, mail);
     assertNotNull(sealed);
-    assertEquals(mail, new ProtectedInvitationMailSecrets(key, metadata.realmId()).open(metadata, sealed));
+    assertEquals(
+        mail, new ProtectedInvitationMailSecrets(key, metadata.realmId()).open(metadata, sealed));
     var large = (ObjectNode) vector.path("mail").deepCopy();
     large.put("body", "Ä".repeat(40_000));
     large.putNull("language");
@@ -60,7 +74,10 @@ class ProtectedInvitationMailSecretsTest {
     var largeMetadata = metadataFor(large);
     String largeSealed = secrets.seal(largeMetadata, largeMail);
     assertNotNull(largeSealed);
-    assertEquals(largeMail, new ProtectedInvitationMailSecrets(key, metadata.realmId()).open(largeMetadata, largeSealed));
+    assertEquals(
+        largeMail,
+        new ProtectedInvitationMailSecrets(key, metadata.realmId())
+            .open(largeMetadata, largeSealed));
   }
 
   @Test
@@ -68,12 +85,25 @@ class ProtectedInvitationMailSecretsTest {
     String sealed = secrets.seal(metadata, mail);
     assertNotNull(sealed);
     ObjectNode original = (ObjectNode) vector.path("metadata");
-    for (String field : new String[]{"v", "approvalId", "workflowId", "inviteId", "authorizationRevision", "scopeDigest", "requestDigest", "tokenHash", "payloadDigest"}) {
+    for (String field :
+        new String[] {
+          "v",
+          "approvalId",
+          "workflowId",
+          "inviteId",
+          "authorizationRevision",
+          "scopeDigest",
+          "requestDigest",
+          "tokenHash",
+          "payloadDigest"
+        }) {
       ObjectNode changed = original.deepCopy();
-      if (changed.path(field).isIntegralNumber()) changed.put(field, changed.path(field).longValue() + 1);
+      if (changed.path(field).isIntegralNumber())
+        changed.put(field, changed.path(field).longValue() + 1);
       else if (field.endsWith("Id")) changed.put(field, "f53dd071-a5b9-486a-bb91-849901d77143");
       else changed.put(field, "b".repeat(64));
-      var foreign = json.read(json.canonical(changed), ProtectedInvitationMailSecrets.Metadata.class);
+      var foreign =
+          json.read(json.canonical(changed), ProtectedInvitationMailSecrets.Metadata.class);
       assertThrows(RuntimeException.class, () -> secrets.open(foreign, sealed), field);
     }
   }
@@ -82,8 +112,14 @@ class ProtectedInvitationMailSecretsTest {
   void anotherRealmOrMasterKeyCannotOpenTheOriginalIntent() {
     String sealed = secrets.seal(metadata, mail);
     assertNotNull(sealed);
-    assertThrows(RuntimeException.class, () -> new ProtectedInvitationMailSecrets(new byte[32], metadata.realmId()).open(metadata, sealed));
-    assertThrows(RuntimeException.class, () -> new ProtectedInvitationMailSecrets(key, "another-realm").open(metadata, sealed));
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            new ProtectedInvitationMailSecrets(new byte[32], metadata.realmId())
+                .open(metadata, sealed));
+    assertThrows(
+        RuntimeException.class,
+        () -> new ProtectedInvitationMailSecrets(key, "another-realm").open(metadata, sealed));
   }
 
   @Test
@@ -106,12 +142,14 @@ class ProtectedInvitationMailSecretsTest {
     String originalToken = changed.path("rawToken").asText();
     String anotherToken = "A".repeat(43);
     changed.put("rawToken", anotherToken);
-    changed.put("acceptUrl", changed.path("acceptUrl").asText().replace(originalToken, anotherToken));
+    changed.put(
+        "acceptUrl", changed.path("acceptUrl").asText().replace(originalToken, anotherToken));
     changed.put("body", changed.path("body").asText().replace(originalToken, anotherToken));
     var changedTokenMetadata = metadataFor(changed);
     assertEquals(metadata.tokenHash(), changedTokenMetadata.tokenHash());
     assertNotEquals(metadata.payloadDigest(), changedTokenMetadata.payloadDigest());
-    assertThrows(RuntimeException.class, () -> secrets.seal(changedTokenMetadata, json.canonical(changed)));
+    assertThrows(
+        RuntimeException.class, () -> secrets.seal(changedTokenMetadata, json.canonical(changed)));
     changed.setAll((ObjectNode) vector.path("mail"));
     changed.put("subject", "Changed");
     assertThrows(RuntimeException.class, () -> secrets.seal(metadata, json.canonical(changed)));
@@ -122,7 +160,9 @@ class ProtectedInvitationMailSecretsTest {
     String sealed = secrets.seal(metadata, mail);
     assertNotNull(sealed);
     assertThrows(RuntimeException.class, () -> secrets.open(metadata, sealed + " {}"));
-    assertThrows(RuntimeException.class, () -> secrets.open(metadata, sealed.replaceFirst("\\{", "{\"v\":1,")));
+    assertThrows(
+        RuntimeException.class,
+        () -> secrets.open(metadata, sealed.replaceFirst("\\{", "{\"v\":1,")));
     var changed = (ObjectNode) json.read(sealed, JsonNode.class);
     changed.put("v", 2);
     assertThrows(RuntimeException.class, () -> secrets.open(metadata, json.canonical(changed)));
