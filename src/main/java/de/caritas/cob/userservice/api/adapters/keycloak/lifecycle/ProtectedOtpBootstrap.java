@@ -135,12 +135,9 @@ public final class ProtectedOtpBootstrap {
         || !actor.clientId().equals(machine.clientId())
         || !actor.serviceSubject().equals(machine.subject())) throw unavailable();
     String requestDigest = publicIntent(claim);
-    long deadline =
-        Math.min(
-            clock.instant().getEpochSecond() + 600,
-            Math.min(
-                machine.validatedJwtExpiresAt(),
-                Instant.parse(scope(claim).path("validUntil").asText()).getEpochSecond()));
+    long workflowDeadline = Instant.parse(scope(claim).path("validUntil").asText()).getEpochSecond();
+    long deadline = Math.min(clock.instant().getEpochSecond() + 600,
+        Math.min(machine.validatedJwtExpiresAt(), workflowDeadline));
     var frozen =
         transactions.execute(
             tx -> {
@@ -184,7 +181,7 @@ public final class ProtectedOtpBootstrap {
               command.put("username", pending.username());
               command.putNull("otp");
               var metadata = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
-              metadata.put("v", 1);
+              metadata.put("v", 2);
               metadata.put("realmId", realmId);
               metadata.put("approvalId", created.approvalId().toString());
               metadata.put("workflowId", created.workflowId().toString());
@@ -201,7 +198,7 @@ public final class ProtectedOtpBootstrap {
               metadata.put("ownerSubject", actor.serviceSubject());
               metadata.put("requestDigest", requestDigest);
               metadata.put("originDigest", codec.digest("otp-bootstrap-origin/v1", target));
-              metadata.put("authorityValidUntil", deadline);
+              metadata.put("authorityValidUntil", workflowDeadline);
               metadata.put("representation", "REQUEST");
               checkedMetadata(claim, codec.canonical(metadata));
               var record =
@@ -242,7 +239,7 @@ public final class ProtectedOtpBootstrap {
             metadata.path("accountId").asText(),
             actor,
             command,
-            metadata.path("authorityValidUntil").asLong()));
+            Math.min(machine.validatedJwtExpiresAt(), metadata.path("authorityValidUntil").asLong())));
     byte[] response;
     try {
       var reply =
@@ -320,30 +317,33 @@ public final class ProtectedOtpBootstrap {
       throw unavailable();
     var response = codec.read(result, JsonNode.class);
     fields(response, Set.of("otpInfo", "bootstrapReceipt", "authorityValidUntil"));
+    var facts = preparedFacts(metadata, response.path("bootstrapReceipt").asText());
     if (!response.path("authorityValidUntil").isIntegralNumber()
-        || response.path("authorityValidUntil").asLong()
-            != metadata.path("authorityValidUntil").asLong()) throw unavailable();
-    var expected = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
-    expected.put("v", 1);
-    for (String name :
-        List.of(
-            "realmId",
-            "approvalId",
-            "attemptId",
-            "accountId",
-            "claimId",
-            "executionId",
-            "ownerClient",
-            "ownerSubject",
-            "originDigest",
-            "authorityValidUntil")) expected.set(name, metadata.path(name));
-    expected.set("bootstrapIncarnation", metadata.path("executionId"));
-    expected.put("state", "PREPARED");
-    codec.checkProtectedBootstrapPrepareReceipt(
-        response.path("bootstrapReceipt").asText(), expected);
+        || response.path("authorityValidUntil").asLong() != facts.path("authorityValidUntil").asLong()) throw unavailable();
     credential(result);
     return new PreparedBootstrap(
         claim.claimId().toString(), codec.canonical(metadata), codec.canonical(response));
+  }
+
+  /** Verify historical native facts against independently checked owned metadata, never as authority. */
+  private ObjectNode preparedFacts(JsonNode metadata, String receipt) {
+    if (receipt == null || receipt.length() > 8192) throw unavailable();
+    var parts = receipt.split("\\.", -1);
+    if (parts.length != 2) throw unavailable();
+    var signed = codec.read(codec.utf8(decode(parts[0])), JsonNode.class);
+    var bound = signed.path("authorityValidUntil");
+    if (!bound.isIntegralNumber() || !bound.canConvertToLong() || bound.asLong() <= 0
+        || bound.asLong() > metadata.path("authorityValidUntil").asLong()
+        || (metadata.path("v").asInt() == 1 && bound.asLong() != metadata.path("authorityValidUntil").asLong())) throw unavailable();
+    var expected = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+    expected.put("v", 1);
+    for (String name : List.of("realmId", "approvalId", "attemptId", "accountId", "claimId",
+        "executionId", "ownerClient", "ownerSubject", "originDigest")) expected.set(name, metadata.path(name));
+    expected.set("authorityValidUntil", bound);
+    expected.set("bootstrapIncarnation", metadata.path("executionId"));
+    expected.put("state", "PREPARED");
+    codec.checkProtectedBootstrapPrepareReceipt(receipt, expected);
+    return expected;
   }
 
   private IdentityOtpCredential credential(String response) {
@@ -480,7 +480,7 @@ public final class ProtectedOtpBootstrap {
         throw unavailable();
     }
     if (!raw.equals(codec.canonical(metadata))
-        || metadata.path("v").asInt() != 1
+        || !Set.of(1, 2).contains(metadata.path("v").asInt())
         || !realmId.equals(metadata.path("realmId").asText())
         || !claim.frozen().approvalId().toString().equals(metadata.path("approvalId").asText())
         || !scope(claim).path("workflowId").equals(metadata.path("workflowId"))
@@ -496,6 +496,9 @@ public final class ProtectedOtpBootstrap {
         || !command.equals(metadata.path("command").asText())
         || !metadata.path("authorityValidUntil").isIntegralNumber()
         || metadata.path("authorityValidUntil").asLong() <= 0) throw unavailable();
+    long originalWorkflowDeadline = Instant.parse(scope(claim).path("validUntil").asText()).getEpochSecond();
+    if (metadata.path("authorityValidUntil").asLong() > originalWorkflowDeadline
+        || (metadata.path("v").asInt() == 2 && metadata.path("authorityValidUntil").asLong() != originalWorkflowDeadline)) throw unavailable();
     for (String name : List.of("accountId", "operationId", "ownerSubject"))
       uuid(metadata.path(name).asText());
     for (String name : List.of("requestDigest", "originDigest"))
@@ -766,7 +769,7 @@ public final class ProtectedOtpBootstrap {
             metadata.path("accountId").asText(),
             actor,
             materialized,
-            metadata.path("authorityValidUntil").asLong()));
+            Math.min(machine.validatedJwtExpiresAt(), metadata.path("authorityValidUntil").asLong())));
     String response;
     int status;
     try {
@@ -902,21 +905,7 @@ public final class ProtectedOtpBootstrap {
     int status = value.path("status").asInt();
     var result = value.path("result");
     fields(result, status == 201 ? Set.of("info") : Set.of("error", "error_description"));
-    var expected = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
-    expected.put("v", 1);
-    for (String name :
-        List.of(
-            "realmId",
-            "approvalId",
-            "attemptId",
-            "accountId",
-            "claimId",
-            "executionId",
-            "ownerClient",
-            "ownerSubject",
-            "originDigest",
-            "authorityValidUntil")) expected.set(name, metadata.path(name));
-    expected.set("bootstrapIncarnation", metadata.path("executionId"));
+    var expected = preparedFacts(metadata, command.path("bootstrapReceipt").asText());
     expected.put("state", status == 201 ? "COMPLETE" : "INVALID");
     expected.set("operationId", metadata.path("operationId"));
     expected.put("intentDigest", codec.digest("otp-bootstrap-intent/v1", materialized));

@@ -215,6 +215,8 @@ class ProtectedOtpBootstrapTest {
         for (String sql : Files.readString(migration).split(";"))
           if (!sql.isBlank()) jdbc.execute(sql);
       }
+      for (String sql : Files.readString(Path.of("src/main/resources/db/changelog/changeset/20261022_protected_otp_bootstrap_367/operations.sql")).split(";"))
+        if (!sql.isBlank()) jdbc.execute(sql);
       var approvals =
           new ProtectedInvitationCodec(key, clock, "synthetic", "native-synthetic-realm");
       var av = vector.path("approvalVector");
