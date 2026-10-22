@@ -26,10 +26,10 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
-import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
+import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient;
@@ -362,7 +362,16 @@ public class ProtectedInvitationIssuanceConfiguration {
       AccountInactivityEnrollmentService inactivity,
       JdbcProtectedAccountCreation creation) {
     return new JdbcProtectedAccountActivation(
-        jdbc, manager, journal, accounts, json, otp, admins, inactivity, Clock.systemUTC(), creation);
+        jdbc,
+        manager,
+        journal,
+        accounts,
+        json,
+        otp,
+        admins,
+        inactivity,
+        Clock.systemUTC(),
+        creation);
   }
 
   @Bean
@@ -412,8 +421,15 @@ public class ProtectedInvitationIssuanceConfiguration {
       IdentityAuthentication authentication,
       TenantContextProvider tenantContext) {
     return new ProtectedInvitationRecoverySweep(
-        actors, claims, cancellation, coordinator, invites, Clock.systemUTC(),
-        identity, authentication, tenantContext);
+        actors,
+        claims,
+        cancellation,
+        coordinator,
+        invites,
+        Clock.systemUTC(),
+        identity,
+        authentication,
+        tenantContext);
   }
 
   private String required(String name) {
