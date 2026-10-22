@@ -28,7 +28,9 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
   private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
 
   @org.springframework.beans.factory.annotation.Autowired
-  public void setIdentityMode(de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) { this.identityMode = java.util.Objects.requireNonNull(mode); }
+  public void setIdentityMode(de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    this.identityMode = java.util.Objects.requireNonNull(mode);
+  }
 
   private void requireLegacyIdentity() {
     if (identityMode != null && identityMode.isFiveActorMode())
@@ -63,13 +65,15 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
     work.requireCurrent();
     var projection = work.nativeRead();
     var roles = new HashSet<Role>();
-    projection.effectiveRoles().forEach(name -> classify(roles,name));
+    projection.effectiveRoles().forEach(name -> classify(roles, name));
     var source = new com.fasterxml.jackson.databind.ObjectMapper();
     try {
       var rows = source.readTree(work.originalSourceJson());
       if (!rows.path("consultant").isEmpty()) roles.add(Role.CONSULTANT);
       if (!rows.path("admin").isEmpty()) roles.add(Role.OTHER);
-    } catch (java.io.IOException invalid) { throw new AccountInactivityEffectException(DATABASE,FAILED); }
+    } catch (java.io.IOException invalid) {
+      throw new AccountInactivityEffectException(DATABASE, FAILED);
+    }
     work.requireCurrent();
     return roles.isEmpty() ? Set.of(Role.UNKNOWN) : Set.copyOf(roles);
   }
@@ -81,64 +85,124 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
     if (!work.suspendNative()) return false;
     for (var access : matrixStates(work.identityId())) {
       work.requireCurrent();
-      if (!matrix.setAccountSuspended(access.id(),true)) throw new AccountInactivityEffectException(MATRIX,UNCONFIRMED);
+      if (!matrix.setAccountSuspended(access.id(), true))
+        throw new AccountInactivityEffectException(MATRIX, UNCONFIRMED);
     }
     work.requireCurrent();
     media.revoke(matrixStates(work.identityId()).stream().map(MatrixAccess::id).toList());
-    work.requireCurrent(); return true;
+    work.requireCurrent();
+    return true;
   }
 
   @Override
   public boolean reactivate(AccountInactivityService.ClaimedWork work) {
     work.requireCurrent();
-    var original = state(work.identityId()).orElseThrow(() -> new AccountInactivityEffectException(DATABASE,FAILED));
-    if (!java.util.Objects.equals(work.suspensionOperationId(),accessOwner(work.identityId()))) throw new AccountInactivityEffectException(DATABASE,FAILED);
+    var original =
+        state(work.identityId())
+            .orElseThrow(() -> new AccountInactivityEffectException(DATABASE, FAILED));
+    if (!java.util.Objects.equals(work.suspensionOperationId(), accessOwner(work.identityId())))
+      throw new AccountInactivityEffectException(DATABASE, FAILED);
     for (var access : matrixStates(work.identityId())) {
       work.requireCurrent();
-      if (!matrix.setAccountSuspended(access.id(),access.locked())) throw new AccountInactivityEffectException(MATRIX,UNCONFIRMED);
+      if (!matrix.setAccountSuspended(access.id(), access.locked()))
+        throw new AccountInactivityEffectException(MATRIX, UNCONFIRMED);
     }
     work.requireCurrent();
     media.restore(matrixStates(work.identityId()).stream().map(MatrixAccess::id).toList());
     work.requireCurrent();
     if (!work.restoreNative(original.enabled())) return false;
-    durable.executeWithoutResult(ignored -> {
-      work.requireOwnedSql();
-      var latest = state(work.identityId()).orElseThrow(() -> new AccountInactivityEffectException(DATABASE,FAILED));
-      if (latest.enabled() != original.enabled() || !java.util.Objects.equals(work.suspensionOperationId(),accessOwner(work.identityId()))) throw new AccountInactivityEffectException(DATABASE,FAILED);
-      if (!latest.restored() && jdbc.update("update account_inactivity_access_state set restored=TRUE where identity_id=? and restored=FALSE",work.identityId()) != 1) throw new AccountInactivityEffectException(DATABASE,FAILED);
-    }); return true;
+    durable.executeWithoutResult(
+        ignored -> {
+          work.requireOwnedSql();
+          var latest =
+              state(work.identityId())
+                  .orElseThrow(() -> new AccountInactivityEffectException(DATABASE, FAILED));
+          if (latest.enabled() != original.enabled()
+              || !java.util.Objects.equals(
+                  work.suspensionOperationId(), accessOwner(work.identityId())))
+            throw new AccountInactivityEffectException(DATABASE, FAILED);
+          if (!latest.restored()
+              && jdbc.update(
+                      "update account_inactivity_access_state set restored=TRUE where identity_id=? and restored=FALSE",
+                      work.identityId())
+                  != 1) throw new AccountInactivityEffectException(DATABASE, FAILED);
+        });
+    return true;
   }
 
   private void scopedCapture(AccountInactivityService.ClaimedWork work) {
     var existing = state(work.identityId());
-    if (existing.isPresent() && !existing.get().restored() && work.workId().equals(accessOwner(work.identityId()))) return;
-    String phase = jdbc.queryForObject("select native_phase from account_inactivity where identity_id=? and work_id=?",String.class,work.identityId(),work.workId());
-    if (!"CLAIMED".equals(phase)) throw new AccountInactivityEffectException(DATABASE,FAILED);
+    if (existing.isPresent()
+        && !existing.get().restored()
+        && work.workId().equals(accessOwner(work.identityId()))) return;
+    String phase =
+        jdbc.queryForObject(
+            "select native_phase from account_inactivity where identity_id=? and work_id=?",
+            String.class,
+            work.identityId(),
+            work.workId());
+    if (!"CLAIMED".equals(phase)) throw new AccountInactivityEffectException(DATABASE, FAILED);
     var projection = work.nativeRead();
-    var ids = jdbc.queryForList("SELECT matrix_user_id FROM user WHERE user_id=? AND matrix_user_id IS NOT NULL UNION SELECT matrix_user_id FROM consultant WHERE consultant_id=? AND matrix_user_id IS NOT NULL",String.class,work.identityId(),work.identityId());
+    var ids =
+        jdbc.queryForList(
+            "SELECT matrix_user_id FROM user WHERE user_id=? AND matrix_user_id IS NOT NULL UNION SELECT matrix_user_id FROM consultant WHERE consultant_id=? AND matrix_user_id IS NOT NULL",
+            String.class,
+            work.identityId(),
+            work.identityId());
     var access = new java.util.ArrayList<MatrixAccess>();
     for (String id : ids) {
-      if (id == null || id.isBlank()) throw new AccountInactivityEffectException(MATRIX,UNCONFIRMED);
+      if (id == null || id.isBlank())
+        throw new AccountInactivityEffectException(MATRIX, UNCONFIRMED);
       work.requireCurrent();
-      access.add(new MatrixAccess(id,matrix.getAccountLocked(id).orElseThrow(() -> new AccountInactivityEffectException(MATRIX,UNCONFIRMED))));
+      access.add(
+          new MatrixAccess(
+              id,
+              matrix
+                  .getAccountLocked(id)
+                  .orElseThrow(() -> new AccountInactivityEffectException(MATRIX, UNCONFIRMED))));
     }
     work.requireCurrent();
-    durable.executeWithoutResult(ignored -> {
-      work.requireOwnedSql();
-      var saved = state(work.identityId());
-      if (saved.isPresent() && !saved.get().restored() && work.workId().equals(accessOwner(work.identityId()))) return;
-      String currentPhase = jdbc.queryForObject("select native_phase from account_inactivity where identity_id=? and work_id=?",String.class,work.identityId(),work.workId());
-      if (!"CLAIMED".equals(currentPhase)) throw new AccountInactivityEffectException(DATABASE,FAILED);
-      jdbc.update("delete from account_inactivity_matrix_state where identity_id=?",work.identityId());
-      jdbc.update("delete from account_inactivity_access_state where identity_id=?",work.identityId());
-      jdbc.update("insert into account_inactivity_access_state(identity_id,keycloak_enabled,restored,deletion_authorized) values(?,?,FALSE,FALSE)",work.identityId(),projection.enabled());
-      for (var item : access) jdbc.update("insert into account_inactivity_matrix_state(identity_id,matrix_user_id,original_locked) values(?,?,?)",work.identityId(),item.id(),item.locked());
-      if (jdbc.update("update account_inactivity set access_work_id=? where identity_id=? and work_id=?",work.workId(),work.identityId(),work.workId()) != 1) throw new AccountInactivityEffectException(DATABASE,FAILED);
-    });
+    durable.executeWithoutResult(
+        ignored -> {
+          work.requireOwnedSql();
+          var saved = state(work.identityId());
+          if (saved.isPresent()
+              && !saved.get().restored()
+              && work.workId().equals(accessOwner(work.identityId()))) return;
+          String currentPhase =
+              jdbc.queryForObject(
+                  "select native_phase from account_inactivity where identity_id=? and work_id=?",
+                  String.class,
+                  work.identityId(),
+                  work.workId());
+          if (!"CLAIMED".equals(currentPhase))
+            throw new AccountInactivityEffectException(DATABASE, FAILED);
+          jdbc.update(
+              "delete from account_inactivity_matrix_state where identity_id=?", work.identityId());
+          jdbc.update(
+              "delete from account_inactivity_access_state where identity_id=?", work.identityId());
+          jdbc.update(
+              "insert into account_inactivity_access_state(identity_id,keycloak_enabled,restored,deletion_authorized) values(?,?,FALSE,FALSE)",
+              work.identityId(),
+              projection.enabled());
+          for (var item : access)
+            jdbc.update(
+                "insert into account_inactivity_matrix_state(identity_id,matrix_user_id,original_locked) values(?,?,?)",
+                work.identityId(),
+                item.id(),
+                item.locked());
+          if (jdbc.update(
+                  "update account_inactivity set access_work_id=? where identity_id=? and work_id=?",
+                  work.workId(),
+                  work.identityId(),
+                  work.workId())
+              != 1) throw new AccountInactivityEffectException(DATABASE, FAILED);
+        });
   }
 
   private String accessOwner(String id) {
-    return jdbc.queryForObject("select access_work_id from account_inactivity where identity_id=?",String.class,id);
+    return jdbc.queryForObject(
+        "select access_work_id from account_inactivity where identity_id=?", String.class, id);
   }
 
   @Override

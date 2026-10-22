@@ -27,7 +27,8 @@ class HumanAdminMaintenanceCodecTest {
 
   @Test
   void onlyFixedProfileEmailProofsKeepTheOriginalFifteenClaimsAndIndependentMac() throws Exception {
-    for (String command : List.of("profile", "email", "ordinary-profile", "deactivate", "reactivate")) {
+    for (String command :
+        List.of("profile", "email", "ordinary-profile", "deactivate", "reactivate")) {
       JsonNode body =
           json.readTree(
               "{\"target\":{\"accountId\":\"native-account\",\"tenantId\":\"7\",\"origin\":{\"kind\":\"HUMAN_ADMIN\"}},\"change\":{\"email\":\"äda@example.test\"}}");
@@ -97,7 +98,8 @@ class HumanAdminMaintenanceCodecTest {
   @Test
   void fixedProfileEmailReceiptsVerifyEveryOriginalBindingAndRejectResignedMutation()
       throws Exception {
-    for (String command : List.of("profile", "email", "ordinary-profile", "deactivate", "reactivate")) {
+    for (String command :
+        List.of("profile", "email", "ordinary-profile", "deactivate", "reactivate")) {
       JsonNode body =
           json.readTree(
               "{\"target\":{\"accountId\":\"native-account\",\"tenantId\":\"7\",\"origin\":{\"kind\":\"HUMAN_ADMIN\",\"workflowId\":\"operation\"}},\"operationId\":\"60000000-0000-4000-8000-000000000003\",\"expectedState\":\""
@@ -148,8 +150,10 @@ class HumanAdminMaintenanceCodecTest {
       case "email" -> codec.verifyMaintenanceEmailReceipt(reply, "realm-1", actor, frozen);
       case "ordinary-profile" ->
           codec.verifyMaintenanceOrdinaryProfileReceipt(reply, "realm-1", actor, frozen);
-      case "deactivate" -> codec.verifyMaintenanceInactivitySuspendReceipt(reply, "realm-1", actor, frozen);
-      case "reactivate" -> codec.verifyMaintenanceInactivityRestoreReceipt(reply, "realm-1", actor, frozen);
+      case "deactivate" ->
+          codec.verifyMaintenanceInactivitySuspendReceipt(reply, "realm-1", actor, frozen);
+      case "reactivate" ->
+          codec.verifyMaintenanceInactivityRestoreReceipt(reply, "realm-1", actor, frozen);
       default -> throw new IllegalArgumentException();
     };
   }

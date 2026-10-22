@@ -18,12 +18,15 @@ public interface AccountInactivityEffects {
   default Set<Role> currentRoles(AccountInactivityService.ClaimedWork work) {
     throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
   }
+
   default boolean suspend(AccountInactivityService.ClaimedWork work) {
     throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
   }
+
   default boolean reactivate(AccountInactivityService.ClaimedWork work) {
     throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
   }
+
   default boolean delete(AccountInactivityService.ClaimedWork work) {
     throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
   }

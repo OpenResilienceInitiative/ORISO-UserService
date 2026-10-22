@@ -1225,21 +1225,25 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     }
   }
 
-
-  public String verifyMaintenanceInactivitySuspendReceipt(String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+  public String verifyMaintenanceInactivitySuspendReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
     throw new IllegalArgumentException("Checked inactivity suspension receipt is unavailable");
   }
 
-  public String verifyMaintenanceInactivityRestoreReceipt(String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+  public String verifyMaintenanceInactivityRestoreReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
     throw new IllegalArgumentException("Checked inactivity restoration receipt is unavailable");
   }
 
   public String claimedInactivityDeletionRowDigest(JsonNode exactOwnedRow) {
-    return digest("claimed-inactivity-deletion-row/v1",ClaimedInactivityRowSchema.require(exactOwnedRow,true));
+    return digest(
+        "claimed-inactivity-deletion-row/v1",
+        ClaimedInactivityRowSchema.require(exactOwnedRow, true));
   }
 
   public String claimedInactivityRowDigest(JsonNode exactOwnedRow) {
-    return digest("claimed-inactivity-row/v1",ClaimedInactivityRowSchema.require(exactOwnedRow,false));
+    return digest(
+        "claimed-inactivity-row/v1", ClaimedInactivityRowSchema.require(exactOwnedRow, false));
   }
 
   public String verifyMaintenanceOrdinaryProfileReceipt(

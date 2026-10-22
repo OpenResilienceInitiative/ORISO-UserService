@@ -110,7 +110,9 @@ class ClaimedInactivityRowCodecTest {
     restored.put("status", "REACTIVATING");
     assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivityRowDigest(restored));
     restored.put("suspensionOperationId", "71000000-0000-4000-8000-000000000009");
-    assertEquals(independent(restored), assertDoesNotThrow(() -> codec.claimedInactivityRowDigest(restored)));
+    assertEquals(
+        independent(restored),
+        assertDoesNotThrow(() -> codec.claimedInactivityRowDigest(restored)));
   }
 
   @Test
@@ -121,7 +123,8 @@ class ClaimedInactivityRowCodecTest {
     initiator.put("subject", "71000000-0000-4000-8000-000000000003");
     initiator.put("issuer", "https://auth.example.test/realms/test");
     initiator.put("client", "admin");
-    assertEquals(independent(human), assertDoesNotThrow(() -> codec.claimedInactivityRowDigest(human)));
+    assertEquals(
+        independent(human), assertDoesNotThrow(() -> codec.claimedInactivityRowDigest(human)));
     assertNotEquals(
         codec.claimedInactivityRowDigest(row()), codec.claimedInactivityRowDigest(human));
     for (String field : List.of("subject", "issuer", "client")) {

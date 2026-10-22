@@ -154,7 +154,9 @@ public class ConsultantUpdateService {
           dto.getLastname());
     }
 
-    public Boolean groupChatRequested() { return dto.getIsGroupchatConsultant(); }
+    public Boolean groupChatRequested() {
+      return dto.getIsGroupchatConsultant();
+    }
 
     public void validate() {
       userAccountInputValidator.validateAbsence(new UpdateConsultantDTOAbsenceInputAdapter(dto));
