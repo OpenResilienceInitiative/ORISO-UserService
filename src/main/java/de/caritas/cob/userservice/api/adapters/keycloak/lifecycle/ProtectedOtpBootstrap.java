@@ -2,9 +2,9 @@ package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationAcceptance.AcceptanceClaim;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedAccounts.PendingOwnedAccount;
-import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Clock;
 import java.util.UUID;
@@ -35,7 +35,8 @@ public final class ProtectedOtpBootstrap {
   }
 
   /** Required owning SQL: encrypted preparation and WAITING_OTP are committed together. No RPC. */
-  public IdentityOtpCredential stagePrepared(AcceptanceClaim currentClaim, PreparedBootstrap prepared) {
+  public IdentityOtpCredential stagePrepared(
+      AcceptanceClaim currentClaim, PreparedBootstrap prepared) {
     throw unavailable();
   }
 
@@ -62,31 +63,72 @@ public final class ProtectedOtpBootstrap {
     throw unavailable();
   }
 
-  public enum AttemptState { COMPLETE, INVALID, PENDING, UNKNOWN }
+  public enum AttemptState {
+    COMPLETE,
+    INVALID,
+    PENDING,
+    UNKNOWN
+  }
 
   public static final class PreparedBootstrap {
     private PreparedBootstrap() {}
-    @Override public String toString() { return "PreparedProtectedOtp[redacted]"; }
+
+    @Override
+    public String toString() {
+      return "PreparedProtectedOtp[redacted]";
+    }
   }
 
   public static final class BootstrapAttempt {
     private BootstrapAttempt() {}
-    public AttemptState state() { throw unavailable(); }
+
+    public AttemptState state() {
+      throw unavailable();
+    }
+
     /** Available only for COMPLETE; private constructor of Completion supplies no raw-tuple API. */
-    public Completion completion() { throw unavailable(); }
-    @Override public String toString() { return "ProtectedOtpAttempt[redacted]"; }
+    public Completion completion() {
+      throw unavailable();
+    }
+
+    @Override
+    public String toString() {
+      return "ProtectedOtpAttempt[redacted]";
+    }
   }
 
   public static final class Completion {
     private Completion() {}
-    public UUID claimId() { throw unavailable(); }
-    public UUID attemptId() { throw unavailable(); }
-    public UUID executionId() { throw unavailable(); }
-    public UUID bootstrapIncarnation() { throw unavailable(); }
-    public String accountId() { throw unavailable(); }
+
+    public UUID claimId() {
+      throw unavailable();
+    }
+
+    public UUID attemptId() {
+      throw unavailable();
+    }
+
+    public UUID executionId() {
+      throw unavailable();
+    }
+
+    public UUID bootstrapIncarnation() {
+      throw unavailable();
+    }
+
+    public String accountId() {
+      throw unavailable();
+    }
+
     /** Metadata-only MAC-bound native completion receipt; never setup material/code/JWT/address. */
-    public String receipt() { throw unavailable(); }
-    @Override public String toString() { return "ProtectedOtpCompletion[redacted]"; }
+    public String receipt() {
+      throw unavailable();
+    }
+
+    @Override
+    public String toString() {
+      return "ProtectedOtpCompletion[redacted]";
+    }
   }
 
   private static IllegalStateException unavailable() {
