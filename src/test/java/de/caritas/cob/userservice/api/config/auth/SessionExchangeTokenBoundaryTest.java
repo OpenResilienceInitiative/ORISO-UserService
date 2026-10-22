@@ -85,11 +85,26 @@ class SessionExchangeTokenBoundaryTest {
     List<Executable> checks = new ArrayList<>();
     for (String variant :
         List.of(
-            "mixed-roles", "admin-extra-role", "admin-missing-role", "wrong-audience",
-            "admin-extra-audience", "admin-missing-audience", "wrong-subject", "wrong-client",
-            "wrong-issuer", "expired", "missing-expiry", "future", "native-admin",
-            "wrong-signature", "provider-error", "missing-issued-at", "zero-issued-at",
-            "negative-issued-at", "future-issued-at", "unordered-native-bounds")) {
+            "mixed-roles",
+            "admin-extra-role",
+            "admin-missing-role",
+            "wrong-audience",
+            "admin-extra-audience",
+            "admin-missing-audience",
+            "wrong-subject",
+            "wrong-client",
+            "wrong-issuer",
+            "expired",
+            "missing-expiry",
+            "future",
+            "native-admin",
+            "wrong-signature",
+            "provider-error",
+            "missing-issued-at",
+            "zero-issued-at",
+            "negative-issued-at",
+            "future-issued-at",
+            "unordered-native-bounds")) {
       checks.add(
           () -> {
             issuer.variant = variant;
