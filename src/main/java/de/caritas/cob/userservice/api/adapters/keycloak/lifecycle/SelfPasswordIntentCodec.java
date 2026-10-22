@@ -46,6 +46,7 @@ final class SelfPasswordIntentCodec {
       var value = codec.read(envelope, JsonNode.class);
       fields(value, Set.of("v", "nonce", "ciphertext"));
       if (!value.path("v").isIntegralNumber()
+          || !value.path("v").canConvertToInt()
           || value.path("v").intValue() != 1
           || !envelope.equals(codec.canonical(value))) throw invalid();
       byte[] nonce = decode(value.path("nonce"), 12, 12);

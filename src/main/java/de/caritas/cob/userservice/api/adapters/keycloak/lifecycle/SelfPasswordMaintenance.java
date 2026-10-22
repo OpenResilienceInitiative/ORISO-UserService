@@ -286,11 +286,15 @@ public final class SelfPasswordMaintenance {
       throw unavailable();
     if (Set.of("FROZEN", "ACKNOWLEDGED").contains(row.status)) {
       if (row.metadata == null || row.envelope == null) throw unavailable();
-      var stored = codec.read(row.metadata, JsonNode.class);
-      if (!row.metadata.equals(
-          codec.canonical(metadata(row, stored.path("expectedState").asText()))))
+      try {
+        var stored = codec.read(row.metadata, JsonNode.class);
+        if (!row.metadata.equals(
+            codec.canonical(metadata(row, stored.path("expectedState").asText()))))
+          throw unavailable();
+        codec.openSelfPasswordIntent(stored, row.envelope);
+      } catch (IllegalArgumentException invalidPrivateIntent) {
         throw unavailable();
-      codec.openSelfPasswordIntent(stored, row.envelope);
+      }
       if ("ACKNOWLEDGED".equals(row.status) && row.receipt == null) throw unavailable();
     }
     return row;
