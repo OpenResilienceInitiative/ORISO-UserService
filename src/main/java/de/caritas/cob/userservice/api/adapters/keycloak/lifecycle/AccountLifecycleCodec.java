@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import de.caritas.cob.userservice.api.config.auth.TaskActorCredentials;
 import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
+import de.caritas.cob.userservice.api.port.out.MagicLinkCapabilityDigest;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Base64;
@@ -22,7 +23,7 @@ import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 /** One shared key; distinct MAC domains for payload, proof and durable creation fingerprint. */
-public final class AccountLifecycleCodec {
+public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
   private final byte[] key;
   private final Clock clock;
   private final java.security.SecureRandom intentNonce;
@@ -74,6 +75,13 @@ public final class AccountLifecycleCodec {
           }
         });
     json.registerModule(strict);
+  }
+
+  @Override
+  public String digest(UUID workflowId, String oneTimeToken) {
+    return digest(
+        "magic-link-capability/v1",
+        Map.of("workflowId", workflowId.toString(), "token", oneTimeToken));
   }
 
   public CreationIdentity identity(CreationScope scope, AccountCreation account) {
@@ -837,6 +845,80 @@ public final class AccountLifecycleCodec {
       return new VerifiedSelfAppOutcome(status, receipt);
     } catch (RuntimeException failure) {
       throw invalidSecretIntent();
+    }
+  }
+
+  /** Fixed claimed-session wire; producers still require a live private claim and checked actor. */
+  public String magicLinkProof(
+      de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker.VerifiedMaintenanceToken
+          actor,
+      String realmName,
+      String realmId,
+      JsonNode command) {
+    try {
+      long now = clock.instant().getEpochSecond();
+      if (actor == null
+          || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN
+          || actor.purpose() != TaskPurpose.SESSION_EXCHANGE
+          || actor.validatedJwtIssuedAt() <= 0
+          || actor.validatedJwtIssuedAt() > now
+          || actor.validatedJwtExpiresAt() <= now
+          || actor.validatedJwtExpiresAt() <= actor.validatedJwtIssuedAt()
+          || realmName == null
+          || realmName.isBlank()
+          || realmName.length() > 255
+          || realmId == null
+          || !realmId.matches("[A-Za-z0-9._-]{1,255}")) throw new IllegalStateException();
+      intentFields(
+          command,
+          java.util.Set.of(
+              "version",
+              "workflowId",
+              "targetUserId",
+              "tenantId",
+              "clientId",
+              "expiresAt",
+              "claimDigest"));
+      String workflow = intentUuid(command, "workflowId");
+      intentUuid(command, "targetUserId");
+      if (!command.path("version").isIntegralNumber()
+          || command.path("version").intValue() != 1
+          || !command.path("version").canConvertToInt()
+          || !"app".equals(intentText(command, "clientId", 255))
+          || !command.path("expiresAt").isIntegralNumber()
+          || !command.path("expiresAt").canConvertToLong()
+          || command.path("expiresAt").longValue() <= now
+          || command.path("expiresAt").longValue() - now > 900
+          || !intentText(command, "claimDigest", 64).matches("[0-9a-f]{64}"))
+        throw new IllegalStateException();
+      JsonNode tenant = command.get("tenantId");
+      if (!tenant.isNull()
+          && (!tenant.isIntegralNumber() || !tenant.canConvertToLong() || tenant.longValue() < 0))
+        throw new IllegalStateException();
+      Map<String, Object> claims = new TreeMap<>();
+      claims.put("iss", "userservice");
+      claims.put("aud", "oriso-session-exchange");
+      claims.put("purpose", "SESSION_EXCHANGE");
+      claims.put("operation", "session.magic-link.exchange");
+      claims.put("method", "POST");
+      claims.put("actor", "ACCOUNT_ADMIN");
+      claims.put("realm", realmName);
+      claims.put("target", "realm/" + realmId + "/magic-link/" + workflow);
+      claims.put("taskClient", actor.clientId());
+      claims.put("taskSubject", actor.subject());
+      claims.put("payloadDigest", digest("magic-link-command/v1", command));
+      claims.put("jti", UUID.randomUUID().toString());
+      claims.put("nonce", UUID.randomUUID().toString().replace("-", ""));
+      claims.put("iat", now);
+      claims.put(
+          "exp",
+          Math.min(
+              Math.min(now + 30, actor.validatedJwtExpiresAt()),
+              command.path("expiresAt").longValue()));
+      String encoded = encode(canonical(claims).getBytes(StandardCharsets.UTF_8));
+      return encoded + "." + encode(mac("magic-link-proof/v1\n" + encoded));
+    } catch (RuntimeException invalid) {
+      throw new IllegalStateException("Claimed session proof unavailable");
     }
   }
 

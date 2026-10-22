@@ -96,4 +96,23 @@ class RedisOneTimeTokenStoreIT {
     assertThat(firstInstance.claim("reset", "old-token")).isEmpty();
     assertThat(firstInstance.claim("reset", "new-token")).contains(oldClaim);
   }
+
+  @Test
+  void scopedMagicMetadataSurvivesReplicaClaimAndUnknownRetryWithoutExpiryExtension() {
+    Instant expiresAt = Instant.ofEpochMilli(Instant.now().plusSeconds(30).toEpochMilli());
+    var metadata =
+        new OneTimeTokenStore.TokenClaim(
+            "11111111-1111-4111-8111-111111111111",
+            expiresAt,
+            UUID.randomUUID(),
+            null,
+            "b".repeat(64));
+    firstInstance.storeMagicLink("scoped-token", metadata);
+    assertThat(secondInstance.claim("magic-login", "scoped-token")).contains(metadata);
+    assertThat(firstInstance.claim("magic-login", "scoped-token")).isEmpty();
+    assertThat(firstInstance.restore("magic-login", "scoped-token", metadata, false)).isTrue();
+    assertThat(secondInstance.claim("magic-login", "scoped-token")).contains(metadata);
+    assertThat(metadata.toString())
+        .doesNotContain(metadata.subjectId(), metadata.capabilityDigest());
+  }
 }

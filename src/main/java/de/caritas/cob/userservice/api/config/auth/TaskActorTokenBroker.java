@@ -100,10 +100,19 @@ public class TaskActorTokenBroker {
     }
   }
 
+  /** Only the claimed Magic Link transport may obtain the finite session-purpose result. */
+  public VerifiedMaintenanceToken issueCheckedSessionExchange() {
+    return issueCheckedAdminPurpose(TaskPurpose.SESSION_EXCHANGE);
+  }
+
   /** Only the finite checked maintenance/OTP workflow may obtain this private result. */
   public VerifiedMaintenanceToken issueCheckedMaintenance(TaskPurpose purpose) {
     if (purpose != TaskPurpose.ACCOUNT_MAINTENANCE && purpose != TaskPurpose.OTP)
       throw checkedUnavailable();
+    return issueCheckedAdminPurpose(purpose);
+  }
+
+  private VerifiedMaintenanceToken issueCheckedAdminPurpose(TaskPurpose purpose) {
     try {
       var binding = configuration.require(purpose);
       if (binding.actor() != TaskActor.ACCOUNT_ADMIN) throw checkedUnavailable();

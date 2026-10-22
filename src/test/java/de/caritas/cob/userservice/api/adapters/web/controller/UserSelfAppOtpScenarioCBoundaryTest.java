@@ -87,6 +87,66 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
+  void publicAppSetupValidatesThePublicIssuerWhileUsingTheConfiguredInternalTransport()
+      throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      String internal = "https://keycloak.internal.fixture.invalid";
+      var internalCalls = new AtomicInteger();
+      fixture
+          .http
+          .getInterceptors()
+          .add(
+              (request, body, execution) -> {
+                assertTrue(request.getURI().toString().startsWith(internal + "/realms/"));
+                internalCalls.incrementAndGet();
+                var uri =
+                    java.net.URI.create(
+                        fixture.issuer.base()
+                            + request.getURI().toString().substring(internal.length()));
+                return execution.execute(
+                    new org.springframework.http.client.support.HttpRequestWrapper(request) {
+                      @Override
+                      public java.net.URI getURI() {
+                        return uri;
+                      }
+                    },
+                    body);
+              });
+      fixture.delegate.setSelfAppOtpMaintenance(
+          new SelfAppOtpMaintenance(
+              fixture.mode,
+              fixture.human,
+              fixture.request,
+              fixture.jdbc,
+              fixture.transactions,
+              fixture.issuer.actors(),
+              fixture.issuer.broker(),
+              fixture.codec,
+              fixture.http,
+              Clock.systemUTC(),
+              internal,
+              "synthetic",
+              REALM_ID,
+              fixture.issuer.issuer()));
+      fixture.expectNative(false, false);
+      assertDoesNotThrow(
+          () ->
+              assertEquals(
+                  200,
+                  fixture
+                      .controller
+                      .activateTwoFactorAuthByApp(fixture.dto())
+                      .getStatusCode()
+                      .value()));
+      assertEquals(2, internalCalls.get());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals(1, fixture.domainWrites());
+      assertEquals(1, fixture.nativeExecutions.get());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
   void publicAppSetupFreezesEncryptedOwnedIntentAndMarksInviteOnlyAfterVerifiedReceipt()
       throws Exception {
     try (var fixture = new Fixture(true, true)) {
@@ -353,6 +413,32 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       assertEquals(0, fixture.domainWrites());
       assertEquals(1, fixture.nativeExecutions.get());
       fixture.assertEmailStorage();
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void publicEmailIdempotencyBindsTheCompleteEmailFieldBeforeNormalization() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.request.setRequestURI("/service/users/2fa/email");
+      fixture.expectEmail(false, false);
+      assertEquals(
+          204,
+          fixture
+              .controller
+              .startTwoFactorAuthByEmailSetup(fixture.email())
+              .getStatusCode()
+              .value());
+      var changed = new EmailDTO();
+      changed.setEmail(PENDING_EMAIL);
+      assertThrows(
+          ConflictException.class,
+          () -> fixture.controller.startTwoFactorAuthByEmailSetup(changed));
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals(fixture.operation, fixture.pendingEmailOperation());
+      assertEquals("original@oriso.org", fixture.currentEmail());
+      assertEquals(1, fixture.nativeExecutions.get());
+      assertEquals(0, fixture.domainWrites());
       fixture.server.verify();
     }
   }

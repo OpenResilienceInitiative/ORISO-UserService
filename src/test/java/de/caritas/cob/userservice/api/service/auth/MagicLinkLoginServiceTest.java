@@ -14,10 +14,13 @@ import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
+import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
+import de.caritas.cob.userservice.api.port.out.MagicLinkCapabilityDigest;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.MagicLinkRequestResult;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -35,6 +38,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,7 +49,9 @@ import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
@@ -59,6 +66,8 @@ class MagicLinkLoginServiceTest {
   @Mock private ApplicationSettingsService applicationSettingsService;
   @Mock private OrisoEmailRenderer emailRenderer;
   @Mock private OrisoEmailBrand emailBrand;
+  @Mock private TaskActorConfiguration taskActors;
+  @Mock private ObjectProvider<MagicLinkCapabilityDigest> capabilityDigest;
 
   @InjectMocks private MagicLinkLoginService magicLinkLoginService;
 
@@ -678,5 +687,246 @@ class MagicLinkLoginServiceTest {
         .globalSmtpFrom("noreply@example.com")
         .globalSmtpUsername(username)
         .globalSmtpPassword(password);
+  }
+
+  @Test
+  void fiveActorsUsesOnlyTheLiveClaimAndInvalidatesItAfterTheCall() {
+    when(taskActors.isEnabled()).thenReturn(true);
+    var stored = scopedClaim(42L);
+    when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
+    var seen = new AtomicReference<MagicLinkLoginService.ClaimedMagicLink>();
+    var session = new IdentitySession("access", 300, 600, "refresh", "Bearer", "session", "openid");
+    when(identitySessionExchange.exchangeMagicLink(any()))
+        .thenAnswer(
+            invocation -> {
+              MagicLinkLoginService.ClaimedMagicLink claim = invocation.getArgument(0);
+              seen.set(claim);
+              claim.requireCurrent();
+              assertThat(claim.targetUserId()).isEqualTo(stored.subjectId());
+              assertThat(claim.workflowId()).isEqualTo(stored.workflowId());
+              assertThat(claim.tenantId()).isEqualTo(42L);
+              assertThat(claim.expiresAt()).isEqualTo(stored.expiresAt());
+              assertThat(claim.claimDigest()).isEqualTo(stored.capabilityDigest());
+              assertThat(claim.toString())
+                  .doesNotContain(stored.subjectId(), stored.capabilityDigest());
+              var wrongThread = new AtomicReference<Throwable>();
+              Thread thread =
+                  new Thread(
+                      () -> {
+                        try {
+                          claim.requireCurrent();
+                        } catch (Throwable failure) {
+                          wrongThread.set(failure);
+                        }
+                      });
+              thread.start();
+              thread.join(2000);
+              assertThat(wrongThread.get()).isInstanceOf(IllegalStateException.class);
+              return Optional.of(session);
+            });
+    assertThat(magicLinkLoginService.consumeMagicLink("scoped-token")).contains(session);
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> seen.get().requireCurrent())
+        .isInstanceOf(IllegalStateException.class);
+    verify(identitySessionExchange, never()).exchangeForUser(anyString());
+    verify(oneTimeTokenStore, never()).restore(anyString(), anyString(), any(), anyBoolean());
+  }
+
+  @Test
+  void fiveActorsNeverTreatsLegacyOrMalformedClaimMetadataAsScopedAuthority() {
+    when(taskActors.isEnabled()).thenReturn(true);
+    for (var stored :
+        List.of(
+            validClaim("legacy-user"),
+            new OneTimeTokenStore.TokenClaim(
+                "not-a-uuid",
+                Instant.now().plusSeconds(60),
+                UUID.randomUUID(),
+                42L,
+                "b".repeat(64)),
+            new OneTimeTokenStore.TokenClaim(
+                UUID.randomUUID().toString(),
+                Instant.now().minusSeconds(1),
+                UUID.randomUUID(),
+                42L,
+                "b".repeat(64)),
+            new OneTimeTokenStore.TokenClaim(
+                UUID.randomUUID().toString(),
+                Instant.now().plusSeconds(60),
+                UUID.randomUUID(),
+                -1L,
+                "b".repeat(64)))) {
+      when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
+      assertThat(magicLinkLoginService.consumeMagicLink("scoped-token")).isEmpty();
+    }
+    verifyNoInteractions(identitySessionExchange);
+    verify(oneTimeTokenStore, never()).restore(anyString(), anyString(), any(), anyBoolean());
+  }
+
+  @Test
+  void fiveActorsRestoresTheExactScopedTupleAfterAnUnknownExchangeOutcome() {
+    when(taskActors.isEnabled()).thenReturn(true);
+    var stored = scopedClaim(42L);
+    when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
+    when(identitySessionExchange.exchangeMagicLink(any()))
+        .thenThrow(new IllegalStateException("private"));
+    assertThat(magicLinkLoginService.consumeMagicLink("scoped-token")).isEmpty();
+    verify(oneTimeTokenStore).restore("magic-login", "scoped-token", stored, false);
+    verify(identitySessionExchange, never()).exchangeForUser(anyString());
+  }
+
+  @Test
+  void fiveActorsPreservesAnUnassignedTenantWithoutInventingZero() {
+    when(taskActors.isEnabled()).thenReturn(true);
+    when(oneTimeTokenStore.claim("magic-login", "scoped-token"))
+        .thenReturn(Optional.of(scopedClaim(null)));
+    when(identitySessionExchange.exchangeMagicLink(any()))
+        .thenAnswer(
+            invocation -> {
+              MagicLinkLoginService.ClaimedMagicLink claim = invocation.getArgument(0);
+              assertThat(claim.tenantId()).isNull();
+              return Optional.empty();
+            });
+    assertThat(magicLinkLoginService.consumeMagicLink("scoped-token")).isEmpty();
+    verify(identitySessionExchange).exchangeMagicLink(any());
+    verify(identitySessionExchange, never()).exchangeForUser(anyString());
+  }
+
+  @Test
+  void fiveActorsRefusesAmbientSqlBeforeTheRedisClaim() {
+    when(taskActors.isEnabled()).thenReturn(true);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      assertThat(magicLinkLoginService.consumeMagicLink("scoped-token")).isEmpty();
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+    verifyNoInteractions(oneTimeTokenStore, identitySessionExchange);
+  }
+
+  @Test
+  void fiveActorsIssuesScopedMetadataBeforeSendingTheRealMail() {
+    when(taskActors.isEnabled()).thenReturn(true);
+    when(capabilityDigest.getObject()).thenReturn(new AccountLifecycleCodec(new byte[32]));
+    User user = validUserWithMagicLinkEnabled();
+    user.setUserId("11111111-1111-4111-8111-111111111111");
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
+    stubReadyMail();
+    try (MockedStatic<Transport> transport = mockStatic(Transport.class)) {
+      assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+          .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+      transport.verify(() -> Transport.send(any(Message.class)));
+    }
+    var token = org.mockito.ArgumentCaptor.forClass(String.class);
+    var stored = org.mockito.ArgumentCaptor.forClass(OneTimeTokenStore.TokenClaim.class);
+    verify(oneTimeTokenStore).storeMagicLink(token.capture(), stored.capture());
+    assertThat(stored.getValue().subjectId()).isEqualTo(user.getUserId());
+    assertThat(stored.getValue().tenantId()).isEqualTo(user.getTenantId());
+    assertThat(stored.getValue().workflowId()).isNotNull();
+    assertThat(stored.getValue().expiresAt())
+        .isAfter(Instant.now())
+        .isBefore(Instant.now().plusSeconds(901));
+    assertThat(stored.getValue().capabilityDigest())
+        .isEqualTo(
+            new AccountLifecycleCodec(new byte[32])
+                .digest(
+                    "magic-link-capability/v1",
+                    Map.of(
+                        "workflowId",
+                        stored.getValue().workflowId().toString(),
+                        "token",
+                        token.getValue())));
+    verify(oneTimeTokenStore, never())
+        .store(anyString(), anyString(), anyString(), any(), anyBoolean());
+  }
+
+  @Test
+  void fiveActorsForwardsOnlySixAsciiDigitOtpFromTheSameLiveClaim() {
+    when(taskActors.isEnabled()).thenReturn(true);
+    for (String invalid : List.of("", "12345", "1234567", "１２３４５６", " 123456", "12345a")) {
+      assertThat(magicLinkLoginService.consumeMagicLink("scoped-token", invalid)).isEmpty();
+    }
+    verifyNoInteractions(oneTimeTokenStore, identitySessionExchange);
+    var stored = scopedClaim(42L);
+    when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
+    var seen = new AtomicReference<MagicLinkLoginService.ClaimedMagicLink>();
+    when(identitySessionExchange.exchangeMagicLink(any(), eq("123456")))
+        .thenAnswer(
+            invocation -> {
+              MagicLinkLoginService.ClaimedMagicLink live = invocation.getArgument(0);
+              seen.set(live);
+              live.requireCurrent();
+              assertThat(live.workflowId()).isEqualTo(stored.workflowId());
+              assertThat(live.claimDigest()).isEqualTo(stored.capabilityDigest());
+              assertThat(live.expiresAt()).isEqualTo(stored.expiresAt());
+              return Optional.of(identitySession());
+            });
+    assertThat(magicLinkLoginService.consumeMagicLink("scoped-token", "123456"))
+        .contains(identitySession());
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> seen.get().requireCurrent())
+        .isInstanceOf(IllegalStateException.class);
+    verify(identitySessionExchange, never()).exchangeForUser(anyString());
+    verify(oneTimeTokenStore, never()).restore(anyString(), anyString(), any(), anyBoolean());
+  }
+
+  @Test
+  void fiveActorsRestoresAndPropagatesOnlyFiniteMfaChallenges() {
+    when(taskActors.isEnabled()).thenReturn(true);
+    var stored = scopedClaim(42L);
+    when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
+    for (var challenge :
+        List.of(
+            new IdentitySessionExchange.MagicLinkChallenge("APP", null, 400),
+            new IdentitySessionExchange.MagicLinkChallenge("EMAIL", 17, 400),
+            new IdentitySessionExchange.MagicLinkChallenge("EMAIL", 23, 429))) {
+      var seen = new AtomicReference<MagicLinkLoginService.ClaimedMagicLink>();
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                MagicLinkLoginService.ClaimedMagicLink live = invocation.getArgument(0);
+                seen.set(live);
+                live.requireCurrent();
+                throw challenge;
+              })
+          .when(identitySessionExchange)
+          .exchangeMagicLink(any(), eq("123456"));
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> magicLinkLoginService.consumeMagicLink("scoped-token", "123456"))
+          .isSameAs(challenge);
+      org.assertj.core.api.Assertions.assertThatThrownBy(() -> seen.get().requireCurrent())
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(challenge.getMessage()).isEqualTo("Magic-link verification required");
+      assertThat(challenge.toString()).isEqualTo("MagicLinkChallenge[redacted]");
+    }
+    verify(oneTimeTokenStore, org.mockito.Mockito.times(3))
+        .restore("magic-login", "scoped-token", stored, false);
+    verify(identitySessionExchange, never()).exchangeForUser(anyString());
+  }
+
+  @Test
+  void fiveActorsRestoresTheOriginalContinuationTupleAfterWrongFactorOrUnknownTransport() {
+    when(taskActors.isEnabled()).thenReturn(true);
+    var stored = scopedClaim(42L);
+    when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
+    when(identitySessionExchange.exchangeMagicLink(any(), eq("123456")))
+        .thenReturn(Optional.empty());
+    assertThat(magicLinkLoginService.consumeMagicLink("scoped-token", "123456")).isEmpty();
+    verify(oneTimeTokenStore).restore("magic-login", "scoped-token", stored, false);
+    org.mockito.Mockito.doThrow(
+            new org.springframework.web.client.ResourceAccessException("private"))
+        .when(identitySessionExchange)
+        .exchangeMagicLink(any(), eq("123456"));
+    assertThat(magicLinkLoginService.consumeMagicLink("scoped-token", "123456")).isEmpty();
+    verify(oneTimeTokenStore, org.mockito.Mockito.times(2))
+        .restore("magic-login", "scoped-token", stored, false);
+    verify(oneTimeTokenStore, never()).storeMagicLink(anyString(), any());
+    verify(identitySessionExchange, never()).exchangeForUser(anyString());
+  }
+
+  private static OneTimeTokenStore.TokenClaim scopedClaim(Long tenant) {
+    return new OneTimeTokenStore.TokenClaim(
+        "11111111-1111-4111-8111-111111111111",
+        Instant.now().plusSeconds(90).truncatedTo(java.time.temporal.ChronoUnit.SECONDS),
+        UUID.randomUUID(),
+        tenant,
+        "b".repeat(64));
   }
 }

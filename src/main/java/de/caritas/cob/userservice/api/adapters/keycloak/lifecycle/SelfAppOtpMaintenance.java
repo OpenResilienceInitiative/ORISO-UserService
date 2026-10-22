@@ -58,6 +58,38 @@ public final class SelfAppOtpMaintenance {
   private final @NonNull String authServer;
   private final @NonNull String realmName;
   private final @NonNull String realmId;
+  private final @NonNull String humanIssuer;
+
+  public SelfAppOtpMaintenance(
+      IdentityClientConfig mode,
+      AuthenticatedUser authenticatedUser,
+      HttpServletRequest request,
+      JdbcTemplate jdbc,
+      PlatformTransactionManager transactions,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      RestTemplate http,
+      Clock clock,
+      String authServer,
+      String realmName,
+      String realmId) {
+    this(
+        mode,
+        authenticatedUser,
+        request,
+        jdbc,
+        transactions,
+        actors,
+        broker,
+        codec,
+        http,
+        clock,
+        authServer,
+        realmName,
+        realmId,
+        authServer.replaceAll("/+$", "") + "/realms/" + realmName);
+  }
 
   public boolean isFiveActorMode() {
     return mode.isFiveActorMode();
@@ -215,7 +247,9 @@ public final class SelfAppOtpMaintenance {
                         projection,
                         initialCode,
                         secret,
-                        pendingEmail,
+                        kind == Operation.EMAIL_START
+                            ? pendingEmail.toLowerCase(java.util.Locale.ROOT)
+                            : pendingEmail,
                         kind));
       } catch (RuntimeException uncertain) {
         checked = transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
@@ -839,8 +873,7 @@ public final class SelfAppOtpMaintenance {
         || jwt.getExpiresAt().getEpochSecond() <= now) throw forbidden();
     String issuer = jwt.getIssuer().toString();
     String client = jwt.getClaimAsString("azp");
-    if (!(authServer.replaceAll("/+$", "") + "/realms/" + realmName).equals(issuer)
-        || !text(client, 255)) throw forbidden();
+    if (!humanIssuer.equals(issuer) || !text(client, 255)) throw forbidden();
     Object tenant = jwt.getClaims().get("tenantId");
     Long tenantId;
     if (tenant == null && !jwt.getClaims().containsKey("tenantId")) tenantId = null;

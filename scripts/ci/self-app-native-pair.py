@@ -19,7 +19,7 @@ import unittest
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-KC_COMMIT = "3256a5ffade50f3607264d456345c6ba1cdeaaa8"
+KC_COMMIT = "a9483e4b44578f10badf70c5265a37a2c1d3d26e"
 SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserSelfAppOtpNativePairProof"
 CASE = "actualPublicUserAppLostNativeReplyReplaysOneCredentialAndCommitsOwnedInvite"
 EMAIL_CASE = "actualPublicUserEmailLostSentReplyPreservesEarlierOriginalMachineExpiry"
