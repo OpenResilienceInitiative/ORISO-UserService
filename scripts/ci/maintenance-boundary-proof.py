@@ -154,7 +154,8 @@ def select_slice(name):
                  "publicPasswordFreezesEncryptedIntentAndClearsSetupOnlyAfterVerifiedNativeOldPasswordReceipt",
                  "missingScopedPasswordOwnerRefusesBeforeLegacyOrSetupMutation",
                  "samePasswordConflictKeepsExistingSetupRequirementAndDoesNotCallIdentity",
-                 "unsupportedOuterEnvelopeVersionCannotResumeUnknownPasswordOrClearSetup"}
+                 "unsupportedOuterEnvelopeVersionCannotResumeUnknownPasswordOrClearSetup",
+                 "publicPasswordSupportsEveryOwnedKindAndLegitimateAdministratorConsultantPair"}
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/adapters/web/controller/UserController",
             "de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate",
