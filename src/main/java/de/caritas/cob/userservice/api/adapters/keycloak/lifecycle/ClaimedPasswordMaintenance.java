@@ -194,7 +194,10 @@ public final class ClaimedPasswordMaintenance {
         () -> {
           var local = localAccounts().lock(accountId);
           if (!Objects.equals(tenantId, local.tenant())
-              || !accountKind.equals(local.kind())
+              || (!accountKind.equals(local.kind())
+                  && !("CONSULTANT".equals(accountKind)
+                      && Set.of("AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN").contains(local.kind())
+                      && local.consultantVersion() != null))
               || !ClaimedPasswordLocalAccounts.canonicalUsername(username).equals(local.username())
               || !recipient.equals(local.email())) throw unavailable();
           return new PasswordResetBinding(

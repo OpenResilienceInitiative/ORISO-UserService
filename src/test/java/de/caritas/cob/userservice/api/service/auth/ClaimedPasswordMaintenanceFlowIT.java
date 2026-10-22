@@ -527,6 +527,46 @@ class ClaimedPasswordMaintenanceFlowIT {
         verifyNoInteractions(f.legacy);
       }
     }
+    for (String drift : List.of("tenant_id=43", "username='enc.FOREIGN'", "email='Foreign@Example.org'")) {
+      try (var f = new Fixture("AGENCY_ADMIN", true)) {
+        f.jdbc.update("update consultant set " + drift + " where consultant_id=?", ACCOUNT);
+        f.service.requestPasswordReset("testuser", "en");
+        assertThat(f.resetUrl).isNull();
+        assertThat(f.effects).isZero();
+        assertThat(f.jdbc.queryForObject("select count(*) from identity_claimed_password_intent", Integer.class)).isZero();
+      }
+    }
+
+  }
+
+  @Test
+  void setupCompletionRefusesAChangedLocalIncarnationBeforeFlagsOrInviteAck() throws Exception {
+    try (var f = new Fixture()) {
+      var setup = f.setupService();
+      f.changeSetupIncarnation = true;
+      assertThatThrownBy(() -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(f.effects).isEqualTo(1);
+      assertThat(f.required()).isTrue();
+      assertThat(f.phase()).isEqualTo("VERIFIED");
+      assertThat(f.jdbc.queryForObject("select status from account_invite where id=11", String.class)).isEqualTo("EMAIL_SENT");
+      assertThat(f.jdbc.queryForObject("select status from identity_setup_password_claim where invite_id=11", String.class)).isEqualTo("UNKNOWN");
+    }
+  }
+
+  @Test
+  void setupCompletionClearsCoherentAdminConsultantSecondaryWithInviteAndClaim() throws Exception {
+    for (String kind : List.of("AGENCY_ADMIN", "TENANT_ADMIN")) {
+      try (var f = new Fixture(kind, true)) {
+        var setup = f.setupService();
+        setup.confirm("fixture-original-setup-token", "fixture-new-password!42");
+        assertThat(f.effects).isEqualTo(1);
+        assertThat(f.required()).isFalse();
+        assertThat(f.phase()).isEqualTo("VERIFIED");
+        assertThat(f.jdbc.queryForObject("select status from account_invite where id=11", String.class)).isEqualTo("ACCEPTED");
+        assertThat(f.jdbc.queryForObject("select status from identity_setup_password_claim where invite_id=11", String.class)).isEqualTo("ACKNOWLEDGED");
+      }
+    }
   }
 
   private static final class Fixture implements AutoCloseable {
@@ -590,7 +630,7 @@ class ClaimedPasswordMaintenanceFlowIT {
     String resetUrl, savedReply;
     int effects;
     boolean loseReply, corruptReceipt, failSetupCompletion, expiredAbsent, foreignUsername;
-    boolean candidateCatalog, ambiguousCatalog, reverseCatalog, policyRefusal, barePolicy;
+    boolean candidateCatalog, ambiguousCatalog, reverseCatalog, policyRefusal, barePolicy, changeSetupIncarnation;
     int savedStatus = 200;
     int policyStatus = 400;
     final Set<String> readCandidates = new HashSet<>();
@@ -669,6 +709,7 @@ class ClaimedPasswordMaintenanceFlowIT {
                   if (!policyRefusal) effects++;
                   savedStatus = policyRefusal ? policyStatus : 200;
                   savedReply = signedReply(body, policyRefusal);
+                  if (changeSetupIncarnation) jdbc.update("update consultant set create_date=? where consultant_id=?", Timestamp.valueOf(LocalDateTime.of(2027, 1, 1, 12, 0)), ACCOUNT);
                 }
                 reply = savedReply;
                 if (loseReply) {
@@ -789,6 +830,7 @@ class ClaimedPasswordMaintenanceFlowIT {
                 .type(de.caritas.cob.userservice.api.model.Admin.AdminType.valueOf(type))
                 .build();
         when(admins.findForSignIn(anyString())).thenReturn(Optional.of(admin));
+        when(admins.findByIdAndType(eq(ACCOUNT), eq(admin.getType()))).thenReturn(Optional.of(admin));
         ReflectionTestUtils.setField(
             service, "passwordResetAdminFrontendBaseUrl", "https://admin.example.org");
       }
@@ -840,10 +882,11 @@ class ClaimedPasswordMaintenanceFlowIT {
                   java.security.MessageDigest.getInstance("SHA-256")
                       .digest("fixture-original-setup-token".getBytes(StandardCharsets.UTF_8)));
       jdbc.update(
-          "insert into account_invite values(11,'EXISTING_ACCOUNT_SETUP','EMAIL_SENT','PENDING',?,?,?,'COUNSELLOR',42,?,'Original@Example.org','fixture-salted-verifier',null,null)",
+          "insert into account_invite values(11,'EXISTING_ACCOUNT_SETUP','EMAIL_SENT','PENDING',?,?,?,?,42,?,'Original@Example.org','fixture-salted-verifier',null,null)",
           ACCOUNT,
           hash,
           Timestamp.valueOf(LocalDateTime.now(clock).plusHours(2)),
+          switch (ownedKind) { case "AGENCY_ADMIN" -> "AGENCY_ADMIN"; case "TENANT_ADMIN" -> "TENANT_ADMIN"; default -> "COUNSELLOR"; },
           sqlUsername);
       try (var c = source.getConnection()) {
         ScriptUtils.executeSqlScript(
@@ -904,7 +947,7 @@ class ClaimedPasswordMaintenanceFlowIT {
       var setup =
           new ExistingAccountSetupService(
               invites,
-              mock(AdminRepository.class),
+              admins,
               localConsultants,
               mock(IdentityProfileLookup.class),
               mock(IdentityRoleLookup.class),
@@ -940,7 +983,7 @@ class ClaimedPasswordMaintenanceFlowIT {
                       .provisionedUserId(rs.getString("provisioned_user_id"))
                       .tokenHash(rs.getString("token_hash"))
                       .expiresAt(rs.getTimestamp("expires_at").toLocalDateTime())
-                      .targetRole(AccountInviteTargetRole.COUNSELLOR)
+                      .targetRole(AccountInviteTargetRole.valueOf(rs.getString("target_role")))
                       .tenantId(42L)
                       .setupBoundUsername(sqlUsername)
                       .recipientEmail("Original@Example.org")
