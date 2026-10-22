@@ -327,10 +327,11 @@ class ProtectedOtpBootstrapTest {
               av.path("request").path("scope").path("creatorSubject").asText());
       when(creators.require(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(creator);
       var broker = mock(TaskActorTokenBroker.class);
-      when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
-          .thenReturn(
-              new TaskActorTokenBroker.TaskToken(
-                  TaskActor.ACCOUNT_CREATE, "synthetic-creator-bearer", 60));
+      var checkedCreator = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+      when(checkedCreator.actor()).thenReturn(TaskActor.ACCOUNT_CREATE);
+      when(checkedCreator.accessToken()).thenReturn("synthetic-creator-bearer");
+      when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING))
+          .thenReturn(checkedCreator);
       server
           .expect(
               requestTo(
