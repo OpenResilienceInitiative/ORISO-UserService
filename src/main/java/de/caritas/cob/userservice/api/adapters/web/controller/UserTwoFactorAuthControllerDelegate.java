@@ -46,6 +46,13 @@ class UserTwoFactorAuthControllerDelegate {
     var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var email = emailDTO.getEmail().toLowerCase(Locale.ROOT);
 
+    if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
+      if (!selfAppOtpMaintenance.startEmail(email))
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
+            "OTP email delivery unavailable");
+      return ResponseEntity.noContent().build();
+    }
+
     if (!identityManager.isEmailAvailableOrOwn(username, email)) {
       return new ResponseEntity<>(HttpStatus.PRECONDITION_FAILED);
     }

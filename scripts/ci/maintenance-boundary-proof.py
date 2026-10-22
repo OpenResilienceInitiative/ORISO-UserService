@@ -84,6 +84,13 @@ def select_slice(name):
             "publicAppDeleteLostReplyNewOwnerReplaysFrozenDeleteWithoutSecondGateTransition",
             "publicAppDeleteInvalidReceiptRetainsActiveGateAndFrozenOwnership",
             "missingScopedDeleteKeepsActualCGuardAndLegacyDeleteRemainsWorking",
+            "publicEmailStartAcknowledgesOnlyVerifiedSentAndKeepsPendingRecipientEncrypted",
+            "publicEmailStartLostReplyNewOwnerReplaysFrozenRecipientAndOriginalExpiry",
+            "publicEmailStartSameIdCannotReplaceTheCompletePendingDestination",
+            "publicEmailStartUnknownNativeDeliveryCannotCommitSuccessOrPendingRecipient",
+            "publicEmailStartInvalidReceiptRetainsFrozenOwnershipBeforeAnyLocalSuccess",
+            "publicEmailStartMissingIntentAndForeignCurrentDomainRefuseBeforeOwnedStateOrRpc",
+            "missingScopedEmailStartKeepsActualCGuardAndLegacyEmailStartWorking",
         }
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/adapters/web/controller/UserController",
@@ -186,6 +193,7 @@ def select_slice(name):
                          "legacyModeRetainsExistingExactEmailOwnerAndRoleProjections"})
     if name == "app":
         CONTROLS.add("missingScopedDeleteKeepsActualCGuardAndLegacyDeleteRemainsWorking")
+        CONTROLS.add("missingScopedEmailStartKeepsActualCGuardAndLegacyEmailStartWorking")
     elif name == "locale":
         CONTROLS.add("domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract")
     elif name == "availability":

@@ -265,7 +265,7 @@ class SelfAppBoundaryEvidenceTest(unittest.TestCase):
 
     def test_six_public_assertions_require_actual_missing_service_and_legacy_control(self):
         proof = self.proof()
-        self.assertEqual(11, len(proof.CASES))
+        self.assertEqual(18, len(proof.CASES))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             suite = ET.Element("testsuite", name=proof.SUITE)
@@ -278,7 +278,7 @@ class SelfAppBoundaryEvidenceTest(unittest.TestCase):
             path = root / "TEST-app.xml"
             ET.ElementTree(suite).write(path)
             result = proof.sanitize(root, root / "clean.xml")
-            self.assertEqual(9, result["failures"])
+            self.assertEqual(15, result["failures"])
             self.assertTrue(result["adapter_behavior_red"])
             self.assertFalse(result["all_passed"])
             ET.SubElement(control, "failure", type="org.opentest4j.AssertionFailedError")

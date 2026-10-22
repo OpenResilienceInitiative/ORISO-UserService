@@ -60,6 +60,11 @@ public final class SelfAppOtpMaintenance {
     return mode.isFiveActorMode();
   }
 
+  /** Signature-only diagnostic frontier. No email intent or native effect is implemented here. */
+  public boolean startEmail(String pendingEmail) {
+    return false;
+  }
+
   public boolean delete(Runnable markPending) {
     return execute(null, null, markPending, true);
   }
