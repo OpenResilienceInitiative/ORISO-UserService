@@ -83,8 +83,47 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
   @Override
   public Projection read(CheckedAccount account) {
     account.requireCurrent();
+    return projection(
+        account, call(account, "read", codec.canonical(Map.of("target", target(account)))));
+  }
+
+  @Override
+  public FactorProjection factorStatus(CheckedAccount account) {
+    account.requireCurrent();
     try {
-      String raw = call(account, "read", codec.canonical(Map.of("target", target(account))));
+      String raw =
+          call(
+              account,
+              "read",
+              codec.canonical(
+                  Map.of("target", target(account), "include", "TWO_FACTOR_STATUS_V1")));
+      JsonNode shape = codec.read(raw, JsonNode.class);
+      if (!shape.isObject() || shape.size() != 13 || !shape.path("twoFactor").isObject())
+        throw invalid();
+      JsonNode factors = shape.path("twoFactor");
+      var fields = new HashSet<String>();
+      factors.fieldNames().forEachRemaining(fields::add);
+      if (!fields.equals(Set.of("configured", "active"))
+          || !factors.path("configured").isBoolean()
+          || !factors.path("active").isBoolean()) throw invalid();
+      ((com.fasterxml.jackson.databind.node.ObjectNode) shape).remove("twoFactor");
+      Projection projection = projection(account, codec.canonical(shape));
+      return new FactorProjection(
+          projection,
+          new FactorStatus(
+              factors.path("configured").booleanValue(), factors.path("active").booleanValue()));
+    } catch (ForbiddenException
+        | ConflictException
+        | NotFoundException
+        | BadRequestException known) {
+      throw known;
+    } catch (RuntimeException invalid) {
+      throw invalid();
+    }
+  }
+
+  private Projection projection(CheckedAccount account, String raw) {
+    try {
       JsonNode shape = codec.read(raw, JsonNode.class);
       var fields = new HashSet<String>();
       shape.fieldNames().forEachRemaining(fields::add);

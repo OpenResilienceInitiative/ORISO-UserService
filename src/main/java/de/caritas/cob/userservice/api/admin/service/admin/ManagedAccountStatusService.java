@@ -41,6 +41,17 @@ public class ManagedAccountStatusService {
   private JdbcTemplate jdbc;
   private TransactionTemplate localWrites;
 
+  private de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+      scopedMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setHumanAdminMaintenance(
+      @org.springframework.lang.Nullable
+          de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+              maintenance) {
+    scopedMaintenance = maintenance;
+  }
+
   @org.springframework.beans.factory.annotation.Autowired
   public void setScopedLocalWrites(
       IdentityClientConfig mode, JdbcTemplate jdbc, PlatformTransactionManager manager) {
@@ -400,15 +411,23 @@ public class ManagedAccountStatusService {
             : consultant != null ? consultant.getTwoFactorRequired() : null;
     Boolean configured = null, factorActive = null;
     try {
-      var profile = includeFactor ? profiles.findById(id).orElse(null) : null;
-      // Never resolve a target's second factor through an unverified or observer username.
-      var otp =
-          profile != null && id.equals(profile.id()) && profile.username() != null
-              ? factors.getOtpCredential(profile.username())
-              : null;
-      if (otp != null && otp.setup() != null) {
-        factorActive = otp.setup();
-        configured = Boolean.TRUE.equals(otp.setup()) || otp.type() != null;
+      if (identityMode != null && identityMode.isFiveActorMode()) {
+        if (includeFactor && scopedMaintenance != null && scopedMaintenance.isFiveActorMode()) {
+          var metadata = scopedMaintenance.factorStatus(id);
+          configured = metadata.configured();
+          factorActive = metadata.active();
+        }
+      } else {
+        var profile = includeFactor ? profiles.findById(id).orElse(null) : null;
+        // Never resolve a target's second factor through an unverified or observer username.
+        var otp =
+            profile != null && id.equals(profile.id()) && profile.username() != null
+                ? factors.getOtpCredential(profile.username())
+                : null;
+        if (otp != null && otp.setup() != null) {
+          factorActive = otp.setup();
+          configured = Boolean.TRUE.equals(otp.setup()) || otp.type() != null;
+        }
       }
     } catch (RuntimeException unavailable) {
       /* Unknown metadata; never expose provider exception or enrollment secrets. */

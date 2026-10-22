@@ -6,24 +6,34 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Issues only the local SELF origin kind; native permission is checked separately on every RPC. */
-final class SelfAccountOwner {
-  enum Kind {
+public final class SelfAccountOwner {
+  public enum Kind {
     USER,
     CONSULTANT,
     AGENCY_ADMIN,
     TENANT_ADMIN,
     PLATFORM_ADMIN;
 
-    boolean protectedTarget() {
+    public boolean protectedTarget() {
       return this == TENANT_ADMIN || this == PLATFORM_ADMIN;
     }
 
-    boolean admin() {
+    public boolean admin() {
       return this != USER && this != CONSULTANT;
     }
   }
 
-  record Owner(Kind kind, boolean consultant, String email, String consultantEmail) {}
+  public record Owner(Kind kind, boolean consultant, String email, String consultantEmail) {
+    @Override
+    public String toString() {
+      return "Owner[identity=redacted]";
+    }
+  }
+
+  /** Returns local identity data under the owning SQL transaction, without granting authority. */
+  public static Owner inspect(JdbcTemplate jdbc, String account, Long tenant) {
+    return new SelfAccountOwner(jdbc).require(account, tenant);
+  }
 
   private final JdbcTemplate jdbc;
 
