@@ -121,6 +121,7 @@ class JdbcProtectedAccountActivationTest {
                   default -> RETURNS_DEFAULTS.answer(invocation);
                 });
     when(created.accountId()).thenReturn(ACCOUNT);
+    when(created.realmId()).thenReturn(frozen.issuerRealm());
     when(created.claimId()).thenReturn(claim.claimId());
     when(created.attemptId()).thenReturn(claim.attemptId());
     when(created.executionId()).thenReturn(claim.executionId());

@@ -106,7 +106,7 @@ public final class JdbcProtectedInvitationAcceptance {
               uuid(saved.claimId()),
               uuid(saved.attemptId()),
               uuid(saved.executionId()),
-              saved.digest());
+              saved.digest(), tokenHash);
         });
   }
 
@@ -156,7 +156,7 @@ public final class JdbcProtectedInvitationAcceptance {
               uuid(saved.claimId()),
               uuid(saved.attemptId()),
               uuid(saved.executionId()),
-              saved.digest());
+              saved.digest(), tokenHash);
         });
   }
 
@@ -216,6 +216,7 @@ public final class JdbcProtectedInvitationAcceptance {
     private final UUID attemptId;
     private final UUID executionId;
     private final String registrationDigest;
+    private final String tokenHash;
 
     private AcceptanceClaim(
         FrozenApproval frozen,
@@ -223,13 +224,14 @@ public final class JdbcProtectedInvitationAcceptance {
         UUID claimId,
         UUID attemptId,
         UUID executionId,
-        String registrationDigest) {
+        String registrationDigest, String tokenHash) {
       this.frozen = frozen;
       this.approval = approval;
       this.claimId = claimId;
       this.attemptId = attemptId;
       this.executionId = executionId;
       this.registrationDigest = registrationDigest;
+      this.tokenHash = tokenHash;
     }
 
     public FrozenApproval frozen() {
@@ -258,6 +260,10 @@ public final class JdbcProtectedInvitationAcceptance {
 
     public String registrationDigest() {
       return registrationDigest;
+    }
+
+    String tokenHash() {
+      return tokenHash;
     }
 
     @Override
