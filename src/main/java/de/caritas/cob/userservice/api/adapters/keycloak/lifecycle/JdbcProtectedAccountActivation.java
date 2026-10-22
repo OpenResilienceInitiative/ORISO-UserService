@@ -15,7 +15,9 @@ import java.time.Clock;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 
-/** Owns local protected-account effects; native activation requires its committed private handle. */
+/**
+ * Owns local protected-account effects; native activation requires its committed private handle.
+ */
 public final class JdbcProtectedAccountActivation {
   public JdbcProtectedAccountActivation(
       JdbcTemplate jdbc,
@@ -32,7 +34,10 @@ public final class JdbcProtectedAccountActivation {
   }
 
   public IdentityOtpCredential stage(
-      AcceptanceClaim claim, PendingOwnedAccount pending, PreparedBootstrap prepared, Policy policy) {
+      AcceptanceClaim claim,
+      PendingOwnedAccount pending,
+      PreparedBootstrap prepared,
+      Policy policy) {
     throw unavailable();
   }
 
