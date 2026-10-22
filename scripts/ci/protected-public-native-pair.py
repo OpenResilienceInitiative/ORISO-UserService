@@ -43,7 +43,7 @@ def sanitize(reports, output):
     clean = ET.Element("testsuite", name=SUITE)
     totals = dict(tests=0, failures=0, errors=0, skipped=0)
     files = list(reports.glob("TEST-*.xml"))
-    names, locations, valid = [], [], len(files) == 1
+    names, locations, frames, types, valid = [], [], [], [], len(files) == 1
     for path in files:
         suite = ET.parse(path).getroot()
         valid &= suite.get("name") == SUITE
@@ -58,6 +58,13 @@ def sanitize(reports, output):
                     totals[count] += 1
                     ET.SubElement(child, tag, message="Sensitive paired diagnostic omitted")
                     locations += re.findall(r"ProtectedAdminPublicNativePairProof\.java:[0-9]+", found.text or "")
+                    frames += closed_failure_frames((found.text or "").encode(), b"")
+                    category = found.get("type", "")
+                    if len(category) <= 255 and re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+", category):
+                        types.append(category)
+                    for category in re.findall(r"Caused by: ([A-Za-z_$][A-Za-z0-9_$.]+):", found.text or ""):
+                        if len(category) <= 255 and category.startswith(("java.", "javax.", "jakarta.", "org.springframework.", "org.hibernate.", "de.caritas.")):
+                            types.append(category)
         for name, number in totals.items():
             valid &= suite.get(name) is None or int(suite.get(name)) == number
     valid &= names == [CASE]
@@ -65,7 +72,7 @@ def sanitize(reports, output):
         clean.set(name, str(number))
     output.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(clean).write(output, encoding="utf-8", xml_declaration=True)
-    return {**totals, "exact_method_inventory": valid, "failure_locations": sorted(set(locations)), "accepted": valid and totals == dict(tests=1, failures=0, errors=0, skipped=0)}
+    return {**totals, "exact_method_inventory": valid, "failure_locations": sorted(set(locations)), "closed_source_failure_frames": sorted(set(frames))[:50], "failure_types": sorted(set(types))[:10], "accepted": valid and totals == dict(tests=1, failures=0, errors=0, skipped=0)}
 
 def delivered_code(messages):
     import email
@@ -170,7 +177,7 @@ def native(kc, report):
         child = subprocess.run(["mvn", "-B", "-ntp", "-q", "surefire:test", "-Dtest=" + SUITE + "#" + CASE, "-DfailIfNoTests=true", "-Dsurefire.failIfNoSpecifiedTests=true", "-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2"], cwd=ROOT, env=environment, capture_output=True, timeout=180)
         result = sanitize(reports, report.with_suffix(".xml"))
         receipt.update(result)
-        receipt["closed_source_failure_frames"] = closed_failure_frames(child.stdout, child.stderr)
+        receipt["closed_source_failure_frames"] = sorted(set(result["closed_source_failure_frames"] + closed_failure_frames(child.stdout, child.stderr)))[:50]
         receipt["executed"] = result["tests"]
         receipt["java_exit"] = child.returncode
         receipt["accepted"] = result["accepted"] and child.returncode == 0
