@@ -71,7 +71,7 @@ def sanitize(reports, output, expected_case=CASE):
                     if len(category) <= 255 and re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+", category):
                         types.append(category)
                     for category in re.findall(r"Caused by: ([A-Za-z_$][A-Za-z0-9_$.]+):", found.text or ""):
-                        if len(category) <= 255 and category.startswith(("java.", "javax.", "jakarta.", "org.springframework.", "org.hibernate.", "de.caritas.")):
+                        if len(category) <= 255 and (category.startswith(("java.", "javax.", "jakarta.", "org.springframework.", "org.hibernate.", "de.caritas.")) or category == "org.opentest4j.AssertionFailedError"):
                             types.append(category)
         for name, number in totals.items():
             valid &= suite.get(name) is None or int(suite.get(name)) == number
@@ -118,7 +118,8 @@ def closed_failure_frames(stdout, stderr):
     names = {"JdbcProtectedAccountActivation", "JdbcProtectedInvitationJournal",
         "JdbcProtectedInvitationAcceptance", "ProtectedAccountCodec", "ProtectedOtpBootstrap",
         "ProtectedAdminOnboardingService", "TenantAdminOnboardingController",
-        "AccountInactivityService", "AccountInactivityEnrollmentService"}
+        "AccountInactivityService", "AccountInactivityEnrollmentService",
+        "TenantCreationClient", "ReservedTenantBootstrap", "ProtectedPublicTenantFixture"}
     frames = re.findall(r"\b([A-Za-z]+)\.java:([0-9]{1,5})\b", text)
     return sorted({name + ".java:" + line for name, line in frames if name in names})[:50]
 
