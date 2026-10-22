@@ -213,8 +213,10 @@ public class MagicLinkLoginService {
     }
     Optional<IdentitySession> result;
     try {
-      result = otp == null ? identitySessionExchange.exchangeMagicLink(live)
-          : identitySessionExchange.exchangeMagicLink(live, otp);
+      result =
+          otp == null
+              ? identitySessionExchange.exchangeMagicLink(live)
+              : identitySessionExchange.exchangeMagicLink(live, otp);
     } catch (IdentitySessionExchange.MagicLinkChallenge challenge) {
       restoreTokenForRetry(token, stored);
       throw challenge;

@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecyc
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange.MagicLinkChallenge;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -481,6 +482,9 @@ class KeycloakIdentitySessionExchangeTest {
 
   @Test
   void malformedOrForeignNativeChallengesNeverBecomePublicContinuationData() {
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> new MagicLinkChallenge("APP", null, 429))
+        .isInstanceOf(IllegalArgumentException.class);
     for (String body :
         List.of(
             "{\"otpType\":\"SMS\"}",

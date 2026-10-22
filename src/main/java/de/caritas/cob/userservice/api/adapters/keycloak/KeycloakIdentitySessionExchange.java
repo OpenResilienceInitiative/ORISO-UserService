@@ -106,8 +106,9 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
       claim.requireCurrent();
       ResponseEntity<KeycloakLoginResponseDTO> response;
       try {
-        response = restTemplate.postForEntity(
-            url, new HttpEntity<>(form, headers), KeycloakLoginResponseDTO.class);
+        response =
+            restTemplate.postForEntity(
+                url, new HttpEntity<>(form, headers), KeycloakLoginResponseDTO.class);
       } catch (org.springframework.web.client.RestClientResponseException refused) {
         claim.requireCurrent();
         var challenge = checkedChallenge(refused, codec);
@@ -154,28 +155,35 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
   }
 
   private static MagicLinkChallenge checkedChallenge(
-      org.springframework.web.client.RestClientResponseException refused, AccountLifecycleCodec codec) {
+      org.springframework.web.client.RestClientResponseException refused,
+      AccountLifecycleCodec codec) {
     try {
       int status = refused.getStatusCode().value();
-      if (status != 400 && status != 429 || refused.getResponseHeaders() == null
+      if (status != 400 && status != 429
+          || refused.getResponseHeaders() == null
           || refused.getResponseHeaders().getContentType() == null
-          || !MediaType.APPLICATION_JSON.isCompatibleWith(refused.getResponseHeaders().getContentType())
+          || !MediaType.APPLICATION_JSON.isCompatibleWith(
+              refused.getResponseHeaders().getContentType())
           || refused.getResponseBodyAsByteArray().length > 4096) return null;
-      var body = codec.read(refused.getResponseBodyAsString(java.nio.charset.StandardCharsets.UTF_8),
-          com.fasterxml.jackson.databind.JsonNode.class);
+      var body =
+          codec.read(
+              refused.getResponseBodyAsString(java.nio.charset.StandardCharsets.UTF_8),
+              com.fasterxml.jackson.databind.JsonNode.class);
       var allowed = Set.of("error", "error_description", "otpType", "resendAvailableInSeconds");
       if (!body.isObject() || !body.has("otpType") || !body.get("otpType").isTextual()) return null;
       var names = body.fieldNames();
       while (names.hasNext()) if (!allowed.contains(names.next())) return null;
-      if (body.has("error") && (!body.get("error").isTextual()
-          || !"invalid_grant".equals(body.get("error").textValue()))) return null;
+      if (body.has("error")
+          && (!body.get("error").isTextual()
+              || !"invalid_grant".equals(body.get("error").textValue()))) return null;
       if (body.has("error_description") && !body.get("error_description").isTextual()) return null;
       String type = body.get("otpType").textValue();
       if (!Set.of("APP", "EMAIL").contains(type)) return null;
       var retry = body.get("resendAvailableInSeconds");
       Integer seconds = null;
       if (retry != null && !retry.isNull()) {
-        if (!retry.isIntegralNumber() || !retry.canConvertToInt() || retry.intValue() < 0) return null;
+        if (!retry.isIntegralNumber() || !retry.canConvertToInt() || retry.intValue() < 0)
+          return null;
         seconds = retry.intValue();
       }
       if ("APP".equals(type) && (seconds != null || status != 400)) return null;
