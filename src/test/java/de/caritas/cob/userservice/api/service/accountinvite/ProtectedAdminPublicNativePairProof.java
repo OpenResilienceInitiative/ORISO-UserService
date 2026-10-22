@@ -121,7 +121,11 @@ class ProtectedAdminPublicNativePairProof {
   @MockitoBean OperatorDpaContentClient dpa;
   @Autowired TenantCreationClient tenantCreation;
   @MockitoBean SecurityHeaderSupplier heldHeaders;
-  @MockitoBean de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory heldTenantFactory;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory
+      heldTenantFactory;
+
   @MockitoBean IdentityAuthentication identityAuthentication;
   @MockitoBean TenantContextProvider tenantContextProvider;
   @MockitoBean ScheduledTaskClaimService leases;
@@ -202,9 +206,12 @@ class ProtectedAdminPublicNativePairProof {
     completePublicOnboarding(role, mail, loseCommit, false);
   }
 
-  void completePublicOnboarding(AccountInviteTargetRole role, boolean mail, boolean loseCommit,
-      boolean reserved) throws Exception {
-    assertEquals(reserved ? "reserved-new" : loseCommit ? "lost-commit" : "happy", required("PAIR_SCENARIO"));
+  void completePublicOnboarding(
+      AccountInviteTargetRole role, boolean mail, boolean loseCommit, boolean reserved)
+      throws Exception {
+    assertEquals(
+        reserved ? "reserved-new" : loseCommit ? "lost-commit" : "happy",
+        required("PAIR_SCENARIO"));
     LOSE_COMMIT.set(loseCommit);
     LOST_COMMIT.set(false);
     assertEquals(mail ? "email" : "app", required("PAIR_KIND"));
@@ -247,21 +254,29 @@ class ProtectedAdminPublicNativePairProof {
     if (reserved) {
       assertEquals(AccountInviteTargetRole.TENANT_ADMIN, role);
       assertFalse(mail);
-      when(tenantIds.reserve(17L)).thenReturn(new TenantIdReservation(17, ProtectedPublicTenantFixture.CAPABILITY));
+      when(tenantIds.reserve(17L))
+          .thenReturn(new TenantIdReservation(17, ProtectedPublicTenantFixture.CAPABILITY));
       when(tenantIds.getAvailability(17L)).thenReturn(IdAllocationStatus.RESERVED);
-      when(dpa.fetchPublishedDpa()).thenReturn(new OperatorDpaContentClient.OperatorDpa(
-          "Displayed agreement", "displayed-dpa-v1"));
-      when(heldHeaders.getKeycloakAndCsrfHttpHeaders(anyString())).thenAnswer(call -> {
-        var headers = new org.springframework.http.HttpHeaders();
-        headers.setBearerAuth(call.getArgument(0));
-        return headers;
-      });
+      when(dpa.fetchPublishedDpa())
+          .thenReturn(
+              new OperatorDpaContentClient.OperatorDpa("Displayed agreement", "displayed-dpa-v1"));
+      when(heldHeaders.getKeycloakAndCsrfHttpHeaders(anyString()))
+          .thenAnswer(
+              call -> {
+                var headers = new org.springframework.http.HttpHeaders();
+                headers.setBearerAuth(call.getArgument(0));
+                return headers;
+              });
     }
     if (tenantId > 0)
       when(tenantService.getRestrictedTenantData(tenantId))
-          .thenAnswer(call -> !reserved || ProtectedPublicTenantFixture.CREATED.get()
-              ? new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO().id(tenantId)
-              : null);
+          .thenAnswer(
+              call ->
+                  !reserved || ProtectedPublicTenantFixture.CREATED.get()
+                      ? new de.caritas.cob.userservice.tenantservice.generated.web.model
+                              .RestrictedTenantDTO()
+                          .id(tenantId)
+                      : null);
     when(platformPolicy.capture())
         .thenReturn(
             new AccountInactivityEnrollmentService.Policy(
@@ -314,7 +329,9 @@ class ProtectedAdminPublicNativePairProof {
                 null,
                 null,
                 1L,
-                tenantId == 0 ? null : reserved ? IdAllocationMode.MANUAL : IdAllocationMode.EXISTING,
+                tenantId == 0
+                    ? null
+                    : reserved ? IdAllocationMode.MANUAL : IdAllocationMode.EXISTING,
                 null),
             template.getId());
     assertEquals(AccountInviteStatus.EMAIL_SENT, sent.invite().getStatus());
@@ -339,12 +356,15 @@ class ProtectedAdminPublicNativePairProof {
                 new ApiDefaultResponseEntityExceptionHandler())
             .build();
     String raw = "{\"account\":{\"password\":\"SyntheticPublicOnly!731\"}}";
-    if (reserved) raw = json.canonical(Map.of(
-        "account", Map.of("password", "SyntheticPublicOnly!731"),
-        "organisation", Map.of("name", "Public retained tenant"),
-        "reservedTenantId", 17,
-        "tenantIdReservationToken", ProtectedPublicTenantFixture.CAPABILITY,
-        "dpa", Map.of("accepted", true, "version", "displayed-dpa-v1")));
+    if (reserved)
+      raw =
+          json.canonical(
+              Map.of(
+                  "account", Map.of("password", "SyntheticPublicOnly!731"),
+                  "organisation", Map.of("name", "Public retained tenant"),
+                  "reservedTenantId", 17,
+                  "tenantIdReservationToken", ProtectedPublicTenantFixture.CAPABILITY,
+                  "dpa", Map.of("accepted", true, "version", "displayed-dpa-v1")));
 
     String key = UUID.randomUUID().toString();
     String registrationPath = "/service/users/account-invites/" + token + "/onboarding/register";
@@ -582,24 +602,29 @@ class ProtectedAdminPublicNativePairProof {
       verifyNoMoreInteractions(tenantCreation);
       verify(tenantIds).reserve(17L);
       verify(tenantIds, never()).release(anyLong());
-      assertTrue(json.read(jdbc.queryForObject("SELECT local_effects_json FROM protected_account_activation", String.class),
-          JsonNode.class).hasNonNull("tenantBootstrapReceipt"));
-      assertFalse(jdbc.queryForObject("SELECT tenant_request_json FROM protected_account_creation", String.class)
-          .contains(ProtectedPublicTenantFixture.CAPABILITY));
-      Files.writeString(Path.of(required("PAIR_TENANT_WITNESS")), json.canonical(Map.of(
-          "realTenantCallerAndNativeSetupBroker", true,
-          "actualHeldPairAndDisplayedDpaBound", true,
-          "privateTenantReceiptBeforeLocalStage", true,
-          "sameRegistrationRetryNoSecondTenant", true,
-          "reservationCapabilityAbsentFromFrozenTenantMetadata", true)));
+      assertTrue(
+          json.read(
+                  jdbc.queryForObject(
+                      "SELECT local_effects_json FROM protected_account_activation", String.class),
+                  JsonNode.class)
+              .hasNonNull("tenantBootstrapReceipt"));
+      assertFalse(
+          jdbc.queryForObject(
+                  "SELECT tenant_request_json FROM protected_account_creation", String.class)
+              .contains(ProtectedPublicTenantFixture.CAPABILITY));
+      Files.writeString(
+          Path.of(required("PAIR_TENANT_WITNESS")),
+          json.canonical(
+              Map.of(
+                  "realTenantCallerAndNativeSetupBroker", true,
+                  "actualHeldPairAndDisplayedDpaBound", true,
+                  "privateTenantReceiptBeforeLocalStage", true,
+                  "sameRegistrationRetryNoSecondTenant", true,
+                  "reservationCapabilityAbsentFromFrozenTenantMetadata", true)));
     } else {
       verifyNoInteractions(tenantCreation, tenantIds);
     }
-    verifyNoInteractions(
-        existingAccountSetupIssuer,
-        legacyOnboarding,
-        legacyCounsellor,
-        agencyIds);
+    verifyNoInteractions(existingAccountSetupIssuer, legacyOnboarding, legacyCounsellor, agencyIds);
     Files.writeString(Path.of(required("PAIR_HTTP_WITNESS")), json.canonical(HTTP));
     Files.writeString(
         Path.of(required("PAIR_WITNESS")),
