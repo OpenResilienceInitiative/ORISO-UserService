@@ -76,7 +76,7 @@ class ProtectedPublicTenantFixture {
                     ProtectedAdminPublicNativePairProof.required("PAIR_SETUP_SUBJECT"),
                     actual.getSubject());
                 assertEquals("backend-setup", actual.getClaimAsString("azp"));
-                assertEquals("0", actual.getClaimAsString("tenantId"));
+                assertEquals("0", request.getHeaders().getFirst("tenantId"));
                 assertEquals(
                     Set.of(
                         "tenantservice", "agencyservice", "consultingtypeservice", "userservice"),
