@@ -143,10 +143,7 @@ class ProtectedAccountCleanupNativePairProof {
               if (observedHttp.size() >= 100)
                 throw new IllegalStateException("Pair observations exceed bound");
               String phase = nativePhase(logical.getPath());
-              observedHttp.add(
-                  Map.of(
-                      "phase", phase,
-                      "status", response.getStatusCode().value()));
+              observedHttp.add(Map.of("phase", phase, "status", response.getStatusCode().value()));
               Files.writeString(
                   Path.of(required("PAIR_HTTP_WITNESS")), codec.canonical(observedHttp));
               if ("create".equals(phase)
