@@ -192,9 +192,10 @@ public final class JdbcProtectedAccountActivation {
           var saved = rows(claim);
           if (saved.isEmpty()) return Phase.UNSTAGED;
           if (saved.size() != 1) throw unavailable();
-          var row = Set.of("READY", "COMMITTED").contains(saved.getFirst().state())
-              ? historicallyChecked(claim, saved.getFirst())
-              : checked(claim, saved.getFirst());
+          var row =
+              Set.of("READY", "COMMITTED").contains(saved.getFirst().state())
+                  ? historicallyChecked(claim, saved.getFirst())
+                  : checked(claim, saved.getFirst());
           try {
             return Phase.valueOf(row.state());
           } catch (IllegalArgumentException failure) {
@@ -272,12 +273,16 @@ public final class JdbcProtectedAccountActivation {
   }
 
   private void acknowledge(
-      AcceptanceClaim claim, LocalOutcome outcome, VerifiedCommitted committed, boolean historical) {
+      AcceptanceClaim claim,
+      LocalOutcome outcome,
+      VerifiedCommitted committed,
+      boolean historical) {
     owned(
         claim,
         historical,
         () -> {
-          Row row = historical ? historicallyChecked(claim, one(claim)) : checked(claim, one(claim));
+          Row row =
+              historical ? historicallyChecked(claim, one(claim)) : checked(claim, one(claim));
           if (!Set.of("READY", "COMMITTED").contains(row.state())
               || !equal(row.readyDigest(), outcome.effectsDigest())
               || outcome.journalVersion() != 1
@@ -443,7 +448,8 @@ public final class JdbcProtectedAccountActivation {
 
   private <T> T owned(AcceptanceClaim claim, boolean historical, Supplier<T> action) {
     long invite = inviteId(claim);
-    Supplier<T> checked = () -> {
+    Supplier<T> checked =
+        () -> {
           if (!claim.frozen().equals(journal.pending(invite))) throw unavailable();
           var row =
               jdbc.queryForMap(
@@ -465,7 +471,9 @@ public final class JdbcProtectedAccountActivation {
                       + (historical ? "" : " AND state='READY'"),
                   String.class,
                   invite);
-          if (!(historical ? Objects.equals(token, claim.tokenHash()) : equal(token, claim.tokenHash()))
+          if (!(historical
+                  ? Objects.equals(token, claim.tokenHash())
+                  : equal(token, claim.tokenHash()))
               || !equal(
                   json.canonical(json.read(response, JsonNode.class)),
                   claim.approval().responseJson())) throw unavailable();
@@ -503,8 +511,14 @@ public final class JdbcProtectedAccountActivation {
                 "otpIncarnation", row.otpIncarnation(),
                 "otpReceipt", row.otpReceipt()));
     if (!equal(ready, row.readyDigest())) throw unavailable();
-    var invite = jdbc.queryForMap("SELECT accepted_by_user_id FROM account_invite WHERE id=?", inviteId(claim));
-    String accepted = jdbc.queryForObject("SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?", String.class, inviteId(claim));
+    var invite =
+        jdbc.queryForMap(
+            "SELECT accepted_by_user_id FROM account_invite WHERE id=?", inviteId(claim));
+    String accepted =
+        jdbc.queryForObject(
+            "SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?",
+            String.class,
+            inviteId(claim));
     if (!row.accountId().equals(invite.get("accepted_by_user_id"))
         || !row.accountId().equals(accepted)) throw unavailable();
     return row;

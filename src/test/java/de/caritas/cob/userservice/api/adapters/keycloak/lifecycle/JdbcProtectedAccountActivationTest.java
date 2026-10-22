@@ -343,17 +343,35 @@ class JdbcProtectedAccountActivationTest {
   }
 
   @Test
-  void reservedAdminStagingRequiresTheExactPrivateTenantResultAndFreezesItsReceipt() throws Exception {
-    byte[] key = HexFormat.of().parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+  void reservedAdminStagingRequiresTheExactPrivateTenantResultAndFreezesItsReceipt()
+      throws Exception {
+    byte[] key =
+        HexFormat.of().parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
     var approvals = new ProtectedInvitationCodec(key, clock, "oriso", "native-synthetic-realm");
-    JsonNode vector = json.read(Files.readString(Path.of("src/test/resources/scenario-c/protected-approval-reserved-v1.json")), JsonNode.class);
+    JsonNode vector =
+        json.read(
+            Files.readString(
+                Path.of("src/test/resources/scenario-c/protected-approval-reserved-v1.json")),
+            JsonNode.class);
     jdbc.update("DELETE FROM protected_invitation_acceptance");
     jdbc.update("DELETE FROM protected_invitation_authorization");
-    jdbc.update("UPDATE account_invite SET tenant_id_reservation_token=?", vector.path("syntheticReservationToken").asText());
-    var frozen = approvals.freeze(UUID.fromString(vector.path("approvalId").asText()), json.canonical(vector.path("request")), vector.path("issuerRealm").asText(), vector.path("issuerSubject").asText());
+    jdbc.update(
+        "UPDATE account_invite SET tenant_id_reservation_token=?",
+        vector.path("syntheticReservationToken").asText());
+    var frozen =
+        approvals.freeze(
+            UUID.fromString(vector.path("approvalId").asText()),
+            json.canonical(vector.path("request")),
+            vector.path("issuerRealm").asText(),
+            vector.path("issuerSubject").asText());
     journal.propose(73, frozen);
-    journal.recordReady(frozen.approvalId(), approvals.verifyAuthorized(frozen, json.canonical(vector.path("response"))));
-    claim = new JdbcProtectedInvitationAcceptance(jdbc, manager, journal, approvals, json, clock).claim(73, TOKEN, json.read("{\"password\":\"synthetic-memory-only\"}", JsonNode.class));
+    journal.recordReady(
+        frozen.approvalId(),
+        approvals.verifyAuthorized(frozen, json.canonical(vector.path("response"))));
+    claim =
+        new JdbcProtectedInvitationAcceptance(jdbc, manager, journal, approvals, json, clock)
+            .claim(
+                73, TOKEN, json.read("{\"password\":\"synthetic-memory-only\"}", JsonNode.class));
     when(pending.claim()).thenReturn(claim);
     when(created.claimId()).thenReturn(claim.claimId());
     when(created.attemptId()).thenReturn(claim.attemptId());
@@ -363,23 +381,36 @@ class JdbcProtectedAccountActivationTest {
     assertEquals(0, count("admin"));
     var tenant = mock(VerifiedTenant.class);
     when(tenant.tenantId()).thenReturn(8L);
-    assertThrows(RuntimeException.class, () -> restart().stageReserved(claim, pending, prepared, policy, tenant));
+    assertThrows(
+        RuntimeException.class,
+        () -> restart().stageReserved(claim, pending, prepared, policy, tenant));
     when(tenant.tenantId()).thenReturn(7L);
     when(tenant.claimId()).thenReturn(claim.claimId());
     when(tenant.attemptId()).thenReturn(UUID.randomUUID());
     when(tenant.executionId()).thenReturn(claim.executionId());
     when(tenant.receipt()).thenReturn("synthetic-authenticated-tenant-receipt");
-    assertThrows(RuntimeException.class, () -> restart().stageReserved(claim, pending, prepared, policy, tenant));
+    assertThrows(
+        RuntimeException.class,
+        () -> restart().stageReserved(claim, pending, prepared, policy, tenant));
     assertEquals(0, count("admin"));
     when(tenant.attemptId()).thenReturn(claim.attemptId());
-    assertEquals(setup, assertDoesNotThrow(() -> restart().stageReserved(claim, pending, prepared, policy, tenant)));
+    assertEquals(
+        setup,
+        assertDoesNotThrow(
+            () -> restart().stageReserved(claim, pending, prepared, policy, tenant)));
     assertEquals(setup, restart().stageReserved(claim, pending, prepared, policy, tenant));
     assertEquals(1, count("admin"));
     assertEquals("WAITING_OTP", state());
-    var effects = json.read(jdbc.queryForObject("SELECT local_effects_json FROM protected_account_activation", String.class), JsonNode.class);
+    var effects =
+        json.read(
+            jdbc.queryForObject(
+                "SELECT local_effects_json FROM protected_account_activation", String.class),
+            JsonNode.class);
     assertEquals(tenant.receipt(), effects.path("tenantBootstrapReceipt").asText());
     when(tenant.receipt()).thenReturn("synthetic-different-tenant-receipt");
-    assertThrows(RuntimeException.class, () -> restart().stageReserved(claim, pending, prepared, policy, tenant));
+    assertThrows(
+        RuntimeException.class,
+        () -> restart().stageReserved(claim, pending, prepared, policy, tenant));
     assertEquals(1, count("admin"));
   }
 
