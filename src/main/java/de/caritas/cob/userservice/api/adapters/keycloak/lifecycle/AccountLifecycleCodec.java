@@ -123,6 +123,16 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     }
   }
 
+  String sealSelfPasswordIntent(JsonNode independentlyCheckedOwnedMetadata, byte[] frozenCommand) {
+    return new SelfPasswordIntentCodec(this, this::mac)
+        .seal(independentlyCheckedOwnedMetadata, frozenCommand);
+  }
+
+  byte[] openSelfPasswordIntent(JsonNode independentlyCheckedOwnedMetadata, String envelope) {
+    return new SelfPasswordIntentCodec(this, this::mac)
+        .open(independentlyCheckedOwnedMetadata, envelope);
+  }
+
   /** Immutable data only; construction is deliberately private and grants no workflow authority. */
   private record SelfAppMetadata(
       int v,
