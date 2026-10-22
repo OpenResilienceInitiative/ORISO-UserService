@@ -742,9 +742,22 @@ public final class JdbcProtectedAccountActivation {
     var keys = new java.util.HashSet<String>();
     body.fieldNames().forEachRemaining(keys::add);
     var metadata = creation.metadataWithinOwner(historical);
-    if (!keys.equals(Set.of("inviteId", "approvalId", "claimId", "attemptId", "executionId",
-            "accountId", "recoveryId", "generation", "creationProofDigest", "creationFingerprint",
-            "registrationDigest", "bootstrapIncarnation", "previousState", "outboxId"))
+    if (!keys.equals(
+            Set.of(
+                "inviteId",
+                "approvalId",
+                "claimId",
+                "attemptId",
+                "executionId",
+                "accountId",
+                "recoveryId",
+                "generation",
+                "creationProofDigest",
+                "creationFingerprint",
+                "registrationDigest",
+                "bootstrapIncarnation",
+                "previousState",
+                "outboxId"))
         || !cleanup.body().equals(json.canonical(body))
         || !equal(cleanup.digest(), json.digest("protected-local-cleanup/v1", body))
         || !Long.toString(inviteId(claim)).equals(body.path("inviteId").asText())
@@ -780,12 +793,15 @@ public final class JdbcProtectedAccountActivation {
     if (known.isPresent()) {
       requireCreated(claim, known.get());
       if (!Objects.equals(account, known.get().accountId())
-          || !equal(proofDigest(known.get().creationProof()), body.path("creationProofDigest").asText()))
+          || !equal(
+              proofDigest(known.get().creationProof()), body.path("creationProofDigest").asText()))
         throw unavailable();
     }
     if (jdbc.queryForObject(
-        "SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?",
-        String.class, inviteId(claim)) != null) throw unavailable();
+            "SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?",
+            String.class,
+            inviteId(claim))
+        != null) throw unavailable();
   }
 
   private record Cleanup(String body, String digest, String outbox) {
