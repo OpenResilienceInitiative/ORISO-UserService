@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService.PasswordResetMailSender;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -268,6 +270,25 @@ class PasswordResetServiceTest {
   }
 
   // --- confirmPasswordReset ---
+
+  @Test
+  void unsupportedPasswordAdapterRefusesBeforeRemovingTheResetTokenOrClearingSetup() {
+    lenient()
+        .doThrow(new ScopedIdentityCommandRequiredException())
+        .when(identityPasswordUpdater)
+        .requirePasswordUpdateSupport();
+    lenient()
+        .when(oneTimeTokenStore.claim("password-reset", "valid-token"))
+        .thenReturn(Optional.of(validClaim()));
+
+    assertThatThrownBy(
+            () -> passwordResetService.confirmPasswordReset("valid-token", "NewPassw0rd!"))
+        .isInstanceOf(ScopedIdentityCommandRequiredException.class);
+
+    org.mockito.Mockito.verifyNoInteractions(oneTimeTokenStore);
+    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
+    verify(consultantService, never()).clearPasswordChangeRequirement(any());
+  }
 
   @Test
   void confirmPasswordReset_Should_ReturnFalse_When_TokenIsBlank() {

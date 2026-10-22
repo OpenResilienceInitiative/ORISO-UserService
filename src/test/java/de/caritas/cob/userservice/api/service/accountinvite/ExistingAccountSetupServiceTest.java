@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -54,6 +55,21 @@ class ExistingAccountSetupServiceTest {
     lenient()
         .when(transactions.getTransaction(any()))
         .thenAnswer(ignored -> new SimpleTransactionStatus());
+  }
+
+  @Test
+  void unsupportedPasswordAdapterRefusesBeforeReadingOrConsumingTheSetupClaim() {
+    lenient()
+        .doThrow(new ScopedIdentityCommandRequiredException())
+        .when(passwords)
+        .requirePasswordUpdateSupport();
+
+    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret"))
+        .isInstanceOf(ScopedIdentityCommandRequiredException.class);
+
+    org.mockito.Mockito.verifyNoInteractions(
+        invites, admins, consultants, identities, roles, passwordChangeRequirement, initialPasswords);
+    verify(passwords, never()).updatePassword(any(), any());
   }
 
   @Test
