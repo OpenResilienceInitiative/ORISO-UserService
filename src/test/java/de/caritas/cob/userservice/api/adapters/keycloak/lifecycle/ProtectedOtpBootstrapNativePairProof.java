@@ -229,8 +229,7 @@ class ProtectedOtpBootstrapNativePairProof {
         new AccountCreation(
             username, recipient, "Protected", "Fixture", "en", registration.get("password"), false);
     var bridge =
-        new KeycloakProtectedAccounts(
-            http, actors, broker, accountCodec, logicalBase, realm);
+        new KeycloakProtectedAccounts(http, actors, broker, accountCodec, logicalBase, realm);
     var created = bridge.create(accountCodec.prepare(claim, registrationJson, account));
     var pending = bridge.ownedRead(claim, created);
     assertEquals(username.toLowerCase(Locale.ROOT), pending.username());
