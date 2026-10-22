@@ -13,13 +13,16 @@ import re
 import subprocess
 import sys
 import time
+import threading
 import unittest
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-KC_COMMIT = "66b7a668da6b7504074667d66332bc9a5f9a6172"
+KC_COMMIT = "3d7b1553d99379288d7b441650270468adae7270"
 SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserSelfAppOtpNativePairProof"
 CASE = "actualPublicUserAppLostNativeReplyReplaysOneCredentialAndCommitsOwnedInvite"
+EMAIL_CASE = "actualPublicUserEmailLostSentReplyPreservesEarlierOriginalMachineExpiry"
+CASES = {"app": CASE, "email": EMAIL_CASE}
 IMAGE = "quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992"
 
 
@@ -43,7 +46,8 @@ def save(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def sanitize(reports, destination):
+def sanitize(reports, destination, pair_kind="app"):
+    if pair_kind not in CASES: raise ValueError("Unknown native pair kind")
     counts = dict(tests=0, failures=0, errors=0, skipped=0)
     clean = ET.Element("testsuite", name=SUITE)
     paths = list(reports.glob("TEST-*.xml"))
@@ -68,7 +72,7 @@ def sanitize(reports, destination):
         for key, value in local.items():
             valid &= suite.get(key) is None or int(suite.get(key)) == value
             counts[key] += value
-    valid &= names == [CASE]
+    valid &= names == [CASES[pair_kind]]
     accepted = valid and counts == dict(tests=1, failures=0, errors=0, skipped=0)
     for key, value in counts.items():
         clean.set(key, str(value))
@@ -83,6 +87,9 @@ def native(kc, report):
     available = int(next(line.split()[1] for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemAvailable:")))
     if available < 4 * 1024 * 1024:
         raise ValueError("Native pairing requires four GiB headroom and two GiB reserve")
+    kind = os.environ.get("PAIR_KIND", "app")
+    if kind not in CASES:
+        raise ValueError("Unknown actual public pair kind")
     module = kc / "keycloak-image/account-lifecycle-spi"
     otp = kc / "keycloak-image/otp-config-spi"
     jars = {"LIFECYCLE_C_TEST_JAR": module / "target/account-lifecycle-spi-1.0-SNAPSHOT.jar", "OTP_C_TEST_JAR": otp / "target/keycloak-otp-config-spi-1.0-SNAPSHOT-keycloak.jar"}
@@ -112,19 +119,33 @@ def native(kc, report):
 
     class UserPair(HumanMaintenanceFixture, unittest.TestCase):
         @classmethod
+        def setUpClass(cls):
+            if kind == "email":
+                source = otp / "tests/scenario_c_otp_fixture.py"
+                spec = importlib.util.spec_from_file_location("pair_mail_fixture", source)
+                fixture_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(fixture_module)
+                cls.mail = fixture_module.MailSink(("0.0.0.0", 0), fixture_module.MailSink.Handler)
+                cls.mail.messages = []
+                cls.addClassCleanup(cls.mail.server_close)
+                cls.addClassCleanup(cls.mail.shutdown)
+                threading.Thread(target=cls.mail.serve_forever, daemon=True).start()
+            super().setUpClass()
+
+        @classmethod
         def reviewed_human_profile(cls):
             return {"kind": "ASKER", "group": "user", "roles": ["user"], "id": "user-v1"}
 
         @classmethod
         def reviewed_self_operations(cls):
-            return ["account.read", "otp.app-setup"]
+            return ["account.read", "otp.email-start" if kind == "email" else "otp.app-setup"]
 
         @classmethod
         def extra_launch_arguments(cls):
-            return ["-v", str(jars["OTP_C_TEST_JAR"].resolve()) + ":/opt/keycloak/providers/otp-config-spi.jar:ro", "-e", "IDENTITY_ACCOUNT_ADMIN_CLIENT_ID=backend-account-admin", "-e", "ORISO_APP_BASE_URL=https://otp-fixture.internal", "-e", "EMAIL_BRANDING_NAME=OTP Fixture", "-e", "EMAIL_LEGAL_ORGANISATION_NAME=Fixture Operator"]
+            return ["-v", str(jars["OTP_C_TEST_JAR"].resolve()) + ":/opt/keycloak/providers/otp-config-spi.jar:ro", "-e", "IDENTITY_ACCOUNT_ADMIN_CLIENT_ID=backend-account-admin", "-e", "ORISO_APP_BASE_URL=https://otp-fixture.internal", "-e", "EMAIL_BRANDING_NAME=OTP Fixture", "-e", "EMAIL_LEGAL_ORGANISATION_NAME=Fixture Operator", "-v", str(kc / "keycloak-image/themes/oriso") + ":/opt/keycloak/themes/oriso:ro", "--add-host", "host.docker.internal:host-gateway"]
 
     phase = "native-fixture-setup"
-    receipt = {"phase": phase, "accepted": False, "executed": 0, "genuine_behavior_red": False, "before": before, "jars": hashes, "image": IMAGE, "compiled_user_classes": compiled}
+    receipt = {"kind": kind, "case": CASES[kind], "phase": phase, "accepted": False, "executed": 0, "genuine_behavior_red": False, "before": before, "jars": hashes, "image": IMAGE, "compiled_user_classes": compiled}
     saved_environment = {key: os.environ.get(key) for key in jars}
     for key, path in jars.items():
         os.environ[key] = str(path.resolve())
@@ -132,6 +153,18 @@ def native(kc, report):
         UserPair.setUpClass()
         fixture = UserPair("runTest")
         fixture.human()
+        if kind == "email":
+            realm_config = fixture.admin("GET", "")
+            realm_config["emailTheme"] = "oriso"
+            realm_config["smtpServer"] = {"host": "host.docker.internal", "port": str(UserPair.mail.server_address[1]), "from": "otp-fixture@oriso.org", "auth": "false", "ssl": "false", "starttls": "false"}
+            fixture.admin("PUT", "", realm_config)
+            assert fixture.admin("GET", "")["smtpServer"] == realm_config["smtpServer"]
+            clients = fixture.admin("GET", "/clients?clientId=" + lifecycle.ACTORS["ACCOUNT_ADMIN"][0])
+            assert len(clients) == 1
+            native_client = clients[0]
+            native_client["attributes"] = {**native_client.get("attributes", {}), "access.token.lifespan": "90"}
+            fixture.admin("PUT", "/clients/" + native_client["id"], native_client)
+            assert fixture.admin("GET", "/clients/" + native_client["id"])["attributes"]["access.token.lifespan"] == "90"
         assert fixture.creation_input["identity"]["scope"]["registrationKind"] == "ASKER"
         assert fixture.admin("GET", "/users/" + fixture.account_id + "/credentials")
         assert not any(c["type"] == "otp" for c in fixture.admin("GET", "/users/" + fixture.account_id + "/credentials"))
@@ -145,14 +178,14 @@ def native(kc, report):
         receipt["native_preconditions"] = {"actual_user_registration": True, "current_user_group_role": True, "actual_native_human_session": True, "canonical_admin3": True, "stock_native_denied": True, "no_app_credential": True, "actual_totp_sha1_6_30_policy": True}
         phase = "actual-public-java-native-pair"
         environment = dict(os.environ)
-        environment.update({"PAIR_NATIVE_BASE": fixture.base, "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id, "PAIR_ACCOUNT_ID": fixture.account_id, "PAIR_USERNAME": fixture.creation_input["account"]["username"], "PAIR_PASSWORD": fixture.creation_input["account"]["password"], "PAIR_HUMAN_CLIENT": CLIENT, "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(), "PAIR_WITNESS": str(report.with_name("self-app-native-witness.json").resolve())})
+        environment.update({"PAIR_KIND": kind, "PAIR_NATIVE_BASE": fixture.base, "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id, "PAIR_ACCOUNT_ID": fixture.account_id, "PAIR_USERNAME": fixture.creation_input["account"]["username"], "PAIR_PASSWORD": fixture.creation_input["account"]["password"], "PAIR_HUMAN_CLIENT": CLIENT, "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(), "PAIR_WITNESS": str(report.with_name("self-app-native-witness.json").resolve())})
         for actor, (client, roles) in lifecycle.ACTORS.items():
             environment.update({"PAIR_" + actor + "_CLIENT": client, "PAIR_" + actor + "_SECRET": "synthetic-lifecycle-" + actor, "PAIR_" + actor + "_SUBJECT": lifecycle.SUBJECTS[actor]})
         reports = ROOT / "target/surefire-reports"
         for path in reports.glob("TEST-*.xml"):
             path.unlink()
-        child = subprocess.run(["mvn", "-B", "-ntp", "-q", "surefire:test", "-Dtest=" + SUITE, "-DfailIfNoTests=true", "-Dsurefire.failIfNoSpecifiedTests=true", "-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2"], cwd=ROOT, env=environment, capture_output=True, timeout=180)
-        result = sanitize(reports, report.with_suffix(".xml"))
+        child = subprocess.run(["mvn", "-B", "-ntp", "-q", "surefire:test", "-Dtest=" + SUITE + "#" + CASES[kind], "-DfailIfNoTests=true", "-Dsurefire.failIfNoSpecifiedTests=true", "-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2"], cwd=ROOT, env=environment, capture_output=True, timeout=180)
+        result = sanitize(reports, report.with_suffix(".xml"), kind)
         receipt.update(result)
         witness = report.with_name("self-app-native-witness.json")
         if witness.is_file():
@@ -164,8 +197,13 @@ def native(kc, report):
         receipt["java_exit"] = child.returncode
         receipt["accepted"] = result["accepted"] and child.returncode == 0
         credentials = fixture.admin("GET", "/users/" + fixture.account_id + "/credentials")
-        receipt["single_native_app_credential"] = len([c for c in credentials if c["type"] == "otp"]) == 1
-        receipt["accepted"] &= receipt["single_native_app_credential"]
+        if kind == "email":
+            receipt["single_native_mail_credential"] = len([c for c in credentials if c["type"] == "MAIL_OTP_CM"]) == 1
+            receipt["single_actual_smtp"] = len(UserPair.mail.messages) == 1
+            receipt["accepted"] &= receipt["single_native_mail_credential"] and receipt["single_actual_smtp"]
+        else:
+            receipt["single_native_app_credential"] = len([c for c in credentials if c["type"] == "otp"]) == 1
+            receipt["accepted"] &= receipt["single_native_app_credential"]
         # Never persist child output: it may contain JWTs, codes, passwords or native responses.
         child = None
         phase = "complete"

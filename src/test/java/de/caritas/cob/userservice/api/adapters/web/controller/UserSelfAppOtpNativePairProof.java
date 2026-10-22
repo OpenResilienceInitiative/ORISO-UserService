@@ -65,6 +65,7 @@ class UserSelfAppOtpNativePairProof {
                 "public-success",
                 "native-read-http",
                 "native-app-http",
+                "native-email-http",
                 "native-token-http",
                 "native-stock-http")
             .contains(name)
@@ -87,6 +88,17 @@ class UserSelfAppOtpNativePairProof {
   @Test
   void actualPublicUserAppLostNativeReplyReplaysOneCredentialAndCommitsOwnedInvite()
       throws Exception {
+    runPair(false);
+  }
+
+  @Test
+  void actualPublicUserEmailLostSentReplyPreservesEarlierOriginalMachineExpiry()
+      throws Exception {
+    runPair(true);
+  }
+
+  private void runPair(boolean email) throws Exception {
+    assertEquals(email ? "email" : "app", required("PAIR_KIND"));
     PHASES.clear();
     assertEquals("true", required("GITHUB_ACTIONS"));
     assertEquals("Linux", System.getProperty("os.name"));
@@ -102,6 +114,12 @@ class UserSelfAppOtpNativePairProof {
     assertEquals(32, key.length);
     var codec = new AccountLifecycleCodec(key);
     var http = new RestTemplate();
+    http.setRequestFactory(new org.springframework.http.client.BufferingClientHttpRequestFactory(http.getRequestFactory()));
+    var decoderReference = new AtomicReference<JwtDecoder>();
+    var inPublicCall = new java.util.concurrent.atomic.AtomicBoolean();
+    var firstMachineExpiry = new java.util.concurrent.atomic.AtomicLong();
+    var humanExpiry = new java.util.concurrent.atomic.AtomicLong();
+    String pendingEmail = "pair-pending@oriso.org";
     var nativeCalls = new AtomicInteger();
     var activationCalls = new AtomicInteger();
     var lost = new AtomicInteger();
@@ -118,8 +136,8 @@ class UserSelfAppOtpNativePairProof {
     var transactions = new DataSourceTransactionManager(source);
     try {
       jdbc.execute(
-          "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512))");
-      jdbc.update("insert into user values(?,?,null,?)", account, 11L, username);
+          "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512),email varchar(320))");
+      jdbc.update("insert into user values(?,?,null,?,'original@oriso.org')", account, 11L, username);
       jdbc.execute(
           "create table account_invite(id bigint primary key,accepted_by_user_id varchar(36),two_factor_status varchar(32),write_count int)");
       jdbc.update("insert into account_invite values(1,?,'PENDING_SETUP',0)", account);
@@ -127,6 +145,8 @@ class UserSelfAppOtpNativePairProof {
               new ClassPathResource(
                   "db/changelog/changeset/20261022_identity_self_app_otp_367/migrate.sql"))
           .execute(source);
+      new ResourceDatabasePopulator(new ClassPathResource(
+          "db/changelog/changeset/20261022_identity_self_otp_email_367/migrate.sql")).execute(source);
       http.getInterceptors()
           .add(
               (outbound, bytes, execution) -> {
@@ -144,7 +164,8 @@ class UserSelfAppOtpNativePairProof {
                         return physical;
                       }
                     };
-                boolean mutation = logical.getPath().contains("/otp-config/setup-otp/");
+                boolean mutation = logical.getPath().contains(email
+                    ? "/otp-config/send-verification-mail/" : "/otp-config/setup-otp/");
                 if (mutation) {
                   assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
                   assertEquals(
@@ -158,6 +179,12 @@ class UserSelfAppOtpNativePairProof {
                       jdbc.queryForObject(
                           "select two_factor_status from account_invite where id=1", String.class));
                   String wire = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+                  if (email) {
+                    assertTrue(firstMachineExpiry.get() > 0);
+                    assertTrue(firstMachineExpiry.get() < humanExpiry.get());
+                    assertEquals(firstMachineExpiry.get(), codec.read(wire, JsonNode.class)
+                        .path("authorityValidUntil").longValue());
+                  }
                   String cipher =
                       jdbc.queryForObject(
                           "select envelope from identity_self_app_otp_intent where operation_id=?",
@@ -177,17 +204,24 @@ class UserSelfAppOtpNativePairProof {
                   nativeCalls.incrementAndGet();
                 }
                 var response = execution.execute(mapped, bytes);
+                if (email && inPublicCall.get() && logical.getPath().endsWith("/token")) {
+                  // Read only in memory; the same native signature decoder independently validates bounds.
+                  var nativeToken = codec.read(new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8), JsonNode.class);
+                  var verified = decoderReference.get().decode(nativeToken.path("access_token").textValue());
+                  firstMachineExpiry.compareAndSet(0, verified.getExpiresAt().getEpochSecond());
+                }
                 phase(
                     mutation
-                        ? "native-app-http"
+                        ? email ? "native-email-http" : "native-app-http"
                         : logical.getPath().endsWith("/read")
                             ? "native-read-http"
                             : logical.getPath().endsWith("/token")
                                 ? "native-token-http"
                                 : "native-stock-http",
                     response.getStatusCode().value());
-                if (mutation && lost.getAndIncrement() == 0) {
-                  assertEquals(201, response.getStatusCode().value());
+                if (mutation && (!email || response.getStatusCode().value() == 200)
+                    && lost.getAndIncrement() == 0) {
+                  assertEquals(email ? 200 : 201, response.getStatusCode().value());
                   response.getBody().readAllBytes();
                   response.close();
                   throw new ResourceAccessException("Fixture lost actual committed native reply");
@@ -216,6 +250,7 @@ class UserSelfAppOtpNativePairProof {
                   base + "/realms/" + realm + "/protocol/openid-connect/certs")
               .build();
       decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
+      decoderReference.set(decoder);
       var jwt = decoder.decode(humanBearer);
       assertEquals(account, jwt.getSubject());
       assertEquals(required("PAIR_HUMAN_CLIENT"), jwt.getClaimAsString("azp"));
@@ -224,6 +259,7 @@ class UserSelfAppOtpNativePairProof {
           Set.of("user"),
           Set.copyOf((List<?>) ((Map<?, ?>) jwt.getClaims().get("realm_access")).get("roles")));
       assertEquals("11", jwt.getClaimAsString("tenantId"));
+      humanExpiry.set(jwt.getExpiresAt().getEpochSecond());
       phase("human-signed", 0);
       var identity = new IdentityConfig();
       identity.setOpenidConnectUrl(issuer + "/protocol/openid-connect");
@@ -252,6 +288,10 @@ class UserSelfAppOtpNativePairProof {
       var checkedMachine = broker.issueCheckedMaintenance(TaskPurpose.OTP);
       assertEquals(actors.require(TaskPurpose.OTP).serviceSubject(), checkedMachine.subject());
       var machineJwt = decoder.decode(checkedMachine.accessToken());
+      if (email) {
+        assertTrue(machineJwt.getExpiresAt().isBefore(jwt.getExpiresAt()));
+        assertTrue(machineJwt.getExpiresAt().getEpochSecond() <= Instant.now().getEpochSecond() + 100);
+      }
       phase("machine-signed", 0);
       assertEquals(
           Set.of("userservice", "oriso-account-lifecycle", "oriso-otp"),
@@ -267,7 +307,7 @@ class UserSelfAppOtpNativePairProof {
         assertEquals(403, denied.getStatusCode().value());
       }
       phase("stock-denied", 403);
-      var request = new MockHttpServletRequest("PUT", "/service/users/2fa/app");
+      var request = new MockHttpServletRequest("PUT", email ? "/service/users/2fa/email" : "/service/users/2fa/app");
       var authentication =
           new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_USER")));
       request.setUserPrincipal(authentication);
@@ -347,8 +387,14 @@ class UserSelfAppOtpNativePairProof {
               "http://maintenance-human-fixture.invalid",
               realm,
               realmId));
+      var emailDto = new de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO();
+      emailDto.setEmail(pendingEmail);
+      inPublicCall.set(true);
       phase("public-first-call", 0);
-      assertThrows(RuntimeException.class, () -> controller.activateTwoFactorAuthByApp(dto));
+      assertThrows(RuntimeException.class, () -> {
+        if (email) controller.startTwoFactorAuthByEmailSetup(emailDto);
+        else controller.activateTwoFactorAuthByApp(dto);
+      });
       phase("public-after-first-call", 0);
       assertEquals(
           "FROZEN",
@@ -374,8 +420,12 @@ class UserSelfAppOtpNativePairProof {
               realm,
               realmId));
       phase("public-retry", 0);
-      assertEquals(200, controller.activateTwoFactorAuthByApp(dto).getStatusCode().value());
-      assertEquals(200, controller.activateTwoFactorAuthByApp(dto).getStatusCode().value());
+      for (int retry = 0; retry < 2; retry++) {
+        var resolved = assertDoesNotThrow(() -> email
+            ? controller.startTwoFactorAuthByEmailSetup(emailDto)
+            : controller.activateTwoFactorAuthByApp(dto));
+        assertEquals(email ? 204 : 200, resolved.getStatusCode().value());
+      }
       assertEquals(
           "ACKNOWLEDGED",
           jdbc.queryForObject(
@@ -383,14 +433,19 @@ class UserSelfAppOtpNativePairProof {
               String.class,
               operation));
       assertEquals(
-          "ACTIVE",
+          email ? "PENDING_SETUP" : "ACTIVE",
           jdbc.queryForObject(
               "select two_factor_status from account_invite where id=1", String.class));
       assertEquals(
-          1,
+          email ? 0 : 1,
           jdbc.queryForObject("select write_count from account_invite where id=1", Integer.class));
-      assertEquals(1, activationCalls.get());
-      assertEquals(2, nativeCalls.get());
+      assertEquals(email ? 0 : 1, activationCalls.get());
+      assertEquals(email ? 3 : 2, nativeCalls.get());
+      if (email) {
+        assertEquals(operation, jdbc.queryForObject(
+            "select start_operation_id from identity_self_otp_pending_email where account_id=?", String.class, account));
+        assertEquals("original@oriso.org", jdbc.queryForObject("select email from user where user_id=?", String.class, account));
+      }
       String receipt =
           jdbc.queryForObject(
               "select receipt from identity_self_app_otp_intent where operation_id=?",
@@ -404,6 +459,13 @@ class UserSelfAppOtpNativePairProof {
                   java.nio.charset.StandardCharsets.UTF_8),
               JsonNode.class);
       assertEquals("backend-account-admin", facts.path("ownerClient").textValue());
+      if (email) {
+        assertEquals("otp.email-start", facts.path("operation").textValue());
+        assertEquals("SENT", facts.path("deliveryState").textValue());
+        assertEquals(firstMachineExpiry.get(), facts.path("authorityValidUntil").longValue());
+        assertEquals(firstMachineExpiry.get(), jdbc.queryForObject(
+            "select authority_valid_until from identity_self_app_otp_intent where operation_id=?", Long.class, operation));
+      }
       assertEquals(
           actors.require(TaskPurpose.OTP).serviceSubject(), facts.path("ownerSubject").textValue());
       var stored =
@@ -414,7 +476,8 @@ class UserSelfAppOtpNativePairProof {
           List.of(humanBearer, checkedMachine.accessToken(), dto.getSecret(), dto.getOtp()))
         assertFalse(
             flat.contains(secret), "No plaintext secret or JWT may enter the private durable row");
-      phase("public-success", 200);
+      if (email) assertFalse(flat.contains(pendingEmail));
+      phase("public-success", email ? 204 : 200);
       verifyNoInteractions(legacy);
     } finally {
       SecurityContextHolder.clearContext();

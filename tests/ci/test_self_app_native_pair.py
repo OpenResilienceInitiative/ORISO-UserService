@@ -32,11 +32,33 @@ class SelfAppNativePairEvidenceTest(unittest.TestCase):
                 self.assertNotIn("password", output.read_text())
                 self.assertEqual(["UserSelfAppOtpNativePairProof.java:123"] if kind in {"failure", "error", "skipped"} else [], result["failure_source_locations"])
 
+    def test_email_selects_exact_one_method_and_rejects_app_or_unknown_pair(self):
+        for kind in ("green", "failure", "error", "skipped", "missing", "duplicate", "wrong-app"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                suite = ET.Element("testsuite", name=PROOF.SUITE)
+                if kind != "missing":
+                    row = ET.SubElement(suite, "testcase", classname=PROOF.SUITE,
+                                        name=PROOF.CASE if kind == "wrong-app" else PROOF.EMAIL_CASE)
+                    if kind in {"failure", "error", "skipped"}:
+                        ET.SubElement(row, kind, message="secret recipient/native code/JWT")
+                    if kind == "duplicate":
+                        ET.SubElement(suite, "testcase", classname=PROOF.SUITE, name=PROOF.EMAIL_CASE)
+                ET.ElementTree(suite).write(root / "TEST-pair.xml")
+                result = PROOF.sanitize(root, root / "clean.xml", "email")
+                self.assertEqual(kind == "green", result["accepted"])
+                self.assertNotIn("secret", (root / "clean.xml").read_text())
+                with self.assertRaises(ValueError):
+                    PROOF.sanitize(root, root / "clean.xml", "other")
+
     def test_native_workflow_has_read_only_pins_required_builds_and_bounded_cleanup(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/scenario-c-self-app-native-pair.yml").read_text())
         self.assertEqual({"contents": "read"}, workflow["permissions"])
         job = workflow["jobs"]["public-app-native-pair"]
         self.assertEqual("ubuntu-24.04", job["runs-on"])
+        self.assertEqual(["app", "email"], job["strategy"]["matrix"]["kind"])
+        self.assertFalse(job["strategy"]["fail-fast"])
+        self.assertEqual("${{ matrix.kind }}", job["env"]["PAIR_KIND"])
         steps = job["steps"]
         native = next(s for s in steps if "self-app-native-pair.py native" in s.get("run", ""))
         self.assertEqual(10, native["timeout-minutes"])
