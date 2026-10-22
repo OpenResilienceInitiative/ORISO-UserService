@@ -24,7 +24,7 @@ public interface HumanAdminMaintenanceTransport {
     }
   }
 
-  record FrozenProfile(String body, String requestDigest) {
+  record FrozenProfile(String body, String bindingDigest) {
     @Override
     public String toString() {
       return "FrozenProfile[payload=redacted]";
@@ -40,4 +40,6 @@ public interface HumanAdminMaintenanceTransport {
       CheckedAccount account, IdentityProfileUpdate profile, UUID operation, String expectedState);
 
   String updateProfile(CheckedAccount account, FrozenProfile frozen);
+
+  String verifyProfileReceipt(CheckedAccount account, FrozenProfile frozen, String receipt);
 }

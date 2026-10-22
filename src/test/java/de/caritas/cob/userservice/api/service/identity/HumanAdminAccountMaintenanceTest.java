@@ -86,8 +86,10 @@ class HumanAdminAccountMaintenanceTest {
         "insert into admin values(?,7,'original-admin','TENANT','Old','Name','old@example.test',true,?)",
         ACCOUNT,
         java.sql.Timestamp.from(CLOCK.instant()));
-    jdbc.execute(
-        "create table general_admin_identity_intent(operation_id varchar(36) primary key,account_id varchar(36) not null,tenant_id bigint,human_subject varchar(36) not null,human_issuer varchar(512) not null,human_client varchar(255) not null,request_digest varchar(64) not null,original_json clob not null,desired_json clob not null,native_body clob,native_receipt clob,status varchar(20) not null,created_at timestamp not null,updated_at timestamp not null)");
+    new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
+            new org.springframework.core.io.ClassPathResource(
+                "db/changelog/changeset/20261022_general_admin_identity_367/migrate.sql"))
+        .execute(ds);
     when(mode.isFiveActorMode()).thenReturn(true);
     human.setUserId(HUMAN);
     human.setAccessToken("synthetic-current-human");
@@ -125,6 +127,25 @@ class HumanAdminAccountMaintenanceTest {
   @Test
   void actualAdminSqlAndCurrentHumanReachOnlyTheFixedScopedNativeRead() {
     readReply();
+    List<String> malformed = List.of("extra", "missing", "null-enabled", "string-enabled", "numeric-tenant", "numeric-role", "duplicate");
+    for (String variant : malformed) {
+      server.expect(requestTo(URL + "/read")).andRespond(r -> {
+        var body=projection(false);
+        switch (variant) {
+          case "extra" -> body.put("extra",true);
+          case "missing" -> body.remove("enabled");
+          case "null-enabled" -> body.putNull("enabled");
+          case "string-enabled" -> body.put("enabled","true");
+          case "numeric-tenant" -> body.put("tenantId",7);
+          case "numeric-role" -> body.putArray("effectiveRoles").add(1);
+          default -> { }
+        }
+        String raw=codec.canonical(body);
+        if (variant.equals("duplicate")) raw=raw.substring(0,raw.length()-1)+",\"enabled\":false}";
+        var response=withSuccess(raw,MediaType.APPLICATION_JSON).createResponse(r);
+        response.getHeaders().setCacheControl("no-store");return response;
+      });
+    }
     var result = assertDoesNotThrow(() -> service.read(ACCOUNT));
     assertEquals(ACCOUNT, result.id());
     assertEquals(7L, result.tenantId());
@@ -132,8 +153,9 @@ class HumanAdminAccountMaintenanceTest {
     assertEquals(
         0,
         jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
-    verify(scope).assertMay(any());
-    verify(broker).issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
+    for (String variant : malformed) assertThrows(RuntimeException.class, () -> service.read(ACCOUNT),variant);
+    verify(scope, atLeastOnce()).assertMay(any());
+    verify(broker, atLeastOnce()).issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
     verify(broker, never()).issue(any());
     server.verify();
   }
@@ -148,6 +170,7 @@ class HumanAdminAccountMaintenanceTest {
         .andExpect(header("Authorization", "Bearer synthetic-checked-admin"))
         .andExpect(header("X-ORISO-Human-Authorization", "Bearer synthetic-current-human"))
         .andRespond(profileReceipt(null));
+    readReply(true);
     assertDoesNotThrow(() -> service.updateAdminProfile(ACCOUNT, desired()));
     var row = jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT);
     assertEquals("New", row.get("first_name"));
@@ -169,15 +192,16 @@ class HumanAdminAccountMaintenanceTest {
         .expect(requestTo(URL + "/profile"))
         .andExpect(r -> first.set(((MockClientHttpRequest) r).getBodyAsString()))
         .andRespond(withException(new IOException("synthetic lost response")));
+    server
+        .expect(requestTo(URL + "/profile"))
+        .andExpect(r -> assertEquals(first.get(), ((MockClientHttpRequest) r).getBodyAsString()))
+        .andRespond(profileReceipt(null));
+    readReply(true);
     assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, desired()));
     assertEquals("Old", jdbc.queryForObject("select first_name from admin", String.class));
     assertEquals(
         List.of("FROZEN"),
         jdbc.queryForList("select status from general_admin_identity_intent", String.class));
-    server
-        .expect(requestTo(URL + "/profile"))
-        .andExpect(r -> assertEquals(first.get(), ((MockClientHttpRequest) r).getBodyAsString()))
-        .andRespond(profileReceipt(null));
     assertDoesNotThrow(() -> service.updateAdminProfile(ACCOUNT, desired()));
     assertEquals(
         1,
@@ -351,7 +375,9 @@ class HumanAdminAccountMaintenanceTest {
             .build());
   }
 
-  private void readReply() {
+  private void readReply() { readReply(false); }
+
+  private void readReply(boolean applied) {
     server
         .expect(requestTo(URL + "/read"))
         .andExpect(method(HttpMethod.POST))
@@ -373,14 +399,23 @@ class HumanAdminAccountMaintenanceTest {
                   "PROTECTED_ACCOUNT_OPERATIONS_V1",
                   body.path("target").path("origin").path("humanAuthority").textValue());
             })
-        .andRespond(
-            withSuccess(
-                "{\"id\":\""
-                    + ACCOUNT
-                    + "\",\"username\":\"original-admin\",\"email\":\"old@example.test\",\"firstName\":\"Old\",\"lastName\":\"Name\",\"enabled\":true,\"emailVerified\":true,\"tenantId\":\"7\",\"preferredLanguage\":\"de\",\"effectiveRoles\":[\"tenant-admin\"],\"passwordChangeRequired\":false,\"state\":\""
-                    + "a".repeat(64)
-                    + "\"}",
-                MediaType.APPLICATION_JSON));
+        .andRespond(r -> {
+          var projection = projection(applied);
+          var response=withSuccess(codec.canonical(projection),MediaType.APPLICATION_JSON).createResponse(r);
+          response.getHeaders().setCacheControl("no-store");return response;
+        });
+  }
+
+  private com.fasterxml.jackson.databind.node.ObjectNode projection(boolean applied) {
+    var body=codec.read("{}",com.fasterxml.jackson.databind.node.ObjectNode.class);
+    body.put("id",ACCOUNT);body.put("username","original-admin");
+    body.put("email",applied?"new@example.test":"old@example.test");
+    body.put("firstName",applied?"New":"Old");body.put("lastName","Name");
+    body.put("enabled",true);body.put("emailVerified",true);
+    body.put("tenantId","7");body.put("preferredLanguage","de");
+    body.putArray("effectiveRoles").add("tenant-admin");
+    body.put("passwordChangeRequired",false);body.put("state","a".repeat(64));
+    return body;
   }
 
   private ResponseCreator profileReceipt(Runnable beforeReply) {
@@ -414,7 +449,7 @@ class HumanAdminAccountMaintenanceTest {
                 .encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
         String receipt = encoded + "." + mac("maintenance-operation-receipt\n" + encoded);
         if (beforeReply != null) beforeReply.run();
-        return withSuccess(
+        var response=withSuccess(
                 codec.canonical(
                     Map.of(
                         "operationId",
@@ -427,6 +462,7 @@ class HumanAdminAccountMaintenanceTest {
                         receipt)),
                 MediaType.APPLICATION_JSON)
             .createResponse(request);
+        response.getHeaders().setCacheControl("no-store");return response;
       } catch (Exception failure) {
         throw new IOException(failure);
       }

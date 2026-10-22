@@ -1010,7 +1010,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       String accountId,
       TaskActorCredentials actor,
       Object body) {
-    if (!java.util.Set.of("read", "delete", "locale").contains(command)
+    if (!java.util.Set.of("read", "delete", "locale", "profile", "email").contains(command)
         || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
       throw new IllegalArgumentException("Invalid maintenance proof binding");
     long now = clock.instant().getEpochSecond();
@@ -1065,12 +1065,12 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
 
   public String verifyMaintenanceProfileReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
-    throw new IllegalArgumentException("Checked profile receipt is unavailable");
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "profile", "UPDATED");
   }
 
   public String verifyMaintenanceEmailReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
-    throw new IllegalArgumentException("Checked email receipt is unavailable");
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "email", "UPDATED");
   }
 
   private String verifyMaintenanceReceipt(
