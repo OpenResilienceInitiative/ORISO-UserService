@@ -41,6 +41,7 @@ public final class JdbcProtectedAccountActivation {
   private final AdminRepository admins;
   private final AccountInactivityEnrollmentService inactivity;
   private final Clock clock;
+  private final JdbcProtectedAccountCreation creation;
 
   public JdbcProtectedAccountActivation(
       JdbcTemplate jdbc,
@@ -52,6 +53,20 @@ public final class JdbcProtectedAccountActivation {
       AdminRepository admins,
       AccountInactivityEnrollmentService inactivity,
       Clock clock) {
+    this(jdbc, manager, journal, accounts, json, otp, admins, inactivity, clock, null);
+  }
+
+  public JdbcProtectedAccountActivation(
+      JdbcTemplate jdbc,
+      PlatformTransactionManager manager,
+      JdbcProtectedInvitationJournal journal,
+      ProtectedAccountCodec accounts,
+      AccountLifecycleCodec json,
+      ProtectedOtpBootstrap otp,
+      AdminRepository admins,
+      AccountInactivityEnrollmentService inactivity,
+      Clock clock,
+      JdbcProtectedAccountCreation creation) {
     ProtectedInvitationSqlOwner.require(jdbc, manager);
     journal.requireOwner(jdbc, manager);
     this.jdbc = jdbc;
@@ -62,6 +77,7 @@ public final class JdbcProtectedAccountActivation {
     this.admins = Objects.requireNonNull(admins);
     this.inactivity = Objects.requireNonNull(inactivity);
     this.clock = Objects.requireNonNull(clock);
+    this.creation = creation;
   }
 
   public IdentityOtpCredential stage(

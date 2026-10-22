@@ -100,6 +100,22 @@ class KeycloakProtectedAccountsTest {
   }
 
   @Test
+  void protectedCreationUsesTheCheckedCreatorWhileGenericIssuanceStaysClosed() {
+    var checked = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+    when(checked.actor()).thenReturn(TaskActor.ACCOUNT_CREATE);
+    when(checked.accessToken()).thenReturn("public-synthetic-checked");
+    when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(checked);
+    when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
+        .thenThrow(new IllegalStateException("Generic native issuance remains closed"));
+    server.expect(requestTo(url())).andExpect(method(HttpMethod.PUT))
+        .andExpect(header("Authorization", "Bearer public-synthetic-checked"))
+        .andRespond(withStatus(HttpStatus.CREATED).body(createdResponse).contentType(MediaType.APPLICATION_JSON));
+    assertSame(created, assertDoesNotThrow(() -> transport.create(prepared)));
+    verify(broker).issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING);
+    server.verify();
+  }
+
+  @Test
   void createUsesOnlyTheFixedCreatorRouteAndExactMemoryBody() {
     server
         .expect(requestTo(url()))

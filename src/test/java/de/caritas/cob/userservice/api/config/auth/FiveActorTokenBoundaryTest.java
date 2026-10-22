@@ -147,6 +147,57 @@ class FiveActorTokenBoundaryTest {
     assertThat(issuer.calls.get()).isZero();
   }
 
+  @Test
+  void checkedProvisioningUsesTheCanonicalSignedCreatorAndItsOriginalJwtBounds() {
+    var nativeGrant = authentication.loginService("backend-account-create", "synthetic-account-create-secret");
+    var checked = NimbusJwtDecoder.withJwkSetUri(issuer.base() + "/certs").build()
+        .decode(nativeGrant.getAccessToken());
+    assertThat(checked.getAudience()).containsExactlyInAnyOrder("userservice", "oriso-account-lifecycle");
+    assertThat(checked.getSubject()).isEqualTo("native-account-create-subject");
+    assertThat(issuer.calls.get()).isEqualTo(1);
+    var token = org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+        () -> broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING));
+    assertThat(issuer.calls.get()).isEqualTo(2);
+    assertThat(issuer.lastForm).containsEntry("grant_type", "client_credentials")
+        .containsEntry("client_id", "backend-account-create");
+    assertThat(issuer.lastForm.keySet()).doesNotContain("username", "password", "refresh_token");
+    assertThat(token.actor()).isEqualTo(TaskActor.ACCOUNT_CREATE);
+    assertThat(token.purpose()).isEqualTo(TaskPurpose.ACCOUNT_PROVISIONING);
+    assertThat(token.issuer()).isEqualTo(issuer.issuer());
+    assertThat(token.subject()).isEqualTo("native-account-create-subject");
+    assertThat(token.clientId()).isEqualTo("backend-account-create");
+    assertThat(token.validatedJwtIssuedAt()).isPositive();
+    assertThat(token.validatedJwtExpiresAt()).isGreaterThan(token.validatedJwtIssuedAt());
+    assertThat(token.validatedJwtExpiresAt()).isGreaterThan(java.time.Instant.now().getEpochSecond());
+    assertThat(token.toString()).doesNotContain(token.accessToken());
+  }
+
+  @Test
+  void checkedProvisioningRejectsEveryInvalidSignedCreatorWithoutAnotherActorOrFallback() {
+    for (String variant : java.util.List.of("create-extra-role", "create-missing-role",
+        "create-extra-audience", "create-missing-audience", "mixed-roles", "wrong-audience",
+        "wrong-subject", "wrong-client", "wrong-issuer", "expired", "missing-expiry",
+        "future", "native-admin", "wrong-signature", "provider-error", "missing-issued-at",
+        "zero-issued-at", "negative-issued-at", "future-issued-at", "unordered-native-bounds")) {
+      issuer.variant = variant;
+      int before = issuer.calls.get();
+      assertThatThrownBy(() -> broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING))
+          .as(variant).hasMessage("Checked provisioning authentication unavailable").hasNoCause();
+      assertThat(issuer.calls.get()).as(variant).isEqualTo(before + 1);
+      assertThat(issuer.lastForm.get("client_id")).isEqualTo("backend-account-create");
+    }
+  }
+
+  @Test
+  void checkedProvisioningRefusesOtherPurposesBeforeAnyTokenRequest() {
+    for (TaskPurpose purpose : TaskPurpose.values()) {
+      if (purpose == TaskPurpose.ACCOUNT_PROVISIONING) continue;
+      assertThatThrownBy(() -> broker.issueCheckedProvisioning(purpose))
+          .hasMessage("Checked provisioning authentication unavailable").hasNoCause();
+      assertThat(issuer.calls.get()).isZero();
+    }
+  }
+
   @ParameterizedTest
   @EnumSource(
       value = TaskPurpose.class,

@@ -151,6 +151,11 @@ public final class JdbcProtectedInvitationAcceptance {
   }
 
   /** Saved terminal-status custody cannot authorize creation or a new activation. */
+  HistoricalAcceptance historicalWithinOwner(long inviteId) {
+    throw unavailable();
+  }
+
+  /** Saved terminal-status custody cannot authorize creation or a new activation. */
   public HistoricalAcceptance historical(long inviteId) {
     if (inviteId < 1
         || TransactionSynchronizationManager.isActualTransactionActive()

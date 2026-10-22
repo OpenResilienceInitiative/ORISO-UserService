@@ -39,6 +39,33 @@ public class TaskActorTokenBroker {
     return new TaskToken(binding.actor(), issued.bearer, issued.expiresIn);
   }
 
+  /** Only checked account-creation transports may obtain this private result. */
+  public VerifiedProvisioningToken issueCheckedProvisioning(TaskPurpose purpose) {
+    throw provisioningUnavailable();
+  }
+
+  private static IllegalStateException provisioningUnavailable() {
+    return new IllegalStateException("Checked provisioning authentication unavailable");
+  }
+
+  public static final class VerifiedProvisioningToken {
+    private final NativeToken issued;
+
+    private VerifiedProvisioningToken(NativeToken issued) {
+      this.issued = issued;
+    }
+
+    public TaskPurpose purpose() { return TaskPurpose.ACCOUNT_PROVISIONING; }
+    public TaskActor actor() { return TaskActor.ACCOUNT_CREATE; }
+    public String accessToken() { return issued.bearer; }
+    public String issuer() { return issued.token.getIssuer().toString(); }
+    public String clientId() { return issued.token.getClaimAsString("azp"); }
+    public String subject() { return issued.token.getSubject(); }
+    public long validatedJwtIssuedAt() { return issued.token.getIssuedAt().getEpochSecond(); }
+    public long validatedJwtExpiresAt() { return issued.token.getExpiresAt().getEpochSecond(); }
+    @Override public String toString() { return "VerifiedProvisioningToken[redacted]"; }
+  }
+
   /** Only the finite checked maintenance/OTP workflow may obtain this private result. */
   public VerifiedMaintenanceToken issueCheckedMaintenance(TaskPurpose purpose) {
     if (purpose != TaskPurpose.ACCOUNT_MAINTENANCE && purpose != TaskPurpose.OTP)
