@@ -8,7 +8,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 final class ConsultantProfileSqlSnapshot {
   private ConsultantProfileSqlSnapshot() {}
 
-  static String capture(JdbcTemplate jdbc, String id, boolean lock, Function<Object, String> encoder) {
+  static String capture(
+      JdbcTemplate jdbc, String id, boolean lock, Function<Object, String> encoder) {
     var tables = new java.util.TreeMap<String, List<String>>();
     for (String table :
         List.of(

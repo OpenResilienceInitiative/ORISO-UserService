@@ -75,8 +75,7 @@ class HumanAdminMaintenanceCodecTest {
           claims.path("payloadDigest").textValue());
       assertEquals(60, claims.path("exp").longValue() - claims.path("iat").longValue());
     }
-    for (String command :
-        List.of("password", "create", "deactivate", "reactivate", "unknown"))
+    for (String command : List.of("password", "create", "deactivate", "reactivate", "unknown"))
       assertThrows(
           IllegalArgumentException.class,
           () ->
@@ -147,7 +146,8 @@ class HumanAdminMaintenanceCodecTest {
     return switch (command) {
       case "profile" -> codec.verifyMaintenanceProfileReceipt(reply, "realm-1", actor, frozen);
       case "email" -> codec.verifyMaintenanceEmailReceipt(reply, "realm-1", actor, frozen);
-      case "ordinary-profile" -> codec.verifyMaintenanceOrdinaryProfileReceipt(reply, "realm-1", actor, frozen);
+      case "ordinary-profile" ->
+          codec.verifyMaintenanceOrdinaryProfileReceipt(reply, "realm-1", actor, frozen);
       default -> throw new IllegalArgumentException();
     };
   }

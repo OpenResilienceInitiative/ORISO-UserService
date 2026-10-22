@@ -12,44 +12,64 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 class AccountInactivityServiceTest {
   @Test
   void scopedDueRoleDiscoveryUsesTheActualRevisionZeroRowOutsideSql() {
-    var service = createService(new Effects() {
-      @Override public Set<Role> currentRoles(String id) {
-        org.junit.jupiter.api.Assertions.assertFalse(
-            org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive(),
-            "Native role discovery must not hold the owning SQL transaction");
-        return Set.of(Role.ASKER);
-      }
-    });
-    var mode = org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    var service =
+        createService(
+            new Effects() {
+              @Override
+              public Set<Role> currentRoles(String id) {
+                org.junit.jupiter.api.Assertions.assertFalse(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive(),
+                    "Native role discovery must not hold the owning SQL transaction");
+                return Set.of(Role.ASKER);
+              }
+            });
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
     org.mockito.Mockito.when(mode.isFiveActorMode()).thenReturn(true);
     service.setIdentityMode(mode);
     String id = "61000000-0000-4000-8000-000000000001";
     service.assignAtCreation(id, 7L, 24, 0, Instant.parse("2023-01-01T00:00:00Z"));
     assertThat(service.snapshot(id).orElseThrow().revision()).isZero();
-    assertThat(service.snapshot(id).orElseThrow().dueAt()).isBefore(Instant.parse("2026-02-01T00:00:00Z"));
+    assertThat(service.snapshot(id).orElseThrow().dueAt())
+        .isBefore(Instant.parse("2026-02-01T00:00:00Z"));
     org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> service.scan(false));
-    assertThat(service.snapshot(id).orElseThrow().status()).isEqualTo(AccountInactivityService.Status.DELETED);
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.DELETED);
   }
 
   @Test
   void scopedClaimedSuspensionCallsTheExternalEffectOutsideSql() {
-    var service = createService(new Effects() {
-      @Override public Set<Role> currentRoles(String id) { return Set.of(Role.CONSULTANT); }
-      @Override public boolean suspend(String id) {
-        org.junit.jupiter.api.Assertions.assertFalse(
-            org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive(),
-            "Native suspension must not hold the owning SQL transaction");
-        return true;
-      }
-    });
-    var mode = org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    var service =
+        createService(
+            new Effects() {
+              @Override
+              public Set<Role> currentRoles(String id) {
+                return Set.of(Role.CONSULTANT);
+              }
+
+              @Override
+              public boolean suspend(String id) {
+                org.junit.jupiter.api.Assertions.assertFalse(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive(),
+                    "Native suspension must not hold the owning SQL transaction");
+                return true;
+              }
+            });
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
     org.mockito.Mockito.when(mode.isFiveActorMode()).thenReturn(true);
     service.setIdentityMode(mode);
     String id = "61000000-0000-4000-8000-000000000002";
     service.assignAtCreation(id, 7L, 24, 0, Instant.parse("2023-01-01T00:00:00Z"));
-    assertThat(service.snapshot(id).orElseThrow().status()).isEqualTo(AccountInactivityService.Status.ACTIVE);
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.ACTIVE);
     org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> service.scan(false));
-    assertThat(service.snapshot(id).orElseThrow().status()).isEqualTo(AccountInactivityService.Status.SUSPENDED);
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.SUSPENDED);
   }
 
   @Test
