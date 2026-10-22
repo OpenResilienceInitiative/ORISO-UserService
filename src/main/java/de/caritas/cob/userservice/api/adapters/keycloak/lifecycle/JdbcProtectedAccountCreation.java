@@ -125,9 +125,12 @@ public final class JdbcProtectedAccountCreation {
   PreparedMetadata metadataWithinOwner(
       JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical) {
     owningSql();
-    if (historical == null || historical.inviteId() != inviteId(historical.claim())) throw unavailable();
+    if (historical == null || historical.inviteId() != inviteId(historical.claim()))
+      throw unavailable();
     var claim = historical.claim();
-    return owned(claim, true,
+    return owned(
+        claim,
+        true,
         () -> accounts.restorePrepared(claim, checked(claim, one(rows(claim))).prepared()));
   }
 
@@ -135,16 +138,20 @@ public final class JdbcProtectedAccountCreation {
   java.util.Optional<VerifiedCreated> createdWithinOwner(
       JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical) {
     owningSql();
-    if (historical == null || historical.inviteId() != inviteId(historical.claim())) throw unavailable();
+    if (historical == null || historical.inviteId() != inviteId(historical.claim()))
+      throw unavailable();
     var claim = historical.claim();
-    return owned(claim, true, () -> {
-      Row saved = checked(claim, one(rows(claim)));
-      if ("PREPARED".equals(saved.state())) return Optional.empty();
-      var restored = accounts.restore(claim, saved.created());
-      if (!restored.accountId().equals(saved.account())
-          || !equal(restored.creationFingerprint(), saved.fingerprint())) throw unavailable();
-      return Optional.of(restored);
-    });
+    return owned(
+        claim,
+        true,
+        () -> {
+          Row saved = checked(claim, one(rows(claim)));
+          if ("PREPARED".equals(saved.state())) return Optional.empty();
+          var restored = accounts.restore(claim, saved.created());
+          if (!restored.accountId().equals(saved.account())
+              || !equal(restored.creationFingerprint(), saved.fingerprint())) throw unavailable();
+          return Optional.of(restored);
+        });
   }
 
   private void owningSql() {

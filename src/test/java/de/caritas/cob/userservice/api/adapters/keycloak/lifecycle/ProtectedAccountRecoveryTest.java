@@ -58,7 +58,9 @@ class ProtectedAccountRecoveryTest {
     lenient().when(token.clientId()).thenReturn("backend-account-admin");
     lenient().when(token.subject()).thenReturn("091b8cef-09a8-4e5b-a244-6be3db4b7bee");
     lenient().when(token.accessToken()).thenReturn("public-synthetic-admin");
-    lenient().when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(token);
+    lenient()
+        .when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE))
+        .thenReturn(token);
     lenient().when(prepared.approvalId()).thenReturn(approval);
     lenient().when(prepared.attemptId()).thenReturn(attempt);
     lenient().when(recovered.approvalId()).thenReturn(approval);

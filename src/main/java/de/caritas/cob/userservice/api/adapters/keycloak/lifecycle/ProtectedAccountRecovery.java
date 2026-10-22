@@ -66,7 +66,8 @@ public final class ProtectedAccountRecovery {
     var actor = cleanupActor();
     byte[] body = codec.recoverBody(recovery);
     String proof = codec.recoverProof(recovery, actor);
-    byte[] response = call(recovery.approvalId(), recovery.attemptId(), "recover", body, proof, actor);
+    byte[] response =
+        call(recovery.approvalId(), recovery.attemptId(), "recover", body, proof, actor);
     try {
       return Objects.requireNonNull(codec.verifyRecovery(recovery, response));
     } catch (RuntimeException failure) {
@@ -81,7 +82,8 @@ public final class ProtectedAccountRecovery {
     var actor = cleanupActor();
     byte[] body = codec.compensateBody(recovery, local);
     String proof = codec.compensateProof(recovery, local, actor);
-    byte[] response = call(recovery.approvalId(), recovery.attemptId(), "compensate", body, proof, actor);
+    byte[] response =
+        call(recovery.approvalId(), recovery.attemptId(), "compensate", body, proof, actor);
     try {
       return Objects.requireNonNull(codec.verifyCompensated(recovery, local, response));
     } catch (RuntimeException failure) {
@@ -155,7 +157,12 @@ public final class ProtectedAccountRecovery {
     return actor;
   }
 
-  private byte[] call(UUID approval, UUID attempt, String suffix, byte[] body, String proof,
+  private byte[] call(
+      UUID approval,
+      UUID attempt,
+      String suffix,
+      byte[] body,
+      String proof,
       TaskActorCredentials actor) {
     var token = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
     if (token.actor() != TaskActor.ACCOUNT_ADMIN

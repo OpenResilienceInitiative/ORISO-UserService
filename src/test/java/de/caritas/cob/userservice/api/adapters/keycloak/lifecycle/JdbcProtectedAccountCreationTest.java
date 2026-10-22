@@ -240,8 +240,10 @@ class JdbcProtectedAccountCreationTest {
             .contains(account().password()));
     jdbc.update("UPDATE account_invite SET status='REVOKED',token_hash=NULL WHERE id=73");
     var historical = acceptance.historical(73);
-    var owned = journal.withHistoricalInvite(73,
-        () -> owner().createdWithinOwner(historical)).orElseThrow();
+    var owned =
+        journal
+            .withHistoricalInvite(73, () -> owner().createdWithinOwner(historical))
+            .orElseThrow();
     assertEquals(created.accountId(), owned.accountId());
     assertEquals(created.creationProof(), owned.creationProof());
   }
@@ -259,12 +261,8 @@ class JdbcProtectedAccountCreationTest {
         IllegalArgumentException.class,
         () -> accounts.prepare(claim, changedRegistration, account()));
     jdbc.update("UPDATE account_invite SET token_hash=? WHERE id=73", "c".repeat(64));
-    assertThrows(
-        IllegalStateException.class,
-        () -> owner().metadata(claim));
-    assertThrows(
-        IllegalStateException.class,
-        () -> owner().recovery(claim, 0));
+    assertThrows(IllegalStateException.class, () -> owner().metadata(claim));
+    assertThrows(IllegalStateException.class, () -> owner().recovery(claim, 0));
     jdbc.update("UPDATE account_invite SET token_hash=? WHERE id=73", TOKEN);
     jdbc.update(
         "UPDATE protected_invitation_acceptance SET attempt_id=? WHERE invite_id=73",
@@ -300,9 +298,11 @@ class JdbcProtectedAccountCreationTest {
     assertEquals(0, count("protected_account_recovery"));
     var other = new JdbcDataSource();
     other.setURL("jdbc:h2:mem:foreign-owner-" + UUID.randomUUID());
-    assertThrows(IllegalStateException.class,
-        () -> new TransactionTemplate(new DataSourceTransactionManager(other)).execute(
-            tx -> owner().metadataWithinOwner(historical)));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            new TransactionTemplate(new DataSourceTransactionManager(other))
+                .execute(tx -> owner().metadataWithinOwner(historical)));
     jdbc.update(
         "UPDATE protected_invitation_acceptance SET execution_id=? WHERE invite_id=73",
         UUID.randomUUID().toString());
