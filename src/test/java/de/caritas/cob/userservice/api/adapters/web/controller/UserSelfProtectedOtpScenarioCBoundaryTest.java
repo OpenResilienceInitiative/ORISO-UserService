@@ -226,6 +226,65 @@ class UserSelfProtectedOtpScenarioCBoundaryTest {
     }
   }
 
+  @Test
+  void currentAgencyAdminKeepsOrdinarySelfAuthorityForOtp() throws Exception {
+    try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
+      fixture.protectedAdmin(7L, "AGENCY");
+      fixture.protectedAccount = false;
+      fixture.jdbc.update("update account_invite set target_role='AGENCY_ADMIN'");
+      fixture.expectNative(false, false);
+      assertEquals(
+          200,
+          assertDoesNotThrow(() -> fixture.controller.activateTwoFactorAuthByApp(fixture.dto()))
+              .getStatusCode()
+              .value());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals("ACTIVE", fixture.inviteStatus());
+      assertEquals(1, fixture.domainWrites());
+      verifyNoInteractions(fixture.accounts, fixture.nativeClient);
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void collidingUserAndConsultantRowsCannotChooseTheirSelfDomain() throws Exception {
+    try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
+      fixture.jdbc.update(
+          "insert into consultant values(?,7,null,'ordinary','original@oriso.org')", ACCOUNT);
+      refusedBeforeAnyEffect(fixture);
+    }
+  }
+
+  @Test
+  void foreignConsultantAndAdminRowsCannotChooseAnAuthority() throws Exception {
+    try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
+      fixture.protectedAdmin(7L, "TENANT");
+      fixture.jdbc.update(
+          "insert into consultant values(?,8,null,'ordinary','original@oriso.org')", ACCOUNT);
+      refusedBeforeAnyEffect(fixture);
+    }
+  }
+
+  @Test
+  void sameTenantAdminAndConsultantKeepsItsExplicitNativeProtectedProfile() throws Exception {
+    try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
+      fixture.protectedAdmin(7L, "TENANT");
+      fixture.jdbc.update(
+          "insert into consultant values(?,7,null,'ordinary','original@oriso.org')", ACCOUNT);
+      fixture.expectNative(false, false);
+      assertEquals(
+          200,
+          assertDoesNotThrow(() -> fixture.controller.activateTwoFactorAuthByApp(fixture.dto()))
+              .getStatusCode()
+              .value());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals("ACTIVE", fixture.inviteStatus());
+      assertEquals(1, fixture.domainWrites());
+      verifyNoInteractions(fixture.accounts, fixture.nativeClient);
+      fixture.server.verify();
+    }
+  }
+
   private static void refusedByNativeBeforeEnrollment(
       UserSelfAppOtpScenarioCBoundaryTest.Fixture fixture) {
     fixture.refuseNativeRead();

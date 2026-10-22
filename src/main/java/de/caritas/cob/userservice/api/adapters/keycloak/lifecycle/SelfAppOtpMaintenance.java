@@ -796,7 +796,7 @@ public final class SelfAppOtpMaintenance {
   }
 
   private void lockedDomain(Self self) {
-    if (new SelfOtpAccountOwner(jdbc).require(self.account, self.tenant) != self.kind)
+    if (new SelfAccountOwner(jdbc).require(self.account, self.tenant) != self.kind)
       throw forbidden();
   }
 
@@ -890,7 +890,7 @@ public final class SelfAppOtpMaintenance {
         tenantId,
         jwt.getTokenValue(),
         jwt.getExpiresAt().getEpochSecond(),
-        transaction(() -> new SelfOtpAccountOwner(jdbc).require(account, tenantId)));
+        transaction(() -> new SelfAccountOwner(jdbc).require(account, tenantId)));
   }
 
   private String operationId() {
@@ -911,8 +911,8 @@ public final class SelfAppOtpMaintenance {
     origin.put("humanIssuer", self.issuer);
     origin.put("humanClient", self.client);
     origin.put("workflowId", operation);
-    if (self.kind == SelfOtpAccountOwner.Kind.ORDINARY) origin.putNull("humanAuthority");
-    else origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
+    if (self.kind.protectedTarget()) origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
+    else origin.putNull("humanAuthority");
     return value;
   }
 
@@ -987,7 +987,7 @@ public final class SelfAppOtpMaintenance {
       Long tenant,
       String bearer,
       long expires,
-      SelfOtpAccountOwner.Kind kind) {
+      SelfAccountOwner.Kind kind) {
     @Override
     public String toString() {
       return "Self[redacted]";

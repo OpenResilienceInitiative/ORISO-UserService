@@ -169,6 +169,8 @@ class UserSelfAppOtpNativePairProof {
           "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512),email varchar(320))");
       jdbc.execute(
           "create table admin(admin_id varchar(36) primary key,tenant_id bigint,type varchar(6),email varchar(320))");
+      jdbc.execute(
+          "create table consultant(consultant_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512),email varchar(320))");
       jdbc.update(
           "insert into user values(?,?,null,?,'original@oriso.org')", account, 11L, username);
       jdbc.execute(
