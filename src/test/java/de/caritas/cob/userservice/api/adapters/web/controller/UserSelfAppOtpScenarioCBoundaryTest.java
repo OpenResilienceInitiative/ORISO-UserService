@@ -974,7 +974,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   void publicOtpHttpKeyKeepsPreparedMethodPathAndBodyBindingBeforeAnotherRpc() throws Exception {
     try (var fixture = new Fixture(true, true)) {
       var reads = new AtomicInteger();
-      fixture.server
+      fixture
+          .server
           .expect(
               ExpectedCount.between(1, 2),
               requestTo(
@@ -1020,7 +1021,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   void publicOtpHttpIntentNeverAdoptsAnOlderPreparedRowWithoutItsPublicBinding() throws Exception {
     try (var fixture = new Fixture(true, true)) {
       var reads = new AtomicInteger();
-      fixture.server
+      fixture
+          .server
           .expect(
               ExpectedCount.between(1, 2),
               requestTo(
@@ -1029,26 +1031,35 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                       + ACCOUNT
                       + "/read"))
           .andExpect(method(HttpMethod.POST))
-          .andRespond(outbound -> {
-            reads.incrementAndGet();
-            return withStatus(HttpStatus.SERVICE_UNAVAILABLE)
-                .body("{\"error\":\"bounded read unavailable\"}")
-                .contentType(MediaType.APPLICATION_JSON).createResponse(outbound);
-          });
-      assertThrows(ServiceUnavailableException.class,
+          .andRespond(
+              outbound -> {
+                reads.incrementAndGet();
+                return withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body("{\"error\":\"bounded read unavailable\"}")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
+              });
+      assertThrows(
+          ServiceUnavailableException.class,
           () -> fixture.controller.activateTwoFactorAuthByApp(fixture.dto()));
-      String older = fixture.codec.digest("oriso/user-maintenance-intent/request/v1",
-          Map.of("otp", CODE, "secret", SECRET));
+      String older =
+          fixture.codec.digest(
+              "oriso/user-maintenance-intent/request/v1", Map.of("otp", CODE, "secret", SECRET));
       fixture.jdbc.update(
           "update identity_self_app_otp_intent set request_digest=? where operation_id=?",
-          older, fixture.operation);
-      assertThrows(ConflictException.class,
+          older,
+          fixture.operation);
+      assertThrows(
+          ConflictException.class,
           () -> fixture.controller.activateTwoFactorAuthByApp(fixture.dto()));
       assertEquals("PREPARED", fixture.status());
       assertNull(fixture.envelope());
-      assertEquals(older, fixture.jdbc.queryForObject(
-          "select request_digest from identity_self_app_otp_intent where operation_id=?",
-          String.class, fixture.operation));
+      assertEquals(
+          older,
+          fixture.jdbc.queryForObject(
+              "select request_digest from identity_self_app_otp_intent where operation_id=?",
+              String.class,
+              fixture.operation));
       assertEquals(1, reads.get());
       assertEquals(0, fixture.domainWrites());
       assertEquals(0, fixture.nativeExecutions.get());
@@ -1072,7 +1083,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
               "select two_factor_status from account_invite where id=2", String.class));
       assertEquals(
           0,
-          fixture.jdbc.queryForObject("select write_count from account_invite where id=2", Integer.class));
+          fixture.jdbc.queryForObject(
+              "select write_count from account_invite where id=2", Integer.class));
       assertEquals(1, fixture.domainWrites());
       assertEquals(1, fixture.nativeExecutions.get());
       fixture.server.verify();
@@ -1197,23 +1209,31 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                     // at the actual domain query. It does not acquire the owning User row lock.
                     try (var writer = source.getConnection()) {
                       writer.setAutoCommit(false);
-                      try (var insert = writer.prepareStatement(
-                          "insert into account_invite values(2,?,'PENDING_SETUP',0)")) {
+                      try (var insert =
+                          writer.prepareStatement(
+                              "insert into account_invite values(2,?,'PENDING_SETUP',0)")) {
                         insert.setString(1, ACCOUNT);
                         assertEquals(1, insert.executeUpdate());
                       }
                       writer.commit();
                     }
                   }
-                  return jdbc.queryForList(
-                      "select id,two_factor_status from account_invite where accepted_by_user_id=? and two_factor_status=? order by id",
-                      ACCOUNT, wanted.name()).stream().map(row -> {
-                        var invite = new AccountInvite();
-                        invite.setId(((Number) row.get("id")).longValue());
-                        invite.setAcceptedByUserId(ACCOUNT);
-                        invite.setTwoFactorStatus(TwoFactorGateStatus.valueOf((String) row.get("two_factor_status")));
-                        return invite;
-                      }).toList();
+                  return jdbc
+                      .queryForList(
+                          "select id,two_factor_status from account_invite where accepted_by_user_id=? and two_factor_status=? order by id",
+                          ACCOUNT,
+                          wanted.name())
+                      .stream()
+                      .map(
+                          row -> {
+                            var invite = new AccountInvite();
+                            invite.setId(((Number) row.get("id")).longValue());
+                            invite.setAcceptedByUserId(ACCOUNT);
+                            invite.setTwoFactorStatus(
+                                TwoFactorGateStatus.valueOf((String) row.get("two_factor_status")));
+                            return invite;
+                          })
+                      .toList();
                 });
         when(invites.saveAll(any()))
             .thenAnswer(
