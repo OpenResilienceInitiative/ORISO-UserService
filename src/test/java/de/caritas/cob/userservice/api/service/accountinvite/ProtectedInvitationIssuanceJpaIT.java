@@ -57,7 +57,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
@@ -281,7 +280,6 @@ abstract class ProtectedInvitationIssuanceJpaFixture {
         null);
   }
 
-  @TestConfiguration(proxyBeanMethods = false)
   static class Components {
     @Bean
     JdbcTemplate protectedIssuanceJdbc(DataSource source) {
