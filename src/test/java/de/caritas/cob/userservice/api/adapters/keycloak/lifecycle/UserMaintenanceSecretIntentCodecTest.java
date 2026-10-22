@@ -258,9 +258,11 @@ class UserMaintenanceSecretIntentCodecTest {
     var vector = ordinaryVector();
     var codec = vectorCodec();
     for (String authority :
-        List.of("PLATFORM", "TENANT_PEER", "SELF", "true", "", "PROTECTED_ACCOUNT_OPERATIONS_V1 ")) {
+        List.of(
+            "PLATFORM", "TENANT_PEER", "SELF", "true", "", "PROTECTED_ACCOUNT_OPERATIONS_V1 ")) {
       var metadata = (ObjectNode) vector.path("metadata").deepCopy();
-      var command = codec.read(vector.path("canonical_plaintext_utf8").textValue(), ObjectNode.class);
+      var command =
+          codec.read(vector.path("canonical_plaintext_utf8").textValue(), ObjectNode.class);
       var origin = (ObjectNode) command.path("body").path("target").path("origin");
       origin.put("humanAuthority", authority);
       metadata.put("originDigest", codec.digest("otp-origin", origin));

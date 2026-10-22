@@ -188,7 +188,8 @@ class UserSelfProtectedOtpScenarioCBoundaryTest {
   }
 
   @Test
-  void independentlyNativeAuthorizedAdoptedAdminNeedsNoDuplicateLocalAdoptionRegistry() throws Exception {
+  void independentlyNativeAuthorizedAdoptedAdminNeedsNoDuplicateLocalAdoptionRegistry()
+      throws Exception {
     try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
       fixture.protectedAdmin(7L, "TENANT");
       fixture.jdbc.update("delete from protected_account_activation");
