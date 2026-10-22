@@ -139,7 +139,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     try (var fixture = new Fixture(true, true)) {
       fixture.request.setMethod("DELETE");
       fixture.request.setRequestURI("/service/users/2fa/app");
-      assertThrows(ForbiddenException.class, () -> fixture.controller.deactivateTwoFactorAuthByApp());
+      assertThrows(
+          ForbiddenException.class, () -> fixture.controller.deactivateTwoFactorAuthByApp());
       assertNull(fixture.status());
       assertEquals(0, fixture.nativeExecutions.get());
       assertEquals(0, fixture.domainWrites());
