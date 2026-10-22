@@ -199,6 +199,67 @@ class HumanAdminAccountMaintenanceTest {
   }
 
   @Test
+  void allFourPublicAdminProfileRoutesUseTheCheckedSqlWriterWithoutGenericFallback() {
+    for (boolean agency : List.of(false, true)) {
+      for (boolean put : List.of(false, true)) {
+        server.reset();
+        actualSchemaAndValidatedHumanFixture();
+        var type = agency
+            ? de.caritas.cob.userservice.api.model.Admin.AdminType.AGENCY
+            : de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT;
+        jdbc.update("update admin set type=? where admin_id=?", type.name(), ACCOUNT);
+        human.setGrantedAuthorities(Set.of(agency
+            ? Authority.AuthorityValue.USER_ADMIN : Authority.AuthorityValue.TENANT_ADMIN));
+        request.setMethod(put ? "PUT" : "PATCH");
+        request.setRequestURI("/service/useradmin/" + (agency ? "agencyadmins/" : "tenantadmins/") + ACCOUNT);
+        var generic = mock(IdentityProfileUpdater.class);
+        var repository = mock(AdminRepository.class);
+        var retrieve = mock(de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService.class);
+        when(retrieve.findAdmin(ACCOUNT, type)).thenAnswer(ignored -> {
+          var row = jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT);
+          return de.caritas.cob.userservice.api.model.Admin.builder()
+              .id(ACCOUNT).tenantId(7L).username("original-admin").type(type)
+              .firstName((String) row.get("first_name"))
+              .lastName((String) row.get("last_name"))
+              .email((String) row.get("email")).managedPaused(true).build();
+        });
+        var api = new de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService(
+            generic,
+            mock(de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator.class),
+            repository, retrieve);
+        api.setScopedAdminMaintenance(mode, service);
+        readReply();
+        server.expect(requestTo(URL + "/profile")).andRespond(profileReceipt(null));
+        readReply(true);
+        de.caritas.cob.userservice.api.model.Admin result;
+        if (put && agency) {
+          var dto = new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO();
+          dto.setFirstname("New");dto.setLastname("Name");dto.setEmail("new@example.test");
+          result = api.updateAgencyAdmin(ACCOUNT, dto);
+        } else if (put) {
+          var dto = new de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO();
+          dto.setTenantId(7);dto.setFirstname("New");dto.setLastname("Name");dto.setEmail("new@example.test");
+          result = api.updateTenantAdmin(ACCOUNT, dto);
+        } else {
+          var dto = new de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO();
+          dto.setFirstname("New");dto.setLastname("Name");dto.setEmail("new@example.test");
+          result = agency ? api.patchAgencyAdmin(ACCOUNT, dto) : api.patchTenantAdmin(ACCOUNT, dto);
+        }
+        assertEquals("New", jdbc.queryForObject("select first_name from admin where admin_id=?", String.class, ACCOUNT));
+        assertNotNull(result);
+        assertEquals("New", result.getFirstName());
+        assertTrue(result.isManagedPaused());
+        assertEquals(7L, result.getTenantId());
+        assertEquals("original-admin", result.getUsername());
+        assertEquals("APPLIED", jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
+        verifyNoInteractions(generic);
+        verify(repository, never()).save(any());
+        server.verify();
+      }
+    }
+  }
+
+  @Test
   void unknownNativeReplyRetainsOriginalCommandAndSameKeyRollsForwardWithoutCasRefresh() {
     readReply();
     AtomicReference<String> first = new AtomicReference<>();

@@ -57,6 +57,10 @@ class KeycloakServiceScenarioCModeTest {
   @Test
   void fiveActorsRequiresTheScopedAdapterBeforeRead() {
     assertThrows(IllegalStateException.class, () -> service.findById("target"));
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class,
+        () -> service.updateProfile("target", new de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate(
+            "actual-target", "new@example.test", null, "New", "Name")));
     verifyNoInteractions(nativeClient);
   }
 

@@ -23,6 +23,12 @@ public class UpdateAdminService {
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull RetrieveAdminService retrieveAdminService;
 
+  /** Closed wiring seam until the actual public-path counterfactual is executed. */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setScopedAdminMaintenance(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance maintenance) {}
+
   public Admin updateAgencyAdmin(
       final String adminId, final UpdateAgencyAdminDTO updateAgencyAdminDTO) {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.AGENCY);
