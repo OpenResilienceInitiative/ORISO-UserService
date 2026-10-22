@@ -1047,6 +1047,8 @@ public class KeycloakService
     try {
       deleteUser(userId);
       log.debug("User {} has been removed due to rollback", userId);
+    } catch (ScopedIdentityCommandRequiredException required) {
+      throw required;
     } catch (Exception e) {
       log.error("Keycloak error: User could not be removed/rolled back: {}", userId);
     }
