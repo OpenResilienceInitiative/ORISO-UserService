@@ -461,6 +461,11 @@ public final class JdbcProtectedAccountActivation {
     return discardOwned(historical.claim(), recovery);
   }
 
+  /** Reducing only inside the cancellation owner's SQL; closed until its expiry TDD is proved. */
+  public void restrictExpiredWithinOwner(HistoricalAcceptance historical) {
+    throw unavailable();
+  }
+
   private LocalOutcome discardOwned(AcceptanceClaim claim, VerifiedRecovery recovery) {
     if (recovery == null) throw unavailable();
     return owned(
