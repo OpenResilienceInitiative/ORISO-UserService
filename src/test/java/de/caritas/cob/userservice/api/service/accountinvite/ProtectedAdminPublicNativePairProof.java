@@ -424,7 +424,7 @@ class ProtectedAdminPublicNativePairProof {
           Base64.getDecoder().decode(required("PAIR_CONTEXT_KEY_B64")));
     }
 
-    @Bean
+    @Bean(destroyMethod = "")
     @Scope(value = "request", proxyMode = ScopedProxyMode.INTERFACES)
     HttpServletRequest pairRequest() {
       return ((ServletRequestAttributes) RequestContextHolder.currentRequestAttributes())
