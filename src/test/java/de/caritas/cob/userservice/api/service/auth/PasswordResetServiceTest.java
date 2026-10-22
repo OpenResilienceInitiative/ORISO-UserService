@@ -513,6 +513,36 @@ class PasswordResetServiceTest {
     }
   }
 
+  @Test
+  void causalResetPreflightRunsBeforeLegacyRemoveFirstTokenClaim() {
+    when(identityPasswordUpdater.requiresCausalPasswordClaims()).thenReturn(true);
+    org.mockito.Mockito.lenient().doThrow(new ScopedIdentityCommandRequiredException())
+        .when(identityPasswordUpdater).requirePasswordResetSupport();
+    assertThatThrownBy(() -> passwordResetService.confirmPasswordReset("token", "new-one"))
+        .isInstanceOf(ScopedIdentityCommandRequiredException.class);
+    verify(oneTimeTokenStore, never()).claim(anyString(), anyString());
+  }
+
+  @Test
+  void causalIssuanceBindsTheActualMailboxBeforeTheActualMailAttempt() {
+    when(identityPasswordUpdater.requiresCausalPasswordClaims()).thenReturn(true);
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
+        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
+    var binding = new PasswordResetBinding(java.util.UUID.randomUUID(),
+        "00000000-0000-4000-8000-000000000001", 42L, "testuser", "USER", "version",
+        "a".repeat(64), Instant.now().plusSeconds(7000));
+    org.mockito.Mockito.lenient().when(identityPasswordUpdater.passwordResetIssuance(
+        any(), anyString(), any(), anyString(), anyString(), anyString(), any())).thenReturn(binding);
+    passwordResetService.requestPasswordReset("testuser", "en");
+    var ordered = org.mockito.Mockito.inOrder(oneTimeTokenStore);
+    ordered.verify(oneTimeTokenStore).storePasswordReset(anyString(), org.mockito.ArgumentMatchers.eq(binding));
+    ordered.verify(oneTimeTokenStore).passwordResetDelivery(binding, "ATTEMPTED");
+    ordered.verify(oneTimeTokenStore).passwordResetDelivery(binding, "SENT");
+    assertThat(sentMails).hasSize(1);
+    verify(oneTimeTokenStore, never()).store(anyString(), anyString(), anyString(), any(), anyBoolean());
+  }
+
   private User validUser() {
     User user = new User();
     user.setUserId("u-1");

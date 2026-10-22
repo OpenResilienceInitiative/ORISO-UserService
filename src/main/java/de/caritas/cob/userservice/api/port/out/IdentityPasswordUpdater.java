@@ -31,6 +31,28 @@ public interface IdentityPasswordUpdater {
     throw new ScopedIdentityCommandRequiredException();
   }
 
+  default void requirePasswordResetSupport() {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
+  /** Pure local issuance data only. It must not issue a bearer or perform a provider effect. */
+  default de.caritas.cob.userservice.api.service.auth.PasswordResetBinding passwordResetIssuance(
+      java.util.UUID workflowId, String accountId, Long tenantId, String username,
+      String recipient, String accountKind, java.time.Instant expiresAt) {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
+  default String passwordResetRequestDigest(
+      de.caritas.cob.userservice.api.service.auth.PasswordResetBinding binding, String password) {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
+  default void updateClaimedPasswordReset(
+      de.caritas.cob.userservice.api.service.auth.PasswordResetService.ClaimedReset claimedReset,
+      String password) {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
   void updatePassword(String userId, String password);
 
   /** Sets an administrator-chosen password that must be replaced at first sign-in. */

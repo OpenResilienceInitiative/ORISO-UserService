@@ -57,6 +57,15 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class PasswordResetService {
 
+  /** Opaque service-issued live continuation; data records alone cannot construct this type. */
+  public static final class ClaimedReset {
+    private ClaimedReset() {}
+    public OneTimeTokenStore.PasswordResetClaim checkedClaim() {
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+    @Override public String toString() { return "ClaimedPasswordReset[redacted]"; }
+  }
+
   private static final Duration RESET_TOKEN_TTL = Duration.ofMinutes(120);
   private static final String TOKEN_SCOPE = "password-reset";
 
