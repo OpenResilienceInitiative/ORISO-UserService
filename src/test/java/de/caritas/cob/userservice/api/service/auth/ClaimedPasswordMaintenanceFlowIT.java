@@ -171,6 +171,42 @@ class ClaimedPasswordMaintenanceFlowIT {
     }
   }
 
+  @Test
+  void expiredUnknownResetRecoversOnlyItsExactSavedOutcome() throws Exception {
+    try (var f = new Fixture()) {
+      String token = f.requestLink(); f.loseReply = true;
+      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42")).isInstanceOf(RuntimeException.class);
+      f.now.set(f.now.get().plusSeconds(3 * 3600));
+      assertThat(f.service.confirmPasswordReset(token, "fixture-new-password!42")).isTrue();
+      assertThat(f.effects).isEqualTo(1); assertThat(f.phase()).isEqualTo("ACKNOWLEDGED");
+    }
+  }
+
+  @Test
+  void expiredAbsentAndForeignUsernameCannotDispatchAClaimedPassword() throws Exception {
+    try (var f = new Fixture()) {
+      String token = f.requestLink(); f.foreignUsername = true;
+      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42")).isInstanceOf(RuntimeException.class);
+      assertThat(f.effects).isZero(); assertThat(f.required()).isTrue();
+      f.foreignUsername = false; f.expiredAbsent = true; f.now.set(f.now.get().plusSeconds(3 * 3600));
+      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42")).isInstanceOf(RuntimeException.class);
+      assertThat(f.effects).isZero(); assertThat(f.required()).isTrue();
+    }
+  }
+
+  @Test
+  void expiredUnknownSetupRecoversOriginalSavedReceiptWithoutFreshPasswordEffect() throws Exception {
+    try (var f = new Fixture()) {
+      var setup = f.setupService(); f.loseReply = true;
+      assertThatThrownBy(() -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42")).isInstanceOf(RuntimeException.class);
+      assertThat(f.effects).isEqualTo(1); String envelope = f.envelope();
+      f.now.set(f.now.get().plusSeconds(3 * 3600));
+      assertThatCode(() -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42")).doesNotThrowAnyException();
+      assertThat(f.effects).isEqualTo(1); assertThat(f.envelope()).isEqualTo(envelope);
+      assertThat(f.jdbc.queryForObject("select status from identity_setup_password_claim", String.class)).isEqualTo("ACKNOWLEDGED");
+    }
+  }
+
   private static final class Fixture implements AutoCloseable {
     final AccountLifecycleCodec codec = new AccountLifecycleCodec(new byte[32]);
     final DriverManagerDataSource source =
@@ -205,10 +241,17 @@ class ClaimedPasswordMaintenanceFlowIT {
     final StringRedisTemplate redis;
     final HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     final PasswordResetService service;
-    final String nativeUsername = new UsernameTranscoder().encodeUsername("testuser");
+    final String sqlUsername = new UsernameTranscoder().encodeUsername("testuser");
+    final String nativeUsername = sqlUsername.toLowerCase(Locale.ROOT);
+    final java.util.concurrent.atomic.AtomicReference<Instant> now = new java.util.concurrent.atomic.AtomicReference<>(Instant.now());
+    final Clock clock = new Clock() {
+      public ZoneId getZone() { return ZoneId.systemDefaultZone(); }
+      public Clock withZone(ZoneId zone) { return this; }
+      public Instant instant() { return now.get(); }
+    };
     String resetUrl, savedReply;
     int effects;
-    boolean loseReply, corruptReceipt, failSetupCompletion;
+    boolean loseReply, corruptReceipt, failSetupCompletion, expiredAbsent, foreignUsername;
 
     Fixture() throws Exception {
       connection.afterPropertiesSet();
@@ -223,7 +266,7 @@ class ClaimedPasswordMaintenanceFlowIT {
       jdbc.update(
           "insert into consultant values(?,42,?,'Original@Example.org',?,?,null,'ACTIVE',false,true)",
           ACCOUNT,
-          nativeUsername,
+          sqlUsername,
           Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 12, 0)),
           Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 13, 0)));
       try (var c = source.getConnection()) {
@@ -263,6 +306,7 @@ class ClaimedPasswordMaintenanceFlowIT {
                       JsonNode.class);
               String reply;
               if (exchange.getRequestURI().getPath().endsWith("/read")) {
+                if (savedReply == null && expiredAbsent) { exchange.sendResponseHeaders(400, -1); return; }
                 reply = savedReply == null ? projection() : savedReply;
               } else {
                 if (savedReply == null) {
@@ -294,7 +338,7 @@ class ClaimedPasswordMaintenanceFlowIT {
       var model = new Consultant();
       model.setId(ACCOUNT);
       model.setTenantId(42L);
-      model.setUsername(nativeUsername);
+      model.setUsername(sqlUsername);
       model.setEmail("Original@Example.org");
       when(consultants.findConsultantForSignIn(anyString())).thenReturn(Optional.of(model));
       var settings = mock(ApplicationSettingsService.class);
@@ -352,7 +396,7 @@ class ClaimedPasswordMaintenanceFlowIT {
               broker,
               codec,
               new RestTemplate(),
-              Clock.systemUTC(),
+              clock,
               "http://127.0.0.1:" + server.getAddress().getPort(),
               ISSUER,
               "fixture",
@@ -372,8 +416,8 @@ class ClaimedPasswordMaintenanceFlowIT {
           "insert into account_invite values(11,'EXISTING_ACCOUNT_SETUP','EMAIL_SENT','PENDING',?,?,?,'COUNSELLOR',42,?,'Original@Example.org','fixture-salted-verifier',null,null)",
           ACCOUNT,
           hash,
-          Timestamp.valueOf(LocalDateTime.now().plusHours(2)),
-          nativeUsername);
+          Timestamp.valueOf(LocalDateTime.now(clock).plusHours(2)),
+          sqlUsername);
       try (var c = source.getConnection()) {
         ScriptUtils.executeSqlScript(
             c,
@@ -394,7 +438,7 @@ class ClaimedPasswordMaintenanceFlowIT {
               x -> {
                 var c = new Consultant();
                 c.setId(ACCOUNT);
-                c.setUsername(nativeUsername);
+                c.setUsername(sqlUsername);
                 c.setEmail("Original@Example.org");
                 c.setTenantId(42L);
                 c.setPasswordChangeRequired(required());
@@ -443,7 +487,8 @@ class ClaimedPasswordMaintenanceFlowIT {
               transactions);
       setup.setSetupPasswordClaims(
           new de.caritas.cob.userservice.api.adapters.persistence.password
-              .JdbcExistingSetupPasswordClaims(jdbc, Clock.systemDefaultZone()));
+              .JdbcExistingSetupPasswordClaims(jdbc, clock));
+      ReflectionTestUtils.setField(setup, "clock", clock);
       return setup;
     }
 
@@ -470,7 +515,7 @@ class ClaimedPasswordMaintenanceFlowIT {
                       .expiresAt(rs.getTimestamp("expires_at").toLocalDateTime())
                       .targetRole(AccountInviteTargetRole.COUNSELLOR)
                       .tenantId(42L)
-                      .setupBoundUsername(nativeUsername)
+                      .setupBoundUsername(sqlUsername)
                       .recipientEmail("Original@Example.org")
                       .initialPasswordVerifier(rs.getString("initial_password_verifier"))
                       .build(),
@@ -506,7 +551,7 @@ class ClaimedPasswordMaintenanceFlowIT {
       var value = codec.read("{}", com.fasterxml.jackson.databind.node.ObjectNode.class);
       value
           .put("id", ACCOUNT)
-          .put("username", nativeUsername)
+          .put("username", foreignUsername ? "enc.FOREIGN" : nativeUsername)
           .put("email", "Original@Example.org")
           .put("firstName", "Fixture")
           .put("lastName", "Consultant")

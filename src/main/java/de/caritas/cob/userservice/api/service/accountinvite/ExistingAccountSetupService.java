@@ -58,6 +58,7 @@ public class ExistingAccountSetupService {
   private final @NonNull PlatformTransactionManager transactions;
 
   private ExistingSetupPasswordClaims setupPasswordClaims;
+  private java.time.Clock clock = java.time.Clock.systemDefaultZone();
 
   /** Optional until the checked typed adapter and its same-database journal are installed. */
   @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -81,7 +82,7 @@ public class ExistingAccountSetupService {
     public Claim checkedClaim() {
       if (!active
           || Thread.currentThread() != requestThread
-          || !target.claim().binding().expiresAt().isAfter(LocalDateTime.now())) {
+          || !target.claim().binding().expiresAt().isAfter(LocalDateTime.now(owner.clock))) {
         throw new ScopedIdentityCommandRequiredException();
       }
       return owner.inTransaction(
@@ -158,7 +159,7 @@ public class ExistingAccountSetupService {
                 IN_PROGRESS,
                 AccountInviteStatus.REVOKED,
                 stale.reason,
-                LocalDateTime.now());
+                LocalDateTime.now(clock));
             return null;
           });
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.REVOKED);
@@ -221,7 +222,7 @@ public class ExistingAccountSetupService {
                     AccountInviteProvisioningStatus.COMPLETED,
                     EmailVerificationStatus.VERIFIED,
                     target.identityId(),
-                    LocalDateTime.now());
+                    LocalDateTime.now(clock));
             if (completed != 1) {
               throw new IllegalStateException(
                   "Existing-account setup claim could not be finalized");
@@ -299,7 +300,7 @@ public class ExistingAccountSetupService {
                     AccountInviteProvisioningStatus.COMPLETED,
                     EmailVerificationStatus.VERIFIED,
                     target.saved().identityId(),
-                    LocalDateTime.now());
+                    LocalDateTime.now(clock));
             if (completed != 1) {
               throw new IllegalStateException(
                   "Existing-account setup claim could not be finalized");
@@ -323,7 +324,7 @@ public class ExistingAccountSetupService {
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.NOT_ACTIVE);
     }
     if (invite.getExpiresAt() == null
-        || (!completed && !invite.getExpiresAt().isAfter(LocalDateTime.now()))) {
+        || (!completed && !invite.getExpiresAt().isAfter(LocalDateTime.now(clock)))) {
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
     if (isBlank(invite.getProvisionedUserId())
@@ -376,7 +377,7 @@ public class ExistingAccountSetupService {
                   IN_PROGRESS,
                   AccountInviteProvisioningStatus.FAILED,
                   reason,
-                  LocalDateTime.now());
+                  LocalDateTime.now(clock));
           if (released != 1)
             throw new IllegalStateException("Account setup rejection could not be recorded");
           setupPasswordClaims.rejectWithinOwner(target.claim());
@@ -394,7 +395,7 @@ public class ExistingAccountSetupService {
                 SENT,
                 IN_PROGRESS,
                 "SETUP_OUTCOME_INDETERMINATE",
-                LocalDateTime.now());
+                LocalDateTime.now(clock));
             setupPasswordClaims.markUnknownWithinOwner(target.claim());
             return null;
           });
@@ -424,7 +425,7 @@ public class ExistingAccountSetupService {
                 List.of(AccountInviteStatus.DRAFT, SENT),
                 AccountInviteStatus.EXPIRED,
                 IN_PROGRESS,
-                LocalDateTime.now()));
+                LocalDateTime.now(clock)));
   }
 
   private SetupTarget claim(String rawToken) {
@@ -451,7 +452,7 @@ public class ExistingAccountSetupService {
               ? AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED
               : AccountInviteLinkException.Reason.SETUP_IN_PROGRESS);
     }
-    LocalDateTime now = LocalDateTime.now();
+    LocalDateTime now = LocalDateTime.now(clock);
     if (invite.getExpiresAt() == null || !invite.getExpiresAt().isAfter(now)) {
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
@@ -603,7 +604,7 @@ public class ExistingAccountSetupService {
               IN_PROGRESS,
               AccountInviteProvisioningStatus.FAILED,
               reason,
-              LocalDateTime.now());
+              LocalDateTime.now(clock));
           return null;
         });
   }
@@ -618,7 +619,7 @@ public class ExistingAccountSetupService {
                 SENT,
                 IN_PROGRESS,
                 "SETUP_OUTCOME_INDETERMINATE",
-                LocalDateTime.now());
+                LocalDateTime.now(clock));
             return null;
           });
     } catch (RuntimeException persistenceFailure) {
