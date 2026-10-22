@@ -32,6 +32,13 @@ public class ManagedAccountStatusService {
   private final AccountInactivityService lifecycle;
   private final TenantService tenants;
 
+  /** Closed local write-boundary seam until the real transactional counterfactual executes. */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setScopedLocalWrites(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      org.springframework.jdbc.core.JdbcTemplate jdbc,
+      org.springframework.transaction.PlatformTransactionManager manager) {}
+
   public record TwoFactor(Boolean required, Boolean configured, Boolean active) {}
 
   public record AccountStatus(
