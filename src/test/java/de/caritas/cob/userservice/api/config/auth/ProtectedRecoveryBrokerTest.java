@@ -52,8 +52,9 @@ class ProtectedRecoveryBrokerTest {
           new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationCodec(
               key, clock, "synthetic", "synthetic-realm");
       var codec =
-          spy(new ProtectedAccountCodec(
-              key, clock, approvals, "synthetic", "synthetic-realm", issuer.issuer()));
+          spy(
+              new ProtectedAccountCodec(
+                  key, clock, approvals, "synthetic", "synthetic-realm", issuer.issuer()));
       var prepared = mock(ProtectedAccountCodec.PreparedRecovery.class);
       var recovered = mock(ProtectedAccountCodec.VerifiedRecovery.class);
       UUID approval = UUID.fromString("7f56c348-9785-4c78-b905-3d008dd42482");
