@@ -44,10 +44,20 @@ class AccountLifecycleCallerConfigurationTest {
               assertEquals(0, context.getBeansOfType(AccountLifecycleRetryScheduler.class).size());
               assertEquals(0, context.getBeansOfType(SelfAppOtpMaintenance.class).size());
               assertEquals(0, context.getBeansOfType(SelfPasswordMaintenance.class).size());
-              assertEquals(0, context.getBeansOfType(
-                  de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance.class).size());
-              assertEquals(0, context.getBeansOfType(
-                  de.caritas.cob.userservice.api.adapters.persistence.password.JdbcExistingSetupPasswordClaims.class).size());
+              assertEquals(
+                  0,
+                  context
+                      .getBeansOfType(
+                          de.caritas.cob.userservice.api.adapters.keycloak.maintenance
+                              .SelfLocaleMaintenance.class)
+                      .size());
+              assertEquals(
+                  0,
+                  context
+                      .getBeansOfType(
+                          de.caritas.cob.userservice.api.adapters.persistence.password
+                              .JdbcExistingSetupPasswordClaims.class)
+                      .size());
             });
   }
 
@@ -122,16 +132,16 @@ class AccountLifecycleCallerConfigurationTest {
   void enabledCallerGraphInstallsThePublicSelfOtpOwnerWithoutMakingAnRpc() {
     withEnabledCallerGraph(
         context -> {
-              assertEquals(1, context.getBeansOfType(OrdinaryAccountCreation.class).size());
-              assertEquals(
-                  1,
-                  context.getBeansOfType(SelfAppOtpMaintenance.class).size(),
-                  "The enabled production caller graph must register the existing public OTP owner");
-              assertTrue(context.getBean(SelfAppOtpMaintenance.class).isFiveActorMode());
-              assertEquals(
-                  1,
-                  context.getBeansOfType(HumanAdminAccountMaintenance.class).size(),
-                  "The actual opt-in caller graph must register scoped public Admin maintenance");
+          assertEquals(1, context.getBeansOfType(OrdinaryAccountCreation.class).size());
+          assertEquals(
+              1,
+              context.getBeansOfType(SelfAppOtpMaintenance.class).size(),
+              "The enabled production caller graph must register the existing public OTP owner");
+          assertTrue(context.getBean(SelfAppOtpMaintenance.class).isFiveActorMode());
+          assertEquals(
+              1,
+              context.getBeansOfType(HumanAdminAccountMaintenance.class).size(),
+              "The actual opt-in caller graph must register scoped public Admin maintenance");
         });
   }
 
@@ -141,10 +151,22 @@ class AccountLifecycleCallerConfigurationTest {
         context ->
             assertAll(
                 () -> assertEquals(1, context.getBeansOfType(SelfPasswordMaintenance.class).size()),
-                () -> assertEquals(1, context.getBeansOfType(
-                    de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance.class).size()),
-                () -> assertEquals(1, context.getBeansOfType(
-                    de.caritas.cob.userservice.api.adapters.persistence.password.JdbcExistingSetupPasswordClaims.class).size())));
+                () ->
+                    assertEquals(
+                        1,
+                        context
+                            .getBeansOfType(
+                                de.caritas.cob.userservice.api.adapters.keycloak.maintenance
+                                    .SelfLocaleMaintenance.class)
+                            .size()),
+                () ->
+                    assertEquals(
+                        1,
+                        context
+                            .getBeansOfType(
+                                de.caritas.cob.userservice.api.adapters.persistence.password
+                                    .JdbcExistingSetupPasswordClaims.class)
+                            .size())));
   }
 
   @Test

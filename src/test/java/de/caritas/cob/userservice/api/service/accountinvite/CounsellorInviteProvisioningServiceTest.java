@@ -811,8 +811,7 @@ class CounsellorInviteProvisioningServiceTest {
               org.springframework.beans.BeanUtils.copyProperties(invite, current);
               current.setProvisioningStatus(
                   AccountInviteProvisioningStatus.valueOf((String) row.get("PROVISIONING")));
-              current.setUpdateDate(
-                  ((java.sql.Timestamp) row.get("UPDATED_AT")).toLocalDateTime());
+              current.setUpdateDate(((java.sql.Timestamp) row.get("UPDATED_AT")).toLocalDateTime());
               return Optional.of(current);
             });
     when(identityClientConfig.isFiveActorMode()).thenReturn(true);
@@ -870,7 +869,8 @@ class CounsellorInviteProvisioningServiceTest {
                           "select provisioning from invite_tx_probe where id=41", String.class))
                   .isEqualTo("FAILED"),
           () ->
-              assertThat(jdbc.queryForObject("select count(*) from consultant_tx_probe", Long.class))
+              assertThat(
+                      jdbc.queryForObject("select count(*) from consultant_tx_probe", Long.class))
                   .isZero());
     }
     verifyNoInteractions(consultantAdminFacade, identityPasswordUpdater);
