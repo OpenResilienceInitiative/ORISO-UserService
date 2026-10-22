@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.port.out.*;
 import de.caritas.cob.userservice.api.service.accountinvite.*;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.*;
@@ -429,7 +430,7 @@ class UserSelfAppOtpNativePairProof {
 
   private static String currentCode() throws Exception {
     var mac = Mac.getInstance("HmacSHA1");
-    mac.init(new SecretKeySpec(HexFormat.of().parseHex("48656c6c6f21deadbeef"), "HmacSHA1"));
+    mac.init(new SecretKeySpec("JBSWY3DPEHPK3PXP".getBytes(StandardCharsets.UTF_8), "HmacSHA1"));
     byte[] value =
         mac.doFinal(ByteBuffer.allocate(8).putLong(Instant.now().getEpochSecond() / 30).array());
     int at = value[value.length - 1] & 15;

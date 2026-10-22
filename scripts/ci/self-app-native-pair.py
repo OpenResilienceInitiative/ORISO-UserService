@@ -135,9 +135,14 @@ def native(kc, report):
         assert fixture.creation_input["identity"]["scope"]["registrationKind"] == "ASKER"
         assert fixture.admin("GET", "/users/" + fixture.account_id + "/credentials")
         assert not any(c["type"] == "otp" for c in fixture.admin("GET", "/users/" + fixture.account_id + "/credentials"))
+        otp_policy = fixture.admin("GET", "")
+        assert otp_policy["otpPolicyType"] == "totp"
+        assert otp_policy["otpPolicyAlgorithm"] == "HmacSHA1"
+        assert otp_policy["otpPolicyDigits"] == 6
+        assert otp_policy["otpPolicyPeriod"] == 30
         machine = fixture.token("ACCOUNT_ADMIN")
         assert lifecycle.call(fixture.base, "GET", "/admin/realms/" + lifecycle.REALM + "/users/" + fixture.account_id, token=machine)[0] == 403
-        receipt["native_preconditions"] = {"actual_user_registration": True, "current_user_group_role": True, "actual_native_human_session": True, "canonical_admin3": True, "stock_native_denied": True, "no_app_credential": True}
+        receipt["native_preconditions"] = {"actual_user_registration": True, "current_user_group_role": True, "actual_native_human_session": True, "canonical_admin3": True, "stock_native_denied": True, "no_app_credential": True, "actual_totp_sha1_6_30_policy": True}
         phase = "actual-public-java-native-pair"
         environment = dict(os.environ)
         environment.update({"PAIR_NATIVE_BASE": fixture.base, "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id, "PAIR_ACCOUNT_ID": fixture.account_id, "PAIR_USERNAME": fixture.creation_input["account"]["username"], "PAIR_PASSWORD": fixture.creation_input["account"]["password"], "PAIR_HUMAN_CLIENT": CLIENT, "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(), "PAIR_WITNESS": str(report.with_name("self-app-native-witness.json").resolve())})
