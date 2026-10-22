@@ -165,6 +165,18 @@ public final class JdbcProtectedAccountActivation {
         });
   }
 
+  public enum Phase {
+    UNSTAGED,
+    WAITING_OTP,
+    READY,
+    COMMITTED,
+    LOCAL_CLEANED
+  }
+
+  public Phase phase(AcceptanceClaim claim) {
+    throw unavailable();
+  }
+
   public IdentityOtpCredential currentSetup(AcceptanceClaim claim) {
     outsideSql();
     return owned(

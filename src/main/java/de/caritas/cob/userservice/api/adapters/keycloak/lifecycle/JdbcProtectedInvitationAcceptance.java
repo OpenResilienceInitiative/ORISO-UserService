@@ -156,10 +156,16 @@ public final class JdbcProtectedInvitationAcceptance {
   }
 
   public static final class HistoricalAcceptance {
+    private final long inviteId;
     private final AcceptanceClaim claim;
 
-    private HistoricalAcceptance(AcceptanceClaim claim) {
+    private HistoricalAcceptance(long inviteId, AcceptanceClaim claim) {
+      this.inviteId = inviteId;
       this.claim = claim;
+    }
+
+    public long inviteId() {
+      return inviteId;
     }
 
     AcceptanceClaim claim() {

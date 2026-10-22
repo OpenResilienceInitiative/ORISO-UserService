@@ -180,12 +180,14 @@ class JdbcProtectedAccountActivationTest {
 
   @Test
   void registrationCommitsAdminEnrollmentAndOtpStageTogetherWithoutNativeActivation() {
+    assertEquals(JdbcProtectedAccountActivation.Phase.UNSTAGED, assertDoesNotThrow(() -> restart().phase(claim)));
     assertEquals(
         setup, assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy)));
     assertEquals(1, count("admin"));
     assertEquals(1, count("account_inactivity"));
     assertEquals(1, count("synthetic_otp_stage"));
     assertEquals("WAITING_OTP", state());
+    assertEquals(JdbcProtectedAccountActivation.Phase.WAITING_OTP, restart().phase(claim));
     assertEquals(
         "ACCEPTED", jdbc.queryForObject("SELECT status FROM account_invite", String.class));
     assertEquals(
