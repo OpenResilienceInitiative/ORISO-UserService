@@ -85,6 +85,7 @@ public class ExistingAccountSetupService {
     if (isBlank(rawToken) || isBlank(chosenPassword)) {
       throw new BadRequestException("Setup link and chosen password are required");
     }
+    passwords.requirePasswordUpdateSupport();
     SetupTarget target = inTransaction(() -> claim(rawToken));
     try {
       requireSameCurrentIdentity(target);

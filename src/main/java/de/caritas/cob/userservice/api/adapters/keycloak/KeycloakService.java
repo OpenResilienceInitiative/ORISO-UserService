@@ -872,6 +872,11 @@ public class KeycloakService
    * @param password user password
    */
   @Override
+  public void requirePasswordUpdateSupport() {
+    requireLegacyAccountAccess();
+  }
+
+  @Override
   public void updatePassword(final String userId, final String password) {
     requireLegacyAccountAccess();
     resetPassword(userId, password, false);

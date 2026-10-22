@@ -194,6 +194,7 @@ public class PasswordResetService {
     if (isBlank(token) || isBlank(newPassword)) {
       return false;
     }
+    identityPasswordUpdater.requirePasswordUpdateSupport();
 
     Optional<OneTimeTokenStore.TokenClaim> claim;
     try {
