@@ -1631,9 +1631,12 @@ class UserSelfAppOtpScenarioCBoundaryTest {
 
     String currentEmail() {
       return jdbc.queryForObject(
-          jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT) == 1
+          jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT)
+                  == 1
               ? "select email from admin where admin_id=?"
-              : jdbc.queryForObject("select count(*) from user where user_id=?", Integer.class, ACCOUNT) == 1
+              : jdbc.queryForObject(
+                          "select count(*) from user where user_id=?", Integer.class, ACCOUNT)
+                      == 1
                   ? "select email from user where user_id=?"
                   : "select email from consultant where consultant_id=?",
           String.class,

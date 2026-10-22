@@ -38,16 +38,17 @@ final class SelfAccountOwner {
             "select tenant_id,delete_date,email from user where user_id=? for update", account);
     var consultants =
         jdbc.queryForList(
-            "select tenant_id,delete_date,email from consultant where consultant_id=? for update", account);
+            "select tenant_id,delete_date,email from consultant where consultant_id=? for update",
+            account);
     var admins =
-        jdbc.queryForList("select tenant_id,type,email from admin where admin_id=? for update", account);
+        jdbc.queryForList(
+            "select tenant_id,type,email from admin where admin_id=? for update", account);
     if (users.size() > 1 || consultants.size() > 1 || admins.size() > 1) throw forbidden();
     if (!users.isEmpty() && (!consultants.isEmpty() || !admins.isEmpty())) throw forbidden();
     if (admins.isEmpty() && (!users.isEmpty() || !consultants.isEmpty())) {
       var ordinary = users.isEmpty() ? consultants.getFirst() : users.getFirst();
       if (ordinary.get("delete_date") != null
-          || !Objects.equals(tenant, number(ordinary.get("tenant_id"))))
-        throw forbidden();
+          || !Objects.equals(tenant, number(ordinary.get("tenant_id")))) throw forbidden();
       return new Owner(
           users.isEmpty() ? Kind.CONSULTANT : Kind.USER, false, email(ordinary.get("email")), null);
     }
@@ -77,12 +78,19 @@ final class SelfAccountOwner {
     if (!original.kind().admin() || !original.equals(require(account, tenant))) throw forbidden();
     if (jdbc.update(
             "update admin set email=? where admin_id=? and (email=? or (email is null and ? is null))",
-            desired, account, original.email(), original.email()) != 1) throw forbidden();
+            desired,
+            account,
+            original.email(),
+            original.email())
+        != 1) throw forbidden();
     if (original.consultant()
         && jdbc.update(
                 "update consultant set email=? where consultant_id=? and (email=? or (email is null and ? is null))",
-                desired, account, original.consultantEmail(), original.consultantEmail()) != 1)
-      throw forbidden();
+                desired,
+                account,
+                original.consultantEmail(),
+                original.consultantEmail())
+            != 1) throw forbidden();
   }
 
   private static String email(Object value) {

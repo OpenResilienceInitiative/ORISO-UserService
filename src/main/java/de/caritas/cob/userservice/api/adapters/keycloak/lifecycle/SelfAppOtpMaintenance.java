@@ -151,7 +151,12 @@ public final class SelfAppOtpMaintenance {
   }
 
   public boolean finishEmail(String code, BiConsumer<String, Set<Long>> applyEmailAndInvite) {
-    return finishEmail(code, applyEmailAndInvite, ids -> { throw unavailable(); });
+    return finishEmail(
+        code,
+        applyEmailAndInvite,
+        ids -> {
+          throw unavailable();
+        });
   }
 
   public boolean finishEmail(
@@ -483,8 +488,8 @@ public final class SelfAppOtpMaintenance {
           } else applyEmailAndInvite.accept(delivered.email, inviteIds);
           var after = owners.require(self.account, self.tenant);
           if (!Objects.equals(after.email(), delivered.email)
-              || (after.consultant()
-                  && !Objects.equals(after.consultantEmail(), delivered.email))) throw unavailable();
+              || (after.consultant() && !Objects.equals(after.consultantEmail(), delivered.email)))
+            throw unavailable();
           clearPending(self, delivered.operation);
           appliedEnrollment(self, operation);
         } else if (kind == Operation.DELETE) {
@@ -833,8 +838,7 @@ public final class SelfAppOtpMaintenance {
 
   private void lockedDomain(Self self) {
     var current = new SelfAccountOwner(jdbc).require(self.account, self.tenant);
-    if (current.kind() != self.kind || current.consultant() != self.consultant)
-      throw forbidden();
+    if (current.kind() != self.kind || current.consultant() != self.consultant) throw forbidden();
   }
 
   private Intent find(String operation) {
@@ -950,7 +954,8 @@ public final class SelfAppOtpMaintenance {
     origin.put("humanIssuer", self.issuer);
     origin.put("humanClient", self.client);
     origin.put("workflowId", operation);
-    if (self.kind.protectedTarget()) origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
+    if (self.kind.protectedTarget())
+      origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
     else origin.putNull("humanAuthority");
     return value;
   }

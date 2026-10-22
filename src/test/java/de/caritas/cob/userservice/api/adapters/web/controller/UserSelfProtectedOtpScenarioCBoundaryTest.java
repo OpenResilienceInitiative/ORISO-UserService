@@ -182,7 +182,8 @@ class UserSelfProtectedOtpScenarioCBoundaryTest {
           "insert into consultant values(?,7,null,'ordinary','secondary@oriso.org')", ACCOUNT);
       fixture.prepareDeliveredEmail();
       String delivery = fixture.pendingEmailOperation();
-      fixture.jdbc.execute("alter table account_invite add constraint frozen_invite_write check(write_count=0)");
+      fixture.jdbc.execute(
+          "alter table account_invite add constraint frozen_invite_write check(write_count=0)");
       fixture.expectEmailFinish(false, false, false);
       assertThrows(
           ServiceUnavailableException.class,

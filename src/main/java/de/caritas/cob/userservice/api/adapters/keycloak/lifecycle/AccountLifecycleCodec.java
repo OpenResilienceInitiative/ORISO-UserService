@@ -335,7 +335,9 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     for (String field : java.util.List.of("email", "consultantEmail")) {
       var email = value.path(field);
       if (!email.isNull()
-          && (!emailFinish || !email.isTextual() || email.textValue().length() > 320
+          && (!emailFinish
+              || !email.isTextual()
+              || email.textValue().length() > 320
               || email.textValue().chars().anyMatch(c -> c < 32 || c == 127)))
         throw invalidSecretIntent();
     }

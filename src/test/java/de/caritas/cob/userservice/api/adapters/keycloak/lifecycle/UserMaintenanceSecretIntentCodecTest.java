@@ -281,9 +281,11 @@ class UserMaintenanceSecretIntentCodecTest {
   void frozenLocalAccountKindsRemainPrivateWithoutChangingTheNativeCommand() throws Exception {
     var vector = ordinaryVector();
     var codec = vectorCodec();
-    for (String kind : List.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")) {
+    for (String kind :
+        List.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")) {
       var metadata = (ObjectNode) vector.path("metadata").deepCopy();
-      var command = codec.read(vector.path("canonical_plaintext_utf8").textValue(), ObjectNode.class);
+      var command =
+          codec.read(vector.path("canonical_plaintext_utf8").textValue(), ObjectNode.class);
       var origin = (ObjectNode) command.path("body").path("target").path("origin");
       if (kind.equals("TENANT_ADMIN") || kind.equals("PLATFORM_ADMIN"))
         origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
@@ -299,26 +301,35 @@ class UserMaintenanceSecretIntentCodecTest {
       assertArrayEquals(bytes, codec.openSelfAppIntent(metadata, encrypted));
       assertEquals(
           nativeBody,
-          codec.read(codec.utf8(codec.openSelfAppIntent(metadata, encrypted)), JsonNode.class).path("body"));
+          codec
+              .read(codec.utf8(codec.openSelfAppIntent(metadata, encrypted)), JsonNode.class)
+              .path("body"));
       assertFalse(encrypted.contains("localAccount"));
     }
   }
 
   @Test
-  void localAccountSnapshotRejectsUnknownKindsAuthorityDriftAndUnneededEmailData() throws Exception {
+  void localAccountSnapshotRejectsUnknownKindsAuthorityDriftAndUnneededEmailData()
+      throws Exception {
     var vector = ordinaryVector();
     var codec = vectorCodec();
-    for (String local : List.of(
-        "{}",
-        "{\"kind\":\"SUPPORT\",\"consultant\":false,\"email\":null,\"consultantEmail\":null}",
-        "{\"kind\":\"TENANT_ADMIN\",\"consultant\":false,\"email\":null,\"consultantEmail\":null}",
-        "{\"kind\":\"USER\",\"consultant\":true,\"email\":null,\"consultantEmail\":null}",
-        "{\"kind\":\"USER\",\"consultant\":\"false\",\"email\":null,\"consultantEmail\":null}",
-        "{\"kind\":\"USER\",\"consultant\":false,\"email\":\"unneeded@oriso.org\",\"consultantEmail\":null}",
-        "{\"kind\":\"USER\",\"consultant\":false,\"email\":null,\"consultantEmail\":null,\"authority\":true}")) {
-      var command = codec.read(vector.path("canonical_plaintext_utf8").textValue(), ObjectNode.class);
+    for (String local :
+        List.of(
+            "{}",
+            "{\"kind\":\"SUPPORT\",\"consultant\":false,\"email\":null,\"consultantEmail\":null}",
+            "{\"kind\":\"TENANT_ADMIN\",\"consultant\":false,\"email\":null,\"consultantEmail\":null}",
+            "{\"kind\":\"USER\",\"consultant\":true,\"email\":null,\"consultantEmail\":null}",
+            "{\"kind\":\"USER\",\"consultant\":\"false\",\"email\":null,\"consultantEmail\":null}",
+            "{\"kind\":\"USER\",\"consultant\":false,\"email\":\"unneeded@oriso.org\",\"consultantEmail\":null}",
+            "{\"kind\":\"USER\",\"consultant\":false,\"email\":null,\"consultantEmail\":null,\"authority\":true}")) {
+      var command =
+          codec.read(vector.path("canonical_plaintext_utf8").textValue(), ObjectNode.class);
       command.set("localAccount", codec.read(local, JsonNode.class));
-      refuses(() -> codec.sealSelfAppIntent(vector.path("metadata"), codec.canonical(command).getBytes(StandardCharsets.UTF_8)));
+      refuses(
+          () ->
+              codec.sealSelfAppIntent(
+                  vector.path("metadata"),
+                  codec.canonical(command).getBytes(StandardCharsets.UTF_8)));
     }
   }
 
