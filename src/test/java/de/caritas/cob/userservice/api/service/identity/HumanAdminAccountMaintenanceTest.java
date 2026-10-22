@@ -567,7 +567,7 @@ class HumanAdminAccountMaintenanceTest {
   }
 
   @Test
-  void actualPublicConsultantRoleAndProfileUseOneAtomicReviewedCommand() {
+  void actualPublicConsultantRoleAndProfileUseOneAtomicReviewedCommand() throws Exception {
     for (String scenario :
         List.of(
             "roles-add",
@@ -578,6 +578,8 @@ class HumanAdminAccountMaintenanceTest {
             "roles-preserve")) {
       server.reset();
       actualSchemaAndValidatedHumanFixture();
+      var ddl = new org.springframework.core.io.ClassPathResource("db/changelog/changeset/20260916_account_inactivity/migrate.sql").getContentAsString(StandardCharsets.UTF_8);
+      jdbc.execute(ddl.substring(ddl.indexOf("CREATE TABLE"),ddl.indexOf("-- No trustworthy")));
       runActualConsultantEdit(scenario);
     }
   }
@@ -855,7 +857,7 @@ class HumanAdminAccountMaintenanceTest {
   }
 
   @Test
-  void onlySignedBoundNoEffectReleasesTheOriginalFrozenProfileAfterAnAuthenticatedFence() {
+  void onlySignedBoundNoEffectReleasesTheOriginalFrozenProfileAfterAnAuthenticatedFence() throws Exception {
     for (String scenario :
         List.of(
             "unsigned403",
@@ -891,7 +893,7 @@ class HumanAdminAccountMaintenanceTest {
       int status = scenario.endsWith("403") ? 403 : 409;
       readReply();
       server.expect(requestTo(URL + "/profile")).andRespond(noEffectReply(status, scenario));
-      assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, desired()));
+      var failure = assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, desired()));
       boolean signed = scenario.startsWith("signed");
       assertEquals(
           signed ? "NO_EFFECT" : "FROZEN",
@@ -905,6 +907,7 @@ class HumanAdminAccountMaintenanceTest {
           jdbc.queryForObject(
               "select first_name from admin where admin_id=?", String.class, ACCOUNT));
       server.verify();
+      assertPublicMutationOutcome(failure, status, signed);
       if (!signed) continue;
       assertNotNull(
           jdbc.queryForObject(
@@ -919,6 +922,13 @@ class HumanAdminAccountMaintenanceTest {
         assertThrows(
             de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
             () -> service.updateAdminProfile(ACCOUNT, desired()));
+      var replayFailure = assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, desired()));
+      assertPublicMutationOutcome(replayFailure, status, true);
+      request.setUserPrincipal(authentication("revoked-current-human", ISSUER, HUMAN, "admin", 7L));
+      var revoked = assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, desired()));
+      assertPublicMutationOutcome(revoked, 403, false);
+      assertEquals("NO_EFFECT", jdbc.queryForObject("select status from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+      request.setUserPrincipal(authentication("synthetic-current-human", ISSUER, HUMAN, "admin", 7L));
       server.verify();
       server.reset();
       String next = "81000000-0000-4000-8000-000000000008";
@@ -944,6 +954,39 @@ class HumanAdminAccountMaintenanceTest {
               OPERATION));
       server.verify();
     }
+  }
+
+  private void assertPublicMutationOutcome(RuntimeException failure, int status, boolean definite)
+      throws Exception {
+    var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+        .standaloneSetup(new MutationFailureBoundary(failure))
+        .setControllerAdvice(new de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler())
+        .build();
+    var response = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+        .patch("/profile-outcome")
+        .requestAttr("X-ORISO-Mutation-Outcome", "NO_EFFECT")
+        .requestAttr("X-ORISO-Mutation-Operation", OPERATION))
+        .andReturn().getResponse();
+    if (definite) {
+      assertInstanceOf(HumanAdminAccountMaintenance.DefiniteProfileNoEffect.class, failure);
+      assertEquals(UUID.fromString(OPERATION), ((HumanAdminAccountMaintenance.DefiniteProfileNoEffect) failure).operationId());
+      assertTrue(Arrays.stream(failure.getClass().getDeclaredConstructors()).allMatch(c -> Modifier.isPrivate(c.getModifiers())));
+      assertTrue(HumanAdminAccountMaintenance.DefiniteProfileNoEffect.class.isSealed());
+    } else assertFalse(failure instanceof HumanAdminAccountMaintenance.DefiniteProfileNoEffect);
+    assertEquals(status, response.getStatus());
+    assertEquals(definite ? "NO_EFFECT" : null, response.getHeader("X-ORISO-Mutation-Outcome"));
+    assertEquals(definite ? OPERATION : null, response.getHeader("X-ORISO-Mutation-Operation"));
+    assertFalse(response.getContentAsString().contains("receipt"));
+    assertFalse(response.getContentAsString().contains("synthetic"));
+    assertEquals("", response.getContentAsString());
+  }
+
+  @org.springframework.web.bind.annotation.RestController
+  static final class MutationFailureBoundary {
+    private final RuntimeException failure;
+    MutationFailureBoundary(RuntimeException failure) { this.failure = failure; }
+    @org.springframework.web.bind.annotation.PatchMapping("/profile-outcome")
+    void fail() { throw failure; }
   }
 
   private ResponseCreator noEffectReply(int status, String scenario) {

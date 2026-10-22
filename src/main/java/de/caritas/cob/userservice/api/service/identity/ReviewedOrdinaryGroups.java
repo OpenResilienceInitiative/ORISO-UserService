@@ -1,0 +1,33 @@
+package de.caritas.cob.userservice.api.service.identity;
+
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
+import java.util.*;
+
+/** Immutable installed group data. Native current/desired profiles independently decide authority. */
+final class ReviewedOrdinaryGroups {
+  record Transition(String group,List<String> original,List<String> desired) {
+    Transition { original=List.copyOf(original); desired=List.copyOf(desired); }
+  }
+  private final Map<String,Set<String>> groups;
+  ReviewedOrdinaryGroups(Map<String,Set<String>> configured) {
+    Objects.requireNonNull(configured);
+    var copy=new TreeMap<String,Set<String>>();
+    for (var entry:configured.entrySet()) {
+      if (!entry.getKey().matches("/human-roles/[a-z0-9-]{1,80}") || entry.getValue()==null || entry.getValue().isEmpty() || entry.getValue().size()>32
+          || entry.getValue().stream().anyMatch(role->role==null || role.isBlank() || role.length()>255)) throw new IllegalArgumentException("Invalid reviewed ordinary group map");
+      copy.put(entry.getKey(),Set.copyOf(entry.getValue()));
+    }
+    if (new HashSet<>(copy.values()).size()!=copy.size()) throw new IllegalArgumentException("Reviewed groups must be unambiguous");
+    groups=Map.copyOf(copy);
+  }
+  void requireConfigured() { if (groups.isEmpty()) throw new ScopedIdentityCommandRequiredException(); }
+  Transition groupChat(boolean enabled,List<String> original) {
+    requireConfigured();
+    if (original==null || original.isEmpty() || original.size()>32 || !original.contains("consultant") || new HashSet<>(original).size()!=original.size()) throw new ScopedIdentityCommandRequiredException();
+    var desired=new TreeSet<>(original);
+    if (enabled) desired.add("group-chat-consultant"); else desired.remove("group-chat-consultant");
+    var match=groups.entrySet().stream().filter(entry->entry.getValue().equals(desired)).toList();
+    if (match.size()!=1) throw new ScopedIdentityCommandRequiredException();
+    return new Transition(match.getFirst().getKey(),original.stream().sorted().toList(),List.copyOf(desired));
+  }
+}

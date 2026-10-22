@@ -154,13 +154,12 @@ public class ConsultantUpdateService {
           dto.getLastname());
     }
 
+    public Boolean groupChatRequested() { return dto.getIsGroupchatConsultant(); }
+
     public void validate() {
       userAccountInputValidator.validateAbsence(new UpdateConsultantDTOAbsenceInputAdapter(dto));
       Consultant row = current();
       buildValidatedUserDTO(dto, row);
-      // A combined role/profile command is required before a public role edit may have any effect.
-      if (dto.getIsGroupchatConsultant() != null)
-        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
       topics =
           consultantTopicAgencyCompatibilityValidator.resolveTopicUpdate(
               id, dto.getTopicIds(), dto.getTopicsByAgency(), row.getTenantId());

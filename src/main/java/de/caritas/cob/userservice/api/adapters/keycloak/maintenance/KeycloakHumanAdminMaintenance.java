@@ -217,6 +217,9 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     binding.put("route", account.requestPath());
     binding.put("originalSql", codec.read(account.originalSqlState(), JsonNode.class));
     binding.put("profile", profile);
+    if (account.reviewedGroup() != null) {
+      binding.put("reviewedGroup",account.reviewedGroup()); binding.put("originalRoles",account.originalRoles()); binding.put("desiredRoles",account.desiredRoles());
+    }
     binding.put("ownerClient", actor.clientId());
     binding.put("ownerSubject", actor.serviceSubject());
     return codec.digest("human-admin-profile-request/v1", binding);
@@ -234,27 +237,59 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
   }
 
   @Override
-  public String updateProfile(CheckedAccount account, FrozenProfile frozen) {
+  public String updateProfile(CheckedAccount account,FrozenProfile frozen) {
+    var result=executeProfile(account,frozen);
+    if (result instanceof ProfileApplied applied) return applied.receipt();
+    if (result instanceof ProfileNoEffect refused && refused.status()==403) throw new ForbiddenException("Managed account operation is not authorized");
+    throw new ConflictException("The account operation conflicts with current state");
+  }
+
+  @Override
+  public ProfileOutcome executeProfile(CheckedAccount account,FrozenProfile frozen) {
+    checkedBody(account,frozen);
     try {
-      checkedBody(account, frozen);
-      String reply = call(account, "profile", frozen.body());
-      return verifyProfileReceipt(account, frozen, reply);
-    } catch (ForbiddenException
-        | ConflictException
-        | NotFoundException
-        | BadRequestException known) {
-      throw known;
-    } catch (RuntimeException unavailable) {
-      throw invalid();
+      return new ProfileApplied(verifyProfileReceipt(account,frozen,call(account,account.reviewedGroup()==null ? "profile" : "ordinary-profile",frozen.body())));
+    } catch (TerminalProfileNoEffect refused) {
+      return verifyProfileNoEffect(account,frozen,refused.reply);
     }
+  }
+
+  @Override
+  public ProfileNoEffect verifyProfileNoEffect(CheckedAccount account,FrozenProfile frozen,String receipt) {
+    JsonNode body=checkedBody(account,frozen);
+    var verified=codec.verifyMaintenanceNoEffectReceipt(receipt,realmId,actors.require(TaskPurpose.ACCOUNT_MAINTENANCE),body,account.reviewedGroup()==null ? "profile" : "ordinary-profile");
+    return new ProfileNoEffect(verified.status(),codec.canonical(codec.read(receipt,JsonNode.class)));
+  }
+
+  @Override
+  public void verifyStoredProfileNoEffect(CheckedAccount current,UUID operation,String requestDigest,FrozenProfile original,String receipt) {
+    current.requireCurrent();
+    if (original==null || original.body()==null || original.body().length()>16384 || requestDigest==null || !requestDigest.matches("[0-9a-f]{64}")) throw invalid();
+    JsonNode body=codec.read(original.body(),JsonNode.class);
+    var fields=new HashSet<String>(); body.fieldNames().forEachRemaining(fields::add);
+    if (!fields.equals(Set.of("target","operationId","expectedState","change"))
+        || !original.body().equals(codec.canonical(body)) || !operation.toString().equals(body.path("operationId").textValue())
+        || !current.accountId().equals(body.path("target").path("accountId").textValue())
+        || !Objects.equals(current.tenantId()==null ? null : current.tenantId().toString(),body.path("target").path("tenantId").isNull()?null:body.path("target").path("tenantId").textValue())
+        || !"HUMAN_ADMIN".equals(body.path("target").path("origin").path("kind").textValue())
+        || !operation.toString().equals(body.path("target").path("origin").path("workflowId").textValue())
+        || original.bindingDigest()==null || !original.bindingDigest().matches("[0-9a-f]{64}")
+        || !MessageDigest.isEqual(bindingDigest(requestDigest,body).getBytes(StandardCharsets.US_ASCII),original.bindingDigest().getBytes(StandardCharsets.US_ASCII))) throw invalid();
+    JsonNode change=body.path("change"); fields.clear(); change.fieldNames().forEachRemaining(fields::add);
+    String command;
+    if (fields.equals(Set.of("firstName","lastName","email"))) command="profile";
+    else if (fields.equals(Set.of("group","profile"))) command="ordinary-profile";
+    else throw invalid();
+    codec.verifyMaintenanceNoEffectReceipt(receipt,realmId,actors.require(TaskPurpose.ACCOUNT_MAINTENANCE),body,command);
   }
 
   @Override
   public String verifyProfileReceipt(CheckedAccount account, FrozenProfile frozen, String receipt) {
     JsonNode body = checkedBody(account, frozen);
     try {
-      return codec.verifyMaintenanceProfileReceipt(
-          receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
+      return account.reviewedGroup() == null
+          ? codec.verifyMaintenanceProfileReceipt(receipt,realmId,actors.require(TaskPurpose.ACCOUNT_MAINTENANCE),body)
+          : codec.verifyMaintenanceOrdinaryProfileReceipt(receipt,realmId,actors.require(TaskPurpose.ACCOUNT_MAINTENANCE),body);
     } catch (RuntimeException invalid) {
       throw invalid();
     }
@@ -301,6 +336,7 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     change.put("firstName", profile.firstName());
     change.put("lastName", profile.lastName());
     change.put("email", profile.email());
+    Object completeChange = account.reviewedGroup() == null ? change : Map.of("group",account.reviewedGroup(),"profile",change);
     return Map.of(
         "target",
         target(account),
@@ -309,7 +345,7 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
         "expectedState",
         state,
         "change",
-        change);
+        completeChange);
   }
 
   private Map<String, Object> target(CheckedAccount account) {
@@ -330,7 +366,7 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
   private String call(CheckedAccount account, String command, String frozen) {
     account.requireCurrent();
     if (TransactionSynchronizationManager.isActualTransactionActive()
-        || !Set.of("read", "profile").contains(command)) throw invalid();
+        || !Set.of("read", "profile", "ordinary-profile").contains(command)) throw invalid();
     var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
     var token = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
     long now = Instant.now().getEpochSecond();
@@ -390,6 +426,17 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
           || !"no-store".equals(response.getHeaders().getCacheControl())) throw invalid();
       return codec.utf8(raw);
     } catch (RestClientResponseException refusal) {
+      if (Set.of("profile","ordinary-profile").contains(command) && Set.of(403,409).contains(refusal.getStatusCode().value())
+          && refusal.getResponseHeaders()!=null && "no-store".equals(refusal.getResponseHeaders().getCacheControl())
+          && refusal.getResponseBodyAsByteArray().length>0 && refusal.getResponseBodyAsByteArray().length<=16384) {
+        try {
+          String reply=codec.utf8(refusal.getResponseBodyAsByteArray());
+          var verified=codec.verifyMaintenanceNoEffectReceipt(reply,realmId,actor,codec.read(frozen,JsonNode.class),command);
+          if (verified.status()!=refusal.getStatusCode().value()) throw invalid();
+          throw new TerminalProfileNoEffect(codec.canonical(codec.read(reply,JsonNode.class)));
+        } catch (TerminalProfileNoEffect verified) { throw verified; }
+        catch (RuntimeException invalid) { /* An unsigned/malformed status never releases the SQL intent. */ }
+      }
       switch (refusal.getStatusCode().value()) {
         case 400 -> throw new BadRequestException("Managed account request was rejected");
         case 403 -> throw new ForbiddenException("Managed account operation is not authorized");
@@ -401,6 +448,11 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     } catch (RuntimeException unavailable) {
       throw invalid();
     }
+  }
+
+  private static final class TerminalProfileNoEffect extends RuntimeException {
+    final String reply;
+    TerminalProfileNoEffect(String reply) { super("Verified native profile refusal"); this.reply=reply; }
   }
 
   private static ServiceUnavailableException invalid() {

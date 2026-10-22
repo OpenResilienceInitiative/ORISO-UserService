@@ -1069,12 +1069,177 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "profile", "UPDATED");
   }
 
+  /** A verified definite pre-write refusal, never an HTTP status interpreted as acknowledgement. */
+  public static final class VerifiedMaintenanceNoEffect {
+    private final int status;
+    private final String receipt;
+    private final UUID operationId;
+    private final String accountId;
+    private final String command;
+    private final String realmId;
+    private final String intentDigest;
+
+    private VerifiedMaintenanceNoEffect(
+        int status,
+        String receipt,
+        UUID operationId,
+        String accountId,
+        String command,
+        String realmId,
+        String intentDigest) {
+      this.status = status;
+      this.receipt = receipt;
+      this.operationId = operationId;
+      this.accountId = accountId;
+      this.command = command;
+      this.realmId = realmId;
+      this.intentDigest = intentDigest;
+    }
+
+    public int status() {
+      return status;
+    }
+
+    public String receipt() {
+      return receipt;
+    }
+
+    public UUID operationId() {
+      return operationId;
+    }
+
+    public String accountId() {
+      return accountId;
+    }
+
+    public String command() {
+      return command;
+    }
+
+    public String realmId() {
+      return realmId;
+    }
+
+    public String intentDigest() {
+      return intentDigest;
+    }
+
+    @Override
+    public String toString() {
+      return "VerifiedMaintenanceNoEffect[bindings=redacted]";
+    }
+  }
+
+  public VerifiedMaintenanceNoEffect verifyMaintenanceNoEffectReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen, String command) {
+    try {
+      if (!java.util.Set.of(
+                  "delete",
+                  "locale",
+                  "profile",
+                  "email",
+                  "ordinary-profile",
+                  "deactivate",
+                  "reactivate",
+                  "self-password",
+                  "password-reset",
+                  "reassign-tenant")
+              .contains(command)
+          || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
+        throw new IllegalArgumentException();
+      JsonNode outer = read(reply, JsonNode.class);
+      intentFields(
+          outer, java.util.Set.of("operationId", "accountId", "result", "status", "receipt"));
+      String operation = intentUuid(frozen, "operationId");
+      String account = intentText(frozen.path("target"), "accountId", 512);
+      String previousState = intentDigest(frozen, "expectedState");
+      JsonNode tenant = frozen.path("target").get("tenantId");
+      if (tenant == null || (!tenant.isNull() && !tenant.isTextual()))
+        throw new IllegalArgumentException();
+      JsonNode status = outer.path("status");
+      if (!status.isIntegralNumber()
+          || !status.canConvertToInt()
+          || !(status.intValue() == 403
+              || status.intValue() == 409
+              || (status.intValue() == 400
+                  && java.util.Set.of("self-password", "password-reset").contains(command)))
+          || !operation.equals(intentUuid(outer, "operationId"))
+          || !account.equals(intentText(outer, "accountId", 512))
+          || !"NO_EFFECT".equals(intentText(outer, "result", 16)))
+        throw new IllegalArgumentException();
+      String receipt = intentText(outer, "receipt", 16384);
+      String[] parts = receipt.split("\\.", -1);
+      if (parts.length != 2
+          || !parts[0].matches("[A-Za-z0-9_-]+")
+          || !parts[1].matches("[0-9a-f]{64}")) throw new IllegalArgumentException();
+      byte[] decoded = Base64.getUrlDecoder().decode(parts[0]);
+      if (!encode(decoded).equals(parts[0])
+          || !java.security.MessageDigest.isEqual(
+              HexFormat.of().parseHex(parts[1]),
+              mac("maintenance-no-effect-receipt/v1\n" + parts[0])))
+        throw new IllegalArgumentException();
+      String raw = utf8(decoded);
+      JsonNode payload = read(raw, JsonNode.class);
+      intentFields(
+          payload,
+          java.util.Set.of(
+              "realmId",
+              "accountId",
+              "operationId",
+              "command",
+              "ownerClient",
+              "ownerSubject",
+              "intentDigest",
+              "previousState",
+              "tenantId",
+              "originDigest",
+              "result",
+              "status"));
+      if (!raw.equals(canonical(payload))
+          || !realmId.equals(intentText(payload, "realmId", 512))
+          || !account.equals(intentText(payload, "accountId", 512))
+          || !operation.equals(intentUuid(payload, "operationId"))
+          || !command.equals(intentText(payload, "command", 64))
+          || !actor.clientId().equals(intentText(payload, "ownerClient", 512))
+          || !actor.serviceSubject().equals(intentText(payload, "ownerSubject", 512))
+          || !digest("maintenance-intent", frozen).equals(intentDigest(payload, "intentDigest"))
+          || !previousState.equals(intentDigest(payload, "previousState"))
+          || !tenant.equals(payload.get("tenantId"))
+          || !digest("maintenance-origin", frozen.path("target").path("origin"))
+              .equals(intentDigest(payload, "originDigest"))
+          || !"NO_EFFECT".equals(intentText(payload, "result", 16))
+          || !payload.path("status").isIntegralNumber()
+          || !payload.path("status").canConvertToInt()
+          || status.intValue() != payload.path("status").intValue())
+        throw new IllegalArgumentException();
+      return new VerifiedMaintenanceNoEffect(
+          status.intValue(),
+          receipt,
+          UUID.fromString(operation),
+          account,
+          command,
+          realmId,
+          payload.path("intentDigest").textValue());
+    } catch (RuntimeException failure) {
+      throw new IllegalArgumentException("Invalid native maintenance no-effect receipt");
+    }
+  }
+
+
+  public String verifyMaintenanceInactivitySuspendReceipt(String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    throw new IllegalArgumentException("Checked inactivity suspension receipt is unavailable");
+  }
+
+  public String verifyMaintenanceInactivityRestoreReceipt(String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    throw new IllegalArgumentException("Checked inactivity restoration receipt is unavailable");
+  }
+
   public String claimedInactivityDeletionRowDigest(JsonNode exactOwnedRow) {
-    throw new IllegalArgumentException("Invalid owned inactivity deletion row");
+    return digest("claimed-inactivity-deletion-row/v1",ClaimedInactivityRowSchema.require(exactOwnedRow,true));
   }
 
   public String claimedInactivityRowDigest(JsonNode exactOwnedRow) {
-    throw new IllegalArgumentException("Invalid owned inactivity row");
+    return digest("claimed-inactivity-row/v1",ClaimedInactivityRowSchema.require(exactOwnedRow,false));
   }
 
   public String verifyMaintenanceOrdinaryProfileReceipt(
