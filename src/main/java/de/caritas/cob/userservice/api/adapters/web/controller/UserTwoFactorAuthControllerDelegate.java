@@ -48,8 +48,8 @@ class UserTwoFactorAuthControllerDelegate {
 
     if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
       if (!selfAppOtpMaintenance.startEmail(email))
-        throw new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
-            "OTP email delivery unavailable");
+        throw new de.caritas.cob.userservice.api.exception.httpresponses
+            .ServiceUnavailableException("OTP email delivery unavailable");
       return ResponseEntity.noContent().build();
     }
 

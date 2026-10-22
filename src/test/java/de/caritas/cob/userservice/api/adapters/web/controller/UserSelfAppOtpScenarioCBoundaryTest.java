@@ -338,7 +338,13 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     try (var fixture = new Fixture(true, true)) {
       fixture.request.setRequestURI("/service/users/2fa/email");
       fixture.expectEmail(false, false);
-      assertEquals(204, fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()).getStatusCode().value());
+      assertEquals(
+          204,
+          fixture
+              .controller
+              .startTwoFactorAuthByEmailSetup(fixture.email())
+              .getStatusCode()
+              .value());
       assertEquals("ACKNOWLEDGED", fixture.status());
       assertEquals(fixture.operation, fixture.pendingEmailOperation());
       assertEquals("original@oriso.org", fixture.currentEmail());
@@ -351,23 +357,45 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
-  void publicEmailStartLostReplyNewOwnerReplaysFrozenRecipientAndOriginalExpiry()
-      throws Exception {
+  void publicEmailStartLostReplyNewOwnerReplaysFrozenRecipientAndOriginalExpiry() throws Exception {
     try (var fixture = new Fixture(true, true)) {
       fixture.request.setRequestURI("/service/users/2fa/email");
       fixture.expectEmail(true, false);
-      assertThrows(RuntimeException.class, () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
+      assertThrows(
+          RuntimeException.class,
+          () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
       assertEquals("FROZEN", fixture.status());
       assertNull(fixture.pendingEmailOperation());
       String envelope = fixture.envelope();
-      long expiry = fixture.jdbc.queryForObject("select authority_valid_until from identity_self_app_otp_intent where operation_id=?", Long.class, fixture.operation);
+      long expiry =
+          fixture.jdbc.queryForObject(
+              "select authority_valid_until from identity_self_app_otp_intent where operation_id=?",
+              Long.class,
+              fixture.operation);
       fixture.installOwner();
-      assertEquals(204, fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()).getStatusCode().value());
-      assertEquals(204, fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()).getStatusCode().value());
+      assertEquals(
+          204,
+          fixture
+              .controller
+              .startTwoFactorAuthByEmailSetup(fixture.email())
+              .getStatusCode()
+              .value());
+      assertEquals(
+          204,
+          fixture
+              .controller
+              .startTwoFactorAuthByEmailSetup(fixture.email())
+              .getStatusCode()
+              .value());
       assertEquals("ACKNOWLEDGED", fixture.status());
       assertEquals(fixture.operation, fixture.pendingEmailOperation());
       assertEquals(envelope, fixture.envelope());
-      assertEquals(expiry, fixture.jdbc.queryForObject("select authority_valid_until from identity_self_app_otp_intent where operation_id=?", Long.class, fixture.operation));
+      assertEquals(
+          expiry,
+          fixture.jdbc.queryForObject(
+              "select authority_valid_until from identity_self_app_otp_intent where operation_id=?",
+              Long.class,
+              fixture.operation));
       assertEquals(1, fixture.nativeExecutions.get());
       fixture.assertEmailStorage();
       fixture.server.verify();
@@ -379,11 +407,19 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     try (var fixture = new Fixture(true, true)) {
       fixture.request.setRequestURI("/service/users/2fa/email");
       fixture.expectEmail(false, false);
-      assertEquals(204, fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()).getStatusCode().value());
+      assertEquals(
+          204,
+          fixture
+              .controller
+              .startTwoFactorAuthByEmailSetup(fixture.email())
+              .getStatusCode()
+              .value());
       String original = fixture.envelope();
       var changed = fixture.email();
       changed.setEmail("changed@oriso.org");
-      assertThrows(ConflictException.class, () -> fixture.controller.startTwoFactorAuthByEmailSetup(changed));
+      assertThrows(
+          ConflictException.class,
+          () -> fixture.controller.startTwoFactorAuthByEmailSetup(changed));
       assertEquals(original, fixture.envelope());
       assertEquals(1, fixture.nativeExecutions.get());
       fixture.server.verify();
@@ -396,7 +432,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     try (var fixture = new Fixture(true, true)) {
       fixture.request.setRequestURI("/service/users/2fa/email");
       fixture.expectEmail(false, true);
-      assertThrows(ServiceUnavailableException.class, () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
       assertEquals("FROZEN", fixture.status());
       assertNull(fixture.pendingEmailOperation());
       assertEquals("original@oriso.org", fixture.currentEmail());
@@ -414,7 +452,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.request.setRequestURI("/service/users/2fa/email");
       fixture.tamperReceipt = true;
       fixture.expectEmail(false, false);
-      assertThrows(ServiceUnavailableException.class, () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
       assertEquals("FROZEN", fixture.status());
       assertNull(fixture.pendingEmailOperation());
       assertEquals("original@oriso.org", fixture.currentEmail());
@@ -430,11 +470,15 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     try (var fixture = new Fixture(true, true)) {
       fixture.request.setRequestURI("/service/users/2fa/email");
       fixture.request.removeHeader("Idempotency-Key");
-      assertThrows(BadRequestException.class, () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
+      assertThrows(
+          BadRequestException.class,
+          () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
       assertNull(fixture.status());
       fixture.request.addHeader("Idempotency-Key", fixture.operation);
       fixture.jdbc.update("update user set tenant_id=9 where user_id=?", ACCOUNT);
-      assertThrows(ForbiddenException.class, () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
+      assertThrows(
+          ForbiddenException.class,
+          () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
       assertNull(fixture.status());
       assertNull(fixture.pendingEmailOperation());
       assertEquals(0, fixture.nativeExecutions.get());
@@ -446,15 +490,25 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   void missingScopedEmailStartKeepsActualCGuardAndLegacyEmailStartWorking() throws Exception {
     try (var fixture = new Fixture(true, false)) {
       fixture.request.setRequestURI("/service/users/2fa/email");
-      assertThrows(ScopedIdentityCommandRequiredException.class, () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
+      assertThrows(
+          ScopedIdentityCommandRequiredException.class,
+          () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
       verifyNoInteractions(fixture.nativeClient);
       assertNull(fixture.status());
     }
     try (var fixture = new Fixture(false, false)) {
       fixture.request.setRequestURI("/service/users/2fa/email");
       fixture.request.removeHeader("Idempotency-Key");
-      assertEquals(204, fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()).getStatusCode().value());
-      verify(fixture.nativeClient).putForEntity(any(), any(), any(), eq(de.caritas.cob.userservice.api.model.Success.class));
+      assertEquals(
+          204,
+          fixture
+              .controller
+              .startTwoFactorAuthByEmailSetup(fixture.email())
+              .getStatusCode()
+              .value());
+      verify(fixture.nativeClient)
+          .putForEntity(
+              any(), any(), any(), eq(de.caritas.cob.userservice.api.model.Success.class));
       assertNull(fixture.status());
     }
   }
@@ -516,13 +570,15 @@ class UserSelfAppOtpScenarioCBoundaryTest {
         SecurityContextHolder.getContext().setAuthentication(authentication);
         jdbc.execute(
             "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512),email varchar(320))");
-        jdbc.update("insert into user values(?,?,null,'ordinary','original@oriso.org')", ACCOUNT, 7L);
+        jdbc.update(
+            "insert into user values(?,?,null,'ordinary','original@oriso.org')", ACCOUNT, 7L);
         jdbc.execute(
             "create table account_invite(id bigint primary key,accepted_by_user_id varchar(36),two_factor_status varchar(32),write_count int)");
         jdbc.update("insert into account_invite values(1,?,'PENDING_SETUP',0)", ACCOUNT);
         jdbc.execute(
             "create table identity_self_app_otp_intent(operation_id varchar(36) primary key,realm_id varchar(512),realm_name varchar(512),account_id varchar(36),tenant_id bigint,owner_client varchar(512),owner_subject varchar(36),request_digest varchar(64),target_json clob,status varchar(32),authority_valid_until bigint,metadata_json clob,envelope clob,pending_marker boolean,receipt clob,native_status int,updated_at timestamp)");
-        jdbc.execute("create table identity_self_otp_pending_email(account_id varchar(36) primary key,start_operation_id varchar(36))");
+        jdbc.execute(
+            "create table identity_self_otp_pending_email(account_id varchar(36) primary key,start_operation_id varchar(36))");
         var invites = mock(AccountInviteRepository.class);
         when(invites.findAllByAcceptedByUserIdAndTwoFactorStatus(eq(ACCOUNT), any()))
             .thenAnswer(
@@ -639,7 +695,11 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     }
 
     String pendingEmailOperation() {
-      var rows = jdbc.queryForList("select start_operation_id from identity_self_otp_pending_email where account_id=?", String.class, ACCOUNT);
+      var rows =
+          jdbc.queryForList(
+              "select start_operation_id from identity_self_otp_pending_email where account_id=?",
+              String.class,
+              ACCOUNT);
       return rows.isEmpty() ? null : rows.getFirst();
     }
 
@@ -649,8 +709,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
 
     void assertEmailStorage() {
       assertProtectedStorage();
-      String persisted = jdbc.queryForList("select * from identity_self_app_otp_intent").toString()
-          + jdbc.queryForList("select * from identity_self_otp_pending_email").toString();
+      String persisted =
+          jdbc.queryForList("select * from identity_self_app_otp_intent").toString()
+              + jdbc.queryForList("select * from identity_self_otp_pending_email").toString();
       assertFalse(persisted.contains(PENDING_EMAIL));
       assertFalse(persisted.contains(PENDING_EMAIL.toUpperCase(java.util.Locale.ROOT)));
     }
@@ -858,72 +919,106 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       var frozen = new AtomicReference<String>();
       var encrypted = new AtomicReference<String>();
       var calls = new AtomicInteger();
-      server.expect(ExpectedCount.times(lostReply ? 3 : 2),
+      server
+          .expect(
+              ExpectedCount.times(lostReply ? 3 : 2),
               requestTo(issuer.issuer() + "/otp-config/send-verification-mail/ordinary"))
           .andExpect(method(HttpMethod.PUT))
-          .andRespond(outbound -> {
-            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-            assertEquals("FROZEN", status());
-            assertNull(pendingEmailOperation());
-            assertEquals("original@oriso.org", currentEmail());
-            assertEmailStorage();
-            String wire = ((MockClientHttpRequest) outbound).getBodyAsString();
-            var body = codec.read(wire, ObjectNode.class);
-            var materialized = body.deepCopy();
-            materialized.put("username", "ordinary");
-            checkProof(outbound.getHeaders(), materialized, "otp.email-start", "OTP", "oriso-otp", "PUT");
-            long originalExpiry = jdbc.queryForObject("select authority_valid_until from identity_self_app_otp_intent where operation_id=?", Long.class, operation);
-            assertEquals(originalExpiry, body.path("authorityValidUntil").longValue());
-            assertEquals(PENDING_EMAIL, body.path("otp").path("email").textValue());
-            assertTrue(body.path("otp").path("initialCode").isNull());
-            assertTrue(body.path("otp").path("secret").isNull());
-            if (frozen.compareAndSet(null, wire)) {
-              encrypted.set(envelope());
-              nativeExecutions.incrementAndGet();
-            } else {
-              assertEquals(frozen.get(), wire);
-              assertEquals(encrypted.get(), envelope());
-            }
-            int call = calls.incrementAndGet();
-            if (call > 1 && unknown)
-              return withStatus(HttpStatus.SERVICE_UNAVAILABLE).body("{\"error\":\"OTP delivery outcome is unknown\"}")
-                  .contentType(MediaType.APPLICATION_JSON).createResponse(outbound);
-            boolean ready = call == 1;
-            int status = ready ? 202 : 200;
-            String state = ready ? "READY" : "SENT";
-            var nativeResult = codec.read(ready ? "{\"info\":\"OTP mail pending\"}" : "{\"info\":\"OTP mail sent\"}", JsonNode.class);
-            var outcome = codec.read("{}", ObjectNode.class);
-            outcome.put("realmId", REALM_ID);
-            outcome.put("accountId", ACCOUNT);
-            outcome.put("operationId", operation);
-            outcome.put("operation", "otp.email-start");
-            outcome.put("ownerClient", "backend-account-admin");
-            outcome.put("ownerSubject", ADMIN);
-            outcome.put("intentDigest", codec.digest("otp-intent", materialized));
-            outcome.put("previousState", "a".repeat(64));
-            outcome.put("tenantId", "7");
-            outcome.put("originDigest", codec.digest("otp-origin", body.path("target").path("origin")));
-            outcome.put("status", status);
-            outcome.put("deliveryState", state);
-            outcome.put("authorityValidUntil", originalExpiry);
-            outcome.put("resultDigest", codec.digest("otp-result", nativeResult));
-            var credential = outcome.putObject("emailCredential");
-            credential.put("credentialId", "55555555-5555-4555-8555-555555555555");
-            credential.put("generation", "b".repeat(64));
-            credential.put("destinationDigest", codec.digest("otp-email-destination", codec.read("\"" + PENDING_EMAIL + "\"", JsonNode.class)));
-            String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
-            var result = codec.read("{}", ObjectNode.class);
-            result.put("operationId", operation);
-            result.put("accountId", ACCOUNT);
-            result.put("status", status);
-            result.put("deliveryState", state);
-            result.set("result", nativeResult);
-            result.put("receipt", encoded + "." + HexFormat.of().formatHex(mac("otp-operation-receipt\n" + encoded)));
-            if (tamperReceipt && !ready) result.put("receipt", result.path("receipt").asText() + "x");
-            if (lostReply && call == 2) throw new ResourceAccessException("Fixture committed final SENT reply was lost");
-            return withStatus(ready ? HttpStatus.ACCEPTED : HttpStatus.OK).body(codec.canonical(result))
-                .contentType(MediaType.APPLICATION_JSON).createResponse(outbound);
-          });
+          .andRespond(
+              outbound -> {
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                assertEquals("FROZEN", status());
+                assertNull(pendingEmailOperation());
+                assertEquals("original@oriso.org", currentEmail());
+                assertEmailStorage();
+                String wire = ((MockClientHttpRequest) outbound).getBodyAsString();
+                var body = codec.read(wire, ObjectNode.class);
+                var materialized = body.deepCopy();
+                materialized.put("username", "ordinary");
+                checkProof(
+                    outbound.getHeaders(),
+                    materialized,
+                    "otp.email-start",
+                    "OTP",
+                    "oriso-otp",
+                    "PUT");
+                long originalExpiry =
+                    jdbc.queryForObject(
+                        "select authority_valid_until from identity_self_app_otp_intent where operation_id=?",
+                        Long.class,
+                        operation);
+                assertEquals(originalExpiry, body.path("authorityValidUntil").longValue());
+                assertEquals(PENDING_EMAIL, body.path("otp").path("email").textValue());
+                assertTrue(body.path("otp").path("initialCode").isNull());
+                assertTrue(body.path("otp").path("secret").isNull());
+                if (frozen.compareAndSet(null, wire)) {
+                  encrypted.set(envelope());
+                  nativeExecutions.incrementAndGet();
+                } else {
+                  assertEquals(frozen.get(), wire);
+                  assertEquals(encrypted.get(), envelope());
+                }
+                int call = calls.incrementAndGet();
+                if (call > 1 && unknown)
+                  return withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                      .body("{\"error\":\"OTP delivery outcome is unknown\"}")
+                      .contentType(MediaType.APPLICATION_JSON)
+                      .createResponse(outbound);
+                boolean ready = call == 1;
+                int status = ready ? 202 : 200;
+                String state = ready ? "READY" : "SENT";
+                var nativeResult =
+                    codec.read(
+                        ready ? "{\"info\":\"OTP mail pending\"}" : "{\"info\":\"OTP mail sent\"}",
+                        JsonNode.class);
+                var outcome = codec.read("{}", ObjectNode.class);
+                outcome.put("realmId", REALM_ID);
+                outcome.put("accountId", ACCOUNT);
+                outcome.put("operationId", operation);
+                outcome.put("operation", "otp.email-start");
+                outcome.put("ownerClient", "backend-account-admin");
+                outcome.put("ownerSubject", ADMIN);
+                outcome.put("intentDigest", codec.digest("otp-intent", materialized));
+                outcome.put("previousState", "a".repeat(64));
+                outcome.put("tenantId", "7");
+                outcome.put(
+                    "originDigest", codec.digest("otp-origin", body.path("target").path("origin")));
+                outcome.put("status", status);
+                outcome.put("deliveryState", state);
+                outcome.put("authorityValidUntil", originalExpiry);
+                outcome.put("resultDigest", codec.digest("otp-result", nativeResult));
+                var credential = outcome.putObject("emailCredential");
+                credential.put("credentialId", "55555555-5555-4555-8555-555555555555");
+                credential.put("generation", "b".repeat(64));
+                credential.put(
+                    "destinationDigest",
+                    codec.digest(
+                        "otp-email-destination",
+                        codec.read("\"" + PENDING_EMAIL + "\"", JsonNode.class)));
+                String encoded =
+                    Base64.getUrlEncoder()
+                        .withoutPadding()
+                        .encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
+                var result = codec.read("{}", ObjectNode.class);
+                result.put("operationId", operation);
+                result.put("accountId", ACCOUNT);
+                result.put("status", status);
+                result.put("deliveryState", state);
+                result.set("result", nativeResult);
+                result.put(
+                    "receipt",
+                    encoded
+                        + "."
+                        + HexFormat.of().formatHex(mac("otp-operation-receipt\n" + encoded)));
+                if (tamperReceipt && !ready)
+                  result.put("receipt", result.path("receipt").asText() + "x");
+                if (lostReply && call == 2)
+                  throw new ResourceAccessException("Fixture committed final SENT reply was lost");
+                return withStatus(ready ? HttpStatus.ACCEPTED : HttpStatus.OK)
+                    .body(codec.canonical(result))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
+              });
     }
 
     void expectDelete(boolean lostReply) {
