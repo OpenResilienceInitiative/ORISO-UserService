@@ -63,6 +63,11 @@ public final class SelfAppOtpMaintenance {
     return mode.isFiveActorMode();
   }
 
+  /** Signature seam for the actual current-user read; no read capability is implemented yet. */
+  public de.caritas.cob.userservice.api.identity.IdentityOtpCredential readCredential() {
+    throw unavailable();
+  }
+
   public boolean startEmail(String pendingEmail) {
     return execute(null, null, pendingEmail, ids -> {}, Operation.EMAIL_START);
   }

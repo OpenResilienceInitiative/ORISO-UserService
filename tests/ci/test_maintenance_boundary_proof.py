@@ -328,3 +328,53 @@ class SelfAppJpaEvidenceTest(unittest.TestCase):
                 result = proof.sanitize(root, root / "clean.xml")
                 self.assertEqual(kind == "green", result["all_passed"])
                 self.assertEqual(kind == "failure", result["adapter_behavior_red"])
+
+
+class SelfOtpReadEvidenceTest(unittest.TestCase):
+    def proof(self):
+        proof = importlib.util.module_from_spec(SPEC)
+        SPEC.loader.exec_module(proof)
+        proof.select_slice("otp-read")
+        return proof
+
+    def result(self, failures=(), errors=(), skips=(), omit=()):
+        proof = self.proof()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            suite = ET.Element("testsuite", name=proof.SUITE)
+            for name in proof.CASES - set(omit):
+                row = ET.SubElement(suite, "testcase", classname=proof.SUITE, name=name)
+                if name in failures:
+                    ET.SubElement(row, "failure", type="org.opentest4j.AssertionFailedError")
+                if name in errors:
+                    ET.SubElement(row, "error", type="java.lang.IllegalStateException")
+                if name in skips:
+                    ET.SubElement(row, "skipped")
+            ET.ElementTree(suite).write(root / "TEST-read.xml")
+            return proof.sanitize(root, root / "clean.xml")
+
+    def test_exact_eight_read_cases_and_two_controls_are_required(self):
+        proof = self.proof()
+        self.assertEqual(8, len(proof.CASES))
+        self.assertEqual(2, len(proof.CONTROLS))
+        result = self.result(failures=proof.CASES - proof.CONTROLS)
+        self.assertTrue(result["adapter_behavior_red"])
+        self.assertEqual(6, result["failures"])
+
+    def test_legacy_and_disabled_policy_failures_cannot_be_read_red(self):
+        proof = self.proof()
+        for control in proof.CONTROLS:
+            result = self.result(failures={control})
+            self.assertFalse(result["adapter_behavior_red"] or result["all_passed"])
+
+    def test_missing_skipped_or_fixture_error_never_qualifies_read(self):
+        case = "publicCurrentSelfReadReturnsExistingAppThroughExactOriginalScopedRoute"
+        for settings in [{"omit": {case}}, {"skips": {case}}, {"errors": {case}}]:
+            result = self.result(**settings)
+            self.assertFalse(result["adapter_behavior_red"] or result["all_passed"])
+
+    def test_exact_eight_green_cases_have_no_skip_exception(self):
+        result = self.result()
+        self.assertEqual(8, result["tests"])
+        self.assertTrue(result["all_passed"])
+        self.assertFalse(result["adapter_behavior_red"])

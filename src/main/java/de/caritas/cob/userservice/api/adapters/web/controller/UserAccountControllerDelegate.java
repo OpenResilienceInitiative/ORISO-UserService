@@ -80,6 +80,15 @@ class UserAccountControllerDelegate {
     this.selfLocaleMaintenance = maintenance;
   }
 
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance
+      selfAppOtpMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSelfAppOtpMaintenance(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance maintenance) {
+    this.selfAppOtpMaintenance = maintenance;
+  }
+
   ResponseEntity<Void> updateAbsence(AbsenceDTO absence) {
     var consultant = userAccountProvider.retrieveValidatedConsultant();
     this.consultantDataFacade.updateConsultantAbsent(consultant, absence);
@@ -182,6 +191,9 @@ class UserAccountControllerDelegate {
   private IdentityOtpCredential retrieveOtpCredentialIfAllowed() {
     if (!isOtpAllowed()) {
       return null;
+    }
+    if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
+      return selfAppOtpMaintenance.readCredential();
     }
     try {
       return identityManager.getOtpCredential(

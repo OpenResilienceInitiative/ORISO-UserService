@@ -144,6 +144,29 @@ def select_slice(name):
             "de/caritas/cob/userservice/api/port/out/AccountInviteRepository",
         ]
         TEST_CLASS = SUITE.replace(".", "/")
+    elif name == "otp-read":
+        SLICE = name
+        SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserSelfOtpReadScenarioCBoundaryTest"
+        LEGACY = "missingScopedReadRetainsActualCRefusalAndLegacyCurrentUserRead"
+        CASES = {
+            LEGACY,
+            "publicCurrentSelfReadReturnsExistingAppThroughExactOriginalScopedRoute",
+            "publicCurrentSelfReadPreservesUnconfiguredSecretAndQrWithoutIntentHeaderOrStorage",
+            "publicCurrentSelfReadPreservesExistingEmailFactorType",
+            "publicCurrentSelfReadRefusesForeignCurrentDomainBeforeTokenOrNativeLookup",
+            "publicCurrentSelfMalformedNativeReadCannotBecomeAnUnconfiguredCredential",
+            "publicCurrentSelfUnknownNativeReadRefusesWithoutLegacyFallback",
+            "publicOtpDisabledPolicyKeepsCurrentUserDataWorkingWithoutAnyCredentialRead",
+        }
+        COMPILED_CLASSES += [
+            "de/caritas/cob/userservice/api/adapters/web/controller/UserController",
+            "de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate",
+            "de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfAppOtpMaintenance",
+            "de/caritas/cob/userservice/api/adapters/web/mapping/UserDtoMapper",
+            "de/caritas/cob/userservice/api/config/auth/TaskActorTokenBroker",
+            "de/caritas/cob/userservice/api/IdentityManager",
+        ]
+        TEST_CLASS = SUITE.replace(".", "/")
     elif name == "availability":
         SLICE = name
         SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserUsernameAvailabilityScenarioCBoundaryTest"
@@ -220,6 +243,8 @@ def select_slice(name):
         CONTROLS.add("missingScopedDeleteKeepsActualCGuardAndLegacyDeleteRemainsWorking")
         CONTROLS.add("missingScopedEmailStartKeepsActualCGuardAndLegacyEmailStartWorking")
         CONTROLS.add("missingScopedEmailFinishKeepsActualCGuardAndLegacyInvalidCodeWorking")
+    elif name == "otp-read":
+        CONTROLS.add("publicOtpDisabledPolicyKeepsCurrentUserDataWorkingWithoutAnyCredentialRead")
     elif name == "locale":
         CONTROLS.add("domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract")
     elif name == "availability":
@@ -454,7 +479,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["snapshot", "collect"])
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--slice", choices=["adapter", "deletion", "locale", "jpa", "availability", "app", "app-jpa"], default="adapter")
+    parser.add_argument("--slice", choices=["adapter", "deletion", "locale", "jpa", "availability", "app", "app-jpa", "otp-read"], default="adapter")
     args = parser.parse_args()
     select_slice(args.slice)
     root = Path(__file__).resolve().parents[2]

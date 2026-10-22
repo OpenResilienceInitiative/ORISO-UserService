@@ -1119,7 +1119,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     }
   }
 
-  private static final class Fixture implements AutoCloseable {
+  static final class Fixture implements AutoCloseable {
     final boolean fiveActors;
     final SelfAppSignedIssuer issuer = new SelfAppSignedIssuer(ADMIN);
     final AuthenticatedUser human =
