@@ -22,7 +22,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Bounded replica-neutral retry of original protected ownership; no public cleanup endpoint. */
-public final class ProtectedInvitationRecoverySweep {
+public class ProtectedInvitationRecoverySweep {
   private static final String TASK = "protected-invitation-terminal-recovery";
   private static final int PAGE = 100;
   private static final Duration LEASE = Duration.ofMinutes(5);
