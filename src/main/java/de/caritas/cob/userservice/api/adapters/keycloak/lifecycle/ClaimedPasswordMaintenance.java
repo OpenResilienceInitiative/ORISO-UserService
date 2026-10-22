@@ -31,38 +31,59 @@ public final class ClaimedPasswordMaintenance {
   private final @NonNull String realmId;
   private final @NonNull Map<String, ProfileSelector> profiles;
 
-  /** Reviewed mounted selectors are data; the native receiver independently checks actual provenance. */
+  /**
+   * Reviewed mounted selectors are data; the native receiver independently checks actual
+   * provenance.
+   */
   public record ProfileSelector(String kind, String id, long version) {
     public ProfileSelector {
-      if (!Set.of("ORDINARY", "PROTECTED").contains(kind) || id == null || id.isBlank()
-          || id.length() > 255 || version <= 0) throw new IllegalArgumentException("Invalid password profile selector");
+      if (!Set.of("ORDINARY", "PROTECTED").contains(kind)
+          || id == null
+          || id.isBlank()
+          || id.length() > 255
+          || version <= 0) throw new IllegalArgumentException("Invalid password profile selector");
     }
   }
 
   public void requireSupport() {
-    if (!mode.isFiveActorMode() || !profiles.keySet().equals(Set.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN"))
+    if (!mode.isFiveActorMode()
+        || !profiles
+            .keySet()
+            .equals(Set.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN"))
         || actors.require(TaskPurpose.ACCOUNT_MAINTENANCE).actor() != TaskActor.ACCOUNT_ADMIN)
       throw new ScopedIdentityCommandRequiredException();
   }
 
-  public String existingSetupRequestDigest(ExistingSetupPasswordClaims.Binding binding, String password) {
-    requireSupport(); return codec.existingSetupPasswordRequestDigest(binding, password);
+  public String existingSetupRequestDigest(
+      ExistingSetupPasswordClaims.Binding binding, String password) {
+    requireSupport();
+    return codec.existingSetupPasswordRequestDigest(binding, password);
   }
 
   public String passwordResetRequestDigest(PasswordResetBinding binding, String password) {
-    requireSupport(); return codec.passwordResetRequestDigest(binding, password);
+    requireSupport();
+    return codec.passwordResetRequestDigest(binding, password);
   }
 
-  public PasswordResetBinding issuance(UUID workflowId, String accountId, Long tenantId,
-      String username, String recipient, String accountKind, Instant expiresAt) {
-    requireSupport(); throw new ScopedIdentityCommandRequiredException();
+  public PasswordResetBinding issuance(
+      UUID workflowId,
+      String accountId,
+      Long tenantId,
+      String username,
+      String recipient,
+      String accountKind,
+      Instant expiresAt) {
+    requireSupport();
+    throw new ScopedIdentityCommandRequiredException();
   }
 
   public void setup(ExistingAccountSetupService.ClaimedSetup claim, String password) {
-    requireSupport(); throw new ScopedIdentityCommandRequiredException();
+    requireSupport();
+    throw new ScopedIdentityCommandRequiredException();
   }
 
   public void reset(PasswordResetService.ClaimedReset claim, String password) {
-    requireSupport(); throw new ScopedIdentityCommandRequiredException();
+    requireSupport();
+    throw new ScopedIdentityCommandRequiredException();
   }
 }
