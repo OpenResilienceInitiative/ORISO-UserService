@@ -59,7 +59,7 @@ jobs:
           floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedInvitationsTest'] = 10
           floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationJournalTest'] = 19
           floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationMailSecretsTest'] = 10
-          floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationMailOutboxTest'] = 14
+          floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationMailOutboxTest'] = 15
 
           def git(*args):
               return subprocess.check_output(['git', *args]).decode().strip()

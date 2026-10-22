@@ -142,6 +142,19 @@ class ProtectedInvitationMailOutboxTest {
   }
 
   @Test
+  void boundedLargeUtf8MailReachesTheSenderWithoutWideningTheProofReader() {
+    mail = new ProtectedInvitationMailOutbox.Mail(mail.rawToken(), mail.acceptUrl(), mail.subject(), "Ä".repeat(40_000), mail.templateId(), null);
+    String snapshot = json.canonical(mail);
+    assertTrue(snapshot.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 65_536);
+    assertThrows(IllegalArgumentException.class, () -> json.read(snapshot, JsonNode.class));
+    enqueue();
+    assertEquals("READY", state());
+    assertNotNull(assertDoesNotThrow(() -> restart(clock).dispatch(73)));
+    verify(sender).send(eq("ada@example.test"), eq(mail.subject()), eq(mail.body()), eq(mail.acceptUrl()), eq(7L), isNull(), any());
+    assertEquals("SENT", state());
+  }
+
+  @Test
   void aRolledBackOwningTransactionLeavesNeitherTokenNorMail() {
     var transaction = new TransactionTemplate(manager);
     assertThrows(
