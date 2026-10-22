@@ -1,0 +1,155 @@
+package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos.AccountCreation;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationAcceptance.AcceptanceClaim;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.Timestamp;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.Base64;
+import java.util.HexFormat;
+import java.util.UUID;
+import org.h2.jdbcx.JdbcDataSource;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+/** Real H2 + actual migrations/acceptance claim. Native crypto uses independent synthetic vectors. */
+class JdbcProtectedAccountCreationTest {
+  private static final String TOKEN = "b".repeat(64);
+  private final Clock clock = Clock.fixed(Instant.parse("2030-01-01T00:00:00Z"), ZoneOffset.UTC);
+  private JdbcTemplate jdbc;
+  private DataSourceTransactionManager manager;
+  private JdbcProtectedInvitationJournal journal;
+  private JdbcProtectedInvitationAcceptance acceptance;
+  private AccountLifecycleCodec json;
+  private ProtectedAccountCodec accounts;
+  private JsonNode vector;
+  private AcceptanceClaim claim;
+
+  @BeforeEach
+  void actualOwningDatabaseAndFrozenNativeVector() throws Exception {
+    var source = new JdbcDataSource();
+    source.setURL("jdbc:h2:mem:creation-" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1");
+    jdbc = new JdbcTemplate(source);
+    manager = new DataSourceTransactionManager(source);
+    jdbc.execute("CREATE TABLE account_invite(id BIGINT PRIMARY KEY,target_role VARCHAR(64),tenant_id BIGINT,recipient_email VARCHAR(255),purpose VARCHAR(32),status VARCHAR(32),expires_at TIMESTAMP,token_hash VARCHAR(64),agency_id BIGINT,tenant_id_reservation_token VARCHAR(36))");
+    for (String name : new String[] {"20261022_protected_invitation_367", "20261022_protected_invitation_acceptance_367", "20261022_protected_account_creation_367"}) {
+      for (String sql : Files.readString(Path.of("src/main/resources/db/changelog/changeset/" + name + "/migrate.sql")).split(";")) {
+        if (!sql.isBlank()) jdbc.execute(sql);
+      }
+    }
+    byte[] key = HexFormat.of().parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    json = new AccountLifecycleCodec(key);
+    vector = json.read(Files.readString(Path.of("src/test/resources/scenario-c/protected-account-v1.json")), JsonNode.class);
+    var approvals = new ProtectedInvitationCodec(key, clock, vector.path("realmName").asText(), vector.path("realmId").asText());
+    accounts = new ProtectedAccountCodec(key, clock, approvals, vector.path("realmName").asText(), vector.path("realmId").asText(), vector.path("realmIssuer").asText());
+    var av = vector.path("approvalVector");
+    var frozen = approvals.freeze(UUID.fromString(av.path("approvalId").asText()), json.canonical(av.path("request")), av.path("issuerRealm").asText(), av.path("issuerSubject").asText());
+    jdbc.update("INSERT INTO account_invite VALUES(73,'TENANT_ADMIN',7,'ada@example.test','INVITE','EMAIL_SENT',?,?,NULL,NULL)", Timestamp.from(Instant.parse("2030-01-02T03:04:05Z")), TOKEN);
+    journal = new JdbcProtectedInvitationJournal(jdbc, manager, approvals, json, clock);
+    journal.propose(73, frozen);
+    journal.recordReady(frozen.approvalId(), approvals.verifyAuthorized(frozen, json.canonical(av.path("response"))));
+    acceptance = new JdbcProtectedInvitationAcceptance(jdbc, manager, journal, approvals, json, clock);
+    acceptance.claim(73, TOKEN, vector.path("registration"));
+    // Fix only these synthetic SQL identity values to the independently signed vector.
+    // Re-read through the actual acceptance owner; no public constructor or mock claim.
+    jdbc.update("UPDATE protected_invitation_acceptance SET claim_id=?,attempt_id=?,execution_id=? WHERE invite_id=73", vector.path("claimId").asText(), vector.path("attemptId").asText(), vector.path("executionId").asText());
+    claim = acceptance.claim(73, TOKEN, vector.path("registration"));
+  }
+
+  @Test
+  void originalPreparedMetadataIsCommittedBeforeRpcWithoutPasswordOrAccountBody() {
+    var prepared = prepared();
+    assertDoesNotThrow(() -> owner().prepare(claim, prepared));
+    assertEquals(1, count("protected_account_creation"));
+    assertEquals("PREPARED", jdbc.queryForObject("SELECT state FROM protected_account_creation", String.class));
+    String saved = jdbc.queryForObject("SELECT prepared_checkpoint FROM protected_account_creation", String.class);
+    String plain = new String(Base64.getUrlDecoder().decode(saved.split("\\.")[0]), StandardCharsets.UTF_8);
+    assertFalse(plain.contains(account().password()));
+    assertFalse(plain.contains("\"password\""));
+    assertFalse(plain.contains("\"body\""));
+    assertFalse(plain.contains("\"account\""));
+    assertEquals(prepared.creationFingerprint(), owner().metadata(claim).creationFingerprint());
+    assertEquals(0, count("protected_account_recovery"));
+  }
+
+  @Test
+  void restartKeepsTheOriginalMetadataAndEachSavedRecoveryIdBeforeRpc() {
+    assertDoesNotThrow(() -> owner().prepare(claim, prepared()));
+    String original = jdbc.queryForObject("SELECT prepared_checkpoint FROM protected_account_creation", String.class);
+    assertDoesNotThrow(() -> owner().prepare(claim, prepared()));
+    assertEquals(original, jdbc.queryForObject("SELECT prepared_checkpoint FROM protected_account_creation", String.class));
+    var first = owner().recovery(claim, 0);
+    var replay = owner().recovery(claim, 0);
+    assertEquals(first.recoveryId(), replay.recoveryId());
+    assertEquals(first.approvalId(), replay.approvalId());
+    assertEquals(first.attemptId(), replay.attemptId());
+    assertEquals(1, count("protected_account_recovery"));
+    assertArrayEquals(accounts.recoverBody(first), accounts.recoverBody(replay));
+    assertThrows(IllegalArgumentException.class, () -> owner().recovery(claim, -1));
+    assertThrows(IllegalArgumentException.class, () -> owner().recovery(claim, Long.MAX_VALUE));
+  }
+
+  @Test
+  void onlyAnExactVerifiedCreatedResultBecomesDurableOwnershipAcrossRestart() {
+    var prepared = prepared();
+    assertDoesNotThrow(() -> owner().prepare(claim, prepared));
+    assertThrows(IllegalStateException.class, () -> owner().created(claim));
+    var created = accounts.verifyCreated(prepared, json.canonical(vector.path("createdResponse")).getBytes(StandardCharsets.UTF_8));
+    assertDoesNotThrow(() -> owner().recordCreated(claim, created));
+    var restored = owner().created(claim);
+    assertEquals(created.accountId(), restored.accountId());
+    assertEquals(created.creationProof(), restored.creationProof());
+    assertEquals("CREATED", jdbc.queryForObject("SELECT state FROM protected_account_creation", String.class));
+    assertDoesNotThrow(() -> owner().recordCreated(claim, created));
+    assertEquals(1, count("protected_account_creation"));
+    assertFalse(jdbc.queryForMap("SELECT * FROM protected_account_creation").toString().contains(account().password()));
+  }
+
+  @Test
+  void changedCurrentRecipientTokenOrClaimTupleCannotReadOrRewriteTheSavedAttempt() {
+    assertDoesNotThrow(() -> owner().prepare(claim, prepared()));
+    String original = jdbc.queryForObject("SELECT prepared_checkpoint FROM protected_account_creation", String.class);
+    jdbc.update("UPDATE account_invite SET token_hash=? WHERE id=73", "c".repeat(64));
+    assertThrows(IllegalStateException.class, () -> owner().metadata(claim));
+    assertThrows(IllegalStateException.class, () -> owner().recovery(claim, 0));
+    jdbc.update("UPDATE account_invite SET token_hash=? WHERE id=73", TOKEN);
+    jdbc.update("UPDATE protected_invitation_acceptance SET attempt_id=? WHERE invite_id=73", UUID.randomUUID().toString());
+    assertThrows(IllegalStateException.class, () -> owner().prepare(claim, prepared()));
+    assertEquals(original, jdbc.queryForObject("SELECT prepared_checkpoint FROM protected_account_creation", String.class));
+    assertEquals(0, count("protected_account_recovery"));
+  }
+
+  @Test
+  void ambientSqlCannotPretendTheOriginalIntentIsAlreadyDurable() {
+    new TransactionTemplate(manager).execute(tx -> {
+      assertThrows(IllegalStateException.class, () -> owner().prepare(claim, prepared()));
+      assertThrows(IllegalStateException.class, () -> owner().metadata(claim));
+      assertThrows(IllegalStateException.class, () -> owner().recovery(claim, 0));
+      return null;
+    });
+    assertEquals(0, count("protected_account_creation"));
+  }
+
+  @Test
+  void anotherPhysicalDataSourceCannotBorrowTheJournalTransactionOwner() {
+    var foreign = new JdbcDataSource();
+    foreign.setURL("jdbc:h2:mem:foreign-" + UUID.randomUUID());
+    assertThrows(IllegalArgumentException.class, () -> new JdbcProtectedAccountCreation(jdbc, new DataSourceTransactionManager(foreign), journal, accounts, json, clock));
+    assertThrows(IllegalArgumentException.class, () -> new JdbcProtectedAccountCreation(new JdbcTemplate(foreign), new DataSourceTransactionManager(foreign), journal, accounts, json, clock));
+  }
+
+  private JdbcProtectedAccountCreation owner() { return new JdbcProtectedAccountCreation(jdbc, manager, journal, accounts, json, clock); }
+  private AccountCreation account() { return json.read(vector.path("account").toString(), AccountCreation.class); }
+  private ProtectedAccountCodec.PreparedCreation prepared() { return accounts.prepare(claim, vector.path("registration"), account()); }
+  private int count(String table) { return jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class); }
+}
