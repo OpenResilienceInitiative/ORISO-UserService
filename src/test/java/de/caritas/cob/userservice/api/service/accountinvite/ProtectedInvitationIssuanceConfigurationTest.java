@@ -90,6 +90,58 @@ class ProtectedInvitationIssuanceConfigurationTest {
         .isInstanceOf(IllegalStateException.class);
   }
 
+  @Test
+  void explicitScenarioCConfigurationPublishesTheCompleteFixedRecoveryGraph() {
+    var keycloak = org.mockito.Mockito.mock(de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig.class);
+    org.mockito.Mockito.when(keycloak.getRealm()).thenReturn("oriso");
+    org.mockito.Mockito.when(keycloak.getAuthServerUrl()).thenReturn("https://identity.example.test/auth");
+    var source = new org.h2.jdbcx.JdbcDataSource();
+    source.setURL("jdbc:h2:mem:runtime-" + java.util.UUID.randomUUID() + ";MODE=MySQL");
+    var manager = new org.springframework.jdbc.datasource.DataSourceTransactionManager(source);
+    var runner = new org.springframework.boot.test.context.runner.ApplicationContextRunner()
+        .withUserConfiguration(ProtectedInvitationIssuanceConfiguration.class)
+        .withPropertyValues("ORISO_ACCOUNT_LIFECYCLE_ENABLED=true", "TASK_IDENTITY_MODEL=FIVE_ACTORS",
+            "KEYCLOAK_REALM_INTERNAL_ID=aa6e019d-2ec2-4c4e-ab80-5fd3b9b58294",
+            "ORISO_ACCOUNT_LIFECYCLE_REALM=oriso", "ORISO_PROTECTED_INVITATION_PROFILE_IDS=" + REVIEWED,
+            "ORISO_TASK_CONTEXT_KEY=" + java.util.Base64.getEncoder().encodeToString(new byte[32]))
+        .withBean(org.springframework.jdbc.core.JdbcTemplate.class, () -> new org.springframework.jdbc.core.JdbcTemplate(source))
+        .withBean(org.springframework.transaction.PlatformTransactionManager.class, () -> manager)
+        .withBean(de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec.class,
+            () -> new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec(new byte[32]))
+        .withBean(de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig.class, () -> keycloak)
+        .withBean("keycloakRestTemplate", org.springframework.web.client.RestTemplate.class, org.springframework.web.client.RestTemplate::new);
+    for (Class<?> type : new Class<?>[] {
+        jakarta.persistence.EntityManager.class, jakarta.servlet.http.HttpServletRequest.class,
+        de.caritas.cob.userservice.api.helper.AuthenticatedUser.class,
+        de.caritas.cob.userservice.api.helper.UsernameTranscoder.class,
+        de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration.class,
+        de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker.class,
+        de.caritas.cob.userservice.api.port.out.AccountInviteRepository.class,
+        de.caritas.cob.userservice.api.port.out.AdminRepository.class,
+        de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository.class,
+        de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository.class,
+        de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class,
+        de.caritas.cob.userservice.api.port.out.IdentityAuthentication.class,
+        de.caritas.cob.userservice.api.tenant.TenantContextProvider.class,
+        de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.class,
+        de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.class,
+        de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService.class,
+        AccountInviteService.class,
+        de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.class,
+        de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantCreationClient.class
+    }) runner = registerMock(runner, type);
+    runner.run(context -> {
+      assertThat(context.getStartupFailure()).isNull();
+      assertThat(context).hasSingleBean(de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedCleanupStatusCodec.class);
+      assertThat(context).hasSingleBean(ProtectedInvitationRecoverySweep.class);
+    });
+  }
+
+  private static <T> org.springframework.boot.test.context.runner.ApplicationContextRunner registerMock(
+      org.springframework.boot.test.context.runner.ApplicationContextRunner runner, Class<T> type) {
+    return runner.withBean(type, () -> org.mockito.Mockito.mock(type));
+  }
+
   private static MockEnvironment installed() {
     return new MockEnvironment()
         .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS")

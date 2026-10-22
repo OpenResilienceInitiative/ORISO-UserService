@@ -41,6 +41,23 @@ public final class ProtectedInvitationRecoverySweep {
     this.clock = Objects.requireNonNull(clock);
   }
 
+  /** Configured worker boundary; runtime identity context remains closed until its tracer passes. */
+  public ProtectedInvitationRecoverySweep(
+      TaskActorConfiguration actors,
+      ScheduledTaskClaimService claims,
+      JdbcProtectedInvitationCancellation cancellation,
+      ProtectedAdminOnboardingService coordinator,
+      AccountInviteService invites,
+      Clock clock,
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig identity,
+      de.caritas.cob.userservice.api.port.out.IdentityAuthentication authentication,
+      de.caritas.cob.userservice.api.tenant.TenantContextProvider tenantContext) {
+    this(actors, claims, cancellation, coordinator, invites, clock);
+    Objects.requireNonNull(identity);
+    Objects.requireNonNull(authentication);
+    Objects.requireNonNull(tenantContext);
+  }
+
   public void retryPending() {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()

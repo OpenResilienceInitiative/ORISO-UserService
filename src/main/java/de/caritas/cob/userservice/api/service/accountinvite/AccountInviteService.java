@@ -997,6 +997,7 @@ public class AccountInviteService {
   private void releaseProtectedReservation(AccountInvite current, LocalDateTime now) {
     ledger.releaseUnneeded(current, now);
     current.setTenantIdReservationToken(null);
+    current.setActiveRecipientKey(null);
     accountInviteRepository.saveAndFlush(current);
   }
 

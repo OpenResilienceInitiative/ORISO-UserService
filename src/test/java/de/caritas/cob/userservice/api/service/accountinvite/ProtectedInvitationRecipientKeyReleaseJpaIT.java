@@ -95,6 +95,33 @@ class ProtectedInvitationRecipientKeyReleaseJpaIT extends ProtectedInvitationIss
   }
 
   @Test
+  void unknownRevokeRetainsTheOriginalEmailKeyUntilIndependentReleaseProof() {
+    when(tenantIds.reserve(null)).thenReturn(
+        new TenantIdReservation(17L, "9eb4c868-16d4-4be5-8c0b-5fb9d2b866b3"),
+        new TenantIdReservation(18L, "59ba921a-849d-4f32-a492-98d03ff582b0"));
+    when(tenantIds.getAvailability(18L)).thenReturn(IdAllocationStatus.RESERVED);
+    var original = service.createInvite(command());
+    String held = original.getActiveRecipientKey();
+    doAnswer(call -> {
+      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+      transaction().executeWithoutResult(tx -> ((Runnable) call.getArgument(2)).run());
+      throw new KeycloakProtectedInvitations.RemoteFailure(0);
+    }).when(cancellation).cancel(eq(original.getId()),
+        eq(ProtectedInvitationCancellation.Reason.REVOKED), any());
+    assertThrows(KeycloakProtectedInvitations.RemoteFailure.class,
+        () -> service.revokeInvite(original.getId()));
+    var invalid = invites.findById(original.getId()).orElseThrow();
+    assertThat(invalid.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
+    assertThat(invalid.getTokenHash()).isNull();
+    assertThat(invalid.getTenantIdReservationToken()).isEqualTo(original.getTenantIdReservationToken());
+    assertThat(invalid.getActiveRecipientKey()).isEqualTo(held);
+    assertThatThrownBy(() -> service.createInvite(command())).isInstanceOf(RuntimeException.class);
+    verify(cancellation, never()).withAcknowledged(anyLong(), any());
+    verify(tenantIds, never()).release(17L);
+    verifyNoInteractions(sender, approvals);
+  }
+
+  @Test
   void stalePendingDiscoveryNeverReleasesTheEmailKeyOfAnUnexpiredProtectedInvite() {
     var live = service.createInvite(command());
     when(cancellation.pendingInviteIds(100)).thenReturn(List.of(live.getId()));
