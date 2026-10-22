@@ -72,6 +72,7 @@ class ProtectedPairEvidence(unittest.TestCase):
         self.assertTrue(self.proof(name=pair.EMAIL_CASE, expected=pair.EMAIL_CASE)["accepted"])
         self.assertTrue(self.proof(name=pair.TENANT_EMAIL_CASE, expected=pair.TENANT_EMAIL_CASE)["accepted"])
         self.assertTrue(self.proof(name=pair.LOST_COMMIT_CASE, expected=pair.LOST_COMMIT_CASE)["accepted"])
+        self.assertTrue(self.proof(name=pair.RESERVED_CASE, expected=pair.RESERVED_CASE)["accepted"])
         with self.assertRaises(ValueError):
             self.proof(name="unrelated", expected="unrelated")
 
@@ -98,7 +99,8 @@ class ProtectedPairEvidence(unittest.TestCase):
         self.assertEqual(["PLATFORM_ADMIN", "TENANT_ADMIN"], tree["jobs"]["protected-recipient-native-pair"]["strategy"]["matrix"]["role"])
         matrix = tree["jobs"]["protected-recipient-native-pair"]["strategy"]["matrix"]
         self.assertEqual(["happy"], matrix["scenario"])
-        self.assertEqual([{"kind": "app", "role": "PLATFORM_ADMIN", "scenario": "lost-commit"}], matrix["include"])
+        self.assertEqual([{"kind": "app", "role": "PLATFORM_ADMIN", "scenario": "lost-commit"},
+                          {"kind": "app", "role": "TENANT_ADMIN", "scenario": "reserved-new"}], matrix["include"])
         self.assertIn("-DfailIfNoTests=true", SOURCE.read_text())
         self.assertIn("-Dsurefire.failIfNoSpecifiedTests=true", SOURCE.read_text())
         self.assertIn("capture_output=True, timeout=180", SOURCE.read_text())

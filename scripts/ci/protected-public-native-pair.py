@@ -26,6 +26,7 @@ TENANT_CASE = "realPublicTenantInvitationStagesJpaAndCompletesNativeAppBeforeAck
 EMAIL_CASE = "realPublicPlatformInvitationStagesJpaAndCompletesNativeEmailBeforeAcknowledgingActivation"
 TENANT_EMAIL_CASE = "realPublicTenantInvitationStagesJpaAndCompletesNativeEmailBeforeAcknowledgingActivation"
 LOST_COMMIT_CASE = "realPublicLostNativeCommitReplyReconcilesSavedReadyWithoutRepeatingActivation"
+RESERVED_CASE = "realPublicReservedTenantInvitationVerifiesHeldTenantBeforeNativeAppActivation"
 IMAGE = "quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992"
 
 def save(path, value):
@@ -44,7 +45,7 @@ def snapshot(kc):
     return {"user_commit": current, "keycloak_commit": native, "user_sources": manifest(ROOT), "keycloak_sources": manifest(kc)}
 
 def sanitize(reports, output, expected_case=CASE):
-    if expected_case not in {CASE, TENANT_CASE, EMAIL_CASE, TENANT_EMAIL_CASE, LOST_COMMIT_CASE}:
+    if expected_case not in {CASE, TENANT_CASE, EMAIL_CASE, TENANT_EMAIL_CASE, LOST_COMMIT_CASE, RESERVED_CASE}:
         raise ValueError("Unknown public native case")
     clean = ET.Element("testsuite", name=SUITE)
     totals = dict(tests=0, failures=0, errors=0, skipped=0)
@@ -138,10 +139,14 @@ def native(kc, report):
     case = {("PLATFORM_ADMIN", "app"): CASE, ("TENANT_ADMIN", "app"): TENANT_CASE,
         ("PLATFORM_ADMIN", "email"): EMAIL_CASE, ("TENANT_ADMIN", "email"): TENANT_EMAIL_CASE}[(role, kind)]
     scenario = os.environ.get("PAIR_SCENARIO", "happy")
-    if scenario not in {"happy", "lost-commit"} or (scenario == "lost-commit" and (role, kind) != ("PLATFORM_ADMIN", "app")):
+    if (scenario not in {"happy", "lost-commit", "reserved-new"}
+            or (scenario == "lost-commit" and (role, kind) != ("PLATFORM_ADMIN", "app"))
+            or (scenario == "reserved-new" and (role, kind) != ("TENANT_ADMIN", "app"))):
         raise ValueError("Unknown or mismatched fixed terminal reconciliation scenario")
     if scenario == "lost-commit":
         case = LOST_COMMIT_CASE
+    elif scenario == "reserved-new":
+        case = RESERVED_CASE
     expected_tenant = 0 if role == "PLATFORM_ADMIN" else 17
     module = kc / "keycloak-image/account-lifecycle-spi"
     otp = kc / "keycloak-image/otp-config-spi"
@@ -156,6 +161,9 @@ def native(kc, report):
         "service/accountinvite/ProtectedInvitationIssuance", "service/accountinvite/ProtectedInvitationIssuanceConfiguration",
         "service/accountinvite/onboarding/ProtectedAdminOnboardingService", "adapters/keycloak/lifecycle/JdbcProtectedAccountActivation",
         "adapters/web/controller/TenantAdminOnboardingController", "service/accountinvite/onboarding/ProtectedAdminRegistrationBodyAdvice"]]]
+    compiled_paths += ["target/test-classes/de/caritas/cob/userservice/api/service/accountinvite/ProtectedPublicTenantFixture.class",
+        "target/classes/de/caritas/cob/userservice/api/service/accountinvite/onboarding/TenantCreationClient.class",
+        "target/classes/de/caritas/cob/userservice/api/service/accountinvite/onboarding/ReservedTenantBootstrap.class"]
     if not all((ROOT / name).is_file() for name in compiled_paths):
         raise ValueError("Actual compiled paired User classes required")
     compiled = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in compiled_paths}
@@ -176,6 +184,8 @@ def native(kc, report):
             profile = json.loads(json.dumps(configuration["profiles"][0]))
             profile.update(id="tenant-v1", kind="TENANT_ADMIN", tenantModes=["EXISTING"],
                 groupId=cls.tenant_group_id, groupPath="/protected-admins/tenant-admins", realmRoles=["tenant-admin"])
+            if scenario == "reserved-new":
+                profile["tenantModes"] = ["EXISTING", "RESERVED_NEW"]
             configuration["profiles"].append(profile)
             configuration["bindings"][0]["protectedProfileIds"].append("tenant-v1")
             configuration["bindings"][0]["protectedProfileIds"].sort()
@@ -234,7 +244,8 @@ def native(kc, report):
             "PAIR_LOGIN_WITNESS": str(report.with_name("protected-public-native-login.json").resolve()),
             "PAIR_FRESH_LOGIN_WITNESS": str(report.with_name("protected-public-native-fresh-login.json").resolve()),
             "PAIR_EMAIL_LOGIN_WITNESS": str(report.with_name("protected-public-native-email-login.json").resolve()),
-            "PAIR_TERMINAL_WITNESS": str(report.with_name("protected-public-native-terminal.json").resolve())})
+            "PAIR_TERMINAL_WITNESS": str(report.with_name("protected-public-native-terminal.json").resolve()),
+            "PAIR_TENANT_WITNESS": str(report.with_name("protected-public-native-tenant.json").resolve())})
         if code_server:
             environment["PAIR_MAIL_CODES"] = "http://127.0.0.1:" + str(code_server.server_address[1])
         for actor, (client, _) in lifecycle.ACTORS.items():
@@ -289,6 +300,16 @@ def native(kc, report):
                 assert set(observed) == expected and all(value is True for value in observed.values())
                 receipt["terminal_reconciliation"] = observed
             receipt["accepted"] &= receipt.get("terminal_reconciliation") is not None
+        if scenario == "reserved-new":
+            tenant_witness = report.with_name("protected-public-native-tenant.json")
+            expected = {"realTenantCallerAndNativeSetupBroker", "actualHeldPairAndDisplayedDpaBound",
+                "privateTenantReceiptBeforeLocalStage", "sameRegistrationRetryNoSecondTenant",
+                "reservationCapabilityAbsentFromFrozenTenantMetadata"}
+            if tenant_witness.is_file():
+                observed = json.loads(tenant_witness.read_text())
+                assert set(observed) == expected and all(value is True for value in observed.values())
+                receipt["reserved_tenant_join"] = observed
+            receipt["accepted"] &= receipt.get("reserved_tenant_join") is not None
         phase = "post-java-native-inspection"
         # Installer-only fresh fixture token; tested actor expiry/authority is never refreshed here.
         status, installer = lifecycle.call(fixture.base, "POST", "/realms/master/protocol/openid-connect/token", {"client_id": "admin-cli", "grant_type": "password", "username": "synthetic-installer", "password": lifecycle.INSTALLER}, form=True)

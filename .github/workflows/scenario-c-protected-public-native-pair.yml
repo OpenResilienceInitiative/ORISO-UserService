@@ -36,6 +36,9 @@ jobs:
         - kind: app
           role: PLATFORM_ADMIN
           scenario: lost-commit
+        - kind: app
+          role: TENANT_ADMIN
+          scenario: reserved-new
     env:
       PAIR_KIND: ${{ matrix.kind }}
       PAIR_ROLE: ${{ matrix.role }}
@@ -84,12 +87,12 @@ jobs:
 
         mkdir -p target/protected-public-native
 
-        mvn -B -ntp -q spotless:apply "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedAdminPublicNativePairProof.java"
+        mvn -B -ntp -q spotless:apply "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedAdminPublicNativePairProof.java,$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedPublicTenantFixture.java"
 
-        git diff --binary -- src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedAdminPublicNativePairProof.java
+        git diff --binary -- src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedAdminPublicNativePairProof.java src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedPublicTenantFixture.java
         > target/protected-public-native/protected-public-native-format.patch
 
-        git diff --exit-code -- src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedAdminPublicNativePairProof.java'
+        git diff --exit-code -- src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedAdminPublicNativePairProof.java src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedPublicTenantFixture.java'
     - name: Bind both exact source checkouts before builds
       run: python scripts/ci/protected-public-native-pair.py snapshot --keycloak native-keycloak
     - name: Build same-source lifecycle before its provided OTP consumer
@@ -115,7 +118,7 @@ jobs:
     - name: Compile actual User owned recipient adapter and native paired proof before container
       env:
         MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2
-      run: mvn -B -ntp -q test-compile -DskipTests "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedAdminPublicNativePairProof.java"
+      run: mvn -B -ntp -q test-compile -DskipTests "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedAdminPublicNativePairProof.java,$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedPublicTenantFixture.java"
     - name: Run one bounded public invitation JPA and selected native APP or email activation flow
       timeout-minutes: 10
       env:
@@ -150,7 +153,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        name: scenario-c-protected-recipient-${{ matrix.role }}-${{ matrix.kind }}-native-pair${{ matrix.scenario == 'lost-commit' && '-lost-commit' || '' }}
+        name: scenario-c-protected-recipient-${{ matrix.role }}-${{ matrix.kind }}-native-pair${{ matrix.scenario == 'lost-commit' && '-lost-commit' || matrix.scenario == 'reserved-new' && '-reserved-new' || '' }}
         path: 'target/protected-public-native/protected-public-native-*.json
 
           target/protected-public-native/protected-public-native-*.xml
