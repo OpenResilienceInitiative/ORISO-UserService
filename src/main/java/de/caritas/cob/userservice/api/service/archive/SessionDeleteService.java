@@ -61,7 +61,11 @@ public class SessionDeleteService {
     }
 
     try {
-      matrixSessionSystemMessageService.postUserLeftChatMessage(session);
+      var endedBy =
+          authenticatedUser.isConsultant()
+              ? MatrixSessionSystemMessageService.EndedBy.CONSULTANT
+              : MatrixSessionSystemMessageService.EndedBy.ADVICE_SEEKER;
+      matrixSessionSystemMessageService.postUserLeftChatMessage(session, endedBy);
     } catch (Exception e) {
       log.warn("Could not post Matrix user-left message before deleting session {}", sessionId, e);
     }

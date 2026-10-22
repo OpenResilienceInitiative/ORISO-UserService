@@ -362,7 +362,7 @@ class RequiredCiContractTest(unittest.TestCase):
         publish = job_block(workflow, "publish")
         integration = job_block(workflow, "required-integration-tests")
 
-        self.assertIn("needs: [required-integration-tests, mariadb-contract]", publish)
+        self.assertIn("needs: [build, required-integration-tests, mariadb-contract]", publish)
         self.assertIn("name: required integration tests", integration)
         self.assertNotIn("continue-on-error:", integration)
 
