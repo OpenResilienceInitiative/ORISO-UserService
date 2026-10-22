@@ -181,8 +181,8 @@ public final class JdbcProtectedInvitationJournal {
         tx -> {
           Invite invite = lockInvite(inviteId);
           Row row = row(inviteId);
-          if (!Set.of("READY", "CANCEL_REQUESTED").contains(row.state())
-              || row.response() == null) throw unavailable();
+          if (!Set.of("READY", "CANCEL_REQUESTED").contains(row.state()) || row.response() == null)
+            throw unavailable();
           requireCurrent(inviteId, invite, row.proposal(), false, true, true, true);
           codec.verifyAuthorizedHistory(row.proposal(), row.response());
           return action.get();
@@ -347,10 +347,10 @@ public final class JdbcProtectedInvitationJournal {
         || !(historical
                 ? Set.of("EMAIL_SENT", "ACCEPTED", "EXPIRED", "REVOKED", "SUPERSEDED")
                 : recipient
-                ? Set.of("EMAIL_SENT", "ACCEPTED")
-                : live
-                    ? Set.of("DRAFT", "EMAIL_SENT")
-                    : Set.of("DRAFT", "EMAIL_SENT", "EXPIRED", "REVOKED", "SUPERSEDED"))
+                    ? Set.of("EMAIL_SENT", "ACCEPTED")
+                    : live
+                        ? Set.of("DRAFT", "EMAIL_SENT")
+                        : Set.of("DRAFT", "EMAIL_SENT", "EXPIRED", "REVOKED", "SUPERSEDED"))
             .contains(invite.status())
         || !scope.path("protectedKind").asText().equals(invite.role())
         || invite.tenant() == null
