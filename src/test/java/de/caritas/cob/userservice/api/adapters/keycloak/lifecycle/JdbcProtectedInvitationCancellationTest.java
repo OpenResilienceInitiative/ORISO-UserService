@@ -160,6 +160,7 @@ class JdbcProtectedInvitationCancellationTest {
 
   @Test
   void noSavedNativeAcknowledgementMeansNoReservationReleaseOrTransfer() {
+    assertThrows(AccessDeniedException.class, () -> service().verifiedRestriction(73));
     assertThrows(AccessDeniedException.class, () -> service().withAcknowledged(73, this::release));
     assertEquals(0, releases.get());
     verifyNoInteractions(receiver);
@@ -185,6 +186,10 @@ class JdbcProtectedInvitationCancellationTest {
     service().cancel(73, Reason.REVOKED, this::invalidate);
     assertEquals(1, intents());
     assertEquals("ACKNOWLEDGED", state());
+    var savedFence = assertDoesNotThrow(() -> service().verifiedRestriction(73));
+    assertTrue(savedFence.cleanupRequired());
+    assertEquals(
+        terminals.path("expiredBound"), json.read(savedFence.responseJson(), JsonNode.class));
     assertThrows(AccessDeniedException.class, () -> service().withAcknowledged(73, this::release));
     assertEquals(0, releases.get());
   }
@@ -263,6 +268,7 @@ class JdbcProtectedInvitationCancellationTest {
     assertEquals("ACKNOWLEDGED", state());
     jdbc.update(
         "UPDATE protected_invitation_cancellation SET response_json='{}' WHERE invite_id=73");
+    assertThrows(AccessDeniedException.class, () -> service().verifiedRestriction(73));
     assertThrows(AccessDeniedException.class, () -> service().withAcknowledged(73, this::release));
     assertEquals(0, releases.get());
   }
