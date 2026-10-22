@@ -80,6 +80,16 @@ class JdbcProtectedInvitationJournalTest {
   }
 
   @Test
+  void aForeignDatasourceCannotBeTheJournalTransactionOwner() throws Exception {
+    try (var connection = jdbc.getDataSource().getConnection()) {
+      connection.setAutoCommit(false);
+      var foreign = new org.springframework.jdbc.datasource.SingleConnectionDataSource(connection, true);
+      assertThrows(IllegalArgumentException.class, () -> new JdbcProtectedInvitationJournal(
+          new JdbcTemplate(foreign), manager, codec, json, clock));
+    }
+  }
+
+  @Test
   void exactRetryDoesNotReplaceStableApprovalOrWorkflow() {
     journal.propose(73, proposal);
     assertEquals(proposal, journal.propose(73, proposal));
