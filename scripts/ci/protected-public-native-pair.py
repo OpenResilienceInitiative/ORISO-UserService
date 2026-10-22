@@ -25,6 +25,7 @@ CASE = "realPublicPlatformInvitationStagesJpaAndCompletesNativeAppBeforeAcknowle
 TENANT_CASE = "realPublicTenantInvitationStagesJpaAndCompletesNativeAppBeforeAcknowledgingActivation"
 EMAIL_CASE = "realPublicPlatformInvitationStagesJpaAndCompletesNativeEmailBeforeAcknowledgingActivation"
 TENANT_EMAIL_CASE = "realPublicTenantInvitationStagesJpaAndCompletesNativeEmailBeforeAcknowledgingActivation"
+LOST_COMMIT_CASE = "realPublicLostNativeCommitReplyReconcilesSavedReadyWithoutRepeatingActivation"
 IMAGE = "quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992"
 
 def save(path, value):
@@ -43,7 +44,7 @@ def snapshot(kc):
     return {"user_commit": current, "keycloak_commit": native, "user_sources": manifest(ROOT), "keycloak_sources": manifest(kc)}
 
 def sanitize(reports, output, expected_case=CASE):
-    if expected_case not in {CASE, TENANT_CASE, EMAIL_CASE, TENANT_EMAIL_CASE}:
+    if expected_case not in {CASE, TENANT_CASE, EMAIL_CASE, TENANT_EMAIL_CASE, LOST_COMMIT_CASE}:
         raise ValueError("Unknown public native case")
     clean = ET.Element("testsuite", name=SUITE)
     totals = dict(tests=0, failures=0, errors=0, skipped=0)
@@ -136,6 +137,11 @@ def native(kc, report):
         raise ValueError("Only the four fixed protected onboarding flows are allowed")
     case = {("PLATFORM_ADMIN", "app"): CASE, ("TENANT_ADMIN", "app"): TENANT_CASE,
         ("PLATFORM_ADMIN", "email"): EMAIL_CASE, ("TENANT_ADMIN", "email"): TENANT_EMAIL_CASE}[(role, kind)]
+    scenario = os.environ.get("PAIR_SCENARIO", "happy")
+    if scenario not in {"happy", "lost-commit"} or (scenario == "lost-commit" and (role, kind) != ("PLATFORM_ADMIN", "app")):
+        raise ValueError("Unknown or mismatched fixed terminal reconciliation scenario")
+    if scenario == "lost-commit":
+        case = LOST_COMMIT_CASE
     expected_tenant = 0 if role == "PLATFORM_ADMIN" else 17
     module = kc / "keycloak-image/account-lifecycle-spi"
     otp = kc / "keycloak-image/otp-config-spi"
@@ -179,7 +185,7 @@ def native(kc, report):
     saved = {name: os.environ.get(name) for name in jars}
     for name, path in jars.items():
         os.environ[name] = str(path.resolve())
-    receipt = {"kind": kind, "target_role": role, "accepted": False, "executed": 0, "before": before, "jars": hashes, "image": IMAGE, "compiled_user_classes": compiled}
+    receipt = {"kind": kind, "target_role": role, "scenario": scenario, "accepted": False, "executed": 0, "before": before, "jars": hashes, "image": IMAGE, "compiled_user_classes": compiled}
     phase = "native-fixture-setup"
     code_server = None
     try:
@@ -217,7 +223,7 @@ def native(kc, report):
             "actual_current_human_userinfo_session_client_tenant_grants": True,
             "real_checked_creator_and_admin_broker": True, "actual_single_use_totp_policy": True}
         environment = dict(os.environ)
-        environment.update({"PAIR_KIND": kind, "PAIR_ROLE": role, "PAIR_NATIVE_BASE": fixture.base,
+        environment.update({"PAIR_KIND": kind, "PAIR_ROLE": role, "PAIR_SCENARIO": scenario, "PAIR_NATIVE_BASE": fixture.base,
             "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id,
             "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(),
             "PAIR_RECIPIENT": recipient, "PAIR_HUMAN_SUBJECT": fixture.human_subject,
@@ -227,7 +233,8 @@ def native(kc, report):
             "PAIR_HTTP_WITNESS": str(report.with_name("protected-public-native-http.json").resolve()),
             "PAIR_LOGIN_WITNESS": str(report.with_name("protected-public-native-login.json").resolve()),
             "PAIR_FRESH_LOGIN_WITNESS": str(report.with_name("protected-public-native-fresh-login.json").resolve()),
-            "PAIR_EMAIL_LOGIN_WITNESS": str(report.with_name("protected-public-native-email-login.json").resolve())})
+            "PAIR_EMAIL_LOGIN_WITNESS": str(report.with_name("protected-public-native-email-login.json").resolve()),
+            "PAIR_TERMINAL_WITNESS": str(report.with_name("protected-public-native-terminal.json").resolve())})
         if code_server:
             environment["PAIR_MAIL_CODES"] = "http://127.0.0.1:" + str(code_server.server_address[1])
         for actor, (client, _) in lifecycle.ACTORS.items():
@@ -272,6 +279,16 @@ def native(kc, report):
             if email_login.is_file():
                 receipt["recipient_email_login"] = checked_email_login_observation(json.loads(email_login.read_text()))
             receipt["accepted"] &= receipt.get("recipient_email_login") == {"challengeStatus": 400, "challengeType": "EMAIL", "acceptedStatus": 200}
+        if scenario == "lost-commit":
+            terminal = report.with_name("protected-public-native-terminal.json")
+            expected = {"realNativeCommitReplyDiscarded", "publicUnavailableInsteadOfSuccess",
+                "localReadyRetainedBeforeReconcile", "independentCurrentSetupStatusRead",
+                "noRepeatedCreateOtpOrCommit", "cachedLocalTerminalReconcileEffectFree"}
+            if terminal.is_file():
+                observed = json.loads(terminal.read_text())
+                assert set(observed) == expected and all(value is True for value in observed.values())
+                receipt["terminal_reconciliation"] = observed
+            receipt["accepted"] &= receipt.get("terminal_reconciliation") is not None
         phase = "post-java-native-inspection"
         # Installer-only fresh fixture token; tested actor expiry/authority is never refreshed here.
         status, installer = lifecycle.call(fixture.base, "POST", "/realms/master/protocol/openid-connect/token", {"client_id": "admin-cli", "grant_type": "password", "username": "synthetic-installer", "password": lifecycle.INSTALLER}, form=True)

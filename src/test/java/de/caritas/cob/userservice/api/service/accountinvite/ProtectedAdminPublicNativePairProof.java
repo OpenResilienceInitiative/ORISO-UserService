@@ -87,6 +87,10 @@ class ProtectedAdminPublicNativePairProof {
   static final String LOGICAL = "http://protected-fixture.invalid";
   static final List<Map<String, Object>> HTTP = new ArrayList<>();
   static final AtomicInteger APPROVALS = new AtomicInteger();
+  static final java.util.concurrent.atomic.AtomicBoolean LOSE_COMMIT =
+      new java.util.concurrent.atomic.AtomicBoolean();
+  static final java.util.concurrent.atomic.AtomicBoolean LOST_COMMIT =
+      new java.util.concurrent.atomic.AtomicBoolean();
   static org.springframework.test.web.client.MockRestServiceServer tenantPolicyBoundary;
   @Autowired AccountInviteService invitations;
   @Autowired ProtectedAdminOnboardingService onboarding;
@@ -173,7 +177,21 @@ class ProtectedAdminPublicNativePairProof {
     completePublicOnboarding(role, false);
   }
 
+  @Test
+  void realPublicLostNativeCommitReplyReconcilesSavedReadyWithoutRepeatingActivation()
+      throws Exception {
+    completePublicOnboarding(AccountInviteTargetRole.PLATFORM_ADMIN, false, true);
+  }
+
   void completePublicOnboarding(AccountInviteTargetRole role, boolean mail) throws Exception {
+    completePublicOnboarding(role, mail, false);
+  }
+
+  void completePublicOnboarding(AccountInviteTargetRole role, boolean mail, boolean loseCommit)
+      throws Exception {
+    assertEquals(loseCommit ? "lost-commit" : "happy", required("PAIR_SCENARIO"));
+    LOSE_COMMIT.set(loseCommit);
+    LOST_COMMIT.set(false);
     assertEquals(mail ? "email" : "app", required("PAIR_KIND"));
     assertEquals(role.name(), required("PAIR_ROLE"));
     long tenantId = role == AccountInviteTargetRole.PLATFORM_ADMIN ? 0L : 17L;
@@ -375,7 +393,34 @@ class ProtectedAdminPublicNativePairProof {
               .andReturn()
               .getResponse();
     }
-    assertEquals(200, activated.getStatus());
+    if (loseCommit) {
+      assertEquals(503, activated.getStatus());
+      assertTrue(LOST_COMMIT.get());
+      assertEquals("READY", jdbc.queryForObject(
+          "SELECT state FROM protected_account_activation", String.class));
+      long statusBefore = HTTP.stream().filter(row -> "status".equals(row.get("phase"))).count();
+      assertEquals(1, HTTP.stream().filter(row -> "commit".equals(row.get("phase"))).count());
+      // Exact saved historical READY can only reconcile the receiving terminal result.
+      onboarding.reconcileTerminal(sent.invite().getId());
+      assertEquals(statusBefore + 1,
+          HTTP.stream().filter(row -> "status".equals(row.get("phase"))).count());
+      assertEquals(1, HTTP.stream().filter(row -> "commit".equals(row.get("phase"))).count());
+      assertEquals(1, HTTP.stream().filter(row -> "create".equals(row.get("phase"))).count());
+      assertEquals(1, HTTP.stream().filter(row -> "app".equals(row.get("phase"))).count());
+      onboarding.reconcileTerminal(sent.invite().getId());
+      assertEquals(statusBefore + 1,
+          HTTP.stream().filter(row -> "status".equals(row.get("phase"))).count());
+      Files.writeString(Path.of(required("PAIR_TERMINAL_WITNESS")), json.canonical(Map.of(
+          "realNativeCommitReplyDiscarded", true,
+          "publicUnavailableInsteadOfSuccess", true,
+          "localReadyRetainedBeforeReconcile", true,
+          "independentCurrentSetupStatusRead", true,
+          "noRepeatedCreateOtpOrCommit", true,
+          "cachedLocalTerminalReconcileEffectFree", true)));
+    } else {
+      assertEquals(200, activated.getStatus());
+      assertFalse(LOST_COMMIT.get());
+    }
     assertEquals(
         "COMMITTED",
         jdbc.queryForObject("SELECT state FROM protected_account_activation", String.class));
@@ -704,6 +749,11 @@ class ProtectedAdminPublicNativePairProof {
                 else throw new IllegalStateException("Unexpected fixed native public route");
                 HTTP.add(Map.of("phase", phase, "status", response.getStatusCode().value()));
                 Files.writeString(Path.of(required("PAIR_HTTP_WITNESS")), json.canonical(HTTP));
+                if ("commit".equals(phase) && response.getStatusCode().value() == 200
+                    && LOSE_COMMIT.get() && LOST_COMMIT.compareAndSet(false, true)) {
+                  response.close();
+                  throw new java.io.IOException("Synthetic lost committed reply");
+                }
                 return response;
               });
       return http;

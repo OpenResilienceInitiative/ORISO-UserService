@@ -31,9 +31,15 @@ jobs:
       matrix:
         kind: [app, email]
         role: [PLATFORM_ADMIN, TENANT_ADMIN]
+        scenario: [happy]
+        include:
+        - kind: app
+          role: PLATFORM_ADMIN
+          scenario: lost-commit
     env:
       PAIR_KIND: ${{ matrix.kind }}
       PAIR_ROLE: ${{ matrix.role }}
+      PAIR_SCENARIO: ${{ matrix.scenario }}
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       with:
@@ -144,7 +150,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        name: scenario-c-protected-recipient-${{ matrix.role }}-${{ matrix.kind }}-native-pair
+        name: scenario-c-protected-recipient-${{ matrix.role }}-${{ matrix.kind }}-native-pair${{ matrix.scenario == 'lost-commit' && '-lost-commit' || '' }}
         path: 'target/protected-public-native/protected-public-native-*.json
 
           target/protected-public-native/protected-public-native-*.xml
