@@ -533,22 +533,16 @@ class PasswordResetServiceTest {
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(causalUser));
     when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
-    var binding =
-        new PasswordResetBinding(
-            java.util.UUID.randomUUID(),
-            "00000000-0000-4000-8000-000000000001",
-            42L,
-            "testuser",
-            "USER",
-            "version",
-            "a".repeat(64),
-            Instant.now().plusSeconds(7000));
-    org.mockito.Mockito.lenient()
-        .when(
-            identityPasswordUpdater.passwordResetIssuance(
-                any(), anyString(), any(), anyString(), anyString(), anyString(), any()))
-        .thenReturn(binding);
+    var issued = new java.util.concurrent.atomic.AtomicReference<PasswordResetBinding>();
+    org.mockito.Mockito.lenient().when(identityPasswordUpdater.passwordResetIssuance(
+        any(), anyString(), any(), anyString(), anyString(), anyString(), any()))
+        .thenAnswer(call -> {
+          var binding = new PasswordResetBinding(call.getArgument(0), call.getArgument(1), call.getArgument(2),
+              call.getArgument(3), call.getArgument(5), "version", "a".repeat(64), call.getArgument(6));
+          issued.set(binding); return binding;
+        });
     passwordResetService.requestPasswordReset("testuser", "en");
+    var binding = issued.get();
     var ordered = org.mockito.Mockito.inOrder(oneTimeTokenStore);
     ordered
         .verify(oneTimeTokenStore)
