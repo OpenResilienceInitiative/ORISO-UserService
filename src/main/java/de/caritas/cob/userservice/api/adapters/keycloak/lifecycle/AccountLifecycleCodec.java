@@ -1098,7 +1098,16 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       String accountId,
       TaskActorCredentials actor,
       Object body) {
-    if (!java.util.Set.of("read", "delete", "locale", "profile", "email", "self-password", "password-reset.read", "password-reset").contains(command)
+    if (!java.util.Set.of(
+                "read",
+                "delete",
+                "locale",
+                "profile",
+                "email",
+                "self-password",
+                "password-reset.read",
+                "password-reset")
+            .contains(command)
         || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
       throw new IllegalArgumentException("Invalid maintenance proof binding");
     long now = clock.instant().getEpochSecond();
