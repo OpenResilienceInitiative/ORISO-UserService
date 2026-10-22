@@ -282,6 +282,7 @@ public class KeycloakService
    */
   @Override
   public Optional<IdentityEmailOwner> findByEmail(String email) {
+    requireLegacyAccountAccess();
     return keycloakClient.getUsersResource().search(email, 0, Integer.MAX_VALUE).stream()
         .filter(userRepresentation -> email.equalsIgnoreCase(userRepresentation.getEmail()))
         .findFirst()
@@ -1090,6 +1091,7 @@ public class KeycloakService
    */
   @Override
   public List<String> findAllByUserId(String userId) {
+    requireLegacyAccountAccess();
     try {
       return getUserRoles(userId).stream()
           .map(RoleRepresentation::getName)
