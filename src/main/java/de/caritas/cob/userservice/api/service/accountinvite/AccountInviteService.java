@@ -964,6 +964,7 @@ public class AccountInviteService {
             Reason.REVOKED,
             () -> {
               AccountInvite current = findAuthorizedInviteForUpdate(inviteId);
+              String heldRecipientKey = current.getActiveRecipientKey();
               if (current.getStatus() == AccountInviteStatus.ACCEPTED)
                 throw inviteAlreadyAccepted();
               if (current.getStatus() != AccountInviteStatus.REVOKED) {
@@ -976,7 +977,8 @@ public class AccountInviteService {
                 if (current.getStatus() != AccountInviteStatus.REVOKED)
                   throw inviteAlreadyAccepted();
               }
-              current.setActiveRecipientKey(null);
+              // The shared legacy bulk update clears this key; retain it in the same locked SQL.
+              current.setActiveRecipientKey(heldRecipientKey);
               current.setTokenHash(null);
               accountInviteRepository.saveAndFlush(current);
             });

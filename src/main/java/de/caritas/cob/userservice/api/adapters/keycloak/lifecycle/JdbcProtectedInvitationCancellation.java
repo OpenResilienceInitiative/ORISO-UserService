@@ -320,7 +320,17 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
             requireCleanup();
             checkedFinal(inviteId, current, statusRow(inviteId));
           }
-          return releaseOrTransfer.get();
+          T result = releaseOrTransfer.get();
+          if (cleanup != null && jdbc.queryForObject(
+              "SELECT COUNT(*) FROM account_invite WHERE id=? AND status IN ('REVOKED','EXPIRED','SUPERSEDED') AND active_recipient_key IS NULL AND tenant_id_reservation_token IS NULL",
+              Integer.class, inviteId) == 1) {
+            Timestamp now = Timestamp.from(clock.instant());
+            if (statusRow(inviteId) == null)
+              jdbc.update("INSERT INTO protected_invitation_cleanup_status(invite_id,last_attempt_at,completed_at) VALUES(?,?,?)", inviteId, now, now);
+            else
+              jdbc.update("UPDATE protected_invitation_cleanup_status SET completed_at=COALESCE(completed_at,?) WHERE invite_id=?", now, inviteId);
+          }
+          return result;
         });
   }
 

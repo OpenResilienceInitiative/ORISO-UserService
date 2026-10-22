@@ -127,6 +127,59 @@ class ProtectedInvitationRecipientKeyReleaseJpaIT extends ProtectedInvitationIss
   }
 
   @Test
+  void unknownResendCannotFreeTheOriginalEmailKeyForASecondInvitation() {
+    distinctReservationForRejectedNewInvite();
+    var original = service.createInvite(command());
+    String held = original.getActiveRecipientKey();
+    failAfterCommittedInvalidation(original.getId(), ProtectedInvitationCancellation.Reason.SUPERSEDED);
+    assertThrows(KeycloakProtectedInvitations.RemoteFailure.class, () -> service.resendInvite(
+        new AccountInviteService.SendInviteCommand(original.getId(), template.getId())));
+    var retired = invites.findById(original.getId()).orElseThrow();
+    assertThat(retired.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
+    assertThat(retired.getTokenHash()).isNull();
+    assertThat(retired.getActiveRecipientKey()).isEqualTo(held);
+    assertThatThrownBy(() -> service.createInvite(command())).isInstanceOf(RuntimeException.class);
+    verify(cancellation, never()).withAcknowledged(anyLong(), any());
+    verify(tenantIds, never()).release(17L);
+    verifyNoInteractions(sender, approvals);
+  }
+
+  @Test
+  void actualElapsedDraftKeepsItsEmailKeyWhileNativeCancellationIsUnknown() {
+    distinctReservationForRejectedNewInvite();
+    var original = service.createInvite(command());
+    String held = original.getActiveRecipientKey();
+    original.setExpiresAt(LocalDateTime.now().minusDays(1));
+    invites.saveAndFlush(original);
+    failAfterCommittedInvalidation(original.getId(), ProtectedInvitationCancellation.Reason.ISSUANCE_ABORTED);
+    assertThrows(KeycloakProtectedInvitations.RemoteFailure.class, service::expireElapsedInvites);
+    var expired = invites.findById(original.getId()).orElseThrow();
+    assertThat(expired.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+    assertThat(expired.getTokenHash()).isNull();
+    assertThat(expired.getActiveRecipientKey()).isEqualTo(held);
+    assertThat(expired.getTenantIdReservationToken()).isEqualTo(original.getTenantIdReservationToken());
+    assertThatThrownBy(() -> service.createInvite(command())).isInstanceOf(RuntimeException.class);
+    verify(cancellation, never()).withAcknowledged(anyLong(), any());
+    verify(tenantIds, never()).release(17L);
+    verifyNoInteractions(sender, approvals);
+  }
+
+  private void distinctReservationForRejectedNewInvite() {
+    when(tenantIds.reserve(null)).thenReturn(
+        new TenantIdReservation(17L, "9eb4c868-16d4-4be5-8c0b-5fb9d2b866b3"),
+        new TenantIdReservation(18L, "59ba921a-849d-4f32-a492-98d03ff582b0"));
+    when(tenantIds.getAvailability(18L)).thenReturn(IdAllocationStatus.RESERVED);
+  }
+
+  private void failAfterCommittedInvalidation(long id, ProtectedInvitationCancellation.Reason reason) {
+    doAnswer(call -> {
+      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+      transaction().executeWithoutResult(tx -> ((Runnable) call.getArgument(2)).run());
+      throw new KeycloakProtectedInvitations.RemoteFailure(0);
+    }).when(cancellation).cancel(eq(id), eq(reason), any());
+  }
+
+  @Test
   void stalePendingDiscoveryNeverReleasesTheEmailKeyOfAnUnexpiredProtectedInvite() {
     var live = service.createInvite(command());
     when(cancellation.pendingInviteIds(100)).thenReturn(List.of(live.getId()));

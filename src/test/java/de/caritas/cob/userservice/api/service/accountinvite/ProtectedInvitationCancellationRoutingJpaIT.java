@@ -53,7 +53,7 @@ class ProtectedInvitationCancellationRoutingJpaIT extends ProtectedInvitationIss
 
     var invalid = invites.findById(draft.getId()).orElseThrow();
     assertThat(invalid.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
-    assertThat(invalid.getActiveRecipientKey()).isNull();
+    assertThat(invalid.getActiveRecipientKey()).isEqualTo(draft.getActiveRecipientKey());
     assertThat(invalid.getTokenHash()).isNull();
     assertThat(invalid.getTenantIdReservationToken())
         .isEqualTo(draft.getTenantIdReservationToken());

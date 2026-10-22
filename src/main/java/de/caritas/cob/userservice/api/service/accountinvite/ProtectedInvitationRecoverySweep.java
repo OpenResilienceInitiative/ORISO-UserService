@@ -2,6 +2,13 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationCancellation;
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
+import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.ProtectedAdminOnboardingService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Clock;
@@ -25,6 +32,9 @@ public final class ProtectedInvitationRecoverySweep {
   private final ProtectedAdminOnboardingService coordinator;
   private final AccountInviteService invites;
   private final Clock clock;
+  private final IdentityClientConfig identity;
+  private final IdentityAuthentication authentication;
+  private final TenantContextProvider tenantContext;
 
   public ProtectedInvitationRecoverySweep(
       TaskActorConfiguration actors,
@@ -33,17 +43,9 @@ public final class ProtectedInvitationRecoverySweep {
       ProtectedAdminOnboardingService coordinator,
       AccountInviteService invites,
       Clock clock) {
-    this.actors = Objects.requireNonNull(actors);
-    this.claims = Objects.requireNonNull(claims);
-    this.cancellation = Objects.requireNonNull(cancellation);
-    this.coordinator = Objects.requireNonNull(coordinator);
-    this.invites = Objects.requireNonNull(invites);
-    this.clock = Objects.requireNonNull(clock);
+    this(actors, claims, cancellation, coordinator, invites, clock, null, null, null);
   }
 
-  /**
-   * Configured worker boundary; runtime identity context remains closed until its tracer passes.
-   */
   public ProtectedInvitationRecoverySweep(
       TaskActorConfiguration actors,
       ScheduledTaskClaimService claims,
@@ -51,13 +53,20 @@ public final class ProtectedInvitationRecoverySweep {
       ProtectedAdminOnboardingService coordinator,
       AccountInviteService invites,
       Clock clock,
-      de.caritas.cob.userservice.api.port.out.IdentityClientConfig identity,
-      de.caritas.cob.userservice.api.port.out.IdentityAuthentication authentication,
-      de.caritas.cob.userservice.api.tenant.TenantContextProvider tenantContext) {
-    this(actors, claims, cancellation, coordinator, invites, clock);
-    Objects.requireNonNull(identity);
-    Objects.requireNonNull(authentication);
-    Objects.requireNonNull(tenantContext);
+      IdentityClientConfig identity,
+      IdentityAuthentication authentication,
+      TenantContextProvider tenantContext) {
+    this.actors = Objects.requireNonNull(actors);
+    this.claims = Objects.requireNonNull(claims);
+    this.cancellation = Objects.requireNonNull(cancellation);
+    this.coordinator = Objects.requireNonNull(coordinator);
+    this.invites = Objects.requireNonNull(invites);
+    this.clock = Objects.requireNonNull(clock);
+    if ((identity != null) != (authentication != null) || (identity != null) != (tenantContext != null))
+      throw new IllegalArgumentException("Configure the complete protected recovery runtime");
+    this.identity = identity;
+    this.authentication = authentication;
+    this.tenantContext = tenantContext;
   }
 
   public void retryPending() {
@@ -70,6 +79,7 @@ public final class ProtectedInvitationRecoverySweep {
     if (acquired.isEmpty()) return;
     var lease = acquired.get();
     try {
+      if (tenantContext != null) tenantContext.setTechnicalContextIfMultiTenancyIsEnabled();
       var ids = new LinkedHashSet<>(cancellation.recoveryInviteIds(PAGE));
       if (ids.size() > PAGE)
         throw new IllegalStateException("Protected recovery page exceeds limit");
@@ -84,12 +94,20 @@ public final class ProtectedInvitationRecoverySweep {
           pending++;
         }
       }
-      if (lease.claimedUntil().isAfter(LocalDateTime.now(clock))) invites.expireElapsedInvites();
+      if (lease.claimedUntil().isAfter(LocalDateTime.now(clock))) {
+        if (identity == null) invites.expireElapsedInvites();
+        else {
+          if (!identity.isFiveActorMode()) throw new IllegalStateException("Protected recovery requires five actors");
+          String token = RoutineTaskAuthentication.accessToken(TaskPurpose.INVITE_RESERVATIONS, identity, authentication);
+          TechnicalAccessTokenContext.offerDuring(token, invites::expireElapsedInvites);
+        }
+      }
       if (pending > 0)
         LOG.warn("Protected invitation recovery retained {} pending account(s)", pending);
     } catch (RuntimeException failure) {
       LOG.warn("Protected invitation recovery remains pending");
     } finally {
+      if (tenantContext != null) TenantContext.clear();
       try {
         claims.release(lease);
       } catch (RuntimeException failure) {
