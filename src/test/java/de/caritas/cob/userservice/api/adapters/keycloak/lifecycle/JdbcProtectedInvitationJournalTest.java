@@ -214,6 +214,100 @@ class JdbcProtectedInvitationJournalTest {
     assertEquals("READY", state());
   }
 
+  @Test
+  void reservedTenantAndAgencyUseTheOriginalHeldCapability() throws Exception {
+    reserved();
+    ready();
+    assertEquals(73L, journal.withReadyInvite(73, this::release));
+    assertEquals(1, releases());
+  }
+
+  @Test
+  void anotherReservationCapabilityCannotBeProposedForTheSameTenant() throws Exception {
+    reserved();
+    jdbc.update("UPDATE account_invite SET tenant_id_reservation_token=? WHERE id=73", UUID.randomUUID().toString());
+    assertThrows(RuntimeException.class, () -> journal.propose(73, proposal));
+    assertEquals("ABSENT", state());
+    assertEquals(0, releases());
+  }
+
+  @Test
+  void reservationReplacementCannotReuseAnAcknowledgedReceipt() throws Exception {
+    reserved();
+    ready();
+    jdbc.update("UPDATE account_invite SET tenant_id_reservation_token=? WHERE id=73", UUID.randomUUID().toString());
+    assertThrows(RuntimeException.class, () -> journal.withReadyInvite(73, this::release));
+    assertEquals(0, releases());
+  }
+
+  @Test
+  void agencyReplacementCannotReuseAnAcknowledgedReceipt() throws Exception {
+    reserved();
+    ready();
+    jdbc.update("UPDATE account_invite SET agency_id=12 WHERE id=73");
+    assertThrows(RuntimeException.class, () -> journal.withReadyInvite(73, this::release));
+    assertEquals(0, releases());
+  }
+
+  @Test
+  void eachChangedCurrentInvitationFieldIndependentlyBlocksMail() {
+    ready();
+    String[] changes = {"purpose='EXISTING_ACCOUNT_SETUP'", "status='ACCEPTED'",
+        "recipient_email='other@example.test'", "target_role='PLATFORM_ADMIN'"};
+    for (String change : changes) {
+      jdbc.update("UPDATE account_invite SET " + change + " WHERE id=73");
+      assertThrows(RuntimeException.class, () -> journal.withReadyInvite(73, this::release), change);
+      jdbc.update("UPDATE account_invite SET purpose='INVITE',status='DRAFT',"
+          + "recipient_email='ada@example.test',target_role='TENANT_ADMIN' WHERE id=73");
+    }
+    assertEquals(0, releases());
+    assertEquals(73L, journal.withReadyInvite(73, this::release));
+  }
+
+  @Test
+  void anotherInviteIdCannotAcquireThisRowsApproval() {
+    var request = (com.fasterxml.jackson.databind.node.ObjectNode) vector.path("request").deepCopy();
+    ((com.fasterxml.jackson.databind.node.ObjectNode) request.path("scope")).put("inviteId", "74");
+    var foreign = codec.freeze(proposal.approvalId(), json.canonical(request), proposal.issuerRealm(), proposal.issuerSubject());
+    assertThrows(RuntimeException.class, () -> journal.propose(73, foreign));
+    assertEquals("ABSENT", state());
+  }
+
+  @Test
+  void uncommittedInvitationCannotBeDispatchedThroughANewNestedTransaction() {
+    var outer = new TransactionTemplate(manager);
+    assertThrows(RuntimeException.class, () -> outer.execute(tx -> journal.propose(73, proposal)));
+    assertEquals("ABSENT", state());
+  }
+
+  @Test
+  void failedMailPreparationRollsBackItsLocalEffectAndKeepsTheOriginalApproval() {
+    ready();
+    assertThrows(IllegalStateException.class, () -> journal.withReadyInvite(73, () -> {
+      release();
+      throw new IllegalStateException("mail preparation failed");
+    }));
+    assertEquals(0, releases());
+    assertEquals("READY", state());
+    assertEquals(73L, journal.withReadyInvite(73, this::release));
+  }
+
+  @Test
+  void alteredPersistedProposalDigestCannotTurnCachedReadyIntoAuthority() {
+    ready();
+    jdbc.update("UPDATE protected_invitation_authorization SET request_digest=? WHERE invite_id=73", "b".repeat(64));
+    assertThrows(RuntimeException.class, () -> journal.withReadyInvite(73, this::release));
+    assertEquals(0, releases());
+  }
+
+  private void reserved() throws Exception {
+    vector = json.read(Files.readString(Path.of("src/test/resources/scenario-c/protected-approval-reserved-v1.json")), JsonNode.class);
+    proposal = codec.freeze(UUID.fromString(vector.path("approvalId").asText()),
+        json.canonical(vector.path("request")), vector.path("issuerRealm").asText(),
+        vector.path("issuerSubject").asText());
+    jdbc.update("UPDATE account_invite SET tenant_id_reservation_token=?,agency_id=11 WHERE id=73", vector.path("syntheticReservationToken").asText());
+  }
+
   private JdbcProtectedInvitationJournal restart(Clock selectedClock) {
     return new JdbcProtectedInvitationJournal(
         jdbc,
