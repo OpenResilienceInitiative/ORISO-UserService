@@ -43,7 +43,8 @@ import org.springframework.web.client.RestTemplate;
 class MagicLinkSessionNativeFixture {
   @Test
   void actualReplicaClaimRetriesTheSamePrivateWorkflowAfterLostNativeResponse() throws Exception {
-    var redis = new LettuceConnectionFactory("127.0.0.1", Integer.parseInt(required("S1_REDIS_PORT")));
+    var redis =
+        new LettuceConnectionFactory("127.0.0.1", Integer.parseInt(required("S1_REDIS_PORT")));
     redis.afterPropertiesSet();
     redis.start();
     try {
@@ -56,10 +57,15 @@ class MagicLinkSessionNativeFixture {
       var codec = new AccountLifecycleCodec(Base64.getDecoder().decode(required("S1_CONTEXT_KEY")));
       String token = UUID.randomUUID().toString() + UUID.randomUUID();
       UUID workflow = UUID.randomUUID();
-      var held = new OneTimeTokenStore.TokenClaim(required("S1_TARGET_USER"),
-          Instant.now().plusSeconds(120).truncatedTo(ChronoUnit.SECONDS), workflow,
-          Long.valueOf(required("S1_TARGET_TENANT")),
-          codec.digest("magic-link-capability/v1", Map.of("workflowId", workflow.toString(), "token", token)));
+      var held =
+          new OneTimeTokenStore.TokenClaim(
+              required("S1_TARGET_USER"),
+              Instant.now().plusSeconds(120).truncatedTo(ChronoUnit.SECONDS),
+              workflow,
+              Long.valueOf(required("S1_TARGET_TENANT")),
+              codec.digest(
+                  "magic-link-capability/v1",
+                  Map.of("workflowId", workflow.toString(), "token", token)));
       first.storeMagicLink(token, held);
       assertThat(second.claim("magic-login", token)).contains(held);
       assertThat(first.claim("magic-login", token)).isEmpty();
@@ -75,41 +81,61 @@ class MagicLinkSessionNativeFixture {
       var bindings = new ObjectMapper().readTree(required("S1_ACTOR_BINDINGS"));
       for (var actor : TaskActor.values()) {
         var binding = bindings.get(actor.name());
-        environment.setProperty("IDENTITY_" + actor.name() + "_CLIENT_ID", binding.get("clientId").textValue());
-        environment.setProperty("IDENTITY_" + actor.name() + "_CLIENT_SECRET", binding.get("secret").textValue());
-        environment.setProperty("IDENTITY_" + actor.name() + "_SERVICE_SUBJECT", binding.get("subject").textValue());
+        environment.setProperty(
+            "IDENTITY_" + actor.name() + "_CLIENT_ID", binding.get("clientId").textValue());
+        environment.setProperty(
+            "IDENTITY_" + actor.name() + "_CLIENT_SECRET", binding.get("secret").textValue());
+        environment.setProperty(
+            "IDENTITY_" + actor.name() + "_SERVICE_SUBJECT", binding.get("subject").textValue());
       }
       var legacy = new KeycloakCustomConfig();
       legacy.setAppClientId("app");
       var actors = new TaskActorConfiguration(environment, legacy, identity);
-      var nativeHttp = new RestTemplate(new JdkClientHttpRequestFactory(HttpClient.newBuilder()
-          .connectTimeout(Duration.ofSeconds(5)).build()));
+      var nativeHttp =
+          new RestTemplate(
+              new JdkClientHttpRequestFactory(
+                  HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()));
       var authentication = new KeycloakAuthClient(nativeHttp, new AuthenticatedUser(), identity);
       ReflectionTestUtils.setField(authentication, "keycloakClientId", "app");
       var keycloak = new KeycloakConfig();
       keycloak.setAuthServerUrl(base);
       keycloak.setRealm(realm);
-      var decoder = NimbusJwtDecoder.withJwkSetUri(issuer + "/protocol/openid-connect/certs").build();
+      var decoder =
+          NimbusJwtDecoder.withJwkSetUri(issuer + "/protocol/openid-connect/certs").build();
       decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
       var broker = new TaskActorTokenBroker(actors, authentication, decoder, keycloak);
       // The fixed URL stays the native issuer. An actual local HTTP proxy drops the first
       // upstream200 body; this is not a fake JWT, copied bearer or manufactured Java handle.
-      var requestFactory = new JdkClientHttpRequestFactory(HttpClient.newBuilder()
-          .connectTimeout(Duration.ofSeconds(5))
-          .proxy(ProxySelector.of(new InetSocketAddress("127.0.0.1", Integer.parseInt(required("S1_PROXY_PORT")))))
-          .build());
+      var requestFactory =
+          new JdkClientHttpRequestFactory(
+              HttpClient.newBuilder()
+                  .connectTimeout(Duration.ofSeconds(5))
+                  .proxy(
+                      ProxySelector.of(
+                          new InetSocketAddress(
+                              "127.0.0.1", Integer.parseInt(required("S1_PROXY_PORT")))))
+                  .build());
       requestFactory.setReadTimeout(Duration.ofSeconds(15));
       var beans = new DefaultListableBeanFactory();
       beans.registerSingleton("s1Codec", codec);
       var provider = beans.getBeanProvider(AccountLifecycleCodec.class);
-      var exchange = new KeycloakIdentitySessionExchange(new RestTemplate(requestFactory), identity,
-          decoder, actors, broker, provider);
+      var exchange =
+          new KeycloakIdentitySessionExchange(
+              new RestTemplate(requestFactory), identity, decoder, actors, broker, provider);
       ReflectionTestUtils.setField(exchange, "keycloakAppClientId", "app");
       ReflectionTestUtils.setField(exchange, "realmName", realm);
       ReflectionTestUtils.setField(exchange, "realmId", required("S1_REALM_ID"));
-      var service = new MagicLinkLoginService(mock(UserService.class), mock(ConsultantService.class),
-          exchange, first, mock(ApplicationSettingsService.class), mock(OrisoEmailRenderer.class),
-          mock(OrisoEmailBrand.class), actors, provider);
+      var service =
+          new MagicLinkLoginService(
+              mock(UserService.class),
+              mock(ConsultantService.class),
+              exchange,
+              first,
+              mock(ApplicationSettingsService.class),
+              mock(OrisoEmailRenderer.class),
+              mock(OrisoEmailBrand.class),
+              actors,
+              provider);
       assertThat(service.consumeMagicLink(token)).isEmpty();
       assertThat(second.claim("magic-login", token)).contains(held);
       assertThat(second.restore("magic-login", token, held, false)).isTrue();
@@ -129,7 +155,8 @@ class MagicLinkSessionNativeFixture {
 
   private static String required(String name) {
     String value = System.getenv(name);
-    if (value == null || value.isBlank()) throw new IllegalStateException("Native paired fixture is required");
+    if (value == null || value.isBlank())
+      throw new IllegalStateException("Native paired fixture is required");
     return value;
   }
 }
