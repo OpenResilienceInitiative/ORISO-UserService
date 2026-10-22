@@ -57,6 +57,15 @@ class KeycloakServiceScenarioCModeTest {
   @Test
   void fiveActorsRequiresTheScopedAdapterBeforeRead() {
     assertThrows(IllegalStateException.class, () -> service.findById("target"));
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class, () -> service.findEnabledById("target"));
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class,
+        () ->
+            service.updateProfile(
+                "target",
+                new de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate(
+                    "actual-target", "new@example.test", null, "New", "Name")));
     verifyNoInteractions(nativeClient);
   }
 
@@ -154,6 +163,7 @@ class KeycloakServiceScenarioCModeTest {
   @Test
   void legacyModeRetainsExistingProfileProjection() {
     when(config.isFiveActorMode()).thenReturn(false);
+    assertEquals(java.util.Optional.of(true), service.findEnabledById("target"));
     assertEquals("target", service.findById("target").orElseThrow().id());
     assertEquals("actual-target", service.findById("target").orElseThrow().username());
   }

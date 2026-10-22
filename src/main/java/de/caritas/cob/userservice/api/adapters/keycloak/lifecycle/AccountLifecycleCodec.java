@@ -1035,7 +1035,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       String accountId,
       TaskActorCredentials actor,
       Object body) {
-    if (!java.util.Set.of("read", "delete", "locale").contains(command)
+    if (!java.util.Set.of("read", "delete", "locale", "profile", "email").contains(command)
         || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
       throw new IllegalArgumentException("Invalid maintenance proof binding");
     long now = clock.instant().getEpochSecond();
@@ -1075,6 +1075,46 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       String originDigest,
       String result) {}
 
+  /** A verified definite pre-write refusal, never an HTTP status interpreted as acknowledgement. */
+  public static final class VerifiedMaintenanceNoEffect {
+    private final int status;
+    private final String receipt;
+    private final UUID operationId;
+    private final String accountId;
+    private final String command;
+    private final String realmId;
+    private final String intentDigest;
+
+    private VerifiedMaintenanceNoEffect(
+        int status, String receipt, UUID operationId, String accountId,
+        String command, String realmId, String intentDigest) {
+      this.status = status;
+      this.receipt = receipt;
+      this.operationId = operationId;
+      this.accountId = accountId;
+      this.command = command;
+      this.realmId = realmId;
+      this.intentDigest = intentDigest;
+    }
+
+    public int status() { return status; }
+    public String receipt() { return receipt; }
+    public UUID operationId() { return operationId; }
+    public String accountId() { return accountId; }
+    public String command() { return command; }
+    public String realmId() { return realmId; }
+    public String intentDigest() { return intentDigest; }
+
+    @Override public String toString() {
+      return "VerifiedMaintenanceNoEffect[bindings=redacted]";
+    }
+  }
+
+  public VerifiedMaintenanceNoEffect verifyMaintenanceNoEffectReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen, String command) {
+    throw new IllegalArgumentException("Invalid native maintenance no-effect receipt");
+  }
+
   /**
    * A transport success is not acknowledgement until every immutable receiver binding is checked.
    */
@@ -1086,6 +1126,16 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
   public String verifyMaintenanceLocaleReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "locale", "UPDATED");
+  }
+
+  public String verifyMaintenanceProfileReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "profile", "UPDATED");
+  }
+
+  public String verifyMaintenanceEmailReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "email", "UPDATED");
   }
 
   private String verifyMaintenanceReceipt(

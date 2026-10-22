@@ -7,16 +7,18 @@ import static org.mockito.Mockito.*;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.config.auth.*;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.web.MockHttpServletRequest;
-import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.client.RestTemplate;
 
 class AccountLifecycleCallerConfigurationTest {
@@ -62,6 +64,8 @@ class AccountLifecycleCallerConfigurationTest {
     var http = mock(RestTemplate.class);
     var broker = mock(TaskActorTokenBroker.class);
     var jdbc = mock(JdbcTemplate.class);
+    var source = mock(javax.sql.DataSource.class);
+    when(jdbc.getDataSource()).thenReturn(source);
     new ApplicationContextRunner()
         .withInitializer(
             context -> {
@@ -77,7 +81,8 @@ class AccountLifecycleCallerConfigurationTest {
                     factory.registerSingleton("fixtureRequest", new MockHttpServletRequest());
                     factory.registerSingleton("fixtureJdbc", jdbc);
                     factory.registerSingleton(
-                        "fixtureTransactions", mock(PlatformTransactionManager.class));
+                        "fixtureTransactions", new DataSourceTransactionManager(source));
+                    factory.registerSingleton("fixtureAdminScope", mock(AdminScope.class));
                     factory.registerSingleton("fixtureMatrix", mock(MatrixSynapseService.class));
                     factory.registerSingleton(
                         "fixtureMatrixConfiguration", mock(MatrixConfig.class));
@@ -107,7 +112,13 @@ class AccountLifecycleCallerConfigurationTest {
                   context.getBeansOfType(SelfAppOtpMaintenance.class).size(),
                   "The enabled production caller graph must register the existing public OTP owner");
               assertTrue(context.getBean(SelfAppOtpMaintenance.class).isFiveActorMode());
-              verifyNoInteractions(http, broker, jdbc);
+              assertEquals(
+                  1,
+                  context.getBeansOfType(HumanAdminAccountMaintenance.class).size(),
+                  "The actual opt-in caller graph must register scoped public Admin maintenance");
+              verify(jdbc).getDataSource();
+              verifyNoMoreInteractions(jdbc);
+              verifyNoInteractions(http, broker, source);
             });
   }
 

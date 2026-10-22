@@ -139,6 +139,15 @@ public class KeycloakService
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
+  private de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+      humanAdminMaintenance;
+
+  @Autowired(required = false)
+  public void setHumanAdminMaintenance(
+      de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance maintenance) {
+    this.humanAdminMaintenance = java.util.Objects.requireNonNull(maintenance);
+  }
+
   private de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedUsernameAvailability
       scopedUsernameAvailability;
 
@@ -962,6 +971,7 @@ public class KeycloakService
    */
   @Override
   public void updateProfile(final String userId, final IdentityProfileUpdate profile) {
+    if (identityClientConfig.isFiveActorMode()) throw new ScopedIdentityCommandRequiredException();
     var userResource = keycloakClient.getUsersResource().get(userId);
     var existing = userResource.toRepresentation();
     verifyEmail(existing, profile.email());
@@ -1133,6 +1143,11 @@ public class KeycloakService
 
   @Override
   public Optional<Boolean> findEnabledById(String userId) {
+    if (identityClientConfig.isFiveActorMode()) {
+      if (humanAdminMaintenance == null || !humanAdminMaintenance.isFiveActorMode())
+        throw new ScopedIdentityCommandRequiredException();
+      return Optional.of(humanAdminMaintenance.read(userId).enabled());
+    }
     try {
       return findEnabledByIdOnce(userId);
     } catch (NotAuthorizedException unauthorized) {
