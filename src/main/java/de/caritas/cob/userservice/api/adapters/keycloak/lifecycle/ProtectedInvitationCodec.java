@@ -63,6 +63,16 @@ public final class ProtectedInvitationCodec {
   }
 
   public VerifiedApproval verifyAuthorized(FrozenApproval frozen, String responseJson) {
+    return verifyAuthorized(frozen, responseJson, true);
+  }
+
+  /** Original authenticated evidence only; callers cannot use it as a current recipient grant. */
+  VerifiedApproval verifyAuthorizedHistory(FrozenApproval frozen, String responseJson) {
+    return verifyAuthorized(frozen, responseJson, false);
+  }
+
+  private VerifiedApproval verifyAuthorized(
+      FrozenApproval frozen, String responseJson, boolean live) {
     try {
       JsonNode scope = checkedScope(frozen);
       JsonNode response = json.read(responseJson, JsonNode.class);
@@ -105,7 +115,8 @@ public final class ProtectedInvitationCodec {
           || number(receipt, "profileVersion") <= 0
           || !equal(frozen.requestDigest(), text(receipt, "approvalRequestDigest", 64))
           || !scope.path("validUntil").asText().equals(text(receipt, "validUntil", 30))
-          || !instant(text(receipt, "validUntil", 30)).isAfter(clock.instant())) throw invalid();
+          || live && !instant(text(receipt, "validUntil", 30)).isAfter(clock.instant()))
+        throw invalid();
       ObjectNode authenticated = receipt.deepCopy();
       authenticated.remove("receipt");
       String encoded = encode(json.canonical(authenticated).getBytes(StandardCharsets.UTF_8));

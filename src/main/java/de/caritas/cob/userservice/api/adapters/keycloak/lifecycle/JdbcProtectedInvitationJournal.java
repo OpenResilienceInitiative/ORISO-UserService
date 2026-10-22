@@ -176,7 +176,17 @@ public final class JdbcProtectedInvitationJournal {
 
   /** Original saved evidence for reducing/status-only operations; never a live recipient grant. */
   <T> T withHistoricalInvite(long inviteId, Supplier<T> action) {
-    throw unavailable();
+    if (action == null) throw unavailable();
+    return local.execute(
+        tx -> {
+          Invite invite = lockInvite(inviteId);
+          Row row = row(inviteId);
+          if (!Set.of("READY", "CANCEL_REQUESTED").contains(row.state())
+              || row.response() == null) throw unavailable();
+          requireCurrent(inviteId, invite, row.proposal(), false, true, true, true);
+          codec.verifyAuthorizedHistory(row.proposal(), row.response());
+          return action.get();
+        });
   }
 
   RestrictionProposal requestRestriction(long inviteId, Supplier<FrozenApproval> missingProposal) {
@@ -319,11 +329,24 @@ public final class JdbcProtectedInvitationJournal {
       boolean live,
       boolean released,
       boolean recipient) {
+    requireCurrent(inviteId, invite, proposal, live, released, recipient, false);
+  }
+
+  private void requireCurrent(
+      long inviteId,
+      Invite invite,
+      FrozenApproval proposal,
+      boolean live,
+      boolean released,
+      boolean recipient,
+      boolean historical) {
     JsonNode scope = scope(proposal);
     Instant deadline = Instant.parse(scope.path("validUntil").asText());
     if (!Long.toString(inviteId).equals(scope.path("inviteId").asText())
         || !"INVITE".equals(invite.purpose())
-        || !(recipient
+        || !(historical
+                ? Set.of("EMAIL_SENT", "ACCEPTED", "EXPIRED", "REVOKED", "SUPERSEDED")
+                : recipient
                 ? Set.of("EMAIL_SENT", "ACCEPTED")
                 : live
                     ? Set.of("DRAFT", "EMAIL_SENT")
