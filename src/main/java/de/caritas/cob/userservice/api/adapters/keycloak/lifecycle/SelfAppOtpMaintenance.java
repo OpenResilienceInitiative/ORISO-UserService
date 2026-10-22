@@ -457,8 +457,9 @@ public final class SelfAppOtpMaintenance {
         || !codec.canonical(target(self, row.operation)).equals(row.target))
       throw new ConflictException("The app OTP operation does not match its original request");
     // A terminal result is owned historical data; expiry never grants another native effect.
-    if (row.expiry <= clock.instant().getEpochSecond() && !terminal(row.status))
-      throw unavailable();
+    if (row.expiry <= clock.instant().getEpochSecond()
+        && !terminal(row.status)
+        && !(kind == Operation.EMAIL_START && "FROZEN".equals(row.status))) throw unavailable();
     JsonNode metadata = null;
     if ("PREPARED".equals(row.status)) {
       if (row.pending
@@ -609,13 +610,24 @@ public final class SelfAppOtpMaintenance {
 
   private Reply invoke(
       Self self, Intent row, TaskActorCredentials actor, JsonNode command, Operation kind) {
-    outsideLocks(self, row);
-    var token = machine(self, actor, TaskPurpose.OTP);
+    boolean historicalSent = kind == Operation.EMAIL_START
+        && "FROZEN".equals(row.status) && row.expiry <= clock.instant().getEpochSecond();
     var body = command.path("body");
+    if (historicalSent) {
+      // Fresh authentication may read only the original outcome: this immutable expired body
+      // cannot prepare or send in the native receiver, including absent/READY/unknown states.
+      if (TransactionSynchronizationManager.isActualTransactionActive()
+          || self.expires <= clock.instant().getEpochSecond()
+          || !body.path("authorityValidUntil").isIntegralNumber()
+          || body.path("authorityValidUntil").longValue() != row.expiry) throw unavailable();
+    } else outsideLocks(self, row);
+    var token = machine(self, actor, TaskPurpose.OTP);
     var materialized = ((ObjectNode) body).deepCopy();
     materialized.put("username", command.path("username").textValue());
     var headers = headers(self, token);
-    long expiry = Math.min(Math.min(row.expiry, self.expires), token.validatedJwtExpiresAt());
+    long expiry = Math.min(historicalSent ? self.expires : Math.min(row.expiry, self.expires),
+        token.validatedJwtExpiresAt());
+    if (expiry <= clock.instant().getEpochSecond()) throw unavailable();
     headers.set(
         "X-ORISO-Task-Context",
         kind == Operation.DELETE
@@ -643,9 +655,10 @@ public final class SelfAppOtpMaintenance {
               HttpMethod.valueOf(kind.method),
               new HttpEntity<>(codec.canonical(body), headers),
               String.class);
+      if (historicalSent && response.getStatusCode().value() != 200) throw unavailable();
       return new Reply(response.getStatusCode().value(), response.getBody());
     } catch (RestClientResponseException failure) {
-      if (failure.getStatusCode().value() != 401
+      if (historicalSent || failure.getStatusCode().value() != 401
           || failure.getResponseBodyAsByteArray().length > 16384) throw unavailable();
       return new Reply(401, codec.utf8(failure.getResponseBodyAsByteArray()));
     }

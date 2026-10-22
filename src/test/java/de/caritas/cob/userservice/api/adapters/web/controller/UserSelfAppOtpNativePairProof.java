@@ -61,6 +61,7 @@ class UserSelfAppOtpNativePairProof {
                 "stock-denied",
                 "public-first-call",
                 "public-after-first-call",
+                "original-deadline-expired",
                 "public-retry",
                 "public-success",
                 "native-read-http",
@@ -451,6 +452,16 @@ class UserSelfAppOtpNativePairProof {
               String.class,
               operation));
       assertEquals(0, activationCalls.get());
+      if (email) {
+        long originalDeadline = jdbc.queryForObject(
+            "select authority_valid_until from identity_self_app_otp_intent where operation_id=?", Long.class, operation);
+        assertEquals(firstMachineExpiry.get(), originalDeadline);
+        long remaining = originalDeadline + 1 - Instant.now().getEpochSecond();
+        assertTrue(remaining <= 95, "The existing original90second native-machine bound is required");
+        while (Instant.now().getEpochSecond() <= originalDeadline) Thread.sleep(250);
+        assertTrue(Instant.now().getEpochSecond() < humanExpiry.get());
+        phase("original-deadline-expired", 0);
+      }
       // Reconstruct the actual public delegate's owner over the same durable rows; no cached grant.
       delegate.setSelfAppOtpMaintenance(
           new SelfAppOtpMaintenance(

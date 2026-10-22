@@ -98,6 +98,7 @@ def select_slice(name):
             "publicLostDeleteAckCannotReopenInviteOrClearPointerOfLaterEnrollment",
             "publicReorderedAppAckKeepsTheLaterAppliedEnrollmentIncarnation",
             "publicEmailSentLostAckAfterOriginalExpiryRecoversExactOutcomeWithoutAnotherSend",
+            "publicExpiredHistoricalSentAckCannotReplaceLaterEnrollmentOrPendingEmail",
             "publicEmailStartAcknowledgesOnlyVerifiedSentAndKeepsPendingRecipientEncrypted",
             "publicEmailStartLostReplyNewOwnerReplaysFrozenRecipientAndOriginalExpiry",
             "publicEmailStartSameIdCannotReplaceTheCompletePendingDestination",
