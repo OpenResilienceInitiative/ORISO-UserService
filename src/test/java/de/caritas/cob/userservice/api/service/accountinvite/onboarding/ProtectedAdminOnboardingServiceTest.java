@@ -180,7 +180,7 @@ class ProtectedAdminOnboardingServiceTest {
     order.verify(accounts).create(prepared);
     verifyNoInteractions(otp, inactivity);
     verify(activation, never()).stage(any(), any(), any(), any());
-    when(accounts.create(prepared)).thenReturn(created);
+    doReturn(created).when(accounts).create(prepared);
     assertNotNull(assertDoesNotThrow(() -> service.register("synthetic", command, original)));
     verify(creation, times(2)).prepare(claim, prepared);
     verify(accounts, times(2)).create(prepared);

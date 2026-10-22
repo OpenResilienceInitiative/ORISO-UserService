@@ -142,6 +142,34 @@ class ProtectedAccountRecoveryCodecTest {
   }
 
   @Test
+  void reducingRecoveryMustMatchTheAuthenticatedOriginalPreparedMetadata() {
+    var claim = claim();
+    var prepared = codec.prepare(claim, original.path("registration"), account());
+    var metadata = codec.restorePrepared(claim, codec.checkpointPrepared(prepared));
+    var pending = codec.prepareRecovery(metadata, 0, recoveryId());
+    var recovered = codec.verifyRecovery(pending, bytes(vector.path("recoveryResponse")));
+    assertDoesNotThrow(() -> codec.checkRecovery(metadata, recovered));
+    var absent = codec.verifyRecovery(pending, bytes(vector.path("abandonedResponse")));
+    assertDoesNotThrow(() -> codec.checkRecovery(metadata, absent));
+    var different =
+        new AccountCreation(
+            account().username(),
+            account().email(),
+            "Other",
+            account().lastName(),
+            account().preferredLanguage(),
+            account().password(),
+            false);
+    var otherPrepared = codec.prepare(claim, original.path("registration"), different);
+    var otherMetadata = codec.restorePrepared(claim, codec.checkpointPrepared(otherPrepared));
+    assertThrows(
+        IllegalArgumentException.class, () -> codec.checkRecovery(otherMetadata, recovered));
+    assertThrows(IllegalArgumentException.class, () -> codec.checkRecovery(null, recovered));
+    assertThrows(IllegalArgumentException.class, () -> codec.checkRecovery(metadata, null));
+    assertEquals("RECOVERY_CLAIMED", recovered.state());
+  }
+
+  @Test
   void validMacCannotRebindAnyNativeRecoveryTupleOrUseAnOrdinaryScope() throws Exception {
     var pending = pending();
     assertNotNull(

@@ -1,14 +1,18 @@
 package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationAcceptance.AcceptanceClaim;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.*;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -116,6 +120,18 @@ public final class JdbcProtectedAccountCreation {
         });
   }
 
+  /** Reducing data only, within the existing historical owner's SQL transaction. */
+  PreparedMetadata metadataWithinOwner(
+      JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical) {
+    throw unavailable();
+  }
+
+  /** An authenticated PREPARED row has no saved creation reply. */
+  java.util.Optional<VerifiedCreated> createdWithinOwner(
+      JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical) {
+    throw unavailable();
+  }
+
   public PreparedRecovery recovery(AcceptanceClaim claim, long expectedGeneration) {
     return recovery(claim, expectedGeneration, false);
   }
@@ -154,22 +170,78 @@ public final class JdbcProtectedAccountCreation {
         });
   }
 
-  public java.util.Optional<PreparedMetadata> findPrepared(AcceptanceClaim claim) {
-    throw unavailable();
+  public Optional<PreparedMetadata> findPrepared(AcceptanceClaim claim) {
+    outsideSql();
+    return owned(claim, () -> {
+      var found = rows(claim);
+      if (found.isEmpty()) return Optional.empty();
+      return Optional.of(accounts.restorePrepared(claim, checked(claim, one(found)).prepared()));
+    });
   }
 
-  public java.util.Optional<
-          de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO>
-      tenantRequest(AcceptanceClaim claim) {
-    throw unavailable();
+  public Optional<MultilingualTenantDTO> tenantRequest(AcceptanceClaim claim) {
+    outsideSql();
+    return owned(claim, () -> savedTenant(claim, checked(claim, one(rows(claim)))));
   }
 
-  public de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO
-      freezeTenantRequest(
-          AcceptanceClaim claim,
-          de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO
-              original) {
-    throw unavailable();
+  public MultilingualTenantDTO freezeTenantRequest(
+      AcceptanceClaim claim, MultilingualTenantDTO original) {
+    outsideSql();
+    return owned(claim, () -> {
+      Row row = checked(claim, one(rows(claim)));
+      MultilingualTenantDTO checked = tenant(claim, original);
+      String digest = tenantDigest(claim, row, checked);
+      var existing = savedTenant(claim, row);
+      if (existing.isPresent()) {
+        if (!equal(row.tenantDigest(), digest)) throw unavailable();
+        return existing.orElseThrow();
+      }
+      var stored = (ObjectNode) json.read(json.canonical(checked), JsonNode.class);
+      stored.putNull("tenantIdReservationToken");
+      if (jdbc.update(
+          "UPDATE protected_account_creation SET tenant_request_json=?,tenant_request_digest=?,updated_at=? WHERE invite_id=? AND tenant_request_json IS NULL AND tenant_request_digest IS NULL",
+          json.canonical(stored), digest, Timestamp.from(clock.instant()), inviteId(claim)) != 1)
+        throw unavailable();
+      return json.read(json.canonical(checked), MultilingualTenantDTO.class);
+    });
+  }
+
+  private Optional<MultilingualTenantDTO> savedTenant(AcceptanceClaim claim, Row row) {
+    if (row.tenantJson() == null && row.tenantDigest() == null) return Optional.empty();
+    if (row.tenantJson() == null || row.tenantDigest() == null) throw unavailable();
+    MultilingualTenantDTO saved = json.read(row.tenantJson(), MultilingualTenantDTO.class);
+    if (saved.getTenantIdReservationToken() != null) throw unavailable();
+    saved.setTenantIdReservationToken(reservation(claim));
+    saved = tenant(claim, saved);
+    if (!equal(row.tenantDigest(), tenantDigest(claim, row, saved))) throw unavailable();
+    return Optional.of(saved);
+  }
+
+  private MultilingualTenantDTO tenant(AcceptanceClaim claim, MultilingualTenantDTO value) {
+    if (value == null) throw unavailable();
+    var scope = json.read(claim.frozen().requestJson(), JsonNode.class).path("scope");
+    if (!"RESERVED_NEW".equals(scope.path("tenantMode").asText())
+        || !"TENANT_ADMIN".equals(scope.path("protectedKind").asText())
+        || value.getId() == null || value.getId() <= 0
+        || value.getId().longValue() != scope.path("targetTenantIds").get(0).longValue()
+        || !equal(reservation(claim), value.getTenantIdReservationToken())) throw unavailable();
+    return json.read(json.canonical(value), MultilingualTenantDTO.class);
+  }
+
+  private String reservation(AcceptanceClaim claim) {
+    String value = jdbc.queryForObject(
+        "SELECT tenant_id_reservation_token FROM account_invite WHERE id=?", String.class,
+        inviteId(claim));
+    if (value == null || value.isBlank()) throw unavailable();
+    return value;
+  }
+
+  private String tenantDigest(AcceptanceClaim claim, Row row, MultilingualTenantDTO value) {
+    return json.digest("protected-tenant-request/v1", Map.of(
+        "inviteId", inviteId(claim), "approvalId", claim.frozen().approvalId(),
+        "claimId", claim.claimId(), "attemptId", claim.attemptId(),
+        "executionId", claim.executionId(), "registrationDigest", claim.registrationDigest(),
+        "creationFingerprint", row.fingerprint(), "body", value));
   }
 
   /** Historical SQL evidence can request reducing recovery only, never creation. */
@@ -235,6 +307,8 @@ public final class JdbcProtectedAccountCreation {
                 rs.getString("creation_fingerprint"),
                 rs.getString("account_id"),
                 rs.getString("created_checkpoint"),
+                rs.getString("tenant_request_json"),
+                rs.getString("tenant_request_digest"),
                 rs.getString("state")),
         inviteId(claim));
   }
@@ -314,6 +388,8 @@ public final class JdbcProtectedAccountCreation {
       String fingerprint,
       String account,
       String created,
+      String tenantJson,
+      String tenantDigest,
       String state) {
     @Override
     public String toString() {

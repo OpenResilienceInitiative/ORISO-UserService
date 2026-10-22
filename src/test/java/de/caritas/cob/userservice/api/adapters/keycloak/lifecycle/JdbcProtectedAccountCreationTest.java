@@ -159,8 +159,8 @@ class JdbcProtectedAccountCreationTest {
     var reducing = assertDoesNotThrow(() -> owner().recovery(historical, 0));
     assertEquals(first.recoveryId(), reducing.recoveryId());
     assertArrayEquals(accounts.recoverBody(first), accounts.recoverBody(reducing));
-    assertThrows(IllegalStateException.class, () -> owner().metadata(claim));
-    assertThrows(IllegalStateException.class, () -> owner().recovery(claim, 0));
+    assertThrows(org.springframework.security.access.AccessDeniedException.class, () -> owner().metadata(claim));
+    assertThrows(org.springframework.security.access.AccessDeniedException.class, () -> owner().recovery(claim, 0));
     jdbc.update(
         "UPDATE protected_invitation_acceptance SET execution_id=? WHERE invite_id=73",
         UUID.randomUUID().toString());
@@ -249,8 +249,8 @@ class JdbcProtectedAccountCreationTest {
         IllegalArgumentException.class,
         () -> accounts.prepare(claim, changedRegistration, account()));
     jdbc.update("UPDATE account_invite SET token_hash=? WHERE id=73", "c".repeat(64));
-    assertThrows(IllegalStateException.class, () -> owner().metadata(claim));
-    assertThrows(IllegalStateException.class, () -> owner().recovery(claim, 0));
+    assertThrows(org.springframework.security.access.AccessDeniedException.class, () -> owner().metadata(claim));
+    assertThrows(org.springframework.security.access.AccessDeniedException.class, () -> owner().recovery(claim, 0));
     jdbc.update("UPDATE account_invite SET token_hash=? WHERE id=73", TOKEN);
     jdbc.update(
         "UPDATE protected_invitation_acceptance SET attempt_id=? WHERE invite_id=73",
@@ -261,6 +261,37 @@ class JdbcProtectedAccountCreationTest {
         jdbc.queryForObject(
             "SELECT prepared_checkpoint FROM protected_account_creation", String.class));
     assertEquals(0, count("protected_account_recovery"));
+  }
+
+  @Test
+  void historicalOwnerCanAuthenticateLostReplyMetadataWithoutInventingCreatedOwnership() {
+    var prepared = prepared();
+    owner().prepare(claim, prepared);
+    jdbc.update("UPDATE account_invite SET status='REVOKED',token_hash=NULL WHERE id=73");
+    var historical = acceptance.historical(73);
+    assertThrows(IllegalStateException.class, () -> owner().metadataWithinOwner(historical));
+    assertThrows(IllegalStateException.class, () -> owner().createdWithinOwner(historical));
+    var metadata =
+        assertDoesNotThrow(
+            () ->
+                journal.withHistoricalInvite(
+                    73, () -> owner().metadataWithinOwner(historical)));
+    assertEquals(prepared.creationFingerprint(), metadata.creationFingerprint());
+    assertTrue(
+        journal.withHistoricalInvite(73, () -> owner().createdWithinOwner(historical)).isEmpty());
+    assertEquals(
+        "PREPARED",
+        jdbc.queryForObject("SELECT state FROM protected_account_creation", String.class));
+    assertNull(
+        jdbc.queryForObject(
+            "SELECT created_checkpoint FROM protected_account_creation", String.class));
+    assertEquals(0, count("protected_account_recovery"));
+    jdbc.update(
+        "UPDATE protected_invitation_acceptance SET execution_id=? WHERE invite_id=73",
+        UUID.randomUUID().toString());
+    assertThrows(
+        IllegalStateException.class,
+        () -> journal.withHistoricalInvite(73, () -> owner().metadataWithinOwner(historical)));
   }
 
   @Test

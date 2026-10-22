@@ -694,6 +694,11 @@ public final class ProtectedAccountCodec {
     return new PreparedRecovery(this, metadata.prepared, expectedGeneration, recoveryId);
   }
 
+  /** Pure original-metadata comparison; this never grants cleanup or releases ownership. */
+  public void checkRecovery(PreparedMetadata metadata, VerifiedRecovery recovery) {
+    throw invalid();
+  }
+
   public byte[] recoverBody(PreparedRecovery recovery) {
     requireRecovery(recovery);
     return recoveryBytes(recoveryBody(recovery));
