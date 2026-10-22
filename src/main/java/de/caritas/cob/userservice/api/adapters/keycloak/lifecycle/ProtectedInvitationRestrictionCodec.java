@@ -119,7 +119,7 @@ public final class ProtectedInvitationRestrictionCodec {
             .encodeToString(mac("protected-invitation-proof/v1\n" + encoded));
   }
 
-  /** Fixed reducing status read only; closed until the HTTP counterfactual is measured. */
+  /** Fixed independent reducing-status proof; it cannot authorize a lifecycle effect. */
   public String cleanupStatusProof(FrozenCancellation cancellation, TaskActorCredentials actor) {
     JsonNode scope = checked(cancellation);
     if (actor == null

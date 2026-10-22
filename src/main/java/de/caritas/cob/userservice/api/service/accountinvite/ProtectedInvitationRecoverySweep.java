@@ -18,6 +18,7 @@ import java.util.LinkedHashSet;
 import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Bounded replica-neutral retry of original protected ownership; no public cleanup endpoint. */
@@ -70,6 +71,9 @@ public final class ProtectedInvitationRecoverySweep {
     this.tenantContext = tenantContext;
   }
 
+  @Scheduled(
+      fixedDelayString = "${identity.lifecycle.retry-delay-ms:30000}",
+      initialDelayString = "${identity.lifecycle.retry-initial-delay-ms:30000}")
   public void retryPending() {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()

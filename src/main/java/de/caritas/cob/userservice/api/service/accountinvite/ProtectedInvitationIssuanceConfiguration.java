@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtec
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedRestrictions;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountRecovery;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedCleanupStatusCodec;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationCodec;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationMailOutbox;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationRestrictionCodec;
@@ -27,11 +28,15 @@ import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.ProtectedAdminOnboardingService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantCreationClient;
+import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
@@ -186,18 +191,27 @@ public class ProtectedInvitationIssuanceConfiguration {
   }
 
   @Bean
+  ProtectedCleanupStatusCodec protectedCleanupStatusCodec(
+      AccountLifecycleCodec json,
+      ProtectedInvitationRestrictionCodec restrictions,
+      ProtectedAccountCodec accounts) {
+    return new ProtectedCleanupStatusCodec(json, restrictions, accounts, key());
+  }
+
+  @Bean
   KeycloakProtectedRestrictions keycloakProtectedRestrictions(
       @Qualifier("keycloakRestTemplate") RestTemplate http,
       TaskActorConfiguration actors,
       TaskActorTokenBroker broker,
       ProtectedInvitationCodec codec,
       ProtectedInvitationRestrictionCodec restrictions,
+      ProtectedCleanupStatusCodec cleanup,
       KeycloakConfig keycloak) {
     String server =
         environment.getProperty(
             "ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", keycloak.getAuthServerUrl());
     return new KeycloakProtectedRestrictions(
-        http, actors, broker, codec, restrictions, server, keycloak.getRealm());
+        http, actors, broker, codec, restrictions, server, keycloak.getRealm(), cleanup);
   }
 
   @Bean
@@ -210,7 +224,11 @@ public class ProtectedInvitationIssuanceConfiguration {
       KeycloakProtectedRestrictions receiver,
       ProtectedInvitationIssuance issuance,
       AccountInviteRepository invites,
-      EntityManager entityManager) {
+      EntityManager entityManager,
+      ProtectedCleanupStatusCodec cleanup,
+      ProtectedAccountCodec accounts,
+      JdbcProtectedInvitationAcceptance acceptance,
+      JdbcProtectedAccountCreation creation) {
     return new JdbcProtectedInvitationCancellation(
         jdbc,
         manager,
@@ -224,7 +242,11 @@ public class ProtectedInvitationIssuanceConfiguration {
           entityManager.refresh(invite);
           return issuance.restrictionProposal(invite);
         },
-        Clock.systemUTC());
+        Clock.systemUTC(),
+        cleanup,
+        accounts,
+        acceptance,
+        creation);
   }
 
   private byte[] key() {
@@ -337,9 +359,10 @@ public class ProtectedInvitationIssuanceConfiguration {
       AccountLifecycleCodec json,
       ProtectedOtpBootstrap otp,
       AdminRepository admins,
-      AccountInactivityEnrollmentService inactivity) {
+      AccountInactivityEnrollmentService inactivity,
+      JdbcProtectedAccountCreation creation) {
     return new JdbcProtectedAccountActivation(
-        jdbc, manager, journal, accounts, json, otp, admins, inactivity, Clock.systemUTC());
+        jdbc, manager, journal, accounts, json, otp, admins, inactivity, Clock.systemUTC(), creation);
   }
 
   @Bean
@@ -356,7 +379,9 @@ public class ProtectedInvitationIssuanceConfiguration {
       UsernameTranscoder usernames,
       ProtectedInvitationProfiles profiles,
       OperatorDpaContentClient dpa,
-      TenantCreationClient tenants) {
+      TenantCreationClient tenants,
+      ProtectedAccountRecovery recovery,
+      JdbcProtectedInvitationCancellation cancellation) {
     return new ProtectedAdminOnboardingService(
         invites,
         actors,
@@ -371,7 +396,24 @@ public class ProtectedInvitationIssuanceConfiguration {
         profiles,
         dpa,
         tenants,
-        Clock.systemUTC());
+        Clock.systemUTC(),
+        recovery,
+        cancellation);
+  }
+
+  @Bean
+  ProtectedInvitationRecoverySweep protectedInvitationRecoverySweep(
+      TaskActorConfiguration actors,
+      ScheduledTaskClaimService claims,
+      JdbcProtectedInvitationCancellation cancellation,
+      ProtectedAdminOnboardingService coordinator,
+      AccountInviteService invites,
+      IdentityClientConfig identity,
+      IdentityAuthentication authentication,
+      TenantContextProvider tenantContext) {
+    return new ProtectedInvitationRecoverySweep(
+        actors, claims, cancellation, coordinator, invites, Clock.systemUTC(),
+        identity, authentication, tenantContext);
   }
 
   private String required(String name) {

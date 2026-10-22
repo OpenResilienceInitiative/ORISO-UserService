@@ -160,7 +160,7 @@ def native(kc, report):
         fixture.installer = installer["access_token"]
         username = "enc." + base64.b32encode(scope["recipient"].encode()).decode().replace("=", ".")
         users = fixture.admin("GET", "/users?username=" + __import__('urllib.parse', fromlist=['quote']).quote(username.lower(), safe='') + "&exact=true")
-        receipt["native_account_absent_after_compensation"] = users == []
+        receipt["native_account_absent_after_compensation"] = users == [] and receipt.get("consumer_observations") is not None
         receipt["accepted"] &= receipt["native_account_absent_after_compensation"]
         phase = "complete"
     except BaseException as error:

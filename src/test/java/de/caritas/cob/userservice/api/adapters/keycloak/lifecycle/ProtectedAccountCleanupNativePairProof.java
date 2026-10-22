@@ -142,13 +142,14 @@ class ProtectedAccountCleanupNativePairProof {
                       bytes);
               if (observedHttp.size() >= 100)
                 throw new IllegalStateException("Pair observations exceed bound");
+              String phase = nativePhase(logical.getPath());
               observedHttp.add(
                   Map.of(
-                      "phase", nativePhase(logical.getPath()),
+                      "phase", phase,
                       "status", response.getStatusCode().value()));
               Files.writeString(
                   Path.of(required("PAIR_HTTP_WITNESS")), codec.canonical(observedHttp));
-              if (logical.getPath().endsWith("/accounts")
+              if ("create".equals(phase)
                   && response.getStatusCode().value() == 201
                   && lostCreate.getAndIncrement() == 0) {
                 response.close();
@@ -397,7 +398,9 @@ class ProtectedAccountCleanupNativePairProof {
   private static String nativePhase(String path) {
     if (path.contains("/openid-connect/token")) return "token";
     if (path.startsWith("/admin/")) return "stock-denial";
-    if (path.endsWith("/accounts")) return "create";
+    if (path.matches(
+        "/realms/[^/]+/oriso-protected-invitations/v1/approvals/[0-9a-f-]{36}/attempts/[0-9a-f-]{36}"))
+      return "create";
     if (path.endsWith("/recover")) return "recover";
     if (path.endsWith("/compensate")) return "compensate";
     if (path.endsWith("/cleanup-status")) return "cleanup-status";

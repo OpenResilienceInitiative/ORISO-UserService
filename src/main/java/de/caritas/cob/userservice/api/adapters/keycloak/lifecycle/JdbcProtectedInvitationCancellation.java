@@ -316,7 +316,14 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
           Row current = row(inviteId, proposal);
           if (current == null || !"ACKNOWLEDGED".equals(current.state())) throw unavailable();
           journal.requireRestrictedInvite(inviteId, current.frozen().approval(), true);
-          if (checkedAck(current).cleanupRequired()) {
+          boolean ownsCreation =
+              cleanup != null
+                  && jdbc.queryForObject(
+                          "SELECT COUNT(*) FROM protected_account_creation WHERE invite_id=?",
+                          Integer.class,
+                          inviteId)
+                      > 0;
+          if (checkedAck(current).cleanupRequired() || ownsCreation) {
             requireCleanup();
             checkedFinal(inviteId, current, statusRow(inviteId));
           }

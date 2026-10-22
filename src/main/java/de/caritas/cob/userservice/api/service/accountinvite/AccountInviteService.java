@@ -660,7 +660,6 @@ public class AccountInviteService {
             old.setSupersededByUserId(authenticatedUser.getUserId());
             old.setUpdateDate(now);
           }
-          old.setActiveRecipientKey(null);
           old.setTokenHash(null);
           accountInviteRepository.saveAndFlush(old);
         });
@@ -703,6 +702,8 @@ public class AccountInviteService {
                       .createDate(now)
                       .updateDate(now)
                       .build();
+              old.setActiveRecipientKey(null);
+              accountInviteRepository.saveAndFlush(old);
               next = save(next);
               old.setSupersededByInviteId(next.getId());
               old.setTenantIdReservationToken(null);
@@ -1033,6 +1034,7 @@ public class AccountInviteService {
 
   /** Conditional, so an accept or revoke that landed after the read is never written over. */
   private boolean expireAndReleaseNumbers(AccountInvite invite, LocalDateTime now) {
+    String heldRecipientKey = invite.getActiveRecipientKey();
     if (InviteRowHold.orBusy(
             () ->
                 accountInviteRepository.expireWhileStatusIn(
@@ -1046,8 +1048,10 @@ public class AccountInviteService {
     if (delivery.protects(invite.getTargetRole())) {
       // The root pending coordinator records/retries its exact reducing intent outside SQL.
       AccountInvite current = findInvite(invite.getId());
+      current.setActiveRecipientKey(heldRecipientKey);
       current.setTokenHash(null);
       accountInviteRepository.saveAndFlush(current);
+      invite.setActiveRecipientKey(heldRecipientKey);
       invite.setTokenHash(null);
       return true;
     }
