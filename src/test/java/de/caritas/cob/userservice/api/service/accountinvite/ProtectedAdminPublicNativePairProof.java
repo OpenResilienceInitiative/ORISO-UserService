@@ -2,12 +2,14 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.*;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.*;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.adapters.web.controller.TenantAdminOnboardingController;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.*;
@@ -19,7 +21,6 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.*;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.*;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.*;
-import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
 import de.caritas.cob.userservice.api.service.accountpolicy.CheckedPlatformInactivityPolicyReads;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.tenant.*;
@@ -46,7 +47,8 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.client.support.HttpRequestWrapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
-import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.*;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.test.context.*;
@@ -64,7 +66,8 @@ import org.springframework.web.client.RestTemplate;
 @Import({AccountInviteService.class, InviteTargetResolver.class, ReservationLedger.class,
   UnitQueue.class, InviteDelivery.class, AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class, AdminScope.class, IdReservationReleaseProcessor.class,
-  ProtectedInvitationIssuanceConfiguration.class, ProtectedAdminPublicNativePairProof.Inputs.class})
+  ProtectedInvitationIssuanceConfiguration.class, TenantAdminOnboardingController.class,
+  ProtectedAdminRegistrationBodyAdvice.class, ProtectedAdminPublicNativePairProof.Inputs.class})
 @AsTechnicalUser
 class ProtectedAdminPublicNativePairProof {
   static final String LOGICAL = "http://protected-fixture.invalid";
@@ -80,9 +83,13 @@ class ProtectedAdminPublicNativePairProof {
   @Autowired DataSource source;
   @Autowired PlatformTransactionManager transactions;
   @Autowired AccountLifecycleCodec json;
-  @Autowired MockHttpServletRequest request;
+  @Autowired TenantAdminOnboardingController controller;
+  @Autowired ProtectedAdminRegistrationBodyAdvice bodyAdvice;
   @Autowired AuthenticatedUser human;
+  @Autowired JwtDecoder decoder;
   @MockitoBean ExistingAccountSetupIssuer existingAccountSetupIssuer;
+  @MockitoBean TenantAdminOnboardingService legacyOnboarding;
+  @MockitoBean CounsellorOnboardingService legacyCounsellor;
   @MockitoBean de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean TenantService tenantService;
@@ -169,33 +176,61 @@ class ProtectedAdminPublicNativePairProof {
     assertNull(sent.rawToken());assertNull(sent.acceptUrl());
     assertEquals(AccountInviteService.hash(token),invites.findById(sent.invite().getId()).orElseThrow().getTokenHash());
     for(var audit:deliveries.findAll())assertFalse(audit.getBodySnapshot().contains(token));
-    var command=new RegisterTenantAdminCommand(null,null,null,false,null,null,null,null,"SyntheticPublicOnly!731",null,null);
+    var mvc=MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(bodyAdvice).build();
     String raw="{\"account\":{\"password\":\"SyntheticPublicOnly!731\"}}";
     String key=UUID.randomUUID().toString();
-    request.setMethod("POST");request.setRequestURI("/service/tenant/register/"+token);
-    request.addHeader("Idempotency-Key",key);
-    JsonNode original=json.read(json.canonical(Map.of("method","POST","path",request.getRequestURI(),"key",key,"body",raw)),JsonNode.class);
-    var registered=onboarding.register(token,command,original);
-    assertEquals("PENDING_2FA_ACTIVATION",registered.phase());
-    assertNotNull(registered.totpSecret());
+    String registrationPath="/service/users/account-invites/"+token+"/onboarding/register";
+    var reply=mvc.perform(post(registrationPath).header("Idempotency-Key",key)
+        .contentType("application/json").content(raw)).andReturn().getResponse();
+    assertEquals(200,reply.getStatus());
+    var registered=json.read(reply.getContentAsString(),JsonNode.class);
+    assertEquals("PENDING_2FA_ACTIVATION",registered.path("phase").asText());
+    String secret=registered.path("twoFactor").path("secret").asText();
+    assertFalse(secret.isBlank());
     String account=invites.findById(sent.invite().getId()).orElseThrow().getAcceptedByUserId();
     assertNotNull(account);
     assertEquals(0L,admins.findById(account).orElseThrow().getTenantId());
     assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM account_inactivity WHERE identity_id=?",Integer.class,account));
     assertEquals("WAITING_OTP",jdbc.queryForObject("SELECT state FROM protected_account_activation",String.class));
-    assertEquals(registered.totpSecret(),onboarding.register(token,command,original).totpSecret());
-    request.setRequestURI("/service/tenant/register/"+token+"/two-factor");
-    request.removeHeader("Idempotency-Key");request.addHeader("Idempotency-Key",UUID.randomUUID().toString());
-    onboarding.setupApp(token,totp(registered.totpSecret()));
+    assertNull(invites.findById(sent.invite().getId()).orElseThrow().getTotpPendingSecret());
+    assertFalse(jdbc.queryForObject("SELECT prepared_checkpoint FROM protected_account_creation",String.class).contains("SyntheticPublicOnly!731"));
+    assertFalse(jdbc.queryForObject("SELECT request_json FROM protected_invitation_authorization",String.class).contains(human.getAccessToken()));
+    var retry=mvc.perform(post(registrationPath).header("Idempotency-Key",key)
+        .contentType("application/json").content(raw)).andReturn().getResponse();
+    assertEquals(200,retry.getStatus());
+    assertEquals(secret,json.read(retry.getContentAsString(),JsonNode.class).path("twoFactor").path("secret").asText());
+    String appPath="/service/users/account-invites/"+token+"/onboarding/two-factor";
+    var activated=mvc.perform(post(appPath).header("Idempotency-Key",UUID.randomUUID().toString())
+        .contentType("application/json").content(json.canonical(Map.of("otp",totp(secret)))))
+        .andReturn().getResponse();
+    assertEquals(200,activated.getStatus());
     assertEquals("COMMITTED",jdbc.queryForObject("SELECT state FROM protected_account_activation",String.class));
-    assertEquals("COMPLETED",onboarding.resolve(token).phase());
+    var resolved=mvc.perform(get("/service/users/account-invites/"+token+"/onboarding")).andReturn().getResponse();
+    assertEquals(200,resolved.getStatus());
+    assertEquals("COMPLETED",json.read(resolved.getContentAsString(),JsonNode.class).path("phase").asText());
     assertEquals(1,admins.count());
     assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM protected_account_creation",Integer.class));
-    verifyNoInteractions(existingAccountSetupIssuer,tenantCreation,tenantIds,agencyIds);
+    var loginBody=new org.springframework.util.LinkedMultiValueMap<String,String>();
+    loginBody.add("client_id",required("PAIR_HUMAN_CLIENT"));loginBody.add("grant_type","password");loginBody.add("scope","openid");
+    loginBody.add("username",recipient);loginBody.add("password","SyntheticPublicOnly!731");loginBody.add("totp",totp(secret));
+    var headers=new org.springframework.http.HttpHeaders();headers.setContentType(org.springframework.http.MediaType.APPLICATION_FORM_URLENCODED);
+    String oidc=required("PAIR_NATIVE_BASE")+"/realms/"+required("PAIR_REALM")+"/protocol/openid-connect";
+    var login=new RestTemplate().postForEntity(oidc+"/token",new org.springframework.http.HttpEntity<>(loginBody,headers),String.class);
+    assertEquals(200,login.getStatusCode().value());
+    var tokenReply=json.read(login.getBody(),JsonNode.class);
+    var recipientJwt=decoder.decode(tokenReply.path("access_token").asText());
+    assertEquals(account,recipientJwt.getSubject());assertEquals("0",recipientJwt.getClaimAsString("tenantId"));
+    assertEquals(required("PAIR_HUMAN_CLIENT"),recipientJwt.getClaimAsString("azp"));
+    assertEquals(Set.of("userservice"),Set.copyOf(recipientJwt.getAudience()));
+    assertFalse(recipientJwt.getClaimAsString("sid").isBlank());
+    var infoHeaders=new org.springframework.http.HttpHeaders();infoHeaders.setBearerAuth(tokenReply.path("access_token").asText());
+    var info=new RestTemplate().exchange(oidc+"/userinfo",org.springframework.http.HttpMethod.GET,new org.springframework.http.HttpEntity<>(infoHeaders),String.class);
+    assertEquals(200,info.getStatusCode().value());assertEquals(account,json.read(info.getBody(),JsonNode.class).path("sub").asText());
+    verifyNoInteractions(existingAccountSetupIssuer,legacyOnboarding,legacyCounsellor,tenantCreation,tenantIds,agencyIds);
     Files.writeString(Path.of(required("PAIR_HTTP_WITNESS")),json.canonical(HTTP));
     Files.writeString(Path.of(required("PAIR_WITNESS")),json.canonical(Map.of("realJpaOwner",true,
         "proposalBeforeHumanRpc",true,"encryptedInviteTokenBeforeDispatch",true,"productionProtectedBeans",true,
-        "publicCoordinatorBeforeNativeCommit",true,"oneAdminAndInactivity",true,"localCommittedAfterNativeReceipt",true)));
+        "publicCoordinatorBeforeNativeCommit",true,"oneAdminAndInactivity",true,"localCommittedAfterNativeReceipt",true,"newRecipientLoginAfterOtpAndCommit",true)));
   }
 
   static String totp(String secret) throws Exception {
@@ -210,12 +245,17 @@ class ProtectedAdminPublicNativePairProof {
     @Bean JdbcTemplate pairJdbc(DataSource ds){return new JdbcTemplate(ds);}
     @Bean Clock pairClock(){return Clock.systemUTC();}
     @Bean AccountLifecycleCodec pairJson(){return new AccountLifecycleCodec(Base64.getDecoder().decode(required("PAIR_CONTEXT_KEY_B64")));}
-    @Bean MockHttpServletRequest pairRequest(){return new MockHttpServletRequest();}
+    @Bean
+    @Scope(value="request",proxyMode=ScopedProxyMode.INTERFACES)
+    HttpServletRequest pairRequest(){
+      return ((ServletRequestAttributes)RequestContextHolder.currentRequestAttributes()).getRequest();
+    }
     @Bean AuthenticatedUser pairHuman(){return new AuthenticatedUser("uninitialized","uninitialized",Set.of(),"",Set.of());}
     @Bean UsernameTranscoder pairUsernames(){return new UsernameTranscoder();}
     @Bean InviteAcceptUrlBuilder pairUrls(){return new InviteAcceptUrlBuilder("https://app.example.test","https://admin.example.test");}
     @Bean static org.springframework.beans.factory.config.BeanFactoryPostProcessor pairNativeClientInputs(){
       return factory->{
+        factory.registerScope("request",new RequestScope());
         var keycloak=new KeycloakConfig();keycloak.setAuthServerUrl(LOGICAL);keycloak.setRealm(required("PAIR_REALM"));
         var identity=new IdentityConfig();identity.setOpenidConnectUrl(LOGICAL+"/realms/"+required("PAIR_REALM")+"/protocol/openid-connect");
         factory.registerSingleton("pairKeycloak",keycloak);factory.registerSingleton("pairIdentity",identity);
@@ -243,6 +283,7 @@ class ProtectedAdminPublicNativePairProof {
         String phase;
         if(path.endsWith("/protocol/openid-connect/token"))phase="token";
         else if(approval)phase="approve";
+        else if(outbound.getMethod()==org.springframework.http.HttpMethod.GET&&path.matches(".*/oriso-protected-invitations/v1/approvals/[a-f0-9-]{36}"))phase="status";
         else if(path.endsWith("/owned-read"))phase="owned-read";
         else if(path.contains("/fetch-otp-setup-info/"))phase="prepare";
         else if(path.contains("/setup-otp/"))phase="app";

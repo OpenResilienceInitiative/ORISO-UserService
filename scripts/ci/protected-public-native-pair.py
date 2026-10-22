@@ -100,7 +100,8 @@ def native(kc, report):
         raise ValueError("Paired source changed during builds")
     compiled_paths = ["target/test-classes/" + SUITE.replace(".", "/") + ".class", *["target/classes/de/caritas/cob/userservice/api/" + name + ".class" for name in ["adapters/keycloak/lifecycle/ProtectedOtpBootstrap", "adapters/keycloak/lifecycle/ProtectedAccountCodec", "adapters/keycloak/lifecycle/KeycloakProtectedAccounts", "adapters/keycloak/lifecycle/JdbcProtectedInvitationAcceptance", "adapters/keycloak/lifecycle/JdbcProtectedInvitationJournal", "adapters/keycloak/lifecycle/AccountLifecycleCodec", "config/auth/TaskActorTokenBroker", "service/accountinvite/AccountInviteService",
         "service/accountinvite/ProtectedInvitationIssuance", "service/accountinvite/ProtectedInvitationIssuanceConfiguration",
-        "service/accountinvite/onboarding/ProtectedAdminOnboardingService", "adapters/keycloak/lifecycle/JdbcProtectedAccountActivation"]]]
+        "service/accountinvite/onboarding/ProtectedAdminOnboardingService", "adapters/keycloak/lifecycle/JdbcProtectedAccountActivation",
+        "adapters/web/controller/TenantAdminOnboardingController", "service/accountinvite/onboarding/ProtectedAdminRegistrationBodyAdvice"]]]
     if not all((ROOT / name).is_file() for name in compiled_paths):
         raise ValueError("Actual compiled paired User classes required")
     compiled = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in compiled_paths}
@@ -135,6 +136,8 @@ def native(kc, report):
             assert len(links) == 1
             assert lifecycle.SUBJECTS[actor] == fixture.admin("GET", "/clients/" + links[0]["id"] + "/service-account-user")["id"]
         human_bearer = fixture.human(record=False)
+        human_claims = json.loads(base64.urlsafe_b64decode(human_bearer.split(".")[1] + "=" * (-len(human_bearer.split(".")[1]) % 4)))
+        assert human_claims["azp"] == "protected-human-web"
         recipient = "public-" + uuid.uuid4().hex + "@fixture.invalid"
         receipt["native_preconditions"] = {"five_exact_links": True,
             "actual_current_human_userinfo_session_client_tenant_grants": True,
@@ -144,6 +147,7 @@ def native(kc, report):
             "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id,
             "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(),
             "PAIR_RECIPIENT": recipient, "PAIR_HUMAN_SUBJECT": fixture.human_subject,
+            "PAIR_HUMAN_CLIENT": human_claims["azp"],
             "PAIR_HUMAN_TOKEN": human_bearer,
             "PAIR_WITNESS": str(report.with_name("protected-public-native-witness.json").resolve()),
             "PAIR_HTTP_WITNESS": str(report.with_name("protected-public-native-http.json").resolve())})
@@ -164,7 +168,7 @@ def native(kc, report):
             observed = json.loads(witness.read_text())
             expected = {"realJpaOwner", "proposalBeforeHumanRpc", "encryptedInviteTokenBeforeDispatch",
                 "productionProtectedBeans", "publicCoordinatorBeforeNativeCommit", "oneAdminAndInactivity",
-                "localCommittedAfterNativeReceipt"}
+                "localCommittedAfterNativeReceipt", "newRecipientLoginAfterOtpAndCommit"}
             assert set(observed) == expected and all(value is True for value in observed.values())
             receipt["consumer_observations"] = observed
         receipt["accepted"] &= receipt.get("consumer_observations") is not None
@@ -172,7 +176,7 @@ def native(kc, report):
         if http_witness.is_file():
             observed_http = json.loads(http_witness.read_text())
             assert isinstance(observed_http, list) and len(observed_http) <= 100
-            assert all(set(row) == {"phase", "status"} and row["phase"] in {"token", "approve", "create", "owned-read", "prepare", "app", "commit"} and type(row["status"]) is int and 100 <= row["status"] <= 599 for row in observed_http)
+            assert all(set(row) == {"phase", "status"} and row["phase"] in {"token", "approve", "status", "create", "owned-read", "prepare", "app", "commit"} and type(row["status"]) is int and 100 <= row["status"] <= 599 for row in observed_http)
             receipt["http_observations"] = observed_http
         phase = "post-java-native-inspection"
         # Installer-only fresh fixture token; tested actor expiry/authority is never refreshed here.
