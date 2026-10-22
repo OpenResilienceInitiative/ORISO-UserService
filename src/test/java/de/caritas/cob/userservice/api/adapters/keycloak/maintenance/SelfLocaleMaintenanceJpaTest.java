@@ -131,6 +131,9 @@ class SelfLocaleMaintenanceJpaTest {
     when(checked.validatedJwtExpiresAt())
         .thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
     when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
+    when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))
+        .thenReturn(
+            new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_ADMIN, "fixture-admin", 60));
     var http = new RestTemplate();
     server = MockRestServiceServer.bindTo(http).build();
     maintenance =

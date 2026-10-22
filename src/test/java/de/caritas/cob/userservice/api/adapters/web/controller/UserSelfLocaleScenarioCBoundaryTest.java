@@ -331,6 +331,10 @@ class UserSelfLocaleScenarioCBoundaryTest {
       when(checked.validatedJwtExpiresAt())
           .thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
       when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
+      if (!splitIssuer)
+        when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))
+            .thenReturn(
+                new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_ADMIN, "fixture-admin", 60));
       var users = mock(UserRepository.class);
       when(users.findByUserIdAndDeleteDateIsNull(ACCOUNT))
           .thenAnswer(
@@ -416,7 +420,10 @@ class UserSelfLocaleScenarioCBoundaryTest {
               codec,
               http,
               Clock.systemUTC(),
-              "https://identity.test",
+              splitIssuer ? "https://internal.identity.test" : "https://identity.test",
+              splitIssuer
+                  ? "https://public.identity.test/realms/fixture"
+                  : "https://identity.test/realms/fixture",
               "fixture",
               REALM_ID));
     }
@@ -442,7 +449,9 @@ class UserSelfLocaleScenarioCBoundaryTest {
 
     void expectRead() {
       String endpoint =
-          "https://identity.test/realms/fixture/oriso-account-maintenance/v1/accounts/" + ACCOUNT;
+          (splitIssuer ? "https://internal.identity.test" : "https://identity.test")
+              + "/realms/fixture/oriso-account-maintenance/v1/accounts/"
+              + ACCOUNT;
       server
           .expect(requestTo(endpoint + "/read"))
           .andExpect(method(HttpMethod.POST))
@@ -467,7 +476,9 @@ class UserSelfLocaleScenarioCBoundaryTest {
     void expectNative(boolean lostReply) {
       expectRead();
       String endpoint =
-          "https://identity.test/realms/fixture/oriso-account-maintenance/v1/accounts/" + ACCOUNT;
+          (splitIssuer ? "https://internal.identity.test" : "https://identity.test")
+              + "/realms/fixture/oriso-account-maintenance/v1/accounts/"
+              + ACCOUNT;
       var frozen = new AtomicReference<String>();
       var reply = new AtomicReference<String>();
       server
