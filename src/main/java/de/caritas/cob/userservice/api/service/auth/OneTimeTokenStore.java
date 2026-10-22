@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.auth;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.UUID;
 
 /** Shared, fail-closed storage for short-lived, single-use authentication tokens. */
 public interface OneTimeTokenStore {
@@ -21,6 +22,11 @@ public interface OneTimeTokenStore {
   }
 
   default void passwordResetDelivery(PasswordResetBinding binding, String delivery) {
+    throw new IllegalStateException("Causal password-reset storage unavailable");
+  }
+
+  /** Pure issuance data lookup. Token possession plus atomic claim remain necessary. */
+  default Optional<PasswordResetBinding> passwordResetIssuance(String token) {
     throw new IllegalStateException("Causal password-reset storage unavailable");
   }
 
@@ -49,5 +55,24 @@ public interface OneTimeTokenStore {
     }
   }
 
-  record TokenClaim(String subjectId, Instant expiresAt) {}
+  /** Scoped magic-link metadata is data; only a successful store claim creates live authority. */
+  default void storeMagicLink(String token, TokenClaim claim) {
+    throw new IllegalStateException("Scoped magic-link storage unavailable");
+  }
+
+  record TokenClaim(
+      String subjectId,
+      Instant expiresAt,
+      UUID workflowId,
+      Long tenantId,
+      String capabilityDigest) {
+    public TokenClaim(String subjectId, Instant expiresAt) {
+      this(subjectId, expiresAt, null, null, null);
+    }
+
+    @Override
+    public String toString() {
+      return "TokenClaim[redacted]";
+    }
+  }
 }
