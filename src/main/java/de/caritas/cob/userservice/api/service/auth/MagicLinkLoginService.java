@@ -4,13 +4,13 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
+import de.caritas.cob.userservice.api.port.out.MagicLinkCapabilityDigest;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
@@ -54,7 +54,7 @@ public class MagicLinkLoginService {
   private final @NonNull OrisoEmailRenderer emailRenderer;
   private final @NonNull OrisoEmailBrand emailBrand;
   private final @NonNull TaskActorConfiguration taskActors;
-  private final @NonNull ObjectProvider<AccountLifecycleCodec> lifecycleCodec;
+  private final @NonNull ObjectProvider<MagicLinkCapabilityDigest> capabilityDigest;
 
   /** A public subject or saved TokenClaim never constructs this live workflow handle. */
   public static final class ClaimedMagicLink {
@@ -320,11 +320,7 @@ public class MagicLinkLoginService {
                     .truncatedTo(java.time.temporal.ChronoUnit.SECONDS),
                 workflow,
                 target.getTenantId(),
-                lifecycleCodec
-                    .getObject()
-                    .digest(
-                        "magic-link-capability/v1",
-                        Map.of("workflowId", workflow.toString(), "token", oneTimeToken)));
+                capabilityDigest.getObject().digest(workflow, oneTimeToken));
         oneTimeTokenStore.storeMagicLink(oneTimeToken, scoped);
       } else {
         oneTimeTokenStore.store(

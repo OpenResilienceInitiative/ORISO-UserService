@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import de.caritas.cob.userservice.api.config.auth.TaskActorCredentials;
 import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
+import de.caritas.cob.userservice.api.port.out.MagicLinkCapabilityDigest;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Base64;
@@ -22,7 +23,7 @@ import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 /** One shared key; distinct MAC domains for payload, proof and durable creation fingerprint. */
-public final class AccountLifecycleCodec {
+public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
   private final byte[] key;
   private final Clock clock;
   private final java.security.SecureRandom intentNonce;
@@ -74,6 +75,13 @@ public final class AccountLifecycleCodec {
           }
         });
     json.registerModule(strict);
+  }
+
+  @Override
+  public String digest(UUID workflowId, String oneTimeToken) {
+    return digest(
+        "magic-link-capability/v1",
+        Map.of("workflowId", workflowId.toString(), "token", oneTimeToken));
   }
 
   public CreationIdentity identity(CreationScope scope, AccountCreation account) {
