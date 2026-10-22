@@ -205,10 +205,50 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
 
   /** Includes committed-reply recovery and restricted cleanup holds; separate bounded worker. */
   public List<Long> recoveryInviteIds(int limit) {
-    return List.of();
+    if (limit < 1 || limit > 100) throw new IllegalArgumentException("Invalid protected recovery page");
+    requireOutsideRecoverySql();
+    return jdbc.queryForList(
+        "SELECT i.id FROM account_invite i"
+            + " LEFT JOIN protected_account_activation a ON a.invite_id=i.id"
+            + " LEFT JOIN protected_invitation_cancellation c ON c.invite_id=i.id"
+            + " LEFT JOIN protected_invitation_cleanup_status s ON s.invite_id=i.id"
+            + " WHERE i.target_role IN ('TENANT_ADMIN','PLATFORM_ADMIN') AND i.purpose='INVITE'"
+            + " AND (a.state IS NULL OR a.state<>'COMMITTED') AND s.completed_at IS NULL"
+            + " AND ((a.state='READY' AND i.status IN ('ACCEPTED','EXPIRED','REVOKED','SUPERSEDED'))"
+            + " OR (a.state='WAITING_OTP' AND i.status='ACCEPTED' AND i.provisioning_status='IN_PROGRESS' AND i.expires_at<=?)"
+            + " OR (i.status IN ('EXPIRED','REVOKED','SUPERSEDED') AND (c.invite_id IS NULL OR c.state IN ('PENDING','ACKNOWLEDGED'))))"
+            + " ORDER BY COALESCE(s.last_attempt_at,c.updated_at,a.updated_at,i.update_date,i.expires_at),i.id LIMIT ?",
+        Long.class, Timestamp.from(clock.instant()), limit);
   }
 
-  public void touchRecovery(long inviteId) {}
+  /** Fairness metadata only; the callback still needs independently checked original ownership. */
+  public void touchRecovery(long inviteId) {
+    requireOutsideRecoverySql();
+    if (inviteId < 1) throw new IllegalArgumentException("Invalid protected recovery target");
+    local.executeWithoutResult(tx -> {
+      var found = jdbc.queryForList(
+          "SELECT id FROM account_invite WHERE id=? AND target_role IN ('TENANT_ADMIN','PLATFORM_ADMIN') AND purpose='INVITE' FOR UPDATE",
+          Long.class, inviteId);
+      if (found.size() != 1) throw unavailable();
+      var cursor = jdbc.queryForList(
+          "SELECT invite_id FROM protected_invitation_cleanup_status WHERE invite_id=? FOR UPDATE", Long.class, inviteId);
+      if (cursor.isEmpty()) jdbc.update(
+          "INSERT INTO protected_invitation_cleanup_status(invite_id,last_attempt_at) VALUES(?,?)",
+          inviteId, Timestamp.from(clock.instant()));
+      else {
+        if (cursor.size() != 1) throw unavailable();
+        jdbc.update("UPDATE protected_invitation_cleanup_status SET last_attempt_at=? WHERE invite_id=?",
+            Timestamp.from(clock.instant()), inviteId);
+      }
+    });
+  }
+
+  private static void requireOutsideRecoverySql() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()
+        || !TransactionSynchronizationManager.getResourceMap().isEmpty())
+      throw new IllegalStateException("Protected recovery requires completed local SQL");
+  }
 
   private VerifiedRestriction checkedAck(Row row) {
     try {
