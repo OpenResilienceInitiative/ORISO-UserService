@@ -172,11 +172,14 @@ public final class JdbcProtectedAccountCreation {
 
   public Optional<PreparedMetadata> findPrepared(AcceptanceClaim claim) {
     outsideSql();
-    return owned(claim, () -> {
-      var found = rows(claim);
-      if (found.isEmpty()) return Optional.empty();
-      return Optional.of(accounts.restorePrepared(claim, checked(claim, one(found)).prepared()));
-    });
+    return owned(
+        claim,
+        () -> {
+          var found = rows(claim);
+          if (found.isEmpty()) return Optional.empty();
+          return Optional.of(
+              accounts.restorePrepared(claim, checked(claim, one(found)).prepared()));
+        });
   }
 
   public Optional<MultilingualTenantDTO> tenantRequest(AcceptanceClaim claim) {
@@ -187,23 +190,28 @@ public final class JdbcProtectedAccountCreation {
   public MultilingualTenantDTO freezeTenantRequest(
       AcceptanceClaim claim, MultilingualTenantDTO original) {
     outsideSql();
-    return owned(claim, () -> {
-      Row row = checked(claim, one(rows(claim)));
-      MultilingualTenantDTO checked = tenant(claim, original);
-      String digest = tenantDigest(claim, row, checked);
-      var existing = savedTenant(claim, row);
-      if (existing.isPresent()) {
-        if (!equal(row.tenantDigest(), digest)) throw unavailable();
-        return existing.orElseThrow();
-      }
-      var stored = (ObjectNode) json.read(json.canonical(checked), JsonNode.class);
-      stored.putNull("tenantIdReservationToken");
-      if (jdbc.update(
-          "UPDATE protected_account_creation SET tenant_request_json=?,tenant_request_digest=?,updated_at=? WHERE invite_id=? AND tenant_request_json IS NULL AND tenant_request_digest IS NULL",
-          json.canonical(stored), digest, Timestamp.from(clock.instant()), inviteId(claim)) != 1)
-        throw unavailable();
-      return json.read(json.canonical(checked), MultilingualTenantDTO.class);
-    });
+    return owned(
+        claim,
+        () -> {
+          Row row = checked(claim, one(rows(claim)));
+          MultilingualTenantDTO checked = tenant(claim, original);
+          String digest = tenantDigest(claim, row, checked);
+          var existing = savedTenant(claim, row);
+          if (existing.isPresent()) {
+            if (!equal(row.tenantDigest(), digest)) throw unavailable();
+            return existing.orElseThrow();
+          }
+          var stored = (ObjectNode) json.read(json.canonical(checked), JsonNode.class);
+          stored.putNull("tenantIdReservationToken");
+          if (jdbc.update(
+                  "UPDATE protected_account_creation SET tenant_request_json=?,tenant_request_digest=?,updated_at=? WHERE invite_id=? AND tenant_request_json IS NULL AND tenant_request_digest IS NULL",
+                  json.canonical(stored),
+                  digest,
+                  Timestamp.from(clock.instant()),
+                  inviteId(claim))
+              != 1) throw unavailable();
+          return json.read(json.canonical(checked), MultilingualTenantDTO.class);
+        });
   }
 
   private Optional<MultilingualTenantDTO> savedTenant(AcceptanceClaim claim, Row row) {
@@ -222,26 +230,43 @@ public final class JdbcProtectedAccountCreation {
     var scope = json.read(claim.frozen().requestJson(), JsonNode.class).path("scope");
     if (!"RESERVED_NEW".equals(scope.path("tenantMode").asText())
         || !"TENANT_ADMIN".equals(scope.path("protectedKind").asText())
-        || value.getId() == null || value.getId() <= 0
+        || value.getId() == null
+        || value.getId() <= 0
         || value.getId().longValue() != scope.path("targetTenantIds").get(0).longValue()
         || !equal(reservation(claim), value.getTenantIdReservationToken())) throw unavailable();
     return json.read(json.canonical(value), MultilingualTenantDTO.class);
   }
 
   private String reservation(AcceptanceClaim claim) {
-    String value = jdbc.queryForObject(
-        "SELECT tenant_id_reservation_token FROM account_invite WHERE id=?", String.class,
-        inviteId(claim));
+    String value =
+        jdbc.queryForObject(
+            "SELECT tenant_id_reservation_token FROM account_invite WHERE id=?",
+            String.class,
+            inviteId(claim));
     if (value == null || value.isBlank()) throw unavailable();
     return value;
   }
 
   private String tenantDigest(AcceptanceClaim claim, Row row, MultilingualTenantDTO value) {
-    return json.digest("protected-tenant-request/v1", Map.of(
-        "inviteId", inviteId(claim), "approvalId", claim.frozen().approvalId(),
-        "claimId", claim.claimId(), "attemptId", claim.attemptId(),
-        "executionId", claim.executionId(), "registrationDigest", claim.registrationDigest(),
-        "creationFingerprint", row.fingerprint(), "body", value));
+    return json.digest(
+        "protected-tenant-request/v1",
+        Map.of(
+            "inviteId",
+            inviteId(claim),
+            "approvalId",
+            claim.frozen().approvalId(),
+            "claimId",
+            claim.claimId(),
+            "attemptId",
+            claim.attemptId(),
+            "executionId",
+            claim.executionId(),
+            "registrationDigest",
+            claim.registrationDigest(),
+            "creationFingerprint",
+            row.fingerprint(),
+            "body",
+            value));
   }
 
   /** Historical SQL evidence can request reducing recovery only, never creation. */

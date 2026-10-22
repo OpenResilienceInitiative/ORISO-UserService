@@ -159,8 +159,12 @@ class JdbcProtectedAccountCreationTest {
     var reducing = assertDoesNotThrow(() -> owner().recovery(historical, 0));
     assertEquals(first.recoveryId(), reducing.recoveryId());
     assertArrayEquals(accounts.recoverBody(first), accounts.recoverBody(reducing));
-    assertThrows(org.springframework.security.access.AccessDeniedException.class, () -> owner().metadata(claim));
-    assertThrows(org.springframework.security.access.AccessDeniedException.class, () -> owner().recovery(claim, 0));
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> owner().metadata(claim));
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> owner().recovery(claim, 0));
     jdbc.update(
         "UPDATE protected_invitation_acceptance SET execution_id=? WHERE invite_id=73",
         UUID.randomUUID().toString());
@@ -249,8 +253,12 @@ class JdbcProtectedAccountCreationTest {
         IllegalArgumentException.class,
         () -> accounts.prepare(claim, changedRegistration, account()));
     jdbc.update("UPDATE account_invite SET token_hash=? WHERE id=73", "c".repeat(64));
-    assertThrows(org.springframework.security.access.AccessDeniedException.class, () -> owner().metadata(claim));
-    assertThrows(org.springframework.security.access.AccessDeniedException.class, () -> owner().recovery(claim, 0));
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> owner().metadata(claim));
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> owner().recovery(claim, 0));
     jdbc.update("UPDATE account_invite SET token_hash=? WHERE id=73", TOKEN);
     jdbc.update(
         "UPDATE protected_invitation_acceptance SET attempt_id=? WHERE invite_id=73",
@@ -273,9 +281,7 @@ class JdbcProtectedAccountCreationTest {
     assertThrows(IllegalStateException.class, () -> owner().createdWithinOwner(historical));
     var metadata =
         assertDoesNotThrow(
-            () ->
-                journal.withHistoricalInvite(
-                    73, () -> owner().metadataWithinOwner(historical)));
+            () -> journal.withHistoricalInvite(73, () -> owner().metadataWithinOwner(historical)));
     assertEquals(prepared.creationFingerprint(), metadata.creationFingerprint());
     assertTrue(
         journal.withHistoricalInvite(73, () -> owner().createdWithinOwner(historical)).isEmpty());

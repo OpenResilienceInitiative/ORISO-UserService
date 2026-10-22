@@ -128,22 +128,36 @@ public final class ProtectedAdminOnboardingService {
     var pending = accounts.ownedRead(claim, created);
     var bootstrap = otp.prepare(claim, pending);
     if (reserved) {
-      var tenantRequest = creation.tenantRequest(claim).orElseGet(() -> {
-        var signer = Admin.builder().id(created.accountId()).username(created.email())
-            .firstName(created.firstName()).lastName(created.lastName()).build();
-        var signature = command.dpaAccepted()
-            ? TenantAdminOnboardingService.buildDpaAcceptance(command, signer,
-                new OperatorDpaContentClient.OperatorDpa(null, command.dpaVersion()))
-            : null;
-        return creation.freezeTenantRequest(claim,
-            TenantAdminOnboardingService.buildTenantDto(invite, command, signature));
-      });
+      var tenantRequest =
+          creation
+              .tenantRequest(claim)
+              .orElseGet(
+                  () -> {
+                    var signer =
+                        Admin.builder()
+                            .id(created.accountId())
+                            .username(created.email())
+                            .firstName(created.firstName())
+                            .lastName(created.lastName())
+                            .build();
+                    var signature =
+                        command.dpaAccepted()
+                            ? TenantAdminOnboardingService.buildDpaAcceptance(
+                                command,
+                                signer,
+                                new OperatorDpaContentClient.OperatorDpa(
+                                    null, command.dpaVersion()))
+                            : null;
+                    return creation.freezeTenantRequest(
+                        claim,
+                        TenantAdminOnboardingService.buildTenantDto(invite, command, signature));
+                  });
       // The opaque saved claim is data; refresh the current phase before the fixed Tenant RPC.
       if (activation.phase(claim) != JdbcProtectedAccountActivation.Phase.UNSTAGED)
         throw unavailable();
       var tenant = tenants.createReservedTenant(claim, tenantRequest);
-      var policy = inactivity.capture(invite.getTenantId(),
-          AccountInactivityEnrollmentService.Group.OTHER);
+      var policy =
+          inactivity.capture(invite.getTenantId(), AccountInactivityEnrollmentService.Group.OTHER);
       return result(invite, activation.stageReserved(claim, pending, bootstrap, policy, tenant));
     }
     var policy =
@@ -158,7 +172,9 @@ public final class ProtectedAdminOnboardingService {
       return;
     }
     var published = dpa.fetchPublishedDpa();
-    if (published == null || blank(published.version()) || blank(command.dpaVersion())
+    if (published == null
+        || blank(published.version())
+        || blank(command.dpaVersion())
         || !published.version().equals(command.dpaVersion())) throw unavailable();
   }
 
