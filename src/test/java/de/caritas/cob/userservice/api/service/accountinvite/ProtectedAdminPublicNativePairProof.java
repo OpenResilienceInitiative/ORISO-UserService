@@ -524,8 +524,9 @@ class ProtectedAdminPublicNativePairProof {
                 String phase;
                 if (path.endsWith("/protocol/openid-connect/token")) phase = "token";
                 else if (approval) phase = "approve";
-                else if (outbound.getMethod() == org.springframework.http.HttpMethod.GET
-                    && path.matches(".*/oriso-protected-invitations/v1/approvals/[a-f0-9-]{36}"))
+                else if (outbound.getMethod() == org.springframework.http.HttpMethod.POST
+                    && path.matches(
+                        ".*/oriso-protected-invitations/v1/approvals/[a-f0-9-]{36}/status"))
                   phase = "status";
                 else if (path.endsWith("/owned-read")) phase = "owned-read";
                 else if (path.contains("/fetch-otp-setup-info/")) phase = "prepare";
