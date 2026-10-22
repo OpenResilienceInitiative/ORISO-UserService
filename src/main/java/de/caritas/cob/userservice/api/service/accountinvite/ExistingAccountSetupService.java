@@ -274,6 +274,13 @@ public class ExistingAccountSetupService {
       // Resolve this exact saved command before mutable provider checks on retries. The checked
       // adapter verifies current identity/roles/required action when no saved outcome exists.
       passwords.updateExistingSetupPassword(handle, chosenPassword);
+    } catch (de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ClaimedPasswordMaintenance.Refusal refused) {
+      if (!refused.matches(handle)) throw new ScopedIdentityCommandRequiredException();
+      inTransaction(() -> {
+        setupPasswordClaims.refuseWithinOwner(target.claim());
+        return null;
+      });
+      throw refused.publicResponse();
     } catch (CustomValidationHttpStatusException rejected) {
       inTransaction(
           () -> {

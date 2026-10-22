@@ -307,6 +307,10 @@ public class PasswordResetService {
       // The finite provider resolves an exact saved result before considering mutable state.
       // It owns local SQL completion and its verified receipt in the same transaction.
       identityPasswordUpdater.updateClaimedPasswordReset(handle, newPassword);
+    } catch (de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ClaimedPasswordMaintenance.Refusal refused) {
+      if (!refused.matches(handle)) throw ClaimedReset.unavailable();
+      oneTimeTokenStore.refusePasswordResetClaim(claim);
+      throw refused.publicResponse();
     } catch (CustomValidationHttpStatusException rejected) {
       // Only a cryptographically checked native pre-write password-policy terminal may get here.
       oneTimeTokenStore.finishPasswordResetClaim(claim, false);

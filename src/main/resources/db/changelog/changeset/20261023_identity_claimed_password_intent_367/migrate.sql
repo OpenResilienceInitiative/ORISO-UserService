@@ -21,5 +21,6 @@ CREATE TABLE identity_claimed_password_intent (
   updated_at DATETIME(6) NOT NULL,
   PRIMARY KEY (claim_id, claim_version),
   UNIQUE KEY uq_identity_claimed_password_operation (operation_id),
-  INDEX idx_identity_claimed_password_account (account_id, status)
+  INDEX idx_identity_claimed_password_account (account_id, status),
+  INDEX idx_identity_claimed_password_expiry (authority_valid_until, claim_id, claim_version)
 );

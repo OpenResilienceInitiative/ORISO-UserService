@@ -47,6 +47,11 @@ public interface OneTimeTokenStore {
     throw new IllegalStateException("Causal password-reset storage unavailable");
   }
 
+  /** Terminal verified refusal; keeps the original claim and never permits a different request. */
+  default void refusePasswordResetClaim(PasswordResetClaim claim) {
+    throw new IllegalStateException("Causal password-reset storage unavailable");
+  }
+
   record PasswordResetClaim(
       PasswordResetBinding binding,
       java.util.UUID claimId,

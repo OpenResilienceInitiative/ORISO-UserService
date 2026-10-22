@@ -220,6 +220,11 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
   }
 
   @Override
+  public void refusePasswordResetClaim(PasswordResetClaim claim) {
+    resetCustody().refuse(claim);
+  }
+
+  @Override
   public void finishPasswordResetClaim(PasswordResetClaim claim, boolean accepted) {
     resetCustody().finish(claim, accepted);
   }

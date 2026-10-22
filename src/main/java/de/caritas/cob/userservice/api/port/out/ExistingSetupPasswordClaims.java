@@ -56,5 +56,10 @@ public interface ExistingSetupPasswordClaims {
     throw new IllegalStateException("Existing setup policy custody unavailable");
   }
 
+  /** Verified non-policy terminal. No release or version advance is allowed. */
+  default void refuseWithinOwner(Claim claim) {
+    throw new IllegalStateException("Existing setup refusal custody unavailable");
+  }
+
   void acknowledgeWithinOwner(Claim claim);
 }

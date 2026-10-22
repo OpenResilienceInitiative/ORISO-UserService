@@ -59,7 +59,63 @@ public final class ClaimedPasswordMaintenance {
   /** Retention maintenance only; it cannot issue, rebind or acknowledge any native command. */
   public int expireSecretCustody() {
     requireSupport();
-    return 0;
+    if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+    return transaction(() -> {
+      long cutoff = clock.instant().minusSeconds(7 * 86400L).getEpochSecond();
+      var rows = jdbc.query(
+          "select claim_id,claim_version,status from identity_claimed_password_intent where intent_envelope is not null and authority_valid_until<=? order by authority_valid_until,claim_id,claim_version limit 100 for update",
+          (rs, index) -> new Object[] {rs.getString("claim_id"), rs.getLong("claim_version"), rs.getString("status")}, cutoff);
+      int erased = 0;
+      for (var row : rows) {
+        String terminal = Set.of("ACKNOWLEDGED", "VERIFIED", "REJECTED", "REFUSED").contains((String) row[2])
+            ? "EXPIRED" : "EXPIRED_UNKNOWN";
+        erased += jdbc.update(
+            "update identity_claimed_password_intent set intent_envelope=null,status=?,updated_at=? where claim_id=? and claim_version=? and intent_envelope is not null and authority_valid_until<=?",
+            terminal, java.sql.Timestamp.from(clock.instant()), row[0], row[1], cutoff);
+      }
+      return erased;
+    });
+  }
+
+  /** Only this adapter issues a refusal after strict proof verification and a committed tombstone. */
+  public static final class Refusal extends RuntimeException {
+    private final Object handle;
+    private final UUID operationId;
+    private final int status;
+
+    private Refusal(Object handle, AccountLifecycleCodec.VerifiedMaintenanceNoEffect proof) {
+      super("Verified password command refused");
+      if (!(handle instanceof ExistingAccountSetupService.ClaimedSetup)
+          && !(handle instanceof PasswordResetService.ClaimedReset)) throw unavailable();
+      if (!Set.of(403, 409).contains(proof.status())
+          || !"password-reset".equals(proof.command())) throw unavailable();
+      this.handle = handle;
+      this.operationId = proof.operationId();
+      this.status = proof.status();
+    }
+
+    public boolean matches(ExistingAccountSetupService.ClaimedSetup candidate) {
+      if (candidate != handle) return false;
+      candidate.checkedRecoveryClaim();
+      return true;
+    }
+
+    public boolean matches(PasswordResetService.ClaimedReset candidate) {
+      if (candidate != handle) return false;
+      candidate.checkedRecoveryClaim();
+      return true;
+    }
+
+    public UUID operationId() { return operationId; }
+    public int status() { return status; }
+
+    public RuntimeException publicResponse() {
+      return status == 403
+          ? new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("Password command refused")
+          : new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException("Password command refused");
+    }
+
+    @Override public String toString() { return "ClaimedPasswordRefusal[redacted]"; }
   }
 
   public void requireSupport() {
@@ -152,7 +208,7 @@ public final class ClaimedPasswordMaintenance {
             null,
             b.expiresAt().atZone(ZoneId.systemDefault()).toInstant().getEpochSecond(),
             digest);
-    execute(binding, password, claim::checkedClaim, claim::checkedRecoveryClaim);
+    execute(binding, password, claim::checkedClaim, claim::checkedRecoveryClaim, claim);
   }
 
   public void reset(PasswordResetService.ClaimedReset claim, String password) {
@@ -174,7 +230,7 @@ public final class ClaimedPasswordMaintenance {
             b.accountVersion(),
             b.expiresAt().getEpochSecond(),
             digest);
-    execute(binding, password, claim::checkedClaim, claim::checkedRecoveryClaim);
+    execute(binding, password, claim::checkedClaim, claim::checkedRecoveryClaim, claim);
   }
 
   private record Bound(
@@ -201,7 +257,7 @@ public final class ClaimedPasswordMaintenance {
       String status,
       String receipt) {}
 
-  private void execute(Bound b, String password, Supplier<?> fresh, Supplier<?> recovery) {
+  private void execute(Bound b, String password, Supplier<?> fresh, Supplier<?> recovery, Object handle) {
     if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
     recovery.get();
@@ -214,10 +270,10 @@ public final class ClaimedPasswordMaintenance {
       verifySaved(b, actor, row);
       return;
     }
-    if ("REJECTED".equals(row.status())) {
+    if (Set.of("REJECTED", "REFUSED").contains(row.status())) {
       final Intent rejected = row;
       var body = transaction(() -> open(b, actor, rejected)).path("body");
-      policy(b, actor, rejected, body, codec.read(rejected.receipt(), JsonNode.class));
+      policy(b, actor, rejected, body, codec.read(rejected.receipt(), JsonNode.class), handle);
     }
     if ("PREPARED".equals(row.status())) {
       fresh.get();
@@ -233,7 +289,7 @@ public final class ClaimedPasswordMaintenance {
     String verified;
     if (response.has("receipt")) {
       if ("NO_EFFECT".equals(response.path("result").textValue()))
-        policy(b, actor, frozen, body, response);
+        policy(b, actor, frozen, body, response, handle);
       verified =
           codec.verifyMaintenancePasswordResetReceipt(
               codec.canonical(response), realmId, actor, body);
@@ -249,7 +305,7 @@ public final class ClaimedPasswordMaintenance {
       String reply = call(b, actor, body, false);
       var result = codec.read(reply, JsonNode.class);
       if ("NO_EFFECT".equals(result.path("result").textValue()))
-        policy(b, actor, frozen, body, result);
+        policy(b, actor, frozen, body, result, handle);
       verified = codec.verifyMaintenancePasswordResetReceipt(reply, realmId, actor, body);
     }
     recovery.get();
@@ -292,24 +348,25 @@ public final class ClaimedPasswordMaintenance {
   }
 
   private void policy(
-      Bound b, TaskActorCredentials actor, Intent frozen, JsonNode body, JsonNode result) {
+      Bound b, TaskActorCredentials actor, Intent frozen, JsonNode body, JsonNode result, Object handle) {
     String reply = codec.canonical(result);
     var proof =
         codec.verifyMaintenanceNoEffectReceipt(reply, realmId, actor, body, "password-reset");
-    if (proof.status() != 400) throw unavailable();
+    String terminal = proof.status() == 400 ? "REJECTED" : "REFUSED";
     transaction(
         () -> {
           var current = find(b, actor);
           if (current == null
               || !Objects.equals(current.envelope(), frozen.envelope())
               || !Objects.equals(current.metadata(), frozen.metadata())) throw unavailable();
-          if ("REJECTED".equals(current.status())) {
+          if (terminal.equals(current.status())) {
             if (!reply.equals(current.receipt())) throw unavailable();
             return null;
           }
           if (!"FROZEN".equals(current.status())) throw unavailable();
           if (jdbc.update(
-                  "update identity_claimed_password_intent set status='REJECTED',receipt=?,updated_at=? where claim_id=? and claim_version=? and status='FROZEN'",
+                  "update identity_claimed_password_intent set status=?,receipt=?,updated_at=? where claim_id=? and claim_version=? and status='FROZEN'",
+                  terminal,
                   reply,
                   java.sql.Timestamp.from(clock.instant()),
                   b.claim().toString(),
@@ -317,6 +374,7 @@ public final class ClaimedPasswordMaintenance {
               != 1) throw unavailable();
           return null;
         });
+    if (proof.status() != 400) throw new Refusal(handle, proof);
     throw new de.caritas.cob.userservice.api.exception.httpresponses
         .CustomValidationHttpStatusException(
         de.caritas.cob.userservice.api.exception.httpresponses.customheader

@@ -442,6 +442,9 @@ class ClaimedPasswordMaintenanceFlowIT {
               f.clock.instant().plusSeconds(30 * 86400).getEpochSecond(),
               id);
       }
+      assertThat(f.adapter.expireSecretCustody()).isZero();
+      var store = new RedisOneTimeTokenStore(f.redis, f.prefix);
+      var held = store.claimPasswordReset(token, f.jdbc.queryForObject("select request_digest from identity_claimed_password_intent where claim_id=?", String.class, originalId)).orElseThrow();
       f.now.set(f.now.get().plusSeconds(9 * 86400));
       assertThat(f.adapter.expireSecretCustody()).isEqualTo(100);
       assertThat(f.adapter.expireSecretCustody()).isEqualTo(1);
@@ -469,6 +472,7 @@ class ClaimedPasswordMaintenanceFlowIT {
                   String.class,
                   originalId))
           .isEqualTo(digest);
+      store.finishPasswordResetClaim(held, true); // Late custody ACK is data and cannot rebind the expired SQL command.
       assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
           .isInstanceOf(RuntimeException.class);
       assertThat(f.effects).isEqualTo(1);
@@ -476,6 +480,23 @@ class ClaimedPasswordMaintenanceFlowIT {
               f.jdbc.queryForObject(
                   "select count(*) from identity_claimed_password_intent", Integer.class))
           .isEqualTo(102);
+    }
+  }
+
+  @Test
+  void actualResetSupportsEveryOwnedKindAndLegitimateAdministratorConsultantPair() throws Exception {
+    for (String kind : List.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")) {
+      for (boolean dual : kind.endsWith("ADMIN") ? List.of(false, true) : List.of(false)) {
+        try (var f = new Fixture(kind, dual)) {
+          String token = f.requestLink();
+          assertThat(f.service.confirmPasswordReset(token, "fixture-new-password!42")).isTrue();
+          assertThat(f.effects).isEqualTo(1);
+          assertThat(f.phase()).isEqualTo("ACKNOWLEDGED");
+          if (dual || "CONSULTANT".equals(kind)) assertThat(f.required()).isFalse();
+          assertThat(f.readCandidates).containsExactly("reviewed-" + kind.toLowerCase(Locale.ROOT));
+          verifyNoInteractions(f.legacy);
+        }
+      }
     }
   }
 
@@ -507,6 +528,11 @@ class ClaimedPasswordMaintenanceFlowIT {
             mock(UserHelper.class),
             mock(KeycloakAuthClient.class));
     final ConsultantService consultants = mock(ConsultantService.class);
+    final UserService users = mock(UserService.class);
+    final AdminRepository admins = mock(AdminRepository.class);
+    String ownedKind = "CONSULTANT";
+    long ownedTenant = 42;
+    boolean ownsConsultant = true;
     final LettuceConnectionFactory connection =
         new LettuceConnectionFactory(REDIS.getHost(), REDIS.getMappedPort(6379));
     final String prefix = "test:causal-flow:" + UUID.randomUUID() + ":";
@@ -635,8 +661,6 @@ class ClaimedPasswordMaintenanceFlowIT {
           });
       server.start();
       restartAdapter();
-      var users = mock(UserService.class);
-      var admins = mock(AdminRepository.class);
       var model = new Consultant();
       model.setId(ACCOUNT);
       model.setTenantId(42L);
@@ -677,6 +701,33 @@ class ClaimedPasswordMaintenanceFlowIT {
                 assertThat(recipient).isEqualTo("Original@Example.org");
                 resetUrl = url;
               });
+    }
+
+    Fixture(String kind, boolean dual) throws Exception {
+      this();
+      ownedKind = kind;
+      ownedTenant = "PLATFORM_ADMIN".equals(kind) ? 0 : 42;
+      ownsConsultant = "CONSULTANT".equals(kind) || dual;
+      if (!ownsConsultant) jdbc.update("delete from consultant where consultant_id=?", ACCOUNT);
+      else jdbc.update("update consultant set tenant_id=? where consultant_id=?", ownedTenant, ACCOUNT);
+      if ("USER".equals(kind)) {
+        jdbc.update("insert into user values(?,?,?,'Original@Example.org',?,?,null,'ACTIVE')", ACCOUNT, ownedTenant, sqlUsername,
+            Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 12, 0)), Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 13, 0)));
+        var model = new de.caritas.cob.userservice.api.model.User();
+        model.setUserId(ACCOUNT);
+        model.setTenantId(ownedTenant);
+        model.setUsername(sqlUsername);
+        model.setEmail("Original@Example.org");
+        when(users.findUserByUsername(anyString())).thenReturn(Optional.of(model));
+      } else if (kind.endsWith("ADMIN")) {
+        String type = switch (kind) { case "AGENCY_ADMIN" -> "AGENCY"; case "TENANT_ADMIN" -> "TENANT"; default -> "SUPER"; };
+        jdbc.update("insert into admin values(?,?,?,'Original@Example.org',?,?,?,false)", ACCOUNT, ownedTenant, sqlUsername,
+            Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 12, 0)), Timestamp.valueOf(LocalDateTime.of(2026, 10, 22, 13, 0)), type);
+        var admin = de.caritas.cob.userservice.api.model.Admin.builder().id(ACCOUNT).tenantId(ownedTenant)
+            .username(sqlUsername).email("Original@Example.org").type(de.caritas.cob.userservice.api.model.Admin.AdminType.valueOf(type)).build();
+        when(admins.findForSignIn(anyString())).thenReturn(Optional.of(admin));
+        ReflectionTestUtils.setField(service, "passwordResetAdminFrontendBaseUrl", "https://admin.example.org");
+      }
     }
 
     void restartAdapter() {
@@ -837,7 +888,9 @@ class ClaimedPasswordMaintenanceFlowIT {
     }
 
     String requestLink() {
-      service.requestPasswordReset("testuser", "en");
+      service.requestPasswordReset("testuser", "en", ownedKind.endsWith("ADMIN")
+          ? de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication.ADMIN
+          : de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication.APP);
       assertThat(resetUrl).isNotNull();
       return resetUrl.substring(resetUrl.indexOf("token=") + 6);
     }
@@ -869,11 +922,16 @@ class ClaimedPasswordMaintenanceFlowIT {
           .put("lastName", "Consultant")
           .put("enabled", true)
           .put("emailVerified", true)
-          .put("tenantId", "42")
+          .put("tenantId", Long.toString(ownedTenant))
           .put("preferredLanguage", "de")
           .put("passwordChangeRequired", true)
           .put("state", "a".repeat(64));
-      value.putArray("effectiveRoles").add("consultant");
+      var roles = value.putArray("effectiveRoles");
+      if ("USER".equals(ownedKind)) roles.add("user");
+      else if ("AGENCY_ADMIN".equals(ownedKind)) {
+        roles.add("restricted-agency-admin").add("user-admin");
+        if (ownsConsultant) roles.add("consultant");
+      } else roles.add("consultant"); // Protected receiver-double roles are data; native separately proves its exact installed profile.
       return codec.canonical(value);
     }
 
@@ -887,7 +945,7 @@ class ClaimedPasswordMaintenanceFlowIT {
       receipt.put("ownerSubject", SUBJECT);
       receipt.put("intentDigest", codec.digest("maintenance-intent", body));
       receipt.put("previousState", body.path("expectedState").textValue());
-      receipt.put("tenantId", "42");
+      receipt.put("tenantId", Long.toString(ownedTenant));
       receipt.put(
           "originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
       String result = noEffect ? "NO_EFFECT" : "UPDATED";
