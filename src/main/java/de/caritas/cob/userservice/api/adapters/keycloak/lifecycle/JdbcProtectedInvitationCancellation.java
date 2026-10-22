@@ -203,6 +203,13 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
         limit);
   }
 
+  /** Includes committed-reply recovery and restricted cleanup holds; separate bounded worker. */
+  public List<Long> recoveryInviteIds(int limit) {
+    return List.of();
+  }
+
+  public void touchRecovery(long inviteId) {}
+
   private VerifiedRestriction checkedAck(Row row) {
     try {
       if (row.response() == null) throw unavailable();
