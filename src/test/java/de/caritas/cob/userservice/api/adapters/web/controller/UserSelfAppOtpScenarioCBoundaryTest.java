@@ -92,21 +92,26 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     try (var fixture = new Fixture(true, true)) {
       String internal = "https://keycloak.internal.fixture.invalid";
       var internalCalls = new AtomicInteger();
-      fixture.http.getInterceptors().add(
-          (request, body, execution) -> {
-            assertTrue(request.getURI().toString().startsWith(internal + "/realms/"));
-            internalCalls.incrementAndGet();
-            var uri = java.net.URI.create(
-                fixture.issuer.base() + request.getURI().toString().substring(internal.length()));
-            return execution.execute(
-                new org.springframework.http.client.support.HttpRequestWrapper(request) {
-                  @Override
-                  public java.net.URI getURI() {
-                    return uri;
-                  }
-                },
-                body);
-          });
+      fixture
+          .http
+          .getInterceptors()
+          .add(
+              (request, body, execution) -> {
+                assertTrue(request.getURI().toString().startsWith(internal + "/realms/"));
+                internalCalls.incrementAndGet();
+                var uri =
+                    java.net.URI.create(
+                        fixture.issuer.base()
+                            + request.getURI().toString().substring(internal.length()));
+                return execution.execute(
+                    new org.springframework.http.client.support.HttpRequestWrapper(request) {
+                      @Override
+                      public java.net.URI getURI() {
+                        return uri;
+                      }
+                    },
+                    body);
+              });
       fixture.delegate.setSelfAppOtpMaintenance(
           new SelfAppOtpMaintenance(
               fixture.mode,
@@ -125,9 +130,14 @@ class UserSelfAppOtpScenarioCBoundaryTest {
               fixture.issuer.issuer()));
       fixture.expectNative(false, false);
       assertDoesNotThrow(
-          () -> assertEquals(
-              200,
-              fixture.controller.activateTwoFactorAuthByApp(fixture.dto()).getStatusCode().value()));
+          () ->
+              assertEquals(
+                  200,
+                  fixture
+                      .controller
+                      .activateTwoFactorAuthByApp(fixture.dto())
+                      .getStatusCode()
+                      .value()));
       assertEquals(2, internalCalls.get());
       assertEquals("ACKNOWLEDGED", fixture.status());
       assertEquals(1, fixture.domainWrites());
