@@ -391,6 +391,16 @@ class PasswordResetServiceTest {
     assertThat(result).isFalse();
     verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
     verify(consultantService, never()).clearPasswordChangeRequirement(any());
+    when(oneTimeTokenStore.claim("password-reset", "elapsed-claim"))
+        .thenReturn(
+            Optional.of(
+                new OneTimeTokenStore.TokenClaim(
+                    "user-keycloak-id", Instant.now().minusSeconds(30))));
+
+    assertThat(passwordResetService.confirmPasswordReset("elapsed-claim", "NewPassw0rd!"))
+        .isFalse();
+    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
+    verify(consultantService, never()).clearPasswordChangeRequirement(any());
   }
 
   @Test
