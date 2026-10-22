@@ -268,7 +268,7 @@ class ClaimedPasswordMaintenanceFlowIT {
     final Clock clock =
         new Clock() {
           public ZoneId getZone() {
-            return ZoneId.systemDefaultZone();
+            return ZoneId.systemDefault();
           }
 
           public Clock withZone(ZoneId zone) {

@@ -106,10 +106,8 @@ class UserSelfPasswordScenarioCBoundaryTest {
       for (boolean dual : admin ? List.of(false, true) : List.of(false)) {
         try (var f = new Fixture(true, true, "PLATFORM_ADMIN".equals(kind) ? 0L : 7L, kind, dual)) {
           f.expectNative();
-          assertEquals(
-              200,
-              f.controller.updatePassword(f.password()).getStatusCode().value(),
-              kind + "/" + dual);
+          var response = assertDoesNotThrow(() -> f.controller.updatePassword(f.password()));
+          assertEquals(200, response.getStatusCode().value(), kind + "/" + dual);
           assertEquals("ACKNOWLEDGED", f.status());
           assertEquals(1, f.effects.get());
           assertEquals(dual || "CONSULTANT".equals(kind) ? 1 : 0, f.clears());
