@@ -1365,6 +1365,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
         jdbc.execute(
             "create table admin(admin_id varchar(36) primary key,tenant_id bigint,type varchar(6),email varchar(320))");
         jdbc.execute(
+            "create table consultant(consultant_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512),email varchar(320))");
+        jdbc.execute(
             "create table account_invite(id bigint primary key,accepted_by_user_id varchar(36),two_factor_status varchar(32),write_count int)");
         jdbc.update("insert into account_invite values(1,?,'PENDING_SETUP',0)", ACCOUNT);
         jdbc.execute(
@@ -1553,6 +1555,15 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       SecurityContextHolder.getContext().setAuthentication(authentication);
     }
 
+    void refuseNativeRead() {
+      server
+          .expect(
+              requestTo(
+                  issuer.issuer() + "/oriso-account-maintenance/v1/accounts/" + ACCOUNT + "/read"))
+          .andExpect(method(HttpMethod.POST))
+          .andRespond(withStatus(HttpStatus.FORBIDDEN));
+    }
+
     void humanExpiry(Instant deadline) {
       var previous = ((JwtAuthenticationToken) request.getUserPrincipal()).getToken();
       var jwt =
@@ -1618,7 +1629,12 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     }
 
     String currentEmail() {
-      return jdbc.queryForObject("select email from user where user_id=?", String.class, ACCOUNT);
+      return jdbc.queryForObject(
+          protectedAccount
+              ? "select email from admin where admin_id=?"
+              : "select email from user where user_id=?",
+          String.class,
+          ACCOUNT);
     }
 
     void assertEmailStorage() {

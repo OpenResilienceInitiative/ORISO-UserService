@@ -265,7 +265,8 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
         java.util.Set.of(
             "kind", "humanAuthority", "humanClient", "humanIssuer", "humanSubject", "workflowId"));
     if (!"SELF".equals(intentText(origin, "kind", 16))
-        || !origin.get("humanAuthority").isNull()
+        || !(origin.get("humanAuthority").isNull()
+            || "PROTECTED_ACCOUNT_OPERATIONS_V1".equals(origin.get("humanAuthority").textValue()))
         || !metadata.accountId().equals(intentUuid(origin, "humanSubject"))
         || !metadata.workflowId().equals(intentUuid(origin, "workflowId"))
         || !metadata.originDigest().equals(digest("otp-origin", origin)))

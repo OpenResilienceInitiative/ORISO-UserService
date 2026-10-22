@@ -235,6 +235,40 @@ class UserMaintenanceSecretIntentCodecTest {
     }
   }
 
+  @Test
+  void protectedSelfAssertionUsesTheSameBoundPrivateFormatWithoutGrantingAuthority()
+      throws Exception {
+    var vector = ordinaryVector();
+    var codec = vectorCodec();
+    var metadata = (ObjectNode) vector.path("metadata").deepCopy();
+    var command = codec.read(vector.path("canonical_plaintext_utf8").textValue(), ObjectNode.class);
+    var origin = (ObjectNode) command.path("body").path("target").path("origin");
+    origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
+    metadata.put("originDigest", codec.digest("otp-origin", origin));
+    byte[] plaintext = codec.canonical(command).getBytes(StandardCharsets.UTF_8);
+    String encrypted = codec.sealSelfAppIntent(metadata, plaintext);
+    assertArrayEquals(plaintext, codec.openSelfAppIntent(metadata, encrypted));
+    var ordinaryMetadata = vector.path("metadata");
+    refuses(() -> codec.openSelfAppIntent(ordinaryMetadata, encrypted));
+  }
+
+  @Test
+  void privateSelfFormatStillRejectsEveryUnreviewedAuthorityEvenWithMatchingDigest()
+      throws Exception {
+    var vector = ordinaryVector();
+    var codec = vectorCodec();
+    for (String authority :
+        List.of("PLATFORM", "TENANT_PEER", "SELF", "true", "", "PROTECTED_ACCOUNT_OPERATIONS_V1 ")) {
+      var metadata = (ObjectNode) vector.path("metadata").deepCopy();
+      var command = codec.read(vector.path("canonical_plaintext_utf8").textValue(), ObjectNode.class);
+      var origin = (ObjectNode) command.path("body").path("target").path("origin");
+      origin.put("humanAuthority", authority);
+      metadata.put("originDigest", codec.digest("otp-origin", origin));
+      byte[] plaintext = codec.canonical(command).getBytes(StandardCharsets.UTF_8);
+      refuses(() -> codec.sealSelfAppIntent(metadata, plaintext));
+    }
+  }
+
   private AccountLifecycleCodec vectorCodec() {
     return new AccountLifecycleCodec(
         HexFormat.of()
