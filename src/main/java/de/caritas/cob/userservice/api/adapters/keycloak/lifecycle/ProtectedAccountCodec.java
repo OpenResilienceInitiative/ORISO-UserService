@@ -831,6 +831,18 @@ public final class ProtectedAccountCodec {
       return prepared.executionId;
     }
 
+    public String email() {
+      return prepared.account.email();
+    }
+
+    public String firstName() {
+      return prepared.account.firstName();
+    }
+
+    public String lastName() {
+      return prepared.account.lastName();
+    }
+
     public String accountId() {
       return accountId;
     }
