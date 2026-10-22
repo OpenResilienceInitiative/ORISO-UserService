@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCom
 import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationUpstreamException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.picture.PictureDiagnostics;
+import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange.MagicLinkChallenge;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import jakarta.persistence.OptimisticLockException;
@@ -58,6 +59,24 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 @ControllerAdvice
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHandler {
+
+  @ExceptionHandler(MagicLinkChallenge.class)
+  public ResponseEntity<Object> handleMagicLinkChallenge(
+      MagicLinkChallenge ex, WebRequest request) {
+    Map<String, Object> body = new java.util.LinkedHashMap<>();
+    body.put("error", "invalid_grant");
+    body.put("error_description", "Missing totp");
+    body.put("otpType", ex.otpType());
+    var headers = new HttpHeaders();
+    headers.setCacheControl("no-store");
+    if (ex.resendAvailableInSeconds() != null) {
+      body.put("resendAvailableInSeconds", ex.resendAvailableInSeconds());
+      if (ex.status() == 429) {
+        headers.set(HttpHeaders.RETRY_AFTER, ex.resendAvailableInSeconds().toString());
+      }
+    }
+    return handleExceptionInternal(ex, body, headers, HttpStatus.valueOf(ex.status()), request);
+  }
 
   @ExceptionHandler(de.caritas.cob.userservice.api.picture.PictureException.class)
   public ResponseEntity<Object> handlePicture(
