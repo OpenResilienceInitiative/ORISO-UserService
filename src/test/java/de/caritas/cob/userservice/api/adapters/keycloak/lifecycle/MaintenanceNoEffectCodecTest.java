@@ -173,8 +173,10 @@ class MaintenanceNoEffectCodecTest {
   private String reply(ObjectNode outcome) throws Exception {
     // Independent signing must retain malformed numeric representations so they reach the verifier.
     var sorted = new TreeMap<String, Object>();
-    outcome.fields().forEachRemaining(entry ->
-        sorted.put(entry.getKey(), json.convertValue(entry.getValue(), Object.class)));
+    outcome
+        .fields()
+        .forEachRemaining(
+            entry -> sorted.put(entry.getKey(), json.convertValue(entry.getValue(), Object.class)));
     String payload =
         Base64.getUrlEncoder()
             .withoutPadding()

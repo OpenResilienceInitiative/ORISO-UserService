@@ -139,7 +139,8 @@ public class AccountLifecycleCallerConfiguration {
         || internalServer == null
         || internalServer.isBlank()) throw invalid();
     var transport =
-        new de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakHumanAdminMaintenance(
+        new de.caritas.cob.userservice.api.adapters.keycloak.maintenance
+            .KeycloakHumanAdminMaintenance(
             http,
             actors,
             broker,
