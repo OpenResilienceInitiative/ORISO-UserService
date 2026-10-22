@@ -36,7 +36,8 @@ class KeycloakProtectedCleanupStatusTest {
   private final JsonNode vector = resource("protected-cleanup-status-v1.json");
   private final JsonNode recoveryVector = resource("protected-account-recovery-v1.json");
   private final Clock clock = Clock.fixed(Instant.parse("2029-01-01T00:00:00Z"), ZoneOffset.UTC);
-  private final Clock readClock = Clock.fixed(Instant.parse("2031-01-01T00:00:00Z"), ZoneOffset.UTC);
+  private final Clock readClock =
+      Clock.fixed(Instant.parse("2031-01-01T00:00:00Z"), ZoneOffset.UTC);
   private final ProtectedInvitationCodec approvals =
       new ProtectedInvitationCodec(
           key, clock, account.path("realmName").asText(), account.path("realmId").asText());

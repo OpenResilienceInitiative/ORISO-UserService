@@ -414,22 +414,38 @@ class JdbcProtectedInvitationCancellationTest {
       throws Exception {
     // This fixture uses real approval, acceptance and activation SQL owners; only native identity
     // receipt restoration and external RPC are explicit doubles, as in the activation owner suite.
-    for (String column : new String[] {
-        "accepted_by_user_id VARCHAR(36)", "accepted_at TIMESTAMP", "provisioning_status VARCHAR(32)",
-        "provisioning_failure_reason VARCHAR(255)", "active_recipient_key VARCHAR(255)", "update_date TIMESTAMP"})
-      jdbc.execute("ALTER TABLE account_invite ADD " + column);
-    for (String migration : new String[] {
-        "20261022_protected_invitation_acceptance_367", "20261022_protected_account_activation_367"})
-      for (String sql : Files.readString(Path.of("src/main/resources/db/changelog/changeset", migration, "migrate.sql")).split(";"))
-        if (!sql.isBlank()) jdbc.execute(sql);
-    jdbc.execute("CREATE TABLE admin(admin_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,username VARCHAR(255),first_name VARCHAR(255),last_name VARCHAR(255),email VARCHAR(255),type VARCHAR(10),managed_paused BOOLEAN)");
-    jdbc.execute("CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,assigned_months INT,revision BIGINT,last_activity TIMESTAMP,due_at TIMESTAMP,status VARCHAR(20),attempts INT)");
+    for (String column :
+        new String[] {
+          "accepted_by_user_id VARCHAR(36)", "accepted_at TIMESTAMP",
+              "provisioning_status VARCHAR(32)",
+          "provisioning_failure_reason VARCHAR(255)", "active_recipient_key VARCHAR(255)",
+              "update_date TIMESTAMP"
+        }) jdbc.execute("ALTER TABLE account_invite ADD " + column);
+    for (String migration :
+        new String[] {
+          "20261022_protected_invitation_acceptance_367",
+          "20261022_protected_account_activation_367"
+        })
+      for (String sql :
+          Files.readString(
+                  Path.of("src/main/resources/db/changelog/changeset", migration, "migrate.sql"))
+              .split(";")) if (!sql.isBlank()) jdbc.execute(sql);
+    jdbc.execute(
+        "CREATE TABLE admin(admin_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,username VARCHAR(255),first_name VARCHAR(255),last_name VARCHAR(255),email VARCHAR(255),type VARCHAR(10),managed_paused BOOLEAN)");
+    jdbc.execute(
+        "CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,assigned_months INT,revision BIGINT,last_activity TIMESTAMP,due_at TIMESTAMP,status VARCHAR(20),attempts INT)");
     String token = "c".repeat(64);
-    jdbc.update("UPDATE account_invite SET status='EMAIL_SENT',token_hash=?,provisioning_status='PENDING' WHERE id=73",token);
-    byte[] key = HexFormat.of().parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
-    var approvals = new ProtectedInvitationCodec(key,before,"synthetic",proposal.issuerRealm());
-    var acceptance = new JdbcProtectedInvitationAcceptance(jdbc,manager,journal,approvals,json,before);
-    var claim = acceptance.claim(73,token,json.read("{\"password\":\"synthetic-memory-only\"}",JsonNode.class));
+    jdbc.update(
+        "UPDATE account_invite SET status='EMAIL_SENT',token_hash=?,provisioning_status='PENDING' WHERE id=73",
+        token);
+    byte[] key =
+        HexFormat.of().parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    var approvals = new ProtectedInvitationCodec(key, before, "synthetic", proposal.issuerRealm());
+    var acceptance =
+        new JdbcProtectedInvitationAcceptance(jdbc, manager, journal, approvals, json, before);
+    var claim =
+        acceptance.claim(
+            73, token, json.read("{\"password\":\"synthetic-memory-only\"}", JsonNode.class));
     String account = "bf75ecf1-e612-414a-9e20-fd0858957f68";
     var original = mock(ProtectedAccountCodec.VerifiedCreated.class);
     when(original.accountId()).thenReturn(account);
@@ -442,48 +458,133 @@ class JdbcProtectedInvitationCancellationTest {
     when(original.registrationKind()).thenReturn("TENANT_ADMIN");
     when(original.tenantId()).thenReturn(7L);
     var accounts = mock(ProtectedAccountCodec.class);
-    when(accounts.restore(any(),eq("synthetic-owned-checkpoint"))).thenReturn(original);
-    var admin = java.util.Map.of("id",account,"tenantId",7L,"username","ada@example.test","firstName","Ada","lastName","Lovelace","email","ada@example.test","type","TENANT","managedPaused",false);
-    var enrollment = java.util.Map.of("id",account,"tenantId",7L,"months",12,"revision",4L,"lastActivity",before.instant().toString(),"dueAt",before.instant().plusSeconds(365L*86400).toString(),"state","ACTIVE","attempts",0);
-    jdbc.update("INSERT INTO admin VALUES(?,7,'ada@example.test','Ada','Lovelace','ada@example.test','TENANT',false)",account);
-    jdbc.update("INSERT INTO account_inactivity VALUES(?,7,12,4,?,?,'ACTIVE',0)",account,Timestamp.from(before.instant()),Timestamp.from(before.instant().plusSeconds(365L*86400)));
-    String effects = json.canonical(java.util.Map.of("admin",admin,"inactivity",enrollment));
-    jdbc.update("INSERT INTO protected_account_activation(invite_id,claim_id,attempt_id,execution_id,account_id,state,created_checkpoint,local_effects_json,local_effects_digest,local_outbox_id,created_at,updated_at) VALUES(73,?,?,?,?,'WAITING_OTP','synthetic-owned-checkpoint',?,?,?,?,?)",
-        claim.claimId().toString(),claim.attemptId().toString(),claim.executionId().toString(),account,effects,json.digest("protected-local-registration/v1",json.read(effects,JsonNode.class)),UUID.randomUUID().toString(),Timestamp.from(before.instant()),Timestamp.from(before.instant()));
-    jdbc.update("UPDATE protected_invitation_acceptance SET account_id=? WHERE invite_id=73",account);
-    jdbc.update("UPDATE account_invite SET status='ACCEPTED',accepted_by_user_id=?,provisioning_status='IN_PROGRESS',active_recipient_key='still-held' WHERE id=73",account);
-    var historical = new JdbcProtectedInvitationAcceptance(jdbc,manager,journal,approvals,json,after).historical(73);
-    var activation = new JdbcProtectedAccountActivation(jdbc,manager,journal,accounts,json,
-        mock(ProtectedOtpBootstrap.class),mock(de.caritas.cob.userservice.api.port.out.AdminRepository.class),
-        mock(de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.class),after);
+    when(accounts.restore(any(), eq("synthetic-owned-checkpoint"))).thenReturn(original);
+    var admin =
+        java.util.Map.of(
+            "id",
+            account,
+            "tenantId",
+            7L,
+            "username",
+            "ada@example.test",
+            "firstName",
+            "Ada",
+            "lastName",
+            "Lovelace",
+            "email",
+            "ada@example.test",
+            "type",
+            "TENANT",
+            "managedPaused",
+            false);
+    var enrollment =
+        java.util.Map.of(
+            "id",
+            account,
+            "tenantId",
+            7L,
+            "months",
+            12,
+            "revision",
+            4L,
+            "lastActivity",
+            before.instant().toString(),
+            "dueAt",
+            before.instant().plusSeconds(365L * 86400).toString(),
+            "state",
+            "ACTIVE",
+            "attempts",
+            0);
+    jdbc.update(
+        "INSERT INTO admin VALUES(?,7,'ada@example.test','Ada','Lovelace','ada@example.test','TENANT',false)",
+        account);
+    jdbc.update(
+        "INSERT INTO account_inactivity VALUES(?,7,12,4,?,?,'ACTIVE',0)",
+        account,
+        Timestamp.from(before.instant()),
+        Timestamp.from(before.instant().plusSeconds(365L * 86400)));
+    String effects = json.canonical(java.util.Map.of("admin", admin, "inactivity", enrollment));
+    jdbc.update(
+        "INSERT INTO protected_account_activation(invite_id,claim_id,attempt_id,execution_id,account_id,state,created_checkpoint,local_effects_json,local_effects_digest,local_outbox_id,created_at,updated_at) VALUES(73,?,?,?,?,'WAITING_OTP','synthetic-owned-checkpoint',?,?,?,?,?)",
+        claim.claimId().toString(),
+        claim.attemptId().toString(),
+        claim.executionId().toString(),
+        account,
+        effects,
+        json.digest("protected-local-registration/v1", json.read(effects, JsonNode.class)),
+        UUID.randomUUID().toString(),
+        Timestamp.from(before.instant()),
+        Timestamp.from(before.instant()));
+    jdbc.update(
+        "UPDATE protected_invitation_acceptance SET account_id=? WHERE invite_id=73", account);
+    jdbc.update(
+        "UPDATE account_invite SET status='ACCEPTED',accepted_by_user_id=?,provisioning_status='IN_PROGRESS',active_recipient_key='still-held' WHERE id=73",
+        account);
+    var historical =
+        new JdbcProtectedInvitationAcceptance(jdbc, manager, journal, approvals, json, after)
+            .historical(73);
+    var activation =
+        new JdbcProtectedAccountActivation(
+            jdbc,
+            manager,
+            journal,
+            accounts,
+            json,
+            mock(ProtectedOtpBootstrap.class),
+            mock(de.caritas.cob.userservice.api.port.out.AdminRepository.class),
+            mock(de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.class),
+            after);
     // Prove the actual owner callback and its data preconditions before testing cancellation order.
-    new TransactionTemplate(manager).executeWithoutResult(tx -> {
-      assertDoesNotThrow(() -> activation.restrictExpiredWithinOwner(historical));
-      assertEquals("EXPIRED",status());
-      tx.setRollbackOnly();
-    });
-    assertEquals("ACCEPTED",status());
-    assertEquals(0,intents());
-    when(receiver.cancel(any())).thenAnswer(call -> {
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      assertEquals("EXPIRED",status());
-      assertEquals("CANCEL_REQUESTED",authorization());
-      assertEquals("PENDING",state());
-      throw new KeycloakProtectedInvitations.RemoteFailure(0);
-    });
+    new TransactionTemplate(manager)
+        .executeWithoutResult(
+            tx -> {
+              assertDoesNotThrow(() -> activation.restrictExpiredWithinOwner(historical));
+              assertEquals("EXPIRED", status());
+              tx.setRollbackOnly();
+            });
+    assertEquals("ACCEPTED", status());
+    assertEquals(0, intents());
+    when(receiver.cancel(any()))
+        .thenAnswer(
+            call -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              assertEquals("EXPIRED", status());
+              assertEquals("CANCEL_REQUESTED", authorization());
+              assertEquals("PENDING", state());
+              throw new KeycloakProtectedInvitations.RemoteFailure(0);
+            });
     var callbacks = new AtomicInteger();
-    assertThrows(KeycloakProtectedInvitations.RemoteFailure.class, () -> service().cancel(73,Reason.ISSUANCE_ABORTED,() -> {
-      callbacks.incrementAndGet();activation.restrictExpiredWithinOwner(historical);
-    }));
-    assertEquals(1,callbacks.get());
-    assertEquals("EXPIRED",status());
-    assertNull(jdbc.queryForObject("SELECT token_hash FROM account_invite WHERE id=73",String.class));
-    assertEquals("still-held",jdbc.queryForObject("SELECT active_recipient_key FROM account_invite WHERE id=73",String.class));
-    assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM admin",Integer.class));
-    assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM account_inactivity",Integer.class));
-    assertEquals(0,releases.get());
-    assertThrows(KeycloakProtectedInvitations.RemoteFailure.class, () -> service().cancel(73,Reason.ISSUANCE_ABORTED,() -> fail("Saved intent must not invalidate again")));
-    assertEquals(1,callbacks.get());
+    assertThrows(
+        KeycloakProtectedInvitations.RemoteFailure.class,
+        () ->
+            service()
+                .cancel(
+                    73,
+                    Reason.ISSUANCE_ABORTED,
+                    () -> {
+                      callbacks.incrementAndGet();
+                      activation.restrictExpiredWithinOwner(historical);
+                    }));
+    assertEquals(1, callbacks.get());
+    assertEquals("EXPIRED", status());
+    assertNull(
+        jdbc.queryForObject("SELECT token_hash FROM account_invite WHERE id=73", String.class));
+    assertEquals(
+        "still-held",
+        jdbc.queryForObject(
+            "SELECT active_recipient_key FROM account_invite WHERE id=73", String.class));
+    assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM admin", Integer.class));
+    assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM account_inactivity", Integer.class));
+    assertEquals(0, releases.get());
+    assertThrows(
+        KeycloakProtectedInvitations.RemoteFailure.class,
+        () ->
+            service()
+                .cancel(
+                    73,
+                    Reason.ISSUANCE_ABORTED,
+                    () -> fail("Saved intent must not invalidate again")));
+    assertEquals(1, callbacks.get());
   }
 
   private void recoveryFixture() throws Exception {
