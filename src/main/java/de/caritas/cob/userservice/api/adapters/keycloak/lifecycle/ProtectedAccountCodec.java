@@ -450,7 +450,7 @@ public final class ProtectedAccountCodec {
           || !equal(
               json.digest("protected-invitation-payload/v1", commit(created, local)),
               text(terminal, "commandDigest", 64))) throw invalid();
-      return new VerifiedCommitted(created, receipt);
+      return new VerifiedCommitted(created, local, receipt);
     } catch (RuntimeException failure) {
       throw invalid();
     }
@@ -863,11 +863,17 @@ public final class ProtectedAccountCodec {
 
   public static final class VerifiedCommitted {
     private final VerifiedCreated created;
+    private final LocalOutcome localOutcome;
     private final String receipt;
 
-    private VerifiedCommitted(VerifiedCreated created, String receipt) {
+    private VerifiedCommitted(VerifiedCreated created, LocalOutcome localOutcome, String receipt) {
       this.created = created;
+      this.localOutcome = localOutcome;
       this.receipt = receipt;
+    }
+
+    public LocalOutcome localOutcome() {
+      return localOutcome;
     }
 
     public UUID claimId() {

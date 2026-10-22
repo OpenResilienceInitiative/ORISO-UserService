@@ -380,6 +380,7 @@ class ProtectedAccountCodecTest {
     var committed =
         codec.verifyCommitted(created, local(), bytes(vector.path("committedResponse")));
     assertNotNull(committed);
+    assertEquals(local(), committed.localOutcome());
     assertTrue(vector.path("claimId").asText().equals(committed.claimId().toString()));
     assertTrue(created.attemptId().equals(committed.attemptId()));
     assertTrue(created.accountId().equals(committed.accountId()));
