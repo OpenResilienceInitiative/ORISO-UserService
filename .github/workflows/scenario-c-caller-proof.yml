@@ -204,7 +204,7 @@ jobs:
           if not stable:
               raise SystemExit('Missing or changed full source/resource manifest')
           PY
-      - name: Export a formatting proposal for the sixteen owned protected approval sources
+      - name: Export a formatting proposal for the eighteen owned protected approval sources
         if: failure()
         shell: bash
         run: |
@@ -225,12 +225,14 @@ jobs:
           protected_legacy_tests=src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedInvitationIssuanceLegacyJpaIT.java
           protected_url_tests=src/test/java/de/caritas/cob/userservice/api/service/accountinvite/InviteAcceptUrlBuilderTest.java
           protected_cancel_port=src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/ProtectedInvitationCancellation.java
-          trap 'git restore --source=HEAD -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" "$protected_journal" "$protected_journal_tests" "$protected_mail" "$protected_mail_tests" "$protected_outbox" "$protected_outbox_tests" "$protected_issuance" "$protected_profiles" "$protected_issuance_tests" "$protected_legacy_tests" "$protected_url_tests" "$protected_cancel_port"' EXIT
+          protected_sql_owner=src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/ProtectedInvitationSqlOwner.java
+          protected_url_builder=src/main/java/de/caritas/cob/userservice/api/service/accountinvite/InviteAcceptUrlBuilder.java
+          trap 'git restore --source=HEAD -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" "$protected_journal" "$protected_journal_tests" "$protected_mail" "$protected_mail_tests" "$protected_outbox" "$protected_outbox_tests" "$protected_issuance" "$protected_profiles" "$protected_issuance_tests" "$protected_legacy_tests" "$protected_url_tests" "$protected_cancel_port" "$protected_sql_owner" "$protected_url_builder"' EXIT
           ./mvnw -B -ntp -q spotless:apply \
-            "-DspotlessFiles=$GITHUB_WORKSPACE/$protected_codec|$GITHUB_WORKSPACE/$protected_tests|$GITHUB_WORKSPACE/$protected_transport|$GITHUB_WORKSPACE/$protected_http_tests|$GITHUB_WORKSPACE/$protected_journal|$GITHUB_WORKSPACE/$protected_journal_tests|$GITHUB_WORKSPACE/$protected_mail|$GITHUB_WORKSPACE/$protected_mail_tests|$GITHUB_WORKSPACE/$protected_outbox|$GITHUB_WORKSPACE/$protected_outbox_tests|$GITHUB_WORKSPACE/$protected_issuance|$GITHUB_WORKSPACE/$protected_profiles|$GITHUB_WORKSPACE/$protected_issuance_tests|$GITHUB_WORKSPACE/$protected_legacy_tests|$GITHUB_WORKSPACE/$protected_url_tests|$GITHUB_WORKSPACE/$protected_cancel_port"
-          git diff --binary -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" "$protected_journal" "$protected_journal_tests" "$protected_mail" "$protected_mail_tests" "$protected_outbox" "$protected_outbox_tests" "$protected_issuance" "$protected_profiles" "$protected_issuance_tests" "$protected_legacy_tests" "$protected_url_tests" "$protected_cancel_port" \
+            "-DspotlessFiles=$GITHUB_WORKSPACE/$protected_codec|$GITHUB_WORKSPACE/$protected_tests|$GITHUB_WORKSPACE/$protected_transport|$GITHUB_WORKSPACE/$protected_http_tests|$GITHUB_WORKSPACE/$protected_journal|$GITHUB_WORKSPACE/$protected_journal_tests|$GITHUB_WORKSPACE/$protected_mail|$GITHUB_WORKSPACE/$protected_mail_tests|$GITHUB_WORKSPACE/$protected_outbox|$GITHUB_WORKSPACE/$protected_outbox_tests|$GITHUB_WORKSPACE/$protected_issuance|$GITHUB_WORKSPACE/$protected_profiles|$GITHUB_WORKSPACE/$protected_issuance_tests|$GITHUB_WORKSPACE/$protected_legacy_tests|$GITHUB_WORKSPACE/$protected_url_tests|$GITHUB_WORKSPACE/$protected_cancel_port|$GITHUB_WORKSPACE/$protected_sql_owner|$GITHUB_WORKSPACE/$protected_url_builder"
+          git diff --binary -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" "$protected_journal" "$protected_journal_tests" "$protected_mail" "$protected_mail_tests" "$protected_outbox" "$protected_outbox_tests" "$protected_issuance" "$protected_profiles" "$protected_issuance_tests" "$protected_legacy_tests" "$protected_url_tests" "$protected_cancel_port" "$protected_sql_owner" "$protected_url_builder" \
             > target/scenario-c-caller-proof/protected-format.patch
-          git restore --source=HEAD -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" "$protected_journal" "$protected_journal_tests" "$protected_mail" "$protected_mail_tests" "$protected_outbox" "$protected_outbox_tests" "$protected_issuance" "$protected_profiles" "$protected_issuance_tests" "$protected_legacy_tests" "$protected_url_tests" "$protected_cancel_port"
+          git restore --source=HEAD -- "$protected_codec" "$protected_tests" "$protected_transport" "$protected_http_tests" "$protected_journal" "$protected_journal_tests" "$protected_mail" "$protected_mail_tests" "$protected_outbox" "$protected_outbox_tests" "$protected_issuance" "$protected_profiles" "$protected_issuance_tests" "$protected_legacy_tests" "$protected_url_tests" "$protected_cancel_port" "$protected_sql_owner" "$protected_url_builder"
           trap - EXIT
           git diff --exit-code
       - name: Upload complete caller proof, including diagnostic RED evidence

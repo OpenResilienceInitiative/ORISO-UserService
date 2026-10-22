@@ -32,6 +32,7 @@ public final class JdbcProtectedInvitationJournal {
       ProtectedInvitationCodec codec,
       AccountLifecycleCodec json,
       Clock clock) {
+    ProtectedInvitationSqlOwner.require(jdbc, manager);
     this.jdbc = jdbc;
     this.codec = codec;
     this.json = json;

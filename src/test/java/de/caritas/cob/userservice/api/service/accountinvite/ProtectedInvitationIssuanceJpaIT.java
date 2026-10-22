@@ -33,6 +33,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.SendInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
@@ -222,6 +223,7 @@ abstract class ProtectedInvitationIssuanceJpaFixture {
     when(identityEmailOwnerLookup.findByEmail(RECIPIENT)).thenReturn(Optional.empty());
     when(tenantIds.reserve(null))
         .thenReturn(new TenantIdReservation(17L, "9eb4c868-16d4-4be5-8c0b-5fb9d2b866b3"));
+    when(tenantIds.getAvailability(17L)).thenReturn(IdAllocationStatus.RESERVED);
     when(actors.isEnabled())
         .thenReturn("FIVE_ACTORS".equals(environment.getProperty("TASK_IDENTITY_MODEL")));
     when(actors.require(TaskPurpose.ACCOUNT_PROVISIONING))

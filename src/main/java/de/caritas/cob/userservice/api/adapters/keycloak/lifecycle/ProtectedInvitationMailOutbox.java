@@ -44,6 +44,7 @@ public final class ProtectedInvitationMailOutbox {
       Clock clock,
       KeycloakProtectedInvitations approvals,
       InviteMailDispatchService sender) {
+    ProtectedInvitationSqlOwner.require(jdbc, transactions);
     this.jdbc = Objects.requireNonNull(jdbc);
     this.journal = Objects.requireNonNull(journal);
     this.json = Objects.requireNonNull(json);
