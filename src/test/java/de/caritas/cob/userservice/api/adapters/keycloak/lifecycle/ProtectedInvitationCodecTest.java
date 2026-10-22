@@ -23,8 +23,7 @@ import org.junit.jupiter.api.Test;
 class ProtectedInvitationCodecTest {
   private final ObjectMapper json = new ObjectMapper();
   private final JsonNode vector = vector();
-  private final byte[] key =
-      HexFormat.of().parseHex(vector.path("syntheticPublicKeyHex").asText());
+  private final byte[] key = HexFormat.of().parseHex(vector.path("syntheticPublicKeyHex").asText());
   private final AccountLifecycleCodec ordinary = new AccountLifecycleCodec(key);
   private final ProtectedInvitationCodec codec =
       new ProtectedInvitationCodec(
@@ -63,8 +62,7 @@ class ProtectedInvitationCodecTest {
     var duplicate = response().toString().replaceFirst("\\{", "{\"state\":\"AUTHORIZED\",");
     for (String candidate :
         new String[] {
-          unknown.toString(), missing.toString(), coerced.toString(), duplicate,
-          response() + " {}"
+          unknown.toString(), missing.toString(), coerced.toString(), duplicate, response() + " {}"
         }) {
       assertThrows(IllegalArgumentException.class, () -> codec.verifyAuthorized(frozen, candidate));
     }
@@ -158,7 +156,8 @@ class ProtectedInvitationCodecTest {
     ((ObjectNode) unresolved.path("scope")).putNull("targetTenantIds");
     var mixed = vector.path("request").deepCopy();
     ((ObjectNode) mixed.path("scope")).put("recipient", " Ada@Example.test ");
-    for (String candidate : new String[] {unknown.toString(), unresolved.toString(), mixed.toString()}) {
+    for (String candidate :
+        new String[] {unknown.toString(), unresolved.toString(), mixed.toString()}) {
       assertThrows(
           IllegalArgumentException.class,
           () ->
@@ -180,7 +179,8 @@ class ProtectedInvitationCodecTest {
             "public-synthetic-secret",
             "4ebf5f9c-a3f4-41fe-8a22-ec1f511d77ed");
     JsonNode body = json.readTree(codec.statusBody(frozen));
-    assertEquals(vector.path("requestDigest").asText(), body.path("approvalRequestDigest").asText());
+    assertEquals(
+        vector.path("requestDigest").asText(), body.path("approvalRequestDigest").asText());
     assertEquals(vector.path("request").path("scope").path("workflowId"), body.path("workflowId"));
     assertTrue(body.path("scopeDigest").isNull());
     assertTrue(body.path("attemptId").isNull());
@@ -195,13 +195,18 @@ class ProtectedInvitationCodecTest {
     assertEquals(actor.clientId(), claims.path("taskClient").asText());
     assertEquals(actor.serviceSubject(), claims.path("taskSubject").asText());
     assertEquals(
-        "realm/" + vector.path("issuerRealm").asText() + "/protected-invitation/" + frozen.approvalId(),
+        "realm/"
+            + vector.path("issuerRealm").asText()
+            + "/protected-invitation/"
+            + frozen.approvalId(),
         claims.path("target").asText());
     assertEquals(
         hexMac("protected-invitation-payload/v1\n" + ordinary.canonical(body)),
         claims.path("payloadDigest").asText());
     assertEquals(
-        Base64.getUrlEncoder().withoutPadding().encodeToString(mac("protected-invitation-proof/v1\n" + proof[0])),
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(mac("protected-invitation-proof/v1\n" + proof[0])),
         proof[1]);
     assertEquals(60, claims.path("exp").asLong() - claims.path("iat").asLong());
   }
