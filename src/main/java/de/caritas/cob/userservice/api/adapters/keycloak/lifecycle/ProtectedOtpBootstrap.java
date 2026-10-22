@@ -1280,12 +1280,16 @@ public final class ProtectedOtpBootstrap {
       fields(operationMetadata, METADATA);
       String name = operationMetadata.path("command").asText();
       if (!Set.of(
-                  "otp.bootstrap-app-setup", "otp.bootstrap-email-start", "otp.bootstrap-email-finish")
+                  "otp.bootstrap-app-setup",
+                  "otp.bootstrap-email-start",
+                  "otp.bootstrap-email-finish")
               .contains(name)
           || !operationRaw.equals(codec.canonical(operationMetadata))
           || !operationMetadata.path("operationId").asText().equals(operation.get("operation_id"))
-          || !operationMetadata.path("requestDigest").asText().equals(operation.get("request_digest")))
-        throw unavailable();
+          || !operationMetadata
+              .path("requestDigest")
+              .asText()
+              .equals(operation.get("request_digest"))) throw unavailable();
       uuid(operationMetadata.path("operationId").asText());
       if (!operationMetadata.path("requestDigest").asText().matches("[0-9a-f]{64}"))
         throw unavailable();
@@ -1303,8 +1307,7 @@ public final class ProtectedOtpBootstrap {
               .equals(frozenCommand.path("body").path("target").path("accountId").asText())
           || !operationMetadata
               .path("operationId")
-              .equals(frozenCommand.path("body").path("operationId")))
-        throw unavailable();
+              .equals(frozenCommand.path("body").path("operationId"))) throw unavailable();
       preparedFacts(operationMetadata, frozenCommand.path("bootstrapReceipt").asText());
     }
     for (var operation : operations) {
@@ -1315,8 +1318,7 @@ public final class ProtectedOtpBootstrap {
               discarded.claimId().toString(),
               operation.get("metadata_json"),
               operation.get("command_envelope"))
-          != 1)
-        throw unavailable();
+          != 1) throw unavailable();
     }
     if (jdbc.update(
             "DELETE FROM protected_otp_bootstrap WHERE invite_id=? AND claim_id=? AND metadata_json=?",
