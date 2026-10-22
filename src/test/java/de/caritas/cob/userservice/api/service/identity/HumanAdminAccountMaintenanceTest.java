@@ -377,24 +377,43 @@ class HumanAdminAccountMaintenanceTest {
     jdbc.update("delete from admin where admin_id=?", ACCOUNT);
     jdbc.update(
         "insert into consultant values(?,7,'original-admin','Old','Name','old@example.test',null,?,true)",
-        ACCOUNT, java.sql.Timestamp.from(CLOCK.instant()));
+        ACCOUNT,
+        java.sql.Timestamp.from(CLOCK.instant()));
     var actualScope = actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
     assertEquals(new AdminScope.Tenant(7L), actualScope.current());
     assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.counsellor(ACCOUNT)));
     jdbc.update("update consultant set tenant_id=8 where consultant_id=?", ACCOUNT);
-    assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
         () -> actualScope.assertMay(AdminScope.Target.counsellor(ACCOUNT)));
     jdbc.update("update consultant set tenant_id=7 where consultant_id=?", ACCOUNT);
-    service = new HumanAdminAccountMaintenance(mode, human, actualScope, jdbc, transactions,
-        request, new KeycloakHumanAdminMaintenance(http, actors, broker, codec,
-            "https://internal-auth.example.test", "test", "realm-1"), CLOCK, ISSUER);
+    service =
+        new HumanAdminAccountMaintenance(
+            mode,
+            human,
+            actualScope,
+            jdbc,
+            transactions,
+            request,
+            new KeycloakHumanAdminMaintenance(
+                http,
+                actors,
+                broker,
+                codec,
+                "https://internal-auth.example.test",
+                "test",
+                "realm-1"),
+            CLOCK,
+            ISSUER);
     readReply();
     var result = assertDoesNotThrow(() -> service.read(ACCOUNT));
     assertEquals(ACCOUNT, result.id());
     assertEquals(7L, result.tenantId());
     assertTrue(result.enabled());
     assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, desired()));
-    assertEquals(0, jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
+    assertEquals(
+        0,
+        jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
     assertEquals(0, jdbc.queryForObject("select count(*) from admin", Integer.class));
     server.verify();
   }
@@ -406,9 +425,24 @@ class HumanAdminAccountMaintenanceTest {
     assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
     assertEquals(new AdminScope.Tenant(7L), actualScope.current());
     assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.admin(ACCOUNT)));
-    service = new HumanAdminAccountMaintenance(mode, human, actualScope, jdbc, transactions,
-        request, new KeycloakHumanAdminMaintenance(http, actors, broker, codec,
-            "https://internal-auth.example.test", "test", "realm-1"), CLOCK, ISSUER);
+    service =
+        new HumanAdminAccountMaintenance(
+            mode,
+            human,
+            actualScope,
+            jdbc,
+            transactions,
+            request,
+            new KeycloakHumanAdminMaintenance(
+                http,
+                actors,
+                broker,
+                codec,
+                "https://internal-auth.example.test",
+                "test",
+                "realm-1"),
+            CLOCK,
+            ISSUER);
     var legacy = mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient.class);
     var users = mock(org.keycloak.admin.client.resource.UsersResource.class);
     var user = mock(org.keycloak.admin.client.resource.UserResource.class);
@@ -417,11 +451,17 @@ class HumanAdminAccountMaintenanceTest {
     var misleading = new org.keycloak.representations.idm.UserRepresentation();
     misleading.setEnabled(false);
     when(user.toRepresentation()).thenReturn(misleading);
-    var adapter = new de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService(human,
-        mock(de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator.class),
-        mode, legacy, mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakMapper.class),
-        mock(de.caritas.cob.userservice.api.helper.UserHelper.class),
-        mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient.class));
+    var adapter =
+        new de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService(
+            human,
+            mock(
+                de.caritas.cob.userservice.api.admin.service.consultant.validation
+                    .UserAccountInputValidator.class),
+            mode,
+            legacy,
+            mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakMapper.class),
+            mock(de.caritas.cob.userservice.api.helper.UserHelper.class),
+            mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient.class));
     adapter.setHumanAdminMaintenance(service);
     readReply();
     assertEquals(Optional.of(true), assertDoesNotThrow(() -> adapter.findEnabledById(ACCOUNT)));
@@ -604,9 +644,14 @@ class HumanAdminAccountMaintenanceTest {
 
   private AdminScope actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType type) {
     var adminRows = mock(AdminRepository.class);
-    when(adminRows.findById(ACCOUNT)).thenAnswer(ignored ->
-        jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT) == 0
-            ? Optional.empty() : Optional.of(localAdmin(type)));
+    when(adminRows.findById(ACCOUNT))
+        .thenAnswer(
+            ignored ->
+                jdbc.queryForObject(
+                            "select count(*) from admin where admin_id=?", Integer.class, ACCOUNT)
+                        == 0
+                    ? Optional.empty()
+                    : Optional.of(localAdmin(type)));
     var consultantRows = mock(ConsultantRepository.class);
     when(consultantRows.findById(ACCOUNT))
         .thenAnswer(

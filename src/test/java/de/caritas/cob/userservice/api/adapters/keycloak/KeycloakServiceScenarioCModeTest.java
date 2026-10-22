@@ -57,7 +57,8 @@ class KeycloakServiceScenarioCModeTest {
   @Test
   void fiveActorsRequiresTheScopedAdapterBeforeRead() {
     assertThrows(IllegalStateException.class, () -> service.findById("target"));
-    assertThrows(ScopedIdentityCommandRequiredException.class, () -> service.findEnabledById("target"));
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class, () -> service.findEnabledById("target"));
     assertThrows(
         ScopedIdentityCommandRequiredException.class,
         () ->
