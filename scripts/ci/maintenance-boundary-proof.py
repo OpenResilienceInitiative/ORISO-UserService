@@ -14,7 +14,8 @@ SUITE = (
 )
 LEGACY = "legacyModeRetainsExistingProfileProjection"
 CONTROLS = {LEGACY, "legacyRollbackRetainsExistingSuccessfulNativeRemoval",
-            "legacyRollbackRetainsExistingBestEffortNativeFailure"}
+            "legacyRollbackRetainsExistingBestEffortNativeFailure",
+            "legacyModeRetainsExistingExactEmailOwnerAndRoleProjections"}
 CASES = {
     LEGACY,
     "fiveActorsRequiresTheScopedAdapterBeforeRead",
@@ -25,6 +26,9 @@ CASES = {
     "fiveActorsRollbackPropagatesScopedCommandDemandBeforeNativeCleanup",
     "legacyRollbackRetainsExistingSuccessfulNativeRemoval",
     "legacyRollbackRetainsExistingBestEffortNativeFailure",
+    "fiveActorsEmailOwnerLookupRequiresScopedAuthorityBeforeGenericNativeSearch",
+    "fiveActorsRoleLookupRequiresScopedAuthorityBeforeGenericNativeRoleRead",
+    "legacyModeRetainsExistingExactEmailOwnerAndRoleProjections",
 }
 DEV_BASE = "c944417d9d664d35d63b31bb57c55f852c2d783c"
 WORKFLOW = ".github/workflows/scenario-c-maintenance-caller-proof.yml"
@@ -178,7 +182,8 @@ def select_slice(name):
     CONTROLS = {LEGACY}
     if name == "adapter":
         CONTROLS.update({"legacyRollbackRetainsExistingSuccessfulNativeRemoval",
-                         "legacyRollbackRetainsExistingBestEffortNativeFailure"})
+                         "legacyRollbackRetainsExistingBestEffortNativeFailure",
+                         "legacyModeRetainsExistingExactEmailOwnerAndRoleProjections"})
     if name == "app":
         CONTROLS.add("missingScopedDeleteKeepsActualCGuardAndLegacyDeleteRemainsWorking")
     elif name == "locale":

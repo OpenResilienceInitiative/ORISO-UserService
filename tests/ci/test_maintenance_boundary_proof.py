@@ -40,10 +40,10 @@ class MaintenanceBoundaryEvidenceTest(unittest.TestCase):
             result = PROOF.sanitize(root, root / "clean.xml")
             return result, (root / "clean.xml").read_text()
 
-    def test_exact_nine_green_cases_pass(self):
+    def test_exact_twelve_green_cases_pass(self):
         result, _ = self.run_case()
         self.assertTrue(result["all_passed"])
-        self.assertEqual(9, result["tests"])
+        self.assertEqual(12, result["tests"])
 
     def test_rollback_assertion_requires_both_legacy_cleanup_controls(self):
         result, _ = self.run_case(failure="fiveActorsRollbackPropagatesScopedCommandDemandBeforeNativeCleanup")
@@ -79,10 +79,10 @@ class MaintenanceBoundaryEvidenceTest(unittest.TestCase):
         result, xml = self.run_case(
             failure="fiveActorsRequiresTheScopedAdapterBeforeRead"
         )
-        self.assertEqual(9, result["tests"])
+        self.assertEqual(12, result["tests"])
         for secret in ["password", "token", "traceback", "raw-"]:
             self.assertNotIn(secret, xml)
-        self.assertEqual(9, len(ET.fromstring(xml).findall("testcase")))
+        self.assertEqual(12, len(ET.fromstring(xml).findall("testcase")))
 
 
 class DeletionBoundaryEvidenceTest(unittest.TestCase):

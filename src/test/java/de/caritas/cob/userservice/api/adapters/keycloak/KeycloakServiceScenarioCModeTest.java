@@ -12,8 +12,10 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.keycloak.admin.client.resource.RoleMappingResource;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
+import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 
 /** Actual public adapter boundary: C never silently falls back to stock native administration. */
@@ -44,6 +46,12 @@ class KeycloakServiceScenarioCModeTest {
     profile.setEnabled(true);
     profile.setAttributes(Map.of("locale", List.of("de")));
     when(user.toRepresentation()).thenReturn(profile);
+    when(users.search("target@example.test", 0, Integer.MAX_VALUE)).thenReturn(List.of(profile));
+    var mappings = mock(RoleMappingResource.class, RETURNS_DEEP_STUBS);
+    when(user.roles()).thenReturn(mappings);
+    var role = new RoleRepresentation();
+    role.setName("user");
+    when(mappings.realmLevel().listAll()).thenReturn(List.of(role));
   }
 
   @Test
@@ -118,6 +126,29 @@ class KeycloakServiceScenarioCModeTest {
     doThrow(new IllegalStateException("Synthetic legacy native failure")).when(user).remove();
     assertDoesNotThrow(() -> service.rollbackUser("target"));
     verify(user).remove();
+  }
+
+  @Test
+  void fiveActorsEmailOwnerLookupRequiresScopedAuthorityBeforeGenericNativeSearch() {
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class,
+        () -> service.findByEmail("target@example.test"));
+    verifyNoInteractions(nativeClient);
+  }
+
+  @Test
+  void fiveActorsRoleLookupRequiresScopedAuthorityBeforeGenericNativeRoleRead() {
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class, () -> service.findAllByUserId("target"));
+    verifyNoInteractions(nativeClient);
+  }
+
+  @Test
+  void legacyModeRetainsExistingExactEmailOwnerAndRoleProjections() {
+    when(config.isFiveActorMode()).thenReturn(false);
+    assertEquals(
+        "actual-target", service.findByEmail("target@example.test").orElseThrow().username());
+    assertEquals(List.of("user"), service.findAllByUserId("target"));
   }
 
   @Test
