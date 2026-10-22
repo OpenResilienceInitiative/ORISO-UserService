@@ -72,6 +72,9 @@ class UserSelfAppOtpNativePairProof {
                 "public-first-call",
                 "public-self-read",
                 "public-self-read-active",
+                "public-self-read-deleted",
+                "public-delete-success",
+                "native-delete-http",
                 "native-otp-read-http",
                 "public-after-first-call",
                 "original-deadline-expired",
@@ -110,8 +113,17 @@ class UserSelfAppOtpNativePairProof {
     runPair(true);
   }
 
+  @Test
+  void actualPublicUserDeleteLostNativeReplyReopensOnlyOwnedGateOnce() throws Exception {
+    runPair(false, true);
+  }
+
   private void runPair(boolean email) throws Exception {
-    assertEquals(email ? "email" : "app", required("PAIR_KIND"));
+    runPair(email, false);
+  }
+
+  private void runPair(boolean email, boolean deleteAfterSetup) throws Exception {
+    assertEquals(deleteAfterSetup ? "delete" : email ? "email" : "app", required("PAIR_KIND"));
     PHASES.clear();
     assertEquals("true", required("GITHUB_ACTIONS"));
     assertEquals("Linux", System.getProperty("os.name"));
@@ -141,6 +153,7 @@ class UserSelfAppOtpNativePairProof {
     var frozenWire = new AtomicReference<String>();
     var frozenCipher = new AtomicReference<String>();
     var finishingEmail = new java.util.concurrent.atomic.AtomicBoolean();
+    var deletingOtp = new java.util.concurrent.atomic.AtomicBoolean();
     var activeOperation = new AtomicReference<>(operation);
     var source =
         new DriverManagerDataSource(
@@ -192,7 +205,9 @@ class UserSelfAppOtpNativePairProof {
                     logical
                         .getPath()
                         .contains(
-                            finishingEmail.get()
+                            deletingOtp.get()
+                                ? "/otp-config/delete-otp/"
+                                : finishingEmail.get()
                                 ? "/otp-config/setup-otp-mail/"
                                 : email
                                     ? "/otp-config/send-verification-mail/"
@@ -206,7 +221,7 @@ class UserSelfAppOtpNativePairProof {
                           String.class,
                           activeOperation.get()));
                   assertEquals(
-                      "PENDING_SETUP",
+                      deletingOtp.get() ? "ACTIVE" : "PENDING_SETUP",
                       jdbc.queryForObject(
                           "select two_factor_status from account_invite where id=1", String.class));
                   String wire = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
@@ -249,7 +264,9 @@ class UserSelfAppOtpNativePairProof {
                 }
                 phase(
                     mutation
-                        ? email ? "native-email-http" : "native-app-http"
+                        ? deletingOtp.get()
+                            ? "native-delete-http"
+                            : email ? "native-email-http" : "native-app-http"
                         : logical.getPath().endsWith("/read")
                             ? "native-read-http"
                             : logical.getPath().contains("/otp-config/fetch-otp-setup-info/")
@@ -259,12 +276,14 @@ class UserSelfAppOtpNativePairProof {
                                     : "native-stock-http",
                     response.getStatusCode().value());
                 if (mutation
-                    && (finishingEmail.get()
+                    && (deletingOtp.get()
+                        ? response.getStatusCode().value() == 200
+                        : finishingEmail.get()
                         ? response.getStatusCode().value() == 201
                         : !email || response.getStatusCode().value() == 200)
                     && lost.getAndIncrement() == 0) {
                   assertEquals(
-                      finishingEmail.get() ? 201 : email ? 200 : 201,
+                      deletingOtp.get() ? 200 : finishingEmail.get() ? 201 : email ? 200 : 201,
                       response.getStatusCode().value());
                   response.getBody().readAllBytes();
                   response.close();
@@ -634,6 +653,7 @@ class UserSelfAppOtpNativePairProof {
         request.removeHeader("Idempotency-Key");
         request.addHeader("Idempotency-Key", finishOperation);
         request.setMethod("POST");
+        request.setRequestURI("/service/users/2fa/email/validate/" + deliveredCode);
         finishingEmail.set(true);
         activeOperation.set(finishOperation);
         frozenWire.set(null);
@@ -738,6 +758,52 @@ class UserSelfAppOtpNativePairProof {
           jdbc.queryForObject("select count(*) from identity_self_app_otp_intent", Integer.class));
       assertEquals(writesBeforeRead, activationCalls.get());
       phase("public-self-read-active", 200);
+      if (deleteAfterSetup) {
+        String deleteOperation = UUID.randomUUID().toString();
+        request.setMethod("DELETE");
+        request.setRequestURI("/service/users/2fa");
+        request.addHeader("Idempotency-Key", deleteOperation);
+        deletingOtp.set(true);
+        activeOperation.set(deleteOperation);
+        frozenWire.set(null);
+        frozenCipher.set(null);
+        lost.set(0);
+        assertThrows(RuntimeException.class, () -> controller.deactivateTwoFactorAuthByApp());
+        assertEquals(1, lost.get(), "The actual native delete200 must be the lost reply");
+        assertEquals("FROZEN", jdbc.queryForObject(
+            "select status from identity_self_app_otp_intent where operation_id=?",
+            String.class, deleteOperation));
+        assertEquals("ACTIVE", jdbc.queryForObject(
+            "select two_factor_status from account_invite where id=1", String.class));
+        assertEquals(writesBeforeRead, activationCalls.get());
+        String originalDeleteCipher = frozenCipher.get();
+        delegate.setSelfAppOtpMaintenance(new SelfAppOtpMaintenance(
+            mode, human, request, jdbc, transactions, actors, broker, codec, http,
+            Clock.systemUTC(), "http://maintenance-human-fixture.invalid", realm, realmId));
+        assertEquals(200, controller.deactivateTwoFactorAuthByApp().getStatusCode().value());
+        assertEquals(200, controller.deactivateTwoFactorAuthByApp().getStatusCode().value());
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject(
+            "select status from identity_self_app_otp_intent where operation_id=?",
+            String.class, deleteOperation));
+        assertEquals(originalDeleteCipher, jdbc.queryForObject(
+            "select envelope from identity_self_app_otp_intent where operation_id=?",
+            String.class, deleteOperation));
+        assertEquals("PENDING_SETUP", jdbc.queryForObject(
+            "select two_factor_status from account_invite where id=1", String.class));
+        assertEquals(writesBeforeRead + 1, activationCalls.get());
+        assertEquals(4, nativeCalls.get());
+        phase("public-delete-success", 200);
+        request.setMethod("GET");
+        request.setRequestURI("/service/users/data");
+        request.removeHeader("Idempotency-Key");
+        var inactiveRead = assertDoesNotThrow(() -> controller.getUserData());
+        assertEquals(200, inactiveRead.getStatusCode().value());
+        assertFalse(inactiveRead.getBody().getTwoFactorAuth().getIsActive());
+        assertEquals(writesBeforeRead + 1, activationCalls.get());
+        assertEquals(intentCount + 1, jdbc.queryForObject(
+            "select count(*) from identity_self_app_otp_intent", Integer.class));
+        phase("public-self-read-deleted", 200);
+      }
       verifyNoInteractions(legacy);
     } finally {
       SecurityContextHolder.clearContext();

@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kind: [app, email]
+        kind: [app, email, delete]
     env:
       PAIR_KIND: ${{ matrix.kind }}
     steps:

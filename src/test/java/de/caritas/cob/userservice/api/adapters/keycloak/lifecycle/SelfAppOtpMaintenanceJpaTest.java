@@ -474,6 +474,7 @@ class SelfAppOtpMaintenanceJpaTest {
     request.removeHeader("Idempotency-Key");
     request.addHeader("Idempotency-Key", operation);
     request.setMethod("POST");
+    request.setRequestURI("/service/users/2fa/email/validate/" + CODE);
   }
 
   private void expectProjection() {

@@ -87,6 +87,44 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
+  void actualGeneratedDeleteRouteReachesOwnedMaintenanceAndReopensOnlyItsInvite() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.request.setMethod("DELETE");
+      fixture.request.setRequestURI("/service/users/2fa");
+      fixture.jdbc.update("update account_invite set two_factor_status='ACTIVE' where id=1");
+      fixture.expectDelete(false);
+      org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(fixture.controller)
+          .setControllerAdvice(new de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler())
+          .build()
+          .perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/users/2fa"))
+          .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals("PENDING_SETUP", fixture.inviteStatus());
+      assertEquals(1, fixture.domainWrites());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void actualGeneratedEmailValidationRouteReachesTheOriginalOwnedEmailStart() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.prepareDeliveredEmail();
+      fixture.expectEmailFinish(false, false, false);
+      org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(fixture.controller)
+          .setControllerAdvice(new de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler())
+          .build()
+          .perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(
+              "/users/2fa/email/validate/" + CODE))
+          .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNoContent());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals(PENDING_EMAIL, fixture.currentEmail());
+      assertEquals("ACTIVE", fixture.inviteStatus());
+      assertEquals(1, fixture.domainWrites());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
   void publicAppSetupValidatesThePublicIssuerWhileUsingTheConfiguredInternalTransport()
       throws Exception {
     try (var fixture = new Fixture(true, true)) {
@@ -321,6 +359,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   void publicAppDeleteFreezesOwnedIntentAndMarksPendingOnlyAfterVerifiedReceipt() throws Exception {
     try (var fixture = new Fixture(true, true)) {
       fixture.request.setMethod("DELETE");
+      fixture.request.setRequestURI("/service/users/2fa");
       fixture.jdbc.update("update account_invite set two_factor_status='ACTIVE' where id=1");
       fixture.expectDelete(false);
       assertEquals(200, fixture.controller.deactivateTwoFactorAuthByApp().getStatusCode().value());
@@ -337,6 +376,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       throws Exception {
     try (var fixture = new Fixture(true, true)) {
       fixture.request.setMethod("DELETE");
+      fixture.request.setRequestURI("/service/users/2fa");
       fixture.jdbc.update("update account_invite set two_factor_status='ACTIVE' where id=1");
       fixture.expectDelete(true);
       assertThrows(RuntimeException.class, () -> fixture.controller.deactivateTwoFactorAuthByApp());
@@ -359,6 +399,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   void publicAppDeleteInvalidReceiptRetainsActiveGateAndFrozenOwnership() throws Exception {
     try (var fixture = new Fixture(true, true)) {
       fixture.request.setMethod("DELETE");
+      fixture.request.setRequestURI("/service/users/2fa");
       fixture.jdbc.update("update account_invite set two_factor_status='ACTIVE' where id=1");
       fixture.tamperReceipt = true;
       fixture.expectDelete(false);
@@ -376,6 +417,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   void missingScopedDeleteKeepsActualCGuardAndLegacyDeleteRemainsWorking() throws Exception {
     try (var fixture = new Fixture(true, false)) {
       fixture.request.setMethod("DELETE");
+      fixture.request.setRequestURI("/service/users/2fa");
       fixture.jdbc.update("update account_invite set two_factor_status='ACTIVE' where id=1");
       assertThrows(
           ScopedIdentityCommandRequiredException.class,
@@ -385,6 +427,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     }
     try (var fixture = new Fixture(false, false)) {
       fixture.request.setMethod("DELETE");
+      fixture.request.setRequestURI("/service/users/2fa");
       fixture.request.removeHeader("Idempotency-Key");
       fixture.jdbc.update("update account_invite set two_factor_status='ACTIVE' where id=1");
       assertEquals(200, fixture.controller.deactivateTwoFactorAuthByApp().getStatusCode().value());
@@ -664,6 +707,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       assertEquals("TERMINAL_REFUSAL", fixture.status());
       assertEquals(
           400, fixture.controller.finishTwoFactorAuthByEmailSetup(CODE).getStatusCode().value());
+      fixture.request.setRequestURI("/service/users/2fa/email/validate/654321");
       assertThrows(
           ConflictException.class,
           () -> fixture.controller.finishTwoFactorAuthByEmailSetup("654321"));
@@ -896,7 +940,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     try (var fixture = new Fixture(true, true)) {
       fixture.prepareDeliveredEmail();
       fixture.request.setMethod("DELETE");
-      fixture.request.setRequestURI("/service/users/2fa/app");
+      fixture.request.setRequestURI("/service/users/2fa");
       fixture.expectDelete(false, "PENDING_SETUP");
       assertEquals(200, fixture.controller.deactivateTwoFactorAuthByApp().getStatusCode().value());
       assertEquals("ACKNOWLEDGED", fixture.status());
@@ -921,7 +965,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     try (var fixture = new Fixture(true, true)) {
       fixture.prepareDeliveredEmail();
       fixture.request.setMethod("DELETE");
-      fixture.request.setRequestURI("/service/users/2fa/app");
+      fixture.request.setRequestURI("/service/users/2fa");
       fixture.tamperReceipt = true;
       fixture.expectDelete(false, "PENDING_SETUP");
       assertThrows(
@@ -940,6 +984,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   void publicLostDeleteAckCannotReopenInviteOrClearPointerOfLaterEnrollment() throws Exception {
     try (var fixture = new Fixture(true, true)) {
       fixture.request.setMethod("DELETE");
+      fixture.request.setRequestURI("/service/users/2fa");
       fixture.jdbc.update("update account_invite set two_factor_status='ACTIVE' where id=1");
       String oldDelete = fixture.operation;
       fixture.expectDelete(true, "ACTIVE", 1);
@@ -956,6 +1001,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.request.removeHeader("Idempotency-Key");
       fixture.request.addHeader("Idempotency-Key", fixture.operation);
       fixture.request.setMethod("PUT");
+      fixture.request.setRequestURI("/service/users/2fa/app");
       fixture.jdbc.update("update account_invite set two_factor_status='PENDING_SETUP' where id=1");
       fixture.expectNative(false, false);
       assertEquals(
@@ -975,6 +1021,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.request.removeHeader("Idempotency-Key");
       fixture.request.addHeader("Idempotency-Key", oldDelete);
       fixture.request.setMethod("DELETE");
+      fixture.request.setRequestURI("/service/users/2fa");
       fixture.expectSavedDelete();
       assertEquals(200, fixture.controller.deactivateTwoFactorAuthByApp().getStatusCode().value());
       assertEquals("ACKNOWLEDGED", fixture.status());
@@ -1181,7 +1228,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   void missingScopedEmailFinishKeepsActualCGuardAndLegacyInvalidCodeWorking() throws Exception {
     try (var fixture = new Fixture(true, false)) {
       fixture.request.setMethod("POST");
-      fixture.request.setRequestURI("/service/users/2fa/email");
+      fixture.request.setRequestURI("/service/users/2fa/email/validate/" + CODE);
       assertThrows(
           ScopedIdentityCommandRequiredException.class,
           () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
@@ -1190,7 +1237,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     }
     try (var fixture = new Fixture(false, false)) {
       fixture.request.setMethod("POST");
-      fixture.request.setRequestURI("/service/users/2fa/email");
+      fixture.request.setRequestURI("/service/users/2fa/email/validate/" + CODE);
       fixture.request.removeHeader("Idempotency-Key");
       when(fixture.nativeClient.postForEntity(
               any(), any(), any(), eq(de.caritas.cob.userservice.api.model.SuccessWithEmail.class)))
@@ -1705,6 +1752,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       request.removeHeader("Idempotency-Key");
       request.addHeader("Idempotency-Key", operation);
       request.setMethod("POST");
+      request.setRequestURI("/service/users/2fa/email/validate/" + CODE);
     }
 
     void expectEmailFinish(boolean lostReply, boolean invalid, boolean unknown) {

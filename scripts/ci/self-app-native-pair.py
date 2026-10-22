@@ -23,7 +23,8 @@ KC_COMMIT = "a9483e4b44578f10badf70c5265a37a2c1d3d26e"
 SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserSelfAppOtpNativePairProof"
 CASE = "actualPublicUserAppLostNativeReplyReplaysOneCredentialAndCommitsOwnedInvite"
 EMAIL_CASE = "actualPublicUserEmailLostSentReplyPreservesEarlierOriginalMachineExpiry"
-CASES = {"app": CASE, "email": EMAIL_CASE}
+DELETE_CASE = "actualPublicUserDeleteLostNativeReplyReopensOnlyOwnedGateOnce"
+CASES = {"app": CASE, "email": EMAIL_CASE, "delete": DELETE_CASE}
 IMAGE = "quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992"
 
 
@@ -47,14 +48,22 @@ def reviewed_self_operations(kind):
         return ["account.read", "otp.read", "otp.app-setup"]
     if kind == "email":
         return ["account.read", "otp.read", "otp.email-start", "otp.email-finish"]
+    if kind == "delete":
+        return ["account.read", "otp.read", "otp.app-setup", "otp.delete"]
     raise ValueError("Unknown native pair kind")
 
 
-def public_self_reads_complete(observed):
-    return (isinstance(observed, list)
+def public_self_reads_complete(observed, kind="app"):
+    if kind not in CASES:
+        raise ValueError("Unknown native pair kind")
+    original = (isinstance(observed, list)
             and observed.count({"phase": "public-self-read", "status": 200}) == 1
             and observed.count({"phase": "public-self-read-active", "status": 200}) == 1
-            and observed.count({"phase": "native-otp-read-http", "status": 200}) == 2)
+            and observed.count({"phase": "native-otp-read-http", "status": 200}) == (3 if kind == "delete" else 2))
+    return original and (kind != "delete" or (
+        observed.count({"phase": "public-self-read-deleted", "status": 200}) == 1
+        and observed.count({"phase": "public-delete-success", "status": 200}) == 1
+        and observed.count({"phase": "native-delete-http", "status": 200}) == 2))
 
 
 def fixture_installer_expired(bearer, now):
@@ -257,7 +266,7 @@ def native(kc, report):
             receipt["public_phases"] = observed
         receipt["executed"] = result["tests"]
         receipt["java_exit"] = child.returncode
-        receipt["public_self_read_before_and_after"] = public_self_reads_complete(receipt.get("public_phases"))
+        receipt["public_self_read_before_and_after"] = public_self_reads_complete(receipt.get("public_phases"), kind)
         receipt["accepted"] = result["accepted"] and child.returncode == 0 and receipt["public_self_read_before_and_after"]
         phase = "post-java-native-inspection"
         expired_installer = fixture_installer_expired(fixture.installer, time.time())
@@ -288,6 +297,9 @@ def native(kc, report):
             receipt["native_email_finished"] = native_user.get("email") == "pair-pending@oriso.org" and native_user.get("emailVerified") is True
             receipt["native_mail_active"] = len(mail) == 1 and json.loads(mail[0]["credentialData"])["active"] is True
             receipt["accepted"] &= receipt["single_native_mail_credential"] and receipt["single_actual_smtp"] and receipt["native_email_finished"] and receipt["native_mail_active"]
+        elif kind == "delete":
+            receipt["native_otp_credentials_absent_after_delete"] = not any(c["type"] in {"otp", "MAIL_OTP_CM"} for c in credentials)
+            receipt["accepted"] &= receipt["native_otp_credentials_absent_after_delete"]
         else:
             receipt["single_native_app_credential"] = len([c for c in credentials if c["type"] == "otp"]) == 1
             receipt["accepted"] &= receipt["single_native_app_credential"]

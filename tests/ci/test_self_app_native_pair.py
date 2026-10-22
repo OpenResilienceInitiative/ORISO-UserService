@@ -59,6 +59,7 @@ class SelfAppNativePairEvidenceTest(unittest.TestCase):
     def test_each_actual_pair_fixture_reviews_the_read_operation_and_only_its_mutations(self):
         self.assertEqual(["account.read", "otp.read", "otp.app-setup"], PROOF.reviewed_self_operations("app"))
         self.assertEqual(["account.read", "otp.read", "otp.email-start", "otp.email-finish"], PROOF.reviewed_self_operations("email"))
+        self.assertEqual(["account.read", "otp.read", "otp.app-setup", "otp.delete"], PROOF.reviewed_self_operations("delete"))
         with self.assertRaises(ValueError):
             PROOF.reviewed_self_operations("wildcard")
 
@@ -84,12 +85,31 @@ class SelfAppNativePairEvidenceTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 PROOF.fixture_installer_expired(token(value), 100)
 
+    def test_delete_requires_its_own_exact_method_and_three_public_states(self):
+        for name in (PROOF.DELETE_CASE, PROOF.CASE, PROOF.EMAIL_CASE):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                suite = ET.Element("testsuite", name=PROOF.SUITE)
+                ET.SubElement(suite, "testcase", classname=PROOF.SUITE, name=name)
+                ET.ElementTree(suite).write(root / "TEST-pair.xml")
+                self.assertEqual(name == PROOF.DELETE_CASE, PROOF.sanitize(root, root / "clean.xml", "delete")["accepted"])
+        rows = ([{"phase": "public-self-read", "status": 200},
+                 {"phase": "public-self-read-active", "status": 200},
+                 {"phase": "public-self-read-deleted", "status": 200},
+                 {"phase": "public-delete-success", "status": 200}]
+                + [{"phase": "native-otp-read-http", "status": 200}] * 3
+                + [{"phase": "native-delete-http", "status": 200}] * 2)
+        self.assertTrue(PROOF.public_self_reads_complete(rows, "delete"))
+        for candidate in [rows[:-1], rows[1:], rows + [rows[2]], rows + [rows[-1]]]:
+            self.assertFalse(PROOF.public_self_reads_complete(candidate, "delete"))
+        self.assertFalse(PROOF.public_self_reads_complete(rows))
+
     def test_native_workflow_has_read_only_pins_required_builds_and_bounded_cleanup(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/scenario-c-self-app-native-pair.yml").read_text())
         self.assertEqual({"contents": "read"}, workflow["permissions"])
         job = workflow["jobs"]["public-app-native-pair"]
         self.assertEqual("ubuntu-24.04", job["runs-on"])
-        self.assertEqual(["app", "email"], job["strategy"]["matrix"]["kind"])
+        self.assertEqual(["app", "email", "delete"], job["strategy"]["matrix"]["kind"])
         self.assertFalse(job["strategy"]["fail-fast"])
         self.assertEqual("${{ matrix.kind }}", job["env"]["PAIR_KIND"])
         steps = job["steps"]
