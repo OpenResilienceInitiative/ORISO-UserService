@@ -37,7 +37,6 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -83,11 +82,11 @@ public class ConsultantUpdateService {
    */
   private org.springframework.transaction.support.TransactionTemplate localWrites;
 
-  @jakarta.persistence.PersistenceContext
-  private jakarta.persistence.EntityManager entities;
+  @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager entities;
 
   @org.springframework.beans.factory.annotation.Autowired
-  public void setLocalTransactionManager(org.springframework.transaction.PlatformTransactionManager manager) {
+  public void setLocalTransactionManager(
+      org.springframework.transaction.PlatformTransactionManager manager) {
     localWrites = new org.springframework.transaction.support.TransactionTemplate(manager);
   }
 
@@ -95,14 +94,18 @@ public class ConsultantUpdateService {
     return updateConsultant(consultantId, dto, true);
   }
 
-  public Consultant updateConsultant(String consultantId, UpdateAdminConsultantDTO dto, boolean adminEdit) {
+  public Consultant updateConsultant(
+      String consultantId, UpdateAdminConsultantDTO dto, boolean adminEdit) {
     if (identityMode != null && identityMode.isFiveActorMode()) {
       if (scopedMaintenance == null || !scopedMaintenance.isFiveActorMode())
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
-      if (!adminEdit) throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
-      return scopedMaintenance.updateConsultantProfile(new ScopedEdit(consultantId, dto, adminEdit));
+      if (!adminEdit)
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      return scopedMaintenance.updateConsultantProfile(
+          new ScopedEdit(consultantId, dto, adminEdit));
     }
-    return localWrites == null ? updateConsultantLegacy(consultantId, dto, adminEdit)
+    return localWrites == null
+        ? updateConsultantLegacy(consultantId, dto, adminEdit)
         : localWrites.execute(ignored -> updateConsultantLegacy(consultantId, dto, adminEdit));
   }
 
@@ -118,22 +121,37 @@ public class ConsultantUpdateService {
       this.id = id;
       this.adminEdit = adminEdit;
       try {
-        var mapper = new com.fasterxml.jackson.databind.ObjectMapper()
-            .enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
-            .configure(com.fasterxml.jackson.databind.MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true);
-        this.dto = mapper.readValue(mapper.writeValueAsBytes(requested), UpdateAdminConsultantDTO.class);
+        var mapper =
+            new com.fasterxml.jackson.databind.ObjectMapper()
+                .enable(
+                    com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+                .configure(
+                    com.fasterxml.jackson.databind.MapperFeature.SORT_PROPERTIES_ALPHABETICALLY,
+                    true);
+        this.dto =
+            mapper.readValue(mapper.writeValueAsBytes(requested), UpdateAdminConsultantDTO.class);
         this.intent = mapper.writeValueAsString(Map.of("adminEdit", adminEdit, "fields", this.dto));
       } catch (java.io.IOException invalid) {
         throw new BadRequestException("Consultant edit is invalid");
       }
     }
 
-    public String accountId() { return id; }
-    public String intentJson() { return intent; }
+    public String accountId() {
+      return id;
+    }
+
+    public String intentJson() {
+      return intent;
+    }
 
     public IdentityProfileUpdate profile() {
       Consultant row = current();
-      return new IdentityProfileUpdate(row.getUsername(), dto.getEmail(), row.getTenantId(), dto.getFirstname(), dto.getLastname());
+      return new IdentityProfileUpdate(
+          row.getUsername(),
+          dto.getEmail(),
+          row.getTenantId(),
+          dto.getFirstname(),
+          dto.getLastname());
     }
 
     public void validate() {
@@ -143,24 +161,38 @@ public class ConsultantUpdateService {
       // A combined role/profile command is required before a public role edit may have any effect.
       if (dto.getIsGroupchatConsultant() != null)
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
-      topics = consultantTopicAgencyCompatibilityValidator.resolveTopicUpdate(id, dto.getTopicIds(), dto.getTopicsByAgency(), row.getTenantId());
+      topics =
+          consultantTopicAgencyCompatibilityValidator.resolveTopicUpdate(
+              id, dto.getTopicIds(), dto.getTopicsByAgency(), row.getTenantId());
       rejectRemovingTheLastTopic(row, topics);
       Consultant preview = new Consultant();
-      org.springframework.beans.BeanUtils.copyProperties(row, preview, "languages", "consultantTopics", "consultantAgencies");
-      if (row.getLanguages() != null) preview.setLanguages(new java.util.HashSet<>(row.getLanguages()));
-      if (row.getConsultantTopics() != null) preview.setConsultantTopics(new java.util.HashSet<>(row.getConsultantTopics()));
-      if (row.getConsultantAgencies() != null) preview.setConsultantAgencies(new java.util.HashSet<>(row.getConsultantAgencies()));
+      org.springframework.beans.BeanUtils.copyProperties(
+          row, preview, "languages", "consultantTopics", "consultantAgencies");
+      if (row.getLanguages() != null)
+        preview.setLanguages(new java.util.HashSet<>(row.getLanguages()));
+      if (row.getConsultantTopics() != null)
+        preview.setConsultantTopics(new java.util.HashSet<>(row.getConsultantTopics()));
+      if (row.getConsultantAgencies() != null)
+        preview.setConsultantAgencies(new java.util.HashSet<>(row.getConsultantAgencies()));
       preview.replaceTopicsPerAgency(topics);
       applyDatabaseFields(dto, preview, adminEdit);
     }
 
     public Consultant current() {
-      Consultant row = consultantService.getConsultant(id).orElseThrow(() -> new BadRequestException("Consultant does not exist"));
-      if (entities != null && org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive() && entities.contains(row)) entities.refresh(row);
+      Consultant row =
+          consultantService
+              .getConsultant(id)
+              .orElseThrow(() -> new BadRequestException("Consultant does not exist"));
+      if (entities != null
+          && org.springframework.transaction.support.TransactionSynchronizationManager
+              .isActualTransactionActive()
+          && entities.contains(row)) entities.refresh(row);
       return row;
     }
 
-    public void flush() { if (entities != null) entities.flush(); }
+    public void flush() {
+      if (entities != null) entities.flush();
+    }
 
     public Consultant apply() {
       Consultant row = current();
@@ -169,11 +201,16 @@ public class ConsultantUpdateService {
       Consultant updated = updateDatabaseConsultant(dto, row, adminEdit);
       // Same existing afterCommit Matrix rule; an APPLIED replay never invokes this callback.
       scheduleMatrixDisplayNameUpdate(updated, true, previous);
-      org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-          new TransactionSynchronization() {
-            @Override public void afterCommit() { appointmentService.syncConsultantData(updated); }
-          });
-      emitCounselorRenameNotificationsIfNeeded(updated, previous, consultantDisplayNameResolver.resolveMatrixDisplayName(updated));
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .registerSynchronization(
+              new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                  appointmentService.syncConsultantData(updated);
+                }
+              });
+      emitCounselorRenameNotificationsIfNeeded(
+          updated, previous, consultantDisplayNameResolver.resolveMatrixDisplayName(updated));
       return updated;
     }
   }
@@ -331,7 +368,8 @@ public class ConsultantUpdateService {
     return this.consultantService.saveConsultant(consultant);
   }
 
-  private void applyDatabaseFields(UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant, boolean adminEdit) {
+  private void applyDatabaseFields(
+      UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant, boolean adminEdit) {
     consultant.setFirstName(updateConsultantDTO.getFirstname());
     consultant.setLastName(updateConsultantDTO.getLastname());
     consultant.setEmail(updateConsultantDTO.getEmail());
@@ -364,7 +402,6 @@ public class ConsultantUpdateService {
         && updateConsultantDTO.getDataPrivacyConfirmation()) {
       consultant.setDataPrivacyConfirmation(LocalDateTime.now());
     }
-
   }
 
   /**

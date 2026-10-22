@@ -114,16 +114,23 @@ public final class HumanAdminAccountMaintenance {
   }
 
   public de.caritas.cob.userservice.api.model.Consultant updateConsultantProfile(
-      de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService.ScopedEdit edit) {
+      de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService
+              .ScopedEdit
+          edit) {
     Objects.requireNonNull(edit);
     requireOutsideSql();
     currentHuman();
     authorizedRow(edit.accountId(), false);
-    return (de.caritas.cob.userservice.api.model.Consultant) updateProfile(edit.accountId(), edit.profile(), edit);
+    return (de.caritas.cob.userservice.api.model.Consultant)
+        updateProfile(edit.accountId(), edit.profile(), edit);
   }
 
-  private Object updateProfile(String accountId, IdentityProfileUpdate profile,
-      de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService.ScopedEdit edit) {
+  private Object updateProfile(
+      String accountId,
+      IdentityProfileUpdate profile,
+      de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService
+              .ScopedEdit
+          edit) {
     requireOutsideSql();
     if (!Set.of("PATCH", "PUT").contains(request.getMethod())) throw forbidden();
     Human human = currentHuman();
@@ -131,20 +138,33 @@ public final class HumanAdminAccountMaintenance {
     AdminRow current = authorizedRow(accountId, false);
     // Consultant-only read scopes never authorize the Admin profile writer.
     if ("CONSULTANT".equals(current.type) && edit == null) throw forbidden();
-    if (edit != null && !"CONSULTANT".equals(current.type) && current.secondary == null) throw forbidden();
+    if (edit != null && !"CONSULTANT".equals(current.type) && current.secondary == null)
+      throw forbidden();
     validateProfile(current, profile);
     Intent prior = intent(operation, false);
-    ConsultantOriginal fullOriginal = edit == null || prior == null ? null : decode(prior.original, ConsultantOriginal.class);
-    AdminRow original = prior == null ? current : edit == null ? decode(prior.original, AdminRow.class) : fullOriginal.row;
+    ConsultantOriginal fullOriginal =
+        edit == null || prior == null ? null : decode(prior.original, ConsultantOriginal.class);
+    AdminRow original =
+        prior == null
+            ? current
+            : edit == null ? decode(prior.original, AdminRow.class) : fullOriginal.row;
     if (!current.sameIdentity(original)) throw conflict();
-    String fullSql = edit == null ? null : fullOriginal == null ? consultantSnapshot(accountId, false) : fullOriginal.sql;
+    String fullSql =
+        edit == null
+            ? null
+            : fullOriginal == null ? consultantSnapshot(accountId, false) : fullOriginal.sql;
     if (edit != null && (prior == null || !"APPLIED".equals(prior.status))) edit.validate();
-    try (var checked = new CheckedAccount(current, original, human, operation, profile, edit, fullSql)) {
+    try (var checked =
+        new CheckedAccount(current, original, human, operation, profile, edit, fullSql)) {
       checked.applied = prior != null && "APPLIED".equals(prior.status);
       String digest = transport.profileRequestDigest(checked, profile, operation);
       if (digest == null || !digest.matches("[0-9a-f]{64}")) throw unavailable();
-      String originalJson = edit == null ? encode(original) : encode(new ConsultantOriginal(original, fullSql));
-      String desiredJson = edit == null ? encode(profile) : encode(java.util.Map.of("profile", profile, "publicEdit", edit.intentJson()));
+      String originalJson =
+          edit == null ? encode(original) : encode(new ConsultantOriginal(original, fullSql));
+      String desiredJson =
+          edit == null
+              ? encode(profile)
+              : encode(java.util.Map.of("profile", profile, "publicEdit", edit.intentJson()));
       Intent intent =
           recoverCommit(
               () -> transaction(() -> prepare(checked, digest, originalJson, desiredJson)),
@@ -233,30 +253,50 @@ public final class HumanAdminAccountMaintenance {
 
   private Object profileResultOrConsultant(CheckedAccount checked) {
     if (checked.edit == null) return profileResult(checked);
-    return transaction(() -> {
-      requireDesired(authorizedRow(checked.actual.account, true), checked.original, checked.profile);
-      var found = intent(checked.workflow, true);
-      requireConsultantPostcondition(checked, Objects.requireNonNull(found));
-      return checked.edit.current();
-    });
+    return transaction(
+        () -> {
+          requireDesired(
+              authorizedRow(checked.actual.account, true), checked.original, checked.profile);
+          var found = intent(checked.workflow, true);
+          requireConsultantPostcondition(checked, Objects.requireNonNull(found));
+          return checked.edit.current();
+        });
   }
 
   private record ConsultantOriginal(AdminRow row, String sql) {
-    @Override public String toString() { return "ConsultantOriginal[profile=redacted]"; }
+    @Override
+    public String toString() {
+      return "ConsultantOriginal[profile=redacted]";
+    }
   }
 
   private String consultantSnapshot(String id, boolean lock) {
     var tables = new java.util.TreeMap<String, List<String>>();
-    for (String table : List.of("admin", "consultant", "language", "consultant_topic", "consultant_agency", "admin_agency")) {
+    for (String table :
+        List.of(
+            "admin",
+            "consultant",
+            "language",
+            "consultant_topic",
+            "consultant_agency",
+            "admin_agency")) {
       String column = table.startsWith("admin") ? "admin_id" : "consultant_id";
-      var rows = jdbc.queryForList("select * from " + table + " where " + column + "=?" + (lock ? " for update" : ""), id);
+      var rows =
+          jdbc.queryForList(
+              "select * from " + table + " where " + column + "=?" + (lock ? " for update" : ""),
+              id);
       var encoded = new java.util.ArrayList<String>();
       for (var row : rows) {
         var normalized = new java.util.TreeMap<String, Object>();
-        row.forEach((field, value) -> normalized.put(field,
-            value instanceof java.sql.Timestamp t ? t.toInstant().toString()
-                : value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes)
-                : value));
+        row.forEach(
+            (field, value) ->
+                normalized.put(
+                    field,
+                    value instanceof java.sql.Timestamp t
+                        ? t.toInstant().toString()
+                        : value instanceof byte[] bytes
+                            ? java.util.HexFormat.of().formatHex(bytes)
+                            : value));
         encoded.add(encode(normalized));
       }
       java.util.Collections.sort(encoded);
@@ -266,13 +306,18 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private void requireConsultantPostcondition(CheckedAccount checked, Intent intent) {
-    if (checked.edit != null && (!"APPLIED".equals(intent.status) || intent.applied == null
-        || !Objects.equals(intent.applied, consultantSnapshot(checked.actual.account, true)))) throw conflict();
+    if (checked.edit != null
+        && (!"APPLIED".equals(intent.status)
+            || intent.applied == null
+            || !Objects.equals(intent.applied, consultantSnapshot(checked.actual.account, true))))
+      throw conflict();
   }
 
   private void requireConsultantSnapshot(CheckedAccount checked, String status) {
-    if (checked.edit != null && !"APPLIED".equals(status)
-        && !Objects.equals(checked.fullSql, consultantSnapshot(checked.actual.account, true))) throw conflict();
+    if (checked.edit != null
+        && !"APPLIED".equals(status)
+        && !Objects.equals(checked.fullSql, consultantSnapshot(checked.actual.account, true)))
+      throw conflict();
   }
 
   private de.caritas.cob.userservice.api.model.Admin profileResult(CheckedAccount checked) {
@@ -400,10 +445,22 @@ public final class HumanAdminAccountMaintenance {
     if (!"ACKNOWLEDGED".equals(found.status) || !row.equals(checked.original)) throw conflict();
     var profile = checked.profile;
     if ("CONSULTANT".equals(row.type)) {
-      if (jdbc.update("update consultant set first_name=?,last_name=?,email=?,update_date=? where consultant_id=? and delete_date is null and username=? and ((tenant_id=?) or (tenant_id is null and ? is null)) and first_name=? and last_name=? and email=? and ((update_date=?) or (update_date is null and ? is null))",
-          profile.firstName(), profile.lastName(), profile.email(), Timestamp.from(clock.instant()),
-          row.account, row.username, row.tenant, row.tenant, row.firstName, row.lastName, row.email,
-          timestamp(row.updated), timestamp(row.updated)) != 1) throw conflict();
+      if (jdbc.update(
+              "update consultant set first_name=?,last_name=?,email=?,update_date=? where consultant_id=? and delete_date is null and username=? and ((tenant_id=?) or (tenant_id is null and ? is null)) and first_name=? and last_name=? and email=? and ((update_date=?) or (update_date is null and ? is null))",
+              profile.firstName(),
+              profile.lastName(),
+              profile.email(),
+              Timestamp.from(clock.instant()),
+              row.account,
+              row.username,
+              row.tenant,
+              row.tenant,
+              row.firstName,
+              row.lastName,
+              row.email,
+              timestamp(row.updated),
+              timestamp(row.updated))
+          != 1) throw conflict();
     } else if (jdbc.update(
             "update admin set first_name=?,last_name=?,email=?,update_date=? where admin_id=? and username=? and type=? and ((tenant_id=?) or (tenant_id is null and ? is null)) and first_name=? and last_name=? and email=? and ((update_date=?) or (update_date is null and ? is null))",
             profile.firstName(),
@@ -473,7 +530,8 @@ public final class HumanAdminAccountMaintenance {
         || Set.of("ACKNOWLEDGED", "APPLIED").contains(found.status) && found.receipt == null
         || "FROZEN".equals(found.status) && found.receipt != null
         || !"APPLIED".equals(found.status) && found.applied != null
-        || checked.edit != null && "APPLIED".equals(found.status) && found.applied == null) throw unavailable();
+        || checked.edit != null && "APPLIED".equals(found.status) && found.applied == null)
+      throw unavailable();
     return found;
   }
 
@@ -822,7 +880,9 @@ public final class HumanAdminAccountMaintenance {
     private final Human human;
     private final UUID workflow;
     private final IdentityProfileUpdate profile;
-    private final de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService.ScopedEdit edit;
+    private final de.caritas.cob.userservice.api.admin.service.consultant.update
+            .ConsultantUpdateService.ScopedEdit
+        edit;
     private final String fullSql;
     private boolean applied;
     private final String method = request.getMethod();
@@ -840,9 +900,15 @@ public final class HumanAdminAccountMaintenance {
       this(actual, original, human, workflow, profile, null, null);
     }
 
-    private CheckedAccount(AdminRow actual, AdminRow original, Human human, UUID workflow,
+    private CheckedAccount(
+        AdminRow actual,
+        AdminRow original,
+        Human human,
+        UUID workflow,
         IdentityProfileUpdate profile,
-        de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService.ScopedEdit edit,
+        de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService
+                .ScopedEdit
+            edit,
         String fullSql) {
       this.edit = edit;
       this.fullSql = fullSql;
@@ -908,7 +974,9 @@ public final class HumanAdminAccountMaintenance {
       requireOutsideSql();
       currentHumanMatching(human);
       if (!actual.equals(authorizedRow(actual.account, false))) throw conflict();
-      if (edit != null && !applied && !Objects.equals(fullSql, consultantSnapshot(actual.account, false))) throw conflict();
+      if (edit != null
+          && !applied
+          && !Objects.equals(fullSql, consultantSnapshot(actual.account, false))) throw conflict();
     }
 
     @Override
