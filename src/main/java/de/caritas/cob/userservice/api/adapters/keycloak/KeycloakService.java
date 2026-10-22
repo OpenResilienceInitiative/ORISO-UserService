@@ -139,6 +139,11 @@ public class KeycloakService
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
+  /** Closed dependency seam for the scoped read caller counterfactual. */
+  @Autowired(required = false)
+  public void setHumanAdminMaintenance(
+      de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance maintenance) {}
+
   private de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedUsernameAvailability
       scopedUsernameAvailability;
 
