@@ -149,6 +149,7 @@ class ProtectedAccountRecoveryCodecTest {
     var pending = codec.prepareRecovery(metadata, 0, recoveryId());
     var recovered = codec.verifyRecovery(pending, bytes(vector.path("recoveryResponse")));
     assertDoesNotThrow(() -> codec.checkRecovery(metadata, recovered));
+    assertEquals(vector.path("recoveryResponse"), parse(codec.recoveryResponse(recovered)));
     var absent = codec.verifyRecovery(pending, bytes(vector.path("abandonedResponse")));
     assertDoesNotThrow(() -> codec.checkRecovery(metadata, absent));
     var different =

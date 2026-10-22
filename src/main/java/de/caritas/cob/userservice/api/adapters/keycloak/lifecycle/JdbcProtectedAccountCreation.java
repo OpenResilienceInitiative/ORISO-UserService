@@ -17,6 +17,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -123,13 +124,43 @@ public final class JdbcProtectedAccountCreation {
   /** Reducing data only, within the existing historical owner's SQL transaction. */
   PreparedMetadata metadataWithinOwner(
       JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical) {
-    throw unavailable();
+    owningSql();
+    if (historical == null || historical.inviteId() != inviteId(historical.claim())) throw unavailable();
+    var claim = historical.claim();
+    return owned(claim, true,
+        () -> accounts.restorePrepared(claim, checked(claim, one(rows(claim))).prepared()));
   }
 
   /** An authenticated PREPARED row has no saved creation reply. */
   java.util.Optional<VerifiedCreated> createdWithinOwner(
       JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical) {
-    throw unavailable();
+    owningSql();
+    if (historical == null || historical.inviteId() != inviteId(historical.claim())) throw unavailable();
+    var claim = historical.claim();
+    return owned(claim, true, () -> {
+      Row saved = checked(claim, one(rows(claim)));
+      if ("PREPARED".equals(saved.state())) return Optional.empty();
+      var restored = accounts.restore(claim, saved.created());
+      if (!restored.accountId().equals(saved.account())
+          || !equal(restored.creationFingerprint(), saved.fingerprint())) throw unavailable();
+      return Optional.of(restored);
+    });
+  }
+
+  private void owningSql() {
+    var source = Objects.requireNonNull(jdbc.getDataSource());
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isSynchronizationActive()
+        || !TransactionSynchronizationManager.hasResource(source)) throw unavailable();
+    var connection = DataSourceUtils.getConnection(source);
+    try {
+      if (!DataSourceUtils.isConnectionTransactional(connection, source)
+          || connection.getAutoCommit()) throw unavailable();
+    } catch (java.sql.SQLException failure) {
+      throw unavailable();
+    } finally {
+      DataSourceUtils.releaseConnection(connection, source);
+    }
   }
 
   public PreparedRecovery recovery(AcceptanceClaim claim, long expectedGeneration) {

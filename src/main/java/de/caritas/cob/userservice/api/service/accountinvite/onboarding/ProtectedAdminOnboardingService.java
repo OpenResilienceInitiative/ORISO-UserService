@@ -137,6 +137,7 @@ public final class ProtectedAdminOnboardingService {
                         Admin.builder()
                             .id(created.accountId())
                             .username(created.email())
+                        .email(created.email())
                             .firstName(created.firstName())
                             .lastName(created.lastName())
                             .build();
