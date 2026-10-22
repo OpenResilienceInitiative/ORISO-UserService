@@ -329,7 +329,7 @@ class ProtectedOtpBootstrapNativePairProof {
 
   private static String totp(String secret) throws Exception {
     var mac = Mac.getInstance("HmacSHA1");
-    mac.init(new SecretKeySpec(new Base32().decode(secret), "HmacSHA1"));
+    mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA1"));
     byte[] digest =
         mac.doFinal(ByteBuffer.allocate(8).putLong(Instant.now().getEpochSecond() / 30).array());
     int offset = digest[digest.length - 1] & 15;

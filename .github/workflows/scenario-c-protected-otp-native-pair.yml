@@ -103,6 +103,7 @@ jobs:
     - name: Run one bounded real owned recipient SQL and native Keycloak lost-reply pair
       timeout-minutes: 10
       env:
+        PROTECTED_PROOF_RESOURCE_PROFILE: github-ubuntu-24-amd64-v1
         MAVEN_OPTS: -Xmx384m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2
       run: 'set -euo pipefail
 

@@ -229,6 +229,8 @@ class ProtectedOtpBootstrapTest {
       var prepared = f.adapter().prepare(f.claim, f.pending);
       var owner = new TransactionTemplate(f.manager);
       owner.executeWithoutResult(tx -> f.adapter().stagePrepared(f.claim, prepared));
+      f.server.verify();
+      f.server.reset();
       f.request.setRequestURI("/service/tenant/register/two-factor");
       f.request.removeHeader("Idempotency-Key");
       f.request.addHeader("Idempotency-Key", UUID.randomUUID().toString());

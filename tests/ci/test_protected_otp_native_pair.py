@@ -51,6 +51,7 @@ class ProtectedPairEvidence(unittest.TestCase):
         self.assertIn("-Dsurefire.failIfNoSpecifiedTests=true", SOURCE.read_text())
         self.assertIn("capture_output=True, timeout=180", SOURCE.read_text())
         self.assertNotIn("continue-on-error", workflow)
+        self.assertIn("PROTECTED_PROOF_RESOURCE_PROFILE: github-ubuntu-24-amd64-v1", workflow)
         import fnmatch
         self.assertTrue(fnmatch.fnmatch("protected-otp-native-pair.json", "protected-otp-native-*.json"))
         self.assertIn("target/protected-otp-native/protected-otp-native-pair.json", SOURCE.read_text())
