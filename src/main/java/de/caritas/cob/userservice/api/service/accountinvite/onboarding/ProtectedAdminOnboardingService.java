@@ -266,7 +266,52 @@ public final class ProtectedAdminOnboardingService {
    * Internal exact historical ownership reconciliation; no public request may select this route.
    */
   public void reconcileTerminal(long inviteId) {
-    throw unavailable();
+    outsideSql();
+    if (!actors.isEnabled() || inviteId < 1 || recovery == null || cancellation == null)
+      throw unavailable();
+    var historical = acceptance.historical(inviteId);
+    if (historical == null || historical.inviteId() != inviteId) throw unavailable();
+    var phase = activation.phase(historical);
+    if (phase == null) throw unavailable();
+    if (phase == JdbcProtectedAccountActivation.Phase.COMMITTED) return;
+    if (phase == JdbcProtectedAccountActivation.Phase.READY) {
+      var ready = activation.historicalReady(historical);
+      if (ready == null) throw unavailable();
+      ProtectedAccountCodec.VerifiedCommitted committed = null;
+      try {
+        committed = recovery.consumedStatus(ready.created(), ready.outcome());
+      } catch (KeycloakProtectedAccounts.RemoteFailure pending) {
+        // A failed status read is uncertain. Only a native reducing ACK may fence the owner.
+      }
+      if (committed != null) {
+        activation.acknowledge(ready, committed);
+        return;
+      }
+    }
+    cancellation.cancelPendingActivation(historical, activation);
+    var restricted = cancellation.verifiedRestriction(inviteId);
+    if (restricted == null) throw unavailable();
+    // Restriction can invalidate the current token; reacquire data-only custody after that commit.
+    historical = acceptance.historical(inviteId);
+    if (historical == null || historical.inviteId() != inviteId) throw unavailable();
+    long expected = 0;
+    try {
+      var response = nodes.readTree(restricted.responseJson());
+      if (!response.path("boundAttemptId").isNull()) {
+        var generation = response.path("fencedExecution").path("generation");
+        if (!generation.isIntegralNumber() || !generation.canConvertToLong()
+            || generation.longValue() < 1 || generation.longValue() == Long.MAX_VALUE)
+          throw unavailable();
+        expected = generation.longValue();
+      } else if (!response.path("fencedExecution").isNull()) throw unavailable();
+    } catch (java.io.IOException malformed) {
+      throw unavailable();
+    }
+    var prepared = creation.recovery(historical, expected);
+    var claimed = recovery.recover(prepared);
+    var local = activation.discard(historical, claimed);
+    recovery.compensate(claimed, local);
+    cancellation.refreshAfterCleanup(inviteId, claimed, local);
   }
 
   public void startEmail(String token) {

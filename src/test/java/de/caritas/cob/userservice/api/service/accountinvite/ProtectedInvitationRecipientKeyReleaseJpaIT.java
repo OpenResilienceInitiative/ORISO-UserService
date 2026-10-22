@@ -6,6 +6,8 @@ import static org.mockito.Mockito.*;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedInvitations;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationCancellation;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -25,6 +27,11 @@ class ProtectedInvitationRecipientKeyReleaseJpaIT extends ProtectedInvitationIss
 
   @Test
   void pendingAcceptedEmailKeyStaysHeldUntilVerifiedReleaseThenActualEmailCanBeInvitedAgain() {
+    when(tenantIds.reserve(null)).thenReturn(
+        new TenantIdReservation(17L, "9eb4c868-16d4-4be5-8c0b-5fb9d2b866b3"),
+        new TenantIdReservation(18L, "59ba921a-849d-4f32-a492-98d03ff582b0"),
+        new TenantIdReservation(17L, "99d529dd-ef5c-46c2-92ed-56c005c8c026"));
+    when(tenantIds.getAvailability(18L)).thenReturn(IdAllocationStatus.RESERVED);
     var original = service.createInvite(command());
     String held = original.getActiveRecipientKey();
     original.setStatus(AccountInviteStatus.EXPIRED);

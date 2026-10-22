@@ -181,11 +181,48 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
   public void cancelPendingActivation(
       JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical,
       JdbcProtectedAccountActivation activation) {
-    throw unavailable();
+    requireOutsideRecoverySql();
+    requireCleanup();
+    if (historical == null || historical.inviteId() < 1 || activation == null) throw unavailable();
+    long inviteId = historical.inviteId();
+    cancel(
+        inviteId,
+        Reason.ISSUANCE_ABORTED,
+        () -> {
+          if ("ACCEPTED".equals(pendingActivationState(historical)))
+            activation.restrictExpiredWithinOwner(historical);
+        },
+        () -> pendingActivationState(historical));
+  }
+
+  private String pendingActivationState(
+      JdbcProtectedInvitationAcceptance.HistoricalAcceptance historical) {
+    var current = acceptance.historicalWithinOwner(historical.inviteId()).claim();
+    var expected = historical.claim();
+    if (!current.frozen().equals(expected.frozen())
+        || !same(current.approval().responseJson(), expected.approval().responseJson())
+        || !current.claimId().equals(expected.claimId())
+        || !current.attemptId().equals(expected.attemptId())
+        || !current.executionId().equals(expected.executionId())
+        || !same(current.registrationDigest(), expected.registrationDigest())
+        || !Objects.equals(current.tokenHash(), expected.tokenHash())) throw unavailable();
+    var phases = jdbc.queryForList(
+        "SELECT state FROM protected_account_activation WHERE invite_id=? FOR UPDATE",
+        String.class, historical.inviteId());
+    if (phases.size() > 1 || phases.contains("COMMITTED")) throw unavailable();
+    String state = jdbc.queryForObject(
+        "SELECT status FROM account_invite WHERE id=?", String.class, historical.inviteId());
+    if (!Set.of("ACCEPTED", "EXPIRED", "REVOKED", "SUPERSEDED").contains(state))
+      throw unavailable();
+    return state;
   }
 
   @Override
   public void cancel(long inviteId, Reason reason, Runnable invalidateLocalInvite) {
+    cancel(inviteId, reason, invalidateLocalInvite, () -> {});
+  }
+
+  private void cancel(long inviteId, Reason reason, Runnable invalidateLocalInvite, Runnable currentOwnerGuard) {
     if (TransactionSynchronizationManager.isActualTransactionActive())
       throw new IllegalStateException(
           "Protected cancellation requires a completed local transaction");
@@ -194,6 +231,7 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
         local.execute(
             tx -> {
               FrozenApproval proposal = journal.lockedRestrictionProposal(inviteId);
+              currentOwnerGuard.run();
               Row current = row(inviteId, proposal);
               if (current != null) {
                 journal.requireRestrictedInvite(

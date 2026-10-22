@@ -80,11 +80,15 @@ class ProtectedAdminTerminalRecoveryTest {
         .thenReturn(
             "{\"boundAttemptId\":\"15adb2ed-e40b-48ce-aa4a-49f7f2d71937\",\"fencedExecution\":{\"generation\":1}}");
     when(cancellation.verifiedRestriction(73)).thenReturn(restricted);
+    // Native restriction commits token invalidation. The old live-token snapshot cannot resume it.
+    var restrictedHistory = mock(HistoricalAcceptance.class);
+    when(restrictedHistory.inviteId()).thenReturn(73L);
+    when(acceptance.historical(73)).thenReturn(history, restrictedHistory);
     var prepared = mock(PreparedRecovery.class);
     var claimed = mock(VerifiedRecovery.class);
-    when(creation.recovery(history, 1)).thenReturn(prepared);
+    when(creation.recovery(restrictedHistory, 1)).thenReturn(prepared);
     when(recovery.recover(prepared)).thenReturn(claimed);
-    when(activation.discard(history, claimed)).thenReturn(local);
+    when(activation.discard(restrictedHistory, claimed)).thenReturn(local);
     when(recovery.compensate(claimed, local))
         .thenAnswer(
             call -> {
@@ -97,9 +101,10 @@ class ProtectedAdminTerminalRecoveryTest {
     order.verify(activation).phase(history);
     order.verify(cancellation).cancelPendingActivation(history, activation);
     order.verify(cancellation).verifiedRestriction(73);
-    order.verify(creation).recovery(history, 1);
+    order.verify(acceptance).historical(73);
+    order.verify(creation).recovery(restrictedHistory, 1);
     order.verify(recovery).recover(prepared);
-    order.verify(activation).discard(history, claimed);
+    order.verify(activation).discard(restrictedHistory, claimed);
     order.verify(recovery).compensate(claimed, local);
     order.verify(cancellation).refreshAfterCleanup(73, claimed, local);
     verify(cancellation, never()).withAcknowledged(anyLong(), any());
