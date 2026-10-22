@@ -848,17 +848,21 @@ class MagicLinkLoginServiceTest {
     var stored = scopedClaim(42L);
     when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
     var seen = new AtomicReference<MagicLinkLoginService.ClaimedMagicLink>();
-    when(identitySessionExchange.exchangeMagicLink(any(), eq("123456"))).thenAnswer(invocation -> {
-      MagicLinkLoginService.ClaimedMagicLink live = invocation.getArgument(0);
-      seen.set(live);
-      live.requireCurrent();
-      assertThat(live.workflowId()).isEqualTo(stored.workflowId());
-      assertThat(live.claimDigest()).isEqualTo(stored.capabilityDigest());
-      assertThat(live.expiresAt()).isEqualTo(stored.expiresAt());
-      return Optional.of(identitySession());
-    });
-    assertThat(magicLinkLoginService.consumeMagicLink("scoped-token", "123456")).contains(identitySession());
-    org.assertj.core.api.Assertions.assertThatThrownBy(() -> seen.get().requireCurrent()).isInstanceOf(IllegalStateException.class);
+    when(identitySessionExchange.exchangeMagicLink(any(), eq("123456")))
+        .thenAnswer(
+            invocation -> {
+              MagicLinkLoginService.ClaimedMagicLink live = invocation.getArgument(0);
+              seen.set(live);
+              live.requireCurrent();
+              assertThat(live.workflowId()).isEqualTo(stored.workflowId());
+              assertThat(live.claimDigest()).isEqualTo(stored.capabilityDigest());
+              assertThat(live.expiresAt()).isEqualTo(stored.expiresAt());
+              return Optional.of(identitySession());
+            });
+    assertThat(magicLinkLoginService.consumeMagicLink("scoped-token", "123456"))
+        .contains(identitySession());
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> seen.get().requireCurrent())
+        .isInstanceOf(IllegalStateException.class);
     verify(identitySessionExchange, never()).exchangeForUser(anyString());
     verify(oneTimeTokenStore, never()).restore(anyString(), anyString(), any(), anyBoolean());
   }
@@ -868,20 +872,31 @@ class MagicLinkLoginServiceTest {
     when(taskActors.isEnabled()).thenReturn(true);
     var stored = scopedClaim(42L);
     when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
-    for (var challenge : List.of(new IdentitySessionExchange.MagicLinkChallenge("APP", null, 400),
-        new IdentitySessionExchange.MagicLinkChallenge("EMAIL", 17, 400),
-        new IdentitySessionExchange.MagicLinkChallenge("EMAIL", 23, 429))) {
+    for (var challenge :
+        List.of(
+            new IdentitySessionExchange.MagicLinkChallenge("APP", null, 400),
+            new IdentitySessionExchange.MagicLinkChallenge("EMAIL", 17, 400),
+            new IdentitySessionExchange.MagicLinkChallenge("EMAIL", 23, 429))) {
       var seen = new AtomicReference<MagicLinkLoginService.ClaimedMagicLink>();
-      org.mockito.Mockito.doAnswer(invocation -> {
-        MagicLinkLoginService.ClaimedMagicLink live = invocation.getArgument(0);
-        seen.set(live); live.requireCurrent(); throw challenge;
-      }).when(identitySessionExchange).exchangeMagicLink(any(), eq("123456"));
-      org.assertj.core.api.Assertions.assertThatThrownBy(() -> magicLinkLoginService.consumeMagicLink("scoped-token", "123456")).isSameAs(challenge);
-      org.assertj.core.api.Assertions.assertThatThrownBy(() -> seen.get().requireCurrent()).isInstanceOf(IllegalStateException.class);
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                MagicLinkLoginService.ClaimedMagicLink live = invocation.getArgument(0);
+                seen.set(live);
+                live.requireCurrent();
+                throw challenge;
+              })
+          .when(identitySessionExchange)
+          .exchangeMagicLink(any(), eq("123456"));
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> magicLinkLoginService.consumeMagicLink("scoped-token", "123456"))
+          .isSameAs(challenge);
+      org.assertj.core.api.Assertions.assertThatThrownBy(() -> seen.get().requireCurrent())
+          .isInstanceOf(IllegalStateException.class);
       assertThat(challenge.getMessage()).isEqualTo("Magic-link verification required");
       assertThat(challenge.toString()).isEqualTo("MagicLinkChallenge[redacted]");
     }
-    verify(oneTimeTokenStore, org.mockito.Mockito.times(3)).restore("magic-login", "scoped-token", stored, false);
+    verify(oneTimeTokenStore, org.mockito.Mockito.times(3))
+        .restore("magic-login", "scoped-token", stored, false);
     verify(identitySessionExchange, never()).exchangeForUser(anyString());
   }
 
@@ -890,7 +905,8 @@ class MagicLinkLoginServiceTest {
     when(taskActors.isEnabled()).thenReturn(true);
     var stored = scopedClaim(42L);
     when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
-    when(identitySessionExchange.exchangeMagicLink(any(), eq("123456"))).thenThrow(new org.springframework.web.client.ResourceAccessException("private"));
+    when(identitySessionExchange.exchangeMagicLink(any(), eq("123456")))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("private"));
     assertThat(magicLinkLoginService.consumeMagicLink("scoped-token", "123456")).isEmpty();
     verify(oneTimeTokenStore).restore("magic-login", "scoped-token", stored, false);
     verify(identitySessionExchange, never()).exchangeForUser(anyString());

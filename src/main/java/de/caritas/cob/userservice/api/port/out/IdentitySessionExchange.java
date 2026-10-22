@@ -32,12 +32,22 @@ public interface IdentitySessionExchange {
       this.status = status;
     }
 
-    public String otpType() { return otpType; }
-    public Integer resendAvailableInSeconds() { return resendAvailableInSeconds; }
-    public int status() { return status; }
+    public String otpType() {
+      return otpType;
+    }
+
+    public Integer resendAvailableInSeconds() {
+      return resendAvailableInSeconds;
+    }
+
+    public int status() {
+      return status;
+    }
 
     @Override
-    public String toString() { return "MagicLinkChallenge[redacted]"; }
+    public String toString() {
+      return "MagicLinkChallenge[redacted]";
+    }
   }
 
   default Optional<IdentitySession> exchangeMagicLink(ClaimedMagicLink claim) {

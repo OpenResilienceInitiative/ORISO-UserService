@@ -114,7 +114,9 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
     if (claim.expiresAt().isAfter(Instant.now().plusSeconds(900))) {
       throw new IllegalArgumentException("Invalid scoped magic-link expiry");
     }
-    redisTemplate.opsForValue().set(tokenKey("magic-login", token), value, Duration.ofMillis(ttlMillis));
+    redisTemplate
+        .opsForValue()
+        .set(tokenKey("magic-login", token), value, Duration.ofMillis(ttlMillis));
   }
 
   @Override
@@ -129,7 +131,8 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
 
     TokenClaim claim;
     if (encoded.startsWith("m1.")) {
-      if (!"magic-login".equals(scope)) throw new IllegalStateException("Invalid scoped token namespace");
+      if (!"magic-login".equals(scope))
+        throw new IllegalStateException("Invalid scoped token namespace");
       claim = decodeMagicClaim(encoded);
     } else {
       claim = decode(encoded);
@@ -152,7 +155,8 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
     }
 
     String tokenKey = tokenKey(scope, token);
-    boolean scoped = claim.workflowId() != null || claim.tenantId() != null || claim.capabilityDigest() != null;
+    boolean scoped =
+        claim.workflowId() != null || claim.tenantId() != null || claim.capabilityDigest() != null;
     if (scoped && (!"magic-login".equals(scope) || singlePerSubject)) {
       throw new IllegalArgumentException("Invalid scoped token restoration");
     }
@@ -201,17 +205,27 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
   }
 
   private static String encodeMagicClaim(TokenClaim claim) {
-    if (claim == null || claim.subjectId() == null || claim.workflowId() == null
-        || claim.expiresAt() == null || !claim.expiresAt().equals(claim.expiresAt().truncatedTo(ChronoUnit.MILLIS))
+    if (claim == null
+        || claim.subjectId() == null
+        || claim.workflowId() == null
+        || claim.expiresAt() == null
+        || !claim.expiresAt().equals(claim.expiresAt().truncatedTo(ChronoUnit.MILLIS))
         || !UUID.fromString(claim.subjectId()).toString().equals(claim.subjectId())
         || claim.tenantId() != null && claim.tenantId() < 0
-        || claim.capabilityDigest() == null || !claim.capabilityDigest().matches("[0-9a-f]{64}")) {
+        || claim.capabilityDigest() == null
+        || !claim.capabilityDigest().matches("[0-9a-f]{64}")) {
       throw new IllegalArgumentException("Invalid scoped magic-link metadata");
     }
-    return "m1." + claim.expiresAt().toEpochMilli() + "."
+    return "m1."
+        + claim.expiresAt().toEpochMilli()
+        + "."
         + Base64.getUrlEncoder().withoutPadding().encodeToString(claim.subjectId().getBytes(UTF_8))
-        + "." + claim.workflowId() + "." + (claim.tenantId() == null ? "null" : claim.tenantId())
-        + "." + claim.capabilityDigest();
+        + "."
+        + claim.workflowId()
+        + "."
+        + (claim.tenantId() == null ? "null" : claim.tenantId())
+        + "."
+        + claim.capabilityDigest();
   }
 
   private static TokenClaim decodeMagicClaim(String encoded) {
@@ -219,9 +233,13 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
     if (values.length != 6 || !"m1".equals(values[0])) {
       throw new IllegalStateException("Stored scoped token has an invalid format");
     }
-    var claim = new TokenClaim(new String(Base64.getUrlDecoder().decode(values[2]), UTF_8),
-        Instant.ofEpochMilli(Long.parseLong(values[1])), UUID.fromString(values[3]),
-        "null".equals(values[4]) ? null : Long.valueOf(values[4]), values[5]);
+    var claim =
+        new TokenClaim(
+            new String(Base64.getUrlDecoder().decode(values[2]), UTF_8),
+            Instant.ofEpochMilli(Long.parseLong(values[1])),
+            UUID.fromString(values[3]),
+            "null".equals(values[4]) ? null : Long.valueOf(values[4]),
+            values[5]);
     if (!encodeMagicClaim(claim).equals(encoded)) {
       throw new IllegalStateException("Stored scoped token is not canonical");
     }
