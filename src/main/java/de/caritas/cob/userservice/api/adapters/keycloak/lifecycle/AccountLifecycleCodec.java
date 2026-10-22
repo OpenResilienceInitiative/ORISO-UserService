@@ -1063,6 +1063,16 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "locale", "UPDATED");
   }
 
+  public String verifyMaintenanceProfileReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    throw new IllegalArgumentException("Checked profile receipt is unavailable");
+  }
+
+  public String verifyMaintenanceEmailReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    throw new IllegalArgumentException("Checked email receipt is unavailable");
+  }
+
   private String verifyMaintenanceReceipt(
       String reply,
       String realmId,
