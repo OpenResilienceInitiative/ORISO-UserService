@@ -186,7 +186,7 @@ class UserSelfPasswordScenarioCBoundaryTest {
           .thenAnswer(
               ignored -> {
                 var c = new Consultant();
-                c.setConsultantId(ACCOUNT);
+                c.setId(ACCOUNT);
                 c.setPasswordChangeRequired(
                     jdbc.queryForObject(
                         "select password_change_required from consultant where consultant_id=?",
