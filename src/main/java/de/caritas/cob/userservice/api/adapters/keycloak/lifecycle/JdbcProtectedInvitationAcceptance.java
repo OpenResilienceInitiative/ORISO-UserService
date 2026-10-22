@@ -106,7 +106,8 @@ public final class JdbcProtectedInvitationAcceptance {
               uuid(saved.claimId()),
               uuid(saved.attemptId()),
               uuid(saved.executionId()),
-              saved.digest(), tokenHash);
+              saved.digest(),
+              tokenHash);
         });
   }
 
@@ -156,7 +157,8 @@ public final class JdbcProtectedInvitationAcceptance {
               uuid(saved.claimId()),
               uuid(saved.attemptId()),
               uuid(saved.executionId()),
-              saved.digest(), tokenHash);
+              saved.digest(),
+              tokenHash);
         });
   }
 
@@ -224,7 +226,8 @@ public final class JdbcProtectedInvitationAcceptance {
         UUID claimId,
         UUID attemptId,
         UUID executionId,
-        String registrationDigest, String tokenHash) {
+        String registrationDigest,
+        String tokenHash) {
       this.frozen = frozen;
       this.approval = approval;
       this.claimId = claimId;
