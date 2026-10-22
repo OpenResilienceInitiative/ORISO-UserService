@@ -523,7 +523,9 @@ class JdbcProtectedAccountActivationTest {
     assertEquals(0, count("protected_account_activation"));
     assertEquals(0, count("admin"));
     assertEquals(0, count("account_inactivity"));
-    assertNull(jdbc.queryForObject("SELECT account_id FROM protected_invitation_acceptance", String.class));
+    assertNull(
+        jdbc.queryForObject(
+            "SELECT account_id FROM protected_invitation_acceptance", String.class));
     verify(accounts, times(2)).checkRecovery(any(), same(recovered));
     verify(otp, times(1)).discardWithinOwner(any());
   }
@@ -535,13 +537,16 @@ class JdbcProtectedAccountActivationTest {
     when(recovered.accountId()).thenReturn(null);
     when(recovered.creationProof()).thenReturn(null);
     emptyCustody();
-    doAnswer(call -> {
-      JdbcProtectedAccountActivation.VerifiedDiscard discarded = call.getArgument(0);
-      assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-      assertNull(discarded.accountId());
-      assertEquals(recovered.executionId(), discarded.recoveryId());
-      return null;
-    }).when(otp).discardWithinOwner(any());
+    doAnswer(
+            call -> {
+              JdbcProtectedAccountActivation.VerifiedDiscard discarded = call.getArgument(0);
+              assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+              assertNull(discarded.accountId());
+              assertEquals(recovered.executionId(), discarded.recoveryId());
+              return null;
+            })
+        .when(otp)
+        .discardWithinOwner(any());
     var historical = acceptanceAt(clock).historical(73);
     var cleanup = assertDoesNotThrow(() -> activationWithCustody().discard(historical, recovered));
     assertEquals(cleanup, activationWithCustody().discard(historical, recovered));
@@ -549,7 +554,9 @@ class JdbcProtectedAccountActivationTest {
     assertEquals(0, count("admin"));
     assertEquals(0, count("protected_account_activation"));
     verify(otp, times(1)).discardWithinOwner(any());
-    assertFalse(jdbc.queryForObject("SELECT body_json FROM protected_account_cleanup", String.class).contains(ACCOUNT));
+    assertFalse(
+        jdbc.queryForObject("SELECT body_json FROM protected_account_cleanup", String.class)
+            .contains(ACCOUNT));
   }
 
   @Test
@@ -558,13 +565,16 @@ class JdbcProtectedAccountActivationTest {
     emptyCustody();
     var historical = acceptanceAt(clock).historical(73);
     doThrow(new IllegalArgumentException("Synthetic foreign native recovery"))
-        .when(accounts).checkRecovery(any(), same(recovered));
-    assertThrows(RuntimeException.class, () -> activationWithCustody().discard(historical, recovered));
+        .when(accounts)
+        .checkRecovery(any(), same(recovered));
+    assertThrows(
+        RuntimeException.class, () -> activationWithCustody().discard(historical, recovered));
     assertEquals(0, count("protected_account_cleanup"));
     verifyNoInteractions(otp);
     doNothing().when(accounts).checkRecovery(any(), same(recovered));
     jdbc.update("INSERT INTO admin(admin_id) VALUES(?)", ACCOUNT);
-    assertThrows(RuntimeException.class, () -> activationWithCustody().discard(historical, recovered));
+    assertThrows(
+        RuntimeException.class, () -> activationWithCustody().discard(historical, recovered));
     assertEquals(1, count("admin"));
     assertEquals(0, count("protected_account_cleanup"));
     verifyNoInteractions(otp);
@@ -576,16 +586,24 @@ class JdbcProtectedAccountActivationTest {
     jdbc.update("UPDATE account_invite SET active_recipient_key='still-owned'");
     Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
     var historical = acceptanceAt(late).historical(73);
-    assertDoesNotThrow(() -> journalAt(late).cancel(73,
-        () -> activationAt(late).restrictExpiredWithinOwner(historical)));
+    assertDoesNotThrow(
+        () ->
+            journalAt(late)
+                .cancel(73, () -> activationAt(late).restrictExpiredWithinOwner(historical)));
     assertEquals("EXPIRED", jdbc.queryForObject("SELECT status FROM account_invite", String.class));
     assertNull(jdbc.queryForObject("SELECT token_hash FROM account_invite", String.class));
-    assertEquals("still-owned", jdbc.queryForObject("SELECT active_recipient_key FROM account_invite", String.class));
-    assertEquals(ACCOUNT, jdbc.queryForObject("SELECT accepted_by_user_id FROM account_invite", String.class));
+    assertEquals(
+        "still-owned",
+        jdbc.queryForObject("SELECT active_recipient_key FROM account_invite", String.class));
+    assertEquals(
+        ACCOUNT,
+        jdbc.queryForObject("SELECT accepted_by_user_id FROM account_invite", String.class));
     assertEquals("WAITING_OTP", state());
     assertEquals(1, count("admin"));
     assertEquals(1, count("account_inactivity"));
-    assertEquals("CANCEL_REQUESTED", jdbc.queryForObject("SELECT state FROM protected_invitation_authorization", String.class));
+    assertEquals(
+        "CANCEL_REQUESTED",
+        jdbc.queryForObject("SELECT state FROM protected_invitation_authorization", String.class));
     verify(otp, never()).discardWithinOwner(any());
   }
 
@@ -594,27 +612,42 @@ class JdbcProtectedAccountActivationTest {
     restart().stage(claim, pending, prepared, policy);
     var historical = acceptanceAt(clock).historical(73);
     assertThrows(RuntimeException.class, () -> restart().restrictExpiredWithinOwner(historical));
-    assertThrows(RuntimeException.class, () -> journal.cancel(73,
-        () -> restart().restrictExpiredWithinOwner(historical)));
-    assertEquals("ACCEPTED", jdbc.queryForObject("SELECT status FROM account_invite", String.class));
+    assertThrows(
+        RuntimeException.class,
+        () -> journal.cancel(73, () -> restart().restrictExpiredWithinOwner(historical)));
+    assertEquals(
+        "ACCEPTED", jdbc.queryForObject("SELECT status FROM account_invite", String.class));
     Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
     var afterDeadline = acceptanceAt(late).historical(73);
     var other = new JdbcDataSource();
     other.setURL("jdbc:h2:mem:" + UUID.randomUUID());
-    var foreign = new org.springframework.transaction.support.TransactionTemplate(new DataSourceTransactionManager(other));
-    assertThrows(RuntimeException.class, () -> foreign.executeWithoutResult(tx -> activationAt(late).restrictExpiredWithinOwner(afterDeadline)));
+    var foreign =
+        new org.springframework.transaction.support.TransactionTemplate(
+            new DataSourceTransactionManager(other));
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            foreign.executeWithoutResult(
+                tx -> activationAt(late).restrictExpiredWithinOwner(afterDeadline)));
     jdbc.update("UPDATE admin SET email='changed@example.test'");
-    assertThrows(RuntimeException.class, () -> journalAt(late).cancel(73,
-        () -> activationAt(late).restrictExpiredWithinOwner(afterDeadline)));
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            journalAt(late)
+                .cancel(73, () -> activationAt(late).restrictExpiredWithinOwner(afterDeadline)));
     jdbc.update("UPDATE admin SET email='ada@example.test'");
     var completed = completion();
     allowCompletion(completed);
     var ready = restart().ready(claim, completed);
     restart().acknowledge(ready, committed(ready.outcome()));
-    assertThrows(RuntimeException.class, () -> journalAt(late).cancel(73,
-        () -> activationAt(late).restrictExpiredWithinOwner(afterDeadline)));
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            journalAt(late)
+                .cancel(73, () -> activationAt(late).restrictExpiredWithinOwner(afterDeadline)));
     assertEquals("COMMITTED", state());
-    assertEquals("ACCEPTED", jdbc.queryForObject("SELECT status FROM account_invite", String.class));
+    assertEquals(
+        "ACCEPTED", jdbc.queryForObject("SELECT status FROM account_invite", String.class));
   }
 
   private void emptyCustody() {
@@ -622,10 +655,12 @@ class JdbcProtectedAccountActivationTest {
     when(metadata.approvalId()).thenReturn(claim.frozen().approvalId());
     when(metadata.attemptId()).thenReturn(claim.attemptId());
     when(metadata.creationFingerprint()).thenReturn("f".repeat(64));
-    when(creation.metadataWithinOwner(any())).thenAnswer(call -> {
-      assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-      return metadata;
-    });
+    when(creation.metadataWithinOwner(any()))
+        .thenAnswer(
+            call -> {
+              assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+              return metadata;
+            });
     when(creation.createdWithinOwner(any())).thenReturn(Optional.empty());
   }
 
