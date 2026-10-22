@@ -724,7 +724,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.request.setRequestURI("/service/users/2fa/email");
       fixture.humanExpiry(Instant.now().plusSeconds(20));
       fixture.expectEmail(true, false, 2);
-      assertThrows(ServiceUnavailableException.class,
+      assertThrows(
+          ServiceUnavailableException.class,
           () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
       String oldCipher = fixture.envelope();
       fixture.server.verify();
@@ -736,23 +737,38 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.request.addHeader("Idempotency-Key", later);
       fixture.request.setRequestURI("/service/users/2fa/app");
       fixture.expectNative(false, false);
-      assertEquals(200, fixture.controller.activateTwoFactorAuthByApp(fixture.dto()).getStatusCode().value());
+      assertEquals(
+          200,
+          fixture.controller.activateTwoFactorAuthByApp(fixture.dto()).getStatusCode().value());
       fixture.server.verify();
       fixture.server.reset();
       String laterPending = UUID.randomUUID().toString();
-      fixture.jdbc.update("insert into identity_self_otp_pending_email(account_id,start_operation_id) values(?,?)", ACCOUNT, laterPending);
+      fixture.jdbc.update(
+          "insert into identity_self_otp_pending_email(account_id,start_operation_id) values(?,?)",
+          ACCOUNT,
+          laterPending);
       fixture.operation = oldStart;
       fixture.request.removeHeader("Idempotency-Key");
       fixture.request.addHeader("Idempotency-Key", oldStart);
       fixture.request.setRequestURI("/service/users/2fa/email");
       fixture.installOwner(fixture.afterOriginalExpiry());
       fixture.expectSavedEmail();
-      assertEquals(204, fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()).getStatusCode().value());
+      assertEquals(
+          204,
+          fixture
+              .controller
+              .startTwoFactorAuthByEmailSetup(fixture.email())
+              .getStatusCode()
+              .value());
       assertEquals("ACKNOWLEDGED", fixture.status());
       assertEquals(oldCipher, fixture.envelope());
       assertEquals(laterPending, fixture.pendingEmailOperation());
-      assertEquals(later, fixture.jdbc.queryForObject(
-          "select operation_id from identity_self_otp_local_enrollment where account_id=?", String.class, ACCOUNT));
+      assertEquals(
+          later,
+          fixture.jdbc.queryForObject(
+              "select operation_id from identity_self_otp_local_enrollment where account_id=?",
+              String.class,
+              ACCOUNT));
       assertEquals("ACTIVE", fixture.inviteStatus());
       assertEquals("original@oriso.org", fixture.currentEmail());
       assertEquals(1, fixture.domainWrites());
@@ -1692,7 +1708,10 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                         + HexFormat.of().formatHex(mac("otp-operation-receipt\n" + encoded)));
                 if (tamperReceipt && !ready)
                   result.put("receipt", result.path("receipt").asText() + "x");
-                if (!ready) { savedEmailReply = codec.canonical(result); savedEmailWire = wire; }
+                if (!ready) {
+                  savedEmailReply = codec.canonical(result);
+                  savedEmailWire = wire;
+                }
                 if (lostReply && call == 2)
                   throw new ResourceAccessException("Fixture committed final SENT reply was lost");
                 return withStatus(ready ? HttpStatus.ACCEPTED : HttpStatus.OK)
@@ -1704,16 +1723,27 @@ class UserSelfAppOtpScenarioCBoundaryTest {
 
     void expectSavedEmail() {
       assertNotNull(savedEmailReply);
-      server.expect(requestTo(issuer.issuer() + "/otp-config/send-verification-mail/ordinary"))
-          .andExpect(method(HttpMethod.PUT)).andRespond(outbound -> {
-            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-            assertEquals(savedEmailWire, ((MockClientHttpRequest) outbound).getBodyAsString());
-            var materialized = codec.read(savedEmailWire, ObjectNode.class);
-            materialized.put("username", "ordinary");
-            checkProof(outbound.getHeaders(), materialized, "otp.email-start", "OTP", "oriso-otp", "PUT");
-            return withStatus(HttpStatus.OK).body(savedEmailReply)
-                .contentType(MediaType.APPLICATION_JSON).createResponse(outbound);
-          });
+      server
+          .expect(requestTo(issuer.issuer() + "/otp-config/send-verification-mail/ordinary"))
+          .andExpect(method(HttpMethod.PUT))
+          .andRespond(
+              outbound -> {
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                assertEquals(savedEmailWire, ((MockClientHttpRequest) outbound).getBodyAsString());
+                var materialized = codec.read(savedEmailWire, ObjectNode.class);
+                materialized.put("username", "ordinary");
+                checkProof(
+                    outbound.getHeaders(),
+                    materialized,
+                    "otp.email-start",
+                    "OTP",
+                    "oriso-otp",
+                    "PUT");
+                return withStatus(HttpStatus.OK)
+                    .body(savedEmailReply)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
+              });
     }
 
     void expectDelete(boolean lostReply) {

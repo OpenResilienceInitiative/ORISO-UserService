@@ -610,8 +610,10 @@ public final class SelfAppOtpMaintenance {
 
   private Reply invoke(
       Self self, Intent row, TaskActorCredentials actor, JsonNode command, Operation kind) {
-    boolean historicalSent = kind == Operation.EMAIL_START
-        && "FROZEN".equals(row.status) && row.expiry <= clock.instant().getEpochSecond();
+    boolean historicalSent =
+        kind == Operation.EMAIL_START
+            && "FROZEN".equals(row.status)
+            && row.expiry <= clock.instant().getEpochSecond();
     var body = command.path("body");
     if (historicalSent) {
       // Fresh authentication may read only the original outcome: this immutable expired body
@@ -625,8 +627,10 @@ public final class SelfAppOtpMaintenance {
     var materialized = ((ObjectNode) body).deepCopy();
     materialized.put("username", command.path("username").textValue());
     var headers = headers(self, token);
-    long expiry = Math.min(historicalSent ? self.expires : Math.min(row.expiry, self.expires),
-        token.validatedJwtExpiresAt());
+    long expiry =
+        Math.min(
+            historicalSent ? self.expires : Math.min(row.expiry, self.expires),
+            token.validatedJwtExpiresAt());
     if (expiry <= clock.instant().getEpochSecond()) throw unavailable();
     headers.set(
         "X-ORISO-Task-Context",
@@ -658,7 +662,8 @@ public final class SelfAppOtpMaintenance {
       if (historicalSent && response.getStatusCode().value() != 200) throw unavailable();
       return new Reply(response.getStatusCode().value(), response.getBody());
     } catch (RestClientResponseException failure) {
-      if (historicalSent || failure.getStatusCode().value() != 401
+      if (historicalSent
+          || failure.getStatusCode().value() != 401
           || failure.getResponseBodyAsByteArray().length > 16384) throw unavailable();
       return new Reply(401, codec.utf8(failure.getResponseBodyAsByteArray()));
     }
