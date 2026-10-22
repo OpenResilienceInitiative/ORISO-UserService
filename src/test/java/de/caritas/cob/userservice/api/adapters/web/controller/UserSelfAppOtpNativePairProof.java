@@ -208,10 +208,10 @@ class UserSelfAppOtpNativePairProof {
                             deletingOtp.get()
                                 ? "/otp-config/delete-otp/"
                                 : finishingEmail.get()
-                                ? "/otp-config/setup-otp-mail/"
-                                : email
-                                    ? "/otp-config/send-verification-mail/"
-                                    : "/otp-config/setup-otp/");
+                                    ? "/otp-config/setup-otp-mail/"
+                                    : email
+                                        ? "/otp-config/send-verification-mail/"
+                                        : "/otp-config/setup-otp/");
                 if (mutation) {
                   assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
                   assertEquals(
@@ -279,8 +279,8 @@ class UserSelfAppOtpNativePairProof {
                     && (deletingOtp.get()
                         ? response.getStatusCode().value() == 200
                         : finishingEmail.get()
-                        ? response.getStatusCode().value() == 201
-                        : !email || response.getStatusCode().value() == 200)
+                            ? response.getStatusCode().value() == 201
+                            : !email || response.getStatusCode().value() == 200)
                     && lost.getAndIncrement() == 0) {
                   assertEquals(
                       deletingOtp.get() ? 200 : finishingEmail.get() ? 201 : email ? 200 : 201,
@@ -770,26 +770,51 @@ class UserSelfAppOtpNativePairProof {
         lost.set(0);
         assertThrows(RuntimeException.class, () -> controller.deactivateTwoFactorAuthByApp());
         assertEquals(1, lost.get(), "The actual native delete200 must be the lost reply");
-        assertEquals("FROZEN", jdbc.queryForObject(
-            "select status from identity_self_app_otp_intent where operation_id=?",
-            String.class, deleteOperation));
-        assertEquals("ACTIVE", jdbc.queryForObject(
-            "select two_factor_status from account_invite where id=1", String.class));
+        assertEquals(
+            "FROZEN",
+            jdbc.queryForObject(
+                "select status from identity_self_app_otp_intent where operation_id=?",
+                String.class,
+                deleteOperation));
+        assertEquals(
+            "ACTIVE",
+            jdbc.queryForObject(
+                "select two_factor_status from account_invite where id=1", String.class));
         assertEquals(writesBeforeRead, activationCalls.get());
         String originalDeleteCipher = frozenCipher.get();
-        delegate.setSelfAppOtpMaintenance(new SelfAppOtpMaintenance(
-            mode, human, request, jdbc, transactions, actors, broker, codec, http,
-            Clock.systemUTC(), "http://maintenance-human-fixture.invalid", realm, realmId));
+        delegate.setSelfAppOtpMaintenance(
+            new SelfAppOtpMaintenance(
+                mode,
+                human,
+                request,
+                jdbc,
+                transactions,
+                actors,
+                broker,
+                codec,
+                http,
+                Clock.systemUTC(),
+                "http://maintenance-human-fixture.invalid",
+                realm,
+                realmId));
         assertEquals(200, controller.deactivateTwoFactorAuthByApp().getStatusCode().value());
         assertEquals(200, controller.deactivateTwoFactorAuthByApp().getStatusCode().value());
-        assertEquals("ACKNOWLEDGED", jdbc.queryForObject(
-            "select status from identity_self_app_otp_intent where operation_id=?",
-            String.class, deleteOperation));
-        assertEquals(originalDeleteCipher, jdbc.queryForObject(
-            "select envelope from identity_self_app_otp_intent where operation_id=?",
-            String.class, deleteOperation));
-        assertEquals("PENDING_SETUP", jdbc.queryForObject(
-            "select two_factor_status from account_invite where id=1", String.class));
+        assertEquals(
+            "ACKNOWLEDGED",
+            jdbc.queryForObject(
+                "select status from identity_self_app_otp_intent where operation_id=?",
+                String.class,
+                deleteOperation));
+        assertEquals(
+            originalDeleteCipher,
+            jdbc.queryForObject(
+                "select envelope from identity_self_app_otp_intent where operation_id=?",
+                String.class,
+                deleteOperation));
+        assertEquals(
+            "PENDING_SETUP",
+            jdbc.queryForObject(
+                "select two_factor_status from account_invite where id=1", String.class));
         assertEquals(writesBeforeRead + 1, activationCalls.get());
         assertEquals(4, nativeCalls.get());
         phase("public-delete-success", 200);
@@ -800,8 +825,10 @@ class UserSelfAppOtpNativePairProof {
         assertEquals(200, inactiveRead.getStatusCode().value());
         assertFalse(inactiveRead.getBody().getTwoFactorAuth().getIsActive());
         assertEquals(writesBeforeRead + 1, activationCalls.get());
-        assertEquals(intentCount + 1, jdbc.queryForObject(
-            "select count(*) from identity_self_app_otp_intent", Integer.class));
+        assertEquals(
+            intentCount + 1,
+            jdbc.queryForObject(
+                "select count(*) from identity_self_app_otp_intent", Integer.class));
         phase("public-self-read-deleted", 200);
       }
       verifyNoInteractions(legacy);

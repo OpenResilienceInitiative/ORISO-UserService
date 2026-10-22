@@ -33,7 +33,8 @@ public interface HumanAdminMaintenanceTransport {
 
   Projection read(CheckedAccount account);
 
-  String profileRequestDigest(CheckedAccount account, IdentityProfileUpdate profile, UUID operation);
+  String profileRequestDigest(
+      CheckedAccount account, IdentityProfileUpdate profile, UUID operation);
 
   FrozenProfile freezeProfile(
       CheckedAccount account, IdentityProfileUpdate profile, UUID operation, String expectedState);

@@ -38,16 +38,22 @@ import org.springframework.test.web.client.ResponseCreator;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestTemplate;
 
-/** Actual H2 domain plus HTTP boundary. The mocked broker conveys no native JWT authority credit. */
+/**
+ * Actual H2 domain plus HTTP boundary. The mocked broker conveys no native JWT authority credit.
+ */
 class HumanAdminAccountMaintenanceTest {
   private static final String ACCOUNT = "60000000-0000-4000-8000-000000000001";
   private static final String HUMAN = "60000000-0000-4000-8000-000000000002";
   private static final String OPERATION = "60000000-0000-4000-8000-000000000003";
   private static final String SUBJECT = "60000000-0000-4000-8000-000000000004";
   private static final String ISSUER = "https://public-auth.example.test/realms/test";
-  private static final String URL = "https://internal-auth.example.test/realms/test/oriso-account-maintenance/v1/accounts/" + ACCOUNT;
-  private static final byte[] KEY = "synthetic-admin-maintenance-key-32bytes".getBytes(StandardCharsets.UTF_8);
-  private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-22T10:00:00Z"), ZoneOffset.UTC);
+  private static final String URL =
+      "https://internal-auth.example.test/realms/test/oriso-account-maintenance/v1/accounts/"
+          + ACCOUNT;
+  private static final byte[] KEY =
+      "synthetic-admin-maintenance-key-32bytes".getBytes(StandardCharsets.UTF_8);
+  private static final Clock CLOCK =
+      Clock.fixed(Instant.parse("2026-10-22T10:00:00Z"), ZoneOffset.UTC);
   private final AccountLifecycleCodec codec = new AccountLifecycleCodec(KEY);
   private final ObjectMapper json = new ObjectMapper();
   private final IdentityClientConfig mode = mock(IdentityClientConfig.class);
@@ -58,7 +64,9 @@ class HumanAdminAccountMaintenanceTest {
   private final TaskActorTokenBroker broker = mock(TaskActorTokenBroker.class);
   private final RestTemplate http = new RestTemplate();
   private final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
-  private final TaskActorCredentials actor = new TaskActorCredentials(TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "synthetic-only", SUBJECT);
+  private final TaskActorCredentials actor =
+      new TaskActorCredentials(
+          TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "synthetic-only", SUBJECT);
   private JdbcTemplate jdbc;
   private DataSourceTransactionManager transactions;
   private HumanAdminAccountMaintenance service;
@@ -66,12 +74,20 @@ class HumanAdminAccountMaintenanceTest {
   @BeforeEach
   void actualSchemaAndValidatedHumanFixture() {
     var ds = new JdbcDataSource();
-    ds.setURL("jdbc:h2:mem:human-admin-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1;MODE=MySQL;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=USER");
+    ds.setURL(
+        "jdbc:h2:mem:human-admin-"
+            + UUID.randomUUID()
+            + ";DB_CLOSE_DELAY=-1;MODE=MySQL;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=USER");
     jdbc = new JdbcTemplate(ds);
     transactions = new DataSourceTransactionManager(ds);
-    jdbc.execute("create table admin(admin_id varchar(36) primary key,tenant_id bigint,username varchar(255) not null,type varchar(6) not null,first_name varchar(255),last_name varchar(255),email varchar(255),managed_paused boolean not null,update_date timestamp)");
-    jdbc.update("insert into admin values(?,7,'original-admin','TENANT','Old','Name','old@example.test',true,?)", ACCOUNT, java.sql.Timestamp.from(CLOCK.instant()));
-    jdbc.execute("create table general_admin_identity_intent(operation_id varchar(36) primary key,account_id varchar(36) not null,tenant_id bigint,human_subject varchar(36) not null,human_issuer varchar(512) not null,human_client varchar(255) not null,request_digest varchar(64) not null,original_json clob not null,desired_json clob not null,native_body clob,native_receipt clob,status varchar(20) not null,created_at timestamp not null,updated_at timestamp not null)");
+    jdbc.execute(
+        "create table admin(admin_id varchar(36) primary key,tenant_id bigint,username varchar(255) not null,type varchar(6) not null,first_name varchar(255),last_name varchar(255),email varchar(255),managed_paused boolean not null,update_date timestamp)");
+    jdbc.update(
+        "insert into admin values(?,7,'original-admin','TENANT','Old','Name','old@example.test',true,?)",
+        ACCOUNT,
+        java.sql.Timestamp.from(CLOCK.instant()));
+    jdbc.execute(
+        "create table general_admin_identity_intent(operation_id varchar(36) primary key,account_id varchar(36) not null,tenant_id bigint,human_subject varchar(36) not null,human_issuer varchar(512) not null,human_client varchar(255) not null,request_digest varchar(64) not null,original_json clob not null,desired_json clob not null,native_body clob,native_receipt clob,status varchar(20) not null,created_at timestamp not null,updated_at timestamp not null)");
     when(mode.isFiveActorMode()).thenReturn(true);
     human.setUserId(HUMAN);
     human.setAccessToken("synthetic-current-human");
@@ -91,9 +107,19 @@ class HumanAdminAccountMaintenanceTest {
     when(checked.subject()).thenReturn(SUBJECT);
     when(checked.issuer()).thenReturn(ISSUER);
     when(checked.validatedJwtIssuedAt()).thenReturn(Instant.now().minusSeconds(5).getEpochSecond());
-    when(checked.validatedJwtExpiresAt()).thenReturn(Instant.now().plusSeconds(300).getEpochSecond());
+    when(checked.validatedJwtExpiresAt())
+        .thenReturn(Instant.now().plusSeconds(300).getEpochSecond());
     when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
-    service = service(new KeycloakHumanAdminMaintenance(http, actors, broker, codec, "https://internal-auth.example.test", "test", "realm-1"));
+    service =
+        service(
+            new KeycloakHumanAdminMaintenance(
+                http,
+                actors,
+                broker,
+                codec,
+                "https://internal-auth.example.test",
+                "test",
+                "realm-1"));
   }
 
   @Test
@@ -103,7 +129,9 @@ class HumanAdminAccountMaintenanceTest {
     assertEquals(ACCOUNT, result.id());
     assertEquals(7L, result.tenantId());
     assertTrue(result.enabled());
-    assertEquals(0, jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
+    assertEquals(
+        0,
+        jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
     verify(scope).assertMay(any());
     verify(broker).issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
     verify(broker, never()).issue(any());
@@ -113,7 +141,13 @@ class HumanAdminAccountMaintenanceTest {
   @Test
   void completeProfileReceiptPrecedesExactSqlUpdateAndPreservesPauseTenantAndUsername() {
     readReply();
-    server.expect(requestTo(URL + "/profile")).andExpect(method(HttpMethod.POST)).andExpect(content().contentType(MediaType.APPLICATION_JSON)).andExpect(header("Authorization", "Bearer synthetic-checked-admin")).andExpect(header("X-ORISO-Human-Authorization", "Bearer synthetic-current-human")).andRespond(profileReceipt(null));
+    server
+        .expect(requestTo(URL + "/profile"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+        .andExpect(header("Authorization", "Bearer synthetic-checked-admin"))
+        .andExpect(header("X-ORISO-Human-Authorization", "Bearer synthetic-current-human"))
+        .andRespond(profileReceipt(null));
     assertDoesNotThrow(() -> service.updateAdminProfile(ACCOUNT, desired()));
     var row = jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT);
     assertEquals("New", row.get("first_name"));
@@ -121,7 +155,9 @@ class HumanAdminAccountMaintenanceTest {
     assertEquals("original-admin", row.get("username"));
     assertEquals(7L, ((Number) row.get("tenant_id")).longValue());
     assertEquals(true, row.get("managed_paused"));
-    assertEquals("APPLIED", jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
+    assertEquals(
+        "APPLIED",
+        jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
     server.verify();
   }
 
@@ -129,25 +165,47 @@ class HumanAdminAccountMaintenanceTest {
   void unknownNativeReplyRetainsOriginalCommandAndSameKeyRollsForwardWithoutCasRefresh() {
     readReply();
     AtomicReference<String> first = new AtomicReference<>();
-    server.expect(requestTo(URL + "/profile")).andExpect(r -> first.set(((MockClientHttpRequest) r).getBodyAsString())).andRespond(withException(new IOException("synthetic lost response")));
+    server
+        .expect(requestTo(URL + "/profile"))
+        .andExpect(r -> first.set(((MockClientHttpRequest) r).getBodyAsString()))
+        .andRespond(withException(new IOException("synthetic lost response")));
     assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, desired()));
     assertEquals("Old", jdbc.queryForObject("select first_name from admin", String.class));
-    assertEquals(List.of("FROZEN"), jdbc.queryForList("select status from general_admin_identity_intent", String.class));
-    server.expect(requestTo(URL + "/profile")).andExpect(r -> assertEquals(first.get(), ((MockClientHttpRequest) r).getBodyAsString())).andRespond(profileReceipt(null));
+    assertEquals(
+        List.of("FROZEN"),
+        jdbc.queryForList("select status from general_admin_identity_intent", String.class));
+    server
+        .expect(requestTo(URL + "/profile"))
+        .andExpect(r -> assertEquals(first.get(), ((MockClientHttpRequest) r).getBodyAsString()))
+        .andRespond(profileReceipt(null));
     assertDoesNotThrow(() -> service.updateAdminProfile(ACCOUNT, desired()));
-    assertEquals(1, jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
-    assertEquals("APPLIED", jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
+    assertEquals(
+        1,
+        jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
+    assertEquals(
+        "APPLIED",
+        jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
     server.verify();
   }
 
   @Test
   void changedRequestOnSameKeyRefusesBeforeAnotherNativeCallOrSqlWrite() {
     readReply();
-    server.expect(requestTo(URL + "/profile")).andRespond(withException(new IOException("synthetic lost response")));
+    server
+        .expect(requestTo(URL + "/profile"))
+        .andRespond(withException(new IOException("synthetic lost response")));
     assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, desired()));
-    assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, new IdentityProfileUpdate("original-admin", "other@example.test", 7L, "Other", "Name")));
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            service.updateAdminProfile(
+                ACCOUNT,
+                new IdentityProfileUpdate(
+                    "original-admin", "other@example.test", 7L, "Other", "Name")));
     assertEquals("Old", jdbc.queryForObject("select first_name from admin", String.class));
-    assertEquals(List.of("FROZEN"), jdbc.queryForList("select status from general_admin_identity_intent", String.class));
+    assertEquals(
+        List.of("FROZEN"),
+        jdbc.queryForList("select status from general_admin_identity_intent", String.class));
     server.verify();
   }
 
@@ -157,9 +215,26 @@ class HumanAdminAccountMaintenanceTest {
     assertThrows(RuntimeException.class, () -> service.read(ACCOUNT));
     reset(scope);
     assertAll(
-        () -> assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, new IdentityProfileUpdate("foreign", "new@example.test", 7L, "New", "Name"))),
-        () -> assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, new IdentityProfileUpdate("original-admin", "new@example.test", 8L, "New", "Name"))),
-        () -> assertThrows(RuntimeException.class, () -> service.read("60000000-0000-4000-8000-000000000099")));
+        () ->
+            assertThrows(
+                RuntimeException.class,
+                () ->
+                    service.updateAdminProfile(
+                        ACCOUNT,
+                        new IdentityProfileUpdate(
+                            "foreign", "new@example.test", 7L, "New", "Name"))),
+        () ->
+            assertThrows(
+                RuntimeException.class,
+                () ->
+                    service.updateAdminProfile(
+                        ACCOUNT,
+                        new IdentityProfileUpdate(
+                            "original-admin", "new@example.test", 8L, "New", "Name"))),
+        () ->
+            assertThrows(
+                RuntimeException.class,
+                () -> service.read("60000000-0000-4000-8000-000000000099")));
     verifyNoInteractions(broker);
     server.verify();
   }
@@ -169,12 +244,20 @@ class HumanAdminAccountMaintenanceTest {
     human.setGrantedAuthorities(Set.of());
     assertThrows(RuntimeException.class, () -> service.read(ACCOUNT));
     human.setGrantedAuthorities(Set.of(Authority.AuthorityValue.TENANT_ADMIN));
-    request.setUserPrincipal(authentication("synthetic-current-human", "https://foreign.example.test/realms/test", HUMAN, "admin", 7L));
+    request.setUserPrincipal(
+        authentication(
+            "synthetic-current-human",
+            "https://foreign.example.test/realms/test",
+            HUMAN,
+            "admin",
+            7L));
     assertThrows(RuntimeException.class, () -> service.read(ACCOUNT));
     request.setUserPrincipal(authentication("different", ISSUER, HUMAN, "admin", 7L));
     assertThrows(RuntimeException.class, () -> service.read(ACCOUNT));
     request.setUserPrincipal(authentication("synthetic-current-human", ISSUER, HUMAN, "admin", 7L));
-    new TransactionTemplate(transactions).executeWithoutResult(tx -> assertThrows(RuntimeException.class, () -> service.read(ACCOUNT)));
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            tx -> assertThrows(RuntimeException.class, () -> service.read(ACCOUNT)));
     verifyNoInteractions(broker);
     server.verify();
   }
@@ -182,10 +265,18 @@ class HumanAdminAccountMaintenanceTest {
   @Test
   void nativeReceiptCannotOverwriteForeignSqlDrift() {
     readReply();
-    server.expect(requestTo(URL + "/profile")).andRespond(profileReceipt(() -> jdbc.update("update admin set first_name='Foreign' where admin_id=?", ACCOUNT)));
+    server
+        .expect(requestTo(URL + "/profile"))
+        .andRespond(
+            profileReceipt(
+                () ->
+                    jdbc.update(
+                        "update admin set first_name='Foreign' where admin_id=?", ACCOUNT)));
     assertThrows(RuntimeException.class, () -> service.updateAdminProfile(ACCOUNT, desired()));
     assertEquals("Foreign", jdbc.queryForObject("select first_name from admin", String.class));
-    assertNotEquals("APPLIED", jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
+    assertNotEquals(
+        "APPLIED",
+        jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
     server.verify();
   }
 
@@ -193,66 +284,149 @@ class HumanAdminAccountMaintenanceTest {
   void privateCheckedHandleClosesAfterReturnAndCannotCrossThreads() throws Exception {
     AtomicReference<HumanAdminAccountMaintenance.CheckedAccount> escaped = new AtomicReference<>();
     var transport = mock(HumanAdminMaintenanceTransport.class);
-    when(transport.read(any())).thenAnswer(call -> {
-      var checked = call.getArgument(0, HumanAdminAccountMaintenance.CheckedAccount.class);
-      checked.requireCurrent();
-      assertEquals(ACCOUNT, checked.accountId());
-      assertEquals(HUMAN, checked.humanSubject());
-      assertEquals(7L, checked.tenantId());
-      escaped.set(checked);
-      AtomicReference<Throwable> refused = new AtomicReference<>();
-      var thread = new Thread(() -> { try { checked.requireCurrent(); } catch (Throwable failure) { refused.set(failure); } });
-      thread.start(); thread.join();
-      assertNotNull(refused.get());
-      return new HumanAdminMaintenanceTransport.Projection(ACCOUNT, "original-admin", "old@example.test", "Old", "Name", true, true, 7L, "de", List.of("tenant-admin"), false, "a".repeat(64));
-    });
+    when(transport.read(any()))
+        .thenAnswer(
+            call -> {
+              var checked = call.getArgument(0, HumanAdminAccountMaintenance.CheckedAccount.class);
+              checked.requireCurrent();
+              assertEquals(ACCOUNT, checked.accountId());
+              assertEquals(HUMAN, checked.humanSubject());
+              assertEquals(7L, checked.tenantId());
+              escaped.set(checked);
+              AtomicReference<Throwable> refused = new AtomicReference<>();
+              var thread =
+                  new Thread(
+                      () -> {
+                        try {
+                          checked.requireCurrent();
+                        } catch (Throwable failure) {
+                          refused.set(failure);
+                        }
+                      });
+              thread.start();
+              thread.join();
+              assertNotNull(refused.get());
+              return new HumanAdminMaintenanceTransport.Projection(
+                  ACCOUNT,
+                  "original-admin",
+                  "old@example.test",
+                  "Old",
+                  "Name",
+                  true,
+                  true,
+                  7L,
+                  "de",
+                  List.of("tenant-admin"),
+                  false,
+                  "a".repeat(64));
+            });
     assertDoesNotThrow(() -> service(transport).read(ACCOUNT));
     assertThrows(RuntimeException.class, () -> escaped.get().requireCurrent());
-    assertTrue(Arrays.stream(HumanAdminAccountMaintenance.CheckedAccount.class.getDeclaredConstructors()).allMatch(c -> Modifier.isPrivate(c.getModifiers())));
+    assertTrue(
+        Arrays.stream(HumanAdminAccountMaintenance.CheckedAccount.class.getDeclaredConstructors())
+            .allMatch(c -> Modifier.isPrivate(c.getModifiers())));
     assertFalse(escaped.get().toString().contains("synthetic-current-human"));
   }
 
   private HumanAdminAccountMaintenance service(HumanAdminMaintenanceTransport transport) {
-    return new HumanAdminAccountMaintenance(mode, human, scope, jdbc, transactions, request, transport, CLOCK, ISSUER);
+    return new HumanAdminAccountMaintenance(
+        mode, human, scope, jdbc, transactions, request, transport, CLOCK, ISSUER);
   }
 
   private IdentityProfileUpdate desired() {
     return new IdentityProfileUpdate("original-admin", "new@example.test", 7L, "New", "Name");
   }
 
-  private JwtAuthenticationToken authentication(String token, String issuer, String subject, String client, Long tenant) {
-    return new JwtAuthenticationToken(Jwt.withTokenValue(token).header("alg", "RS256").issuer(issuer).subject(subject).issuedAt(CLOCK.instant().minusSeconds(30)).expiresAt(CLOCK.instant().plusSeconds(300)).claim("azp", client).claim("tenantId", tenant.toString()).build());
+  private JwtAuthenticationToken authentication(
+      String token, String issuer, String subject, String client, Long tenant) {
+    return new JwtAuthenticationToken(
+        Jwt.withTokenValue(token)
+            .header("alg", "RS256")
+            .issuer(issuer)
+            .subject(subject)
+            .issuedAt(CLOCK.instant().minusSeconds(30))
+            .expiresAt(CLOCK.instant().plusSeconds(300))
+            .claim("azp", client)
+            .claim("tenantId", tenant.toString())
+            .build());
   }
 
   private void readReply() {
-    server.expect(requestTo(URL + "/read")).andExpect(method(HttpMethod.POST)).andExpect(header("Authorization", "Bearer synthetic-checked-admin")).andExpect(header("X-ORISO-Human-Authorization", "Bearer synthetic-current-human")).andExpect(r -> {
-      assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
-      JsonNode body = json.readTree(((MockClientHttpRequest) r).getBodyAsString());
-      verifyProof(r.getHeaders().getFirst("X-ORISO-Task-Context"), "read", body);
-      assertEquals(Set.of("target"), fieldNames(body));
-      assertEquals(ACCOUNT, body.path("target").path("accountId").textValue());
-      assertEquals("7", body.path("target").path("tenantId").textValue());
-      assertEquals("HUMAN_ADMIN", body.path("target").path("origin").path("kind").textValue());
-      assertEquals("PROTECTED_ACCOUNT_OPERATIONS_V1", body.path("target").path("origin").path("humanAuthority").textValue());
-    }).andRespond(withSuccess("{\"id\":\"" + ACCOUNT + "\",\"username\":\"original-admin\",\"email\":\"old@example.test\",\"firstName\":\"Old\",\"lastName\":\"Name\",\"enabled\":true,\"emailVerified\":true,\"tenantId\":\"7\",\"preferredLanguage\":\"de\",\"effectiveRoles\":[\"tenant-admin\"],\"passwordChangeRequired\":false,\"state\":\"" + "a".repeat(64) + "\"}", MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(URL + "/read"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(header("Authorization", "Bearer synthetic-checked-admin"))
+        .andExpect(header("X-ORISO-Human-Authorization", "Bearer synthetic-current-human"))
+        .andExpect(
+            r -> {
+              assertFalse(
+                  org.springframework.transaction.support.TransactionSynchronizationManager
+                      .isActualTransactionActive());
+              JsonNode body = json.readTree(((MockClientHttpRequest) r).getBodyAsString());
+              verifyProof(r.getHeaders().getFirst("X-ORISO-Task-Context"), "read", body);
+              assertEquals(Set.of("target"), fieldNames(body));
+              assertEquals(ACCOUNT, body.path("target").path("accountId").textValue());
+              assertEquals("7", body.path("target").path("tenantId").textValue());
+              assertEquals(
+                  "HUMAN_ADMIN", body.path("target").path("origin").path("kind").textValue());
+              assertEquals(
+                  "PROTECTED_ACCOUNT_OPERATIONS_V1",
+                  body.path("target").path("origin").path("humanAuthority").textValue());
+            })
+        .andRespond(
+            withSuccess(
+                "{\"id\":\""
+                    + ACCOUNT
+                    + "\",\"username\":\"original-admin\",\"email\":\"old@example.test\",\"firstName\":\"Old\",\"lastName\":\"Name\",\"enabled\":true,\"emailVerified\":true,\"tenantId\":\"7\",\"preferredLanguage\":\"de\",\"effectiveRoles\":[\"tenant-admin\"],\"passwordChangeRequired\":false,\"state\":\""
+                    + "a".repeat(64)
+                    + "\"}",
+                MediaType.APPLICATION_JSON));
   }
 
   private ResponseCreator profileReceipt(Runnable beforeReply) {
     return request -> {
       try {
-        assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+        assertFalse(
+            org.springframework.transaction.support.TransactionSynchronizationManager
+                .isActualTransactionActive());
         JsonNode body = json.readTree(((MockClientHttpRequest) request).getBodyAsString());
         verifyProof(request.getHeaders().getFirst("X-ORISO-Task-Context"), "profile", body);
         assertEquals(OPERATION, body.path("operationId").textValue());
         assertEquals("a".repeat(64), body.path("expectedState").textValue());
         assertEquals(Set.of("firstName", "lastName", "email"), fieldNames(body.path("change")));
         assertEquals("new@example.test", body.path("change").path("email").textValue());
-        var outcome = new TreeMap<String,Object>();
-        outcome.put("realmId", "realm-1");outcome.put("accountId", ACCOUNT);outcome.put("operationId", OPERATION);outcome.put("command", "profile");outcome.put("ownerClient", actor.clientId());outcome.put("ownerSubject", SUBJECT);outcome.put("intentDigest", digest("maintenance-intent", body));outcome.put("previousState", "a".repeat(64));outcome.put("tenantId", "7");outcome.put("originDigest", digest("maintenance-origin", body.path("target").path("origin")));outcome.put("result", "UPDATED");
-        String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
+        var outcome = new TreeMap<String, Object>();
+        outcome.put("realmId", "realm-1");
+        outcome.put("accountId", ACCOUNT);
+        outcome.put("operationId", OPERATION);
+        outcome.put("command", "profile");
+        outcome.put("ownerClient", actor.clientId());
+        outcome.put("ownerSubject", SUBJECT);
+        outcome.put("intentDigest", digest("maintenance-intent", body));
+        outcome.put("previousState", "a".repeat(64));
+        outcome.put("tenantId", "7");
+        outcome.put(
+            "originDigest", digest("maintenance-origin", body.path("target").path("origin")));
+        outcome.put("result", "UPDATED");
+        String encoded =
+            Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
         String receipt = encoded + "." + mac("maintenance-operation-receipt\n" + encoded);
         if (beforeReply != null) beforeReply.run();
-        return withSuccess(codec.canonical(Map.of("operationId", OPERATION,"accountId", ACCOUNT,"result", "UPDATED","receipt", receipt)), MediaType.APPLICATION_JSON).createResponse(request);
+        return withSuccess(
+                codec.canonical(
+                    Map.of(
+                        "operationId",
+                        OPERATION,
+                        "accountId",
+                        ACCOUNT,
+                        "result",
+                        "UPDATED",
+                        "receipt",
+                        receipt)),
+                MediaType.APPLICATION_JSON)
+            .createResponse(request);
       } catch (Exception failure) {
         throw new IOException(failure);
       }
@@ -261,29 +435,52 @@ class HumanAdminAccountMaintenanceTest {
 
   private void verifyProof(String proof, String command, JsonNode body) throws IOException {
     try {
-    String[] parts = proof.split("\\.", -1);
-    assertEquals(2, parts.length);
-    Mac hmac = Mac.getInstance("HmacSHA256");
-    hmac.init(new SecretKeySpec(KEY, "HmacSHA256"));
-    assertArrayEquals(hmac.doFinal(("proof\n" + parts[0]).getBytes(StandardCharsets.UTF_8)), Base64.getUrlDecoder().decode(parts[1]));
-    JsonNode claims = json.readTree(Base64.getUrlDecoder().decode(parts[0]));
-    assertEquals(Set.of("iss", "aud", "purpose", "operation", "method", "actor", "realm", "target", "taskClient", "taskSubject", "payloadDigest", "jti", "nonce", "iat", "exp"), fieldNames(claims));
-    assertEquals("userservice", claims.path("iss").textValue());
-    assertEquals("oriso-account-maintenance", claims.path("aud").textValue());
-    assertEquals("ACCOUNT_MAINTENANCE", claims.path("purpose").textValue());
-    assertEquals("account." + command, claims.path("operation").textValue());
-    assertEquals("POST", claims.path("method").textValue());
-    assertEquals("ACCOUNT_ADMIN", claims.path("actor").textValue());
-    assertEquals("test", claims.path("realm").textValue());
-    assertEquals("realm/realm-1/account/" + ACCOUNT, claims.path("target").textValue());
-    assertEquals(actor.clientId(), claims.path("taskClient").textValue());
-    assertEquals(SUBJECT, claims.path("taskSubject").textValue());
-    assertEquals(digest("payload", body), claims.path("payloadDigest").textValue());
-    assertEquals(UUID.fromString(claims.path("jti").textValue()).toString(), claims.path("jti").textValue());
-    assertTrue(claims.path("nonce").textValue().matches("[0-9a-f]{32}"));
-    assertTrue(claims.path("iat").isIntegralNumber());
-    assertEquals(60, claims.path("exp").longValue() - claims.path("iat").longValue());
-    } catch (Exception invalid) { throw new IOException("Synthetic proof verification failed", invalid); }
+      String[] parts = proof.split("\\.", -1);
+      assertEquals(2, parts.length);
+      Mac hmac = Mac.getInstance("HmacSHA256");
+      hmac.init(new SecretKeySpec(KEY, "HmacSHA256"));
+      assertArrayEquals(
+          hmac.doFinal(("proof\n" + parts[0]).getBytes(StandardCharsets.UTF_8)),
+          Base64.getUrlDecoder().decode(parts[1]));
+      JsonNode claims = json.readTree(Base64.getUrlDecoder().decode(parts[0]));
+      assertEquals(
+          Set.of(
+              "iss",
+              "aud",
+              "purpose",
+              "operation",
+              "method",
+              "actor",
+              "realm",
+              "target",
+              "taskClient",
+              "taskSubject",
+              "payloadDigest",
+              "jti",
+              "nonce",
+              "iat",
+              "exp"),
+          fieldNames(claims));
+      assertEquals("userservice", claims.path("iss").textValue());
+      assertEquals("oriso-account-maintenance", claims.path("aud").textValue());
+      assertEquals("ACCOUNT_MAINTENANCE", claims.path("purpose").textValue());
+      assertEquals("account." + command, claims.path("operation").textValue());
+      assertEquals("POST", claims.path("method").textValue());
+      assertEquals("ACCOUNT_ADMIN", claims.path("actor").textValue());
+      assertEquals("test", claims.path("realm").textValue());
+      assertEquals("realm/realm-1/account/" + ACCOUNT, claims.path("target").textValue());
+      assertEquals(actor.clientId(), claims.path("taskClient").textValue());
+      assertEquals(SUBJECT, claims.path("taskSubject").textValue());
+      assertEquals(digest("payload", body), claims.path("payloadDigest").textValue());
+      assertEquals(
+          UUID.fromString(claims.path("jti").textValue()).toString(),
+          claims.path("jti").textValue());
+      assertTrue(claims.path("nonce").textValue().matches("[0-9a-f]{32}"));
+      assertTrue(claims.path("iat").isIntegralNumber());
+      assertEquals(60, claims.path("exp").longValue() - claims.path("iat").longValue());
+    } catch (Exception invalid) {
+      throw new IOException("Synthetic proof verification failed", invalid);
+    }
   }
 
   private String digest(String domain, Object value) throws Exception {
@@ -297,6 +494,8 @@ class HumanAdminAccountMaintenanceTest {
   }
 
   private Set<String> fieldNames(JsonNode node) {
-    Set<String> fields = new HashSet<>();node.fieldNames().forEachRemaining(fields::add);return fields;
+    Set<String> fields = new HashSet<>();
+    node.fieldNames().forEachRemaining(fields::add);
+    return fields;
   }
 }

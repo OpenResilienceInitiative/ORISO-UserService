@@ -47,13 +47,34 @@ public final class HumanAdminAccountMaintenance {
   public static final class CheckedAccount {
     private CheckedAccount() {}
 
-    public String accountId() { return null; }
-    public Long tenantId() { return null; }
-    public String humanSubject() { return null; }
-    public String humanIssuer() { return null; }
-    public String humanClient() { return null; }
-    public String rawHumanBearer() { return null; }
-    public UUID workflowId() { return null; }
+    public String accountId() {
+      return null;
+    }
+
+    public Long tenantId() {
+      return null;
+    }
+
+    public String humanSubject() {
+      return null;
+    }
+
+    public String humanIssuer() {
+      return null;
+    }
+
+    public String humanClient() {
+      return null;
+    }
+
+    public String rawHumanBearer() {
+      return null;
+    }
+
+    public UUID workflowId() {
+      return null;
+    }
+
     public void requireCurrent() {
       throw new IllegalStateException("Checked admin maintenance is unavailable");
     }
