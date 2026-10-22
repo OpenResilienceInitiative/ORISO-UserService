@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakCustomConfig;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos.AccountCreation;
+import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakUsernameAvailability;
 import de.caritas.cob.userservice.api.config.auth.*;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import java.net.URI;
@@ -225,12 +226,16 @@ class ProtectedOtpBootstrapNativePairProof {
             + new Base32()
                 .encodeAsString(recipient.getBytes(StandardCharsets.UTF_8))
                 .replace('=', '.');
+    var availability =
+        new KeycloakUsernameAvailability(http, actors, broker, codec, logicalBase, realm, realmId);
+    assertTrue(availability.available(username));
     var account =
         new AccountCreation(
             username, recipient, "Protected", "Fixture", "en", registration.get("password"), false);
     var bridge =
         new KeycloakProtectedAccounts(http, actors, broker, accountCodec, logicalBase, realm);
     var created = bridge.create(accountCodec.prepare(claim, registrationJson, account));
+    assertFalse(availability.available(username));
     var pending = bridge.ownedRead(claim, created);
     assertEquals(username.toLowerCase(Locale.ROOT), pending.username());
     var request = new MockHttpServletRequest("POST", "/service/tenant/register");
@@ -313,6 +318,7 @@ class ProtectedOtpBootstrapNativePairProof {
     if (path.contains("/admin/realms/")) return "stock-denial";
     if (path.contains("/owned-read")) return "owned-read";
     if (path.contains("/oriso-protected-invitations/")) return "create";
+    if (path.endsWith("/oriso-account-maintenance/v1/availability")) return "availability";
     if (path.contains("/fetch-otp-setup-info/")) return "prepare";
     if (path.contains("/setup-otp-mail/")) return "email-finish";
     if (path.contains("/send-verification-mail/")) return "email-start";

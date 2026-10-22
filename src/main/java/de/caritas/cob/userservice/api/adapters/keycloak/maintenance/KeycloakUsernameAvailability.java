@@ -37,7 +37,7 @@ public final class KeycloakUsernameAvailability implements ScopedUsernameAvailab
           || exactUsername.chars().anyMatch(Character::isISOControl))
         throw new ScopedAvailabilityUnavailableException();
       var actor = actors.require(TaskPurpose.ACCOUNT_PROVISIONING);
-      var token = broker.issue(TaskPurpose.ACCOUNT_PROVISIONING);
+      var token = broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING);
       if (token.actor() != actor.actor()) throw new ScopedAvailabilityUnavailableException();
       var body = Map.of("selector", "username", "value", exactUsername);
       var headers = new HttpHeaders();

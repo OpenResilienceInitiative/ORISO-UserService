@@ -173,7 +173,7 @@ def native(kc, report):
         if http_witness.is_file():
             observed_http = json.loads(http_witness.read_text())
             assert isinstance(observed_http, list) and len(observed_http) <= 100
-            assert all(set(row) == {"phase", "status"} and row["phase"] in {"token", "stock-denial", "create", "owned-read", "prepare", "app", "email-start", "email-finish"} and type(row["status"]) is int and 100 <= row["status"] <= 599 for row in observed_http)
+            assert all(set(row) == {"phase", "status"} and row["phase"] in {"token", "stock-denial", "create", "owned-read", "availability", "prepare", "app", "email-start", "email-finish"} and type(row["status"]) is int and 100 <= row["status"] <= 599 for row in observed_http)
             receipt["http_observations"] = observed_http
         phase = "post-java-native-inspection"
         # Installer-only fresh fixture token; tested actor expiry/authority is never refreshed here.
