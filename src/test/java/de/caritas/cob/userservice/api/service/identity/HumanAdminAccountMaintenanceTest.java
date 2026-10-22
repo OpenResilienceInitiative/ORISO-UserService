@@ -701,6 +701,13 @@ class HumanAdminAccountMaintenanceTest {
                           "update consultant set is_absent=true where consultant_id=?", ACCOUNT)
                   : null));
     if (!unknown && !"drift".equals(scenario)) readReply(true);
+    if (unknown)
+      server
+          .expect(requestTo(URL + "/profile"))
+          .andExpect(
+              r -> assertEquals(frozen.get(), ((MockClientHttpRequest) r).getBodyAsString()))
+          .andRespond(profileReceipt(null));
+    if (unknown || "rollback".equals(scenario)) readReply(true);
     if ("drift".equals(scenario)) {
       assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto));
       assertEquals(
@@ -741,13 +748,6 @@ class HumanAdminAccountMaintenanceTest {
         assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto));
         dto.setAbsent(true);
       }
-      if (unknown)
-        server
-            .expect(requestTo(URL + "/profile"))
-            .andExpect(
-                r -> assertEquals(frozen.get(), ((MockClientHttpRequest) r).getBodyAsString()))
-            .andRespond(profileReceipt(null));
-      readReply(true);
     }
     var updated = assertDoesNotThrow(() -> publicEdit.updateConsultant(ACCOUNT, dto));
     assertEquals("New", updated.getFirstName());
