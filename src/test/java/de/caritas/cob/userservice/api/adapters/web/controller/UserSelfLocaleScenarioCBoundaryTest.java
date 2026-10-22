@@ -84,6 +84,20 @@ class UserSelfLocaleScenarioCBoundaryTest {
   }
 
   @Test
+  void publicPatchSeparatesInternalRpcFromVerifiedPublicIssuerAndUsesCheckedMachineToken() {
+    var fixture = new Fixture(true, true);
+    fixture.expectNative(false);
+    assertDoesNotThrow(() -> assertEquals(204,
+        fixture.controller.patchUser(fixture.patch(false)).getStatusCode().value()));
+    assertEquals("ACKNOWLEDGED", fixture.status());
+    assertEquals(1, fixture.domainCalls());
+    assertEquals(1, fixture.nativeEffects.get());
+    verify(fixture.broker, never()).issue(any());
+    verify(fixture.broker, atLeastOnce()).issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
+    fixture.server.verify();
+  }
+
+  @Test
   void publicPatchCapturesIntentAndDomainCommitBeforeScopedLocaleRpc() {
     var fixture = new Fixture(true);
     fixture.expectNative(false);
@@ -256,6 +270,7 @@ class UserSelfLocaleScenarioCBoundaryTest {
     final UserController controller = mock(UserController.class, CALLS_REAL_METHODS);
     final UserAccountControllerDelegate delegate;
     final AtomicInteger nativeEffects = new AtomicInteger();
+    final boolean splitIssuer;
     boolean failDomainAfterWrite;
     boolean tamperReceipt;
     final String operation = UUID.randomUUID().toString();
@@ -263,14 +278,17 @@ class UserSelfLocaleScenarioCBoundaryTest {
         new TaskActorCredentials(
             TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "fixture-secret", ADMIN);
 
-    Fixture(boolean fiveActors) {
+    Fixture(boolean fiveActors) { this(fiveActors, false); }
+
+    Fixture(boolean fiveActors, boolean splitIssuer) {
+      this.splitIssuer = splitIssuer;
       when(mode.isFiveActorMode()).thenReturn(fiveActors);
       human.setTenantId(7L);
       var jwt =
           Jwt.withTokenValue("fixture-human")
               .header("alg", "RS256")
               .subject(ACCOUNT)
-              .issuer("https://identity.test/realms/fixture")
+              .issuer(splitIssuer ? "https://public.identity.test/realms/fixture" : "https://identity.test/realms/fixture")
               .claim("azp", "app")
               .claim("tenantId", "7")
               .issuedAt(Instant.now().minusSeconds(10))
@@ -290,9 +308,21 @@ class UserSelfLocaleScenarioCBoundaryTest {
                   "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"))
           .execute(source);
       when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(actor);
-      when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))
-          .thenReturn(
-              new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_ADMIN, "fixture-admin", 60));
+      if (splitIssuer) {
+        var checked = mock(TaskActorTokenBroker.VerifiedMaintenanceToken.class);
+        when(checked.accessToken()).thenReturn("fixture-admin");
+        when(checked.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
+        when(checked.purpose()).thenReturn(TaskPurpose.ACCOUNT_MAINTENANCE);
+        when(checked.clientId()).thenReturn(actor.clientId());
+        when(checked.subject()).thenReturn(actor.serviceSubject());
+        when(checked.issuer()).thenReturn("https://public.identity.test/realms/fixture");
+        when(checked.validatedJwtIssuedAt()).thenReturn(Instant.now().minusSeconds(1).getEpochSecond());
+        when(checked.validatedJwtExpiresAt()).thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
+        when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
+      } else {
+        when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(
+            new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_ADMIN, "fixture-admin", 60));
+      }
       var users = mock(UserRepository.class);
       when(users.findByUserIdAndDeleteDateIsNull(ACCOUNT))
           .thenAnswer(

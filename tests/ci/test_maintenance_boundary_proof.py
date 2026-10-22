@@ -167,6 +167,31 @@ class DeletionBoundaryEvidenceTest(unittest.TestCase):
             self.assertFalse(result["adapter_behavior_red"] or result["all_passed"])
 
 
+class PasswordBoundaryEvidenceTest(unittest.TestCase):
+    def test_real_four_case_inventory_requires_legacy_and_scope_controls(self):
+        proof = importlib.util.module_from_spec(SPEC)
+        SPEC.loader.exec_module(proof)
+        proof.select_slice("password")
+        self.assertEqual(4, len(proof.CASES))
+        self.assertEqual(3, len(proof.CONTROLS))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            suite = ET.Element("testsuite", name=proof.SUITE)
+            for name in proof.CASES:
+                row = ET.SubElement(suite, "testcase", classname=proof.SUITE, name=name)
+                if name not in proof.CONTROLS:
+                    ET.SubElement(row, "failure", type="org.opentest4j.AssertionFailedError")
+            path = root / "TEST-password.xml"
+            ET.ElementTree(suite).write(path)
+            result = proof.sanitize(root, root / "clean.xml")
+            self.assertTrue(result["adapter_behavior_red"])
+            self.assertEqual(1, result["failures"])
+            row = next(x for x in suite.findall("testcase") if x.get("name") == "missingScopedPasswordOwnerRefusesBeforeLegacyOrSetupMutation")
+            ET.SubElement(row, "failure", type="org.opentest4j.AssertionFailedError")
+            ET.ElementTree(suite).write(path)
+            self.assertFalse(proof.sanitize(root, root / "clean2.xml")["adapter_behavior_red"])
+
+
 class LocaleBoundaryEvidenceTest(unittest.TestCase):
     def proof(self):
         proof = importlib.util.module_from_spec(SPEC)
@@ -186,12 +211,12 @@ class LocaleBoundaryEvidenceTest(unittest.TestCase):
             ET.ElementTree(suite).write(root / "TEST-locale.xml")
             return proof.sanitize(root, root / "clean.xml")
 
-    def test_nine_public_cases_require_both_domain_and_legacy_controls(self):
+    def test_ten_public_cases_require_both_domain_and_legacy_controls(self):
         result = self.result()
-        self.assertEqual(9, result["floor"])
+        self.assertEqual(10, result["floor"])
         self.assertTrue(result["adapter_behavior_red"])
         self.assertTrue(result["all_required_controls_passed"])
-        self.assertEqual(7, result["failures"])
+        self.assertEqual(8, result["failures"])
 
     def test_failing_domain_only_control_cannot_be_locale_red(self):
         result = self.result({"domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract"})

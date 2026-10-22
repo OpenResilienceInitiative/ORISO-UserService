@@ -53,6 +53,7 @@ def select_slice(name):
         CASES = {
             LEGACY,
             "publicPatchCapturesIntentAndDomainCommitBeforeScopedLocaleRpc",
+            "publicPatchSeparatesInternalRpcFromVerifiedPublicIssuerAndUsesCheckedMachineToken",
             "publicPatchNewOwnerReplaysFrozenLocaleAfterLostReplyWithoutDomainReapply",
             "publicPatchSameIdCannotSubstituteTheCompleteMixedRequest",
             "publicPatchMissingIntentRefusesBeforeAnyDomainMutation",
@@ -143,6 +144,20 @@ def select_slice(name):
             "de/caritas/cob/userservice/api/UserServiceMapper",
             "de/caritas/cob/userservice/api/model/AccountInvite",
             "de/caritas/cob/userservice/api/port/out/AccountInviteRepository",
+        ]
+        TEST_CLASS = SUITE.replace(".", "/")
+    elif name == "password":
+        SLICE = name
+        SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserSelfPasswordScenarioCBoundaryTest"
+        LEGACY = "legacyPasswordRetainsCurrentPasswordValidationAndKnownSuccessCleanup"
+        CASES = {LEGACY,
+                 "publicPasswordFreezesEncryptedIntentAndClearsSetupOnlyAfterVerifiedNativeOldPasswordReceipt",
+                 "missingScopedPasswordOwnerRefusesBeforeLegacyOrSetupMutation",
+                 "samePasswordConflictKeepsExistingSetupRequirementAndDoesNotCallIdentity"}
+        COMPILED_CLASSES += [
+            "de/caritas/cob/userservice/api/adapters/web/controller/UserController",
+            "de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate",
+            "de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfPasswordMaintenance",
         ]
         TEST_CLASS = SUITE.replace(".", "/")
     elif name == "otp-read":
@@ -255,6 +270,9 @@ def select_slice(name):
         CONTROLS.update({"legacyModeRetainsItsExistingConsultantDeletionWorkflow", "legacyMissingScopedSchedulerDelegateKeepsActualStartup"})
     elif name == "app-jpa":
         CONTROLS = {"actualJpaInviteAndReceiptCommitTogetherOnlyAfterVerifiedNativeOutcome"}
+    elif name == "password":
+        CONTROLS.update({"missingScopedPasswordOwnerRefusesBeforeLegacyOrSetupMutation",
+                         "samePasswordConflictKeepsExistingSetupRequirementAndDoesNotCallIdentity"})
     elif name == "jpa":
         CONTROLS = {"actualJpaCommitPrecedesNativeDispatchEvenWhenReplyIsUnknown"}
 
@@ -480,7 +498,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["snapshot", "collect"])
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--slice", choices=["adapter", "deletion", "locale", "jpa", "availability", "app", "app-jpa", "otp-read"], default="adapter")
+    parser.add_argument("--slice", choices=["adapter", "deletion", "locale", "jpa", "availability", "app", "app-jpa", "otp-read", "password"], default="adapter")
     args = parser.parse_args()
     select_slice(args.slice)
     root = Path(__file__).resolve().parents[2]
