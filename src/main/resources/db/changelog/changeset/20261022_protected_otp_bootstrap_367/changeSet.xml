@@ -5,4 +5,7 @@
   <changeSet id="20261022-protected-otp-bootstrap-367" author="oriso">
     <sqlFile path="db/changelog/changeset/20261022_protected_otp_bootstrap_367/migrate.sql"/>
   </changeSet>
+  <changeSet id="20261022-protected-otp-bootstrap-operations-367" author="oriso">
+    <sqlFile path="db/changelog/changeset/20261022_protected_otp_bootstrap_367/operations.sql"/>
+  </changeSet>
 </databaseChangeLog>
