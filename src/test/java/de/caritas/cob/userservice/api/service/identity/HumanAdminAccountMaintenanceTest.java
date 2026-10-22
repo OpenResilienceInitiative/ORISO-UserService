@@ -83,7 +83,7 @@ class HumanAdminAccountMaintenanceTest {
     jdbc.execute(
         "create table admin(admin_id varchar(36) primary key,tenant_id bigint,username varchar(255) not null,type varchar(6) not null,first_name varchar(255),last_name varchar(255),email varchar(255),managed_paused boolean not null,update_date timestamp,id_old bigint,create_date timestamp)");
     jdbc.execute(
-        "create table consultant(consultant_id varchar(36) primary key,tenant_id bigint,username varchar(255),first_name varchar(255),last_name varchar(255),email varchar(255),delete_date timestamp,update_date timestamp,managed_paused boolean not null)");
+        "create table consultant(consultant_id varchar(36) primary key,tenant_id bigint,username varchar(255),first_name varchar(255),last_name varchar(255),email varchar(255),delete_date timestamp,update_date timestamp,managed_paused boolean not null,is_absent boolean not null default false,two_factor_required boolean,status varchar(11),deletion_lifecycle_state varchar(32),create_date timestamp)");
     jdbc.execute("create table user(user_id varchar(36) primary key,tenant_id bigint)");
     jdbc.update(
         "insert into admin(admin_id,tenant_id,username,type,first_name,last_name,email,managed_paused,update_date) values(?,7,'original-admin','TENANT','Old','Name','old@example.test',true,?)",
@@ -470,133 +470,96 @@ class HumanAdminAccountMaintenanceTest {
   }
 
   @Test
-  void actualStatusActivationReadsOutsideSqlAndCommitsOnlyTheSelectedManagementPause()
-      throws Exception {
-    human.setRoles(Set.of(UserRole.TENANT_ADMIN.getValue()));
-    var actualScope = actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
-    assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
-    assertEquals(new AdminScope.Tenant(7L), actualScope.current());
-    assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.admin(ACCOUNT)));
-    var ddl =
-        new org.springframework.core.io.ClassPathResource(
-                "db/changelog/changeset/20260916_account_inactivity/migrate.sql")
-            .getContentAsString(StandardCharsets.UTF_8);
-    // Execute the actual production table definition; rollout data is not part of this focused
-    // case.
+  void actualStatusActivationReadsOutsideSqlAndCommitsOnlyTheSelectedManagementPause() throws Exception {
+    for (String scenario : List.of("single", "dual", "drift", "foreign-secondary", "ambient")) {
+      server.reset();
+      actualSchemaAndValidatedHumanFixture();
+      human.setRoles(Set.of(UserRole.TENANT_ADMIN.getValue()));
+      if (scenario.equals("dual") || scenario.equals("foreign-secondary")) {
+        jdbc.update("insert into consultant(consultant_id,tenant_id,username,first_name,last_name,email,managed_paused,status) values(?,?,?,'Consultant','Name','old@example.test',true,'CREATED')",
+            ACCOUNT, scenario.equals("dual") ? 7L : 8L, "original-admin");
+      }
+      var actualScope = actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
+      assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
+      assertEquals(new AdminScope.Tenant(7L), actualScope.current());
+      assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.admin(ACCOUNT)));
+      var publicStatus = actualStatusService(actualScope, scenario.equals("drift"));
+      if (scenario.equals("ambient")) {
+        assertThrows(RuntimeException.class, () -> new TransactionTemplate(transactions).execute(ignored -> publicStatus.update(ACCOUNT, true)));
+      } else if (scenario.equals("foreign-secondary")) {
+        assertThrows(RuntimeException.class, () -> publicStatus.update(ACCOUNT, true));
+      } else {
+        readReply();
+        if (scenario.equals("drift")) {
+          assertThrows(RuntimeException.class, () -> publicStatus.update(ACCOUNT, true));
+          assertEquals("Foreign", jdbc.queryForObject("select first_name from admin where admin_id=?", String.class, ACCOUNT));
+        } else {
+          readReply();
+          var result = assertDoesNotThrow(() -> publicStatus.update(ACCOUNT, true));
+          assertEquals(true, result.active());
+          assertEquals(true, result.loginEnabled());
+          assertFalse(result.paused());
+          assertEquals("Old", jdbc.queryForObject("select first_name from admin where admin_id=?", String.class, ACCOUNT));
+          if (scenario.equals("dual")) {
+            assertEquals(false, jdbc.queryForObject("select managed_paused from consultant where consultant_id=?", Boolean.class, ACCOUNT));
+            assertEquals("Consultant", jdbc.queryForObject("select first_name from consultant where consultant_id=?", String.class, ACCOUNT));
+          }
+        }
+      }
+      boolean shouldRemainPaused = !Set.of("single", "dual").contains(scenario);
+      assertEquals(shouldRemainPaused, jdbc.queryForObject("select managed_paused from admin where admin_id=?", Boolean.class, ACCOUNT));
+      assertEquals("ACTIVE", jdbc.queryForObject("select status from account_inactivity where identity_id=?", String.class, ACCOUNT));
+      server.verify();
+    }
+  }
+
+  private de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService actualStatusService(
+      AdminScope actualScope, boolean changeSqlDuringExternalRead) throws Exception {
+    var ddl = new org.springframework.core.io.ClassPathResource(
+        "db/changelog/changeset/20260916_account_inactivity/migrate.sql")
+        .getContentAsString(StandardCharsets.UTF_8);
+    // The actual table definition is independent of rollout data, which this case does not execute.
     jdbc.execute(ddl.substring(ddl.indexOf("CREATE TABLE"), ddl.indexOf("-- No trustworthy")));
-    var lifecycle =
-        new de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService(
-            jdbc,
-            transactions,
-            CLOCK,
-            mock(
-                de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityEffects
-                    .class));
+    var lifecycle = new de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService(
+        jdbc, transactions, CLOCK,
+        mock(de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityEffects.class));
     lifecycle.assignAtCreation(ACCOUNT, 7L, 6, 1, CLOCK.instant());
-    assertEquals(
-        de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
-            .ACTIVE,
+    assertEquals(de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status.ACTIVE,
         lifecycle.snapshot(ACCOUNT).orElseThrow().status());
     var tenant = mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class);
-    when(tenant.getRestrictedTenantDataFresh(7L))
-        .thenAnswer(
-            ignored -> {
-              assertFalse(
-                  org.springframework.transaction.support.TransactionSynchronizationManager
-                      .isActualTransactionActive(),
-                  "Tenant HTTP read must be outside the owning write transaction");
-              return new de.caritas.cob.userservice.tenantservice.generated.web.model
-                      .RestrictedTenantDTO()
-                  .active(true);
-            });
+    var changed = new java.util.concurrent.atomic.AtomicBoolean();
+    when(tenant.getRestrictedTenantDataFresh(7L)).thenAnswer(ignored -> {
+      assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive(),
+          "Tenant HTTP read must be outside the owning write transaction");
+      if (changeSqlDuringExternalRead && changed.compareAndSet(false, true))
+        jdbc.update("update admin set first_name='Foreign' where admin_id=?", ACCOUNT);
+      return new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO().active(true);
+    });
     var adminRows = mock(AdminRepository.class);
-    when(adminRows.findById(ACCOUNT))
-        .thenAnswer(
-            ignored ->
-                Optional.of(
-                    localAdmin(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT)));
-    when(adminRows.save(any()))
-        .thenAnswer(
-            call -> {
-              assertTrue(
-                  org.springframework.transaction.support.TransactionSynchronizationManager
-                      .isActualTransactionActive());
-              var row = call.getArgument(0, de.caritas.cob.userservice.api.model.Admin.class);
-              jdbc.update(
-                  "update admin set managed_paused=?,first_name=?,last_name=?,email=? where admin_id=?",
-                  row.isManagedPaused(),
-                  row.getFirstName(),
-                  row.getLastName(),
-                  row.getEmail(),
-                  row.getId());
-              return row;
-            });
-    service =
-        new HumanAdminAccountMaintenance(
-            mode,
-            human,
-            actualScope,
-            jdbc,
-            transactions,
-            request,
-            new KeycloakHumanAdminMaintenance(
-                http,
-                actors,
-                broker,
-                codec,
-                "https://internal-auth.example.test",
-                "test",
-                "realm-1"),
-            CLOCK,
-            ISSUER);
-    var adapter =
-        new de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService(
-            human,
-            mock(
-                de.caritas.cob.userservice.api.admin.service.consultant.validation
-                    .UserAccountInputValidator.class),
-            mode,
-            mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient.class),
-            mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakMapper.class),
-            mock(de.caritas.cob.userservice.api.helper.UserHelper.class),
-            mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient.class));
+    when(adminRows.findById(ACCOUNT)).thenAnswer(ignored -> Optional.of(localAdmin(
+        de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT)));
+    when(adminRows.save(any())).thenThrow(new AssertionError("C pause must not merge a stale whole Admin entity"));
+    var consultantRows = mock(ConsultantRepository.class);
+    when(consultantRows.save(any())).thenThrow(new AssertionError("C pause must not merge a stale whole Consultant entity"));
+    service = new HumanAdminAccountMaintenance(mode, human, actualScope, jdbc, transactions,
+        request, new KeycloakHumanAdminMaintenance(http, actors, broker, codec,
+            "https://internal-auth.example.test", "test", "realm-1"), CLOCK, ISSUER);
+    var adapter = new de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService(human,
+        mock(de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator.class),
+        mode, mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient.class),
+        mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakMapper.class),
+        mock(de.caritas.cob.userservice.api.helper.UserHelper.class),
+        mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient.class));
     adapter.setHumanAdminMaintenance(service);
-    var status =
-        new de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService(
-            human,
-            actualScope,
-            adminRows,
-            mock(ConsultantRepository.class),
-            adapter,
-            mock(IdentityProfileLookup.class),
-            mock(IdentitySecondFactor.class),
-            lifecycle,
-            tenant);
+    var status = new de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService(
+        human, actualScope, adminRows, consultantRows, adapter,
+        mock(IdentityProfileLookup.class), mock(IdentitySecondFactor.class), lifecycle, tenant);
     status.setScopedLocalWrites(mode, jdbc, transactions);
     var proxy = new org.springframework.aop.framework.ProxyFactory(status);
     proxy.setProxyTargetClass(true);
-    proxy.addAdvice(
-        new org.springframework.transaction.interceptor.TransactionInterceptor(
-            transactions,
-            new org.springframework.transaction.annotation.AnnotationTransactionAttributeSource()));
-    var publicStatus =
-        (de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService)
-            proxy.getProxy();
-    readReply();
-    readReply();
-    var result = assertDoesNotThrow(() -> publicStatus.update(ACCOUNT, true));
-    assertEquals(true, result.active());
-    assertEquals(true, result.loginEnabled());
-    assertFalse(result.paused());
-    assertEquals(
-        false,
-        jdbc.queryForObject(
-            "select managed_paused from admin where admin_id=?", Boolean.class, ACCOUNT));
-    assertEquals(
-        "Old",
-        jdbc.queryForObject(
-            "select first_name from admin where admin_id=?", String.class, ACCOUNT));
-    server.verify();
+    proxy.addAdvice(new org.springframework.transaction.interceptor.TransactionInterceptor(
+        transactions, new org.springframework.transaction.annotation.AnnotationTransactionAttributeSource()));
+    return (de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService) proxy.getProxy();
   }
 
   @Test
