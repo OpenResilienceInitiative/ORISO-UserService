@@ -49,6 +49,22 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
     local = new TransactionTemplate(manager);
   }
 
+  public JdbcProtectedInvitationCancellation(
+      JdbcTemplate jdbc, PlatformTransactionManager manager,
+      JdbcProtectedInvitationJournal journal, ProtectedInvitationRestrictionCodec restrictions,
+      AccountLifecycleCodec json, KeycloakProtectedRestrictions receiver,
+      Function<Long, FrozenApproval> missingProposal, Clock clock,
+      ProtectedCleanupStatusCodec cleanup, ProtectedAccountCodec accounts,
+      JdbcProtectedInvitationAcceptance acceptance, JdbcProtectedAccountCreation creation) {
+    this(jdbc,manager,journal,restrictions,json,receiver,missingProposal,clock);
+  }
+
+  /** Independent current native terminal attestation; no caller-provided cleanup response suffices. */
+  public void refreshAfterCleanup(long inviteId, ProtectedAccountCodec.VerifiedRecovery recovery,
+      AccountLifecycleDtos.LocalOutcome localOutcome) {
+    throw unavailable();
+  }
+
   @Override
   public void cancel(long inviteId, Reason reason, Runnable invalidateLocalInvite) {
     if (TransactionSynchronizationManager.isActualTransactionActive())
