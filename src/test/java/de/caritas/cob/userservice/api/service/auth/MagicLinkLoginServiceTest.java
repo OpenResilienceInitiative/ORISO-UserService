@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
+import de.caritas.cob.userservice.api.port.out.MagicLinkCapabilityDigest;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.MagicLinkRequestResult;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -66,7 +67,7 @@ class MagicLinkLoginServiceTest {
   @Mock private OrisoEmailRenderer emailRenderer;
   @Mock private OrisoEmailBrand emailBrand;
   @Mock private TaskActorConfiguration taskActors;
-  @Mock private ObjectProvider<AccountLifecycleCodec> lifecycleCodec;
+  @Mock private ObjectProvider<MagicLinkCapabilityDigest> capabilityDigest;
 
   @InjectMocks private MagicLinkLoginService magicLinkLoginService;
 
@@ -805,7 +806,7 @@ class MagicLinkLoginServiceTest {
   @Test
   void fiveActorsIssuesScopedMetadataBeforeSendingTheRealMail() {
     when(taskActors.isEnabled()).thenReturn(true);
-    when(lifecycleCodec.getObject()).thenReturn(new AccountLifecycleCodec(new byte[32]));
+    when(capabilityDigest.getObject()).thenReturn(new AccountLifecycleCodec(new byte[32]));
     User user = validUserWithMagicLinkEnabled();
     user.setUserId("11111111-1111-4111-8111-111111111111");
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));

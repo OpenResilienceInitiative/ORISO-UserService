@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.config.auth.TaskActor;
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.MagicLinkCapabilityDigest;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
@@ -135,7 +136,7 @@ class MagicLinkSessionNativeFixture {
               mock(OrisoEmailRenderer.class),
               mock(OrisoEmailBrand.class),
               actors,
-              provider);
+              beans.getBeanProvider(MagicLinkCapabilityDigest.class));
       assertThat(service.consumeMagicLink(token)).isEmpty();
       assertThat(second.claim("magic-login", token)).contains(held);
       assertThat(second.restore("magic-login", token, held, false)).isTrue();
