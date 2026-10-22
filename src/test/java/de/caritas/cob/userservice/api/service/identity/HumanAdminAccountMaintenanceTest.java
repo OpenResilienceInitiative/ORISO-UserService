@@ -81,12 +81,12 @@ class HumanAdminAccountMaintenanceTest {
     jdbc = new JdbcTemplate(ds);
     transactions = new DataSourceTransactionManager(ds);
     jdbc.execute(
-        "create table admin(admin_id varchar(36) primary key,tenant_id bigint,username varchar(255) not null,type varchar(6) not null,first_name varchar(255),last_name varchar(255),email varchar(255),managed_paused boolean not null,update_date timestamp)");
+        "create table admin(admin_id varchar(36) primary key,tenant_id bigint,username varchar(255) not null,type varchar(6) not null,first_name varchar(255),last_name varchar(255),email varchar(255),managed_paused boolean not null,update_date timestamp,id_old bigint,create_date timestamp)");
     jdbc.execute(
         "create table consultant(consultant_id varchar(36) primary key,tenant_id bigint,username varchar(255),first_name varchar(255),last_name varchar(255),email varchar(255),delete_date timestamp,update_date timestamp,managed_paused boolean not null)");
     jdbc.execute("create table user(user_id varchar(36) primary key,tenant_id bigint)");
     jdbc.update(
-        "insert into admin values(?,7,'original-admin','TENANT','Old','Name','old@example.test',true,?)",
+        "insert into admin(admin_id,tenant_id,username,type,first_name,last_name,email,managed_paused,update_date) values(?,7,'original-admin','TENANT','Old','Name','old@example.test',true,?)",
         ACCOUNT,
         java.sql.Timestamp.from(CLOCK.instant()));
     new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(

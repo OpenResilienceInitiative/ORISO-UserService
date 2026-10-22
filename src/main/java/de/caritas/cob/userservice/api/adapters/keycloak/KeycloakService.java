@@ -962,6 +962,7 @@ public class KeycloakService
    */
   @Override
   public void updateProfile(final String userId, final IdentityProfileUpdate profile) {
+    if (identityClientConfig.isFiveActorMode()) throw new ScopedIdentityCommandRequiredException();
     var userResource = keycloakClient.getUsersResource().get(userId);
     var existing = userResource.toRepresentation();
     verifyEmail(existing, profile.email());

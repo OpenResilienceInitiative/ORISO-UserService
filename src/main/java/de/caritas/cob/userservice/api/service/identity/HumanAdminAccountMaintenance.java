@@ -96,7 +96,8 @@ public final class HumanAdminAccountMaintenance {
     }
   }
 
-  public void updateAdminProfile(String accountId, IdentityProfileUpdate profile) {
+  public de.caritas.cob.userservice.api.model.Admin updateAdminProfile(
+      String accountId, IdentityProfileUpdate profile) {
     requireOutsideSql();
     if (!Set.of("PATCH", "PUT").contains(request.getMethod())) throw forbidden();
     Human human = currentHuman();
@@ -118,7 +119,7 @@ public final class HumanAdminAccountMaintenance {
       if ("APPLIED".equals(intent.status)) {
         requireDesired(authorizedRow(accountId, false), original, profile);
         transport.verifyProfileReceipt(checked, frozen(intent), intent.receipt);
-        return;
+        return profileResult(checked);
       }
       if ("PREPARED".equals(intent.status)) {
         var state = transport.read(checked);
@@ -192,7 +193,26 @@ public final class HumanAdminAccountMaintenance {
             || !Objects.equals(receipt, found.receipt)) throw unavailable();
         requireDesired(authorizedRow(accountId, false), original, profile);
       }
+      return profileResult(checked);
     }
+  }
+
+  private de.caritas.cob.userservice.api.model.Admin profileResult(CheckedAccount checked) {
+    return transaction(() -> {
+      requireDesired(authorizedRow(checked.actual.account, true), checked.original, checked.profile);
+      return jdbc.queryForObject(
+          "select admin_id,tenant_id,username,type,first_name,last_name,email,managed_paused,id_old,create_date,update_date from admin where admin_id=?",
+          (r, index) -> de.caritas.cob.userservice.api.model.Admin.builder()
+              .id(r.getString("admin_id")).tenantId(nullableLong(r, "tenant_id"))
+              .username(r.getString("username"))
+              .type(de.caritas.cob.userservice.api.model.Admin.AdminType.valueOf(r.getString("type")))
+              .firstName(r.getString("first_name")).lastName(r.getString("last_name"))
+              .email(r.getString("email")).managedPaused(r.getBoolean("managed_paused"))
+              .oldId(nullableLong(r, "id_old"))
+              .createDate(r.getTimestamp("create_date") == null ? null : r.getTimestamp("create_date").toLocalDateTime())
+              .updateDate(r.getTimestamp("update_date") == null ? null : r.getTimestamp("update_date").toLocalDateTime())
+              .build(), checked.actual.account);
+    });
   }
 
   private Intent prepare(CheckedAccount checked, String digest, String original, String desired) {
@@ -299,6 +319,15 @@ public final class HumanAdminAccountMaintenance {
             timestamp(row.updated),
             timestamp(row.updated))
         != 1) throw conflict();
+    if (row.secondary != null) {
+      var secondary = row.secondary;
+      if (jdbc.update(
+          "update consultant set first_name=?,last_name=?,email=?,update_date=? where consultant_id=? and username=? and ((tenant_id=?) or (tenant_id is null and ? is null)) and delete_date is null and first_name=? and last_name=? and email=? and ((update_date=?) or (update_date is null and ? is null))",
+          profile.firstName(), profile.lastName(), profile.email(), Timestamp.from(clock.instant()),
+          secondary.account, secondary.username, secondary.tenant, secondary.tenant,
+          secondary.firstName, secondary.lastName, secondary.email,
+          timestamp(secondary.updated), timestamp(secondary.updated)) != 1) throw conflict();
+    }
     requireDesired(authorizedRow(row.account, true), row, profile);
     if (jdbc.update(
             "update general_admin_identity_intent set status='APPLIED',updated_at=? where operation_id=? and status='ACKNOWLEDGED' and native_receipt=?",
@@ -354,23 +383,20 @@ public final class HumanAdminAccountMaintenance {
 
   private AdminRow authorizedRow(String account, boolean lock) {
     canonicalUuid(account);
-    var rows =
-        jdbc.query(
-            "select admin_id,tenant_id,username,type,first_name,last_name,email,update_date from admin where admin_id=?"
-                + (lock ? " for update" : ""),
-            (r, index) ->
-                new AdminRow(
-                    r.getString("admin_id"),
-                    nullableLong(r, "tenant_id"),
-                    r.getString("username"),
-                    r.getString("type"),
-                    r.getString("first_name"),
-                    r.getString("last_name"),
-                    r.getString("email"),
-                    r.getTimestamp("update_date") == null
-                        ? null
-                        : r.getTimestamp("update_date").toInstant().toString()),
-            account);
+    var rows = jdbc.query(
+        "select a.admin_id,a.tenant_id,a.username,a.type,a.first_name,a.last_name,a.email,a.update_date,c.consultant_id,c.tenant_id as consultant_tenant,c.username as consultant_username,c.first_name as consultant_first,c.last_name as consultant_last,c.email as consultant_email,c.delete_date as consultant_deleted,c.update_date as consultant_updated,u.user_id as user_collision from admin a left join consultant c on c.consultant_id=a.admin_id left join user u on u.user_id=a.admin_id where a.admin_id=?"
+            + (lock ? " for update" : ""),
+        (r, index) -> {
+          if (r.getString("user_collision") != null) throw forbidden();
+          ConsultantRow secondary = r.getString("consultant_id") == null ? null : new ConsultantRow(
+              r.getString("consultant_id"), nullableLong(r, "consultant_tenant"),
+              r.getString("consultant_username"), r.getString("consultant_first"),
+              r.getString("consultant_last"), r.getString("consultant_email"),
+              instant(r, "consultant_deleted"), instant(r, "consultant_updated"));
+          return new AdminRow(r.getString("admin_id"), nullableLong(r, "tenant_id"),
+              r.getString("username"), r.getString("type"), r.getString("first_name"),
+              r.getString("last_name"), r.getString("email"), instant(r, "update_date"), secondary);
+        }, account);
     if (rows.isEmpty()) throw new NotFoundException("Managed account was not found");
     if (rows.size() != 1) throw forbidden();
     var row = rows.getFirst();
@@ -383,7 +409,12 @@ public final class HumanAdminAccountMaintenance {
             || "SUPER".equals(row.type)
                 && actor.isPlatformAdmin()
                 && authorities.contains(Authority.AuthorityValue.TENANT_ADMIN))) throw forbidden();
+    var secondary = row.secondary;
+    if (secondary != null && (secondary.deleted != null
+        || !row.account.equals(secondary.account) || !Objects.equals(row.tenant, secondary.tenant)
+        || !decodedUsername(row.username).equals(decodedUsername(secondary.username)))) throw forbidden();
     scope.assertMay(AdminScope.Target.admin(account));
+    if (secondary != null) scope.assertMay(AdminScope.Target.counsellor(account));
     return row;
   }
 
@@ -463,9 +494,7 @@ public final class HumanAdminAccountMaintenance {
     if (projection == null
         || !row.account.equals(projection.id())
         || !Objects.equals(row.tenant, projection.tenantId())
-        || !new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
-            .decodeUsername(row.username)
-            .equals(projection.username())) throw unavailable();
+        || !decodedUsername(row.username).equals(projection.username())) throw unavailable();
   }
 
   private static void validateProfile(AdminRow row, IdentityProfileUpdate profile) {
@@ -494,7 +523,15 @@ public final class HumanAdminAccountMaintenance {
     if (!row.sameIdentity(original)
         || !Objects.equals(row.firstName, desired.firstName())
         || !Objects.equals(row.lastName, desired.lastName())
-        || !Objects.equals(row.email, desired.email())) throw conflict();
+        || !Objects.equals(row.email, desired.email())
+        || row.secondary != null && (!Objects.equals(row.secondary.firstName, desired.firstName())
+            || !Objects.equals(row.secondary.lastName, desired.lastName())
+            || !Objects.equals(row.secondary.email, desired.email()))) throw conflict();
+  }
+
+  private static String decodedUsername(String value) {
+    if (value == null) throw forbidden();
+    return new de.caritas.cob.userservice.api.helper.UsernameTranscoder().decodeUsername(value);
   }
 
   private FrozenProfile frozen(Intent intent) {
@@ -539,6 +576,11 @@ public final class HumanAdminAccountMaintenance {
     return row.wasNull() ? null : value;
   }
 
+  private static String instant(ResultSet row, String name) throws SQLException {
+    Timestamp value = row.getTimestamp(name);
+    return value == null ? null : value.toInstant().toString();
+  }
+
   private static Timestamp timestamp(String value) {
     return value == null ? null : Timestamp.from(Instant.parse(value));
   }
@@ -559,18 +601,32 @@ public final class HumanAdminAccountMaintenance {
       String firstName,
       String lastName,
       String email,
-      String updated) {
+      String updated,
+      ConsultantRow secondary) {
     boolean sameIdentity(AdminRow other) {
       return account.equals(other.account)
           && Objects.equals(tenant, other.tenant)
           && username.equals(other.username)
-          && type.equals(other.type);
+          && type.equals(other.type)
+          && (secondary == null ? other.secondary == null
+              : other.secondary != null && secondary.sameIdentity(other.secondary));
     }
 
     @Override
     public String toString() {
       return "AdminRow[profile=redacted]";
     }
+  }
+
+  private record ConsultantRow(String account, Long tenant, String username, String firstName,
+      String lastName, String email, String deleted, String updated) {
+    boolean sameIdentity(ConsultantRow other) {
+      return account.equals(other.account) && Objects.equals(tenant, other.tenant)
+          && Objects.equals(username, other.username) && Objects.equals(deleted, other.deleted);
+    }
+
+    @Override
+    public String toString() { return "ConsultantRow[profile=redacted]"; }
   }
 
   private record Intent(
