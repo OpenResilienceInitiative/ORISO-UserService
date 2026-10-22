@@ -487,7 +487,11 @@ public final class ProtectedOtpBootstrap {
   }
 
   private JsonNode checkedMetadata(AcceptanceClaim claim, String raw, String command) {
-    if (!Set.of("otp.bootstrap-read", "otp.bootstrap-app-setup", "otp.bootstrap-email-start")
+    if (!Set.of(
+            "otp.bootstrap-read",
+            "otp.bootstrap-app-setup",
+            "otp.bootstrap-email-start",
+            "otp.bootstrap-email-finish")
         .contains(command)) throw unavailable();
     var metadata = codec.read(raw, JsonNode.class);
     fields(metadata, METADATA);
@@ -662,9 +666,18 @@ public final class ProtectedOtpBootstrap {
     }
   }
 
-  /** All three methods capture actual servlet key/method/path/body inside this adapter. */
+  /** Capture the actual servlet key, method, path and complete body before the native RPC. */
   public BootstrapAttempt setupApp(AcceptanceClaim claim, String initialCode) {
+    return completeOtp(claim, initialCode, false);
+  }
+
+  public BootstrapAttempt finishEmail(AcceptanceClaim claim, String initialCode) {
+    return completeOtp(claim, initialCode, true);
+  }
+
+  private BootstrapAttempt completeOtp(AcceptanceClaim claim, String initialCode, boolean email) {
     outsideSql();
+    String operationName = email ? "otp.bootstrap-email-finish" : "otp.bootstrap-app-setup";
     if (initialCode == null || !initialCode.matches("[0-9]{6,8}")) throw unavailable();
     var actor = actors.require(TaskPurpose.OTP);
     var machine = broker.issueCheckedMaintenance(TaskPurpose.OTP);
@@ -697,7 +710,7 @@ public final class ProtectedOtpBootstrap {
                 "registrationDigest",
                 claim.registrationDigest(),
                 "method",
-                "APP",
+                email ? "EMAIL_FINISH" : "APP",
                 "otp",
                 initialCode));
     var frozen =
@@ -712,7 +725,7 @@ public final class ProtectedOtpBootstrap {
                 throw unavailable();
               var existing = operation(claim, publicIntent);
               if (existing != null) {
-                checkedMetadata(claim, existing.metadata(), "otp.bootstrap-app-setup");
+                checkedMetadata(claim, existing.metadata(), operationName);
                 if (!requestDigest.equals(existing.requestDigest()))
                   throw new org.springframework.web.server.ResponseStatusException(
                       org.springframework.http.HttpStatus.CONFLICT,
@@ -721,11 +734,23 @@ public final class ProtectedOtpBootstrap {
               }
               var prepared = prepared(claim, base, open(resultMetadata(base), original.result()));
               var result = codec.read(prepared.result, JsonNode.class);
-              var setup = credential(prepared.result);
+              var setup = email ? null : credential(prepared.result);
               var originalCommand = codec.read(open(base, original.request()), JsonNode.class);
               var command = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
               command.put("username", originalCommand.path("username").asText());
               command.put("bootstrapReceipt", result.path("bootstrapReceipt").asText());
+              Operation sent = email ? sentEmailStart(claim) : null;
+              JsonNode sentCommand = null;
+              if (sent != null) {
+                var sentMetadata =
+                    checkedMetadata(claim, sent.metadata(), "otp.bootstrap-email-start");
+                sentCommand = codec.read(open(sentMetadata, sent.command()), JsonNode.class);
+                if (!command.path("username").equals(sentCommand.path("username"))
+                    || !command
+                        .path("bootstrapReceipt")
+                        .equals(sentCommand.path("bootstrapReceipt")))
+                  throw unavailable();
+              }
               var body = command.putObject("body");
               var target = body.putObject("target");
               target.set("accountId", base.path("accountId"));
@@ -742,13 +767,22 @@ public final class ProtectedOtpBootstrap {
               body.put(
                   "expectedState",
                   codec.digest("otp-bootstrap-state/v1", result.path("bootstrapReceipt").asText()));
+              if (email) {
+                if (!target.equals(sentCommand.path("body").path("target"))
+                    || !body
+                        .path("expectedState")
+                        .equals(sentCommand.path("body").path("expectedState")))
+                  throw unavailable();
+                body.set("emailStartOperationId", sentCommand.path("body").path("operationId"));
+              }
               var otp = body.putObject("otp");
               otp.put("initialCode", initialCode);
-              otp.put("secret", setup.secret());
+              if (email) otp.putNull("secret");
+              else otp.put("secret", setup.secret());
               otp.putNull("email");
               var metadata = base.deepCopy();
               ((ObjectNode) metadata).put("operationId", operation);
-              ((ObjectNode) metadata).put("command", "otp.bootstrap-app-setup");
+              ((ObjectNode) metadata).put("command", operationName);
               ((ObjectNode) metadata).put("requestDigest", requestDigest);
               var saved =
                   new Operation(
@@ -775,7 +809,7 @@ public final class ProtectedOtpBootstrap {
     if (frozen == null) throw unavailable();
     if ("ACKNOWLEDGED".equals(frozen.state())) return checkedOutcome(claim, frozen);
     if (!"FROZEN".equals(frozen.state())) throw unavailable();
-    var metadata = checkedMetadata(claim, frozen.metadata(), "otp.bootstrap-app-setup");
+    var metadata = checkedMetadata(claim, frozen.metadata(), operationName);
     var command = codec.read(open(metadata, frozen.command()), JsonNode.class);
     var materialized = ((ObjectNode) command.path("body")).deepCopy();
     materialized.set("username", command.path("username"));
@@ -785,16 +819,25 @@ public final class ProtectedOtpBootstrap {
     headers.setContentType(MediaType.APPLICATION_JSON);
     headers.setAccept(List.of(MediaType.APPLICATION_JSON));
     headers.set("X-ORISO-OTP-Bootstrap", command.path("bootstrapReceipt").asText());
-    headers.set(
-        "X-ORISO-Task-Context",
-        codec.protectedBootstrapAppProof(
-            realmName,
-            realmId,
-            metadata.path("accountId").asText(),
-            actor,
-            materialized,
-            Math.min(
-                machine.validatedJwtExpiresAt(), metadata.path("authorityValidUntil").asLong())));
+    long proofUntil =
+        Math.min(machine.validatedJwtExpiresAt(), metadata.path("authorityValidUntil").asLong());
+    String proof =
+        email
+            ? codec.protectedBootstrapEmailFinishProof(
+                realmName,
+                realmId,
+                metadata.path("accountId").asText(),
+                actor,
+                materialized,
+                proofUntil)
+            : codec.protectedBootstrapAppProof(
+                realmName,
+                realmId,
+                metadata.path("accountId").asText(),
+                actor,
+                materialized,
+                proofUntil);
+    headers.set("X-ORISO-Task-Context", proof);
     String response;
     int status;
     try {
@@ -805,12 +848,12 @@ public final class ProtectedOtpBootstrap {
                       "realms",
                       realmName,
                       "otp-config",
-                      "setup-otp",
+                      email ? "setup-otp-mail" : "setup-otp",
                       command.path("username").asText())
                   .build()
                   .encode()
                   .toUri(),
-              HttpMethod.PUT,
+              email ? HttpMethod.POST : HttpMethod.PUT,
               new HttpEntity<>(
                   codec.canonical(command.path("body")).getBytes(StandardCharsets.UTF_8), headers),
               byte[].class);
@@ -1131,8 +1174,24 @@ public final class ProtectedOtpBootstrap {
     return new BootstrapAttempt(status == 200 ? AttemptState.SENT : AttemptState.PENDING, null);
   }
 
-  public BootstrapAttempt finishEmail(AcceptanceClaim currentClaim, String initialCode) {
-    throw unavailable();
+  private Operation sentEmailStart(AcceptanceClaim claim) {
+    var ids =
+        jdbc.queryForList(
+            "SELECT public_intent_id FROM protected_otp_bootstrap_operation WHERE invite_id=? AND claim_id=? AND state='ACKNOWLEDGED' ORDER BY public_intent_id",
+            String.class,
+            invite(claim),
+            claim.claimId().toString());
+    Operation found = null;
+    for (String id : ids) {
+      var saved = Objects.requireNonNull(operation(claim, id));
+      String command = codec.read(saved.metadata(), JsonNode.class).path("command").asText();
+      if (!"otp.bootstrap-email-start".equals(command)) continue;
+      if (checkedEmailStart(claim, saved).state() != AttemptState.SENT || found != null)
+        throw unavailable();
+      found = saved;
+    }
+    if (found == null) throw unavailable();
+    return found;
   }
 
   /** Reconstruct opaque success only from the independently checked committed private journal. */
@@ -1192,7 +1251,10 @@ public final class ProtectedOtpBootstrap {
   }
 
   private BootstrapAttempt checkedOutcome(AcceptanceClaim claim, Operation saved) {
-    var metadata = checkedMetadata(claim, saved.metadata(), "otp.bootstrap-app-setup");
+    String operationName = codec.read(saved.metadata(), JsonNode.class).path("command").asText();
+    if (!Set.of("otp.bootstrap-app-setup", "otp.bootstrap-email-finish").contains(operationName))
+      throw unavailable();
+    var metadata = checkedMetadata(claim, saved.metadata(), operationName);
     if (!"ACKNOWLEDGED".equals(saved.state()) || saved.result() == null) throw unavailable();
     var command = codec.read(open(metadata, saved.command()), JsonNode.class);
     var materialized = ((ObjectNode) command.path("body")).deepCopy();

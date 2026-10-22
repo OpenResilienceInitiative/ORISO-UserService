@@ -528,6 +528,24 @@ public final class AccountLifecycleCodec {
         "PUT");
   }
 
+  String protectedBootstrapEmailFinishProof(
+      String realmName,
+      String realmId,
+      String accountId,
+      TaskActorCredentials actor,
+      JsonNode materialized,
+      long authorityValidUntil) {
+    return selfOtpProof(
+        realmName,
+        realmId,
+        accountId,
+        actor,
+        materialized,
+        authorityValidUntil,
+        "otp.bootstrap-email-finish",
+        "POST");
+  }
+
   void checkProtectedBootstrapCompleteReceipt(String receipt, JsonNode independentlyExpected) {
     if (receipt == null || receipt.length() > 8192) throw invalidSecretIntent();
     String encoded = encode(canonical(independentlyExpected).getBytes(StandardCharsets.UTF_8));
