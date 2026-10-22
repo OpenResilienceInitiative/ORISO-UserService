@@ -391,6 +391,79 @@ class KeycloakIdentitySessionExchangeTest {
         .isInstanceOf(IllegalStateException.class);
   }
 
+  @Test
+  void optionalOtpIsEphemeralFormDataOutsideTheOriginalBoundCommand() throws Exception {
+    var http = new RestTemplate();
+    var server = org.springframework.test.web.client.MockRestServiceServer.bindTo(http).build();
+    var configured = scopedTransport(http);
+    for (String invalid : List.of("", "12345", "1234567", "１２３４５６", " 123456", "12345a")) {
+      assertThat(configured.exchangeMagicLink(liveTransportClaim(), invalid)).isEmpty();
+    }
+    org.mockito.Mockito.verifyNoInteractions(broker, jwtDecoder);
+    when(jwtDecoder.decode("native-access")).thenReturn(magicJwt(MAGIC_TARGET, "app", "42"));
+    server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(MAGIC_URL))
+      .andExpect(request -> {
+        String raw = ((org.springframework.mock.http.client.MockClientHttpRequest) request).getBodyAsString();
+        var fields = new java.util.TreeMap<String, String>();
+        for (String part : raw.split("&")) {
+          String[] pair = part.split("=", 2);
+          fields.put(java.net.URLDecoder.decode(pair[0], java.nio.charset.StandardCharsets.UTF_8),
+              java.net.URLDecoder.decode(pair[1], java.nio.charset.StandardCharsets.UTF_8));
+        }
+        assertThat(fields.keySet()).containsExactly("client_id", "grant_type", "oriso_magic_command", "otp");
+        assertThat(fields.get("otp")).isEqualTo("123456");
+        var body = new com.fasterxml.jackson.databind.ObjectMapper().readTree(fields.get("oriso_magic_command"));
+        assertThat(body.size()).isEqualTo(7);
+        assertThat(body.has("otp")).isFalse();
+        assertThat(body.path("targetUserId").asText()).isEqualTo(MAGIC_TARGET);
+        assertThat(request.getHeaders().getFirst("X-ORISO-Task-Context")).isNotBlank();
+      })
+      .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+        "{\"access_token\":\"native-access\",\"expires_in\":60,\"refresh_expires_in\":600,\"refresh_token\":\"refresh\",\"token_type\":\"Bearer\",\"session_state\":\"44444444-4444-4444-8444-444444444444\",\"scope\":\"openid\"}", org.springframework.http.MediaType.APPLICATION_JSON));
+    assertThat(configured.exchangeMagicLink(liveTransportClaim(), "123456")).isPresent();
+    server.verify();
+  }
+
+  @Test
+  void nativeAppAndEmailChallengesExposeOnlyTheFiniteContinuationShape() {
+    for (var expected : List.of(new de.caritas.cob.userservice.api.port.out.IdentitySessionExchange.MagicLinkChallenge("APP", null, 400),
+        new de.caritas.cob.userservice.api.port.out.IdentitySessionExchange.MagicLinkChallenge("EMAIL", 17, 400),
+        new de.caritas.cob.userservice.api.port.out.IdentitySessionExchange.MagicLinkChallenge("EMAIL", 23, 429))) {
+      var http = new RestTemplate();
+      var server = org.springframework.test.web.client.MockRestServiceServer.bindTo(http).build();
+      var configured = scopedTransport(http);
+      String body = "{\"error\":\"invalid_grant\",\"error_description\":\"private-provider-text\",\"otpType\":\"" + expected.otpType() + "\",\"resendAvailableInSeconds\":" + expected.resendAvailableInSeconds() + "}";
+      server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(MAGIC_URL))
+        .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.valueOf(expected.status()))
+          .contentType(org.springframework.http.MediaType.APPLICATION_JSON).body(body));
+      org.assertj.core.api.Assertions.assertThatThrownBy(() -> configured.exchangeMagicLink(liveTransportClaim(), "123456"))
+        .isInstanceOfSatisfying(de.caritas.cob.userservice.api.port.out.IdentitySessionExchange.MagicLinkChallenge.class, actual -> {
+          assertThat(actual.otpType()).isEqualTo(expected.otpType());
+          assertThat(actual.resendAvailableInSeconds()).isEqualTo(expected.resendAvailableInSeconds());
+          assertThat(actual.status()).isEqualTo(expected.status());
+          assertThat(actual.getMessage()).doesNotContain("private-provider-text");
+        });
+      server.verify();
+    }
+  }
+
+  @Test
+  void malformedOrForeignNativeChallengesNeverBecomePublicContinuationData() {
+    for (String body : List.of("{\"otpType\":\"SMS\"}", "{\"otpType\":\"EMAIL\",\"resendAvailableInSeconds\":-1}",
+        "{\"otpType\":\"EMAIL\",\"resendAvailableInSeconds\":true}", "{\"otpType\":\"EMAIL\",\"resendAvailableInSeconds\":1.5}",
+        "{\"otpType\":\"EMAIL\",\"resendAvailableInSeconds\":2147483648}", "{\"otpType\":\"EMAIL\",\"resendAvailableInSeconds\":\"1\"}",
+        "{\"otpType\":\"APP\",\"private\":\"never-export\"}")) {
+      var http = new RestTemplate();
+      var server = org.springframework.test.web.client.MockRestServiceServer.bindTo(http).build();
+      var configured = scopedTransport(http);
+      server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(MAGIC_URL))
+        .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest()
+          .contentType(org.springframework.http.MediaType.APPLICATION_JSON).body(body));
+      assertThat(configured.exchangeMagicLink(liveTransportClaim())).isEmpty();
+      server.verify();
+    }
+  }
+
   private KeycloakIdentitySessionExchange scopedTransport(RestTemplate http) {
     org.mockito.Mockito.lenient().when(taskActors.isEnabled()).thenReturn(true);
     org.mockito.Mockito.lenient()

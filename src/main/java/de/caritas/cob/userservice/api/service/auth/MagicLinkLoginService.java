@@ -151,6 +151,11 @@ public class MagicLinkLoginService {
     return MagicLinkRequestResult.ACCEPTED;
   }
 
+  /** Closed continuation seam until the finite caller/HTTP counterfactual is qualified. */
+  public Optional<IdentitySession> consumeMagicLink(String token, String otp) {
+    return otp == null ? consumeMagicLink(token) : Optional.empty();
+  }
+
   public Optional<IdentitySession> consumeMagicLink(String token) {
     if (isBlank(token)) {
       return Optional.empty();
