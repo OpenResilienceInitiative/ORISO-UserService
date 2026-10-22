@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 import com.fasterxml.jackson.databind.JsonNode;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos.LocalOutcome;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationAcceptance.AcceptanceClaim;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationAcceptance.HistoricalAcceptance;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedAccounts.PendingOwnedAccount;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCommitted;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCreated;
@@ -164,6 +165,18 @@ public final class JdbcProtectedAccountActivation {
         });
   }
 
+  public enum Phase {
+    UNSTAGED,
+    WAITING_OTP,
+    READY,
+    COMMITTED,
+    LOCAL_CLEANED
+  }
+
+  public Phase phase(AcceptanceClaim claim) {
+    throw unavailable();
+  }
+
   public IdentityOtpCredential currentSetup(AcceptanceClaim claim) {
     outsideSql();
     return owned(
@@ -239,6 +252,7 @@ public final class JdbcProtectedAccountActivation {
               || !ready.claim.claimId().equals(committed.claimId())
               || !ready.claim.attemptId().equals(committed.attemptId())
               || !row.accountId().equals(committed.accountId())
+              || !ready.outcome.equals(committed.localOutcome())
               || committed.terminalReceipt() == null
               || committed.terminalReceipt().isBlank()
               || committed.terminalReceipt().length() > 16384) throw unavailable();
@@ -285,6 +299,94 @@ public final class JdbcProtectedAccountActivation {
     @Override
     public String toString() {
       return "ProtectedReadyActivation[redacted]";
+    }
+  }
+
+  public HistoricalReady historicalReady(HistoricalAcceptance historical) {
+    throw unavailable();
+  }
+
+  public void acknowledge(HistoricalReady historical, VerifiedCommitted committed) {
+    throw unavailable();
+  }
+
+  /** Data for a fresh status read; deliberately incompatible with the activation transport. */
+  public static final class HistoricalReady {
+    private final AcceptanceClaim claim;
+    private final VerifiedCreated created;
+    private final LocalOutcome outcome;
+
+    private HistoricalReady(AcceptanceClaim claim, VerifiedCreated created, LocalOutcome outcome) {
+      this.claim = claim;
+      this.created = created;
+      this.outcome = outcome;
+    }
+
+    public VerifiedCreated created() {
+      return created;
+    }
+
+    public LocalOutcome outcome() {
+      return outcome;
+    }
+
+    @Override
+    public String toString() {
+      return "ProtectedHistoricalReady[redacted]";
+    }
+  }
+
+  /** Only this account-effects owner can authorize removal of its exact encrypted OTP rows. */
+  public static final class VerifiedDiscard {
+    private final long inviteId;
+    private final UUID claimId;
+    private final UUID attemptId;
+    private final UUID executionId;
+    private final String accountId;
+    private final UUID bootstrapIncarnation;
+
+    private VerifiedDiscard(
+        long inviteId,
+        UUID claimId,
+        UUID attemptId,
+        UUID executionId,
+        String accountId,
+        UUID bootstrapIncarnation) {
+      this.inviteId = inviteId;
+      this.claimId = claimId;
+      this.attemptId = attemptId;
+      this.executionId = executionId;
+      this.accountId = accountId;
+      this.bootstrapIncarnation = bootstrapIncarnation;
+    }
+
+    public long inviteId() {
+      return inviteId;
+    }
+
+    public UUID claimId() {
+      return claimId;
+    }
+
+    public UUID attemptId() {
+      return attemptId;
+    }
+
+    public UUID executionId() {
+      return executionId;
+    }
+
+    public String accountId() {
+      return accountId;
+    }
+
+    public UUID bootstrapIncarnation() {
+      return bootstrapIncarnation;
+    }
+
+    @Override
+    public String toString() {
+      return "ProtectedVerifiedDiscard[redacted]";
     }
   }
 

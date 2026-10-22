@@ -174,6 +174,11 @@ public final class JdbcProtectedInvitationJournal {
         });
   }
 
+  /** Original saved evidence for reducing/status-only operations; never a live recipient grant. */
+  <T> T withHistoricalInvite(long inviteId, Supplier<T> action) {
+    throw unavailable();
+  }
+
   RestrictionProposal requestRestriction(long inviteId, Supplier<FrozenApproval> missingProposal) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     Invite invite = lockInvite(inviteId);
