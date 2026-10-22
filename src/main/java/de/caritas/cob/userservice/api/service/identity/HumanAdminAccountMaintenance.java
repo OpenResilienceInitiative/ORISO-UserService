@@ -103,6 +103,8 @@ public final class HumanAdminAccountMaintenance {
     Human human = currentHuman();
     UUID operation = operationId();
     AdminRow current = authorizedRow(accountId, false);
+    // Consultant-only read scopes never authorize the Admin profile writer.
+    if ("CONSULTANT".equals(current.type)) throw forbidden();
     validateProfile(current, profile);
     Intent prior = intent(operation, false);
     AdminRow original = prior == null ? current : decode(prior.original, AdminRow.class);
@@ -410,7 +412,7 @@ public final class HumanAdminAccountMaintenance {
     canonicalUuid(account);
     var rows =
         jdbc.query(
-            "select a.admin_id,a.tenant_id,a.username,a.type,a.first_name,a.last_name,a.email,a.update_date,c.consultant_id,c.tenant_id as consultant_tenant,c.username as consultant_username,c.first_name as consultant_first,c.last_name as consultant_last,c.email as consultant_email,c.delete_date as consultant_deleted,c.update_date as consultant_updated,u.user_id as user_collision from admin a left join consultant c on c.consultant_id=a.admin_id left join user u on u.user_id=a.admin_id where a.admin_id=?"
+            "select a.admin_id,a.tenant_id,a.username,a.type,a.first_name,a.last_name,a.email,a.update_date,c.consultant_id,c.tenant_id as consultant_tenant,c.username as consultant_username,c.first_name as consultant_first,c.last_name as consultant_last,c.email as consultant_email,c.delete_date as consultant_deleted,c.update_date as consultant_updated,u.user_id as user_collision from (select cast(? as char(36)) as requested_id) owned left join admin a on a.admin_id=owned.requested_id left join consultant c on c.consultant_id=owned.requested_id left join user u on u.user_id=owned.requested_id"
                 + (lock ? " for update" : ""),
             (r, index) -> {
               if (r.getString("user_collision") != null) throw forbidden();
@@ -422,6 +424,13 @@ public final class HumanAdminAccountMaintenance {
                           r.getString("consultant_username"), r.getString("consultant_first"),
                           r.getString("consultant_last"), r.getString("consultant_email"),
                           instant(r, "consultant_deleted"), instant(r, "consultant_updated"));
+              if (r.getString("admin_id") == null) {
+                if (secondary == null) return null;
+                if (secondary.deleted != null) throw forbidden();
+                return new AdminRow(secondary.account, secondary.tenant, secondary.username,
+                    "CONSULTANT", secondary.firstName, secondary.lastName, secondary.email,
+                    secondary.updated, null);
+              }
               return new AdminRow(
                   r.getString("admin_id"),
                   nullableLong(r, "tenant_id"),
@@ -434,12 +443,15 @@ public final class HumanAdminAccountMaintenance {
                   secondary);
             },
             account);
-    if (rows.isEmpty()) throw new NotFoundException("Managed account was not found");
+    if (rows.isEmpty() || rows.size() == 1 && rows.getFirst() == null)
+      throw new NotFoundException("Managed account was not found");
     if (rows.size() != 1) throw forbidden();
     var row = rows.getFirst();
     var authorities = actor.getGrantedAuthorities();
     if (authorities == null
-        || !("TENANT".equals(row.type)
+        || !("CONSULTANT".equals(row.type)
+                && authorities.contains(Authority.AuthorityValue.USER_ADMIN)
+            || "TENANT".equals(row.type)
                 && authorities.contains(Authority.AuthorityValue.TENANT_ADMIN)
             || "AGENCY".equals(row.type)
                 && authorities.contains(Authority.AuthorityValue.USER_ADMIN)
@@ -453,7 +465,8 @@ public final class HumanAdminAccountMaintenance {
             || !Objects.equals(row.tenant, secondary.tenant)
             || !decodedUsername(row.username).equals(decodedUsername(secondary.username))))
       throw forbidden();
-    scope.assertMay(AdminScope.Target.admin(account));
+    scope.assertMay("CONSULTANT".equals(row.type)
+        ? AdminScope.Target.counsellor(account) : AdminScope.Target.admin(account));
     if (secondary != null) scope.assertMay(AdminScope.Target.counsellor(account));
     return row;
   }

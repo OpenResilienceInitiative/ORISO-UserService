@@ -139,10 +139,14 @@ public class KeycloakService
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
-  /** Closed dependency seam for the scoped read caller counterfactual. */
+  private de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+      humanAdminMaintenance;
+
   @Autowired(required = false)
   public void setHumanAdminMaintenance(
-      de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance maintenance) {}
+      de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance maintenance) {
+    this.humanAdminMaintenance = java.util.Objects.requireNonNull(maintenance);
+  }
 
   private de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedUsernameAvailability
       scopedUsernameAvailability;
@@ -1139,6 +1143,11 @@ public class KeycloakService
 
   @Override
   public Optional<Boolean> findEnabledById(String userId) {
+    if (identityClientConfig.isFiveActorMode()) {
+      if (humanAdminMaintenance == null || !humanAdminMaintenance.isFiveActorMode())
+        throw new ScopedIdentityCommandRequiredException();
+      return Optional.of(humanAdminMaintenance.read(userId).enabled());
+    }
     try {
       return findEnabledByIdOnce(userId);
     } catch (NotAuthorizedException unauthorized) {
