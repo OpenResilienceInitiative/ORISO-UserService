@@ -155,7 +155,8 @@ public final class JdbcProtectedInvitationAcceptance {
     if (inviteId < 1
         || !TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
-        || !TransactionSynchronizationManager.hasResource(jdbc.getDataSource())) throw unavailable();
+        || !TransactionSynchronizationManager.hasResource(jdbc.getDataSource()))
+      throw unavailable();
     return readHistorical(inviteId);
   }
 

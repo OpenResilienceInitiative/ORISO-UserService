@@ -422,7 +422,7 @@ class JdbcProtectedAccountActivationTest {
     assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy));
     jdbc.update("UPDATE account_invite SET active_recipient_key='still-owned'");
     var recovered = recovery();
-    allowDiscard(claim.executionId());
+    allowDiscard(claim.executionId(), recovered);
     var cleaned = assertDoesNotThrow(() -> restart().discard(claim, recovered));
     assertEquals(0, count("admin"));
     assertEquals(0, count("account_inactivity"));
@@ -498,8 +498,8 @@ class JdbcProtectedAccountActivationTest {
     jdbc.update("UPDATE protected_invitation_authorization SET state='CANCEL_REQUESTED'");
     Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
     var historical = acceptanceAt(late).historical(73);
-    allowDiscard(complete.bootstrapIncarnation());
     var recovered = recovery();
+    allowDiscard(complete.bootstrapIncarnation(), recovered);
     var cleaned = assertDoesNotThrow(() -> activationAt(late).discard(historical, recovered));
     assertEquals(cleaned, activationAt(late).discard(historical, recovered));
     assertEquals("LOCAL_CLEANED", state());
@@ -523,7 +523,7 @@ class JdbcProtectedAccountActivationTest {
     return recovered;
   }
 
-  private void allowDiscard(UUID incarnation) {
+  private void allowDiscard(UUID incarnation, VerifiedRecovery recovery) {
     doAnswer(
             call -> {
               assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
@@ -534,6 +534,8 @@ class JdbcProtectedAccountActivationTest {
               assertEquals(claim.executionId(), exact.executionId());
               assertEquals(ACCOUNT, exact.accountId());
               assertEquals(incarnation, exact.bootstrapIncarnation());
+              assertEquals(recovery.executionId(), exact.recoveryId());
+              assertEquals(recovery.generation(), exact.recoveryGeneration());
               assertEquals(1, jdbc.update("DELETE FROM synthetic_otp_stage WHERE invite_id=73"));
               return null;
             })

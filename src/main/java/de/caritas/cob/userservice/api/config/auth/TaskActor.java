@@ -7,7 +7,9 @@ public enum TaskActor {
   SETUP(
       Set.of("config-wizard", "invitation-reservations", "consultant-import"),
       Set.of("tenantservice", "agencyservice", "consultingtypeservice", "userservice")),
-  ACCOUNT_CREATE(Set.of("account-provisioning", "account-read"), Set.of("userservice", "oriso-account-lifecycle")),
+  ACCOUNT_CREATE(
+      Set.of("account-provisioning", "account-read"),
+      Set.of("userservice", "oriso-account-lifecycle")),
   ACCOUNT_ADMIN(
       Set.of("account-maintenance", "account-read", "otp-config-admin", "session-exchange"),
       Set.of("userservice", "oriso-account-lifecycle", "oriso-otp")),

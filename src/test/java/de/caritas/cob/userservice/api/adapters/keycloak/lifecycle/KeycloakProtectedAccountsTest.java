@@ -65,7 +65,9 @@ class KeycloakProtectedAccountsTest {
     var checkedCreator = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
     lenient().when(checkedCreator.actor()).thenReturn(TaskActor.ACCOUNT_CREATE);
     lenient().when(checkedCreator.accessToken()).thenReturn("public-synthetic-creator");
-    lenient().when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(checkedCreator);
+    lenient()
+        .when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING))
+        .thenReturn(checkedCreator);
     lenient().when(prepared.approvalId()).thenReturn(APPROVAL);
     lenient().when(prepared.claimId()).thenReturn(CLAIM);
     lenient().when(prepared.attemptId()).thenReturn(ATTEMPT);
