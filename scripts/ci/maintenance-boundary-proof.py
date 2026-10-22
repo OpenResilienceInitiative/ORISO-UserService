@@ -93,6 +93,8 @@ def select_slice(name):
             "missingScopedEmailFinishKeepsActualCGuardAndLegacyInvalidCodeWorking",
             "publicEmailStartAcknowledgedRetryAfterOriginalExpiryReturnsSavedOutcomeWithoutResend",
             "publicLinkedEmailTerminalRefusalAfterOriginalExpiryReturnsSaved400WithoutAnotherAttempt",
+            "publicDeleteAfterSentEmailClearsOnlyOriginalPendingPointerWithVerifiedAck",
+            "publicDeleteInvalidReceiptCannotClearSentPendingEmailPointer",
             "publicEmailStartAcknowledgesOnlyVerifiedSentAndKeepsPendingRecipientEncrypted",
             "publicEmailStartLostReplyNewOwnerReplaysFrozenRecipientAndOriginalExpiry",
             "publicEmailStartSameIdCannotReplaceTheCompletePendingDestination",

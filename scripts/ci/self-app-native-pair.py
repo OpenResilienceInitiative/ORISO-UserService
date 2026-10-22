@@ -4,6 +4,7 @@ import argparse
 import ast
 import base64
 import hashlib
+import http.server
 import importlib.util
 import json
 import os
@@ -18,7 +19,7 @@ import unittest
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-KC_COMMIT = "3d7b1553d99379288d7b441650270468adae7270"
+KC_COMMIT = "50d2518f16de6c1161f632404c8e0ab1c463b299"
 SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserSelfAppOtpNativePairProof"
 CASE = "actualPublicUserAppLostNativeReplyReplaysOneCredentialAndCommitsOwnedInvite"
 EMAIL_CASE = "actualPublicUserEmailLostSentReplyPreservesEarlierOriginalMachineExpiry"
@@ -81,6 +82,20 @@ def sanitize(reports, destination, pair_kind="app"):
     return {**counts, "exact_inventory": valid, "accepted": accepted, "failure_source_locations": sorted(set(locations))}
 
 
+def delivered_code(messages):
+    from email import policy as email_policy
+    from email.parser import BytesParser
+    if len(messages) != 1: raise ValueError("Exactly one actual native message required")
+    message = BytesParser(policy=email_policy.default).parsebytes(messages[0])
+    codes = set()
+    for part in message.walk():
+        if part.get_content_type() in {"text/plain", "text/html"}:
+            text = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8")
+            codes.update(re.findall(r"(?<![0-9])[0-9]{6}(?![0-9])", text))
+    if len(codes) != 1: raise ValueError("Exactly one actual delivered code required")
+    return next(iter(codes))
+
+
 def native(kc, report):
     if platform.system() != "Linux" or os.environ.get("GITHUB_ACTIONS") != "true":
         raise ValueError("Only the fresh isolated Linux hosted job may start native pairing")
@@ -130,6 +145,22 @@ def native(kc, report):
                 cls.addClassCleanup(cls.mail.server_close)
                 cls.addClassCleanup(cls.mail.shutdown)
                 threading.Thread(target=cls.mail.serve_forever, daemon=True).start()
+                # Java receives the actual SMTP code only in memory over this owned loopback
+                # fixture. No file, output, receipt, product endpoint or extra runtime actor.
+                class CodeHandler(http.server.BaseHTTPRequestHandler):
+                    def log_message(self, *args): pass
+                    def do_GET(self):
+                        if self.path != "/one-delivered-code":
+                            self.send_response(404); self.end_headers(); return
+                        try: body = delivered_code(cls.mail.messages).encode()
+                        except (ValueError, UnicodeError):
+                            self.send_response(503); self.end_headers(); return
+                        self.send_response(200); self.send_header("Content-Type", "text/plain")
+                        self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+                cls.code_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), CodeHandler)
+                cls.addClassCleanup(cls.code_server.server_close)
+                cls.addClassCleanup(cls.code_server.shutdown)
+                threading.Thread(target=cls.code_server.serve_forever, daemon=True).start()
             super().setUpClass()
 
         @classmethod
@@ -138,7 +169,7 @@ def native(kc, report):
 
         @classmethod
         def reviewed_self_operations(cls):
-            return ["account.read", "otp.email-start" if kind == "email" else "otp.app-setup"]
+            return ["account.read", "otp.email-start", "otp.email-finish"] if kind == "email" else ["account.read", "otp.app-setup"]
 
         @classmethod
         def extra_launch_arguments(cls):
@@ -179,6 +210,8 @@ def native(kc, report):
         phase = "actual-public-java-native-pair"
         environment = dict(os.environ)
         environment.update({"PAIR_KIND": kind, "PAIR_NATIVE_BASE": fixture.base, "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id, "PAIR_ACCOUNT_ID": fixture.account_id, "PAIR_USERNAME": fixture.creation_input["account"]["username"], "PAIR_PASSWORD": fixture.creation_input["account"]["password"], "PAIR_HUMAN_CLIENT": CLIENT, "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(), "PAIR_WITNESS": str(report.with_name("self-app-native-witness.json").resolve())})
+        if kind == "email":
+            environment["PAIR_MAIL_CALLBACK"] = "http://127.0.0.1:" + str(UserPair.code_server.server_address[1]) + "/one-delivered-code"
         for actor, (client, roles) in lifecycle.ACTORS.items():
             environment.update({"PAIR_" + actor + "_CLIENT": client, "PAIR_" + actor + "_SECRET": "synthetic-lifecycle-" + actor, "PAIR_" + actor + "_SUBJECT": lifecycle.SUBJECTS[actor]})
         reports = ROOT / "target/surefire-reports"
@@ -200,7 +233,11 @@ def native(kc, report):
         if kind == "email":
             receipt["single_native_mail_credential"] = len([c for c in credentials if c["type"] == "MAIL_OTP_CM"]) == 1
             receipt["single_actual_smtp"] = len(UserPair.mail.messages) == 1
-            receipt["accepted"] &= receipt["single_native_mail_credential"] and receipt["single_actual_smtp"]
+            native_user = fixture.admin("GET", "/users/" + fixture.account_id)
+            mail = [c for c in credentials if c["type"] == "MAIL_OTP_CM"]
+            receipt["native_email_finished"] = native_user.get("email") == "pair-pending@oriso.org" and native_user.get("emailVerified") is True
+            receipt["native_mail_active"] = len(mail) == 1 and json.loads(mail[0]["credentialData"])["active"] is True
+            receipt["accepted"] &= receipt["single_native_mail_credential"] and receipt["single_actual_smtp"] and receipt["native_email_finished"] and receipt["native_mail_active"]
         else:
             receipt["single_native_app_credential"] = len([c for c in credentials if c["type"] == "otp"]) == 1
             receipt["accepted"] &= receipt["single_native_app_credential"]

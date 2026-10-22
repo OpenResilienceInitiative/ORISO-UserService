@@ -51,6 +51,11 @@ class SelfAppNativePairEvidenceTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     PROOF.sanitize(root, root / "clean.xml", "other")
 
+    def test_delivered_code_requires_one_actual_message_and_one_distinct_code(self):
+        self.assertEqual("654321", PROOF.delivered_code([b"Content-Type: text/plain\n\n654321"]))
+        for messages in ([], [b"Content-Type: text/plain\n\nnone"], [b"Content-Type: text/plain\n\n654321 and 123456"], [b"one", b"two"]):
+            with self.subTest(count=len(messages)), self.assertRaises(ValueError): PROOF.delivered_code(messages)
+
     def test_native_workflow_has_read_only_pins_required_builds_and_bounded_cleanup(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/scenario-c-self-app-native-pair.yml").read_text())
         self.assertEqual({"contents": "read"}, workflow["permissions"])

@@ -691,6 +691,44 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
+  void publicDeleteAfterSentEmailClearsOnlyOriginalPendingPointerWithVerifiedAck() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.prepareDeliveredEmail();
+      fixture.request.setMethod("DELETE"); fixture.request.setRequestURI("/service/users/2fa/app");
+      fixture.expectDelete(false, "PENDING_SETUP");
+      assertEquals(200, fixture.controller.deactivateTwoFactorAuthByApp().getStatusCode().value());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertNull(fixture.pendingEmailOperation());
+      assertEquals("original@oriso.org", fixture.currentEmail());
+      assertEquals("PENDING_SETUP", fixture.inviteStatus());
+      String laterPending = UUID.randomUUID().toString();
+      fixture.jdbc.update("insert into identity_self_otp_pending_email(account_id,start_operation_id) values(?,?)", ACCOUNT, laterPending);
+      assertEquals(200, fixture.controller.deactivateTwoFactorAuthByApp().getStatusCode().value());
+      assertEquals(laterPending, fixture.pendingEmailOperation());
+      assertEquals(0, fixture.domainWrites());
+      assertEquals(2, fixture.nativeExecutions.get());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void publicDeleteInvalidReceiptCannotClearSentPendingEmailPointer() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.prepareDeliveredEmail();
+      fixture.request.setMethod("DELETE"); fixture.request.setRequestURI("/service/users/2fa/app");
+      fixture.tamperReceipt = true;
+      fixture.expectDelete(false, "PENDING_SETUP");
+      assertThrows(ServiceUnavailableException.class, () -> fixture.controller.deactivateTwoFactorAuthByApp());
+      assertEquals("FROZEN", fixture.status());
+      assertEquals(fixture.emailStartOperation, fixture.pendingEmailOperation());
+      assertEquals("original@oriso.org", fixture.currentEmail());
+      assertEquals("PENDING_SETUP", fixture.inviteStatus());
+      assertEquals(0, fixture.domainWrites());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
   void missingScopedEmailFinishKeepsActualCGuardAndLegacyInvalidCodeWorking() throws Exception {
     try (var fixture = new Fixture(true, false)) {
       fixture.request.setMethod("POST");
@@ -1394,7 +1432,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
               });
     }
 
-    void expectDelete(boolean lostReply) {
+    void expectDelete(boolean lostReply) { expectDelete(lostReply, "ACTIVE"); }
+
+    void expectDelete(boolean lostReply, String initialGate) {
       server
           .expect(
               requestTo(
@@ -1404,7 +1444,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
               outbound -> {
                 assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
                 assertEquals("PREPARED", status());
-                assertEquals("ACTIVE", inviteStatus());
+                assertEquals(initialGate, inviteStatus());
                 return withSuccess(
                         "{\"id\":\""
                             + ACCOUNT
@@ -1425,7 +1465,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
               outbound -> {
                 assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
                 assertEquals("FROZEN", status());
-                assertEquals("ACTIVE", inviteStatus());
+                assertEquals(initialGate, inviteStatus());
                 assertEquals(0, domainWrites());
                 String wire = ((MockClientHttpRequest) outbound).getBodyAsString();
                 var body = codec.read(wire, ObjectNode.class);

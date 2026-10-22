@@ -126,6 +126,8 @@ class UserSelfAppOtpNativePairProof {
     var lost = new AtomicInteger();
     var frozenWire = new AtomicReference<String>();
     var frozenCipher = new AtomicReference<String>();
+    var finishingEmail = new java.util.concurrent.atomic.AtomicBoolean();
+    var activeOperation = new AtomicReference<>(operation);
     var source =
         new DriverManagerDataSource(
             "jdbc:h2:mem:app-native-"
@@ -172,8 +174,8 @@ class UserSelfAppOtpNativePairProof {
                     logical
                         .getPath()
                         .contains(
-                            email
-                                ? "/otp-config/send-verification-mail/"
+                            finishingEmail.get() ? "/otp-config/setup-otp-mail/"
+                                : email ? "/otp-config/send-verification-mail/"
                                 : "/otp-config/setup-otp/");
                 if (mutation) {
                   assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
@@ -182,13 +184,13 @@ class UserSelfAppOtpNativePairProof {
                       jdbc.queryForObject(
                           "select status from identity_self_app_otp_intent where operation_id=?",
                           String.class,
-                          operation));
+                          activeOperation.get()));
                   assertEquals(
                       "PENDING_SETUP",
                       jdbc.queryForObject(
                           "select two_factor_status from account_invite where id=1", String.class));
                   String wire = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-                  if (email) {
+                  if (email && !finishingEmail.get()) {
                     assertTrue(firstMachineExpiry.get() > 0);
                     assertTrue(firstMachineExpiry.get() < humanExpiry.get());
                     assertEquals(
@@ -199,7 +201,7 @@ class UserSelfAppOtpNativePairProof {
                       jdbc.queryForObject(
                           "select envelope from identity_self_app_otp_intent where operation_id=?",
                           String.class,
-                          operation);
+                          activeOperation.get());
                   if (frozenWire.get() == null) {
                     frozenWire.set(wire);
                     frozenCipher.set(cipher);
@@ -235,9 +237,9 @@ class UserSelfAppOtpNativePairProof {
                                 : "native-stock-http",
                     response.getStatusCode().value());
                 if (mutation
-                    && (!email || response.getStatusCode().value() == 200)
+                    && (finishingEmail.get() ? response.getStatusCode().value() == 201 : !email || response.getStatusCode().value() == 200)
                     && lost.getAndIncrement() == 0) {
-                  assertEquals(email ? 200 : 201, response.getStatusCode().value());
+                  assertEquals(finishingEmail.get() ? 201 : email ? 200 : 201, response.getStatusCode().value());
                   response.getBody().readAllBytes();
                   response.close();
                   throw new ResourceAccessException("Fixture lost actual committed native reply");
@@ -377,12 +379,20 @@ class UserSelfAppOtpNativePairProof {
       var mode = mock(IdentityClientConfig.class);
       when(mode.isFiveActorMode()).thenReturn(true);
       var legacy = mock(IdentityManager.class);
+      var accounts = mock(AccountManaging.class);
+      when(accounts.patchUser(anyMap())).thenAnswer(invocation -> {
+        assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+        Map<String, Object> patch = invocation.getArgument(0);
+        assertEquals(Map.of("id", account, "email", pendingEmail), patch);
+        assertEquals(1, jdbc.update("update user set email=? where user_id=? and tenant_id=11 and delete_date is null", pendingEmail, account));
+        return Optional.of(patch);
+      });
       var delegate =
           new UserTwoFactorAuthControllerDelegate(
               human,
               identity,
               legacy,
-              mock(AccountManaging.class),
+              accounts,
               inviteService,
               new UserDtoMapper(identity),
               new UsernameTranscoder());
@@ -512,6 +522,37 @@ class UserSelfAppOtpNativePairProof {
             flat.contains(secret), "No plaintext secret or JWT may enter the private durable row");
       if (email) assertFalse(flat.contains(pendingEmail));
       phase("public-success", email ? 204 : 200);
+      if (email) {
+        String callback = required("PAIR_MAIL_CALLBACK");
+        assertTrue(callback.matches("http://127\\.0\\.0\\.1:[0-9]+/one-delivered-code"));
+        String deliveredCode = http.getForObject(callback, String.class);
+        assertTrue(deliveredCode != null && deliveredCode.matches("[0-9]{6}"), "One actual SMTP-delivered code required");
+        String finishOperation = UUID.randomUUID().toString();
+        request.removeHeader("Idempotency-Key"); request.addHeader("Idempotency-Key", finishOperation);
+        request.setMethod("POST");
+        finishingEmail.set(true); activeOperation.set(finishOperation); frozenWire.set(null); frozenCipher.set(null); lost.set(0);
+        assertThrows(RuntimeException.class, () -> controller.finishTwoFactorAuthByEmailSetup(deliveredCode));
+        assertEquals(1, lost.get(), "The actual first native201 must be the lost reply");
+        assertEquals("FROZEN", jdbc.queryForObject("select status from identity_self_app_otp_intent where operation_id=?", String.class, finishOperation));
+        assertEquals("original@oriso.org", jdbc.queryForObject("select email from user where user_id=?", String.class, account));
+        assertEquals(0, activationCalls.get());
+        delegate.setSelfAppOtpMaintenance(new SelfAppOtpMaintenance(mode, human, request, jdbc, transactions, actors, broker, codec, http, Clock.systemUTC(), "http://maintenance-human-fixture.invalid", realm, realmId));
+        assertEquals(204, assertDoesNotThrow(() -> controller.finishTwoFactorAuthByEmailSetup(deliveredCode)).getStatusCode().value());
+        assertEquals(204, controller.finishTwoFactorAuthByEmailSetup(deliveredCode).getStatusCode().value());
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from identity_self_app_otp_intent where operation_id=?", String.class, finishOperation));
+        assertEquals(pendingEmail, jdbc.queryForObject("select email from user where user_id=?", String.class, account));
+        assertEquals(0, jdbc.queryForObject("select count(*) from identity_self_otp_pending_email where account_id=?", Integer.class, account));
+        assertEquals("ACTIVE", jdbc.queryForObject("select two_factor_status from account_invite where id=1", String.class));
+        assertEquals(1, activationCalls.get()); assertEquals(5, nativeCalls.get());
+        String finishReceipt = jdbc.queryForObject("select receipt from identity_self_app_otp_intent where operation_id=?", String.class, finishOperation);
+        var finishFacts=codec.read(new String(Base64.getUrlDecoder().decode(finishReceipt.split("\\.")[0]), StandardCharsets.UTF_8), JsonNode.class);
+        assertEquals("otp.email-finish", finishFacts.path("operation").textValue());
+        assertEquals(operation, finishFacts.path("emailStartOperationId").textValue());
+        assertEquals(actors.require(TaskPurpose.OTP).serviceSubject(), finishFacts.path("ownerSubject").textValue());
+        String allStored=jdbc.queryForList("select * from identity_self_app_otp_intent").toString();
+        for(String secret:List.of(humanBearer, checkedMachine.accessToken(), deliveredCode, pendingEmail)) assertFalse(allStored.contains(secret), "No delivered secret or bearer at rest");
+        phase("public-success", 204);
+      }
       verifyNoInteractions(legacy);
     } finally {
       SecurityContextHolder.clearContext();
