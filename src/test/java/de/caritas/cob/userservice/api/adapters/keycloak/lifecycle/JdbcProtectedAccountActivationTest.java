@@ -259,6 +259,92 @@ class JdbcProtectedAccountActivationTest {
     verify(admins, times(1)).saveAndFlush(any());
   }
 
+  @Test
+  void aLostCommitReplyCanFinishFromConsumedStatusAfterExpiryWithoutNewActivation() {
+    assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy));
+    Completion complete = completion();
+    when(otp.completed(any())).thenReturn(complete);
+    var ready = assertDoesNotThrow(() -> restart().ready(claim, complete));
+    Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
+    var historical = assertDoesNotThrow(() -> acceptanceAt(late).historical(73));
+    assertThrows(RuntimeException.class, () -> acceptanceAt(late).resume(73, TOKEN));
+    assertThrows(RuntimeException.class, () -> activationAt(late).ready(claim, complete));
+    // A native commit can permit the first login before its lost reply is reconciled.
+    jdbc.update("UPDATE account_inactivity SET last_activity=? WHERE identity_id=?", Timestamp.from(late.instant()), ACCOUNT);
+    clearInvocations(otp);
+    var saved = assertDoesNotThrow(() -> activationAt(late).historicalReady(historical));
+    assertEquals(ready.outcome(), saved.outcome());
+    assertSame(created, saved.created());
+    var terminal = committed(ready.outcome());
+    assertDoesNotThrow(() -> activationAt(late).acknowledge(saved, terminal));
+    assertDoesNotThrow(() -> activationAt(late).acknowledge(saved, terminal));
+    assertEquals("COMMITTED", state());
+    assertEquals("COMPLETED", jdbc.queryForObject("SELECT provisioning_status FROM account_invite", String.class));
+    verifyNoInteractions(otp);
+    verify(admins, times(1)).saveAndFlush(any());
+    assertNotEquals(JdbcProtectedAccountActivation.ReadyActivation.class, saved.getClass());
+  }
+
+  @Test
+  void historicalStatusCannotAcknowledgeAForeignOutcomeOrAlteredSavedReadyDigest() {
+    assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy));
+    Completion complete = completion();
+    when(otp.completed(any())).thenReturn(complete);
+    var ready = assertDoesNotThrow(() -> restart().ready(claim, complete));
+    Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
+    var historical = assertDoesNotThrow(() -> acceptanceAt(late).historical(73));
+    var saved = assertDoesNotThrow(() -> activationAt(late).historicalReady(historical));
+    var foreign = committed(new AccountLifecycleDtos.LocalOutcome(1, UUID.randomUUID(), "f".repeat(64)));
+    assertThrows(RuntimeException.class, () -> activationAt(late).acknowledge(saved, foreign));
+    assertEquals("READY", state());
+    jdbc.update("UPDATE protected_account_activation SET ready_effects_digest=?", "a".repeat(64));
+    assertThrows(RuntimeException.class, () -> activationAt(late).historicalReady(historical));
+    assertThrows(RuntimeException.class, () -> activationAt(late).acknowledge(saved, committed(ready.outcome())));
+    assertEquals("READY", state());
+    assertEquals("IN_PROGRESS", jdbc.queryForObject("SELECT provisioning_status FROM account_invite", String.class));
+  }
+
+  @Test
+  void historicalCustodyCannotTurnAnOtpPendingOrMismatchedInvitationIntoReady() {
+    assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy));
+    Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
+    var historical = assertDoesNotThrow(() -> acceptanceAt(late).historical(73));
+    assertThrows(RuntimeException.class, () -> activationAt(late).historicalReady(historical));
+    assertEquals("WAITING_OTP", state());
+    jdbc.update("UPDATE account_invite SET accepted_by_user_id=?", UUID.randomUUID().toString());
+    assertThrows(RuntimeException.class, () -> acceptanceAt(late).historical(73));
+    assertEquals("WAITING_OTP", state());
+    verify(otp, never()).setupApp(any(), any());
+    verify(otp, never()).startEmail(any());
+    verify(otp, never()).finishEmail(any(), any());
+  }
+
+  private VerifiedCommitted committed(AccountLifecycleDtos.LocalOutcome local) {
+    var terminal = mock(VerifiedCommitted.class);
+    when(terminal.claimId()).thenReturn(claim.claimId());
+    when(terminal.attemptId()).thenReturn(claim.attemptId());
+    when(terminal.accountId()).thenReturn(ACCOUNT);
+    when(terminal.localOutcome()).thenReturn(local);
+    when(terminal.terminalReceipt()).thenReturn("synthetic-authenticated-terminal-receipt");
+    return terminal;
+  }
+
+  private JdbcProtectedInvitationJournal journalAt(Clock at) {
+    byte[] key = HexFormat.of().parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    var approvals = new ProtectedInvitationCodec(key, at, "oriso", "native-synthetic-realm");
+    return new JdbcProtectedInvitationJournal(jdbc, manager, approvals, json, at);
+  }
+
+  private JdbcProtectedInvitationAcceptance acceptanceAt(Clock at) {
+    byte[] key = HexFormat.of().parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    var approvals = new ProtectedInvitationCodec(key, at, "oriso", "native-synthetic-realm");
+    return new JdbcProtectedInvitationAcceptance(jdbc, manager, journalAt(at), approvals, json, at);
+  }
+
+  private JdbcProtectedAccountActivation activationAt(Clock at) {
+    return new JdbcProtectedAccountActivation(jdbc, manager, journalAt(at), accounts, json, otp, admins, inactivity, at);
+  }
+
   private Completion completion() {
     var complete = mock(Completion.class);
     when(complete.claimId()).thenReturn(claim.claimId());

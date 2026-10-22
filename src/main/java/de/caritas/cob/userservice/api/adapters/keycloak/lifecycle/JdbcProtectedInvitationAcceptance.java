@@ -48,7 +48,7 @@ public final class JdbcProtectedInvitationAcceptance {
         || !registration.isObject()) throw unavailable();
     // Freeze the caller's mutable JSON before acquiring a lock; no password is persisted.
     JsonNode frozenRegistration = json.read(json.canonical(registration), JsonNode.class);
-    return journal.withReadyInvite(
+    return journal.withRecipientInvite(
         inviteId,
         () -> {
           var invites =
@@ -57,7 +57,6 @@ public final class JdbcProtectedInvitationAcceptance {
                   (rs, index) -> new String[] {rs.getString("status"), rs.getString("token_hash")},
                   inviteId);
           if (invites.size() != 1
-              || !"EMAIL_SENT".equals(invites.getFirst()[0])
               || !equal(tokenHash, invites.getFirst()[1])) throw unavailable();
           FrozenApproval frozen = journal.pending(inviteId);
           String response =
@@ -80,6 +79,7 @@ public final class JdbcProtectedInvitationAcceptance {
                       frozenRegistration));
           var rows = rows(inviteId);
           if (rows.isEmpty()) {
+            if (!"EMAIL_SENT".equals(invites.getFirst()[0])) throw unavailable();
             Timestamp now = Timestamp.from(clock.instant());
             jdbc.update(
                 "INSERT INTO protected_invitation_acceptance"
@@ -100,6 +100,7 @@ public final class JdbcProtectedInvitationAcceptance {
           if (!frozen.approvalId().toString().equals(saved.approvalId())
               || saved.version() != 1
               || !equal(digest, saved.digest())) throw unavailable();
+          requireAcceptedAccount(inviteId, invites.getFirst()[0]);
           return new AcceptanceClaim(
               frozen,
               approval,
@@ -138,19 +139,7 @@ public final class JdbcProtectedInvitationAcceptance {
           if (!frozen.approvalId().toString().equals(saved.approvalId())
               || saved.version() != 1
               || !saved.digest().matches("[0-9a-f]{64}")) throw unavailable();
-          if ("ACCEPTED".equals(invites.getFirst()[0])) {
-            String accepted =
-                jdbc.queryForObject(
-                    "SELECT accepted_by_user_id FROM account_invite WHERE id=?",
-                    String.class,
-                    inviteId);
-            String owned =
-                jdbc.queryForObject(
-                    "SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?",
-                    String.class,
-                    inviteId);
-            if (owned == null || !uuid(owned).toString().equals(accepted)) throw unavailable();
-          }
+          requireAcceptedAccount(inviteId, invites.getFirst()[0]);
           return new AcceptanceClaim(
               frozen,
               approval,
@@ -160,6 +149,41 @@ public final class JdbcProtectedInvitationAcceptance {
               saved.digest(),
               tokenHash);
         });
+  }
+
+  /** Saved terminal-status custody cannot authorize creation or a new activation. */
+  public HistoricalAcceptance historical(long inviteId) {
+    throw unavailable();
+  }
+
+  public static final class HistoricalAcceptance {
+    private final AcceptanceClaim claim;
+
+    private HistoricalAcceptance(AcceptanceClaim claim) {
+      this.claim = claim;
+    }
+
+    AcceptanceClaim claim() {
+      return claim;
+    }
+
+    @Override
+    public String toString() {
+      return "ProtectedHistoricalAcceptance[redacted]";
+    }
+  }
+
+  private void requireAcceptedAccount(long inviteId, String status) {
+    if (!"ACCEPTED".equals(status)) return;
+    String accepted =
+        jdbc.queryForObject(
+            "SELECT accepted_by_user_id FROM account_invite WHERE id=?", String.class, inviteId);
+    String owned =
+        jdbc.queryForObject(
+            "SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?",
+            String.class,
+            inviteId);
+    if (owned == null || !uuid(owned).toString().equals(accepted)) throw unavailable();
   }
 
   private java.util.List<Row> rows(long inviteId) {

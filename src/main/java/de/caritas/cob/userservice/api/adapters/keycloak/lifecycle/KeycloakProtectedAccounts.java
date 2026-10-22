@@ -79,7 +79,21 @@ public final class KeycloakProtectedAccounts {
   }
 
   public VerifiedCommitted commit(ReadyActivation ready) {
-    throw new IllegalStateException("Protected activation transport is pending");
+    outsideSql();
+    if (ready == null || ready.created() == null || ready.outcome() == null) throw invalid();
+    var actor = actors.require(TaskPurpose.ACCOUNT_PROVISIONING);
+    if (actor.actor() != TaskActor.ACCOUNT_CREATE) throw invalid();
+    var created = ready.created();
+    var local = ready.outcome();
+    byte[] body = codec.commitBody(created, local);
+    String proof = codec.commitProof(created, local, actor);
+    byte[] response =
+        call(created.approvalId(), created.attemptId(), "commit", HttpMethod.POST, body, proof);
+    try {
+      return Objects.requireNonNull(codec.verifyCommitted(created, local, response));
+    } catch (RuntimeException failure) {
+      throw new RemoteFailure(0);
+    }
   }
 
   public PendingOwnedAccount ownedRead(AcceptanceClaim claim, VerifiedCreated created) {
