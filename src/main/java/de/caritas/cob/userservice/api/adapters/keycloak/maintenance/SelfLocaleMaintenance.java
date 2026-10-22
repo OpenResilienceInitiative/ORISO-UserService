@@ -57,8 +57,40 @@ public final class SelfLocaleMaintenance {
   private final @NonNull RestTemplate http;
   private final @NonNull Clock clock;
   private final @NonNull String authServer;
+  private final @NonNull String publicIssuer;
   private final @NonNull String realmName;
   private final @NonNull String realmId;
+
+  public SelfLocaleMaintenance(
+      IdentityClientConfig mode,
+      AuthenticatedUser authenticatedUser,
+      HttpServletRequest request,
+      JdbcTemplate jdbc,
+      PlatformTransactionManager transactions,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      RestTemplate http,
+      Clock clock,
+      String authServer,
+      String realmName,
+      String realmId) {
+    this(
+        mode,
+        authenticatedUser,
+        request,
+        jdbc,
+        transactions,
+        actors,
+        broker,
+        codec,
+        http,
+        clock,
+        authServer,
+        authServer.replaceAll("/+$", "") + "/realms/" + realmName,
+        realmName,
+        realmId);
+  }
 
   public boolean isFiveActorMode() {
     return mode.isFiveActorMode();
@@ -289,7 +321,7 @@ public final class SelfLocaleMaintenance {
         || !jwt.getExpiresAt().isAfter(jwt.getIssuedAt())
         || !jwt.getExpiresAt().isAfter(clock.instant())) throw forbidden();
     String issuer = jwt.getIssuer().toString();
-    String expected = authServer.replaceAll("/+$", "") + "/realms/" + realmName;
+    String expected = publicIssuer;
     String client = jwt.getClaimAsString("azp");
     if (!expected.equals(issuer) || client == null || client.isBlank() || client.length() > 255)
       throw forbidden();
@@ -382,7 +414,18 @@ public final class SelfLocaleMaintenance {
     try {
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
-      headers.setBearerAuth(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE).accessToken());
+      var machine = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
+      long now = clock.instant().getEpochSecond();
+      if (machine == null
+          || machine.actor() != actor.actor()
+          || machine.purpose() != TaskPurpose.ACCOUNT_MAINTENANCE
+          || !actor.clientId().equals(machine.clientId())
+          || !actor.serviceSubject().equals(machine.subject())
+          || !publicIssuer.equals(machine.issuer())
+          || machine.validatedJwtIssuedAt() <= 0
+          || machine.validatedJwtExpiresAt() <= machine.validatedJwtIssuedAt()
+          || machine.validatedJwtExpiresAt() <= now) throw unavailable();
+      headers.setBearerAuth(machine.accessToken());
       headers.set("X-ORISO-Human-Authorization", "Bearer " + self.token);
       headers.set(
           "X-ORISO-Task-Context",

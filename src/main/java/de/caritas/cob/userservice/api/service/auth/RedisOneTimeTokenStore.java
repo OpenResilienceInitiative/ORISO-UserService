@@ -189,6 +189,40 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
     clearSubjectIndexIfOwned(scope, subjectId, tokenKey);
   }
 
+  @Override
+  public void storePasswordReset(String token, PasswordResetBinding binding) {
+    resetCustody().store(token, binding);
+  }
+
+  @Override
+  public Optional<PasswordResetBinding> passwordResetIssuance(String token) {
+    return resetCustody().issuance(token);
+  }
+
+  @Override
+  public void passwordResetDelivery(PasswordResetBinding binding, String delivery) {
+    resetCustody().delivery(binding, delivery);
+  }
+
+  @Override
+  public Optional<PasswordResetClaim> claimPasswordReset(String token, String requestDigest) {
+    return resetCustody().claim(token, requestDigest);
+  }
+
+  @Override
+  public void requirePasswordResetClaim(PasswordResetClaim claim) {
+    resetCustody().requireCurrent(claim);
+  }
+
+  @Override
+  public void finishPasswordResetClaim(PasswordResetClaim claim, boolean accepted) {
+    resetCustody().finish(claim, accepted);
+  }
+
+  private RedisPasswordResetCustody resetCustody() {
+    return new RedisPasswordResetCustody(redisTemplate, keyPrefix);
+  }
+
   private void clearSubjectIndexIfOwned(String scope, String subjectId, String tokenKey) {
     redisTemplate.execute(CLEAR_INDEX_SCRIPT, List.of(subjectIndexKey(scope, subjectId)), tokenKey);
   }

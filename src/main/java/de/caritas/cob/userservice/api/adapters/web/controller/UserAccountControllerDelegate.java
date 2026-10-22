@@ -90,6 +90,23 @@ class UserAccountControllerDelegate {
     this.selfAppOtpMaintenance = maintenance;
   }
 
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance
+      selfPasswordMaintenance;
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig passwordIdentityConfig;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSelfPasswordMaintenance(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance
+          maintenance) {
+    this.selfPasswordMaintenance = maintenance;
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setPasswordIdentityConfig(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    this.passwordIdentityConfig = mode;
+  }
+
   ResponseEntity<Void> updateAbsence(AbsenceDTO absence) {
     var consultant = userAccountProvider.retrieveValidatedConsultant();
     this.consultantDataFacade.updateConsultantAbsent(consultant, absence);
@@ -296,6 +313,17 @@ class UserAccountControllerDelegate {
     if (passwordDTO.getNewPassword() != null
         && passwordDTO.getNewPassword().equals(passwordDTO.getOldPassword())) {
       throw new ConflictException("The new password must differ from the current one");
+    }
+
+    if (passwordIdentityConfig != null && passwordIdentityConfig.isFiveActorMode()) {
+      if (selfPasswordMaintenance == null)
+        throw new ServiceUnavailableException("Scoped password change is unavailable");
+      if (!selfPasswordMaintenance.change(
+          passwordDTO.getOldPassword(),
+          passwordDTO.getNewPassword(),
+          () -> clearPasswordChangeRequirement(authenticatedUser.getUserId())))
+        throw new BadRequestException("Current password was not accepted");
+      return ResponseEntity.ok().build();
     }
 
     var username = authenticatedUser.getUsername();

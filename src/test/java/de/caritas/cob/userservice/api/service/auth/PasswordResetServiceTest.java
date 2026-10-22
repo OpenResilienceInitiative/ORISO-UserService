@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService.PasswordResetMailSender;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -270,6 +272,25 @@ class PasswordResetServiceTest {
   // --- confirmPasswordReset ---
 
   @Test
+  void unsupportedPasswordAdapterRefusesBeforeRemovingTheResetTokenOrClearingSetup() {
+    lenient()
+        .doThrow(new ScopedIdentityCommandRequiredException())
+        .when(identityPasswordUpdater)
+        .requirePasswordUpdateSupport();
+    lenient()
+        .when(oneTimeTokenStore.claim("password-reset", "valid-token"))
+        .thenReturn(Optional.of(validClaim()));
+
+    assertThatThrownBy(
+            () -> passwordResetService.confirmPasswordReset("valid-token", "NewPassw0rd!"))
+        .isInstanceOf(ScopedIdentityCommandRequiredException.class);
+
+    org.mockito.Mockito.verifyNoInteractions(oneTimeTokenStore);
+    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
+    verify(consultantService, never()).clearPasswordChangeRequirement(any());
+  }
+
+  @Test
   void confirmPasswordReset_Should_ReturnFalse_When_TokenIsBlank() {
     assertThat(passwordResetService.confirmPasswordReset("  ", "NewPassw0rd!")).isFalse();
     verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
@@ -368,6 +389,16 @@ class PasswordResetServiceTest {
     boolean result = passwordResetService.confirmPasswordReset("expired-token", "NewPassw0rd!");
 
     assertThat(result).isFalse();
+    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
+    verify(consultantService, never()).clearPasswordChangeRequirement(any());
+    when(oneTimeTokenStore.claim("password-reset", "elapsed-claim"))
+        .thenReturn(
+            Optional.of(
+                new OneTimeTokenStore.TokenClaim(
+                    "user-keycloak-id", Instant.now().minusSeconds(30))));
+
+    assertThat(passwordResetService.confirmPasswordReset("elapsed-claim", "NewPassw0rd!"))
+        .isFalse();
     verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
     verify(consultantService, never()).clearPasswordChangeRequirement(any());
   }
@@ -480,6 +511,59 @@ class PasswordResetServiceTest {
       verify(resolver).resolve(42L);
       verify(applicationSettingsService).getGlobalSmtpSettingsSnapshot();
     }
+  }
+
+  @Test
+  void causalResetPreflightRunsBeforeLegacyRemoveFirstTokenClaim() {
+    when(identityPasswordUpdater.requiresCausalPasswordClaims()).thenReturn(true);
+    org.mockito.Mockito.lenient()
+        .doThrow(new ScopedIdentityCommandRequiredException())
+        .when(identityPasswordUpdater)
+        .requirePasswordResetSupport();
+    assertThatThrownBy(() -> passwordResetService.confirmPasswordReset("token", "new-one"))
+        .isInstanceOf(ScopedIdentityCommandRequiredException.class);
+    verify(oneTimeTokenStore, never()).claim(anyString(), anyString());
+  }
+
+  @Test
+  void causalIssuanceBindsTheActualMailboxBeforeTheActualMailAttempt() {
+    when(identityPasswordUpdater.requiresCausalPasswordClaims()).thenReturn(true);
+    User causalUser = validUser();
+    causalUser.setUserId("00000000-0000-4000-8000-000000000001");
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(causalUser));
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
+        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
+    var issued = new java.util.concurrent.atomic.AtomicReference<PasswordResetBinding>();
+    org.mockito.Mockito.lenient()
+        .when(
+            identityPasswordUpdater.passwordResetIssuance(
+                any(), anyString(), any(), anyString(), anyString(), anyString(), any()))
+        .thenAnswer(
+            call -> {
+              var binding =
+                  new PasswordResetBinding(
+                      call.getArgument(0),
+                      call.getArgument(1),
+                      call.getArgument(2),
+                      call.getArgument(3),
+                      call.getArgument(5),
+                      "version",
+                      "a".repeat(64),
+                      call.getArgument(6));
+              issued.set(binding);
+              return binding;
+            });
+    passwordResetService.requestPasswordReset("testuser", "en");
+    var binding = issued.get();
+    var ordered = org.mockito.Mockito.inOrder(oneTimeTokenStore);
+    ordered
+        .verify(oneTimeTokenStore)
+        .storePasswordReset(anyString(), org.mockito.ArgumentMatchers.eq(binding));
+    ordered.verify(oneTimeTokenStore).passwordResetDelivery(binding, "ATTEMPTED");
+    ordered.verify(oneTimeTokenStore).passwordResetDelivery(binding, "SENT");
+    assertThat(sentMails).hasSize(1);
+    verify(oneTimeTokenStore, never())
+        .store(anyString(), anyString(), anyString(), any(), anyBoolean());
   }
 
   private User validUser() {

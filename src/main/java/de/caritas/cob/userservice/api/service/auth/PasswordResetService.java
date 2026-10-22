@@ -57,6 +57,46 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class PasswordResetService {
 
+  /** Only the actual possession-plus-custody branch constructs a request-lived continuation. */
+  public static final class ClaimedReset {
+    private final PasswordResetService owner;
+    private final OneTimeTokenStore.PasswordResetClaim claim;
+    private final Thread requestThread = Thread.currentThread();
+    private volatile boolean active = true;
+
+    private ClaimedReset(PasswordResetService owner, OneTimeTokenStore.PasswordResetClaim claim) {
+      this.owner = owner;
+      this.claim = claim;
+    }
+
+    /**
+     * Fresh data check. Provider authorization and its native result remain independently checked.
+     */
+    public OneTimeTokenStore.PasswordResetClaim checkedClaim() {
+      if (!claim.binding().expiresAt().isAfter(Instant.now())) throw unavailable();
+      return checkedRecoveryClaim();
+    }
+
+    /**
+     * Historical data only; the adapter may only recover its exact already frozen native intent.
+     */
+    public OneTimeTokenStore.PasswordResetClaim checkedRecoveryClaim() {
+      if (!active || Thread.currentThread() != requestThread) throw unavailable();
+      owner.oneTimeTokenStore.requirePasswordResetClaim(claim);
+      return claim;
+    }
+
+    private static de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException
+        unavailable() {
+      return new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+
+    @Override
+    public String toString() {
+      return "ClaimedPasswordReset[redacted]";
+    }
+  }
+
   private static final Duration RESET_TOKEN_TTL = Duration.ofMinutes(120);
   private static final String TOKEN_SCOPE = "password-reset";
 
@@ -194,6 +234,10 @@ public class PasswordResetService {
     if (isBlank(token) || isBlank(newPassword)) {
       return false;
     }
+    if (identityPasswordUpdater.requiresCausalPasswordClaims()) {
+      return confirmCausalPasswordReset(token, newPassword);
+    }
+    identityPasswordUpdater.requirePasswordUpdateSupport();
 
     Optional<OneTimeTokenStore.TokenClaim> claim;
     try {
@@ -205,7 +249,9 @@ public class PasswordResetService {
           redisFailure.getClass().getSimpleName());
       return false;
     }
-    if (claim.isEmpty()) {
+    if (claim.isEmpty()
+        || claim.get().expiresAt() == null
+        || !claim.get().expiresAt().isAfter(Instant.now())) {
       return false;
     }
 
@@ -232,6 +278,41 @@ public class PasswordResetService {
 
     // Success only: the password is the owner's own now.
     clearPasswordChangeRequirement(claim.get().subjectId());
+    return true;
+  }
+
+  private boolean confirmCausalPasswordReset(String token, String newPassword) {
+    identityPasswordUpdater.requirePasswordResetSupport();
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+        .isActualTransactionActive())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    Optional<OneTimeTokenStore.PasswordResetClaim> claimed;
+    try {
+      var issuance = oneTimeTokenStore.passwordResetIssuance(token);
+      if (issuance.isEmpty()) return false;
+      String digest =
+          identityPasswordUpdater.passwordResetRequestDigest(issuance.get(), newPassword);
+      claimed = oneTimeTokenStore.claimPasswordReset(token, digest);
+    } catch (RuntimeException unavailable) {
+      log.warn("Password-reset custody unavailable ({})", unavailable.getClass().getSimpleName());
+      return false;
+    }
+    if (claimed.isEmpty()) return false;
+    var claim = claimed.get();
+    var handle = new ClaimedReset(this, claim);
+    try {
+      // The finite provider resolves an exact saved result before considering mutable state.
+      // It owns local SQL completion and its verified receipt in the same transaction.
+      identityPasswordUpdater.updateClaimedPasswordReset(handle, newPassword);
+    } catch (CustomValidationHttpStatusException rejected) {
+      // Only a cryptographically checked native pre-write password-policy terminal may get here.
+      oneTimeTokenStore.finishPasswordResetClaim(claim, false);
+      throw rejected;
+    } finally {
+      handle.active = false;
+    }
+    // A lost Redis ACK is recovered through the same saved SQL/native result on the next request.
+    oneTimeTokenStore.finishPasswordResetClaim(claim, true);
     return true;
   }
 
@@ -264,14 +345,19 @@ public class PasswordResetService {
     if (userOptional.isPresent()) {
       User user = userOptional.get();
       return Optional.of(
-          new AccountResetTarget(user.getUserId(), user.getEmail(), user.getTenantId()));
+          new AccountResetTarget(
+              user.getUserId(), user.getEmail(), user.getTenantId(), user.getUsername(), "USER"));
     }
 
     Optional<Consultant> consultantOptional = consultantService.findConsultantForSignIn(username);
     return consultantOptional.map(
         consultant ->
             new AccountResetTarget(
-                consultant.getId(), consultant.getEmail(), consultant.getTenantId()));
+                consultant.getId(),
+                consultant.getEmail(),
+                consultant.getTenantId(),
+                consultant.getUsername(),
+                "CONSULTANT"));
   }
 
   private Optional<AccountResetTarget> resolveAccount(
@@ -279,7 +365,18 @@ public class PasswordResetService {
     if (application == PasswordResetApplication.ADMIN) {
       Optional<Admin> adminOptional = adminRepository.findForSignIn(username);
       return adminOptional.map(
-          admin -> new AccountResetTarget(admin.getId(), admin.getEmail(), admin.getTenantId()));
+          admin ->
+              new AccountResetTarget(
+                  admin.getId(),
+                  admin.getEmail(),
+                  admin.getTenantId(),
+                  admin.getUsername(),
+                  switch (admin.getType()) {
+                    case SUPER -> "PLATFORM_ADMIN";
+                    case TENANT -> "TENANT_ADMIN";
+                    case AGENCY -> "AGENCY_ADMIN";
+                    case SUPPORT -> "UNSUPPORTED";
+                  }));
     }
     return resolveAccount(username);
   }
@@ -316,24 +413,59 @@ public class PasswordResetService {
     }
     var smtpSettings = smtpSettingsOptional.get();
 
-    String oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
+    boolean causal = identityPasswordUpdater.requiresCausalPasswordClaims();
+    PasswordResetBinding issuance = null;
+    String oneTimeToken;
+    if (causal) {
+      identityPasswordUpdater.requirePasswordResetSupport();
+      UUID workflow = UUID.randomUUID();
+      Instant expiry = Instant.now().plus(RESET_TOKEN_TTL);
+      issuance =
+          identityPasswordUpdater.passwordResetIssuance(
+              workflow,
+              target.getKeycloakUserId(),
+              target.getTenantId(),
+              target.getUsername(),
+              target.getEmail(),
+              target.getAccountKind(),
+              expiry);
+      if (issuance == null
+          || !workflow.equals(issuance.workflowId())
+          || !target.getKeycloakUserId().equals(issuance.subjectId())
+          || !java.util.Objects.equals(target.getTenantId(), issuance.tenantId())
+          || !target.getAccountKind().equals(issuance.accountKind())
+          || !expiry.equals(issuance.expiresAt()))
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      oneTimeToken = newResetToken();
+      oneTimeTokenStore.storePasswordReset(oneTimeToken, issuance);
+    } else {
+      oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
+    }
     String resetUrl = buildResetFrontendUrl(oneTimeToken, frontendBaseUrl);
-
+    boolean attempted = false;
     try {
+      if (causal) {
+        oneTimeTokenStore.passwordResetDelivery(issuance, "ATTEMPTED");
+        attempted = true;
+      }
       mailSender.send(
           target.getEmail(), locale, resetUrl, target.getTenantId(), frontendBaseUrl, smtpSettings);
+      if (causal) oneTimeTokenStore.passwordResetDelivery(issuance, "SENT");
     } catch (Exception ex) {
-      // Do not leave a token behind for a mail that never went out, and never log PII (account id,
-      // recipient, or the raw exception message) — record the exception class only.
       try {
-        oneTimeTokenStore.discard(TOKEN_SCOPE, oneTimeToken, target.getKeycloakUserId());
-      } catch (RuntimeException redisFailure) {
+        if (causal) {
+          // SMTP may have delivered before its response was lost. Actual token possession plus
+          // the original attempted mailbox is required; never revoke that received link here.
+          if (attempted) oneTimeTokenStore.passwordResetDelivery(issuance, "UNKNOWN");
+        } else {
+          oneTimeTokenStore.discard(TOKEN_SCOPE, oneTimeToken, target.getKeycloakUserId());
+        }
+      } catch (RuntimeException custodyFailure) {
         log.warn(
-            "Password-reset token cleanup unavailable ({})",
-            redisFailure.getClass().getSimpleName());
+            "Password-reset delivery custody unavailable ({})",
+            custodyFailure.getClass().getSimpleName());
       }
       log.warn("Password reset email dispatch failed ({})", ex.getClass().getSimpleName());
-      log.debug("Password reset email dispatch failure detail", ex);
     }
   }
 
@@ -399,13 +531,16 @@ public class PasswordResetService {
   }
 
   private String generateAndStoreToken(String keycloakUserId) {
-    String token =
-        UUID.randomUUID().toString().replace("-", "")
-            + UUID.randomUUID().toString().replace("-", "");
+    String token = newResetToken();
     // Cap at one outstanding token per account across all replicas.
     oneTimeTokenStore.store(
         TOKEN_SCOPE, token, keycloakUserId, Instant.now().plus(RESET_TOKEN_TTL), true);
     return token;
+  }
+
+  private String newResetToken() {
+    return UUID.randomUUID().toString().replace("-", "")
+        + UUID.randomUUID().toString().replace("-", "");
   }
 
   private String buildResetFrontendUrl(String oneTimeToken, String frontendBaseUrl) {
@@ -444,6 +579,8 @@ public class PasswordResetService {
     String keycloakUserId;
     String email;
     Long tenantId;
+    String username;
+    String accountKind;
   }
 
   @lombok.Value

@@ -12,10 +12,14 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims;
+import de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims.Binding;
+import de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims.Claim;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import java.time.LocalDateTime;
@@ -29,6 +33,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /** Single-use password handover for an already persisted admin or counsellor identity. */
@@ -51,6 +56,56 @@ public class ExistingAccountSetupService {
   private final @NonNull InitialPasswordVerifier initialPasswords;
   private final @NonNull IdentityPasswordUpdater passwords;
   private final @NonNull PlatformTransactionManager transactions;
+
+  private ExistingSetupPasswordClaims setupPasswordClaims;
+
+  /** Optional until the checked typed adapter and its same-database journal are installed. */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setSetupPasswordClaims(ExistingSetupPasswordClaims claims) {
+    this.setupPasswordClaims = claims;
+  }
+
+  /** Only this service may issue a live setup handle after the actual owned claim. */
+  public static final class ClaimedSetup {
+    private final ExistingAccountSetupService owner;
+    private final CausalTarget target;
+    private final Thread requestThread = Thread.currentThread();
+    private volatile boolean active = true;
+
+    private ClaimedSetup(ExistingAccountSetupService owner, CausalTarget target) {
+      this.owner = owner;
+      this.target = target;
+    }
+
+    /** Journal data only; the provider must independently verify its finite native result. */
+    public Claim checkedClaim() {
+      if (!active
+          || Thread.currentThread() != requestThread
+          || !target.claim().binding().expiresAt().isAfter(LocalDateTime.now())) {
+        throw new ScopedIdentityCommandRequiredException();
+      }
+      return owner.inTransaction(
+          () -> {
+            owner.setupPasswordClaims.requireCurrentWithinOwner(target.claim());
+            owner.requireSameSavedIdentity(target.saved());
+            AccountInvite current =
+                owner
+                    .invites
+                    .findByIdForUpdate(target.saved().inviteId())
+                    .orElseThrow(ScopedIdentityCommandRequiredException::new);
+            if (!Objects.equals(
+                current.getInitialPasswordVerifier(), target.saved().initialPasswordVerifier())) {
+              throw new ScopedIdentityCommandRequiredException();
+            }
+            return target.claim();
+          });
+    }
+
+    @Override
+    public String toString() {
+      return "ClaimedExistingSetup[redacted]";
+    }
+  }
 
   @Value("${multitenancy.enabled:true}")
   private boolean multitenancyEnabled;
@@ -85,6 +140,11 @@ public class ExistingAccountSetupService {
     if (isBlank(rawToken) || isBlank(chosenPassword)) {
       throw new BadRequestException("Setup link and chosen password are required");
     }
+    if (passwords.requiresCausalPasswordClaims()) {
+      confirmCausal(rawToken, chosenPassword);
+      return;
+    }
+    passwords.requirePasswordUpdateSupport();
     SetupTarget target = inTransaction(() -> claim(rawToken));
     try {
       requireSameCurrentIdentity(target);
@@ -171,6 +231,185 @@ public class ExistingAccountSetupService {
     } catch (RuntimeException finalizationFailure) {
       recordIndeterminate(target.inviteId());
       throw new IllegalStateException("Password changed but setup needs operator review");
+    }
+  }
+
+  private void confirmCausal(String rawToken, String chosenPassword) {
+    passwords.requireExistingSetupPasswordSupport();
+    if (setupPasswordClaims == null
+        || TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new ScopedIdentityCommandRequiredException();
+    }
+    CausalTarget target = inTransaction(() -> claimCausal(rawToken, chosenPassword));
+    if (target.completed()) {
+      return;
+    }
+    boolean unchanged;
+    try {
+      unchanged =
+          initialPasswords.matches(chosenPassword, target.saved().initialPasswordVerifier());
+    } catch (RuntimeException invalidVerifier) {
+      recordIndeterminate(target);
+      throw new IllegalStateException("Account setup verifier needs operator review");
+    }
+    if (unchanged) {
+      releaseDefinitive(target, "SETUP_PASSWORD_UNCHANGED");
+      throw new BadRequestException("Choose a password different from the initial password");
+    }
+
+    ClaimedSetup handle = new ClaimedSetup(this, target);
+    try {
+      // Resolve this exact saved command before mutable provider checks on retries. The checked
+      // adapter verifies current identity/roles/required action when no saved outcome exists.
+      passwords.updateExistingSetupPassword(handle, chosenPassword);
+    } catch (CustomValidationHttpStatusException rejected) {
+      releaseDefinitive(target, "SETUP_PASSWORD_REJECTED");
+      throw rejected;
+    } catch (RuntimeException uncertain) {
+      recordIndeterminate(target);
+      throw new IllegalStateException(
+          "Password setup outcome is indeterminate; operator review is required");
+    } finally {
+      handle.active = false;
+    }
+
+    try {
+      inTransaction(
+          () -> {
+            requireSameSavedIdentity(target.saved());
+            if (target.saved().role() == AccountInviteTargetRole.COUNSELLOR) {
+              inTenantOf(
+                  target.saved(),
+                  () ->
+                      consultants
+                          .findByIdAndDeleteDateIsNull(target.saved().identityId())
+                          .ifPresent(
+                              c -> {
+                                c.setPasswordChangeRequired(false);
+                                consultants.save(c);
+                              }));
+            }
+            int completed =
+                invites.completeExistingAccountSetup(
+                    target.saved().inviteId(),
+                    SETUP,
+                    SENT,
+                    IN_PROGRESS,
+                    AccountInviteStatus.ACCEPTED,
+                    AccountInviteProvisioningStatus.COMPLETED,
+                    EmailVerificationStatus.VERIFIED,
+                    target.saved().identityId(),
+                    LocalDateTime.now());
+            if (completed != 1) {
+              throw new IllegalStateException(
+                  "Existing-account setup claim could not be finalized");
+            }
+            setupPasswordClaims.acknowledgeWithinOwner(target.claim());
+            return null;
+          });
+    } catch (RuntimeException finalizationFailure) {
+      recordIndeterminate(target);
+      throw new IllegalStateException("Password changed but setup needs operator review");
+    }
+  }
+
+  private CausalTarget claimCausal(String rawToken, String chosenPassword) {
+    AccountInvite invite =
+        invites
+            .findByTokenHash(AccountInviteService.hash(rawToken))
+            .orElseThrow(() -> new NotFoundException("Account setup link not found"));
+    boolean completed = invite.getStatus() == AccountInviteStatus.ACCEPTED;
+    if (invite.getPurpose() != SETUP || (invite.getStatus() != SENT && !completed)) {
+      throw new AccountInviteLinkException(AccountInviteLinkException.Reason.NOT_ACTIVE);
+    }
+    if (invite.getExpiresAt() == null
+        || (!completed && !invite.getExpiresAt().isAfter(LocalDateTime.now()))) {
+      throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
+    }
+    if (isBlank(invite.getProvisionedUserId())
+        || isBlank(invite.getSetupBoundUsername())
+        || (multitenancyEnabled && invite.getTenantId() == null)
+        || invite.getTargetRole() == null
+        || isBlank(invite.getRecipientEmail())
+        || (!completed && isBlank(invite.getInitialPasswordVerifier()))) {
+      throw new BadRequestException("Account setup binding is incomplete");
+    }
+    if (invite.getTargetRole() != AccountInviteTargetRole.TENANT_ADMIN
+        && invite.getTargetRole() != AccountInviteTargetRole.AGENCY_ADMIN
+        && invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR) {
+      throw new BadRequestException("Account setup role is not supported");
+    }
+    SetupTarget saved =
+        new SetupTarget(
+            invite.getId(),
+            invite.getProvisionedUserId(),
+            invite.getTargetRole(),
+            invite.getTenantId(),
+            invite.getRecipientEmail(),
+            invite.getSetupBoundUsername(),
+            invite.getInitialPasswordVerifier());
+    requireSameSavedIdentity(saved);
+    Binding binding =
+        new Binding(
+            invite.getId(),
+            saved.identityId(),
+            invite.getTokenHash(),
+            invite.getExpiresAt(),
+            saved.role(),
+            saved.tenantId(),
+            saved.username(),
+            saved.email());
+    // Pure keyed binding only; this port operation cannot issue a bearer or call the provider.
+    String digest = passwords.existingSetupRequestDigest(binding, chosenPassword);
+    return new CausalTarget(
+        saved, setupPasswordClaims.claimWithinOwner(binding, digest), completed);
+  }
+
+  private void releaseDefinitive(CausalTarget target, String reason) {
+    inTransaction(
+        () -> {
+          int released =
+              invites.releaseExistingAccountSetup(
+                  target.saved().inviteId(),
+                  SETUP,
+                  SENT,
+                  IN_PROGRESS,
+                  AccountInviteProvisioningStatus.FAILED,
+                  reason,
+                  LocalDateTime.now());
+          if (released != 1)
+            throw new IllegalStateException("Account setup rejection could not be recorded");
+          setupPasswordClaims.rejectWithinOwner(target.claim());
+          return null;
+        });
+  }
+
+  private void recordIndeterminate(CausalTarget target) {
+    try {
+      inTransaction(
+          () -> {
+            invites.recordIndeterminateExistingAccountSetup(
+                target.saved().inviteId(),
+                SETUP,
+                SENT,
+                IN_PROGRESS,
+                "SETUP_OUTCOME_INDETERMINATE",
+                LocalDateTime.now());
+            setupPasswordClaims.markUnknownWithinOwner(target.claim());
+            return null;
+          });
+    } catch (RuntimeException persistenceFailure) {
+      log.error(
+          "Existing-account setup {} needs operator review; outcome audit unavailable ({})",
+          target.saved().inviteId(),
+          persistenceFailure.getClass().getSimpleName());
+    }
+  }
+
+  private record CausalTarget(SetupTarget saved, Claim claim, boolean completed) {
+    @Override
+    public String toString() {
+      return "ExistingSetupCausalTarget[redacted]";
     }
   }
 

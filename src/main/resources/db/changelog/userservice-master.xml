@@ -267,4 +267,6 @@
   <include file="db/changelog/changeset/20261022_identity_maintenance_retry_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_protected_invitation_cleanup_status_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_general_admin_identity_367/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261022_identity_self_password_367/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261022_identity_setup_password_claim_367/changeSet.xml"/>
 </databaseChangeLog>

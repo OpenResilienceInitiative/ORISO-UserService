@@ -71,6 +71,8 @@ class KeycloakServiceScenarioCModeTest {
 
   @Test
   void fiveActorsRequiresTheScopedAdapterBeforePasswordMutation() {
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class, service::requirePasswordUpdateSupport);
     assertThrows(IllegalStateException.class, () -> service.updatePassword("target", "do-not-log"));
     verify(user, never()).resetPassword(any());
     verifyNoInteractions(nativeClient);
@@ -163,6 +165,7 @@ class KeycloakServiceScenarioCModeTest {
   @Test
   void legacyModeRetainsExistingProfileProjection() {
     when(config.isFiveActorMode()).thenReturn(false);
+    assertDoesNotThrow(service::requirePasswordUpdateSupport);
     assertEquals(java.util.Optional.of(true), service.findEnabledById("target"));
     assertEquals("target", service.findById("target").orElseThrow().id());
     assertEquals("actual-target", service.findById("target").orElseThrow().username());
