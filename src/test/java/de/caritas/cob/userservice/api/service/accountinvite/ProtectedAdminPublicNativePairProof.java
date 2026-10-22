@@ -396,27 +396,31 @@ class ProtectedAdminPublicNativePairProof {
     if (loseCommit) {
       assertEquals(503, activated.getStatus());
       assertTrue(LOST_COMMIT.get());
-      assertEquals("READY", jdbc.queryForObject(
-          "SELECT state FROM protected_account_activation", String.class));
+      assertEquals(
+          "READY",
+          jdbc.queryForObject("SELECT state FROM protected_account_activation", String.class));
       long statusBefore = HTTP.stream().filter(row -> "status".equals(row.get("phase"))).count();
       assertEquals(1, HTTP.stream().filter(row -> "commit".equals(row.get("phase"))).count());
       // Exact saved historical READY can only reconcile the receiving terminal result.
       onboarding.reconcileTerminal(sent.invite().getId());
-      assertEquals(statusBefore + 1,
-          HTTP.stream().filter(row -> "status".equals(row.get("phase"))).count());
+      assertEquals(
+          statusBefore + 1, HTTP.stream().filter(row -> "status".equals(row.get("phase"))).count());
       assertEquals(1, HTTP.stream().filter(row -> "commit".equals(row.get("phase"))).count());
       assertEquals(1, HTTP.stream().filter(row -> "create".equals(row.get("phase"))).count());
       assertEquals(1, HTTP.stream().filter(row -> "app".equals(row.get("phase"))).count());
       onboarding.reconcileTerminal(sent.invite().getId());
-      assertEquals(statusBefore + 1,
-          HTTP.stream().filter(row -> "status".equals(row.get("phase"))).count());
-      Files.writeString(Path.of(required("PAIR_TERMINAL_WITNESS")), json.canonical(Map.of(
-          "realNativeCommitReplyDiscarded", true,
-          "publicUnavailableInsteadOfSuccess", true,
-          "localReadyRetainedBeforeReconcile", true,
-          "independentCurrentSetupStatusRead", true,
-          "noRepeatedCreateOtpOrCommit", true,
-          "cachedLocalTerminalReconcileEffectFree", true)));
+      assertEquals(
+          statusBefore + 1, HTTP.stream().filter(row -> "status".equals(row.get("phase"))).count());
+      Files.writeString(
+          Path.of(required("PAIR_TERMINAL_WITNESS")),
+          json.canonical(
+              Map.of(
+                  "realNativeCommitReplyDiscarded", true,
+                  "publicUnavailableInsteadOfSuccess", true,
+                  "localReadyRetainedBeforeReconcile", true,
+                  "independentCurrentSetupStatusRead", true,
+                  "noRepeatedCreateOtpOrCommit", true,
+                  "cachedLocalTerminalReconcileEffectFree", true)));
     } else {
       assertEquals(200, activated.getStatus());
       assertFalse(LOST_COMMIT.get());
@@ -749,8 +753,10 @@ class ProtectedAdminPublicNativePairProof {
                 else throw new IllegalStateException("Unexpected fixed native public route");
                 HTTP.add(Map.of("phase", phase, "status", response.getStatusCode().value()));
                 Files.writeString(Path.of(required("PAIR_HTTP_WITNESS")), json.canonical(HTTP));
-                if ("commit".equals(phase) && response.getStatusCode().value() == 200
-                    && LOSE_COMMIT.get() && LOST_COMMIT.compareAndSet(false, true)) {
+                if ("commit".equals(phase)
+                    && response.getStatusCode().value() == 200
+                    && LOSE_COMMIT.get()
+                    && LOST_COMMIT.compareAndSet(false, true)) {
                   response.close();
                   throw new java.io.IOException("Synthetic lost committed reply");
                 }
