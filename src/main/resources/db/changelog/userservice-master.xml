@@ -260,4 +260,5 @@
   <include file="db/changelog/changeset/20261022_protected_invitation_mail_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_protected_invitation_cancel_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_protected_invitation_acceptance_367/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261022_protected_otp_bootstrap_367/changeSet.xml"/>
 </databaseChangeLog>
