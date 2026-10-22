@@ -38,6 +38,8 @@ public final class ProtectedAdminOnboardingService {
   private final OperatorDpaContentClient dpa;
   private final TenantCreationClient tenants;
   private final Clock clock;
+  private final ProtectedAccountRecovery recovery;
+  private final JdbcProtectedInvitationCancellation cancellation;
   private final ObjectMapper nodes = new ObjectMapper();
 
   public ProtectedAdminOnboardingService(
@@ -55,6 +57,21 @@ public final class ProtectedAdminOnboardingService {
       OperatorDpaContentClient dpa,
       TenantCreationClient tenants,
       Clock clock) {
+    this(invites,actors,acceptance,codec,creation,accounts,otp,activation,inactivity,usernames,
+        profiles,dpa,tenants,clock,null,null);
+  }
+
+  public ProtectedAdminOnboardingService(
+      AccountInviteService invites, TaskActorConfiguration actors,
+      JdbcProtectedInvitationAcceptance acceptance, ProtectedAccountCodec codec,
+      JdbcProtectedAccountCreation creation, KeycloakProtectedAccounts accounts,
+      ProtectedOtpBootstrap otp, JdbcProtectedAccountActivation activation,
+      AccountInactivityEnrollmentService inactivity, UsernameTranscoder usernames,
+      ProtectedInvitationProfiles profiles, OperatorDpaContentClient dpa,
+      TenantCreationClient tenants, Clock clock,
+      ProtectedAccountRecovery recovery, JdbcProtectedInvitationCancellation cancellation) {
+    this.recovery = recovery;
+    this.cancellation = cancellation;
     this.invites = Objects.requireNonNull(invites);
     this.actors = Objects.requireNonNull(actors);
     this.acceptance = Objects.requireNonNull(acceptance);
