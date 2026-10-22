@@ -146,7 +146,18 @@ public final class JdbcProtectedInvitationCancellation implements ProtectedInvit
 
   /** Authenticated saved fence data only; cleanup-required acknowledgements cannot release. */
   public VerifiedRestriction verifiedRestriction(long inviteId) {
-    throw unavailable();
+    if (inviteId < 1
+        || TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()
+        || !TransactionSynchronizationManager.getResourceMap().isEmpty()) throw unavailable();
+    return local.execute(
+        tx -> {
+          FrozenApproval proposal = journal.lockedRestrictionProposal(inviteId);
+          Row current = row(inviteId, proposal);
+          if (current == null || !"ACKNOWLEDGED".equals(current.state())) throw unavailable();
+          journal.requireRestrictedInvite(inviteId, current.frozen().approval(), true);
+          return checkedAck(current);
+        });
   }
 
   private Row row(long inviteId, FrozenApproval proposal) {

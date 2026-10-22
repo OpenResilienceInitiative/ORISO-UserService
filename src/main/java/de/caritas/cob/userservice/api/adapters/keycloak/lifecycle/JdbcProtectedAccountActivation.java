@@ -68,6 +68,15 @@ public final class JdbcProtectedAccountActivation {
       PendingOwnedAccount pending,
       PreparedBootstrap prepared,
       Policy policy) {
+    return stageLocal(claim, pending, prepared, policy, null);
+  }
+
+  private IdentityOtpCredential stageLocal(
+      AcceptanceClaim claim,
+      PendingOwnedAccount pending,
+      PreparedBootstrap prepared,
+      Policy policy,
+      VerifiedTenant tenant) {
     outsideSql();
     if (pending == null || prepared == null || policy == null) throw unavailable();
     return owned(
@@ -76,16 +85,20 @@ public final class JdbcProtectedAccountActivation {
           var created = pending.created();
           sameClaim(claim, pending.claim());
           requireCreated(claim, created);
+          JsonNode scope = scope(claim);
+          String tenantReceipt = checkedTenant(claim, scope, tenant);
           var previous = rows(claim);
           if (!previous.isEmpty()) {
             var saved = checked(claim, previous.getFirst());
             if (!"WAITING_OTP".equals(saved.state())) throw unavailable();
             if (!equal(accounts.checkpoint(created), saved.checkpoint())) throw unavailable();
+            JsonNode effects = json.read(saved.effects(), JsonNode.class);
+            if (tenantReceipt == null
+                ? effects.has("tenantBootstrapReceipt")
+                : !equal(tenantReceipt, effects.path("tenantBootstrapReceipt").asText(null)))
+              throw unavailable();
             return otp.currentSetupWithinOwner(claim);
           }
-          JsonNode scope = scope(claim);
-          // Reserved creation additionally needs TenantCreationClient's verified result.
-          if (!"EXISTING".equals(scope.path("tenantMode").asText())) throw unavailable();
           if (policy.months() < 1
               || policy.revision() < 0
               || policy.capturedAt() == null
@@ -129,7 +142,10 @@ public final class JdbcProtectedAccountActivation {
           JsonNode effects =
               json.read(
                   json.canonical(
-                      Map.of("admin", adminSnapshot(id), "inactivity", inactivitySnapshot(id))),
+                      tenantReceipt == null
+                          ? Map.of("admin", adminSnapshot(id), "inactivity", inactivitySnapshot(id))
+                          : Map.of("admin", adminSnapshot(id), "inactivity", inactivitySnapshot(id),
+                              "tenantBootstrapReceipt", tenantReceipt)),
                   JsonNode.class);
           String effectJson = json.canonical(effects);
           String digest = json.digest("protected-local-registration/v1", effects);
@@ -181,7 +197,25 @@ public final class JdbcProtectedAccountActivation {
       PreparedBootstrap prepared,
       Policy policy,
       VerifiedTenant tenant) {
-    throw unavailable();
+    if (tenant == null) throw unavailable();
+    return stageLocal(claim, pending, prepared, policy, tenant);
+  }
+
+  private String checkedTenant(AcceptanceClaim claim, JsonNode scope, VerifiedTenant tenant) {
+    if ("EXISTING".equals(scope.path("tenantMode").asText())) {
+      if (tenant != null) throw unavailable();
+      return null;
+    }
+    if (!"RESERVED_NEW".equals(scope.path("tenantMode").asText())
+        || tenant == null
+        || tenant.tenantId() != scope.path("targetTenantIds").get(0).longValue()
+        || !claim.claimId().equals(tenant.claimId())
+        || !claim.attemptId().equals(tenant.attemptId())
+        || !claim.executionId().equals(tenant.executionId())
+        || tenant.receipt() == null
+        || tenant.receipt().isBlank()
+        || tenant.receipt().length() > 16384) throw unavailable();
+    return tenant.receipt();
   }
 
   public Phase phase(AcceptanceClaim claim) {
