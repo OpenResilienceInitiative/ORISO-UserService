@@ -1524,15 +1524,25 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     void expectSavedDelete() {
       assertNotNull(savedDeleteReply);
       assertNotNull(savedDeleteWire);
-      server.expect(requestTo(issuer.issuer() + "/otp-config/delete-otp/ordinary"))
-          .andExpect(method(HttpMethod.DELETE)).andRespond(outbound -> {
-            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-            assertEquals(savedDeleteWire, ((MockClientHttpRequest) outbound).getBodyAsString());
-            var materialized = codec.read(savedDeleteWire, ObjectNode.class);
-            materialized.put("username", "ordinary");
-            checkProof(outbound.getHeaders(), materialized, "otp.delete", "OTP", "oriso-otp", "DELETE");
-            return withSuccess(savedDeleteReply, MediaType.APPLICATION_JSON).createResponse(outbound);
-          });
+      server
+          .expect(requestTo(issuer.issuer() + "/otp-config/delete-otp/ordinary"))
+          .andExpect(method(HttpMethod.DELETE))
+          .andRespond(
+              outbound -> {
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                assertEquals(savedDeleteWire, ((MockClientHttpRequest) outbound).getBodyAsString());
+                var materialized = codec.read(savedDeleteWire, ObjectNode.class);
+                materialized.put("username", "ordinary");
+                checkProof(
+                    outbound.getHeaders(),
+                    materialized,
+                    "otp.delete",
+                    "OTP",
+                    "oriso-otp",
+                    "DELETE");
+                return withSuccess(savedDeleteReply, MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
+              });
     }
 
     void expectDelete(boolean lostReply, String initialGate, int requests) {

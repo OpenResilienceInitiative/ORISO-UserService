@@ -376,7 +376,8 @@ public final class SelfAppOtpMaintenance {
         || !codec.canonical(target(self, row.operation)).equals(row.target))
       throw new ConflictException("The app OTP operation does not match its original request");
     // A terminal result is owned historical data; expiry never grants another native effect.
-    if (row.expiry <= clock.instant().getEpochSecond() && !terminal(row.status)) throw unavailable();
+    if (row.expiry <= clock.instant().getEpochSecond() && !terminal(row.status))
+      throw unavailable();
     JsonNode metadata = null;
     if ("PREPARED".equals(row.status)) {
       if (row.pending
