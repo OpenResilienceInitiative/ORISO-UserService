@@ -19,14 +19,14 @@ import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.Environment;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /** Renders an invite mail with a fresh link, sends it and writes the delivery audit. */
 @Slf4j
@@ -50,8 +50,10 @@ public class InviteDelivery {
   }
 
   boolean protectedModelEnabled() {
-    String model = runtimeEnvironment == null
-        ? "LEGACY" : runtimeEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY");
+    String model =
+        runtimeEnvironment == null
+            ? "LEGACY"
+            : runtimeEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY");
     return switch (model) {
       case "LEGACY" -> false;
       case "FIVE_ACTORS" -> true;
@@ -61,7 +63,8 @@ public class InviteDelivery {
 
   boolean protects(AccountInviteTargetRole role) {
     return (role == AccountInviteTargetRole.TENANT_ADMIN
-        || role == AccountInviteTargetRole.PLATFORM_ADMIN) && protectedModelEnabled();
+            || role == AccountInviteTargetRole.PLATFORM_ADMIN)
+        && protectedModelEnabled();
   }
 
   private void requireOrdinaryDelivery(AccountInvite invite) {
@@ -97,7 +100,8 @@ public class InviteDelivery {
 
   /** The private issuance callback may render only inside the owned outbox SQL transaction. */
   Prepared prepareProtected(AccountInvite invite, InviteEmailTemplate template, LocalDateTime now) {
-    if (invite == null || !protects(invite.getTargetRole())
+    if (invite == null
+        || !protects(invite.getTargetRole())
         || !TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new AccessDeniedException("Protected invitation delivery requires native approval");
     }

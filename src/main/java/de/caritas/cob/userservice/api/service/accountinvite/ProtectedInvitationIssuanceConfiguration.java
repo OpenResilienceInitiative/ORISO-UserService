@@ -49,15 +49,18 @@ public class ProtectedInvitationIssuanceConfiguration {
       if (!"FIVE_ACTORS".equals(required("TASK_IDENTITY_MODEL"))) throw invalid();
       String raw = required("ORISO_PROTECTED_INVITATION_PROFILE_IDS");
       if (raw.getBytes(StandardCharsets.UTF_8).length > 4096) throw invalid();
-      var mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
-          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+      var mapper =
+          new ObjectMapper()
+              .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+              .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
       var node = mapper.readTree(raw);
       if (!node.isObject()) throw invalid();
       var names = new HashSet<String>();
       node.fieldNames().forEachRemaining(names::add);
       if (!names.equals(Set.of("TENANT_ADMIN", "PLATFORM_ADMIN"))) throw invalid();
       var ids = new EnumMap<AccountInviteTargetRole, String>(AccountInviteTargetRole.class);
-      for (var role : Set.of(AccountInviteTargetRole.TENANT_ADMIN, AccountInviteTargetRole.PLATFORM_ADMIN)) {
+      for (var role :
+          Set.of(AccountInviteTargetRole.TENANT_ADMIN, AccountInviteTargetRole.PLATFORM_ADMIN)) {
         if (!node.path(role.name()).isTextual()) throw invalid();
         ids.put(role, node.path(role.name()).textValue());
       }
@@ -76,38 +79,80 @@ public class ProtectedInvitationIssuanceConfiguration {
   }
 
   @Bean
-  JdbcProtectedInvitationJournal protectedInvitationJournal(JdbcTemplate jdbc,
-      PlatformTransactionManager manager, ProtectedInvitationCodec codec, AccountLifecycleCodec json) {
+  JdbcProtectedInvitationJournal protectedInvitationJournal(
+      JdbcTemplate jdbc,
+      PlatformTransactionManager manager,
+      ProtectedInvitationCodec codec,
+      AccountLifecycleCodec json) {
     return new JdbcProtectedInvitationJournal(jdbc, manager, codec, json, Clock.systemUTC());
   }
 
   @Bean
   KeycloakProtectedInvitations keycloakProtectedInvitations(
-      @Qualifier("keycloakRestTemplate") RestTemplate http, TaskActorConfiguration actors,
-      TaskActorTokenBroker broker, ProtectedInvitationCodec codec, KeycloakConfig keycloak) {
-    String server = environment.getProperty(
-        "ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", keycloak.getAuthServerUrl());
-    return new KeycloakProtectedInvitations(http, actors, broker, codec, server, keycloak.getRealm());
+      @Qualifier("keycloakRestTemplate") RestTemplate http,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      ProtectedInvitationCodec codec,
+      KeycloakConfig keycloak) {
+    String server =
+        environment.getProperty(
+            "ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", keycloak.getAuthServerUrl());
+    return new KeycloakProtectedInvitations(
+        http, actors, broker, codec, server, keycloak.getRealm());
   }
 
   @Bean
-  ProtectedInvitationMailOutbox protectedInvitationMailOutbox(JdbcTemplate jdbc,
-      PlatformTransactionManager manager, JdbcProtectedInvitationJournal journal,
-      AccountLifecycleCodec json, ProtectedInvitationProfiles profiles,
-      KeycloakProtectedInvitations approvals, InviteMailDispatchService sender) {
-    return new ProtectedInvitationMailOutbox(jdbc, manager, journal, json, key(),
-        profiles.realmId(), Clock.systemUTC(), approvals, sender);
+  ProtectedInvitationMailOutbox protectedInvitationMailOutbox(
+      JdbcTemplate jdbc,
+      PlatformTransactionManager manager,
+      JdbcProtectedInvitationJournal journal,
+      AccountLifecycleCodec json,
+      ProtectedInvitationProfiles profiles,
+      KeycloakProtectedInvitations approvals,
+      InviteMailDispatchService sender) {
+    return new ProtectedInvitationMailOutbox(
+        jdbc,
+        manager,
+        journal,
+        json,
+        key(),
+        profiles.realmId(),
+        Clock.systemUTC(),
+        approvals,
+        sender);
   }
 
   @Bean
-  ProtectedInvitationIssuance protectedInvitationIssuance(AccountInviteRepository invites,
-      InviteEmailTemplateRepository templates, InviteEmailDeliveryRepository deliveries,
-      PlatformTransactionManager manager, JdbcTemplate jdbc, EntityManager entityManager,
-      AuthenticatedUser human, TaskActorConfiguration actors, ProtectedInvitationProfiles profiles,
-      AccountLifecycleCodec json, ProtectedInvitationCodec codec, JdbcProtectedInvitationJournal journal,
-      KeycloakProtectedInvitations approvals, ProtectedInvitationMailOutbox outbox) {
-    return new ProtectedInvitationIssuance(invites, templates, deliveries, manager, jdbc,
-        entityManager, human, actors, profiles, json, codec, journal, approvals, outbox);
+  ProtectedInvitationIssuance protectedInvitationIssuance(
+      AccountInviteRepository invites,
+      InviteEmailTemplateRepository templates,
+      InviteEmailDeliveryRepository deliveries,
+      PlatformTransactionManager manager,
+      JdbcTemplate jdbc,
+      EntityManager entityManager,
+      AuthenticatedUser human,
+      TaskActorConfiguration actors,
+      ProtectedInvitationProfiles profiles,
+      AccountLifecycleCodec json,
+      ProtectedInvitationCodec codec,
+      JdbcProtectedInvitationJournal journal,
+      KeycloakProtectedInvitations approvals,
+      ProtectedInvitationMailOutbox outbox) {
+    return new ProtectedInvitationIssuance(
+        invites,
+        templates,
+        deliveries,
+        manager,
+        jdbc,
+        entityManager,
+        human,
+        actors,
+        profiles,
+        json,
+        codec,
+        journal,
+        approvals,
+        outbox);
   }
 
   private byte[] key() {
@@ -125,6 +170,7 @@ public class ProtectedInvitationIssuanceConfiguration {
   }
 
   private static IllegalStateException invalid() {
-    return new IllegalStateException("Configure the reviewed protected invitation profile bindings");
+    return new IllegalStateException(
+        "Configure the reviewed protected invitation profile bindings");
   }
 }
