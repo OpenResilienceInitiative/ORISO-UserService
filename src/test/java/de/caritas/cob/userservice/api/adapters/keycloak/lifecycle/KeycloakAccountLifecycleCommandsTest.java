@@ -61,6 +61,28 @@ class KeycloakAccountLifecycleCommandsTest {
       new AccountCreation("syntheticä", null, null, null, "de", "synthetic-pāssword", false);
 
   @Test
+  void ordinaryCreationUsesTheCheckedCreatorWhileGenericIssuanceStaysClosed() throws Exception {
+    credentials();
+    var checked = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+    when(checked.accessToken()).thenReturn("public-test-checked");
+    when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(checked);
+    when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
+        .thenThrow(new IllegalStateException("Generic native issuance remains closed"));
+    var identity = codec.identity(scope, account);
+    var request = new CreateRequest(identity, execution, account);
+    var receipt =
+        new AttemptResult(id, "account", "OPEN", execution, proof(identity, "account"), null, null);
+    server
+        .expect(requestTo(url()))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(header("Authorization", "Bearer public-test-checked"))
+        .andRespond(withSuccess(codec.canonical(receipt), MediaType.APPLICATION_JSON));
+    assertEquals(receipt, assertDoesNotThrow(() -> transport.create(id, request)));
+    verify(broker).issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING);
+    server.verify();
+  }
+
+  @Test
   void sendsExactUtf8CanonicalBytesAndVerifiesFirstNativeReceipt() throws Exception {
     credentials();
     var identity = codec.identity(scope, account);
@@ -78,7 +100,7 @@ class KeycloakAccountLifecycleCommandsTest {
                 MediaType.APPLICATION_JSON));
     assertEquals(receipt, transport.create(id, request));
     server.verify();
-    verify(broker).issue(TaskPurpose.ACCOUNT_PROVISIONING);
+    verify(broker).issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING);
   }
 
   @Test
@@ -165,9 +187,9 @@ class KeycloakAccountLifecycleCommandsTest {
 
   private void credentials() {
     when(actors.require(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(owner);
-    when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
-        .thenReturn(
-            new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_CREATE, "public-test-bearer", 60));
+    var checked = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+    when(checked.accessToken()).thenReturn("public-test-bearer");
+    when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(checked);
   }
 
   private String url() {

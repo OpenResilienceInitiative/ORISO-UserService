@@ -6,8 +6,11 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.*;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos.LocalOutcome;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedAccountActivation.ReadyActivation;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationAcceptance.AcceptanceClaim;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.PreparedCreation;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCommitted;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCreated;
 import de.caritas.cob.userservice.api.config.auth.TaskActor;
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
@@ -59,11 +62,12 @@ class KeycloakProtectedAccountsTest {
                 "backend-account-create",
                 "synthetic-only",
                 "c6c2db59-43dc-49ad-8589-16e91673ce2c"));
+    var checkedCreator = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+    lenient().when(checkedCreator.actor()).thenReturn(TaskActor.ACCOUNT_CREATE);
+    lenient().when(checkedCreator.accessToken()).thenReturn("public-synthetic-creator");
     lenient()
-        .when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
-        .thenReturn(
-            new TaskActorTokenBroker.TaskToken(
-                TaskActor.ACCOUNT_CREATE, "public-synthetic-creator", 60));
+        .when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING))
+        .thenReturn(checkedCreator);
     lenient().when(prepared.approvalId()).thenReturn(APPROVAL);
     lenient().when(prepared.claimId()).thenReturn(CLAIM);
     lenient().when(prepared.attemptId()).thenReturn(ATTEMPT);
@@ -94,6 +98,27 @@ class KeycloakProtectedAccountsTest {
         new KeycloakProtectedAccounts(
             http, actors, broker, codec, "https://auth.example.test", "oriso");
     clearInvocations(actors, broker, codec);
+  }
+
+  @Test
+  void protectedCreationUsesTheCheckedCreatorWhileGenericIssuanceStaysClosed() {
+    var checked = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+    when(checked.actor()).thenReturn(TaskActor.ACCOUNT_CREATE);
+    when(checked.accessToken()).thenReturn("public-synthetic-checked");
+    when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(checked);
+    when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
+        .thenThrow(new IllegalStateException("Generic native issuance remains closed"));
+    server
+        .expect(requestTo(url()))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(header("Authorization", "Bearer public-synthetic-checked"))
+        .andRespond(
+            withStatus(HttpStatus.CREATED)
+                .body(createdResponse)
+                .contentType(MediaType.APPLICATION_JSON));
+    assertSame(created, assertDoesNotThrow(() -> transport.create(prepared)));
+    verify(broker).issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING);
+    server.verify();
   }
 
   @Test
@@ -131,6 +156,53 @@ class KeycloakProtectedAccountsTest {
     assertEquals("enc.synthetic-owned", pending.username());
     verify(codec).checkOwnedProjection(eq(created), aryEq(projection));
     assertEquals("ProtectedPendingOwnedAccount[redacted]", pending.toString());
+    server.verify();
+  }
+
+  @Test
+  void activationRequiresTheCommittedPrivateLocalHandleAndExactNativeReceipt() {
+    var ready = mock(ReadyActivation.class);
+    var local =
+        new LocalOutcome(
+            1, UUID.fromString("742ae66e-2fe1-44d4-998c-d3543e5a1bc8"), "a".repeat(64));
+    when(ready.created()).thenReturn(created);
+    when(ready.outcome()).thenReturn(local);
+    byte[] commitBody =
+        "{\"synthetic\":\"committed-local-outcome\"}".getBytes(StandardCharsets.UTF_8);
+    when(codec.commitBody(created, local)).thenReturn(commitBody);
+    when(codec.commitProof(eq(created), eq(local), any()))
+        .thenReturn("public-synthetic-commit-proof");
+    var committed = mock(VerifiedCommitted.class);
+    when(codec.verifyCommitted(eq(created), eq(local), aryEq(createdResponse)))
+        .thenReturn(committed);
+    server
+        .expect(requestTo(url() + "/commit"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(header("Authorization", "Bearer public-synthetic-creator"))
+        .andExpect(header("X-ORISO-Task-Context", "public-synthetic-commit-proof"))
+        .andExpect(content().bytes(commitBody))
+        .andRespond(withSuccess(createdResponse, MediaType.APPLICATION_JSON));
+    assertSame(committed, assertDoesNotThrow(() -> transport.commit(ready)));
+    verify(codec).verifyCommitted(eq(created), eq(local), aryEq(createdResponse));
+    server.verify();
+  }
+
+  @Test
+  void anUnconfirmedCommitCannotFinishTheLocalActivation() {
+    var ready = mock(ReadyActivation.class);
+    var local =
+        new LocalOutcome(
+            1, UUID.fromString("742ae66e-2fe1-44d4-998c-d3543e5a1bc8"), "a".repeat(64));
+    when(ready.created()).thenReturn(created);
+    when(ready.outcome()).thenReturn(local);
+    when(codec.commitBody(created, local)).thenReturn(createBody);
+    when(codec.commitProof(eq(created), eq(local), any()))
+        .thenReturn("public-synthetic-commit-proof");
+    server
+        .expect(requestTo(url() + "/commit"))
+        .andRespond(withStatus(HttpStatus.ACCEPTED).body(createdResponse));
+    assertThrows(KeycloakProtectedAccounts.RemoteFailure.class, () -> transport.commit(ready));
+    verify(codec, never()).verifyCommitted(any(), any(), any());
     server.verify();
   }
 
@@ -182,6 +254,8 @@ class KeycloakProtectedAccountsTest {
     try {
       assertThrows(IllegalStateException.class, () -> transport.create(prepared));
       assertThrows(IllegalStateException.class, () -> transport.ownedRead(claim, created));
+      assertThrows(
+          IllegalStateException.class, () -> transport.commit(mock(ReadyActivation.class)));
       verifyNoInteractions(actors, broker, codec);
     } finally {
       TransactionSynchronizationManager.setActualTransactionActive(false);
@@ -230,10 +304,9 @@ class KeycloakProtectedAccountsTest {
 
   @Test
   void anotherBrokerActorCannotUseTheCreatorTransport() {
-    when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
-        .thenReturn(
-            new TaskActorTokenBroker.TaskToken(
-                TaskActor.ACCOUNT_ADMIN, "public-synthetic-admin", 60));
+    var foreign = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+    when(foreign.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
+    when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(foreign);
     assertThrows(IllegalArgumentException.class, () -> transport.create(prepared));
     server.verify();
   }

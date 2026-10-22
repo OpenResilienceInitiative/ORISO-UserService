@@ -326,6 +326,21 @@ class ProtectedOtpBootstrapTest {
               Integer.class));
       // Root private capability contract double; native fence is proved separately.
       var verifiedRecovery = f.discarded();
+      var empty = f.discarded();
+      when(empty.accountId()).thenReturn(null);
+      assertThrows(
+          RuntimeException.class,
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(empty)));
+      String envelope =
+          f.jdbc.queryForObject(
+              "SELECT command_envelope FROM protected_otp_bootstrap_operation", String.class);
+      f.jdbc.update("UPDATE protected_otp_bootstrap_operation SET command_envelope='{}'");
+      assertThrows(
+          RuntimeException.class,
+          () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(verifiedRecovery)));
+      assertEquals(
+          1, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap", Integer.class));
+      f.jdbc.update("UPDATE protected_otp_bootstrap_operation SET command_envelope=?", envelope);
       assertDoesNotThrow(
           () -> owner.executeWithoutResult(tx -> f.adapter().discardWithinOwner(verifiedRecovery)));
       assertEquals(
@@ -458,10 +473,11 @@ class ProtectedOtpBootstrapTest {
               av.path("request").path("scope").path("creatorSubject").asText());
       when(creators.require(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(creator);
       var broker = mock(TaskActorTokenBroker.class);
-      when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
-          .thenReturn(
-              new TaskActorTokenBroker.TaskToken(
-                  TaskActor.ACCOUNT_CREATE, "synthetic-creator-bearer", 60));
+      var checkedCreator = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+      when(checkedCreator.actor()).thenReturn(TaskActor.ACCOUNT_CREATE);
+      when(checkedCreator.accessToken()).thenReturn("synthetic-creator-bearer");
+      when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING))
+          .thenReturn(checkedCreator);
       server
           .expect(
               requestTo(

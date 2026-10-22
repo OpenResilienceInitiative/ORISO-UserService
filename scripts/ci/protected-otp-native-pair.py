@@ -19,7 +19,7 @@ import uuid
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-KC_COMMIT = "54c44dee3050dd483305fb68d1219b24ec40e7b8"
+KC_COMMIT = "89d11e0e037431c43644304ca5fae6df67d64750"
 SUITE = "de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedOtpBootstrapNativePairProof"
 CASE = "actualOwnedRecipientCompletesOtpAfterLostNativeReplyWithoutEnablingAccount"
 IMAGE = "quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992"
@@ -145,9 +145,9 @@ def native(kc, report):
                     self.send_response(200); self.send_header("Content-Type", "text/plain"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
             code_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), CodeHandler)
             threading.Thread(target=code_server.serve_forever, daemon=True).start()
-        receipt["native_preconditions"] = {"five_exact_links": True, "actual_human_approval": True, "smtp_configured": kind == "email", "creator_issuance_double": True}
+        receipt["native_preconditions"] = {"five_exact_links": True, "actual_human_approval": True, "smtp_configured": kind == "email", "real_checked_creator_broker": True}
         environment = dict(os.environ)
-        environment.update({"PAIR_KIND": kind, "PAIR_NATIVE_BASE": fixture.base, "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id, "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(), "PAIR_APPROVAL_REQUEST": lifecycle.canonical({"scope": scope}).decode(), "PAIR_APPROVAL_RESPONSE": lifecycle.canonical(approved).decode(), "PAIR_CREATE_BEARER": fixture.token("ACCOUNT_CREATE"), "PAIR_WITNESS": str(report.with_name("protected-otp-native-witness.json").resolve()), "PAIR_HTTP_WITNESS": str(report.with_name("protected-otp-native-http.json").resolve())})
+        environment.update({"PAIR_KIND": kind, "PAIR_NATIVE_BASE": fixture.base, "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id, "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(), "PAIR_APPROVAL_REQUEST": lifecycle.canonical({"scope": scope}).decode(), "PAIR_APPROVAL_RESPONSE": lifecycle.canonical(approved).decode(), "PAIR_WITNESS": str(report.with_name("protected-otp-native-witness.json").resolve()), "PAIR_HTTP_WITNESS": str(report.with_name("protected-otp-native-http.json").resolve())})
         if code_server:
             environment["PAIR_MAIL_CALLBACK"] = "http://127.0.0.1:" + str(code_server.server_address[1]) + "/one-delivered-code"
         for actor, (client, _) in lifecycle.ACTORS.items():
@@ -165,7 +165,7 @@ def native(kc, report):
         witness = report.with_name("protected-otp-native-witness.json")
         if witness.is_file():
             observed = json.loads(witness.read_text())
-            expected = {"ownerSqlAndNativePairComplete", "oneLostNativeReplyRecovered", "privateCompletionVerified", "creatorIssuanceDouble"}
+            expected = {"ownerSqlAndNativePairComplete", "oneLostNativeReplyRecovered", "privateCompletionVerified", "realCheckedCreatorBroker"}
             assert set(observed) == expected and all(value is True for value in observed.values())
             receipt["consumer_observations"] = observed
         receipt["accepted"] &= receipt.get("consumer_observations") is not None

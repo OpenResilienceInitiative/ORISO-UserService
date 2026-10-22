@@ -1200,20 +1200,26 @@ public final class ProtectedOtpBootstrap {
         || discarded.claimId() == null
         || discarded.attemptId() == null
         || discarded.executionId() == null
-        || discarded.accountId() == null
+        || discarded.recoveryId() == null
+        || discarded.recoveryGeneration() < 1
+        || discarded.executionId().equals(discarded.recoveryId())
         || !discarded.executionId().equals(discarded.bootstrapIncarnation())) throw unavailable();
-    uuid(discarded.accountId());
     var rows =
         jdbc.queryForList(
             "SELECT * FROM protected_otp_bootstrap WHERE invite_id=? FOR UPDATE",
             discarded.inviteId());
     var operations =
         jdbc.queryForList(
-            "SELECT public_intent_id FROM protected_otp_bootstrap_operation WHERE invite_id=? FOR UPDATE",
+            "SELECT * FROM protected_otp_bootstrap_operation WHERE invite_id=? FOR UPDATE",
             discarded.inviteId());
-    // An unknown old RPC requires independent native fence resolution, never a guessed ACK.
-    if (!operations.isEmpty() || rows.size() > 1) throw unavailable();
-    if (rows.isEmpty()) return;
+    if (rows.size() > 1) throw unavailable();
+    if (rows.isEmpty()) {
+      // A verified empty ABANDONED attempt has no account and no private OTP custody to discard.
+      if (!operations.isEmpty()) throw unavailable();
+      return;
+    }
+    if (discarded.accountId() == null) throw unavailable();
+    uuid(discarded.accountId());
     var saved = rows.getFirst();
     if (!discarded.claimId().toString().equals(saved.get("claim_id"))
         || !Set.of("PREPARED", "FROZEN").contains(saved.get("state"))) throw unavailable();
@@ -1263,6 +1269,55 @@ public final class ProtectedOtpBootstrap {
           || !result.path("authorityValidUntil").equals(facts.path("authorityValidUntil")))
         throw unavailable();
     } else if (!"PREPARED".equals(saved.get("state"))) throw unavailable();
+    // Native recovery serialized the old writer and fenced its original generation. This removes
+    // only authenticated owned ciphertext; an unknown OTP outcome never becomes an acknowledgement.
+    for (var operation : operations) {
+      if (!discarded.claimId().toString().equals(operation.get("claim_id"))
+          || !Set.of("FROZEN", "READY", "ACKNOWLEDGED").contains(operation.get("state")))
+        throw unavailable();
+      var operationRaw = (String) operation.get("metadata_json");
+      var operationMetadata = codec.read(operationRaw, JsonNode.class);
+      fields(operationMetadata, METADATA);
+      String name = operationMetadata.path("command").asText();
+      if (!Set.of(
+                  "otp.bootstrap-app-setup", "otp.bootstrap-email-start", "otp.bootstrap-email-finish")
+              .contains(name)
+          || !operationRaw.equals(codec.canonical(operationMetadata))
+          || !operationMetadata.path("operationId").asText().equals(operation.get("operation_id"))
+          || !operationMetadata.path("requestDigest").asText().equals(operation.get("request_digest")))
+        throw unavailable();
+      uuid(operationMetadata.path("operationId").asText());
+      if (!operationMetadata.path("requestDigest").asText().matches("[0-9a-f]{64}"))
+        throw unavailable();
+      var expectedMetadata = metadata.deepCopy();
+      for (String field : List.of("command", "operationId", "requestDigest"))
+        ((ObjectNode) expectedMetadata).set(field, operationMetadata.path(field));
+      if (!expectedMetadata.equals(operationMetadata)) throw unavailable();
+      var frozenCommand =
+          codec.read(
+              open(operationMetadata, (String) operation.get("command_envelope")), JsonNode.class);
+      fields(frozenCommand, Set.of("username", "bootstrapReceipt", "body"));
+      if (!command.path("username").equals(frozenCommand.path("username"))
+          || !discarded
+              .accountId()
+              .equals(frozenCommand.path("body").path("target").path("accountId").asText())
+          || !operationMetadata
+              .path("operationId")
+              .equals(frozenCommand.path("body").path("operationId")))
+        throw unavailable();
+      preparedFacts(operationMetadata, frozenCommand.path("bootstrapReceipt").asText());
+    }
+    for (var operation : operations) {
+      if (jdbc.update(
+              "DELETE FROM protected_otp_bootstrap_operation WHERE public_intent_id=? AND invite_id=? AND claim_id=? AND metadata_json=? AND command_envelope=?",
+              operation.get("public_intent_id"),
+              discarded.inviteId(),
+              discarded.claimId().toString(),
+              operation.get("metadata_json"),
+              operation.get("command_envelope"))
+          != 1)
+        throw unavailable();
+    }
     if (jdbc.update(
             "DELETE FROM protected_otp_bootstrap WHERE invite_id=? AND claim_id=? AND metadata_json=?",
             discarded.inviteId(),

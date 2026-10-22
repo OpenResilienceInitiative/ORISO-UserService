@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
@@ -32,7 +31,7 @@ import org.springframework.security.oauth2.jwt.*;
 import org.springframework.transaction.support.*;
 import org.springframework.web.client.*;
 
-/** Explicit hosted-only adapter/SQL/native pair; no public coordinator or creator-issuer credit. */
+/** Explicit hosted-only adapter/SQL/native pair through the real checked machine broker. */
 class ProtectedOtpBootstrapNativePairProof {
   private static String required(String name) {
     String value = System.getenv(name);
@@ -201,8 +200,8 @@ class ProtectedOtpBootstrapNativePairProof {
                   String.class);
             });
     assertEquals(403, denied.getStatusCode().value());
-    // Explicit creator issuance double: the fixed native token is independently signature checked.
-    var creator = decoder.decode(required("PAIR_CREATE_BEARER"));
+    var nativeCreator = broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING);
+    var creator = decoder.decode(nativeCreator.accessToken());
     assertEquals(
         actors.require(TaskPurpose.ACCOUNT_PROVISIONING).serviceSubject(), creator.getSubject());
     assertEquals(
@@ -213,11 +212,6 @@ class ProtectedOtpBootstrapNativePairProof {
     assertEquals(
         TaskActor.ACCOUNT_CREATE.roles(),
         Set.copyOf((List<?>) ((Map<?, ?>) creator.getClaims().get("realm_access")).get("roles")));
-    var creatorBroker = mock(TaskActorTokenBroker.class);
-    when(creatorBroker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
-        .thenReturn(
-            new TaskActorTokenBroker.TaskToken(
-                TaskActor.ACCOUNT_CREATE, required("PAIR_CREATE_BEARER"), 60));
     var accountCodec =
         new ProtectedAccountCodec(
             Base64.getDecoder().decode(required("PAIR_CONTEXT_KEY_B64")),
@@ -236,7 +230,7 @@ class ProtectedOtpBootstrapNativePairProof {
             username, recipient, "Protected", "Fixture", "en", registration.get("password"), false);
     var bridge =
         new KeycloakProtectedAccounts(
-            http, actors, creatorBroker, accountCodec, logicalBase, realm);
+            http, actors, broker, accountCodec, logicalBase, realm);
     var created = bridge.create(accountCodec.prepare(claim, registrationJson, account));
     var pending = bridge.ownedRead(claim, created);
     assertEquals(username.toLowerCase(Locale.ROOT), pending.username());
@@ -310,7 +304,7 @@ class ProtectedOtpBootstrapNativePairProof {
                 true,
                 "privateCompletionVerified",
                 true,
-                "creatorIssuanceDouble",
+                "realCheckedCreatorBroker",
                 true)));
     jdbc.execute("SHUTDOWN");
   }

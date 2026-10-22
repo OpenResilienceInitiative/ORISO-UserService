@@ -197,9 +197,10 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
                   "backend-account-create",
                   "fixture-secret",
                   "33333333-3333-4333-8333-333333333333"));
-      when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
-          .thenReturn(
-              new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_CREATE, "fixture-create", 60));
+      var creator = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+      when(creator.actor()).thenReturn(TaskActor.ACCOUNT_CREATE);
+      when(creator.accessToken()).thenReturn("fixture-create");
+      when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(creator);
       gateway =
           new KeycloakUsernameAvailability(
               http,
