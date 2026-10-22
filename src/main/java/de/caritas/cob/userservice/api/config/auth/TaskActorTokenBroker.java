@@ -55,15 +55,42 @@ public class TaskActorTokenBroker {
       this.issued = issued;
     }
 
-    public TaskPurpose purpose() { return TaskPurpose.ACCOUNT_PROVISIONING; }
-    public TaskActor actor() { return TaskActor.ACCOUNT_CREATE; }
-    public String accessToken() { return issued.bearer; }
-    public String issuer() { return issued.token.getIssuer().toString(); }
-    public String clientId() { return issued.token.getClaimAsString("azp"); }
-    public String subject() { return issued.token.getSubject(); }
-    public long validatedJwtIssuedAt() { return issued.token.getIssuedAt().getEpochSecond(); }
-    public long validatedJwtExpiresAt() { return issued.token.getExpiresAt().getEpochSecond(); }
-    @Override public String toString() { return "VerifiedProvisioningToken[redacted]"; }
+    public TaskPurpose purpose() {
+      return TaskPurpose.ACCOUNT_PROVISIONING;
+    }
+
+    public TaskActor actor() {
+      return TaskActor.ACCOUNT_CREATE;
+    }
+
+    public String accessToken() {
+      return issued.bearer;
+    }
+
+    public String issuer() {
+      return issued.token.getIssuer().toString();
+    }
+
+    public String clientId() {
+      return issued.token.getClaimAsString("azp");
+    }
+
+    public String subject() {
+      return issued.token.getSubject();
+    }
+
+    public long validatedJwtIssuedAt() {
+      return issued.token.getIssuedAt().getEpochSecond();
+    }
+
+    public long validatedJwtExpiresAt() {
+      return issued.token.getExpiresAt().getEpochSecond();
+    }
+
+    @Override
+    public String toString() {
+      return "VerifiedProvisioningToken[redacted]";
+    }
   }
 
   /** Only the finite checked maintenance/OTP workflow may obtain this private result. */

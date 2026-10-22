@@ -107,9 +107,14 @@ class KeycloakProtectedAccountsTest {
     when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(checked);
     when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
         .thenThrow(new IllegalStateException("Generic native issuance remains closed"));
-    server.expect(requestTo(url())).andExpect(method(HttpMethod.PUT))
+    server
+        .expect(requestTo(url()))
+        .andExpect(method(HttpMethod.PUT))
         .andExpect(header("Authorization", "Bearer public-synthetic-checked"))
-        .andRespond(withStatus(HttpStatus.CREATED).body(createdResponse).contentType(MediaType.APPLICATION_JSON));
+        .andRespond(
+            withStatus(HttpStatus.CREATED)
+                .body(createdResponse)
+                .contentType(MediaType.APPLICATION_JSON));
     assertSame(created, assertDoesNotThrow(() -> transport.create(prepared)));
     verify(broker).issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING);
     server.verify();

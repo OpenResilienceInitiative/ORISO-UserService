@@ -233,12 +233,16 @@ class JdbcProtectedInvitationAcceptanceTest {
     var foreign = new JdbcDataSource();
     foreign.setURL("jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1");
     var foreignSql = new TransactionTemplate(new DataSourceTransactionManager(foreign));
-    assertThrows(RuntimeException.class, () -> foreignSql.execute(tx -> restart().historicalWithinOwner(73)));
+    assertThrows(
+        RuntimeException.class,
+        () -> foreignSql.execute(tx -> restart().historicalWithinOwner(73)));
     var readOnly = new TransactionTemplate(manager);
     readOnly.setReadOnly(true);
-    assertThrows(RuntimeException.class, () -> readOnly.execute(tx -> restart().historicalWithinOwner(73)));
+    assertThrows(
+        RuntimeException.class, () -> readOnly.execute(tx -> restart().historicalWithinOwner(73)));
     var owner = new TransactionTemplate(manager);
-    var history = assertDoesNotThrow(() -> owner.execute(tx -> restart().historicalWithinOwner(73)));
+    var history =
+        assertDoesNotThrow(() -> owner.execute(tx -> restart().historicalWithinOwner(73)));
     assertNotNull(history);
     assertEquals(73, history.inviteId());
     assertEquals(first.claimId(), history.claim().claimId());

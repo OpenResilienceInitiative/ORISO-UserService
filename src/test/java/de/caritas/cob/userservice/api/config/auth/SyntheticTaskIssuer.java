@@ -158,10 +158,15 @@ final class SyntheticTaskIssuer implements AutoCloseable {
                       "realm-admin")));
       case "missing-role" ->
           claims.claim("realm_access", Map.of("roles", List.of("config-wizard")));
-      case "create-extra-role" -> claims.claim("realm_access",
-          Map.of("roles", List.of("account-provisioning", "account-read", "account-maintenance")));
-      case "create-missing-role" -> claims.claim("realm_access", Map.of("roles", List.of("account-read")));
-      case "create-extra-audience" -> claims.audience(List.of("userservice", "oriso-account-lifecycle", "oriso-otp"));
+      case "create-extra-role" ->
+          claims.claim(
+              "realm_access",
+              Map.of(
+                  "roles", List.of("account-provisioning", "account-read", "account-maintenance")));
+      case "create-missing-role" ->
+          claims.claim("realm_access", Map.of("roles", List.of("account-read")));
+      case "create-extra-audience" ->
+          claims.audience(List.of("userservice", "oriso-account-lifecycle", "oriso-otp"));
       case "create-missing-audience" -> claims.audience(List.of("oriso-account-lifecycle"));
       case "wrong-audience" -> claims.audience(List.of("account"));
       case "extra-audience" ->
