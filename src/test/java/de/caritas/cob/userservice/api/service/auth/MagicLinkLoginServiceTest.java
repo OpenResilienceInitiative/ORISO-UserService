@@ -901,14 +901,18 @@ class MagicLinkLoginServiceTest {
   }
 
   @Test
-  void fiveActorsRestoresTheOriginalContinuationTupleAfterUnknownTransport() {
+  void fiveActorsRestoresTheOriginalContinuationTupleAfterWrongFactorOrUnknownTransport() {
     when(taskActors.isEnabled()).thenReturn(true);
     var stored = scopedClaim(42L);
     when(oneTimeTokenStore.claim("magic-login", "scoped-token")).thenReturn(Optional.of(stored));
-    when(identitySessionExchange.exchangeMagicLink(any(), eq("123456")))
-        .thenThrow(new org.springframework.web.client.ResourceAccessException("private"));
+    when(identitySessionExchange.exchangeMagicLink(any(), eq("123456"))).thenReturn(Optional.empty());
     assertThat(magicLinkLoginService.consumeMagicLink("scoped-token", "123456")).isEmpty();
     verify(oneTimeTokenStore).restore("magic-login", "scoped-token", stored, false);
+    org.mockito.Mockito.doThrow(new org.springframework.web.client.ResourceAccessException("private"))
+        .when(identitySessionExchange).exchangeMagicLink(any(), eq("123456"));
+    assertThat(magicLinkLoginService.consumeMagicLink("scoped-token", "123456")).isEmpty();
+    verify(oneTimeTokenStore, org.mockito.Mockito.times(2)).restore("magic-login", "scoped-token", stored, false);
+    verify(oneTimeTokenStore, never()).storeMagicLink(anyString(), any());
     verify(identitySessionExchange, never()).exchangeForUser(anyString());
   }
 

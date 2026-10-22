@@ -151,13 +151,12 @@ public class MagicLinkLoginService {
     return MagicLinkRequestResult.ACCEPTED;
   }
 
-  /** Closed continuation seam until the finite caller/HTTP counterfactual is qualified. */
-  public Optional<IdentitySession> consumeMagicLink(String token, String otp) {
-    return otp == null ? consumeMagicLink(token) : Optional.empty();
+  public Optional<IdentitySession> consumeMagicLink(String token) {
+    return consumeMagicLink(token, null);
   }
 
-  public Optional<IdentitySession> consumeMagicLink(String token) {
-    if (isBlank(token)) {
+  public Optional<IdentitySession> consumeMagicLink(String token, String otp) {
+    if (isBlank(token) || otp != null && !otp.matches("[0-9]{6}")) {
       return Optional.empty();
     }
 
@@ -183,7 +182,7 @@ public class MagicLinkLoginService {
       return Optional.empty();
     }
 
-    if (scoped) return exchangeScoped(token, claim.get());
+    if (scoped) return exchangeScoped(token, claim.get(), otp);
 
     Optional<IdentitySession> exchanged;
     try {
@@ -204,7 +203,7 @@ public class MagicLinkLoginService {
   }
 
   private Optional<IdentitySession> exchangeScoped(
-      String token, OneTimeTokenStore.TokenClaim stored) {
+      String token, OneTimeTokenStore.TokenClaim stored, String otp) {
     final ClaimedMagicLink live;
     try {
       // A pre-cutover legacy record is consumed and refused; it never acquires scoped authority.
@@ -214,7 +213,11 @@ public class MagicLinkLoginService {
     }
     Optional<IdentitySession> result;
     try {
-      result = identitySessionExchange.exchangeMagicLink(live);
+      result = otp == null ? identitySessionExchange.exchangeMagicLink(live)
+          : identitySessionExchange.exchangeMagicLink(live, otp);
+    } catch (IdentitySessionExchange.MagicLinkChallenge challenge) {
+      restoreTokenForRetry(token, stored);
+      throw challenge;
     } catch (RuntimeException unknownOutcome) {
       restoreTokenForRetry(token, stored);
       return Optional.empty();

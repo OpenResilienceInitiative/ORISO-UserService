@@ -24,6 +24,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.MultiValueMap;
@@ -59,9 +60,15 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
 
   @Override
   public Optional<IdentitySession> exchangeMagicLink(ClaimedMagicLink claim) {
+    return exchangeMagicLink(claim, null);
+  }
+
+  @Override
+  public Optional<IdentitySession> exchangeMagicLink(ClaimedMagicLink claim, String otp) {
     try {
       if (!taskActors.isEnabled()
           || claim == null
+          || otp != null && !otp.matches("[0-9]{6}")
           || !"app".equals(keycloakAppClientId)
           || org.springframework.transaction.support.TransactionSynchronizationManager
               .isActualTransactionActive()) return Optional.empty();
@@ -95,10 +102,18 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
       form.add("client_id", "app");
       form.add("grant_type", "password");
       form.add("oriso_magic_command", codec.canonical(command));
+      if (otp != null) form.add("otp", otp);
       claim.requireCurrent();
-      var response =
-          restTemplate.postForEntity(
-              url, new HttpEntity<>(form, headers), KeycloakLoginResponseDTO.class);
+      ResponseEntity<KeycloakLoginResponseDTO> response;
+      try {
+        response = restTemplate.postForEntity(
+            url, new HttpEntity<>(form, headers), KeycloakLoginResponseDTO.class);
+      } catch (org.springframework.web.client.RestClientResponseException refused) {
+        claim.requireCurrent();
+        var challenge = checkedChallenge(refused, codec);
+        if (challenge != null) throw challenge;
+        return Optional.empty();
+      }
       if (response.getStatusCode().value() != 200 || response.getBody() == null)
         return Optional.empty();
       var value = response.getBody();
@@ -130,9 +145,43 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
         return Optional.empty();
       claim.requireCurrent();
       return Optional.of(toIdentitySession(value));
+    } catch (MagicLinkChallenge challenge) {
+      throw challenge;
     } catch (RuntimeException unavailable) {
       // Decoder/provider diagnostics may contain private native bodies. No fallback or raw logging.
       return Optional.empty();
+    }
+  }
+
+  private static MagicLinkChallenge checkedChallenge(
+      org.springframework.web.client.RestClientResponseException refused, AccountLifecycleCodec codec) {
+    try {
+      int status = refused.getStatusCode().value();
+      if (status != 400 && status != 429 || refused.getResponseHeaders() == null
+          || refused.getResponseHeaders().getContentType() == null
+          || !MediaType.APPLICATION_JSON.isCompatibleWith(refused.getResponseHeaders().getContentType())
+          || refused.getResponseBodyAsByteArray().length > 4096) return null;
+      var body = codec.read(refused.getResponseBodyAsString(java.nio.charset.StandardCharsets.UTF_8),
+          com.fasterxml.jackson.databind.JsonNode.class);
+      var allowed = Set.of("error", "error_description", "otpType", "resendAvailableInSeconds");
+      if (!body.isObject() || !body.has("otpType") || !body.get("otpType").isTextual()) return null;
+      var names = body.fieldNames();
+      while (names.hasNext()) if (!allowed.contains(names.next())) return null;
+      if (body.has("error") && (!body.get("error").isTextual()
+          || !"invalid_grant".equals(body.get("error").textValue()))) return null;
+      if (body.has("error_description") && !body.get("error_description").isTextual()) return null;
+      String type = body.get("otpType").textValue();
+      if (!Set.of("APP", "EMAIL").contains(type)) return null;
+      var retry = body.get("resendAvailableInSeconds");
+      Integer seconds = null;
+      if (retry != null && !retry.isNull()) {
+        if (!retry.isIntegralNumber() || !retry.canConvertToInt() || retry.intValue() < 0) return null;
+        seconds = retry.intValue();
+      }
+      if ("APP".equals(type) && (seconds != null || status != 400)) return null;
+      return new MagicLinkChallenge(type, seconds, status);
+    } catch (RuntimeException malformed) {
+      return null;
     }
   }
 
