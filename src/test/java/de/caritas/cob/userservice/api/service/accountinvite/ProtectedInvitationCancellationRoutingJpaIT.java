@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocat
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -132,6 +133,9 @@ class ProtectedInvitationCancellationRoutingJpaIT extends ProtectedInvitationIss
     expired.setExpiresAt(LocalDateTime.now().minusDays(1));
     invites.saveAndFlush(expired);
     unknownCancellation(expired.getId(), Reason.ISSUANCE_ABORTED);
+    when(cancellation.pendingInviteIds(100)).thenAnswer(call -> invites.findById(expired.getId())
+        .filter(current -> current.getStatus() == AccountInviteStatus.EXPIRED)
+        .map(current -> List.of(current.getId())).orElse(List.of()));
 
     assertThatThrownBy(service::expireElapsedInvites)
         .isInstanceOf(KeycloakProtectedInvitations.RemoteFailure.class);

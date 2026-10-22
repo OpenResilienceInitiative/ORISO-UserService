@@ -78,6 +78,11 @@ public final class ProtectedInvitationRestrictionCodec {
     }
   }
 
+  String cancellationBody(FrozenCancellation cancellation) {
+    checked(cancellation);
+    return cancellation.bodyJson();
+  }
+
   public String cancelProof(FrozenCancellation cancellation, TaskActorCredentials actor) {
     JsonNode scope = checked(cancellation);
     if (actor == null

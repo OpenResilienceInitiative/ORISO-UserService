@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 
 import java.util.function.Supplier;
+import java.util.List;
 
 /** Native restriction must be acknowledged before protected reservations can be reused. */
 public interface ProtectedInvitationCancellation {
@@ -18,4 +19,7 @@ public interface ProtectedInvitationCancellation {
 
   /** Runs a local release/transfer only with the saved exact native ACK in its owning SQL lock. */
   <T> T withAcknowledged(long inviteId, Supplier<T> releaseOrTransfer);
+
+  /** Bounded outside-SQL recovery candidates; completed acknowledgements never fill the page. */
+  List<Long> pendingInviteIds(int limit);
 }
