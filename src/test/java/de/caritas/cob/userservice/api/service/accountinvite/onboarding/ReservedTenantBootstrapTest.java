@@ -55,9 +55,14 @@ class ReservedTenantBootstrapTest {
   private final TaskActorTokenBroker broker = mock(TaskActorTokenBroker.class);
   private final JwtDecoder decoder = mock(JwtDecoder.class);
   private final AcceptanceClaim claim = mock(AcceptanceClaim.class);
-  private final SecurityHeaderSupplier headers = new SecurityHeaderSupplier(mock(AuthenticatedUser.class));
-  private final TenantCreationClient client = new TenantCreationClient(headers,
-      mock(IdentityAuthentication.class), mock(IdentityClientConfig.class), new TenantAdminServiceApiControllerFactory());
+  private final SecurityHeaderSupplier headers =
+      new SecurityHeaderSupplier(mock(AuthenticatedUser.class));
+  private final TenantCreationClient client =
+      new TenantCreationClient(
+          headers,
+          mock(IdentityAuthentication.class),
+          mock(IdentityClientConfig.class),
+          new TenantAdminServiceApiControllerFactory());
   private JsonNode frozen;
   private byte[] key;
   private String setupSubject;
@@ -65,42 +70,72 @@ class ReservedTenantBootstrapTest {
 
   @BeforeEach
   void setup() throws Exception {
-    frozen = JSON.readTree(getClass().getResourceAsStream("/scenario-c/protected-approval-reserved-v1.json"));
+    frozen =
+        JSON.readTree(
+            getClass().getResourceAsStream("/scenario-c/protected-approval-reserved-v1.json"));
     key = HexFormat.of().parseHex(frozen.path("syntheticPublicKeyHex").asText());
     setupSubject = frozen.path("request").path("scope").path("setupSubject").asText();
     capability = frozen.path("syntheticReservationToken").asText();
-    when(claim.frozen()).thenReturn(new FrozenApproval(UUID.fromString(frozen.path("approvalId").asText()),
-        frozen.path("request").toString(), frozen.path("issuerRealm").asText(), frozen.path("issuerSubject").asText(), frozen.path("requestDigest").asText()));
+    when(claim.frozen())
+        .thenReturn(
+            new FrozenApproval(
+                UUID.fromString(frozen.path("approvalId").asText()),
+                frozen.path("request").toString(),
+                frozen.path("issuerRealm").asText(),
+                frozen.path("issuerSubject").asText(),
+                frozen.path("requestDigest").asText()));
     when(claim.claimId()).thenReturn(CLAIM);
     when(claim.attemptId()).thenReturn(ATTEMPT);
     when(claim.executionId()).thenReturn(EXECUTION);
     when(claim.journalVersion()).thenReturn(1L);
-    when(broker.issue(TaskPurpose.CONFIG_WIZARD)).thenReturn(new TaskActorTokenBroker.TaskToken(TaskActor.SETUP, "synthetic-setup", 60));
-    when(decoder.decode("synthetic-setup")).thenReturn(Jwt.withTokenValue("synthetic-setup").header("alg", "RS256")
-        .issuer("https://identity.example/realms/test").subject(setupSubject).claim("azp", "backend-setup")
-        .issuedAt(Instant.now().minusSeconds(1)).expiresAt(Instant.now().plusSeconds(60)).build());
+    when(broker.issue(TaskPurpose.CONFIG_WIZARD))
+        .thenReturn(new TaskActorTokenBroker.TaskToken(TaskActor.SETUP, "synthetic-setup", 60));
+    when(decoder.decode("synthetic-setup"))
+        .thenReturn(
+            Jwt.withTokenValue("synthetic-setup")
+                .header("alg", "RS256")
+                .issuer("https://identity.example/realms/test")
+                .subject(setupSubject)
+                .claim("azp", "backend-setup")
+                .issuedAt(Instant.now().minusSeconds(1))
+                .expiresAt(Instant.now().plusSeconds(60))
+                .build());
     ReflectionTestUtils.setField(headers, "csrfHeaderProperty", "X-CSRF-TOKEN");
     ReflectionTestUtils.setField(headers, "csrfCookieProperty", "CSRF-TOKEN");
-    var environment = new MockEnvironment().withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS")
-        .withProperty("ORISO_TASK_CONTEXT_KEY", Base64.getEncoder().encodeToString(key));
-    ReflectionTestUtils.setField(client, "reservedTenantBootstrap", new ReservedTenantBootstrap(http, headers, broker, decoder, environment, "https://tenant.example"));
+    var environment =
+        new MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS")
+            .withProperty("ORISO_TASK_CONTEXT_KEY", Base64.getEncoder().encodeToString(key));
+    ReflectionTestUtils.setField(
+        client,
+        "reservedTenantBootstrap",
+        new ReservedTenantBootstrap(
+            http, headers, broker, decoder, environment, "https://tenant.example"));
   }
 
   @AfterEach
-  void cleanup() { TransactionSynchronizationManager.clear(); }
+  void cleanup() {
+    TransactionSynchronizationManager.clear();
+  }
 
   @Test
   void fixedPostAuthenticatesTheCompleteReplyAndKeepsPrivateResultDeepFrozen() throws Exception {
     MultilingualTenantDTO input = tenant();
-    server.expect(requestTo("https://tenant.example/tenantadmin/bootstrap")).andExpect(method(HttpMethod.POST))
-        .andExpect(header("Authorization", "Bearer synthetic-setup")).andExpect(content().contentType(MediaType.APPLICATION_JSON))
-        .andRespond(request -> {
-          JsonNode sent = JSON.readTree(((MockClientHttpRequest) request).getBodyAsString());
-          assertThat(sent.size()).isEqualTo(4);
-          assertThat(sent.path("tenant").path("tenantIdReservationToken").asText()).isEqualTo(capability);
-          assertThat(sent.path("tenant").path("name").asText()).isEqualTo("Äctual tenant");
-          return withSuccess(reply(sent, null), MediaType.APPLICATION_JSON).createResponse(request);
-        });
+    server
+        .expect(requestTo("https://tenant.example/tenantadmin/bootstrap"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(header("Authorization", "Bearer synthetic-setup"))
+        .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+        .andRespond(
+            request -> {
+              JsonNode sent = JSON.readTree(((MockClientHttpRequest) request).getBodyAsString());
+              assertThat(sent.size()).isEqualTo(4);
+              assertThat(sent.path("tenant").path("tenantIdReservationToken").asText())
+                  .isEqualTo(capability);
+              assertThat(sent.path("tenant").path("name").asText()).isEqualTo("Äctual tenant");
+              return withSuccess(reply(sent, null), MediaType.APPLICATION_JSON)
+                  .createResponse(request);
+            });
     var result = client.createReservedTenant(claim, input);
     assertThat(result).isNotNull();
     assertThat(result.tenantId()).isEqualTo(input.getId());
@@ -117,11 +152,41 @@ class ReservedTenantBootstrapTest {
 
   @Test
   void independentlyResignedForeignReceiptFieldsAndNonExactShapesRefuse() throws Exception {
-    for (String mutation : new String[] {"claimId", "accountAttemptId", "executionId", "bootstrapAttemptId", "tenantId", "ownerSubject", "ownerClient", "ownerIssuer", "requestDigest", "resultDigest", "state", "v", "extra", "partial", "fractional"}) {
+    for (String mutation :
+        new String[] {
+          "claimId",
+          "accountAttemptId",
+          "executionId",
+          "bootstrapAttemptId",
+          "tenantId",
+          "ownerSubject",
+          "ownerClient",
+          "ownerIssuer",
+          "requestDigest",
+          "resultDigest",
+          "state",
+          "v",
+          "extra",
+          "partial",
+          "fractional"
+        }) {
       server.reset();
-      server.expect(anything()).andRespond(request -> withSuccess(reply(JSON.readTree(((MockClientHttpRequest) request).getBodyAsString()), mutation), MediaType.APPLICATION_JSON).createResponse(request));
-      assertThatThrownBy(() -> client.createReservedTenant(claim, tenant())).isInstanceOf(ResponseStatusException.class)
-          .satisfies(failure -> assertThat(((ResponseStatusException) failure).getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY));
+      server
+          .expect(anything())
+          .andRespond(
+              request ->
+                  withSuccess(
+                          reply(
+                              JSON.readTree(((MockClientHttpRequest) request).getBodyAsString()),
+                              mutation),
+                          MediaType.APPLICATION_JSON)
+                      .createResponse(request));
+      assertThatThrownBy(() -> client.createReservedTenant(claim, tenant()))
+          .isInstanceOf(ResponseStatusException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((ResponseStatusException) failure).getStatusCode())
+                      .isEqualTo(HttpStatus.BAD_GATEWAY));
       server.verify();
     }
   }
@@ -129,29 +194,42 @@ class ReservedTenantBootstrapTest {
   @Test
   void ambientSqlOrMissingHeldPairRefusesBeforeAuthenticationOrHttp() {
     TransactionSynchronizationManager.setActualTransactionActive(true);
-    assertThatThrownBy(() -> client.createReservedTenant(claim, tenant())).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> client.createReservedTenant(claim, tenant()))
+        .isInstanceOf(IllegalStateException.class);
     TransactionSynchronizationManager.clear();
     TransactionSynchronizationManager.initSynchronization();
-    assertThatThrownBy(() -> client.createReservedTenant(claim, tenant())).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> client.createReservedTenant(claim, tenant()))
+        .isInstanceOf(IllegalStateException.class);
     TransactionSynchronizationManager.clear();
-    assertThatThrownBy(() -> client.createReservedTenant(claim, tenant().tenantIdReservationToken(null))).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () -> client.createReservedTenant(claim, tenant().tenantIdReservationToken(null)))
+        .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(broker, decoder);
     server.verify();
   }
 
   @Test
   void unresolved503RetainsTheExactClaimAndNeverRetriesOrLeaksUpstreamText() {
-    server.expect(anything()).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE).body("synthetic-private-upstream-body"));
-    assertThatThrownBy(() -> client.createReservedTenant(claim, tenant())).isInstanceOf(ResponseStatusException.class)
-        .satisfies(failure -> assertThat(((ResponseStatusException) failure).getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE))
+    server
+        .expect(anything())
+        .andRespond(
+            withStatus(HttpStatus.SERVICE_UNAVAILABLE).body("synthetic-private-upstream-body"));
+    assertThatThrownBy(() -> client.createReservedTenant(claim, tenant()))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(
+            failure ->
+                assertThat(((ResponseStatusException) failure).getStatusCode())
+                    .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE))
         .hasMessageNotContaining("synthetic-private");
     verify(broker, times(1)).issue(TaskPurpose.CONFIG_WIZARD);
     server.verify();
   }
 
   private MultilingualTenantDTO tenant() {
-    return new MultilingualTenantDTO().id(frozen.path("request").path("scope").path("targetTenantIds").get(0).longValue())
-        .name("Äctual tenant").tenantIdReservationToken(capability);
+    return new MultilingualTenantDTO()
+        .id(frozen.path("request").path("scope").path("targetTenantIds").get(0).longValue())
+        .name("Äctual tenant")
+        .tenantIdReservationToken(capability);
   }
 
   @lombok.SneakyThrows
@@ -159,12 +237,18 @@ class ReservedTenantBootstrapTest {
     ObjectNode value = ((ObjectNode) sent.path("tenant")).deepCopy();
     value.remove("tenantIdReservationToken");
     var fields = new TreeMap<String, Object>();
-    fields.put("v", 1); fields.put("ownerIssuer", "https://identity.example/realms/test");
-    fields.put("ownerClient", "backend-setup"); fields.put("ownerSubject", setupSubject);
-    fields.put("claimId", CLAIM.toString()); fields.put("accountAttemptId", ATTEMPT.toString()); fields.put("executionId", EXECUTION.toString());
-    fields.put("bootstrapAttemptId", "10000000-0000-0000-0000-000000000004"); fields.put("tenantId", value.path("id").longValue());
+    fields.put("v", 1);
+    fields.put("ownerIssuer", "https://identity.example/realms/test");
+    fields.put("ownerClient", "backend-setup");
+    fields.put("ownerSubject", setupSubject);
+    fields.put("claimId", CLAIM.toString());
+    fields.put("accountAttemptId", ATTEMPT.toString());
+    fields.put("executionId", EXECUTION.toString());
+    fields.put("bootstrapAttemptId", "10000000-0000-0000-0000-000000000004");
+    fields.put("tenantId", value.path("id").longValue());
     fields.put("requestDigest", mac("tenant-held-bootstrap-request/v1\n" + canonical(sent)));
-    fields.put("resultDigest", mac("tenant-held-bootstrap-result/v1\n" + canonical(value))); fields.put("state", "COMPLETE");
+    fields.put("resultDigest", mac("tenant-held-bootstrap-result/v1\n" + canonical(value)));
+    fields.put("state", "COMPLETE");
     if (mutation != null) {
       switch (mutation) {
         case "extra" -> fields.put("extra", false);
@@ -173,28 +257,57 @@ class ReservedTenantBootstrapTest {
         case "tenantId" -> fields.put("tenantId", 999);
         case "v" -> fields.put("v", "1");
         case "bootstrapAttemptId" -> fields.put(mutation, "not-a-uuid");
-        case "claimId", "accountAttemptId", "executionId" -> fields.put(mutation, UUID.randomUUID().toString());
+        case "claimId", "accountAttemptId", "executionId" ->
+            fields.put(mutation, UUID.randomUUID().toString());
         case "requestDigest", "resultDigest" -> fields.put(mutation, "f".repeat(64));
         default -> fields.put(mutation, "foreign");
       }
     }
-    String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(canonical(JSON.valueToTree(fields)).getBytes(StandardCharsets.UTF_8));
-    return JSON.writeValueAsString(Map.of("tenant", value, "receipt", encoded + "." + mac("tenant-held-bootstrap-receipt/v1\n" + encoded)));
+    String encoded =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(canonical(JSON.valueToTree(fields)).getBytes(StandardCharsets.UTF_8));
+    return JSON.writeValueAsString(
+        Map.of(
+            "tenant",
+            value,
+            "receipt",
+            encoded + "." + mac("tenant-held-bootstrap-receipt/v1\n" + encoded)));
   }
 
   private String mac(String value) throws Exception {
-    Mac hmac = Mac.getInstance("HmacSHA256"); hmac.init(new SecretKeySpec(key, "HmacSHA256"));
+    Mac hmac = Mac.getInstance("HmacSHA256");
+    hmac.init(new SecretKeySpec(key, "HmacSHA256"));
     return HexFormat.of().formatHex(hmac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
   }
 
   private static String canonical(JsonNode value) throws Exception {
     if (value.isObject()) {
-      var fields = new TreeMap<String, JsonNode>(); value.fields().forEachRemaining(e -> { if (!e.getValue().isNull()) fields.put(e.getKey(), e.getValue()); });
+      var fields = new TreeMap<String, JsonNode>();
+      value
+          .fields()
+          .forEachRemaining(
+              e -> {
+                if (!e.getValue().isNull()) fields.put(e.getKey(), e.getValue());
+              });
       var output = new StringBuilder("{");
-      for (var entry : fields.entrySet()) { if (output.length() > 1) output.append(','); output.append(JSON.writeValueAsString(entry.getKey())).append(':').append(canonical(entry.getValue())); }
+      for (var entry : fields.entrySet()) {
+        if (output.length() > 1) output.append(',');
+        output
+            .append(JSON.writeValueAsString(entry.getKey()))
+            .append(':')
+            .append(canonical(entry.getValue()));
+      }
       return output.append('}').toString();
     }
-    if (value.isArray()) { var output = new StringBuilder("["); for (var entry : value) { if (output.length() > 1) output.append(','); output.append(canonical(entry)); } return output.append(']').toString(); }
+    if (value.isArray()) {
+      var output = new StringBuilder("[");
+      for (var entry : value) {
+        if (output.length() > 1) output.append(',');
+        output.append(canonical(entry));
+      }
+      return output.append(']').toString();
+    }
     if (value.isNumber()) return value.decimalValue().stripTrailingZeros().toPlainString();
     return JSON.writeValueAsString(value);
   }
