@@ -211,7 +211,8 @@ public final class JdbcAccountLifecycleJournal implements AccountLifecycleJourna
             });
       } catch (RuntimeException refused) {
         // A malformed private row cannot create an intent, abort later accounts, or own every
-        // bounded page. Rotate only its scan timestamp after the failed transaction has rolled back.
+        // bounded page. Rotate only its scan timestamp after the failed transaction has rolled
+        // back.
         boolean rotated = false;
         try {
           rotated =
