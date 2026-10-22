@@ -300,21 +300,16 @@ public final class ProtectedOtpBootstrap {
   /** Only a known committed current same-claim result may reproduce register setup material. */
   public IdentityOtpCredential currentSetup(AcceptanceClaim claim) {
     outsideSql();
-    return transactions.execute(
-        tx -> {
-          checkClaim(claim);
-          var saved = row(claim);
-          if (saved == null || !"FROZEN".equals(saved.state()) || saved.result() == null)
-            throw unavailable();
-          var metadata = checkedMetadata(claim, saved.metadata());
-          return credential(
-              prepared(claim, metadata, open(resultMetadata(metadata), saved.result())).result);
-        });
+    return transactions.execute(tx -> currentSetupWithinOwner(claim));
   }
 
-  /** Pure owning-SQL current setup read; no remote operation is permitted here. */
+  /** Pure current read in the exact writable owning SQL transaction; it performs no RPC. */
   public IdentityOtpCredential currentSetupWithinOwner(AcceptanceClaim claim) {
-    throw unavailable();
+    owningSql(); checkClaim(claim);
+    var saved = row(claim);
+    if (saved == null || !"FROZEN".equals(saved.state()) || saved.result() == null) throw unavailable();
+    var metadata = checkedMetadata(claim, saved.metadata());
+    return credential(prepared(claim, metadata, open(resultMetadata(metadata), saved.result())).result);
   }
 
   private PreparedBootstrap prepared(AcceptanceClaim claim, JsonNode metadata, String result) {
@@ -367,6 +362,9 @@ public final class ProtectedOtpBootstrap {
         jdbc.queryForList("SELECT * FROM account_invite WHERE id=? FOR UPDATE", invite(claim));
     if (invites.size() != 1) throw unavailable();
     var current = invites.getFirst();
+    if (!(current.get("token_hash") instanceof String tokenHash)
+        || claim.tokenHash() == null
+        || !java.security.MessageDigest.isEqual(claim.tokenHash().getBytes(StandardCharsets.UTF_8), tokenHash.getBytes(StandardCharsets.UTF_8))) throw unavailable();
     if (!Set.of("EMAIL_SENT", "ACCEPTED").contains(current.get("status"))
         || !scope.path("protectedKind").asText().equals(current.get("target_role"))
         || !(current.get("tenant_id") instanceof Number tenant)
@@ -419,6 +417,8 @@ public final class ProtectedOtpBootstrap {
             invite(claim));
     if (claims.size() != 1) throw unavailable();
     var own = claims.getFirst();
+    if ("ACCEPTED".equals(current.get("status"))
+        && (own.get("account_id") == null || !own.get("account_id").equals(current.get("accepted_by_user_id")))) throw unavailable();
     if (!claim.frozen().approvalId().toString().equals(own.get("approval_id"))
         || !claim.claimId().toString().equals(own.get("claim_id"))
         || !claim.attemptId().toString().equals(own.get("attempt_id"))
@@ -442,10 +442,19 @@ public final class ProtectedOtpBootstrap {
             },
             invite(claim));
     if (rows.size() > 1) throw unavailable();
-    return rows.isEmpty() ? null : rows.getFirst();
+    if (rows.isEmpty()) return null;
+    var currentAcceptance = jdbc.queryForMap("SELECT * FROM protected_invitation_acceptance WHERE invite_id=?", invite(claim));
+    var ownedAccount = currentAcceptance.get("account_id");
+    if (ownedAccount != null && !ownedAccount.equals(codec.read(rows.getFirst().metadata(), JsonNode.class).path("accountId").asText())) throw unavailable();
+    return rows.getFirst();
   }
 
   private JsonNode checkedMetadata(AcceptanceClaim claim, String raw) {
+    return checkedMetadata(claim, raw, "otp.bootstrap-read");
+  }
+
+  private JsonNode checkedMetadata(AcceptanceClaim claim, String raw, String command) {
+    if (!Set.of("otp.bootstrap-read", "otp.bootstrap-app-setup").contains(command)) throw unavailable();
     var metadata = codec.read(raw, JsonNode.class);
     fields(metadata, METADATA);
     for (String name : METADATA) {
@@ -471,7 +480,7 @@ public final class ProtectedOtpBootstrap {
         || !claim.executionId().toString().equals(metadata.path("executionId").asText())
         || metadata.path("journalVersion").asLong() != 1
         || !"REQUEST".equals(metadata.path("representation").asText())
-        || !"otp.bootstrap-read".equals(metadata.path("command").asText())
+        || !command.equals(metadata.path("command").asText())
         || !metadata.path("authorityValidUntil").isIntegralNumber()
         || metadata.path("authorityValidUntil").asLong() <= 0) throw unavailable();
     for (String name : List.of("accountId", "operationId", "ownerSubject"))
@@ -599,8 +608,10 @@ public final class ProtectedOtpBootstrap {
     if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
   }
 
-  private static void owningSql() {
-    if (!TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+  private void owningSql() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !TransactionSynchronizationManager.hasResource(jdbc.getDataSource())) throw unavailable();
   }
 
   private record Row(String metadata, String request, String result, String state) {
@@ -611,8 +622,90 @@ public final class ProtectedOtpBootstrap {
   }
 
   /** All three methods capture actual servlet key/method/path/body inside this adapter. */
-  public BootstrapAttempt setupApp(AcceptanceClaim currentClaim, String initialCode) {
-    throw unavailable();
+  public BootstrapAttempt setupApp(AcceptanceClaim claim, String initialCode) {
+    outsideSql();
+    if (initialCode == null || !initialCode.matches("[0-9]{6,8}")) throw unavailable();
+    var actor = actors.require(TaskPurpose.OTP);
+    var machine = broker.issueCheckedMaintenance(TaskPurpose.OTP);
+    if (actor.actor() != TaskActor.ACCOUNT_ADMIN || !actor.clientId().equals(machine.clientId())
+        || !actor.serviceSubject().equals(machine.subject())) throw unavailable();
+    String key = request.getHeader("Idempotency-Key"); uuid(key);
+    if (!"POST".equals(request.getMethod()) || request.getRequestURI() == null || request.getRequestURI().length() > 1024) throw unavailable();
+    String publicIntent = codec.digest("protected-otp-bootstrap-public-key/v1", Map.of(
+        "subject", "protected-recipient/" + claim.claimId(), "key", key,
+        "method", request.getMethod(), "path", request.getRequestURI()));
+    String requestDigest = codec.digest("protected-otp-bootstrap-public-body/v1", Map.of(
+        "claimId", claim.claimId().toString(), "registrationDigest", claim.registrationDigest(),
+        "method", "APP", "otp", initialCode));
+    var frozen = transactions.execute(tx -> {
+      checkClaim(claim);
+      var original = row(claim);
+      if (original == null || !"FROZEN".equals(original.state())) throw unavailable();
+      var base = checkedMetadata(claim, original.metadata());
+      if (!actor.clientId().equals(base.path("ownerClient").asText()) || !actor.serviceSubject().equals(base.path("ownerSubject").asText())) throw unavailable();
+      var existing = operation(claim, publicIntent);
+      if (existing != null) {
+        checkedMetadata(claim, existing.metadata(), "otp.bootstrap-app-setup");
+        if (!requestDigest.equals(existing.requestDigest())) throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT, "Protected OTP intent conflicts");
+        return existing;
+      }
+      var prepared = prepared(claim, base, open(resultMetadata(base), original.result()));
+      var result = codec.read(prepared.result, JsonNode.class);
+      var setup = credential(prepared.result);
+      var originalCommand = codec.read(open(base, original.request()), JsonNode.class);
+      var command = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+      command.put("username", originalCommand.path("username").asText());
+      command.put("bootstrapReceipt", result.path("bootstrapReceipt").asText());
+      var body = command.putObject("body"); var target = body.putObject("target");
+      target.set("accountId", base.path("accountId")); target.set("tenantId", originalCommand.path("target").path("tenantId"));
+      var origin = target.putObject("origin"); origin.put("kind", "INVITATION"); origin.set("workflowId", base.path("workflowId"));
+      origin.putNull("humanSubject"); origin.putNull("humanIssuer"); origin.putNull("humanClient"); origin.putNull("humanAuthority");
+      String operation = UUID.randomUUID().toString(); body.put("operationId", operation);
+      body.put("expectedState", codec.digest("otp-bootstrap-state/v1", result.path("bootstrapReceipt").asText()));
+      var otp = body.putObject("otp"); otp.put("initialCode", initialCode); otp.put("secret", setup.secret()); otp.putNull("email");
+      var metadata = base.deepCopy(); ((ObjectNode) metadata).put("operationId", operation);
+      ((ObjectNode) metadata).put("command", "otp.bootstrap-app-setup"); ((ObjectNode) metadata).put("requestDigest", requestDigest);
+      var saved = new Operation(publicIntent, requestDigest, codec.canonical(metadata), seal(metadata, codec.canonical(command)), null, "FROZEN");
+      var now = Timestamp.from(clock.instant());
+      jdbc.update("INSERT INTO protected_otp_bootstrap_operation(public_intent_id,invite_id,claim_id,operation_id,request_digest,metadata_json,command_envelope,result_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,NULL,'FROZEN',?,?)",
+          publicIntent, invite(claim), claim.claimId().toString(), operation, requestDigest, saved.metadata(), saved.command(), now, now);
+      return saved;
+    });
+    if (frozen == null) throw unavailable();
+    if ("ACKNOWLEDGED".equals(frozen.state())) return checkedOutcome(claim, frozen);
+    if (!"FROZEN".equals(frozen.state())) throw unavailable();
+    var metadata = checkedMetadata(claim, frozen.metadata(), "otp.bootstrap-app-setup");
+    var command = codec.read(open(metadata, frozen.command()), JsonNode.class);
+    var materialized = ((ObjectNode) command.path("body")).deepCopy();
+    materialized.set("username", command.path("username")); materialized.set("bootstrapReceipt", command.path("bootstrapReceipt"));
+    var headers = new HttpHeaders(); headers.setBearerAuth(machine.accessToken()); headers.setContentType(MediaType.APPLICATION_JSON);
+    headers.setAccept(List.of(MediaType.APPLICATION_JSON)); headers.set("X-ORISO-OTP-Bootstrap", command.path("bootstrapReceipt").asText());
+    headers.set("X-ORISO-Task-Context", codec.protectedBootstrapAppProof(realmName, realmId,
+        metadata.path("accountId").asText(), actor, materialized, metadata.path("authorityValidUntil").asLong()));
+    String response; int status;
+    try {
+      var reply = http.exchange(UriComponentsBuilder.fromUri(server).pathSegment("realms", realmName,
+          "otp-config", "setup-otp", command.path("username").asText()).build().encode().toUri(),
+          HttpMethod.PUT, new HttpEntity<>(codec.canonical(command.path("body")).getBytes(StandardCharsets.UTF_8), headers), byte[].class);
+      status = reply.getStatusCode().value(); response = reply.getBody() == null ? null : codec.utf8(reply.getBody());
+    } catch (org.springframework.web.client.RestClientResponseException rejected) {
+      if (rejected.getStatusCode().value() != 401) return new BootstrapAttempt(AttemptState.UNKNOWN, null);
+      status = 401; response = codec.utf8(rejected.getResponseBodyAsByteArray());
+    } catch (RestClientException unknown) { return new BootstrapAttempt(AttemptState.UNKNOWN, null); }
+    if (!Set.of(201, 401).contains(status) || response == null) return new BootstrapAttempt(AttemptState.UNKNOWN, null);
+    final String terminalResponse = response;
+    var acknowledged = new Operation(frozen.id(), frozen.requestDigest(), frozen.metadata(), frozen.command(), terminalResponse, "ACKNOWLEDGED");
+    var verified = checkedOutcome(claim, acknowledged);
+    transactions.executeWithoutResult(tx -> {
+      checkClaim(claim); row(claim);
+      var current = operation(claim, frozen.id());
+      if (current == null || !current.metadata().equals(frozen.metadata()) || !current.command().equals(frozen.command())) throw unavailable();
+      if ("ACKNOWLEDGED".equals(current.state())) {
+        if (!Objects.equals(current.result(), terminalResponse)) throw unavailable();
+      } else if (!"FROZEN".equals(current.state()) || jdbc.update("UPDATE protected_otp_bootstrap_operation SET result_json=?,state='ACKNOWLEDGED',updated_at=? WHERE public_intent_id=? AND claim_id=? AND state='FROZEN'",
+          terminalResponse, Timestamp.from(clock.instant()), frozen.id(), claim.claimId().toString()) != 1) throw unavailable();
+    });
+    return verified;
   }
 
   public BootstrapAttempt startEmail(AcceptanceClaim currentClaim) {
@@ -624,8 +717,51 @@ public final class ProtectedOtpBootstrap {
   }
 
   /** Reconstruct opaque success only from the independently checked committed private journal. */
-  public Completion completed(AcceptanceClaim currentClaim) {
-    throw unavailable();
+  public Completion completed(AcceptanceClaim claim) {
+    outsideSql();
+    return transactions.execute(tx -> {
+      checkClaim(claim); row(claim);
+      var ids = jdbc.queryForList("SELECT public_intent_id FROM protected_otp_bootstrap_operation WHERE invite_id=? AND claim_id=? AND state='ACKNOWLEDGED' ORDER BY public_intent_id", String.class, invite(claim), claim.claimId().toString());
+      Completion found = null;
+      for (String id : ids) {
+        var checked = checkedOutcome(claim, Objects.requireNonNull(operation(claim, id)));
+        if (checked.state() == AttemptState.COMPLETE) { if (found != null) throw unavailable(); found = checked.completion(); }
+      }
+      if (found == null) throw unavailable(); return found;
+    });
+  }
+
+  private Operation operation(AcceptanceClaim claim, String id) {
+    var rows = jdbc.query("SELECT * FROM protected_otp_bootstrap_operation WHERE public_intent_id=? FOR UPDATE", (rs, index) -> {
+      if (rs.getLong("invite_id") != invite(claim) || !claim.claimId().toString().equals(rs.getString("claim_id"))) throw unavailable();
+      return new Operation(rs.getString("public_intent_id"), rs.getString("request_digest"), rs.getString("metadata_json"), rs.getString("command_envelope"), rs.getString("result_json"), rs.getString("state"));
+    }, id);
+    if (rows.size() > 1) throw unavailable(); return rows.isEmpty() ? null : rows.getFirst();
+  }
+
+  private BootstrapAttempt checkedOutcome(AcceptanceClaim claim, Operation saved) {
+    var metadata = checkedMetadata(claim, saved.metadata(), "otp.bootstrap-app-setup");
+    if (!"ACKNOWLEDGED".equals(saved.state()) || saved.result() == null) throw unavailable();
+    var command = codec.read(open(metadata, saved.command()), JsonNode.class);
+    var materialized = ((ObjectNode) command.path("body")).deepCopy();
+    materialized.set("username", command.path("username")); materialized.set("bootstrapReceipt", command.path("bootstrapReceipt"));
+    var value = codec.read(saved.result(), JsonNode.class); fields(value, Set.of("status", "result", "receipt"));
+    if (!value.path("status").isIntegralNumber() || !Set.of(201, 401).contains(value.path("status").asInt())) throw unavailable();
+    int status = value.path("status").asInt(); var result = value.path("result");
+    fields(result, status == 201 ? Set.of("info") : Set.of("error", "error_description"));
+    var expected = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode(); expected.put("v", 1);
+    for (String name : List.of("realmId", "approvalId", "attemptId", "accountId", "claimId", "executionId", "ownerClient", "ownerSubject", "originDigest", "authorityValidUntil")) expected.set(name, metadata.path(name));
+    expected.set("bootstrapIncarnation", metadata.path("executionId")); expected.put("state", status == 201 ? "COMPLETE" : "INVALID");
+    expected.set("operationId", metadata.path("operationId")); expected.put("intentDigest", codec.digest("otp-bootstrap-intent/v1", materialized));
+    expected.put("status", status); expected.put("resultDigest", codec.digest("otp-result", result));
+    codec.checkProtectedBootstrapCompleteReceipt(value.path("receipt").asText(), expected);
+    var completion = status == 201 ? new Completion(claim.claimId(), claim.attemptId(), claim.executionId(),
+        metadata.path("accountId").asText(), value.path("receipt").asText()) : null;
+    return new BootstrapAttempt(status == 201 ? AttemptState.COMPLETE : AttemptState.INVALID, completion);
+  }
+
+  private record Operation(String id, String requestDigest, String metadata, String command, String result, String state) {
+    @Override public String toString() { return "ProtectedOtpOperation[redacted]"; }
   }
 
   public enum AttemptState {
@@ -653,55 +789,27 @@ public final class ProtectedOtpBootstrap {
   }
 
   public static final class BootstrapAttempt {
-    private BootstrapAttempt() {}
-
-    public AttemptState state() {
-      throw unavailable();
-    }
-
-    /** Available only for COMPLETE; private constructor of Completion supplies no raw-tuple API. */
-    public Completion completion() {
-      throw unavailable();
-    }
-
-    @Override
-    public String toString() {
-      return "ProtectedOtpAttempt[redacted]";
-    }
+    private final AttemptState state;
+    private final Completion completion;
+    private BootstrapAttempt(AttemptState state, Completion completion) { this.state = state; this.completion = completion; }
+    public AttemptState state() { return state; }
+    public Completion completion() { if (state != AttemptState.COMPLETE || completion == null) throw unavailable(); return completion; }
+    @Override public String toString() { return "ProtectedOtpAttempt[redacted]"; }
   }
 
   public static final class Completion {
-    private Completion() {}
-
-    public UUID claimId() {
-      throw unavailable();
+    private final UUID claimId, attemptId, executionId;
+    private final String accountId, receipt;
+    private Completion(UUID claimId, UUID attemptId, UUID executionId, String accountId, String receipt) {
+      this.claimId = claimId; this.attemptId = attemptId; this.executionId = executionId; this.accountId = accountId; this.receipt = receipt;
     }
-
-    public UUID attemptId() {
-      throw unavailable();
-    }
-
-    public UUID executionId() {
-      throw unavailable();
-    }
-
-    public UUID bootstrapIncarnation() {
-      throw unavailable();
-    }
-
-    public String accountId() {
-      throw unavailable();
-    }
-
-    /** Metadata-only MAC-bound native completion receipt; never setup material/code/JWT/address. */
-    public String receipt() {
-      throw unavailable();
-    }
-
-    @Override
-    public String toString() {
-      return "ProtectedOtpCompletion[redacted]";
-    }
+    public UUID claimId() { return claimId; }
+    public UUID attemptId() { return attemptId; }
+    public UUID executionId() { return executionId; }
+    public UUID bootstrapIncarnation() { return executionId; }
+    public String accountId() { return accountId; }
+    public String receipt() { return receipt; }
+    @Override public String toString() { return "ProtectedOtpCompletion[redacted]"; }
   }
 
   private static IllegalStateException unavailable() {

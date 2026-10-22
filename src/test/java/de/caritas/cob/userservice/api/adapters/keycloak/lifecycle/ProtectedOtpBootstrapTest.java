@@ -149,6 +149,23 @@ class ProtectedOtpBootstrapTest {
     }
   }
 
+  @Test
+  void currentRecipientCanReadSetupAfterMachineExpiryWhileOriginalInvitationRemainsLive()
+      throws Exception {
+    try (var f = new Fixture()) {
+      f.expectPrepare();
+      var prepared = assertDoesNotThrow(() -> f.adapter().prepare(f.claim, f.pending));
+      new TransactionTemplate(f.manager)
+          .executeWithoutResult(tx -> f.adapter().stagePrepared(f.claim, prepared));
+      Clock afterMachine = Clock.offset(f.clock, java.time.Duration.ofSeconds(400));
+      var setup = assertDoesNotThrow(() -> f.adapter(afterMachine).currentSetup(f.claim));
+      assertEquals("SyntheticSetupSecret1234567890", setup.secret());
+      f.jdbc.update("UPDATE account_invite SET token_hash=? WHERE id=73", "d".repeat(64));
+      assertThrows(RuntimeException.class, () -> f.adapter(afterMachine).currentSetup(f.claim));
+      f.server.verify();
+    }
+  }
+
   private static final class Fixture implements AutoCloseable {
     private static final String ADMIN = "032d47ad-8156-47b8-a8ce-17ae1970e046";
     private final Clock clock = Clock.systemUTC();
@@ -274,6 +291,10 @@ class ProtectedOtpBootstrapTest {
     }
 
     ProtectedOtpBootstrap adapter() {
+      return adapter(clock);
+    }
+
+    ProtectedOtpBootstrap adapter(Clock actualClock) {
       return new ProtectedOtpBootstrap(
           jdbc,
           manager,
@@ -282,7 +303,7 @@ class ProtectedOtpBootstrapTest {
           issuer.broker(),
           http,
           request,
-          clock,
+          actualClock,
           issuer.base(),
           "synthetic",
           "native-synthetic-realm");
