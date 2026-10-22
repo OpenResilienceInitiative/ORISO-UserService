@@ -68,6 +68,12 @@ class UserTwoFactorAuthControllerDelegate {
   ResponseEntity<Void> finishTwoFactorAuthByEmailSetup(String tan) {
     assertTwoFactorAuthAllowed();
 
+    if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
+      boolean valid = selfAppOtpMaintenance.finishEmail(tan,
+          () -> accountInviteService.markTwoFactorActive(authenticatedUser.getUserId()));
+      return valid ? ResponseEntity.noContent().build() : ResponseEntity.badRequest().build();
+    }
+
     var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var validationResult = identityManager.validateOneTimePassword(username, tan);
 

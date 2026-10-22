@@ -84,6 +84,13 @@ def select_slice(name):
             "publicAppDeleteLostReplyNewOwnerReplaysFrozenDeleteWithoutSecondGateTransition",
             "publicAppDeleteInvalidReceiptRetainsActiveGateAndFrozenOwnership",
             "missingScopedDeleteKeepsActualCGuardAndLegacyDeleteRemainsWorking",
+            "publicLinkedEmailFinishCommitsEmailPointerInviteOnlyAfterVerifiedNativeReceipt",
+            "publicLinkedEmailFinishLostReplyNewOwnerReplaysOneNativeAndOneDomainEffect",
+            "publicLinkedEmailFinishInvalidCodeCommitsOneTerminalAttemptAndRejectsChangedSameIntent",
+            "publicLinkedEmailFinishUnknownOutcomeKeepsOriginalPointerEmailAndInvite",
+            "publicLinkedEmailFinishInvalidMacCannotChangeEmailPointerOrInvite",
+            "publicLinkedEmailFinishMissingIntentOrForeignDomainRefusesBeforeAnyNativeFinish",
+            "missingScopedEmailFinishKeepsActualCGuardAndLegacyInvalidCodeWorking",
             "publicEmailStartAcknowledgesOnlyVerifiedSentAndKeepsPendingRecipientEncrypted",
             "publicEmailStartLostReplyNewOwnerReplaysFrozenRecipientAndOriginalExpiry",
             "publicEmailStartSameIdCannotReplaceTheCompletePendingDestination",
@@ -194,6 +201,7 @@ def select_slice(name):
     if name == "app":
         CONTROLS.add("missingScopedDeleteKeepsActualCGuardAndLegacyDeleteRemainsWorking")
         CONTROLS.add("missingScopedEmailStartKeepsActualCGuardAndLegacyEmailStartWorking")
+        CONTROLS.add("missingScopedEmailFinishKeepsActualCGuardAndLegacyInvalidCodeWorking")
     elif name == "locale":
         CONTROLS.add("domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract")
     elif name == "availability":

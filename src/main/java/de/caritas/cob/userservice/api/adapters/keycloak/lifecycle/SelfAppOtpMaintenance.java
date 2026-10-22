@@ -64,6 +64,11 @@ public final class SelfAppOtpMaintenance {
     return execute(null, null, pendingEmail, () -> {}, Operation.EMAIL_START);
   }
 
+  /** Signature-only linked finish diagnostic; no native or local email effect. */
+  public boolean finishEmail(String code, Runnable markActive) {
+    return false;
+  }
+
   public boolean delete(Runnable markPending) {
     return execute(null, null, null, markPending, Operation.DELETE);
   }
