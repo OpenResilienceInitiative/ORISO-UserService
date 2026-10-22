@@ -5,6 +5,7 @@ import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourc
 
 import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.workflow.delete.action.DeleteKeycloakUserAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
@@ -44,6 +45,9 @@ public class DeleteKeycloakAskerAction extends DeleteKeycloakUserAction
                   .reason(ERROR_REASON)
                   .timestamp(nowInUtc())
                   .build());
+      if (e instanceof ScopedIdentityCommandRequiredException denied) {
+        throw denied;
+      }
     }
   }
 }

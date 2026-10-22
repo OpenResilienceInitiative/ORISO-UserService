@@ -329,6 +329,68 @@ class ConsultantImportServiceTest {
         .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
   }
 
+  @Test
+  void fiveActorExistingImportRefusesForeignConsultantBeforeAnyRelationMutation() throws Exception {
+    configuredExistingImport(7L);
+    consultantImportService.startImport();
+    verify(consultantAgencyRelationCreatorService, never())
+        .createConsultantAgencyRelations(anyString(), any(), any(), any());
+    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
+  }
+
+  @Test
+  void fiveActorExistingImportRefusesUnassignedConsultantBeforeAnyRelationMutation()
+      throws Exception {
+    configuredExistingImport(null);
+    consultantImportService.startImport();
+    verify(consultantAgencyRelationCreatorService, never())
+        .createConsultantAgencyRelations(anyString(), any(), any(), any());
+    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
+  }
+
+  @Test
+  void fiveActorExistingImportKeepsExactConsultantRowAndAgencyTenantBinding() throws Exception {
+    configuredExistingImport(5L);
+    consultantImportService.startImport();
+    verify(consultantAgencyRelationCreatorService)
+        .createConsultantAgencyRelations(
+            eq("3057c2a7-635f-4bb9-a976-48ac82ec3dda"),
+            eq(java.util.Set.of(10L)),
+            eq(java.util.Set.of("consultant")),
+            any());
+    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
+  }
+
+  private void configuredExistingImport(Long currentTenant) throws IOException {
+    ReflectionTestUtils.setField(
+        consultantImportService,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    writeCsv(
+        "3057c2a7-635f-4bb9-a976-48ac82ec3dda,1,someuser,First,Last,valid@example.com,nein,,10;ordinary\r\n");
+    when(userHelper.isValidEmail("valid@example.com")).thenReturn(true);
+    var agency = agencyWithConsultingType(1);
+    agency.setTenantId(5L);
+    when(lifecycleIdentities.isFiveActorMode()).thenReturn(true);
+    when(lifecycleIdentities.taskAccessToken(
+            de.caritas.cob.userservice.api.config.auth.TaskPurpose.RUNTIME_POLICY))
+        .thenReturn("synthetic-runtime-token");
+    when(agencyService.getAgenciesForOrdinaryCreation(List.of(10L), "synthetic-runtime-token"))
+        .thenReturn(List.of(agency));
+    when(consultingTypeManager.getConsultingTypeSettings(1))
+        .thenReturn(typeWithRoles(Map.of("ordinary", List.of("consultant"))));
+    var existing = new Consultant();
+    existing.setId("3057c2a7-635f-4bb9-a976-48ac82ec3dda");
+    existing.setUsername(
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder().encodeUsername("someuser"));
+    existing.setTenantId(currentTenant);
+    when(consultantService.getConsultant(existing.getId())).thenReturn(Optional.of(existing));
+  }
+
   private void writeCsv(String content) throws IOException {
     Files.writeString(importFile, content);
   }

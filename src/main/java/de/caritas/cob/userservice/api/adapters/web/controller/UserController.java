@@ -64,6 +64,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.port.out.ScopedAvailabilityUnavailableException;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
@@ -178,6 +179,8 @@ public class UserController implements UsersApi {
     boolean usernameAvailable;
     try {
       usernameAvailable = identityManager.isUsernameAvailable(username);
+    } catch (ScopedAvailabilityUnavailableException unavailable) {
+      throw unavailable;
     } catch (RuntimeException exception) {
       log.warn(
           "Could not check username availability for {}. Treating it as available so registration is not blocked.",

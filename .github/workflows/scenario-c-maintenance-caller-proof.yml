@@ -1,0 +1,166 @@
+name: Scenario C maintenance caller boundary diagnostic
+
+on:
+  push:
+    branches: [codex/367-c-maintenance-user-20261021]
+    paths:
+      - src/**
+      - api/**
+      - pom.xml
+      - scripts/ci/maintenance-boundary-proof.py
+      - tests/ci/test_maintenance_boundary_proof.py
+      - .github/workflows/scenario-c-maintenance-caller-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance-caller-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  caller-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slice: adapter
+            test: KeycloakServiceScenarioCModeTest
+            test_path: adapters/keycloak/KeycloakServiceScenarioCModeTest.java
+          - slice: locale
+            test: UserSelfLocaleScenarioCBoundaryTest
+            test_path: adapters/web/controller/UserSelfLocaleScenarioCBoundaryTest.java
+          - slice: availability
+            test: UserUsernameAvailabilityScenarioCBoundaryTest
+            test_path: adapters/web/controller/UserUsernameAvailabilityScenarioCBoundaryTest.java
+          - slice: jpa
+            test: SelfLocaleMaintenanceJpaTest
+            test_path: adapters/keycloak/maintenance/SelfLocaleMaintenanceJpaTest.java
+          - slice: deletion
+            test: DeleteUserAccountScenarioCBoundaryTest
+            test_path: workflow/delete/service/DeleteUserAccountScenarioCBoundaryTest.java
+          - slice: app-jpa
+            test: SelfAppOtpMaintenanceJpaTest
+            test_path: adapters/keycloak/lifecycle/SelfAppOtpMaintenanceJpaTest.java
+          - slice: app
+            test: UserSelfAppOtpScenarioCBoundaryTest
+            test_path: adapters/web/controller/UserSelfAppOtpScenarioCBoundaryTest.java
+          - slice: otp-read
+            test: UserSelfOtpReadScenarioCBoundaryTest
+            test_path: adapters/web/controller/UserSelfOtpReadScenarioCBoundaryTest.java
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21.0.12+8.0.LTS'
+          cache: maven
+          cache-dependency-path: pom.xml
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: 3.12.13
+      - name: Install checksum-verified Maven 3.9.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 \
+            https://archive.apache.org/dist/maven/maven-3/3.9.14/binaries/apache-maven-3.9.14-bin.tar.gz \
+            --output "$RUNNER_TEMP/maven.tar.gz"
+          printf '%s  %s\n' \
+            d50af8ab5e6005b46a07f0ce9d3719e67cfdf898da988a84871304cd59fb1af0fef2f99dea709e6e66f21f732f905979b5c2dce6b6860406f60a70e84d9cf0b8 \
+            "$RUNNER_TEMP/maven.tar.gz" | sha512sum --check
+          tar -xzf "$RUNNER_TEMP/maven.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-3.9.14/bin" >> "$GITHUB_PATH"
+      - name: Verify nonsecret evidence gates without JVM or native fixtures
+        run: python -m unittest discover -s tests/ci -p test_maintenance_boundary_proof.py -v
+      - name: Require committed formatting for the twenty-three owned maintenance sources
+        if: matrix.slice == 'locale' || matrix.slice == 'jpa' || matrix.slice == 'availability' || matrix.slice == 'deletion' || matrix.slice == 'app' || matrix.slice == 'app-jpa' || matrix.slice == 'otp-read'
+        shell: bash
+        env:
+          MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -q spotless:apply \
+            "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/DeleteUserAccountScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/UsernameAvailabilityConfiguration.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/KeycloakUsernameAvailability.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserUsernameAvailabilityScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/ScopedUsernameAvailability.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/port/out/ScopedAvailabilityUnavailableException.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakService.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserController.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenanceJpaTest.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfLocaleScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/UserMaintenanceSecretIntentCodecTest.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/service/accountinvite/AccountInviteService.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfOtpReadWire.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfAppOtpMaintenance.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserTwoFactorAuthControllerDelegate.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfOtpReadScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfAppOtpScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/config/auth/SelfAppSignedIssuer.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/config/auth/SyntheticTaskIssuer.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfAppOtpMaintenanceJpaTest.java"
+          mkdir -p target/scenario-c-maintenance-caller
+          git diff --binary -- \
+            src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/DeleteUserAccountScenarioCBoundaryTest.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/UsernameAvailabilityConfiguration.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/KeycloakUsernameAvailability.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserUsernameAvailabilityScenarioCBoundaryTest.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/ScopedUsernameAvailability.java \
+            src/main/java/de/caritas/cob/userservice/api/port/out/ScopedAvailabilityUnavailableException.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakService.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserController.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenanceJpaTest.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfLocaleScenarioCBoundaryTest.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/UserMaintenanceSecretIntentCodecTest.java \
+            src/main/java/de/caritas/cob/userservice/api/service/accountinvite/AccountInviteService.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfOtpReadWire.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfAppOtpMaintenance.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserTwoFactorAuthControllerDelegate.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfOtpReadScenarioCBoundaryTest.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfAppOtpScenarioCBoundaryTest.java \
+            src/test/java/de/caritas/cob/userservice/api/config/auth/SelfAppSignedIssuer.java \
+            src/test/java/de/caritas/cob/userservice/api/config/auth/SyntheticTaskIssuer.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfAppOtpMaintenanceJpaTest.java \
+            > target/scenario-c-maintenance-caller/locale-format.patch
+          git diff --exit-code -- \
+            src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/DeleteUserAccountScenarioCBoundaryTest.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/UsernameAvailabilityConfiguration.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/KeycloakUsernameAvailability.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserUsernameAvailabilityScenarioCBoundaryTest.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/ScopedUsernameAvailability.java \
+            src/main/java/de/caritas/cob/userservice/api/port/out/ScopedAvailabilityUnavailableException.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakService.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserController.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenanceJpaTest.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfLocaleScenarioCBoundaryTest.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/UserMaintenanceSecretIntentCodecTest.java \
+            src/main/java/de/caritas/cob/userservice/api/service/accountinvite/AccountInviteService.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfOtpReadWire.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfAppOtpMaintenance.java \
+            src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserTwoFactorAuthControllerDelegate.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfOtpReadScenarioCBoundaryTest.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfAppOtpScenarioCBoundaryTest.java \
+            src/test/java/de/caritas/cob/userservice/api/config/auth/SelfAppSignedIssuer.java \
+            src/test/java/de/caritas/cob/userservice/api/config/auth/SyntheticTaskIssuer.java \
+            src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfAppOtpMaintenanceJpaTest.java
+      - name: Bind the actual checkout and required normal Dev ancestor
+        run: python scripts/ci/maintenance-boundary-proof.py snapshot --report target/scenario-c-maintenance-caller/maintenance-caller-before.json --slice ${{ matrix.slice }}
+      - name: Compile actual User source and execute each actual public boundary case once
+        shell: bash
+        env:
+          MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -q test \
+            -Dtest=${{ matrix.test }} \
+            -DfailIfNoTests=true -Dsurefire.failIfNoSpecifiedTests=true \
+            '-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2' \
+            "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/${{ matrix.test_path }}|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakService.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/port/out/ScopedIdentityCommandRequiredException.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/workflow/delete/action/asker/DeleteKeycloakAskerAction.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/workflow/delete/service/DeleteUserAccountService.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleCodec.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/workflow/delete/service/ScheduledAskerMaintenance.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeleteUserAccountScheduler.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/service/accountinvite/AccountInviteService.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfOtpReadWire.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfAppOtpMaintenance.java|$GITHUB_WORKSPACE/src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserTwoFactorAuthControllerDelegate.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfOtpReadScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfAppOtpScenarioCBoundaryTest.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/config/auth/SelfAppSignedIssuer.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/config/auth/SyntheticTaskIssuer.java|$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfAppOtpMaintenanceJpaTest.java"
+      - name: Require the exact finite method inventory and preserve every sanitized outcome
+        if: always()
+        run: python scripts/ci/maintenance-boundary-proof.py collect --report target/scenario-c-maintenance-caller/maintenance-caller-result.json --slice ${{ matrix.slice }}
+      - name: Upload only sanitized XML, JSON and exact source hashes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: scenario-c-maintenance-caller-${{ matrix.slice }}
+          path: |
+            target/scenario-c-maintenance-caller/maintenance-caller-*.json
+            target/scenario-c-maintenance-caller/maintenance-caller-*.xml
+            target/scenario-c-maintenance-caller/locale-format.patch
+          if-no-files-found: error
+          retention-days: 14
