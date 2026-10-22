@@ -106,6 +106,11 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
   }
 
   @Override
+  public void storeMagicLink(String token, TokenClaim claim) {
+    // TDD: closed scoped persistence until the hosted assertion proves the missing effect.
+  }
+
+  @Override
   public Optional<TokenClaim> claim(String scope, String token) {
     requireSegment("scope", scope);
     requireSegment("token", token);

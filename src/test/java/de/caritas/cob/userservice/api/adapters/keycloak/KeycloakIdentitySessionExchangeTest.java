@@ -8,6 +8,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
+import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
+import de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker;
+import org.springframework.beans.factory.ObjectProvider;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import java.time.Instant;
 import java.util.List;
@@ -36,17 +40,20 @@ class KeycloakIdentitySessionExchangeTest {
   @Mock private RestTemplate restTemplate;
   @Mock private IdentityClientConfig identityClientConfig;
   @Mock private JwtDecoder jwtDecoder;
+  @Mock private TaskActorConfiguration taskActors;
+  @Mock private TaskActorTokenBroker broker;
+  @Mock private ObjectProvider<AccountLifecycleCodec> lifecycleCodec;
 
   private KeycloakIdentitySessionExchange exchange;
 
   @BeforeEach
   void setUp() {
-    exchange = new KeycloakIdentitySessionExchange(restTemplate, identityClientConfig, jwtDecoder);
+    exchange = new KeycloakIdentitySessionExchange(restTemplate, identityClientConfig, jwtDecoder, taskActors, broker, lifecycleCodec);
     ReflectionTestUtils.setField(exchange, "keycloakAdminClientId", "backend-admin");
     ReflectionTestUtils.setField(exchange, "keycloakAdminClientSecret", "secret");
     ReflectionTestUtils.setField(exchange, "keycloakAdminServiceSubject", "admin-service-subject");
     ReflectionTestUtils.setField(exchange, "keycloakAppClientId", "app");
-    when(identityClientConfig.getOpenIdConnectUrl("/token")).thenReturn(TOKEN_URL);
+    org.mockito.Mockito.lenient().when(identityClientConfig.getOpenIdConnectUrl("/token")).thenReturn(TOKEN_URL);
   }
 
   @Test
@@ -210,5 +217,157 @@ class KeycloakIdentitySessionExchangeTest {
   @SuppressWarnings("unchecked")
   private static MultiValueMap<String, String> form(ArgumentCaptor<HttpEntity> captor) {
     return (MultiValueMap<String, String>) captor.getValue().getBody();
+  }
+
+  private static final String MAGIC_ISSUER = "https://identity.example/realms/c-fixture";
+  private static final String MAGIC_URL = MAGIC_ISSUER + "/protocol/openid-connect/token";
+  private static final String MAGIC_TARGET = "11111111-1111-4111-8111-111111111111";
+  private static final String MAGIC_REALM_ID = "22222222-2222-4222-8222-222222222222";
+
+  @Test
+  void fiveActorsGenericSubjectExchangeIsClosedBeforeAnyGrant() {
+    when(taskActors.isEnabled()).thenReturn(true);
+    assertThat(exchange.exchangeForUser(MAGIC_TARGET)).isEmpty();
+    org.mockito.Mockito.verifyNoInteractions(restTemplate, broker, jwtDecoder);
+  }
+
+  @Test
+  void liveClaimUsesTheFixedNativePasswordRouteAndIndependentProofMac() throws Exception {
+    var http = new RestTemplate();
+    var server = org.springframework.test.web.client.MockRestServiceServer.bindTo(http).build();
+    var configured = scopedTransport(http);
+    var claim = liveTransportClaim();
+    when(jwtDecoder.decode("native-access")).thenReturn(magicJwt(MAGIC_TARGET, "app", "42"));
+    server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(MAGIC_URL))
+        .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.method(org.springframework.http.HttpMethod.POST))
+        .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.header("Authorization", "Bearer checked-admin"))
+        .andExpect(request -> {
+          assertThat(request.getHeaders().getContentType().isCompatibleWith(org.springframework.http.MediaType.APPLICATION_FORM_URLENCODED)).isTrue();
+          String raw = ((org.springframework.mock.http.client.MockClientHttpRequest) request).getBodyAsString();
+          var fields = new java.util.TreeMap<String,String>();
+          for (String field : raw.split("&")) {
+            String[] pair = field.split("=", 2);
+            fields.put(java.net.URLDecoder.decode(pair[0], java.nio.charset.StandardCharsets.UTF_8),
+                java.net.URLDecoder.decode(pair[1], java.nio.charset.StandardCharsets.UTF_8));
+          }
+          assertThat(fields.keySet()).containsExactly("client_id", "grant_type", "oriso_magic_command");
+          assertThat(fields.get("client_id")).isEqualTo("app");
+          assertThat(fields.get("grant_type")).isEqualTo("password");
+          var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+          var body = mapper.readTree(fields.get("oriso_magic_command"));
+          assertThat(body.size()).isEqualTo(7);
+          assertThat(body.path("targetUserId").asText()).isEqualTo(MAGIC_TARGET);
+          assertThat(body.path("workflowId").asText()).isEqualTo(claim.workflowId().toString());
+          assertThat(body.path("tenantId").isIntegralNumber()).isTrue();
+          assertThat(body.path("tenantId").longValue()).isEqualTo(42L);
+          assertThat(body.path("clientId").asText()).isEqualTo("app");
+          assertThat(body.path("expiresAt").longValue()).isEqualTo(claim.expiresAt().getEpochSecond());
+          assertThat(body.path("claimDigest").asText()).isEqualTo(claim.claimDigest());
+          assertThat(body.path("version").intValue()).isEqualTo(1);
+          String[] signed = request.getHeaders().getFirst("X-ORISO-Task-Context").split("\\.");
+          assertThat(signed).hasSize(2);
+          var claims = mapper.readTree(java.util.Base64.getUrlDecoder().decode(signed[0]));
+          assertThat(claims.size()).isEqualTo(15);
+          assertThat(claims.path("iss").asText()).isEqualTo("userservice");
+          assertThat(claims.path("aud").asText()).isEqualTo("oriso-session-exchange");
+          assertThat(claims.path("purpose").asText()).isEqualTo("SESSION_EXCHANGE");
+          assertThat(claims.path("operation").asText()).isEqualTo("session.magic-link.exchange");
+          assertThat(claims.path("method").asText()).isEqualTo("POST");
+          assertThat(claims.path("actor").asText()).isEqualTo("ACCOUNT_ADMIN");
+          assertThat(claims.path("realm").asText()).isEqualTo("c-fixture");
+          assertThat(claims.path("target").asText()).isEqualTo("realm/" + MAGIC_REALM_ID + "/magic-link/" + claim.workflowId());
+          assertThat(claims.path("taskClient").asText()).isEqualTo("backend-account-admin");
+          assertThat(claims.path("taskSubject").asText()).isEqualTo("33333333-3333-4333-8333-333333333333");
+          assertThat(java.util.UUID.fromString(claims.path("jti").asText()).toString()).isEqualTo(claims.path("jti").asText());
+          assertThat(claims.path("nonce").asText()).matches("[0-9a-f]{32}");
+          assertThat(claims.path("iat").isIntegralNumber()).isTrue();
+          assertThat(claims.path("exp").longValue()).isGreaterThan(claims.path("iat").longValue())
+              .isLessThanOrEqualTo(claims.path("iat").longValue()+30)
+              .isLessThanOrEqualTo(claim.expiresAt().getEpochSecond());
+          var sortedBody = mapper.convertValue(body, new com.fasterxml.jackson.core.type.TypeReference<java.util.TreeMap<String,Object>>() {});
+          try {
+          var mac = javax.crypto.Mac.getInstance("HmacSHA256");
+          mac.init(new javax.crypto.spec.SecretKeySpec(new byte[32], "HmacSHA256"));
+          String digest = java.util.HexFormat.of().formatHex(mac.doFinal(("magic-link-command/v1\n" + mapper.writeValueAsString(sortedBody)).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+          assertThat(claims.path("payloadDigest").asText()).isEqualTo(digest);
+          mac.init(new javax.crypto.spec.SecretKeySpec(new byte[32], "HmacSHA256"));
+          assertThat(java.util.Base64.getUrlDecoder().decode(signed[1])).isEqualTo(mac.doFinal(("magic-link-proof/v1\n" + signed[0]).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+          } catch (java.security.GeneralSecurityException failure) { throw new AssertionError(failure); }
+        })
+        .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+            "{\"access_token\":\"native-access\",\"expires_in\":60,\"refresh_expires_in\":600,\"refresh_token\":\"refresh\",\"token_type\":\"Bearer\",\"session_state\":\"44444444-4444-4444-8444-444444444444\",\"scope\":\"openid\"}", org.springframework.http.MediaType.APPLICATION_JSON));
+    assertThat(configured.exchangeMagicLink(claim)).hasValueSatisfying(result -> assertThat(result.accessToken()).isEqualTo("native-access"));
+    server.verify();
+    verify(broker).issueCheckedSessionExchange();
+    org.mockito.Mockito.verifyNoInteractions(restTemplate);
+  }
+
+  @Test
+  void absentClosedAndAmbientSqlClaimsNeverReachTheSessionBroker() {
+    var configured = scopedTransport(new RestTemplate());
+    assertThat(configured.exchangeMagicLink(null)).isEmpty();
+    var closed = liveTransportClaim();
+    org.mockito.Mockito.lenient().doThrow(new IllegalStateException("closed")).when(closed).requireCurrent();
+    assertThat(configured.exchangeMagicLink(closed)).isEmpty();
+    org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+    try { assertThat(configured.exchangeMagicLink(liveTransportClaim())).isEmpty(); }
+    finally { org.springframework.transaction.support.TransactionSynchronizationManager.clear(); }
+    org.mockito.Mockito.verifyNoInteractions(broker, restTemplate, jwtDecoder);
+  }
+
+  @Test
+  void fixedSessionProofRefusesForeignPurposesAndExpiredCheckedTokens() {
+    var codec = new AccountLifecycleCodec(new byte[32]);
+    var body = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+    body.put("version",1).put("workflowId","55555555-5555-4555-8555-555555555555")
+        .put("targetUserId", MAGIC_TARGET).put("tenantId",42).put("clientId","app")
+        .put("expiresAt",Instant.now().plusSeconds(90).getEpochSecond()).put("claimDigest","b".repeat(64));
+    var actor = checkedSessionActor();
+    when(actor.purpose()).thenReturn(de.caritas.cob.userservice.api.config.auth.TaskPurpose.OTP);
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> codec.magicLinkProof(actor,"c-fixture",MAGIC_REALM_ID,body)).isInstanceOf(IllegalStateException.class);
+    when(actor.purpose()).thenReturn(de.caritas.cob.userservice.api.config.auth.TaskPurpose.SESSION_EXCHANGE);
+    when(actor.validatedJwtExpiresAt()).thenReturn(Instant.now().minusSeconds(1).getEpochSecond());
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> codec.magicLinkProof(actor,"c-fixture",MAGIC_REALM_ID,body)).isInstanceOf(IllegalStateException.class);
+  }
+
+  private KeycloakIdentitySessionExchange scopedTransport(RestTemplate http) {
+    org.mockito.Mockito.lenient().when(taskActors.isEnabled()).thenReturn(true);
+    org.mockito.Mockito.lenient().when(identityClientConfig.getOpenIdConnectUrl("/token")).thenReturn(MAGIC_URL);
+    org.mockito.Mockito.lenient().when(lifecycleCodec.getObject()).thenReturn(new AccountLifecycleCodec(new byte[32]));
+    org.mockito.Mockito.lenient().when(broker.issueCheckedSessionExchange()).thenReturn(checkedSessionActor());
+    var result = new KeycloakIdentitySessionExchange(http, identityClientConfig, jwtDecoder, taskActors, broker, lifecycleCodec);
+    ReflectionTestUtils.setField(result,"keycloakAppClientId","app");
+    ReflectionTestUtils.setField(result,"realmName","c-fixture");
+    ReflectionTestUtils.setField(result,"realmId",MAGIC_REALM_ID);
+    return result;
+  }
+
+  private TaskActorTokenBroker.VerifiedMaintenanceToken checkedSessionActor() {
+    var result = org.mockito.Mockito.mock(TaskActorTokenBroker.VerifiedMaintenanceToken.class);
+    org.mockito.Mockito.lenient().when(result.purpose()).thenReturn(de.caritas.cob.userservice.api.config.auth.TaskPurpose.SESSION_EXCHANGE);
+    org.mockito.Mockito.lenient().when(result.actor()).thenReturn(de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN);
+    org.mockito.Mockito.lenient().when(result.accessToken()).thenReturn("checked-admin");
+    org.mockito.Mockito.lenient().when(result.issuer()).thenReturn(MAGIC_ISSUER);
+    org.mockito.Mockito.lenient().when(result.clientId()).thenReturn("backend-account-admin");
+    org.mockito.Mockito.lenient().when(result.subject()).thenReturn("33333333-3333-4333-8333-333333333333");
+    org.mockito.Mockito.lenient().when(result.validatedJwtIssuedAt()).thenReturn(Instant.now().minusSeconds(1).getEpochSecond());
+    org.mockito.Mockito.lenient().when(result.validatedJwtExpiresAt()).thenReturn(Instant.now().plusSeconds(120).getEpochSecond());
+    return result;
+  }
+
+  private de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.ClaimedMagicLink liveTransportClaim() {
+    var result = org.mockito.Mockito.mock(de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.ClaimedMagicLink.class);
+    org.mockito.Mockito.lenient().when(result.targetUserId()).thenReturn(MAGIC_TARGET);
+    org.mockito.Mockito.lenient().when(result.workflowId()).thenReturn(java.util.UUID.fromString("55555555-5555-4555-8555-555555555555"));
+    org.mockito.Mockito.lenient().when(result.tenantId()).thenReturn(42L);
+    org.mockito.Mockito.lenient().when(result.expiresAt()).thenReturn(Instant.now().plusSeconds(90).truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
+    org.mockito.Mockito.lenient().when(result.claimDigest()).thenReturn("b".repeat(64));
+    return result;
+  }
+
+  private Jwt magicJwt(String subject, String client, Object tenant) {
+    return Jwt.withTokenValue("native-access").header("alg","RS256").issuer(MAGIC_ISSUER).subject(subject)
+        .issuedAt(Instant.now().minusSeconds(1)).expiresAt(Instant.now().plusSeconds(60))
+        .claim("azp",client).claim("tenantId",tenant).claim("sid","44444444-4444-4444-8444-444444444444").build();
   }
 }

@@ -4,6 +4,11 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
+import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
+import de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
+import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.ClaimedMagicLink;
+import org.springframework.beans.factory.ObjectProvider;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
 import java.time.Instant;
@@ -42,6 +47,20 @@ public class KeycloakIdentitySessionExchange implements IdentitySessionExchange 
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull JwtDecoder jwtDecoder;
+  private final @NonNull TaskActorConfiguration taskActors;
+  private final @NonNull TaskActorTokenBroker broker;
+  private final @NonNull ObjectProvider<AccountLifecycleCodec> lifecycleCodec;
+
+  @Value("${keycloak.realm:}")
+  private String realmName;
+
+  @Value("${KEYCLOAK_REALM_INTERNAL_ID:}")
+  private String realmId;
+
+  @Override
+  public Optional<IdentitySession> exchangeMagicLink(ClaimedMagicLink claim) {
+    return Optional.empty();
+  }
 
   @Value("${keycloak.config.admin-client-id}")
   private String keycloakAdminClientId;
