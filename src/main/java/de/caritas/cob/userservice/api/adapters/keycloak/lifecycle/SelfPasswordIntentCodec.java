@@ -146,9 +146,17 @@ final class SelfPasswordIntentCodec {
     fields(wrapper, Set.of("body", "localSetup"));
     var local = wrapper.path("localSetup");
     boolean owned = local.has("consultant");
-    fields(local, owned
-        ? Set.of("kind", "consultant", "email", "consultantEmail", "updateDate", "passwordChangeRequired")
-        : Set.of("kind", "updateDate", "passwordChangeRequired"));
+    fields(
+        local,
+        owned
+            ? Set.of(
+                "kind",
+                "consultant",
+                "email",
+                "consultantEmail",
+                "updateDate",
+                "passwordChangeRequired")
+            : Set.of("kind", "updateDate", "passwordChangeRequired"));
     String kind = text(local, "kind", 32);
     boolean admin = Set.of("AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN").contains(kind);
     if (!admin && !Set.of("USER", "CONSULTANT").contains(kind)) throw invalid();
@@ -160,8 +168,10 @@ final class SelfPasswordIntentCodec {
       if (consultant && !admin) throw invalid();
       for (String email : Set.of("email", "consultantEmail")) {
         var value = local.get(email);
-        if (!value.isNull() && (!value.isTextual() || value.textValue().length() > 320
-            || value.textValue().chars().anyMatch(c -> c < 32 || c == 127))) throw invalid();
+        if (!value.isNull()
+            && (!value.isTextual()
+                || value.textValue().length() > 320
+                || value.textValue().chars().anyMatch(c -> c < 32 || c == 127))) throw invalid();
       }
       if (!consultant && !local.get("consultantEmail").isNull()) throw invalid();
     }

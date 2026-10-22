@@ -291,27 +291,36 @@ public final class ClaimedPasswordMaintenance {
         });
   }
 
-  private void policy(Bound b, TaskActorCredentials actor, Intent frozen, JsonNode body, JsonNode result) {
+  private void policy(
+      Bound b, TaskActorCredentials actor, Intent frozen, JsonNode body, JsonNode result) {
     String reply = codec.canonical(result);
-    var proof = codec.verifyMaintenanceNoEffectReceipt(reply, realmId, actor, body, "password-reset");
+    var proof =
+        codec.verifyMaintenanceNoEffectReceipt(reply, realmId, actor, body, "password-reset");
     if (proof.status() != 400) throw unavailable();
-    transaction(() -> {
-      var current = find(b, actor);
-      if (current == null || !Objects.equals(current.envelope(), frozen.envelope())
-          || !Objects.equals(current.metadata(), frozen.metadata())) throw unavailable();
-      if ("REJECTED".equals(current.status())) {
-        if (!reply.equals(current.receipt())) throw unavailable();
-        return null;
-      }
-      if (!"FROZEN".equals(current.status())) throw unavailable();
-      if (jdbc.update(
-          "update identity_claimed_password_intent set status='REJECTED',receipt=?,updated_at=? where claim_id=? and claim_version=? and status='FROZEN'",
-          reply, java.sql.Timestamp.from(clock.instant()), b.claim().toString(), b.version()) != 1)
-        throw unavailable();
-      return null;
-    });
-    throw new de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException(
-        de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.PASSWORD_NOT_VALID);
+    transaction(
+        () -> {
+          var current = find(b, actor);
+          if (current == null
+              || !Objects.equals(current.envelope(), frozen.envelope())
+              || !Objects.equals(current.metadata(), frozen.metadata())) throw unavailable();
+          if ("REJECTED".equals(current.status())) {
+            if (!reply.equals(current.receipt())) throw unavailable();
+            return null;
+          }
+          if (!"FROZEN".equals(current.status())) throw unavailable();
+          if (jdbc.update(
+                  "update identity_claimed_password_intent set status='REJECTED',receipt=?,updated_at=? where claim_id=? and claim_version=? and status='FROZEN'",
+                  reply,
+                  java.sql.Timestamp.from(clock.instant()),
+                  b.claim().toString(),
+                  b.version())
+              != 1) throw unavailable();
+          return null;
+        });
+    throw new de.caritas.cob.userservice.api.exception.httpresponses
+        .CustomValidationHttpStatusException(
+        de.caritas.cob.userservice.api.exception.httpresponses.customheader
+            .HttpStatusExceptionReason.PASSWORD_NOT_VALID);
   }
 
   private Intent prepare(Bound b, TaskActorCredentials actor) {
@@ -374,17 +383,23 @@ public final class ClaimedPasswordMaintenance {
     var row = found.getFirst();
     if (!codec.canonical(target(b)).equals(row.target())) throw unavailable();
     if ("PREPARED".equals(row.status())) {
-      if (row.workflow() != null || row.envelope() != null || row.metadata() != null
-          || row.intentDigest() != null || row.receipt() != null) throw unavailable();
+      if (row.workflow() != null
+          || row.envelope() != null
+          || row.metadata() != null
+          || row.intentDigest() != null
+          || row.receipt() != null) throw unavailable();
       return row;
     }
     var workflow = codec.read(row.workflow(), JsonNode.class);
-    var profile = new ProfileSelector(workflow.path("profileKind").textValue(),
-        workflow.path("profileId").textValue(), workflow.path("profileVersion").longValue());
+    var profile =
+        new ProfileSelector(
+            workflow.path("profileKind").textValue(),
+            workflow.path("profileId").textValue(),
+            workflow.path("profileVersion").longValue());
     if (!profiles.get(b.accountKind()).contains(profile)
         || !codec.canonical(workflow(b, profile)).equals(row.workflow())
-        || row.intentDigest() == null || !row.intentDigest().matches("[0-9a-f]{64}"))
-      throw unavailable();
+        || row.intentDigest() == null
+        || !row.intentDigest().matches("[0-9a-f]{64}")) throw unavailable();
     return row;
   }
 
@@ -394,9 +409,19 @@ public final class ClaimedPasswordMaintenance {
     if (row == null) throw unavailable();
     if (!"PREPARED".equals(row.status())) return row;
     requireSameLocal(b, row);
-    if (!row.operation().equals(prepared.operation()) || row.workflow() != null) throw unavailable();
-    var checked = new Intent(row.operation(), row.target(), codec.canonical(selected.workflow()),
-        row.local(), null, null, null, row.status(), null);
+    if (!row.operation().equals(prepared.operation()) || row.workflow() != null)
+      throw unavailable();
+    var checked =
+        new Intent(
+            row.operation(),
+            row.target(),
+            codec.canonical(selected.workflow()),
+            row.local(),
+            null,
+            null,
+            null,
+            row.status(),
+            null);
     String state = selected.state();
     var body = codec.read("{}", ObjectNode.class);
     body.set("target", codec.read(row.target(), JsonNode.class));
@@ -516,10 +541,16 @@ public final class ClaimedPasswordMaintenance {
 
   private ObjectNode workflow(Bound b, ProfileSelector profile) {
     var value = codec.read("{}", ObjectNode.class);
-    value.put("v", 1).put("kind", b.kind()).put("claimId", b.claim().toString())
-        .put("claimVersion", b.version()).put("authorityValidUntil", b.expires())
-        .put("expectedUsername", b.username()).put("expectedEmailDigest", b.emailDigest())
-        .put("profileKind", profile.kind()).put("profileId", profile.id())
+    value
+        .put("v", 1)
+        .put("kind", b.kind())
+        .put("claimId", b.claim().toString())
+        .put("claimVersion", b.version())
+        .put("authorityValidUntil", b.expires())
+        .put("expectedUsername", b.username())
+        .put("expectedEmailDigest", b.emailDigest())
+        .put("profileKind", profile.kind())
+        .put("profileId", profile.id())
         .put("profileVersion", profile.version());
     return value;
   }
@@ -566,22 +597,28 @@ public final class ClaimedPasswordMaintenance {
             && !read.path("passwordChangeRequired").booleanValue())
         || !read.path("state").isTextual()
         || !read.path("state").textValue().matches("[0-9a-f]{64}")) throw unavailable();
-    if (!read.path("emailVerified").isBoolean() || !read.path("effectiveRoles").isArray()
+    if (!read.path("emailVerified").isBoolean()
+        || !read.path("effectiveRoles").isArray()
         || read.path("effectiveRoles").size() > 64) throw unavailable();
     var roles = new HashSet<String>();
     for (var role : read.path("effectiveRoles")) {
-      if (!role.isTextual() || role.textValue().isBlank() || role.textValue().length() > 255
+      if (!role.isTextual()
+          || role.textValue().isBlank()
+          || role.textValue().length() > 255
           || role.textValue().chars().anyMatch(c -> c < 32 || c == 127)
           || !roles.add(role.textValue())) throw unavailable();
     }
     if (!Set.of("TENANT_ADMIN", "PLATFORM_ADMIN").contains(b.accountKind())) {
-      String expectedKind = switch (b.accountKind()) {
-        case "USER" -> "ASKER";
-        case "CONSULTANT" -> "CONSULTANT";
-        case "AGENCY_ADMIN" -> codec.read(row.local(), JsonNode.class).path("consultantVersion").isNull()
-            ? "AGENCY_ADMIN" : "CONSULTANT_AGENCY_ADMIN";
-        default -> throw unavailable();
-      };
+      String expectedKind =
+          switch (b.accountKind()) {
+            case "USER" -> "ASKER";
+            case "CONSULTANT" -> "CONSULTANT";
+            case "AGENCY_ADMIN" ->
+                codec.read(row.local(), JsonNode.class).path("consultantVersion").isNull()
+                    ? "AGENCY_ADMIN"
+                    : "CONSULTANT_AGENCY_ADMIN";
+            default -> throw unavailable();
+          };
       if (!expectedKind.equals(OrdinaryAccountCreation.kind(roles))) throw unavailable();
     }
     if (b.expires() <= clock.instant().getEpochSecond()) throw unavailable();
@@ -624,7 +661,8 @@ public final class ClaimedPasswordMaintenance {
             .toUriString();
     if (read) url += "/read";
     try {
-      var response = http.postForEntity(url, new HttpEntity<>(codec.canonical(body), headers), String.class);
+      var response =
+          http.postForEntity(url, new HttpEntity<>(codec.canonical(body), headers), String.class);
       if (response.getStatusCode().value() != 200) throw unavailable();
       return checkedReply(response.getBody());
     } catch (HttpStatusCodeException unknown) {

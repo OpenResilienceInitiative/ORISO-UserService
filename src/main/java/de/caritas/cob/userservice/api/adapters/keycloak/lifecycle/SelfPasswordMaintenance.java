@@ -252,20 +252,26 @@ public final class SelfPasswordMaintenance {
 
   private void rejectSigned(
       Self self, Intent frozen, String digest, TaskActorCredentials actor, String reply) {
-    transaction(() -> {
-      var current = findChecked(self, frozen.operation, digest, actor);
-      if (current == null || !"FROZEN".equals(current.status)
-          || !Objects.equals(current.envelope, frozen.envelope)
-          || !Objects.equals(current.metadata, frozen.metadata)) throw unavailable();
-      var body = openChecked(self, current, digest, actor).path("body");
-      var proof = codec.verifyMaintenanceNoEffectReceipt(reply, realmId, actor, body, "self-password");
-      if (proof.status() != 400) throw unavailable();
-      String terminal = codec.canonical(codec.read(reply, JsonNode.class));
-      if (jdbc.update(
-          "update identity_self_password_intent set status='REJECTED',receipt=?,updated_at=? where operation_id=? and status='FROZEN'",
-          terminal, now(), current.operation) != 1) throw unavailable();
-      return null;
-    });
+    transaction(
+        () -> {
+          var current = findChecked(self, frozen.operation, digest, actor);
+          if (current == null
+              || !"FROZEN".equals(current.status)
+              || !Objects.equals(current.envelope, frozen.envelope)
+              || !Objects.equals(current.metadata, frozen.metadata)) throw unavailable();
+          var body = openChecked(self, current, digest, actor).path("body");
+          var proof =
+              codec.verifyMaintenanceNoEffectReceipt(reply, realmId, actor, body, "self-password");
+          if (proof.status() != 400) throw unavailable();
+          String terminal = codec.canonical(codec.read(reply, JsonNode.class));
+          if (jdbc.update(
+                  "update identity_self_password_intent set status='REJECTED',receipt=?,updated_at=? where operation_id=? and status='FROZEN'",
+                  terminal,
+                  now(),
+                  current.operation)
+              != 1) throw unavailable();
+          return null;
+        });
   }
 
   private void reject(Self self, String operation, String digest, TaskActorCredentials actor) {
@@ -314,10 +320,13 @@ public final class SelfPasswordMaintenance {
         if (!row.metadata.equals(
             codec.canonical(metadata(row, stored.path("expectedState").asText()))))
           throw unavailable();
-        var wrapper = codec.read(codec.utf8(codec.openSelfPasswordIntent(stored, row.envelope)), JsonNode.class);
+        var wrapper =
+            codec.read(
+                codec.utf8(codec.openSelfPasswordIntent(stored, row.envelope)), JsonNode.class);
         if ("REJECTED".equals(row.status)) {
-          var proof = codec.verifyMaintenanceNoEffectReceipt(
-              row.receipt, realmId, actor, wrapper.path("body"), "self-password");
+          var proof =
+              codec.verifyMaintenanceNoEffectReceipt(
+                  row.receipt, realmId, actor, wrapper.path("body"), "self-password");
           if (proof.status() != 400) throw unavailable();
         }
       } catch (IllegalArgumentException invalidPrivateIntent) {
@@ -368,16 +377,18 @@ public final class SelfPasswordMaintenance {
       local.putNull("updateDate");
       local.putNull("passwordChangeRequired");
     } else {
-      var rows = jdbc.queryForList(
-          "select update_date,password_change_required from consultant where consultant_id=? for update",
-          self.account);
+      var rows =
+          jdbc.queryForList(
+              "select update_date,password_change_required from consultant where consultant_id=? for update",
+              self.account);
       if (rows.size() != 1) throw forbidden();
       var row = rows.getFirst();
       Object updated = row.get("update_date"), required = row.get("password_change_required");
       if (updated == null || !(required instanceof Boolean || required instanceof Number))
         throw unavailable();
       local.put("updateDate", updated.toString());
-      local.put("passwordChangeRequired",
+      local.put(
+          "passwordChangeRequired",
           required instanceof Boolean b ? b.booleanValue() : ((Number) required).intValue() != 0);
     }
     return local;

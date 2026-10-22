@@ -155,7 +155,8 @@ class RedisPasswordResetCustodyIT {
   void exactPolicyReplayRetainsItsVersionAndCannotPassTheAtomicFreshGate() {
     var original = sent("policy");
     var firstClaim = first.claimPasswordReset("policy", digest).orElseThrow();
-    assertThatCode(() -> first.requireFreshPasswordResetClaim(firstClaim)).doesNotThrowAnyException();
+    assertThatCode(() -> first.requireFreshPasswordResetClaim(firstClaim))
+        .doesNotThrowAnyException();
     first.finishPasswordResetClaim(firstClaim, false);
     var historical = second.claimPasswordReset("policy", digest).orElseThrow();
     assertThat(historical.status()).isEqualTo("REJECTED");

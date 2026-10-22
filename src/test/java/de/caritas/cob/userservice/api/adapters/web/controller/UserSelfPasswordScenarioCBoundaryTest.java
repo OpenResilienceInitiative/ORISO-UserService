@@ -165,9 +165,10 @@ class UserSelfPasswordScenarioCBoundaryTest {
         f.policyResponse = 2;
         f.policyStatus = status;
         f.expectNative();
-        Class<? extends RuntimeException> expected = status == 403
-            ? de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class
-            : ConflictException.class;
+        Class<? extends RuntimeException> expected =
+            status == 403
+                ? de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class
+                : ConflictException.class;
         assertThrows(expected, () -> f.controller.updatePassword(f.password()));
         assertEquals("REFUSED", f.status());
         assertThrows(expected, () -> f.controller.updatePassword(f.password()));
@@ -591,7 +592,8 @@ class UserSelfPasswordScenarioCBoundaryTest {
                   reply.put("result", result);
                   reply.put("receipt", receipt);
                   if (policyResponse != 0) reply.put("status", policyStatus);
-                  return withStatus(policyResponse == 0 ? HttpStatus.OK : HttpStatus.valueOf(policyStatus))
+                  return withStatus(
+                          policyResponse == 0 ? HttpStatus.OK : HttpStatus.valueOf(policyStatus))
                       .body(codec.canonical(reply))
                       .contentType(MediaType.APPLICATION_JSON)
                       .createResponse(out);

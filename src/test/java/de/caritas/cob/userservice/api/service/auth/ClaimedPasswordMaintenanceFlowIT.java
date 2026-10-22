@@ -306,8 +306,12 @@ class ClaimedPasswordMaintenanceFlowIT {
                   "select receipt from identity_claimed_password_intent", String.class))
           .contains("NO_EFFECT");
       assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
-          .isInstanceOf(de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException.class);
-      assertThat(f.jdbc.queryForObject("select count(*) from identity_claimed_password_intent", Integer.class))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses
+                  .CustomValidationHttpStatusException.class);
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select count(*) from identity_claimed_password_intent", Integer.class))
           .isEqualTo(1);
     }
   }
@@ -331,14 +335,25 @@ class ClaimedPasswordMaintenanceFlowIT {
     try (var f = new Fixture()) {
       var setup = f.setupService();
       f.policyRefusal = true;
-      assertThatThrownBy(() -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
-          .isInstanceOf(de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException.class);
-      String claim = f.jdbc.queryForObject("select claim_id from identity_setup_password_claim", String.class);
-      assertThatThrownBy(() -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
-          .isInstanceOf(de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException.class);
-      assertThat(f.jdbc.queryForObject("select claim_id from identity_setup_password_claim", String.class))
+      assertThatThrownBy(
+              () -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses
+                  .CustomValidationHttpStatusException.class);
+      String claim =
+          f.jdbc.queryForObject("select claim_id from identity_setup_password_claim", String.class);
+      assertThatThrownBy(
+              () -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses
+                  .CustomValidationHttpStatusException.class);
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select claim_id from identity_setup_password_claim", String.class))
           .isEqualTo(claim);
-      assertThat(f.jdbc.queryForObject("select count(*) from identity_claimed_password_intent", Integer.class))
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select count(*) from identity_claimed_password_intent", Integer.class))
           .isEqualTo(1);
       assertThat(f.effects).isZero();
       assertThat(f.required()).isTrue();
@@ -352,14 +367,17 @@ class ClaimedPasswordMaintenanceFlowIT {
       f.policyStatus = 403;
       String token = f.requestLink();
       assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
-          .isInstanceOf(de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
       assertThat(f.phase()).isEqualTo("REFUSED");
       var store = new RedisOneTimeTokenStore(f.redis, f.prefix);
       var issued = store.passwordResetIssuance(token).orElseThrow();
       String digest = f.updater.passwordResetRequestDigest(issued, "fixture-new-password!42");
-      assertThat(store.claimPasswordReset(token, digest).orElseThrow().status()).isEqualTo("REFUSED");
+      assertThat(store.claimPasswordReset(token, digest).orElseThrow().status())
+          .isEqualTo("REFUSED");
       assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
-          .isInstanceOf(de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
       assertThat(f.service.confirmPasswordReset(token, "fixture-different!42")).isFalse();
       assertThat(f.effects).isZero();
       assertThat(f.required()).isTrue();
@@ -372,14 +390,22 @@ class ClaimedPasswordMaintenanceFlowIT {
       var setup = f.setupService();
       f.policyRefusal = true;
       f.policyStatus = 409;
-      assertThatThrownBy(() -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
-          .isInstanceOf(de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+      assertThatThrownBy(
+              () -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
       assertThat(f.phase()).isEqualTo("REFUSED");
-      assertThat(f.jdbc.queryForObject("select status from identity_setup_password_claim", String.class))
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select status from identity_setup_password_claim", String.class))
           .isEqualTo("REFUSED");
-      assertThatThrownBy(() -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
-          .isInstanceOf(de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
-      assertThat(f.jdbc.queryForObject("select claim_version from identity_setup_password_claim", Long.class))
+      assertThatThrownBy(
+              () -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select claim_version from identity_setup_password_claim", Long.class))
           .isEqualTo(1L);
       assertThat(f.effects).isZero();
       assertThat(f.required()).isTrue();
@@ -393,34 +419,62 @@ class ClaimedPasswordMaintenanceFlowIT {
       f.loseReply = true;
       assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
           .isInstanceOf(RuntimeException.class);
-      String metadata = f.jdbc.queryForObject("select metadata_json from identity_claimed_password_intent", String.class);
-      String originalId = f.jdbc.queryForObject("select claim_id from identity_claimed_password_intent", String.class);
-      String digest = f.jdbc.queryForObject("select intent_digest from identity_claimed_password_intent", String.class);
+      String metadata =
+          f.jdbc.queryForObject(
+              "select metadata_json from identity_claimed_password_intent", String.class);
+      String originalId =
+          f.jdbc.queryForObject(
+              "select claim_id from identity_claimed_password_intent", String.class);
+      String digest =
+          f.jdbc.queryForObject(
+              "select intent_digest from identity_claimed_password_intent", String.class);
       assertThat(digest).matches("[0-9a-f]{64}");
       for (int i = 0; i < 101; i++) {
         String id = UUID.randomUUID().toString();
-        f.jdbc.update("insert into identity_claimed_password_intent select ?,claim_version,?,workflow_kind,realm_id,account_id,tenant_id,owner_client,owner_subject,request_digest,authority_valid_until,target_json,workflow_json,local_state_json,metadata_json,intent_envelope,intent_digest,status,receipt,updated_at from identity_claimed_password_intent where claim_id=?",
-            id, UUID.randomUUID().toString(), originalId);
+        f.jdbc.update(
+            "insert into identity_claimed_password_intent select ?,claim_version,?,workflow_kind,realm_id,account_id,tenant_id,owner_client,owner_subject,request_digest,authority_valid_until,target_json,workflow_json,local_state_json,metadata_json,intent_envelope,intent_digest,status,receipt,updated_at from identity_claimed_password_intent where claim_id=?",
+            id,
+            UUID.randomUUID().toString(),
+            originalId);
         if (i == 100)
-          f.jdbc.update("update identity_claimed_password_intent set authority_valid_until=? where claim_id=?",
-              f.clock.instant().plusSeconds(30 * 86400).getEpochSecond(), id);
+          f.jdbc.update(
+              "update identity_claimed_password_intent set authority_valid_until=? where claim_id=?",
+              f.clock.instant().plusSeconds(30 * 86400).getEpochSecond(),
+              id);
       }
       f.now.set(f.now.get().plusSeconds(9 * 86400));
       assertThat(f.adapter.expireSecretCustody()).isEqualTo(100);
       assertThat(f.adapter.expireSecretCustody()).isEqualTo(1);
       assertThat(f.adapter.expireSecretCustody()).isZero();
-      assertThat(f.jdbc.queryForObject("select count(*) from identity_claimed_password_intent where intent_envelope is not null", Integer.class))
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select count(*) from identity_claimed_password_intent where intent_envelope is not null",
+                  Integer.class))
           .isEqualTo(1);
-      assertThat(f.jdbc.queryForObject("select status from identity_claimed_password_intent where claim_id=?", String.class, originalId))
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select status from identity_claimed_password_intent where claim_id=?",
+                  String.class,
+                  originalId))
           .isEqualTo("EXPIRED_UNKNOWN");
-      assertThat(f.jdbc.queryForObject("select metadata_json from identity_claimed_password_intent where claim_id=?", String.class, originalId))
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select metadata_json from identity_claimed_password_intent where claim_id=?",
+                  String.class,
+                  originalId))
           .isEqualTo(metadata);
-      assertThat(f.jdbc.queryForObject("select intent_digest from identity_claimed_password_intent where claim_id=?", String.class, originalId))
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select intent_digest from identity_claimed_password_intent where claim_id=?",
+                  String.class,
+                  originalId))
           .isEqualTo(digest);
       assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
           .isInstanceOf(RuntimeException.class);
       assertThat(f.effects).isEqualTo(1);
-      assertThat(f.jdbc.queryForObject("select count(*) from identity_claimed_password_intent", Integer.class))
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select count(*) from identity_claimed_password_intent", Integer.class))
           .isEqualTo(102);
     }
   }
@@ -644,7 +698,8 @@ class ClaimedPasswordMaintenanceFlowIT {
         profiles.put(
             "CONSULTANT", reverseCatalog ? List.of(reviewed, wrong) : List.of(wrong, reviewed));
       }
-      adapter = new ClaimedPasswordMaintenance(
+      adapter =
+          new ClaimedPasswordMaintenance(
               mode,
               jdbc,
               transactions,

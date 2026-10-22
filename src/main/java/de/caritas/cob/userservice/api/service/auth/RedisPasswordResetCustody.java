@@ -181,9 +181,15 @@ final class RedisPasswordResetCustody {
 
   void requireFresh(PasswordResetClaim claim) {
     validateClaim(claim);
-    if (!Long.valueOf(1).equals(redis.execute(REQUIRE_FRESH,
-        List.of(flow(claim.binding())), encodeBinding(claim.binding()), claim.claimId().toString(),
-        Long.toString(claim.version()), claim.requestDigest()))) throw invalid();
+    if (!Long.valueOf(1)
+        .equals(
+            redis.execute(
+                REQUIRE_FRESH,
+                List.of(flow(claim.binding())),
+                encodeBinding(claim.binding()),
+                claim.claimId().toString(),
+                Long.toString(claim.version()),
+                claim.requestDigest()))) throw invalid();
   }
 
   void finish(PasswordResetClaim claim, boolean accepted) {

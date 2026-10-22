@@ -117,7 +117,10 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
             var saved = rows.getFirst();
             require(saved.bindingMatches(binding));
             if (!saved.requestDigest().equals(requestDigest)) return java.util.Optional.empty();
-            require("EMAIL_SENT".equals(invite.status()) && "FAILED".equals(invite.phase()) && invite.hasVerifier());
+            require(
+                "EMAIL_SENT".equals(invite.status())
+                    && "FAILED".equals(invite.phase())
+                    && invite.hasVerifier());
             require(binding.expiresAt().plusDays(7).isAfter(LocalDateTime.now(clock)));
             return java.util.Optional.of(saved.claim(binding));
           }
@@ -177,17 +180,21 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
 
   @Override
   public void rejectPolicyWithinOwner(Claim claim) {
-    owned(() -> {
-      var exact = recoverWithinOwner(claim.binding(), claim.requestDigest());
-      require(exact.isPresent() && exact.get().equals(claim));
-      var saved = lockSaved(claim.binding().inviteId()).getFirst();
-      if ("POLICY_REJECTED".equals(saved.status())) return null;
-      require(jdbc.update(
-          "update account_invite set provisioning_status='FAILED',provisioning_failure_reason='SETUP_PASSWORD_REJECTED',update_date=? where id=? and purpose='EXISTING_ACCOUNT_SETUP' and status='EMAIL_SENT' and provisioning_status='IN_PROGRESS'",
-          now(), claim.binding().inviteId()) == 1);
-      changePhase(claim, "POLICY_REJECTED");
-      return null;
-    });
+    owned(
+        () -> {
+          var exact = recoverWithinOwner(claim.binding(), claim.requestDigest());
+          require(exact.isPresent() && exact.get().equals(claim));
+          var saved = lockSaved(claim.binding().inviteId()).getFirst();
+          if ("POLICY_REJECTED".equals(saved.status())) return null;
+          require(
+              jdbc.update(
+                      "update account_invite set provisioning_status='FAILED',provisioning_failure_reason='SETUP_PASSWORD_REJECTED',update_date=? where id=? and purpose='EXISTING_ACCOUNT_SETUP' and status='EMAIL_SENT' and provisioning_status='IN_PROGRESS'",
+                      now(),
+                      claim.binding().inviteId())
+                  == 1);
+          changePhase(claim, "POLICY_REJECTED");
+          return null;
+        });
   }
 
   @Override
