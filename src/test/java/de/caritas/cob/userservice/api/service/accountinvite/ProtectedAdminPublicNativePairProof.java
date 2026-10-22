@@ -87,6 +87,7 @@ class ProtectedAdminPublicNativePairProof {
   static final String LOGICAL = "http://protected-fixture.invalid";
   static final List<Map<String, Object>> HTTP = new ArrayList<>();
   static final AtomicInteger APPROVALS = new AtomicInteger();
+  static org.springframework.test.web.client.MockRestServiceServer tenantPolicyBoundary;
   @Autowired AccountInviteService invitations;
   @Autowired ProtectedAdminOnboardingService onboarding;
   @Autowired AccountInviteRepository invites;
@@ -147,6 +148,18 @@ class ProtectedAdminPublicNativePairProof {
   @Test
   void realPublicPlatformInvitationStagesJpaAndCompletesNativeAppBeforeAcknowledgingActivation()
       throws Exception {
+    completePublicApp(AccountInviteTargetRole.PLATFORM_ADMIN);
+  }
+
+  @Test
+  void realPublicTenantInvitationStagesJpaAndCompletesNativeAppBeforeAcknowledgingActivation()
+      throws Exception {
+    completePublicApp(AccountInviteTargetRole.TENANT_ADMIN);
+  }
+
+  void completePublicApp(AccountInviteTargetRole role) throws Exception {
+    assertEquals(role.name(), required("PAIR_ROLE"));
+    long tenantId = role == AccountInviteTargetRole.PLATFORM_ADMIN ? 0L : 17L;
     assertEquals("true", required("GITHUB_ACTIONS"));
     assertEquals("Linux", System.getProperty("os.name"));
     assertInstanceOf(JpaTransactionManager.class, transactions);
@@ -181,6 +194,11 @@ class ProtectedAdminPublicNativePairProof {
     long adminsBefore = admins.count();
     assertTrue(admins.findAllByEmailIgnoreCase(recipient).isEmpty());
     when(identityEmailOwnerLookup.findByEmail(recipient)).thenReturn(Optional.empty());
+    if (tenantId > 0)
+      when(tenantService.getRestrictedTenantData(tenantId))
+          .thenReturn(
+              new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                  .id(tenantId));
     when(platformPolicy.capture())
         .thenReturn(
             new AccountInactivityEnrollmentService.Policy(
@@ -225,17 +243,19 @@ class ProtectedAdminPublicNativePairProof {
     var sent =
         invitations.createAndSendInvite(
             new CreateAccountInviteCommand(
-                AccountInviteTargetRole.PLATFORM_ADMIN,
-                null,
+                role,
+                tenantId == 0 ? null : tenantId,
                 recipient,
                 "Public",
                 "Platform",
                 null,
                 null,
-                1L),
+                1L,
+                tenantId == 0 ? null : IdAllocationMode.EXISTING,
+                null),
             template.getId());
     assertEquals(AccountInviteStatus.EMAIL_SENT, sent.invite().getStatus());
-    assertEquals(0L, sent.invite().getTenantId());
+    assertEquals(tenantId, sent.invite().getTenantId());
     assertEquals(1, APPROVALS.get());
     assertEquals(1, sentLinks.size());
     String link = sentLinks.getFirst();
@@ -273,7 +293,7 @@ class ProtectedAdminPublicNativePairProof {
     assertFalse(secret.isBlank());
     String account = invites.findById(sent.invite().getId()).orElseThrow().getAcceptedByUserId();
     assertNotNull(account);
-    assertEquals(0L, admins.findById(account).orElseThrow().getTenantId());
+    assertEquals(tenantId, admins.findById(account).orElseThrow().getTenantId());
     assertEquals(
         1,
         jdbc.queryForObject(
@@ -391,7 +411,7 @@ class ProtectedAdminPublicNativePairProof {
     var tokenReply = json.read(granted.getBody(), JsonNode.class);
     var recipientJwt = decoder.decode(tokenReply.path("access_token").asText());
     assertEquals(account, recipientJwt.getSubject());
-    assertEquals("0", recipientJwt.getClaimAsString("tenantId"));
+    assertEquals(Long.toString(tenantId), recipientJwt.getClaimAsString("tenantId"));
     assertEquals(required("PAIR_HUMAN_CLIENT"), recipientJwt.getClaimAsString("azp"));
     assertEquals(Set.of("userservice"), Set.copyOf(recipientJwt.getAudience()));
     assertFalse(recipientJwt.getClaimAsString("sid").isBlank());
@@ -406,6 +426,14 @@ class ProtectedAdminPublicNativePairProof {
                 String.class);
     assertEquals(200, info.getStatusCode().value());
     assertEquals(account, json.read(info.getBody(), JsonNode.class).path("sub").asText());
+    if (tenantId > 0) {
+      assertNotNull(tenantPolicyBoundary);
+      tenantPolicyBoundary.verify();
+      verify(platformPolicy, never()).capture();
+    } else {
+      assertNull(tenantPolicyBoundary);
+      verify(platformPolicy).capture();
+    }
     verifyNoInteractions(
         existingAccountSetupIssuer,
         legacyOnboarding,
@@ -634,11 +662,25 @@ class ProtectedAdminPublicNativePairProof {
     @Bean
     AccountInactivityEnrollmentService pairEnrollment(
         AccountInactivityService lifecycle, Clock clock) {
+      var factory = new TenantServiceApiControllerFactory();
+      var rest = new RestTemplate();
+      org.springframework.test.util.ReflectionTestUtils.setField(factory, "restTemplate", rest);
+      org.springframework.test.util.ReflectionTestUtils.setField(
+          factory, "tenantServiceApiUrl", "https://tenant-policy.fixture.invalid");
+      if ("TENANT_ADMIN".equals(required("PAIR_ROLE"))) {
+        tenantPolicyBoundary =
+            org.springframework.test.web.client.MockRestServiceServer.bindTo(rest).build();
+        tenantPolicyBoundary
+            .expect(
+                org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                    "https://tenant-policy.fixture.invalid/tenant/public/id/17"))
+            .andRespond(
+                org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                    "{\"id\":17,\"settings\":{\"tenantAdminControls\":{\"accountInactivitySettings\":{\"otherMonths\":12,\"revision\":4}}}}",
+                    org.springframework.http.MediaType.APPLICATION_JSON));
+      }
       return new AccountInactivityEnrollmentService(
-          mock(TenantServiceApiControllerFactory.class),
-          lifecycle,
-          clock,
-          mock(SecurityHeaderSupplier.class));
+          factory, lifecycle, clock, mock(SecurityHeaderSupplier.class));
     }
   }
 }

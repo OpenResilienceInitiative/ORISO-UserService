@@ -28,8 +28,10 @@ jobs:
       fail-fast: false
       matrix:
         kind: [app]
+        role: [PLATFORM_ADMIN, TENANT_ADMIN]
     env:
       PAIR_KIND: ${{ matrix.kind }}
+      PAIR_ROLE: ${{ matrix.role }}
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       with:
@@ -106,7 +108,7 @@ jobs:
       env:
         MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2
       run: mvn -B -ntp -q test-compile -DskipTests "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedAdminPublicNativePairProof.java"
-    - name: Run one bounded public invitation JPA and native PLATFORM APP activation flow
+    - name: Run one bounded public invitation JPA and selected native APP activation flow
       timeout-minutes: 10
       env:
         PROTECTED_PROOF_RESOURCE_PROFILE: github-ubuntu-24-amd64-v1
@@ -140,7 +142,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        name: scenario-c-protected-recipient-${{ matrix.kind }}-native-pair
+        name: scenario-c-protected-recipient-${{ matrix.role }}-${{ matrix.kind }}-native-pair
         path: 'target/protected-public-native/protected-public-native-*.json
 
           target/protected-public-native/protected-public-native-*.xml

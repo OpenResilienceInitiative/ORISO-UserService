@@ -45,7 +45,7 @@ class ProtectedPairEvidence(unittest.TestCase):
             self.assertNotIn("private-row", str(result))
             self.assertNotIn("secret", (root / "sanitized.xml").read_text())
 
-    def proof(self, tags=(), name=pair.CASE):
+    def proof(self, tags=(), name=pair.CASE, expected=pair.CASE):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             report = ET.Element("testsuite", name=pair.SUITE)
@@ -53,13 +53,17 @@ class ProtectedPairEvidence(unittest.TestCase):
             for tag in tags:
                 ET.SubElement(row, tag).text = "Sensitive diagnostic must not escape"
             ET.ElementTree(report).write(root / "TEST-pair.xml")
-            result = pair.sanitize(root, root / "sanitized.xml")
+            result = pair.sanitize(root, root / "sanitized.xml", expected)
             self.assertNotIn("Sensitive diagnostic", (root / "sanitized.xml").read_text())
             return result
 
     def test_exact_one_actual_method_is_required(self):
         self.assertTrue(self.proof()["accepted"])
         self.assertFalse(self.proof(name="unrelated")["accepted"])
+        self.assertFalse(self.proof(name=pair.TENANT_CASE)["accepted"])
+        self.assertTrue(self.proof(name=pair.TENANT_CASE, expected=pair.TENANT_CASE)["accepted"])
+        with self.assertRaises(ValueError):
+            self.proof(name="unrelated", expected="unrelated")
 
     def test_failure_error_and_skip_cannot_be_accepted(self):
         for tag in ["failure", "error", "skipped"]:
@@ -81,6 +85,7 @@ class ProtectedPairEvidence(unittest.TestCase):
         self.assertIn(pair.KC_COMMIT, workflow)
         self.assertIn(pair.IMAGE, workflow)
         self.assertIn("[app]", workflow)
+        self.assertEqual(["PLATFORM_ADMIN", "TENANT_ADMIN"], tree["jobs"]["protected-recipient-native-pair"]["strategy"]["matrix"]["role"])
         self.assertIn("-DfailIfNoTests=true", SOURCE.read_text())
         self.assertIn("-Dsurefire.failIfNoSpecifiedTests=true", SOURCE.read_text())
         self.assertIn("capture_output=True, timeout=180", SOURCE.read_text())

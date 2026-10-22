@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 KC_COMMIT = "a9483e4b44578f10badf70c5265a37a2c1d3d26e"
 SUITE = "de.caritas.cob.userservice.api.service.accountinvite.ProtectedAdminPublicNativePairProof"
 CASE = "realPublicPlatformInvitationStagesJpaAndCompletesNativeAppBeforeAcknowledgingActivation"
+TENANT_CASE = "realPublicTenantInvitationStagesJpaAndCompletesNativeAppBeforeAcknowledgingActivation"
 IMAGE = "quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992"
 
 def save(path, value):
@@ -39,7 +40,9 @@ def snapshot(kc):
         raise ValueError("Immutable paired source checkout mismatch")
     return {"user_commit": current, "keycloak_commit": native, "user_sources": manifest(ROOT), "keycloak_sources": manifest(kc)}
 
-def sanitize(reports, output):
+def sanitize(reports, output, expected_case=CASE):
+    if expected_case not in {CASE, TENANT_CASE}:
+        raise ValueError("Unknown public native case")
     clean = ET.Element("testsuite", name=SUITE)
     totals = dict(tests=0, failures=0, errors=0, skipped=0)
     files = list(reports.glob("TEST-*.xml"))
@@ -68,7 +71,7 @@ def sanitize(reports, output):
                             types.append(category)
         for name, number in totals.items():
             valid &= suite.get(name) is None or int(suite.get(name)) == number
-    valid &= names == [CASE]
+    valid &= names == [expected_case]
     for name, number in totals.items():
         clean.set(name, str(number))
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -118,8 +121,11 @@ def native(kc, report):
     if available < 4 * 1024 * 1024:
         raise ValueError("Four GiB headroom and two GiB reserve required")
     kind = "app"
-    if os.environ.get("PAIR_KIND", "app") != "app":
-        raise ValueError("First public pair is the fixed PLATFORM APP flow")
+    role = os.environ.get("PAIR_ROLE", "PLATFORM_ADMIN")
+    if os.environ.get("PAIR_KIND", "app") != "app" or role not in {"PLATFORM_ADMIN", "TENANT_ADMIN"}:
+        raise ValueError("Only the two fixed protected APP flows are allowed")
+    case = CASE if role == "PLATFORM_ADMIN" else TENANT_CASE
+    expected_tenant = 0 if role == "PLATFORM_ADMIN" else 17
     module = kc / "keycloak-image/account-lifecycle-spi"
     otp = kc / "keycloak-image/otp-config-spi"
     jars = {"LIFECYCLE_C_TEST_JAR": module / "target/account-lifecycle-spi-1.0-SNAPSHOT.jar", "OTP_C_TEST_JAR": otp / "target/keycloak-otp-config-spi-1.0-SNAPSHOT-keycloak.jar"}
@@ -138,13 +144,31 @@ def native(kc, report):
     compiled = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in compiled_paths}
     sys.path.insert(0, str(module / "tests"))
     import lifecycle_fixture as lifecycle
-    from protected_otp_bootstrap import BootstrapFixture
+    from protected_otp_bootstrap import BootstrapFixture as ExistingBootstrapFixture
+
+    class BootstrapFixture(ExistingBootstrapFixture):
+        @classmethod
+        def prepare_installation(cls, helper, configuration):
+            if role == "PLATFORM_ADMIN":
+                return configuration
+            parent = helper.group_id("/protected-admins")
+            helper.admin("POST", "/groups/" + parent + "/children", {"name": "tenant-admins"})
+            cls.tenant_group_id = helper.group_id("/protected-admins/tenant-admins")
+            tenant_role = helper.admin("GET", "/roles/tenant-admin")
+            helper.admin("POST", "/groups/" + cls.tenant_group_id + "/role-mappings/realm", [tenant_role])
+            profile = json.loads(json.dumps(configuration["profiles"][0]))
+            profile.update(id="tenant-v1", kind="TENANT_ADMIN", tenantModes=["EXISTING"],
+                groupId=cls.tenant_group_id, groupPath="/protected-admins/tenant-admins", realmRoles=["tenant-admin"])
+            configuration["profiles"].append(profile)
+            configuration["bindings"][0]["protectedProfileIds"].append("tenant-v1")
+            configuration["bindings"][0]["protectedProfileIds"].sort()
+            return configuration
     if lifecycle.IMAGE != IMAGE:
         raise ValueError("Pinned native image mismatch")
     saved = {name: os.environ.get(name) for name in jars}
     for name, path in jars.items():
         os.environ[name] = str(path.resolve())
-    receipt = {"kind": kind, "accepted": False, "executed": 0, "before": before, "jars": hashes, "image": IMAGE, "compiled_user_classes": compiled}
+    receipt = {"kind": kind, "target_role": role, "accepted": False, "executed": 0, "before": before, "jars": hashes, "image": IMAGE, "compiled_user_classes": compiled}
     phase = "native-fixture-setup"
     code_server = None
     try:
@@ -178,7 +202,7 @@ def native(kc, report):
             "actual_current_human_userinfo_session_client_tenant_grants": True,
             "real_checked_creator_and_admin_broker": True, "actual_single_use_totp_policy": True}
         environment = dict(os.environ)
-        environment.update({"PAIR_KIND": kind, "PAIR_NATIVE_BASE": fixture.base,
+        environment.update({"PAIR_KIND": kind, "PAIR_ROLE": role, "PAIR_NATIVE_BASE": fixture.base,
             "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id,
             "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(),
             "PAIR_RECIPIENT": recipient, "PAIR_HUMAN_SUBJECT": fixture.human_subject,
@@ -194,8 +218,8 @@ def native(kc, report):
         for path in reports.glob("TEST-*.xml"):
             path.unlink()
         phase = "actual-java-sql-native-pair"
-        child = subprocess.run(["mvn", "-B", "-ntp", "-q", "surefire:test", "-Dtest=" + SUITE + "#" + CASE, "-DfailIfNoTests=true", "-Dsurefire.failIfNoSpecifiedTests=true", "-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2"], cwd=ROOT, env=environment, capture_output=True, timeout=180)
-        result = sanitize(reports, report.with_suffix(".xml"))
+        child = subprocess.run(["mvn", "-B", "-ntp", "-q", "surefire:test", "-Dtest=" + SUITE + "#" + case, "-DfailIfNoTests=true", "-Dsurefire.failIfNoSpecifiedTests=true", "-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2"], cwd=ROOT, env=environment, capture_output=True, timeout=180)
+        result = sanitize(reports, report.with_suffix(".xml"), case)
         receipt.update(result)
         receipt["closed_source_failure_frames"] = sorted(set(result["closed_source_failure_frames"] + closed_failure_frames(child.stdout, child.stderr)))[:50]
         receipt["executed"] = result["tests"]
@@ -256,11 +280,12 @@ def native(kc, report):
         receipt["one_native_enrollment"] = len(selected) == 1
         receipt["actual_smtp_count"] = len(BootstrapFixture.mail.messages)
         receipt["native_tenant_zero"] = user.get("attributes", {}).get("tenantId") == ["0"]
+        receipt["native_target_tenant_matches"] = user.get("attributes", {}).get("tenantId") == [str(expected_tenant)]
         groups = fixture.admin("GET", "/users/" + user["id"] + "/groups")
-        receipt["exact_committed_profile_group"] = [group["id"] for group in groups] == [fixture.protected_group_id]
+        receipt["exact_committed_profile_group"] = [group["id"] for group in groups] == [fixture.protected_group_id if role == "PLATFORM_ADMIN" else fixture.tenant_group_id]
         receipt["native_mail_active"] = True
         receipt["accepted"] &= receipt["native_account_enabled_after_verified_2fa_commit"] and receipt["one_native_enrollment"] and receipt["native_mail_active"] and receipt["actual_smtp_count"] == (1 if kind == "email" else 0)
-        receipt["accepted"] &= receipt["native_tenant_zero"] and receipt["exact_committed_profile_group"]
+        receipt["accepted"] &= receipt["native_target_tenant_matches"] and receipt["exact_committed_profile_group"]
         phase = "complete"
     except BaseException as error:
         receipt["exception_category"] = type(error).__name__
