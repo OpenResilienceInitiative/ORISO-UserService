@@ -37,8 +37,13 @@ public interface IdentityPasswordUpdater {
 
   /** Pure local issuance data only. It must not issue a bearer or perform a provider effect. */
   default de.caritas.cob.userservice.api.service.auth.PasswordResetBinding passwordResetIssuance(
-      java.util.UUID workflowId, String accountId, Long tenantId, String username,
-      String recipient, String accountKind, java.time.Instant expiresAt) {
+      java.util.UUID workflowId,
+      String accountId,
+      Long tenantId,
+      String username,
+      String recipient,
+      String accountKind,
+      java.time.Instant expiresAt) {
     throw new ScopedIdentityCommandRequiredException();
   }
 
