@@ -180,7 +180,9 @@ class JdbcProtectedAccountActivationTest {
 
   @Test
   void registrationCommitsAdminEnrollmentAndOtpStageTogetherWithoutNativeActivation() {
-    assertEquals(JdbcProtectedAccountActivation.Phase.UNSTAGED, assertDoesNotThrow(() -> restart().phase(claim)));
+    assertEquals(
+        JdbcProtectedAccountActivation.Phase.UNSTAGED,
+        assertDoesNotThrow(() -> restart().phase(claim)));
     assertEquals(
         setup, assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy)));
     assertEquals(1, count("admin"));
