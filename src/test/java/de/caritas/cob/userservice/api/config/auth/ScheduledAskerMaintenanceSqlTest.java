@@ -164,7 +164,9 @@ class ScheduledAskerMaintenanceSqlTest {
     private final ScheduledTaskClaimService.ClaimLease lease =
         new ScheduledTaskClaimService.ClaimLease(
             "account-deletion",
-            LocalDateTime.now(clock).plusHours(1).truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+            LocalDateTime.now(clock)
+                .plusHours(1)
+                .truncatedTo(java.time.temporal.ChronoUnit.MICROS));
     private final RestTemplate http = new RestTemplate();
     private final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
     private final TaskActorConfiguration actors;
@@ -203,27 +205,41 @@ class ScheduledAskerMaintenanceSqlTest {
           List.of("20261021_identity_maintenance_367", "20261022_identity_maintenance_retry_367")) {
         for (String sql :
             Files.readString(
-                    Path.of("src/main/resources/db/changelog/changeset/" + migration + "/migrate.sql"))
+                    Path.of(
+                        "src/main/resources/db/changelog/changeset/" + migration + "/migrate.sql"))
                 .split(";")) if (!sql.isBlank()) jdbc.execute(sql);
       }
       // DATETIME(6) has microsecond precision, matching the persisted scheduler lease contract.
       var until = lease.claimedUntil().withNano((lease.claimedUntil().getNano() / 1000) * 1000);
       jdbc.update("INSERT INTO scheduled_task_claim VALUES(?,?)", lease.taskName(), until);
       when(claims.tryClaimLease(eq("account-deletion"), any()))
-          .thenReturn(Optional.of(new ScheduledTaskClaimService.ClaimLease(lease.taskName(), until)));
+          .thenReturn(
+              Optional.of(new ScheduledTaskClaimService.ClaimLease(lease.taskName(), until)));
     }
 
     ScheduledAskerMaintenance scheduler() {
       return new ScheduledAskerMaintenance(
-          jdbc, transactions, claims, clock, new DeletionLifecycleService(), actors, broker, codec,
-          http, "https://identity.example.test", "synthetic", "synthetic-realm");
+          jdbc,
+          transactions,
+          claims,
+          clock,
+          new DeletionLifecycleService(),
+          actors,
+          broker,
+          codec,
+          http,
+          "https://identity.example.test",
+          "synthetic",
+          "synthetic-realm");
     }
 
     void user(String account) {
       jdbc.update(
           "INSERT INTO user(user_id,tenant_id,delete_date,deletion_lifecycle_state,"
               + "deletion_read_only_until) VALUES(?,7,?,'READ_ONLY_SAFEGUARD',?)",
-          account, DELETION, DELETION.plusHours(48));
+          account,
+          DELETION,
+          DELETION.plusHours(48));
     }
 
     void previousAttempt(String account) {
@@ -232,8 +248,15 @@ class ScheduledAskerMaintenanceSqlTest {
           "INSERT INTO identity_maintenance_intent(operation_id,realm_id,realm_name,subject_type,"
               + "subject_id,deletion_started_at,tenant_id,claim_token,claim_until,status,"
               + "owner_client,owner_subject,last_attempt_at) VALUES(?,?,?,'ASKER',?,?,7,?,?,'PREPARED',?,?,?)",
-          UUID.randomUUID().toString(), "synthetic-realm", "synthetic", account, DELETION,
-          UUID.randomUUID().toString(), lease.claimedUntil(), actor.clientId(), actor.serviceSubject(),
+          UUID.randomUUID().toString(),
+          "synthetic-realm",
+          "synthetic",
+          account,
+          DELETION,
+          UUID.randomUUID().toString(),
+          lease.claimedUntil(),
+          actor.clientId(),
+          actor.serviceSubject(),
           LocalDateTime.now(clock).minusMinutes(1));
       jdbc.update(
           "UPDATE user SET deletion_lifecycle_state='HARD_DELETE_IN_PROGRESS' WHERE user_id=?",
@@ -242,7 +265,9 @@ class ScheduledAskerMaintenanceSqlTest {
 
     String url(String account, String command) {
       return "https://identity.example.test/realms/synthetic/oriso-account-maintenance/v1/accounts/"
-          + account + "/" + command;
+          + account
+          + "/"
+          + command;
     }
 
     void readFailure(String account, HttpStatus status) {
@@ -290,18 +315,35 @@ class ScheduledAskerMaintenanceSqlTest {
         outcome.put("intentDigest", codec.digest("maintenance-intent", frozen));
         outcome.put("previousState", frozen.path("expectedState").asText());
         outcome.put("tenantId", "7");
-        outcome.put("originDigest", codec.digest("maintenance-origin", frozen.path("target").path("origin")));
+        outcome.put(
+            "originDigest",
+            codec.digest("maintenance-origin", frozen.path("target").path("origin")));
         outcome.put("result", "DELETED");
-        String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(
-            codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
+        String encoded =
+            Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
         var mac = Mac.getInstance("HmacSHA256");
         mac.init(new SecretKeySpec(key, "HmacSHA256"));
-        String receipt = encoded + "." + HexFormat.of().formatHex(
-            mac.doFinal(("maintenance-operation-receipt\n" + encoded).getBytes(StandardCharsets.UTF_8)));
-        String response = codec.canonical(Map.of(
-            "operationId", frozen.path("operationId").asText(),
-            "accountId", frozen.path("target").path("accountId").asText(),
-            "result", "DELETED", "receipt", receipt));
+        String receipt =
+            encoded
+                + "."
+                + HexFormat.of()
+                    .formatHex(
+                        mac.doFinal(
+                            ("maintenance-operation-receipt\n" + encoded)
+                                .getBytes(StandardCharsets.UTF_8)));
+        String response =
+            codec.canonical(
+                Map.of(
+                    "operationId",
+                    frozen.path("operationId").asText(),
+                    "accountId",
+                    frozen.path("target").path("accountId").asText(),
+                    "result",
+                    "DELETED",
+                    "receipt",
+                    receipt));
         return withSuccess(response, MediaType.APPLICATION_JSON).createResponse(request);
       } catch (Exception failure) {
         throw new java.io.IOException("Synthetic native receipt unavailable", failure);
@@ -310,18 +352,23 @@ class ScheduledAskerMaintenanceSqlTest {
 
     String status(String account) {
       return jdbc.queryForObject(
-          "SELECT status FROM identity_maintenance_intent WHERE subject_id=?", String.class, account);
+          "SELECT status FROM identity_maintenance_intent WHERE subject_id=?",
+          String.class,
+          account);
     }
 
     String frozen(String account) {
       return jdbc.queryForObject(
-          "SELECT frozen_body FROM identity_maintenance_intent WHERE subject_id=?", String.class, account);
+          "SELECT frozen_body FROM identity_maintenance_intent WHERE subject_id=?",
+          String.class,
+          account);
     }
 
     LocalDateTime lastAttempt(String account) {
       return jdbc.queryForObject(
           "SELECT last_attempt_at FROM identity_maintenance_intent WHERE subject_id=?",
-          LocalDateTime.class, account);
+          LocalDateTime.class,
+          account);
     }
 
     @Override
