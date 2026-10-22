@@ -82,6 +82,42 @@ public class AccountLifecycleCallerConfiguration {
   }
 
   @Bean
+  SelfAppOtpMaintenance selfAppOtpMaintenance(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig identities,
+      AuthenticatedUser user,
+      jakarta.servlet.http.HttpServletRequest request,
+      JdbcTemplate jdbc,
+      PlatformTransactionManager manager,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      @Qualifier("keycloakRestTemplate") RestTemplate http,
+      KeycloakConfig keycloak) {
+    String publicServer = keycloak.getAuthServerUrl();
+    String internalServer =
+        environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
+    if (publicServer == null
+        || publicServer.isBlank()
+        || internalServer == null
+        || internalServer.isBlank()) throw invalid();
+    return new SelfAppOtpMaintenance(
+        identities,
+        user,
+        request,
+        jdbc,
+        manager,
+        actors,
+        broker,
+        codec,
+        http,
+        Clock.systemUTC(),
+        internalServer,
+        keycloak.getRealm(),
+        required("KEYCLOAK_REALM_INTERNAL_ID"),
+        publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm());
+  }
+
+  @Bean
   JdbcAccountLifecycleJournal accountLifecycleJournal(
       JdbcTemplate jdbc, PlatformTransactionManager manager, AccountLifecycleCodec codec) {
     return new JdbcAccountLifecycleJournal(jdbc, manager, codec, Clock.systemUTC(), 300);
