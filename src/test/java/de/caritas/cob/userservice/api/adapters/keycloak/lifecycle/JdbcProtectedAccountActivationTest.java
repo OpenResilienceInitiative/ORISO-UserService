@@ -75,7 +75,8 @@ class JdbcProtectedAccountActivationTest {
         new String[] {
           "20261022_protected_invitation_367",
           "20261022_protected_invitation_acceptance_367",
-          "20261022_protected_account_activation_367"
+          "20261022_protected_account_activation_367",
+          "20261022_protected_account_cleanup_367"
         }) {
       for (String sql :
           Files.readString(
@@ -427,6 +428,7 @@ class JdbcProtectedAccountActivationTest {
     assertEquals(0, count("account_inactivity"));
     assertEquals(0, count("synthetic_otp_stage"));
     assertEquals("LOCAL_CLEANED", state());
+    assertEquals(JdbcProtectedAccountActivation.Phase.LOCAL_CLEANED, restart().phase(claim));
     assertEquals(cleaned, restart().discard(claim, recovered));
     assertEquals(1, cleaned.journalVersion());
     assertEquals(

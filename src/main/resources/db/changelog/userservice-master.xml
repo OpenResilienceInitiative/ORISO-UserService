@@ -263,4 +263,5 @@
   <include file="db/changelog/changeset/20261022_protected_account_activation_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_protected_otp_bootstrap_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_protected_account_creation_367/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261022_protected_account_cleanup_367/changeSet.xml"/>
 </databaseChangeLog>
