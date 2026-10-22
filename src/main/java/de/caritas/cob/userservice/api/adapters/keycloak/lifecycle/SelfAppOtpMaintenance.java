@@ -320,21 +320,29 @@ public final class SelfAppOtpMaintenance {
     if (!"FROZEN".equals(current.row.status)) throw unavailable();
     boolean success = outcome.status() == 200 || outcome.status() == 201;
     if (success) {
-      var command = codec.read(codec.utf8(codec.openSelfAppIntent(current.metadata, current.row.envelope)), JsonNode.class);
+      var command =
+          codec.read(
+              codec.utf8(codec.openSelfAppIntent(current.metadata, current.row.envelope)),
+              JsonNode.class);
       var nowLocal = localState(self);
-      boolean apply = command.has("localState")
-          ? codec.canonical(command.path("localState")).equals(codec.canonical(nowLocal))
-          : legacyLocalEffect(kind, command, nowLocal);
+      boolean apply =
+          command.has("localState")
+              ? codec.canonical(command.path("localState")).equals(codec.canonical(nowLocal))
+              : legacyLocalEffect(kind, command, nowLocal);
       // A historical native ACK cannot reapply an older local enrollment or pointer.
       if (apply) {
         if (kind == Operation.EMAIL_START) {
-          var pending = jdbc.queryForList(
-              "select start_operation_id from identity_self_otp_pending_email where account_id=? for update",
-              String.class, self.account);
+          var pending =
+              jdbc.queryForList(
+                  "select start_operation_id from identity_self_otp_pending_email where account_id=? for update",
+                  String.class,
+                  self.account);
           if (pending.size() > 1) throw unavailable();
-          if (pending.isEmpty()) jdbc.update(
-              "insert into identity_self_otp_pending_email(account_id,start_operation_id) values(?,?)",
-              self.account, operation);
+          if (pending.isEmpty())
+            jdbc.update(
+                "insert into identity_self_otp_pending_email(account_id,start_operation_id) values(?,?)",
+                self.account,
+                operation);
           else if (!operation.equals(pending.getFirst()))
             throw new ConflictException("A different email setup is already owned");
         } else if (kind == Operation.EMAIL_FINISH) {
@@ -370,21 +378,26 @@ public final class SelfAppOtpMaintenance {
     if (!TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     var value = codec.read("{}", ObjectNode.class);
     value.put("v", 1);
-    var enrollment = jdbc.queryForList(
-        "select operation_id from identity_self_otp_local_enrollment where account_id=? for update",
-        String.class, self.account);
-    var pending = jdbc.queryForList(
-        "select start_operation_id from identity_self_otp_pending_email where account_id=? for update",
-        String.class, self.account);
+    var enrollment =
+        jdbc.queryForList(
+            "select operation_id from identity_self_otp_local_enrollment where account_id=? for update",
+            String.class,
+            self.account);
+    var pending =
+        jdbc.queryForList(
+            "select start_operation_id from identity_self_otp_pending_email where account_id=? for update",
+            String.class,
+            self.account);
     if (enrollment.size() > 1 || pending.size() > 1) throw unavailable();
     if (enrollment.isEmpty()) value.putNull("enrollmentOperationId");
     else value.put("enrollmentOperationId", enrollment.getFirst());
     if (pending.isEmpty()) value.putNull("pendingEmailStartOperationId");
     else value.put("pendingEmailStartOperationId", pending.getFirst());
     var invites = value.putArray("invites");
-    var rows = jdbc.queryForList(
-        "select id,two_factor_status from account_invite where accepted_by_user_id=? order by id for update",
-        self.account);
+    var rows =
+        jdbc.queryForList(
+            "select id,two_factor_status from account_invite where accepted_by_user_id=? order by id for update",
+            self.account);
     if (rows.size() > 1024) throw unavailable();
     for (var row : rows) {
       var invite = invites.addObject();
@@ -397,21 +410,32 @@ public final class SelfAppOtpMaintenance {
   private boolean legacyLocalEffect(Operation kind, JsonNode command, JsonNode current) {
     if (kind == Operation.DELETE || !current.path("enrollmentOperationId").isNull()) return false;
     var pending = current.path("pendingEmailStartOperationId");
-    return pending.isNull() || (kind == Operation.EMAIL_FINISH
-        && pending.asText().equals(command.path("body").path("emailStartOperationId").asText()));
+    return pending.isNull()
+        || (kind == Operation.EMAIL_FINISH
+            && pending
+                .asText()
+                .equals(command.path("body").path("emailStartOperationId").asText()));
   }
 
   private void clearPending(Self self, String original) {
-    if (!canonicalUuid(original) || jdbc.update(
-        "delete from identity_self_otp_pending_email where account_id=? and start_operation_id=?",
-        self.account, original) != 1) throw unavailable();
+    if (!canonicalUuid(original)
+        || jdbc.update(
+                "delete from identity_self_otp_pending_email where account_id=? and start_operation_id=?",
+                self.account,
+                original)
+            != 1) throw unavailable();
   }
 
   private void appliedEnrollment(Self self, String operation) {
-    if (jdbc.update("update identity_self_otp_local_enrollment set operation_id=? where account_id=?",
-        operation, self.account) == 0) jdbc.update(
-        "insert into identity_self_otp_local_enrollment(account_id,operation_id) values(?,?)",
-        self.account, operation);
+    if (jdbc.update(
+            "update identity_self_otp_local_enrollment set operation_id=? where account_id=?",
+            operation,
+            self.account)
+        == 0)
+      jdbc.update(
+          "insert into identity_self_otp_local_enrollment(account_id,operation_id) values(?,?)",
+          self.account,
+          operation);
   }
 
   private CheckedIntent findChecked(

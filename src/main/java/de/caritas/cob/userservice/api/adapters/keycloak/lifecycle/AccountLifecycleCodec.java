@@ -215,9 +215,11 @@ public final class AccountLifecycleCodec {
     byte[] snapshot = bytes.clone();
     String raw = utf8(snapshot);
     JsonNode value = read(raw, JsonNode.class);
-    intentFields(value, value.has("localState")
-        ? java.util.Set.of("username", "body", "localState")
-        : java.util.Set.of("username", "body"));
+    intentFields(
+        value,
+        value.has("localState")
+            ? java.util.Set.of("username", "body", "localState")
+            : java.util.Set.of("username", "body"));
     if (value.has("localState")) selfOtpLocalState(value.path("localState"));
     intentText(value, "username", 512);
     JsonNode body = value.path("body");
@@ -286,8 +288,11 @@ public final class AccountLifecycleCodec {
   }
 
   private void selfOtpLocalState(JsonNode value) {
-    intentFields(value, java.util.Set.of("v", "enrollmentOperationId", "pendingEmailStartOperationId", "invites"));
-    if (!value.path("v").isIntegralNumber() || !value.path("v").canConvertToInt()
+    intentFields(
+        value,
+        java.util.Set.of("v", "enrollmentOperationId", "pendingEmailStartOperationId", "invites"));
+    if (!value.path("v").isIntegralNumber()
+        || !value.path("v").canConvertToInt()
         || value.path("v").intValue() != 1) throw invalidSecretIntent();
     for (String field : java.util.List.of("enrollmentOperationId", "pendingEmailStartOperationId"))
       if (!value.get(field).isNull()) intentUuid(value, field);
@@ -299,8 +304,10 @@ public final class AccountLifecycleCodec {
       String id = intentText(invite, "id", 19);
       if (!id.matches("[1-9][0-9]{0,18}")) throw invalidSecretIntent();
       long current = Long.parseLong(id);
-      if (current <= previous || !java.util.Set.of("NOT_REQUIRED", "PENDING_SETUP", "ACTIVE", "WAIVED", "DISABLED_BY_POLICY")
-          .contains(intentText(invite, "status", 32))) throw invalidSecretIntent();
+      if (current <= previous
+          || !java.util.Set.of(
+                  "NOT_REQUIRED", "PENDING_SETUP", "ACTIVE", "WAIVED", "DISABLED_BY_POLICY")
+              .contains(intentText(invite, "status", 32))) throw invalidSecretIntent();
       previous = current;
     }
   }

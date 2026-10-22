@@ -194,7 +194,13 @@ class UserMaintenanceSecretIntentCodecTest {
     byte[] bytes = codec.canonical(command).getBytes(StandardCharsets.UTF_8);
     String encrypted = codec.sealSelfAppIntent(vector.path("metadata"), bytes);
     assertArrayEquals(bytes, codec.openSelfAppIntent(vector.path("metadata"), encrypted));
-    assertEquals(body, codec.read(codec.utf8(codec.openSelfAppIntent(vector.path("metadata"), encrypted)), JsonNode.class).path("body"));
+    assertEquals(
+        body,
+        codec
+            .read(
+                codec.utf8(codec.openSelfAppIntent(vector.path("metadata"), encrypted)),
+                JsonNode.class)
+            .path("body"));
   }
 
   @Test
@@ -203,14 +209,19 @@ class UserMaintenanceSecretIntentCodecTest {
     var vector = ordinaryVector();
     var codec = vectorCodec();
     var command = codec.read(vector.path("canonical_plaintext_utf8").textValue(), ObjectNode.class);
-    for (String local : List.of(
-        "{}",
-        "{\"v\":1,\"enrollmentOperationId\":null,\"pendingEmailStartOperationId\":null,\"invites\":[],\"authority\":true}",
-        "{\"v\":1,\"enrollmentOperationId\":\"foreign\",\"pendingEmailStartOperationId\":null,\"invites\":[]}",
-        "{\"v\":1,\"enrollmentOperationId\":null,\"pendingEmailStartOperationId\":null,\"invites\":[{\"id\":\"1\",\"status\":\"ACTIVE\"},{\"id\":\"1\",\"status\":\"ACTIVE\"}]}",
-        "{\"v\":1,\"enrollmentOperationId\":null,\"pendingEmailStartOperationId\":null,\"invites\":[{\"id\":\"1\",\"status\":\"OWNER\"}]}")) {
+    for (String local :
+        List.of(
+            "{}",
+            "{\"v\":1,\"enrollmentOperationId\":null,\"pendingEmailStartOperationId\":null,\"invites\":[],\"authority\":true}",
+            "{\"v\":1,\"enrollmentOperationId\":\"foreign\",\"pendingEmailStartOperationId\":null,\"invites\":[]}",
+            "{\"v\":1,\"enrollmentOperationId\":null,\"pendingEmailStartOperationId\":null,\"invites\":[{\"id\":\"1\",\"status\":\"ACTIVE\"},{\"id\":\"1\",\"status\":\"ACTIVE\"}]}",
+            "{\"v\":1,\"enrollmentOperationId\":null,\"pendingEmailStartOperationId\":null,\"invites\":[{\"id\":\"1\",\"status\":\"OWNER\"}]}")) {
       command.set("localState", codec.read(local, JsonNode.class));
-      refuses(() -> codec.sealSelfAppIntent(vector.path("metadata"), codec.canonical(command).getBytes(StandardCharsets.UTF_8)));
+      refuses(
+          () ->
+              codec.sealSelfAppIntent(
+                  vector.path("metadata"),
+                  codec.canonical(command).getBytes(StandardCharsets.UTF_8)));
     }
   }
 
