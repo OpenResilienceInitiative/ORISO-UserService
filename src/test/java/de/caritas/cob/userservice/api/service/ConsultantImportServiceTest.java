@@ -51,6 +51,10 @@ class ConsultantImportServiceTest {
   @Mock private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClientConfig lifecycleIdentities;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads
+      checkedPolicyReads;
+
   @TempDir Path tempDir;
 
   private Path importFile;
@@ -66,6 +70,7 @@ class ConsultantImportServiceTest {
     ReflectionTestUtils.setField(consultantImportService, "multiTenancyEnabled", false);
     ReflectionTestUtils.setField(
         consultantImportService, "lifecycleIdentities", lifecycleIdentities);
+    ReflectionTestUtils.setField(consultantImportService, "checkedPolicyReads", checkedPolicyReads);
   }
 
   // ---------------------------------------------------------------------------
@@ -274,7 +279,23 @@ class ConsultantImportServiceTest {
         "lifecycleEnvironment",
         new org.springframework.mock.env.MockEnvironment()
             .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
-    String csv = ",1,validuser,First,Last,valid@example.com,nein,,10;ordinary\r\n";
+    // A quoted newline spans physical lines but remains logical CSV record one.
+    String csv = ",1,validuser,\"First\nLine\",Last,valid@example.com,nein,,10;ordinary\r\n";
+    var capturedOrigin =
+        new java.util.concurrent.atomic.AtomicReference<
+            ConsultantImportService.CheckedPolicyOrigin>();
+    when(checkedPolicyReads.withConfiguredImport(any(), any()))
+        .thenAnswer(
+            call -> {
+              ConsultantImportService.CheckedPolicyOrigin origin = call.getArgument(0);
+              origin.requireLive();
+              org.junit.jupiter.api.Assertions.assertEquals(5L, origin.tenantId());
+              org.junit.jupiter.api.Assertions.assertEquals(List.of(10L), origin.agencyIds());
+              org.junit.jupiter.api.Assertions.assertEquals("CONSULTANT", origin.profile());
+              org.junit.jupiter.api.Assertions.assertTrue(origin.reference().endsWith(":1"));
+              capturedOrigin.set(origin);
+              return ((java.util.function.Supplier<?>) call.getArgument(1)).get();
+            });
     writeCsv(csv);
     when(userHelper.isUsernameValid("validuser")).thenReturn(true);
     when(userHelper.isValidEmail("valid@example.com")).thenReturn(true);
@@ -303,6 +324,11 @@ class ConsultantImportServiceTest {
 
     consultantImportService.startImport();
 
+    org.junit.jupiter.api.Assertions.assertNotNull(capturedOrigin.get());
+    org.junit.jupiter.api.Assertions.assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> capturedOrigin.get().requireLive());
+
     var row = org.mockito.ArgumentCaptor.forClass(ConsultantImportService.ImportRecord.class);
     String digest =
         java.util.HexFormat.of()
@@ -318,6 +344,7 @@ class ConsultantImportServiceTest {
             eq(1L),
             any());
     org.junit.jupiter.api.Assertions.assertEquals(5L, row.getValue().getTenantId());
+    org.junit.jupiter.api.Assertions.assertEquals("First\nLine", row.getValue().getFirstName());
     verify(consultantAgencyRelationCreatorService)
         .createConsultantAgencyRelations(
             eq("new-imported-consultant"),

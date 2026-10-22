@@ -44,6 +44,10 @@ public class CounsellorInviteProvisioningService {
   @org.springframework.beans.factory.annotation.Autowired
   private org.springframework.core.env.Environment lifecycleEnvironment;
 
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads
+      checkedPolicyReads;
+
   @org.springframework.beans.factory.annotation.Autowired
   private org.springframework.beans.factory.ObjectProvider<
           de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation>
@@ -122,21 +126,29 @@ public class CounsellorInviteProvisioningService {
       technicalAccessToken = acceptTimeAgencyCheck.serviceToken();
       acceptTimeAgencyCheck.requireLiveAgency(invite, technicalAccessToken);
       if (fiveActors()) {
+        if (checkedPolicyReads == null)
+          throw new IllegalStateException("Checked invitation policy is unavailable");
         String selectedToken = technicalAccessToken;
-        return TechnicalAccessTokenContext.callWith(
-            selectedToken,
+        return checkedPolicyReads.withInvitation(
+            rawToken,
+            Boolean.TRUE.equals(command.grantAgencyAdmin())
+                ? "CONSULTANT_AGENCY_ADMIN"
+                : "CONSULTANT",
             () ->
-                createConsultantSaga.createInvitedConsultant(
-                    toConsultant(command, invite),
-                    invite,
-                    Boolean.TRUE.equals(command.grantAgencyAdmin()),
-                    consultant ->
-                        completeOrdinaryInvitation(
-                            rawToken,
-                            command,
+                TechnicalAccessTokenContext.callWith(
+                    selectedToken,
+                    () ->
+                        createConsultantSaga.createInvitedConsultant(
+                            toConsultant(command, invite),
                             invite,
-                            agencyAdminAlsoCounselling,
-                            consultant.getId())));
+                            Boolean.TRUE.equals(command.grantAgencyAdmin()),
+                            consultant ->
+                                completeOrdinaryInvitation(
+                                    rawToken,
+                                    command,
+                                    invite,
+                                    agencyAdminAlsoCounselling,
+                                    consultant.getId()))));
       }
       // The service identity is ambient ONLY around the remote calls that need it: consultant
       // creation and agency assignment reach TenantService/AgencyService/ConsultingTypeService

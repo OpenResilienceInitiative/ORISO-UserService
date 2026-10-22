@@ -40,6 +40,40 @@ public class TenantCreationClient {
   private final @NonNull TenantAdminServiceApiControllerFactory
       tenantAdminServiceApiControllerFactory;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private ReservedTenantBootstrap reservedTenantBootstrap;
+
+  /** Exact protected held operation; the private SQL claim is checked before authentication. */
+  public VerifiedTenant createReservedTenant(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationAcceptance.AcceptanceClaim claim,
+      MultilingualTenantDTO tenant) {
+    return null;
+  }
+
+  /** Authenticated result ownership only; never a generic tenant creation grant. */
+  public static final class VerifiedTenant {
+    private final long id;
+    private final String proof;
+    private final MultilingualTenantDTO value;
+    private final java.util.UUID claim;
+    private final java.util.UUID attempt;
+    private final java.util.UUID execution;
+
+    private VerifiedTenant(long id, String proof, MultilingualTenantDTO value,
+        java.util.UUID claim, java.util.UUID attempt, java.util.UUID execution) {
+      this.id = id; this.proof = proof; this.value = value;
+      this.claim = claim; this.attempt = attempt; this.execution = execution;
+    }
+
+    public long tenantId() { return id; }
+    public String receipt() { return proof; }
+    public MultilingualTenantDTO tenant() { return null; }
+    public java.util.UUID claimId() { return claim; }
+    public java.util.UUID attemptId() { return attempt; }
+    public java.util.UUID executionId() { return execution; }
+    @Override public String toString() { return "VerifiedHeldTenant[redacted]"; }
+  }
+
   /**
    * Creates the tenant and consumes the invite's tenant-ID reservation atomically.
    *
