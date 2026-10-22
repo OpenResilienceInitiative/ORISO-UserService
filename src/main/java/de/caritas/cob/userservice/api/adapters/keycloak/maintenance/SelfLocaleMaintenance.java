@@ -61,12 +61,35 @@ public final class SelfLocaleMaintenance {
   private final @NonNull String realmName;
   private final @NonNull String realmId;
 
-  public SelfLocaleMaintenance(IdentityClientConfig mode, AuthenticatedUser authenticatedUser,
-      HttpServletRequest request, JdbcTemplate jdbc, PlatformTransactionManager transactions,
-      TaskActorConfiguration actors, TaskActorTokenBroker broker, AccountLifecycleCodec codec,
-      RestTemplate http, Clock clock, String authServer, String realmName, String realmId) {
-    this(mode, authenticatedUser, request, jdbc, transactions, actors, broker, codec, http, clock,
-        authServer, authServer.replaceAll("/+$", "") + "/realms/" + realmName, realmName, realmId);
+  public SelfLocaleMaintenance(
+      IdentityClientConfig mode,
+      AuthenticatedUser authenticatedUser,
+      HttpServletRequest request,
+      JdbcTemplate jdbc,
+      PlatformTransactionManager transactions,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      RestTemplate http,
+      Clock clock,
+      String authServer,
+      String realmName,
+      String realmId) {
+    this(
+        mode,
+        authenticatedUser,
+        request,
+        jdbc,
+        transactions,
+        actors,
+        broker,
+        codec,
+        http,
+        clock,
+        authServer,
+        authServer.replaceAll("/+$", "") + "/realms/" + realmName,
+        realmName,
+        realmId);
   }
 
   public boolean isFiveActorMode() {

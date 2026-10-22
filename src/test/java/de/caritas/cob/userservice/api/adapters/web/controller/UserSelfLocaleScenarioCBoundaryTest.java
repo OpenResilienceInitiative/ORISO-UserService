@@ -87,8 +87,10 @@ class UserSelfLocaleScenarioCBoundaryTest {
   void publicPatchSeparatesInternalRpcFromVerifiedPublicIssuerAndUsesCheckedMachineToken() {
     var fixture = new Fixture(true, true);
     fixture.expectNative(false);
-    assertDoesNotThrow(() -> assertEquals(204,
-        fixture.controller.patchUser(fixture.patch(false)).getStatusCode().value()));
+    assertDoesNotThrow(
+        () ->
+            assertEquals(
+                204, fixture.controller.patchUser(fixture.patch(false)).getStatusCode().value()));
     assertEquals("ACKNOWLEDGED", fixture.status());
     assertEquals(1, fixture.domainCalls());
     assertEquals(1, fixture.nativeEffects.get());
@@ -278,7 +280,9 @@ class UserSelfLocaleScenarioCBoundaryTest {
         new TaskActorCredentials(
             TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "fixture-secret", ADMIN);
 
-    Fixture(boolean fiveActors) { this(fiveActors, false); }
+    Fixture(boolean fiveActors) {
+      this(fiveActors, false);
+    }
 
     Fixture(boolean fiveActors, boolean splitIssuer) {
       this.splitIssuer = splitIssuer;
@@ -288,7 +292,10 @@ class UserSelfLocaleScenarioCBoundaryTest {
           Jwt.withTokenValue("fixture-human")
               .header("alg", "RS256")
               .subject(ACCOUNT)
-              .issuer(splitIssuer ? "https://public.identity.test/realms/fixture" : "https://identity.test/realms/fixture")
+              .issuer(
+                  splitIssuer
+                      ? "https://public.identity.test/realms/fixture"
+                      : "https://identity.test/realms/fixture")
               .claim("azp", "app")
               .claim("tenantId", "7")
               .issuedAt(Instant.now().minusSeconds(10))
@@ -316,12 +323,15 @@ class UserSelfLocaleScenarioCBoundaryTest {
         when(checked.clientId()).thenReturn(actor.clientId());
         when(checked.subject()).thenReturn(actor.serviceSubject());
         when(checked.issuer()).thenReturn("https://public.identity.test/realms/fixture");
-        when(checked.validatedJwtIssuedAt()).thenReturn(Instant.now().minusSeconds(1).getEpochSecond());
-        when(checked.validatedJwtExpiresAt()).thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
+        when(checked.validatedJwtIssuedAt())
+            .thenReturn(Instant.now().minusSeconds(1).getEpochSecond());
+        when(checked.validatedJwtExpiresAt())
+            .thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
         when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
       } else {
-        when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(
-            new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_ADMIN, "fixture-admin", 60));
+        when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))
+            .thenReturn(
+                new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_ADMIN, "fixture-admin", 60));
       }
       var users = mock(UserRepository.class);
       when(users.findByUserIdAndDeleteDateIsNull(ACCOUNT))
