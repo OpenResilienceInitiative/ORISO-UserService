@@ -29,6 +29,8 @@ import java.time.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.crypto.Mac;
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.*;
@@ -140,7 +142,7 @@ class UserSelfPasswordScenarioCBoundaryTest {
       jdbc.execute(
           "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512))");
       jdbc.execute(
-          "create table identity_self_password_intent(operation_id varchar(36) primary key,realm_id varchar(512),account_id varchar(36),tenant_id bigint,owner_client varchar(255),owner_subject varchar(36),request_digest varchar(64),target_json clob,metadata_json clob,intent_envelope clob,status varchar(32),receipt clob,updated_at timestamp)");
+          "create table identity_self_password_intent(operation_id varchar(36) primary key,realm_id varchar(512),account_id varchar(36),tenant_id bigint,owner_client varchar(255),owner_subject varchar(36),request_digest varchar(64),target_json clob,authority_valid_until bigint,metadata_json clob,intent_envelope clob,status varchar(32),receipt clob,updated_at timestamp)");
       var human =
           new AuthenticatedUser(
               ACCOUNT,
@@ -263,6 +265,29 @@ class UserSelfPasswordScenarioCBoundaryTest {
           operation);
     }
 
+    JsonNode frozenBodyFromIndependentDecryption() {
+      var saved = jdbc.queryForMap("select metadata_json,intent_envelope from identity_self_password_intent where operation_id=?", operation);
+      JsonNode metadata = codec.read((String)saved.get("metadata_json"), JsonNode.class);
+      JsonNode envelope = codec.read((String)saved.get("intent_envelope"), JsonNode.class);
+      assertEquals(16, metadata.size());
+      assertEquals(1, envelope.path("v").intValue());
+      try {
+        var mac = Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(KEY,"HmacSHA256"));
+        String digest = HexFormat.of().formatHex(mac.doFinal(("oriso/user-maintenance-intent/metadata/v1\n"+codec.canonical(metadata)).getBytes(StandardCharsets.UTF_8)));
+        byte[] key = mac.doFinal(("oriso/user-maintenance-intent/encryption/v1\n"+digest).getBytes(StandardCharsets.UTF_8));
+        byte[] nonce = Base64.getUrlDecoder().decode(envelope.path("nonce").textValue());
+        assertEquals(12,nonce.length);
+        var cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE,new SecretKeySpec(key,"AES"),new GCMParameterSpec(128,nonce));
+        cipher.updateAAD(codec.canonical(metadata).getBytes(StandardCharsets.UTF_8));
+        var plain = codec.read(new String(cipher.doFinal(Base64.getUrlDecoder().decode(envelope.path("ciphertext").textValue())),StandardCharsets.UTF_8),JsonNode.class);
+        Arrays.fill(key,(byte)0);
+        assertEquals("CONSULTANT",plain.path("localSetup").path("kind").textValue());
+        assertTrue(plain.path("localSetup").path("passwordChangeRequired").booleanValue());
+        return plain.path("body");
+      } catch (java.security.GeneralSecurityException failure) { throw new AssertionError("Private password intent could not be verified"); }
+    }
+
     void expectNative() {
       String endpoint =
           "https://internal.identity.test/realms/fixture/oriso-account-maintenance/v1/accounts/"
@@ -307,6 +332,10 @@ class UserSelfPasswordScenarioCBoundaryTest {
                     codec.read(((MockClientHttpRequest) out).getBodyAsString(), JsonNode.class);
                 assertEquals(CURRENT, body.path("change").path("currentPassword").textValue());
                 assertEquals(CHOSEN, body.path("change").path("password").textValue());
+                assertEquals(frozenBodyFromIndependentDecryption(), body);
+                long expiry = jdbc.queryForObject("select authority_valid_until from identity_self_password_intent where operation_id=?", Long.class, operation);
+                assertTrue(expiry > Instant.now().getEpochSecond());
+                assertTrue(expiry <= Instant.now().plusSeconds(300).getEpochSecond());
                 var facts = new TreeMap<String, Object>();
                 facts.put("realmId", REALM);
                 facts.put("accountId", ACCOUNT);

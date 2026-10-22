@@ -315,24 +315,16 @@ class UserSelfLocaleScenarioCBoundaryTest {
                   "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"))
           .execute(source);
       when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(actor);
-      if (splitIssuer) {
-        var checked = mock(TaskActorTokenBroker.VerifiedMaintenanceToken.class);
-        when(checked.accessToken()).thenReturn("fixture-admin");
-        when(checked.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
-        when(checked.purpose()).thenReturn(TaskPurpose.ACCOUNT_MAINTENANCE);
-        when(checked.clientId()).thenReturn(actor.clientId());
-        when(checked.subject()).thenReturn(actor.serviceSubject());
-        when(checked.issuer()).thenReturn("https://public.identity.test/realms/fixture");
-        when(checked.validatedJwtIssuedAt())
-            .thenReturn(Instant.now().minusSeconds(1).getEpochSecond());
-        when(checked.validatedJwtExpiresAt())
-            .thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
-        when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
-      } else {
-        when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))
-            .thenReturn(
-                new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_ADMIN, "fixture-admin", 60));
-      }
+      var checked = mock(TaskActorTokenBroker.VerifiedMaintenanceToken.class);
+      when(checked.accessToken()).thenReturn("fixture-admin");
+      when(checked.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
+      when(checked.purpose()).thenReturn(TaskPurpose.ACCOUNT_MAINTENANCE);
+      when(checked.clientId()).thenReturn(actor.clientId());
+      when(checked.subject()).thenReturn(actor.serviceSubject());
+      when(checked.issuer()).thenReturn(splitIssuer ? "https://public.identity.test/realms/fixture" : "https://identity.test/realms/fixture");
+      when(checked.validatedJwtIssuedAt()).thenReturn(Instant.now().minusSeconds(1).getEpochSecond());
+      when(checked.validatedJwtExpiresAt()).thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
+      when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
       var users = mock(UserRepository.class);
       when(users.findByUserIdAndDeleteDateIsNull(ACCOUNT))
           .thenAnswer(

@@ -120,9 +120,16 @@ class SelfLocaleMaintenanceJpaTest {
                 "fixture-secret",
                 "33333333-3333-4333-8333-333333333333"));
     var broker = mock(TaskActorTokenBroker.class);
-    when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))
-        .thenReturn(
-            new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_ADMIN, "fixture-admin", 60));
+    var checked = mock(TaskActorTokenBroker.VerifiedMaintenanceToken.class);
+    when(checked.accessToken()).thenReturn("fixture-admin");
+    when(checked.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
+    when(checked.purpose()).thenReturn(TaskPurpose.ACCOUNT_MAINTENANCE);
+    when(checked.clientId()).thenReturn("backend-account-admin");
+    when(checked.subject()).thenReturn("33333333-3333-4333-8333-333333333333");
+    when(checked.issuer()).thenReturn("https://identity.test/realms/fixture");
+    when(checked.validatedJwtIssuedAt()).thenReturn(Instant.now().minusSeconds(1).getEpochSecond());
+    when(checked.validatedJwtExpiresAt()).thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
+    when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
     var http = new RestTemplate();
     server = MockRestServiceServer.bindTo(http).build();
     maintenance =

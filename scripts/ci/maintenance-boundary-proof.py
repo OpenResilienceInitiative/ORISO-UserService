@@ -158,6 +158,7 @@ def select_slice(name):
             "de/caritas/cob/userservice/api/adapters/web/controller/UserController",
             "de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate",
             "de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfPasswordMaintenance",
+            "de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfPasswordIntentCodec",
         ]
         TEST_CLASS = SUITE.replace(".", "/")
     elif name == "otp-read":

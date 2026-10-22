@@ -115,6 +115,14 @@ public final class AccountLifecycleCodec {
     }
   }
 
+  String sealSelfPasswordIntent(JsonNode independentlyCheckedOwnedMetadata, byte[] frozenCommand) {
+    return new SelfPasswordIntentCodec(this, this::mac).seal(independentlyCheckedOwnedMetadata, frozenCommand);
+  }
+
+  byte[] openSelfPasswordIntent(JsonNode independentlyCheckedOwnedMetadata, String envelope) {
+    return new SelfPasswordIntentCodec(this, this::mac).open(independentlyCheckedOwnedMetadata, envelope);
+  }
+
   /** Immutable data only; construction is deliberately private and grants no workflow authority. */
   private record SelfAppMetadata(
       int v,
@@ -928,7 +936,7 @@ public final class AccountLifecycleCodec {
       String accountId,
       TaskActorCredentials actor,
       Object body) {
-    if (!java.util.Set.of("read", "delete", "locale").contains(command)
+    if (!java.util.Set.of("read", "delete", "locale", "self-password").contains(command)
         || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
       throw new IllegalArgumentException("Invalid maintenance proof binding");
     long now = clock.instant().getEpochSecond();
@@ -979,6 +987,10 @@ public final class AccountLifecycleCodec {
   public String verifyMaintenanceLocaleReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "locale", "UPDATED");
+  }
+
+  String verifyMaintenanceSelfPasswordReceipt(String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "self-password", "UPDATED");
   }
 
   private String verifyMaintenanceReceipt(
