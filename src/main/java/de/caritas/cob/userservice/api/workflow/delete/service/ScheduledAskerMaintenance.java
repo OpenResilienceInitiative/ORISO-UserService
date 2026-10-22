@@ -23,6 +23,7 @@ import java.util.UUID;
 import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -37,6 +38,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 /** Scheduled asker native ACK only; downstream ownership/cleanup has a separate gate. */
 @RequiredArgsConstructor
+@Slf4j
 public final class ScheduledAskerMaintenance {
   private static final String TASK = "account-deletion";
   private final @NonNull JdbcTemplate jdbc;
@@ -58,31 +60,48 @@ public final class ScheduledAskerMaintenance {
     if (acquired.isEmpty()) return;
     var lease = acquired.get();
     try {
+      int pending = 0;
       // Only local persisted candidates are scanned. Native enumeration never grants a target.
       for (String account :
           jdbc.queryForList(
-              "select user_id from user where delete_date is not null order by user_id",
+              "select u.user_id from user u left join identity_maintenance_intent i"
+                  + " on i.subject_type='ASKER' and i.subject_id=u.user_id"
+                  + " and i.deletion_started_at=u.delete_date where u.delete_date is not null"
+                  + " order by case when i.last_attempt_at is null then 0 else 1 end,"
+                  + " i.last_attempt_at,u.user_id",
               String.class)) {
-        ClaimedDeletion checked = transaction(() -> prepare(lease, account));
-        if (checked == null || "ACKNOWLEDGED".equals(checked.intent.status)) continue;
-        FrozenDeletion frozen;
-        if (checked.intent.frozen != null) {
-          frozen = frozen(checked, checked.intent.frozen);
-        } else {
-          String state = read(checked);
-          frozen = transaction(() -> freeze(checked, state));
+        try {
+          maintain(lease, account);
+        } catch (RuntimeException failure) {
+          // Keep the exact local intent, including an unknown frozen RPC, for a later run.
+          // A refusal for one account never permits cleanup or prevents another account's ACK.
+          pending++;
         }
-        if (frozen == null) continue;
-        String response = request("delete", frozen.claim, frozen.body);
-        var actor = actor(frozen.claim);
-        String receipt =
-            codec.verifyMaintenanceDeleteReceipt(
-                response, realmId, actor, codec.read(frozen.body, JsonNode.class));
-        transaction(() -> acknowledge(frozen, receipt));
       }
+      if (pending > 0)
+        log.warn("Scheduled scoped identity deletion retained {} pending account(s)", pending);
     } finally {
       claims.release(lease);
     }
+  }
+
+  private void maintain(ScheduledTaskClaimService.ClaimLease lease, String account) {
+    ClaimedDeletion checked = transaction(() -> prepare(lease, account));
+    if (checked == null || "ACKNOWLEDGED".equals(checked.intent.status)) return;
+    FrozenDeletion frozen;
+    if (checked.intent.frozen != null) {
+      frozen = frozen(checked, checked.intent.frozen);
+    } else {
+      String state = read(checked);
+      frozen = transaction(() -> freeze(checked, state));
+    }
+    if (frozen == null) return;
+    String response = request("delete", frozen.claim, frozen.body);
+    var actor = actor(frozen.claim);
+    String receipt =
+        codec.verifyMaintenanceDeleteReceipt(
+            response, realmId, actor, codec.read(frozen.body, JsonNode.class));
+    transaction(() -> acknowledge(frozen, receipt));
   }
 
   private ClaimedDeletion prepare(ScheduledTaskClaimService.ClaimLease lease, String account) {
@@ -142,9 +161,10 @@ public final class ScheduledAskerMaintenance {
       throw unavailable();
     String generation = UUID.randomUUID().toString();
     jdbc.update(
-        "update identity_maintenance_intent set claim_token=?,claim_until=? where operation_id=?",
+        "update identity_maintenance_intent set claim_token=?,claim_until=?,last_attempt_at=? where operation_id=?",
         generation,
         lease.claimedUntil(),
+        LocalDateTime.now(clock),
         intent.operation);
     if (!"ACKNOWLEDGED".equals(intent.status)) {
       user.setDeletionLifecycleState(DeletionLifecycleState.HARD_DELETE_IN_PROGRESS);
@@ -344,7 +364,7 @@ public final class ScheduledAskerMaintenance {
   private String request(String command, ClaimedDeletion claim, String body) {
     if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     var actor = actor(claim);
-    var token = broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE);
+    var token = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
     if (token.actor() != TaskActor.ACCOUNT_ADMIN) throw unavailable();
     var headers = new HttpHeaders();
     headers.setContentType(MediaType.APPLICATION_JSON);

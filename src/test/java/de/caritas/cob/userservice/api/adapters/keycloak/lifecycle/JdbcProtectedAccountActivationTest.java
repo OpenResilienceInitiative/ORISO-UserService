@@ -528,6 +528,7 @@ class JdbcProtectedAccountActivationTest {
             "SELECT account_id FROM protected_invitation_acceptance", String.class));
     verify(accounts, times(2)).checkRecovery(any(), same(recovered));
     verify(otp, times(1)).discardWithinOwner(any());
+    assertThrows(RuntimeException.class, () -> activationWithCustody().phase(claim));
   }
 
   @Test
@@ -648,6 +649,32 @@ class JdbcProtectedAccountActivationTest {
     assertEquals("COMMITTED", state());
     assertEquals(
         "ACCEPTED", jdbc.queryForObject("SELECT status FROM account_invite", String.class));
+  }
+
+  @Test
+  void historicalPhaseDistinguishesPendingAndCommittedWithoutGrantingLiveRecipientAccess() {
+    var before = acceptanceAt(clock).historical(73);
+    assertEquals(JdbcProtectedAccountActivation.Phase.UNSTAGED,
+        assertDoesNotThrow(() -> restart().phase(before)));
+    restart().stage(claim, pending, prepared, policy);
+    Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
+    var pendingHistory = acceptanceAt(late).historical(73);
+    clearInvocations(otp);
+    assertEquals(JdbcProtectedAccountActivation.Phase.WAITING_OTP,
+        assertDoesNotThrow(() -> activationAt(late).phase(pendingHistory)));
+    assertThrows(RuntimeException.class, () -> acceptanceAt(late).resume(73, TOKEN));
+    verifyNoInteractions(otp);
+    var complete = completion();
+    allowCompletion(complete);
+    var ready = restart().ready(claim, complete);
+    clearInvocations(otp);
+    assertEquals(JdbcProtectedAccountActivation.Phase.READY,
+        assertDoesNotThrow(() -> activationAt(late).phase(pendingHistory)));
+    var saved = activationAt(late).historicalReady(pendingHistory);
+    activationAt(late).acknowledge(saved, committed(ready.outcome()));
+    assertEquals(JdbcProtectedAccountActivation.Phase.COMMITTED,
+        assertDoesNotThrow(() -> activationAt(late).phase(pendingHistory)));
+    verifyNoInteractions(otp);
   }
 
   private void emptyCustody() {
