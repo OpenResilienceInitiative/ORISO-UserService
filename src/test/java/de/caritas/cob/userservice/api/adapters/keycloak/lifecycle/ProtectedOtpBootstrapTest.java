@@ -73,8 +73,13 @@ class ProtectedOtpBootstrapTest {
       assertEquals(completion.receipt(), f.adapter().completed(f.claim).receipt());
       assertFalse(completion.toString().contains("123456"));
       assertFalse(completion.receipt().contains("SyntheticSetupSecret1234567890"));
-      assertEquals(1, f.jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='ACKNOWLEDGED'", Integer.class));
-      String intents = f.jdbc.queryForList("SELECT * FROM protected_otp_bootstrap_operation").toString();
+      assertEquals(
+          1,
+          f.jdbc.queryForObject(
+              "SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='ACKNOWLEDGED'",
+              Integer.class));
+      String intents =
+          f.jdbc.queryForList("SELECT * FROM protected_otp_bootstrap_operation").toString();
       assertFalse(intents.contains("SyntheticSetupSecret1234567890"));
       assertFalse(intents.contains("123456"));
       f.server.verify();
@@ -111,9 +116,14 @@ class ProtectedOtpBootstrapTest {
       var prepared = assertDoesNotThrow(() -> f.adapter().prepare(f.claim, f.pending));
       var foreign = new JdbcDataSource();
       foreign.setURL("jdbc:h2:mem:" + UUID.randomUUID());
-      assertThrows(RuntimeException.class, () -> new TransactionTemplate(new DataSourceTransactionManager(foreign))
-          .execute(tx -> f.adapter().stagePrepared(f.claim, prepared)));
-      assertEquals("PREPARED", f.jdbc.queryForObject("SELECT state FROM protected_otp_bootstrap", String.class));
+      assertThrows(
+          RuntimeException.class,
+          () ->
+              new TransactionTemplate(new DataSourceTransactionManager(foreign))
+                  .execute(tx -> f.adapter().stagePrepared(f.claim, prepared)));
+      assertEquals(
+          "PREPARED",
+          f.jdbc.queryForObject("SELECT state FROM protected_otp_bootstrap", String.class));
       assertThrows(RuntimeException.class, () -> f.adapter().currentSetup(f.claim));
       f.server.verify();
     }
@@ -309,7 +319,8 @@ class ProtectedOtpBootstrapTest {
                         .withoutPadding()
                         .encodeToString(json.canonical(receipt).getBytes(StandardCharsets.UTF_8));
                 String sealed = nativeReceipt(key, "otp-bootstrap-prepare/v1", encoded);
-            prepareFacts = receipt.deepCopy(); prepareReceipt = sealed;
+                prepareFacts = receipt.deepCopy();
+                prepareReceipt = sealed;
                 String result =
                     json.canonical(
                         Map.of(
@@ -330,28 +341,58 @@ class ProtectedOtpBootstrapTest {
     }
 
     void expectApp() {
-      server.expect(requestTo(org.springframework.web.util.UriComponentsBuilder.fromUriString(issuer.base()).pathSegment("realms", "synthetic", "otp-config", "setup-otp", pending.username()).build().encode().toUri()))
-          .andExpect(method(HttpMethod.PUT)).andExpect(header("X-ORISO-OTP-Bootstrap", prepareReceipt))
-          .andRespond(req -> {
-            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-            assertNull(req.getHeaders().getFirst("X-ORISO-Human-Authorization"));
-            var actual = (org.springframework.mock.http.client.MockClientHttpRequest) req;
-            JsonNode body = json.read(actual.getBodyAsString(), JsonNode.class);
-            assertEquals("123456", body.path("otp").path("initialCode").asText());
-            assertEquals("SyntheticSetupSecret1234567890", body.path("otp").path("secret").asText());
-            assertEquals("INVITATION", body.path("target").path("origin").path("kind").asText());
-            assertEquals(json.digest("otp-bootstrap-state/v1", prepareReceipt), body.path("expectedState").asText());
-            assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='FROZEN'", Integer.class));
-            ObjectNode materialized = body.deepCopy(); materialized.put("username", pending.username()); materialized.put("bootstrapReceipt", prepareReceipt);
-            var facts = prepareFacts.deepCopy(); facts.put("state", "COMPLETE");
-            facts.set("operationId", body.path("operationId")); facts.put("intentDigest", json.digest("otp-bootstrap-intent/v1", materialized));
-            facts.put("status", 201); var nativeResult = Map.of("info", "OTP credential created"); facts.put("resultDigest", json.digest("otp-result", nativeResult));
-            String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(json.canonical(facts).getBytes(StandardCharsets.UTF_8));
-            String receipt = nativeReceipt(key, "otp-bootstrap-complete/v1", encoded);
-            return withCreatedEntity(java.net.URI.create("/synthetic"))
-                .body(json.canonical(Map.of("status", 201, "result", nativeResult, "receipt", receipt)))
-                .contentType(MediaType.APPLICATION_JSON).createResponse(req);
-          });
+      server
+          .expect(
+              requestTo(
+                  org.springframework.web.util.UriComponentsBuilder.fromUriString(issuer.base())
+                      .pathSegment(
+                          "realms", "synthetic", "otp-config", "setup-otp", pending.username())
+                      .build()
+                      .encode()
+                      .toUri()))
+          .andExpect(method(HttpMethod.PUT))
+          .andExpect(header("X-ORISO-OTP-Bootstrap", prepareReceipt))
+          .andRespond(
+              req -> {
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                assertNull(req.getHeaders().getFirst("X-ORISO-Human-Authorization"));
+                var actual = (org.springframework.mock.http.client.MockClientHttpRequest) req;
+                JsonNode body = json.read(actual.getBodyAsString(), JsonNode.class);
+                assertEquals("123456", body.path("otp").path("initialCode").asText());
+                assertEquals(
+                    "SyntheticSetupSecret1234567890", body.path("otp").path("secret").asText());
+                assertEquals(
+                    "INVITATION", body.path("target").path("origin").path("kind").asText());
+                assertEquals(
+                    json.digest("otp-bootstrap-state/v1", prepareReceipt),
+                    body.path("expectedState").asText());
+                assertEquals(
+                    1,
+                    jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM protected_otp_bootstrap_operation WHERE state='FROZEN'",
+                        Integer.class));
+                ObjectNode materialized = body.deepCopy();
+                materialized.put("username", pending.username());
+                materialized.put("bootstrapReceipt", prepareReceipt);
+                var facts = prepareFacts.deepCopy();
+                facts.put("state", "COMPLETE");
+                facts.set("operationId", body.path("operationId"));
+                facts.put("intentDigest", json.digest("otp-bootstrap-intent/v1", materialized));
+                facts.put("status", 201);
+                var nativeResult = Map.of("info", "OTP credential created");
+                facts.put("resultDigest", json.digest("otp-result", nativeResult));
+                String encoded =
+                    Base64.getUrlEncoder()
+                        .withoutPadding()
+                        .encodeToString(json.canonical(facts).getBytes(StandardCharsets.UTF_8));
+                String receipt = nativeReceipt(key, "otp-bootstrap-complete/v1", encoded);
+                return withCreatedEntity(java.net.URI.create("/synthetic"))
+                    .body(
+                        json.canonical(
+                            Map.of("status", 201, "result", nativeResult, "receipt", receipt)))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .createResponse(req);
+              });
     }
 
     private static String nativeReceipt(byte[] key, String domain, String encoded) {
@@ -361,9 +402,7 @@ class ProtectedOtpBootstrapTest {
         return encoded
             + "."
             + HexFormat.of()
-                .formatHex(
-                    mac.doFinal(
-                        (domain + "\n" + encoded).getBytes(StandardCharsets.UTF_8)));
+                .formatHex(mac.doFinal((domain + "\n" + encoded).getBytes(StandardCharsets.UTF_8)));
       } catch (java.security.GeneralSecurityException failure) {
         throw new IllegalStateException(failure);
       }
