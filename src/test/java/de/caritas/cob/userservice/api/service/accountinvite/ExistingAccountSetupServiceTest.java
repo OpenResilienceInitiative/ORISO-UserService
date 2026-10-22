@@ -68,7 +68,13 @@ class ExistingAccountSetupServiceTest {
         .isInstanceOf(ScopedIdentityCommandRequiredException.class);
 
     org.mockito.Mockito.verifyNoInteractions(
-        invites, admins, consultants, identities, roles, passwordChangeRequirement, initialPasswords);
+        invites,
+        admins,
+        consultants,
+        identities,
+        roles,
+        passwordChangeRequirement,
+        initialPasswords);
     verify(passwords, never()).updatePassword(any(), any());
   }
 
