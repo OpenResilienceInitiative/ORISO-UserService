@@ -69,8 +69,9 @@ class UserTwoFactorAuthControllerDelegate {
     assertTwoFactorAuthAllowed();
 
     if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
-      boolean valid = selfAppOtpMaintenance.finishEmail(tan,
-          () -> accountInviteService.markTwoFactorActive(authenticatedUser.getUserId()));
+      boolean valid =
+          selfAppOtpMaintenance.finishEmail(
+              tan, () -> accountInviteService.markTwoFactorActive(authenticatedUser.getUserId()));
       return valid ? ResponseEntity.noContent().build() : ResponseEntity.badRequest().build();
     }
 

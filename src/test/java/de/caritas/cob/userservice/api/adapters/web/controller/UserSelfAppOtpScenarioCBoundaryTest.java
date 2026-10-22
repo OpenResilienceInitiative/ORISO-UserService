@@ -512,11 +512,16 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
-  void publicLinkedEmailFinishCommitsEmailPointerInviteOnlyAfterVerifiedNativeReceipt() throws Exception {
+  void publicLinkedEmailFinishCommitsEmailPointerInviteOnlyAfterVerifiedNativeReceipt()
+      throws Exception {
     try (var fixture = new Fixture(true, true)) {
       fixture.prepareDeliveredEmail();
       fixture.expectEmailFinish(false, false, false);
-      assertEquals(204, assertDoesNotThrow(() -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE)).getStatusCode().value());
+      assertEquals(
+          204,
+          assertDoesNotThrow(() -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE))
+              .getStatusCode()
+              .value());
       assertEquals("ACKNOWLEDGED", fixture.status());
       assertNull(fixture.pendingEmailOperation());
       assertEquals(PENDING_EMAIL, fixture.currentEmail());
@@ -529,18 +534,26 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
-  void publicLinkedEmailFinishLostReplyNewOwnerReplaysOneNativeAndOneDomainEffect() throws Exception {
+  void publicLinkedEmailFinishLostReplyNewOwnerReplaysOneNativeAndOneDomainEffect()
+      throws Exception {
     try (var fixture = new Fixture(true, true)) {
       fixture.prepareDeliveredEmail();
       fixture.expectEmailFinish(true, false, false);
-      assertThrows(ServiceUnavailableException.class, () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
       assertEquals("FROZEN", fixture.status());
       assertEquals(fixture.emailStartOperation, fixture.pendingEmailOperation());
       assertEquals("original@oriso.org", fixture.currentEmail());
       String cipher = fixture.envelope();
       fixture.installOwner();
-      assertEquals(204, assertDoesNotThrow(() -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE)).getStatusCode().value());
-      assertEquals(204, fixture.controller.finishTwoFactorAuthByEmailSetup(CODE).getStatusCode().value());
+      assertEquals(
+          204,
+          assertDoesNotThrow(() -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE))
+              .getStatusCode()
+              .value());
+      assertEquals(
+          204, fixture.controller.finishTwoFactorAuthByEmailSetup(CODE).getStatusCode().value());
       assertEquals(cipher, fixture.envelope());
       assertEquals("ACKNOWLEDGED", fixture.status());
       assertNull(fixture.pendingEmailOperation());
@@ -553,14 +566,19 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
-  void publicLinkedEmailFinishInvalidCodeCommitsOneTerminalAttemptAndRejectsChangedSameIntent() throws Exception {
+  void publicLinkedEmailFinishInvalidCodeCommitsOneTerminalAttemptAndRejectsChangedSameIntent()
+      throws Exception {
     try (var fixture = new Fixture(true, true)) {
       fixture.prepareDeliveredEmail();
       fixture.expectEmailFinish(false, true, false);
-      assertEquals(400, fixture.controller.finishTwoFactorAuthByEmailSetup(CODE).getStatusCode().value());
+      assertEquals(
+          400, fixture.controller.finishTwoFactorAuthByEmailSetup(CODE).getStatusCode().value());
       assertEquals("TERMINAL_REFUSAL", fixture.status());
-      assertEquals(400, fixture.controller.finishTwoFactorAuthByEmailSetup(CODE).getStatusCode().value());
-      assertThrows(ConflictException.class, () -> fixture.controller.finishTwoFactorAuthByEmailSetup("654321"));
+      assertEquals(
+          400, fixture.controller.finishTwoFactorAuthByEmailSetup(CODE).getStatusCode().value());
+      assertThrows(
+          ConflictException.class,
+          () -> fixture.controller.finishTwoFactorAuthByEmailSetup("654321"));
       assertEquals(fixture.emailStartOperation, fixture.pendingEmailOperation());
       assertEquals("original@oriso.org", fixture.currentEmail());
       assertEquals("PENDING_SETUP", fixture.inviteStatus());
@@ -576,7 +594,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     try (var fixture = new Fixture(true, true)) {
       fixture.prepareDeliveredEmail();
       fixture.expectEmailFinish(false, false, true);
-      assertThrows(ServiceUnavailableException.class, () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
       assertEquals("FROZEN", fixture.status());
       assertEquals(fixture.emailStartOperation, fixture.pendingEmailOperation());
       assertEquals("original@oriso.org", fixture.currentEmail());
@@ -593,7 +613,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.prepareDeliveredEmail();
       fixture.tamperReceipt = true;
       fixture.expectEmailFinish(false, false, false);
-      assertThrows(ServiceUnavailableException.class, () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
       assertEquals("FROZEN", fixture.status());
       assertEquals(fixture.emailStartOperation, fixture.pendingEmailOperation());
       assertEquals("original@oriso.org", fixture.currentEmail());
@@ -604,15 +626,19 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
-  void publicLinkedEmailFinishMissingIntentOrForeignDomainRefusesBeforeAnyNativeFinish() throws Exception {
+  void publicLinkedEmailFinishMissingIntentOrForeignDomainRefusesBeforeAnyNativeFinish()
+      throws Exception {
     try (var fixture = new Fixture(true, true)) {
       fixture.prepareDeliveredEmail();
       fixture.request.removeHeader("Idempotency-Key");
-      assertThrows(BadRequestException.class, () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
+      assertThrows(
+          BadRequestException.class,
+          () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
       assertNull(fixture.status());
       fixture.request.addHeader("Idempotency-Key", fixture.operation);
       fixture.jdbc.update("update user set tenant_id=9 where user_id=?", ACCOUNT);
-      assertThrows(ForbiddenException.class, () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
+      assertThrows(
+          ForbiddenException.class, () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
       assertNull(fixture.status());
       assertEquals(fixture.emailStartOperation, fixture.pendingEmailOperation());
       assertEquals(1, fixture.nativeExecutions.get());
@@ -625,7 +651,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     try (var fixture = new Fixture(true, false)) {
       fixture.request.setMethod("POST");
       fixture.request.setRequestURI("/service/users/2fa/email");
-      assertThrows(ScopedIdentityCommandRequiredException.class, () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
+      assertThrows(
+          ScopedIdentityCommandRequiredException.class,
+          () -> fixture.controller.finishTwoFactorAuthByEmailSetup(CODE));
       verifyNoInteractions(fixture.nativeClient);
       assertNull(fixture.status());
     }
@@ -633,10 +661,15 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.request.setMethod("POST");
       fixture.request.setRequestURI("/service/users/2fa/email");
       fixture.request.removeHeader("Idempotency-Key");
-      when(fixture.nativeClient.postForEntity(any(), any(), any(), eq(de.caritas.cob.userservice.api.model.SuccessWithEmail.class)))
-          .thenThrow(new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED));
-      assertEquals(400, fixture.controller.finishTwoFactorAuthByEmailSetup(CODE).getStatusCode().value());
-      verify(fixture.nativeClient, times(1)).postForEntity(any(), any(), any(), eq(de.caritas.cob.userservice.api.model.SuccessWithEmail.class));
+      when(fixture.nativeClient.postForEntity(
+              any(), any(), any(), eq(de.caritas.cob.userservice.api.model.SuccessWithEmail.class)))
+          .thenThrow(
+              new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED));
+      assertEquals(
+          400, fixture.controller.finishTwoFactorAuthByEmailSetup(CODE).getStatusCode().value());
+      verify(fixture.nativeClient, times(1))
+          .postForEntity(
+              any(), any(), any(), eq(de.caritas.cob.userservice.api.model.SuccessWithEmail.class));
       assertNull(fixture.status());
     }
   }
@@ -1030,54 +1063,128 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     }
 
     void expectEmailFinish(boolean lostReply, boolean invalid, boolean unknown) {
-      server.expect(requestTo(issuer.issuer() + "/oriso-account-maintenance/v1/accounts/" + ACCOUNT + "/read"))
-          .andExpect(method(HttpMethod.POST)).andRespond(outbound -> {
-            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-            assertEquals("PREPARED", status());
-            var read = codec.read(((MockClientHttpRequest) outbound).getBodyAsString(), JsonNode.class);
-            checkProof(outbound.getHeaders(), read, "account.read", "ACCOUNT_MAINTENANCE", "oriso-account-maintenance", "POST");
-            return withSuccess("{\"id\":\"" + ACCOUNT + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\"" + "c".repeat(64) + "\"}", MediaType.APPLICATION_JSON).createResponse(outbound);
-          });
+      server
+          .expect(
+              requestTo(
+                  issuer.issuer() + "/oriso-account-maintenance/v1/accounts/" + ACCOUNT + "/read"))
+          .andExpect(method(HttpMethod.POST))
+          .andRespond(
+              outbound -> {
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                assertEquals("PREPARED", status());
+                var read =
+                    codec.read(
+                        ((MockClientHttpRequest) outbound).getBodyAsString(), JsonNode.class);
+                checkProof(
+                    outbound.getHeaders(),
+                    read,
+                    "account.read",
+                    "ACCOUNT_MAINTENANCE",
+                    "oriso-account-maintenance",
+                    "POST");
+                return withSuccess(
+                        "{\"id\":\""
+                            + ACCOUNT
+                            + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""
+                            + "c".repeat(64)
+                            + "\"}",
+                        MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
+              });
       var frozen = new AtomicReference<String>();
       var response = new AtomicReference<String>();
-      server.expect(ExpectedCount.times(lostReply ? 2 : 1), requestTo(issuer.issuer() + "/otp-config/setup-otp-mail/ordinary"))
-          .andExpect(method(HttpMethod.POST)).andRespond(outbound -> {
-            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-            assertEquals("FROZEN", status());
-            assertEquals(emailStartOperation, pendingEmailOperation());
-            assertEquals("original@oriso.org", currentEmail());
-            assertEquals("PENDING_SETUP", inviteStatus());
-            assertEmailStorage();
-            String wire = ((MockClientHttpRequest) outbound).getBodyAsString();
-            var body = codec.read(wire, ObjectNode.class);
-            assertEquals(emailStartOperation, body.path("emailStartOperationId").textValue());
-            assertEquals(CODE, body.path("otp").path("initialCode").textValue());
-            assertTrue(body.path("otp").path("secret").isNull());
-            assertTrue(body.path("otp").path("email").isNull());
-            var materialized = body.deepCopy();materialized.put("username", "ordinary");
-            checkProof(outbound.getHeaders(), materialized, "otp.email-finish", "OTP", "oriso-otp", "POST");
-            if (frozen.compareAndSet(null, wire)) {
-              nativeExecutions.incrementAndGet();
-              if (unknown) return withStatus(HttpStatus.SERVICE_UNAVAILABLE).body("{\"error\":\"Outcome unknown\"}").contentType(MediaType.APPLICATION_JSON).createResponse(outbound);
-              int status = invalid ? 401 : 201;
-              var nativeResult = codec.read(invalid ? "{\"error\":\"invalid_grant\",\"error_description\":\"Invalid code\"}" : "{\"info\":\"OTP setup created\"}", JsonNode.class);
-              var payload = codec.read("{}", ObjectNode.class);
-              payload.put("realmId", REALM_ID);payload.put("accountId", ACCOUNT);payload.put("operationId", operation);
-              payload.put("operation", "otp.email-finish");payload.put("ownerClient", "backend-account-admin");payload.put("ownerSubject", ADMIN);
-              payload.put("intentDigest", codec.digest("otp-intent", materialized));payload.put("previousState", "c".repeat(64));
-              payload.put("tenantId", "7");payload.put("originDigest", codec.digest("otp-origin", body.path("target").path("origin")));
-              payload.put("status", status);payload.put("resultDigest", codec.digest("otp-result", nativeResult));payload.put("emailStartOperationId", emailStartOperation);
-              var binding=payload.putObject("emailCredential");binding.put("credentialId", "55555555-5555-4555-8555-555555555555");
-              binding.put("generation", "d".repeat(64));binding.put("destinationDigest", codec.digest("otp-email-destination", codec.read("\"" + PENDING_EMAIL + "\"", JsonNode.class)));
-              String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(codec.canonical(payload).getBytes(StandardCharsets.UTF_8));
-              var result = codec.read("{}", ObjectNode.class);result.put("operationId", operation);result.put("accountId", ACCOUNT);result.put("status", status);result.set("result", nativeResult);
-              result.put("receipt", encoded + "." + HexFormat.of().formatHex(mac("otp-operation-receipt\n" + encoded)));
-              if (tamperReceipt) result.put("receipt", result.path("receipt").asText() + "x");
-              response.set(codec.canonical(result));
-              if (lostReply) throw new ResourceAccessException("Fixture actual native linked finish reply lost");
-            } else assertEquals(frozen.get(), wire);
-            return withStatus(invalid ? HttpStatus.UNAUTHORIZED : HttpStatus.CREATED).body(response.get()).contentType(MediaType.APPLICATION_JSON).createResponse(outbound);
-          });
+      server
+          .expect(
+              ExpectedCount.times(lostReply ? 2 : 1),
+              requestTo(issuer.issuer() + "/otp-config/setup-otp-mail/ordinary"))
+          .andExpect(method(HttpMethod.POST))
+          .andRespond(
+              outbound -> {
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                assertEquals("FROZEN", status());
+                assertEquals(emailStartOperation, pendingEmailOperation());
+                assertEquals("original@oriso.org", currentEmail());
+                assertEquals("PENDING_SETUP", inviteStatus());
+                assertEmailStorage();
+                String wire = ((MockClientHttpRequest) outbound).getBodyAsString();
+                var body = codec.read(wire, ObjectNode.class);
+                assertEquals(emailStartOperation, body.path("emailStartOperationId").textValue());
+                assertEquals(CODE, body.path("otp").path("initialCode").textValue());
+                assertTrue(body.path("otp").path("secret").isNull());
+                assertTrue(body.path("otp").path("email").isNull());
+                var materialized = body.deepCopy();
+                materialized.put("username", "ordinary");
+                checkProof(
+                    outbound.getHeaders(),
+                    materialized,
+                    "otp.email-finish",
+                    "OTP",
+                    "oriso-otp",
+                    "POST");
+                if (frozen.compareAndSet(null, wire)) {
+                  nativeExecutions.incrementAndGet();
+                  if (unknown)
+                    return withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                        .body("{\"error\":\"Outcome unknown\"}")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .createResponse(outbound);
+                  int status = invalid ? 401 : 201;
+                  var nativeResult =
+                      codec.read(
+                          invalid
+                              ? "{\"error\":\"invalid_grant\",\"error_description\":\"Invalid code\"}"
+                              : "{\"info\":\"OTP setup created\"}",
+                          JsonNode.class);
+                  var payload = codec.read("{}", ObjectNode.class);
+                  payload.put("realmId", REALM_ID);
+                  payload.put("accountId", ACCOUNT);
+                  payload.put("operationId", operation);
+                  payload.put("operation", "otp.email-finish");
+                  payload.put("ownerClient", "backend-account-admin");
+                  payload.put("ownerSubject", ADMIN);
+                  payload.put("intentDigest", codec.digest("otp-intent", materialized));
+                  payload.put("previousState", "c".repeat(64));
+                  payload.put("tenantId", "7");
+                  payload.put(
+                      "originDigest",
+                      codec.digest("otp-origin", body.path("target").path("origin")));
+                  payload.put("status", status);
+                  payload.put("resultDigest", codec.digest("otp-result", nativeResult));
+                  payload.put("emailStartOperationId", emailStartOperation);
+                  var binding = payload.putObject("emailCredential");
+                  binding.put("credentialId", "55555555-5555-4555-8555-555555555555");
+                  binding.put("generation", "d".repeat(64));
+                  binding.put(
+                      "destinationDigest",
+                      codec.digest(
+                          "otp-email-destination",
+                          codec.read("\"" + PENDING_EMAIL + "\"", JsonNode.class)));
+                  String encoded =
+                      Base64.getUrlEncoder()
+                          .withoutPadding()
+                          .encodeToString(
+                              codec.canonical(payload).getBytes(StandardCharsets.UTF_8));
+                  var result = codec.read("{}", ObjectNode.class);
+                  result.put("operationId", operation);
+                  result.put("accountId", ACCOUNT);
+                  result.put("status", status);
+                  result.set("result", nativeResult);
+                  result.put(
+                      "receipt",
+                      encoded
+                          + "."
+                          + HexFormat.of().formatHex(mac("otp-operation-receipt\n" + encoded)));
+                  if (tamperReceipt) result.put("receipt", result.path("receipt").asText() + "x");
+                  response.set(codec.canonical(result));
+                  if (lostReply)
+                    throw new ResourceAccessException(
+                        "Fixture actual native linked finish reply lost");
+                } else assertEquals(frozen.get(), wire);
+                return withStatus(invalid ? HttpStatus.UNAUTHORIZED : HttpStatus.CREATED)
+                    .body(response.get())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
+              });
     }
 
     void expectEmail(boolean lostReply, boolean unknown) {
