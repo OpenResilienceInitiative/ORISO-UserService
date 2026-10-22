@@ -80,6 +80,16 @@ def delivered_code(messages):
         raise ValueError("Exactly one real delivered code required")
     return next(iter(codes))
 
+def closed_failure_frames(stdout, stderr):
+    # Read captured output only in memory; export source locations, never messages or SQL.
+    text = (stdout + b"\n" + stderr).decode("utf-8", errors="replace")
+    names = {"JdbcProtectedAccountActivation", "JdbcProtectedInvitationJournal",
+        "JdbcProtectedInvitationAcceptance", "ProtectedAccountCodec", "ProtectedOtpBootstrap",
+        "ProtectedAdminOnboardingService", "TenantAdminOnboardingController",
+        "AccountInactivityService", "AccountInactivityEnrollmentService"}
+    frames = re.findall(r"\b([A-Za-z]+)\.java:([0-9]{1,5})\b", text)
+    return sorted({name + ".java:" + line for name, line in frames if name in names})[:50]
+
 def native(kc, report):
     if platform.system() != "Linux" or os.environ.get("GITHUB_ACTIONS") != "true":
         raise ValueError("Fresh Linux hosted native fixture required")
@@ -160,6 +170,7 @@ def native(kc, report):
         child = subprocess.run(["mvn", "-B", "-ntp", "-q", "surefire:test", "-Dtest=" + SUITE + "#" + CASE, "-DfailIfNoTests=true", "-Dsurefire.failIfNoSpecifiedTests=true", "-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2"], cwd=ROOT, env=environment, capture_output=True, timeout=180)
         result = sanitize(reports, report.with_suffix(".xml"))
         receipt.update(result)
+        receipt["closed_source_failure_frames"] = closed_failure_frames(child.stdout, child.stderr)
         receipt["executed"] = result["tests"]
         receipt["java_exit"] = child.returncode
         receipt["accepted"] = result["accepted"] and child.returncode == 0

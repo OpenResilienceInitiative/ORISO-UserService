@@ -11,6 +11,13 @@ pair = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pair)
 
 class ProtectedPairEvidence(unittest.TestCase):
+    def test_failure_observation_exports_only_closed_source_locations(self):
+        raw = b"Bearer secret; SQL private-row; JdbcProtectedAccountActivation.java:120 unknown.java:456"
+        observed = pair.closed_failure_frames(raw, b"ProtectedAdminOnboardingService.java:42")
+        self.assertEqual(["JdbcProtectedAccountActivation.java:120", "ProtectedAdminOnboardingService.java:42"], observed)
+        self.assertNotIn("secret", str(observed))
+        self.assertNotIn("private-row", str(observed))
+
     def proof(self, tags=(), name=pair.CASE):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

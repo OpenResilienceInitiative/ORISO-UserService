@@ -9,6 +9,8 @@ import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.*;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.*;
 import de.caritas.cob.userservice.api.adapters.web.controller.TenantAdminOnboardingController;
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiDefaultResponseEntityExceptionHandler;
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory;
@@ -244,7 +246,13 @@ class ProtectedAdminPublicNativePairProof {
         AccountInviteService.hash(token),
         invites.findById(sent.invite().getId()).orElseThrow().getTokenHash());
     for (var audit : deliveries.findAll()) assertFalse(audit.getBodySnapshot().contains(token));
-    var mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(bodyAdvice).build();
+    var mvc =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(
+                bodyAdvice,
+                new ApiResponseEntityExceptionHandler(),
+                new ApiDefaultResponseEntityExceptionHandler())
+            .build();
     String raw = "{\"account\":{\"password\":\"SyntheticPublicOnly!731\"}}";
     String key = UUID.randomUUID().toString();
     String registrationPath = "/service/users/account-invites/" + token + "/onboarding/register";
