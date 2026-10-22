@@ -295,11 +295,15 @@ class ClaimedPasswordMaintenanceFlowIT {
       f.policyRefusal = true;
       String token = f.requestLink();
       assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
-          .isInstanceOf(de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException.class);
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses
+                  .CustomValidationHttpStatusException.class);
       assertThat(f.effects).isZero();
       assertThat(f.required()).isTrue();
       assertThat(f.phase()).isEqualTo("REJECTED");
-      assertThat(f.jdbc.queryForObject("select receipt from identity_claimed_password_intent", String.class))
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select receipt from identity_claimed_password_intent", String.class))
           .contains("NO_EFFECT");
     }
   }
@@ -443,7 +447,10 @@ class ClaimedPasswordMaintenanceFlowIT {
                 }
                 reply = savedReply == null ? projection() : savedReply;
               } else {
-                if (barePolicy) { exchange.sendResponseHeaders(400, -1); return; }
+                if (barePolicy) {
+                  exchange.sendResponseHeaders(400, -1);
+                  return;
+                }
                 if (savedReply == null) {
                   if (!policyRefusal) effects++;
                   savedStatus = policyRefusal ? 400 : 200;
@@ -738,7 +745,10 @@ class ClaimedPasswordMaintenanceFlowIT {
               + HexFormat.of()
                   .formatHex(
                       mac.doFinal(
-                          ((noEffect ? "maintenance-no-effect-receipt/v1\n" : "maintenance-operation-receipt\n") + encoded)
+                          ((noEffect
+                                      ? "maintenance-no-effect-receipt/v1\n"
+                                      : "maintenance-operation-receipt\n")
+                                  + encoded)
                               .getBytes(StandardCharsets.UTF_8)));
       var outer = new TreeMap<String, Object>();
       outer.put("operationId", body.path("operationId").textValue());

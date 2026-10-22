@@ -16,8 +16,8 @@ import de.caritas.cob.userservice.api.adapters.web.mapping.*;
 import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.auth.*;
-import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.facade.userdata.*;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -556,13 +556,14 @@ class UserSelfPasswordScenarioCBoundaryTest {
                               .formatHex(
                                   mac.doFinal(
                                       ((policyResponse == 0
-                                              ? "maintenance-operation-receipt\n"
-                                              : "maintenance-no-effect-receipt/v1\n")
-                                          + encoded)
+                                                  ? "maintenance-operation-receipt\n"
+                                                  : "maintenance-no-effect-receipt/v1\n")
+                                              + encoded)
                                           .getBytes(StandardCharsets.UTF_8)));
                   if (policyResponse == 3)
-                    receipt = receipt.substring(0, receipt.length() - 1)
-                        + (receipt.endsWith("0") ? "1" : "0");
+                    receipt =
+                        receipt.substring(0, receipt.length() - 1)
+                            + (receipt.endsWith("0") ? "1" : "0");
                   var reply = new TreeMap<String, Object>();
                   reply.put("operationId", operation);
                   reply.put("accountId", ACCOUNT);
