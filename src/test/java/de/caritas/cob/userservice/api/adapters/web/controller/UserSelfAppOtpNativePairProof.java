@@ -153,6 +153,10 @@ class UserSelfAppOtpNativePairProof {
               new ClassPathResource(
                   "db/changelog/changeset/20261022_identity_self_otp_email_367/migrate.sql"))
           .execute(source);
+      new ResourceDatabasePopulator(
+              new ClassPathResource(
+                  "db/changelog/changeset/20261022_identity_self_otp_local_367/migrate.sql"))
+          .execute(source);
       http.getInterceptors()
           .add(
               (outbound, bytes, execution) -> {

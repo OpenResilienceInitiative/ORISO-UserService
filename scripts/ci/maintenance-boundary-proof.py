@@ -96,6 +96,8 @@ def select_slice(name):
             "publicDeleteAfterSentEmailClearsOnlyOriginalPendingPointerWithVerifiedAck",
             "publicDeleteInvalidReceiptCannotClearSentPendingEmailPointer",
             "publicLostDeleteAckCannotReopenInviteOrClearPointerOfLaterEnrollment",
+            "publicReorderedAppAckKeepsTheLaterAppliedEnrollmentIncarnation",
+            "publicEmailSentLostAckAfterOriginalExpiryRecoversExactOutcomeWithoutAnotherSend",
             "publicEmailStartAcknowledgesOnlyVerifiedSentAndKeepsPendingRecipientEncrypted",
             "publicEmailStartLostReplyNewOwnerReplaysFrozenRecipientAndOriginalExpiry",
             "publicEmailStartSameIdCannotReplaceTheCompletePendingDestination",

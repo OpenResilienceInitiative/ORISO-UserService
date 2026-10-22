@@ -676,6 +676,36 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
+  void publicEmailSentLostAckAfterOriginalExpiryRecoversExactOutcomeWithoutAnotherSend()
+      throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.request.setRequestURI("/service/users/2fa/email");
+      fixture.humanExpiry(Instant.now().plusSeconds(20));
+      fixture.expectEmail(true, false);
+      assertThrows(ServiceUnavailableException.class,
+          () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email()));
+      assertEquals("FROZEN", fixture.status());
+      String original = fixture.envelope();
+      long deadline = fixture.jdbc.queryForObject(
+          "select authority_valid_until from identity_self_app_otp_intent where operation_id=?", Long.class, fixture.operation);
+      fixture.humanExpiry(Instant.now().plusSeconds(600));
+      fixture.installOwner(fixture.afterOriginalExpiry());
+      assertEquals(204, assertDoesNotThrow(
+          () -> fixture.controller.startTwoFactorAuthByEmailSetup(fixture.email())).getStatusCode().value());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals(original, fixture.envelope());
+      assertEquals(deadline, fixture.jdbc.queryForObject(
+          "select authority_valid_until from identity_self_app_otp_intent where operation_id=?", Long.class, fixture.operation));
+      assertEquals(fixture.operation, fixture.pendingEmailOperation());
+      assertEquals("original@oriso.org", fixture.currentEmail());
+      assertEquals("PENDING_SETUP", fixture.inviteStatus());
+      assertEquals(0, fixture.domainWrites());
+      assertEquals(1, fixture.nativeExecutions.get());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
   void publicLinkedEmailTerminalRefusalAfterOriginalExpiryReturnsSaved400WithoutAnotherAttempt()
       throws Exception {
     try (var fixture = new Fixture(true, true)) {
@@ -800,6 +830,44 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
+  void publicReorderedAppAckKeepsTheLaterAppliedEnrollmentIncarnation() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      String older = fixture.operation;
+      fixture.expectNative(true, false, 1);
+      assertThrows(ServiceUnavailableException.class,
+          () -> fixture.controller.activateTwoFactorAuthByApp(fixture.dto()));
+      String oldReply = fixture.savedAppReply;
+      String oldWire = fixture.savedAppWire;
+      String oldCipher = fixture.envelope();
+      fixture.server.verify();
+      fixture.server.reset();
+      fixture.operation = UUID.randomUUID().toString();
+      String later = fixture.operation;
+      fixture.request.removeHeader("Idempotency-Key");
+      fixture.request.addHeader("Idempotency-Key", later);
+      fixture.expectNative(false, false);
+      assertEquals(200, fixture.controller.activateTwoFactorAuthByApp(fixture.dto()).getStatusCode().value());
+      fixture.server.verify();
+      fixture.server.reset();
+      fixture.operation = older;
+      fixture.request.removeHeader("Idempotency-Key");
+      fixture.request.addHeader("Idempotency-Key", older);
+      fixture.savedAppReply = oldReply;
+      fixture.savedAppWire = oldWire;
+      fixture.expectSavedApp();
+      assertEquals(200, fixture.controller.activateTwoFactorAuthByApp(fixture.dto()).getStatusCode().value());
+      assertEquals("ACKNOWLEDGED", fixture.status());
+      assertEquals(oldCipher, fixture.envelope());
+      assertEquals("ACTIVE", fixture.inviteStatus());
+      assertEquals(1, fixture.domainWrites());
+      assertEquals(later, fixture.jdbc.queryForObject(
+          "select operation_id from identity_self_otp_local_enrollment where account_id=?", String.class, ACCOUNT));
+      assertEquals(2, fixture.nativeExecutions.get());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
   void missingScopedEmailFinishKeepsActualCGuardAndLegacyInvalidCodeWorking() throws Exception {
     try (var fixture = new Fixture(true, false)) {
       fixture.request.setMethod("POST");
@@ -856,6 +924,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     String emailStartOperation;
     final AtomicInteger nativeExecutions = new AtomicInteger();
     boolean tamperReceipt;
+    String savedAppReply;
+    String savedAppWire;
     String savedDeleteReply;
     String savedDeleteWire;
 
@@ -897,6 +967,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
             "create table identity_self_app_otp_intent(operation_id varchar(36) primary key,realm_id varchar(512),realm_name varchar(512),account_id varchar(36),tenant_id bigint,owner_client varchar(512),owner_subject varchar(36),request_digest varchar(64),target_json clob,status varchar(32),authority_valid_until bigint,metadata_json clob,envelope clob,pending_marker boolean,receipt clob,native_status int,updated_at timestamp)");
         jdbc.execute(
             "create table identity_self_otp_pending_email(account_id varchar(36) primary key,start_operation_id varchar(36))");
+        jdbc.execute("create table identity_self_otp_local_enrollment(account_id varchar(36) primary key,operation_id varchar(36))");
         var invites = mock(AccountInviteRepository.class);
         when(invites.findAllByAcceptedByUserIdAndTwoFactorStatus(eq(ACCOUNT), any()))
             .thenAnswer(
@@ -1003,6 +1074,18 @@ class UserSelfAppOtpScenarioCBoundaryTest {
         jdbc.execute("SHUTDOWN");
         throw failure;
       }
+    }
+
+    void humanExpiry(Instant deadline) {
+      var previous = ((JwtAuthenticationToken) request.getUserPrincipal()).getToken();
+      var jwt = Jwt.withTokenValue("fixture-human")
+          .headers(headers -> headers.putAll(previous.getHeaders()))
+          .claims(claims -> claims.putAll(previous.getClaims()))
+          .expiresAt(deadline).build();
+      var authentication = new JwtAuthenticationToken(jwt,
+          List.of(new SimpleGrantedAuthority("ROLE_USER")));
+      request.setUserPrincipal(authentication);
+      SecurityContextHolder.getContext().setAuthentication(authentication);
     }
 
     Clock afterOriginalExpiry() {
@@ -1114,6 +1197,10 @@ class UserSelfAppOtpScenarioCBoundaryTest {
     }
 
     void expectNative(boolean lostReply, boolean refusal) {
+      expectNative(lostReply, refusal, lostReply ? 2 : 1);
+    }
+
+    void expectNative(boolean lostReply, boolean refusal, int requests) {
       server
           .expect(
               requestTo(
@@ -1149,7 +1236,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       var response = new AtomicReference<String>();
       server
           .expect(
-              lostReply ? ExpectedCount.twice() : ExpectedCount.once(),
+              ExpectedCount.times(requests),
               requestTo(issuer.issuer() + "/otp-config/setup-otp/ordinary"))
           .andExpect(method(HttpMethod.PUT))
           .andRespond(
@@ -1223,6 +1310,8 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                   if (tamperReceipt)
                     result.put("receipt", result.path("receipt").textValue() + "x");
                   response.set(codec.canonical(result));
+                  savedAppWire = wire;
+                  savedAppReply = response.get();
                   nativeExecutions.incrementAndGet();
                   if (lostReply)
                     throw new ResourceAccessException("Fixture committed reply was lost");
@@ -1235,6 +1324,20 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                     .contentType(MediaType.APPLICATION_JSON)
                     .createResponse(outbound);
               });
+    }
+
+    void expectSavedApp() {
+      assertNotNull(savedAppReply);
+      server.expect(requestTo(issuer.issuer() + "/otp-config/setup-otp/ordinary"))
+          .andExpect(method(HttpMethod.PUT)).andRespond(outbound -> {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+            assertEquals(savedAppWire, ((MockClientHttpRequest) outbound).getBodyAsString());
+            var materialized = codec.read(savedAppWire, ObjectNode.class);
+            materialized.put("username", "ordinary");
+            checkProof(outbound.getHeaders(), materialized, "otp.app-setup", "OTP", "oriso-otp", "PUT");
+            return withStatus(HttpStatus.CREATED).body(savedAppReply)
+                .contentType(MediaType.APPLICATION_JSON).createResponse(outbound);
+          });
     }
 
     void prepareDeliveredEmail() {

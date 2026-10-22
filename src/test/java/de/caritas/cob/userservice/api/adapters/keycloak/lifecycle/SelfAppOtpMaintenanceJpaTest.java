@@ -103,6 +103,7 @@ class SelfAppOtpMaintenanceJpaTest {
     assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
     issuer = new SelfAppSignedIssuer(ADMIN);
     jdbc = new JdbcTemplate(source);
+    jdbc.execute("drop table if exists identity_self_otp_local_enrollment");
     jdbc.execute("drop table if exists identity_self_otp_pending_email");
     jdbc.execute("drop table if exists identity_self_app_otp_intent");
     new ResourceDatabasePopulator(
@@ -112,6 +113,10 @@ class SelfAppOtpMaintenanceJpaTest {
     new ResourceDatabasePopulator(
             new ClassPathResource(
                 "db/changelog/changeset/20261022_identity_self_otp_email_367/migrate.sql"))
+        .execute(source);
+    new ResourceDatabasePopulator(
+            new ClassPathResource(
+                "db/changelog/changeset/20261022_identity_self_otp_local_367/migrate.sql"))
         .execute(source);
     users.findById(ACCOUNT).ifPresent(users::delete);
     var user = new User(ACCOUNT, null, "ordinary", "ordinary@fixture.invalid", false);
