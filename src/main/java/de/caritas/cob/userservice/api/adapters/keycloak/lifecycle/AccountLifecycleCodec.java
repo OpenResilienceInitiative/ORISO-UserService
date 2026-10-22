@@ -166,11 +166,13 @@ public final class AccountLifecycleCodec {
     String workflowId = intentUuid(value, "workflowId");
     String operation = intentText(value, "command", 64);
     boolean deletion = "otp.delete".equals(operation);
+    boolean emailStart = "otp.email-start".equals(operation);
+    String route = deletion ? "otp-config/delete-otp"
+        : emailStart ? "otp-config/send-verification-mail" : "otp-config/setup-otp";
     if (!operationId.equals(workflowId)
-        || !(deletion || "otp.app-setup".equals(operation))
+        || !(deletion || emailStart || "otp.app-setup".equals(operation))
         || !(deletion ? "DELETE" : "PUT").equals(intentText(value, "method", 16))
-        || !(deletion ? "otp-config/delete-otp" : "otp-config/setup-otp")
-            .equals(intentText(value, "route", 128))
+        || !route.equals(intentText(value, "route", 128))
         || !"FROZEN_HTTP_V1".equals(intentText(value, "representation", 64)))
       throw invalidSecretIntent();
     JsonNode tenant = value.get("tenantId");
@@ -189,7 +191,7 @@ public final class AccountLifecycleCodec {
         operationId,
         operation,
         deletion ? "DELETE" : "PUT",
-        deletion ? "otp-config/delete-otp" : "otp-config/setup-otp",
+        route,
         intentUuid(value, "accountId"),
         tenantId,
         intentText(value, "ownerClient", 512),
@@ -210,7 +212,14 @@ public final class AccountLifecycleCodec {
     intentFields(value, java.util.Set.of("username", "body"));
     intentText(value, "username", 512);
     JsonNode body = value.path("body");
-    intentFields(body, java.util.Set.of("target", "operationId", "expectedState", "otp"));
+    boolean emailStart = "otp.email-start".equals(metadata.command());
+    intentFields(body, emailStart
+        ? java.util.Set.of("target", "operationId", "expectedState", "otp", "authorityValidUntil")
+        : java.util.Set.of("target", "operationId", "expectedState", "otp"));
+    if (emailStart && (!body.path("authorityValidUntil").isIntegralNumber()
+        || !body.path("authorityValidUntil").canConvertToLong()
+        || body.path("authorityValidUntil").longValue() != metadata.authorityValidUntil()))
+      throw invalidSecretIntent();
     if (!metadata.operationId().equals(intentUuid(body, "operationId"))
         || !metadata.expectedState().equals(intentDigest(body, "expectedState")))
       throw invalidSecretIntent();
@@ -240,9 +249,15 @@ public final class AccountLifecycleCodec {
       if (!otp.isNull()) throw invalidSecretIntent();
     } else {
       intentFields(otp, java.util.Set.of("initialCode", "secret", "email"));
-      intentText(otp, "initialCode", 128);
-      intentText(otp, "secret", 4096);
-      if (!otp.get("email").isNull()) throw invalidSecretIntent();
+      if (emailStart) {
+        if (!otp.get("initialCode").isNull() || !otp.get("secret").isNull())
+          throw invalidSecretIntent();
+        intentText(otp, "email", 320);
+      } else {
+        intentText(otp, "initialCode", 128);
+        intentText(otp, "secret", 4096);
+        if (!otp.get("email").isNull()) throw invalidSecretIntent();
+      }
     }
     if (!raw.equals(canonical(value))) throw invalidSecretIntent();
     return snapshot;
@@ -343,6 +358,13 @@ public final class AccountLifecycleCodec {
         "DELETE");
   }
 
+  String selfEmailStartOtpProof(
+      String realmName, String realmId, String accountId, TaskActorCredentials actor,
+      JsonNode materialized, long authorityValidUntil) {
+    return selfOtpProof(realmName, realmId, accountId, actor, materialized,
+        authorityValidUntil, "otp.email-start", "PUT");
+  }
+
   private String selfOtpProof(
       String realmName,
       String realmId,
@@ -380,10 +402,23 @@ public final class AccountLifecycleCodec {
   static final class VerifiedSelfAppOutcome {
     private final int status;
     private final String receipt;
+    private final JsonNode emailCredential;
+    private final long emailExpiresAt;
 
     private VerifiedSelfAppOutcome(int status, String receipt) {
+      this(status, receipt, null, 0);
+    }
+
+    private VerifiedSelfAppOutcome(int status, String receipt, JsonNode credential, long expiry) {
       this.status = status;
       this.receipt = receipt;
+      this.emailCredential = credential == null ? null : credential.deepCopy();
+      this.emailExpiresAt = expiry;
+    }
+
+    boolean sameEmailDelivery(VerifiedSelfAppOutcome other) {
+      return other != null && emailCredential != null
+          && emailCredential.equals(other.emailCredential) && emailExpiresAt == other.emailExpiresAt;
     }
 
     int status() {
@@ -408,6 +443,78 @@ public final class AccountLifecycleCodec {
   VerifiedSelfAppOutcome verifySelfDeleteOtpReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozenCommand) {
     return verifySelfOtpReceipt(reply, realmId, actor, frozenCommand, true);
+  }
+
+  VerifiedSelfAppOutcome verifySelfEmailStartOtpReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozenCommand) {
+    try {
+      if (reply == null || reply.length() > 16384
+          || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
+        throw invalidSecretIntent();
+      JsonNode result = read(reply, JsonNode.class);
+      intentFields(result, java.util.Set.of(
+          "operationId", "accountId", "status", "deliveryState", "result", "receipt"));
+      JsonNode body = frozenCommand.path("body");
+      JsonNode target = body.path("target");
+      if (!intentUuid(body, "operationId").equals(intentUuid(result, "operationId"))
+          || !intentUuid(target, "accountId").equals(intentUuid(result, "accountId"))
+          || !result.path("status").isIntegralNumber() || !result.path("status").canConvertToInt())
+        throw invalidSecretIntent();
+      int status = result.path("status").intValue();
+      String delivery = intentText(result, "deliveryState", 16);
+      if (!(status == 202 && "READY".equals(delivery))
+          && !(status == 200 && "SENT".equals(delivery))) throw invalidSecretIntent();
+      JsonNode nativeResult = result.path("result");
+      intentFields(nativeResult, java.util.Set.of("info"));
+      if (!(status == 202 ? "OTP mail pending" : "OTP mail sent")
+          .equals(intentText(nativeResult, "info", 512))) throw invalidSecretIntent();
+      String receipt = intentText(result, "receipt", 8192);
+      String[] parts = receipt.split("\\.", -1);
+      if (parts.length != 2 || !parts[1].matches("[a-f0-9]{64}")) throw invalidSecretIntent();
+      byte[] payload = intentBase64(json.valueToTree(parts[0]), 1, 6000);
+      if (!java.security.MessageDigest.isEqual(
+          mac("otp-operation-receipt\n" + parts[0]), HexFormat.of().parseHex(parts[1])))
+        throw invalidSecretIntent();
+      JsonNode saved = read(utf8(payload), JsonNode.class);
+      JsonNode credential = saved.path("emailCredential");
+      intentFields(credential, java.util.Set.of("credentialId", "generation", "destinationDigest"));
+      intentUuid(credential, "credentialId");
+      intentDigest(credential, "generation");
+      if (!intentDigest(credential, "destinationDigest")
+          .equals(digest("otp-email-destination", body.path("otp").path("email"))))
+        throw invalidSecretIntent();
+      if (!saved.path("authorityValidUntil").isIntegralNumber()
+          || !saved.path("authorityValidUntil").canConvertToLong()
+          || saved.path("authorityValidUntil").longValue() <= 0
+          || !body.path("authorityValidUntil").isIntegralNumber()
+          || !body.path("authorityValidUntil").canConvertToLong()
+          || saved.path("authorityValidUntil").longValue() > body.path("authorityValidUntil").longValue())
+        throw invalidSecretIntent();
+      long expiry = saved.path("authorityValidUntil").longValue();
+      var expected = json.createObjectNode();
+      expected.put("realmId", realmId);
+      expected.put("accountId", target.path("accountId").textValue());
+      expected.put("operationId", body.path("operationId").textValue());
+      expected.put("operation", "otp.email-start");
+      expected.put("ownerClient", actor.clientId());
+      expected.put("ownerSubject", actor.serviceSubject());
+      var materialized = ((ObjectNode) body).deepCopy();
+      materialized.put("username", intentText(frozenCommand, "username", 255));
+      expected.put("intentDigest", digest("otp-intent", materialized));
+      expected.put("previousState", intentDigest(body, "expectedState"));
+      expected.set("tenantId", target.path("tenantId"));
+      expected.put("originDigest", digest("otp-origin", target.path("origin")));
+      expected.put("status", status);
+      expected.put("deliveryState", delivery);
+      expected.put("authorityValidUntil", expiry);
+      expected.put("resultDigest", digest("otp-result", nativeResult));
+      expected.set("emailCredential", credential);
+      if (!saved.equals(expected) || !utf8(payload).equals(canonical(expected)))
+        throw invalidSecretIntent();
+      return new VerifiedSelfAppOutcome(status, receipt, credential, expiry);
+    } catch (RuntimeException failure) {
+      throw invalidSecretIntent();
+    }
   }
 
   private VerifiedSelfAppOutcome verifySelfOtpReceipt(

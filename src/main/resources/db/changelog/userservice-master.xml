@@ -254,4 +254,5 @@
   <include file="db/changelog/changeset/20261021_identity_maintenance_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261021_identity_self_locale_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_identity_self_app_otp_367/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261022_identity_self_otp_email_367/changeSet.xml"/>
 </databaseChangeLog>

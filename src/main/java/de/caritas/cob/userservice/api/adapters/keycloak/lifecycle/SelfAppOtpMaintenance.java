@@ -60,38 +60,38 @@ public final class SelfAppOtpMaintenance {
     return mode.isFiveActorMode();
   }
 
-  /** Signature-only diagnostic frontier. No email intent or native effect is implemented here. */
   public boolean startEmail(String pendingEmail) {
-    return false;
+    return execute(null, null, pendingEmail, () -> {}, Operation.EMAIL_START);
   }
 
   public boolean delete(Runnable markPending) {
-    return execute(null, null, markPending, true);
+    return execute(null, null, null, markPending, Operation.DELETE);
   }
 
   public boolean setup(String initialCode, String secret, Runnable markActive) {
-    return execute(initialCode, secret, markActive, false);
+    return execute(initialCode, secret, null, markActive, Operation.APP);
   }
 
   private boolean execute(
-      String initialCode, String secret, Runnable markActive, boolean deletion) {
+      String initialCode, String secret, String pendingEmail, Runnable markActive, Operation kind) {
     if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
       throw unavailable();
-    if ((!deletion && (!text(initialCode, 128) || !text(secret, 4096))) || markActive == null)
+    if ((kind == Operation.APP && (!text(initialCode, 128) || !text(secret, 4096)))
+        || (kind == Operation.EMAIL_START && !text(pendingEmail, 320)) || markActive == null)
       throw new BadRequestException("A complete app OTP request is required");
-    var self = actualSelf(deletion);
+    var self = actualSelf(kind);
     String operation = operationId();
     var actor = actors.require(TaskPurpose.OTP);
     if (!canonicalUuid(actor.serviceSubject())) throw unavailable();
     String requestDigest =
         codec.digest(
             "oriso/user-maintenance-intent/request/v1",
-            deletion
-                ? Map.of("operation", "otp.delete")
+            kind == Operation.DELETE ? Map.of("operation", "otp.delete")
+                : kind == Operation.EMAIL_START ? Map.of("email", pendingEmail)
                 : Map.of("otp", initialCode, "secret", secret));
     // Check actual local ownership before even the token HTTP call, outside every RPC lock.
     CheckedIntent checked =
-        transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
+        transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
     if (checked == null) {
       // Only a native-validated original grant can set the immutable first lifetime minimum.
       var originalMachine = machine(self, actor, TaskPurpose.OTP);
@@ -102,9 +102,9 @@ public final class SelfAppOtpMaintenance {
       try {
         checked =
             transaction(
-                () -> prepare(self, operation, requestDigest, actor, originalExpiry, deletion));
+                () -> prepare(self, operation, requestDigest, actor, originalExpiry, kind));
       } catch (RuntimeException uncertain) {
-        checked = transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
+        checked = transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
         if (checked == null) throw unavailable();
       }
     }
@@ -123,9 +123,10 @@ public final class SelfAppOtpMaintenance {
                         projection,
                         initialCode,
                         secret,
-                        deletion));
+                        pendingEmail,
+                        kind));
       } catch (RuntimeException uncertain) {
-        checked = transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
+        checked = transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
         if (checked == null
             || !Set.of("FROZEN", "ACKNOWLEDGED", "TERMINAL_REFUSAL").contains(checked.row.status))
           throw unavailable();
@@ -133,7 +134,7 @@ public final class SelfAppOtpMaintenance {
     }
     if (terminal(checked.row.status)) return "ACKNOWLEDGED".equals(checked.row.status);
     // This capability comes only from current locked owned data, never from envelope parsing.
-    checked = transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
+    checked = transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
     if (checked == null || !"FROZEN".equals(checked.row.status)) throw unavailable();
     final CheckedIntent frozen = checked;
     final JsonNode command;
@@ -143,12 +144,23 @@ public final class SelfAppOtpMaintenance {
           codec.read(
               codec.utf8(codec.openSelfAppIntent(frozen.metadata, frozen.row.envelope)),
               JsonNode.class);
-      var reply = invoke(self, frozen.row, actor, command, deletion);
-      outcome =
-          deletion
-              ? codec.verifySelfDeleteOtpReceipt(reply.body, realmId, actor, command)
-              : codec.verifySelfAppOtpReceipt(reply.body, realmId, actor, command);
-      if (outcome.status() != reply.status) throw unavailable();
+      var reply = invoke(self, frozen.row, actor, command, kind);
+      if (kind == Operation.EMAIL_START) {
+        var first = codec.verifySelfEmailStartOtpReceipt(reply.body, realmId, actor, command);
+        if (first.status() != reply.status) throw unavailable();
+        if (first.status() == 202) {
+          var completed = invoke(self, frozen.row, actor, command, kind);
+          outcome = codec.verifySelfEmailStartOtpReceipt(completed.body, realmId, actor, command);
+          if (completed.status != 200 || outcome.status() != 200
+              || !first.sameEmailDelivery(outcome)) throw unavailable();
+        } else outcome = first;
+        if (outcome.status() != 200) throw unavailable();
+      } else {
+        outcome = kind == Operation.DELETE
+            ? codec.verifySelfDeleteOtpReceipt(reply.body, realmId, actor, command)
+            : codec.verifySelfAppOtpReceipt(reply.body, realmId, actor, command);
+        if (outcome.status() != reply.status) throw unavailable();
+      }
     } catch (RuntimeException unknown) {
       throw unavailable();
     }
@@ -163,11 +175,11 @@ public final class SelfAppOtpMaintenance {
                   frozen.row.envelope,
                   outcome,
                   markActive,
-                  deletion));
+                  kind));
     } catch (RuntimeException uncertain) {
       // A fresh durable row is the only commit witness. Do not rerun the domain callback here.
       var resolved =
-          transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
+          transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
       if (resolved == null
           || !terminal(resolved.row.status)
           || !Objects.equals(outcome.receipt(), resolved.row.receipt)
@@ -182,10 +194,10 @@ public final class SelfAppOtpMaintenance {
       String digest,
       TaskActorCredentials actor,
       long expiry,
-      boolean deletion) {
+      Operation kind) {
     lockedDomain(self);
     var prior = find(operation);
-    if (prior != null) return checked(self, prior, digest, actor, deletion);
+    if (prior != null) return checked(self, prior, digest, actor, kind);
     if (expiry <= clock.instant().getEpochSecond()) throw unavailable();
     jdbc.update(
         "insert into identity_self_app_otp_intent(operation_id,realm_id,realm_name,account_id,tenant_id,owner_client,owner_subject,request_digest,target_json,status,authority_valid_until,pending_marker,updated_at) values(?,?,?,?,?,?,?,?,?,'PREPARED',?,false,?)",
@@ -200,7 +212,7 @@ public final class SelfAppOtpMaintenance {
         codec.canonical(target(self, operation)),
         expiry,
         now());
-    return checked(self, Objects.requireNonNull(find(operation)), digest, actor, deletion);
+    return checked(self, Objects.requireNonNull(find(operation)), digest, actor, kind);
   }
 
   private CheckedIntent freeze(
@@ -211,25 +223,29 @@ public final class SelfAppOtpMaintenance {
       JsonNode projection,
       String code,
       String secret,
-      boolean deletion) {
-    var current = findChecked(self, operation, digest, actor, deletion);
+      String pendingEmail,
+      Operation kind) {
+    var current = findChecked(self, operation, digest, actor, kind);
     if (current == null) throw unavailable();
     if (!"PREPARED".equals(current.row.status)) return current;
     var body = codec.read("{}", ObjectNode.class);
     body.set("target", codec.read(current.row.target, JsonNode.class));
     body.put("operationId", operation);
     body.put("expectedState", projection.path("state").textValue());
-    if (deletion) body.putNull("otp");
+    if (kind == Operation.DELETE) body.putNull("otp");
     else {
       var otp = body.putObject("otp");
       otp.put("initialCode", code);
       otp.put("secret", secret);
-      otp.putNull("email");
+      if (kind == Operation.EMAIL_START) {
+        otp.put("email", pendingEmail);
+        body.put("authorityValidUntil", current.row.expiry);
+      } else otp.putNull("email");
     }
     var command = codec.read("{}", ObjectNode.class);
     command.put("username", projection.path("username").textValue());
     command.set("body", body);
-    var metadata = metadata(current.row, projection.path("state").textValue(), deletion);
+    var metadata = metadata(current.row, projection.path("state").textValue(), kind);
     String envelope =
         codec.sealSelfAppIntent(
             metadata, codec.canonical(command).getBytes(StandardCharsets.UTF_8));
@@ -241,7 +257,7 @@ public final class SelfAppOtpMaintenance {
             now(),
             operation)
         != 1) throw unavailable();
-    return checked(self, Objects.requireNonNull(find(operation)), digest, actor, deletion);
+    return checked(self, Objects.requireNonNull(find(operation)), digest, actor, kind);
   }
 
   private boolean acknowledge(
@@ -252,8 +268,8 @@ public final class SelfAppOtpMaintenance {
       String envelope,
       AccountLifecycleCodec.VerifiedSelfAppOutcome outcome,
       Runnable markActive,
-      boolean deletion) {
-    var current = findChecked(self, operation, digest, actor, deletion);
+      Operation kind) {
+    var current = findChecked(self, operation, digest, actor, kind);
     if (current == null || !Objects.equals(envelope, current.row.envelope)) throw unavailable();
     if (terminal(current.row.status)) {
       if (!Objects.equals(outcome.receipt(), current.row.receipt)
@@ -262,7 +278,19 @@ public final class SelfAppOtpMaintenance {
     }
     if (!"FROZEN".equals(current.row.status)) throw unavailable();
     boolean success = outcome.status() == 200 || outcome.status() == 201;
-    if (success) markActive.run();
+    if (success) {
+      if (kind == Operation.EMAIL_START) {
+        var pending = jdbc.queryForList(
+            "select start_operation_id from identity_self_otp_pending_email where account_id=? for update",
+            String.class, self.account);
+        if (pending.size() > 1) throw unavailable();
+        if (pending.isEmpty()) jdbc.update(
+            "insert into identity_self_otp_pending_email(account_id,start_operation_id) values(?,?)",
+            self.account, operation);
+        else if (!operation.equals(pending.getFirst()))
+          throw new ConflictException("A different email setup is already owned");
+      } else markActive.run();
+    }
     if (jdbc.update(
             "update identity_self_app_otp_intent set status=?,receipt=?,native_status=?,updated_at=? where operation_id=? and status='FROZEN'",
             success ? "ACKNOWLEDGED" : "TERMINAL_REFUSAL",
@@ -275,14 +303,14 @@ public final class SelfAppOtpMaintenance {
   }
 
   private CheckedIntent findChecked(
-      Self self, String operation, String digest, TaskActorCredentials actor, boolean deletion) {
+      Self self, String operation, String digest, TaskActorCredentials actor, Operation kind) {
     lockedDomain(self);
     var row = find(operation);
-    return row == null ? null : checked(self, row, digest, actor, deletion);
+    return row == null ? null : checked(self, row, digest, actor, kind);
   }
 
   private CheckedIntent checked(
-      Self self, Intent row, String digest, TaskActorCredentials actor, boolean deletion) {
+      Self self, Intent row, String digest, TaskActorCredentials actor, Operation kind) {
     if (!realmId.equals(row.realm)
         || !realmName.equals(row.realmName)
         || !self.account.equals(row.account)
@@ -306,27 +334,27 @@ public final class SelfAppOtpMaintenance {
       String state = metadata.path("expectedState").textValue();
       if (state == null
           || !state.matches("[a-f0-9]{64}")
-          || !codec.canonical(metadata(row, state, deletion)).equals(row.metadata)
+          || !codec.canonical(metadata(row, state, kind)).equals(row.metadata)
           || !row.metadata.equals(codec.canonical(metadata))) throw unavailable();
       if ("FROZEN".equals(row.status)) {
         if (row.receipt != null || row.nativeStatus != null) throw unavailable();
       } else if (row.receipt == null
           || row.nativeStatus == null
           || ("ACKNOWLEDGED".equals(row.status)
-              ? !(deletion ? Set.of(200) : Set.of(200, 201)).contains(row.nativeStatus)
-              : deletion || row.nativeStatus != 401)) throw unavailable();
+              ? !(kind == Operation.APP ? Set.of(200, 201) : Set.of(200)).contains(row.nativeStatus)
+              : kind != Operation.APP || row.nativeStatus != 401)) throw unavailable();
     } else throw unavailable();
     return new CheckedIntent(row, metadata);
   }
 
-  private ObjectNode metadata(Intent row, String state, boolean deletion) {
+  private ObjectNode metadata(Intent row, String state, Operation kind) {
     var value = codec.read("{}", ObjectNode.class);
     value.put("v", 1);
     value.put("realmId", row.realm);
     value.put("operationId", row.operation);
-    value.put("command", deletion ? "otp.delete" : "otp.app-setup");
-    value.put("method", deletion ? "DELETE" : "PUT");
-    value.put("route", deletion ? "otp-config/delete-otp" : "otp-config/setup-otp");
+    value.put("command", kind.command);
+    value.put("method", kind.method);
+    value.put("route", "otp-config/" + kind.route);
     value.put("accountId", row.account);
     if (row.tenant == null) value.putNull("tenantId");
     else value.put("tenantId", row.tenant);
@@ -406,7 +434,7 @@ public final class SelfAppOtpMaintenance {
   }
 
   private Reply invoke(
-      Self self, Intent row, TaskActorCredentials actor, JsonNode command, boolean deletion) {
+      Self self, Intent row, TaskActorCredentials actor, JsonNode command, Operation kind) {
     outsideLocks(self, row);
     var token = machine(self, actor, TaskPurpose.OTP);
     var body = command.path("body");
@@ -416,18 +444,18 @@ public final class SelfAppOtpMaintenance {
     long expiry = Math.min(Math.min(row.expiry, self.expires), token.validatedJwtExpiresAt());
     headers.set(
         "X-ORISO-Task-Context",
-        (deletion
-            ? codec.selfDeleteOtpProof(
-                realmName, realmId, self.account, actor, materialized, expiry)
-            : codec.selfAppOtpProof(
-                realmName, realmId, self.account, actor, materialized, expiry)));
+        kind == Operation.DELETE
+            ? codec.selfDeleteOtpProof(realmName, realmId, self.account, actor, materialized, expiry)
+            : kind == Operation.EMAIL_START
+                ? codec.selfEmailStartOtpProof(realmName, realmId, self.account, actor, materialized, expiry)
+                : codec.selfAppOtpProof(realmName, realmId, self.account, actor, materialized, expiry));
     var uri =
         UriComponentsBuilder.fromUriString(authServer)
             .pathSegment(
                 "realms",
                 realmName,
                 "otp-config",
-                deletion ? "delete-otp" : "setup-otp",
+                kind.route,
                 command.path("username").textValue())
             .build()
             .encode()
@@ -436,7 +464,7 @@ public final class SelfAppOtpMaintenance {
       var response =
           http.exchange(
               uri,
-              deletion ? HttpMethod.DELETE : HttpMethod.PUT,
+              (kind == Operation.DELETE) ? HttpMethod.DELETE : HttpMethod.PUT,
               new HttpEntity<>(codec.canonical(body), headers),
               String.class);
       return new Reply(response.getStatusCode().value(), response.getBody());
@@ -521,11 +549,13 @@ public final class SelfAppOtpMaintenance {
         nativeStatus);
   }
 
-  private Self actualSelf(boolean deletion) {
+  private Self actualSelf(Operation kind) {
     if (!(request.getUserPrincipal() instanceof JwtAuthenticationToken authentication)
         || !authentication.isAuthenticated()
-        || !(deletion ? "DELETE" : "PUT").equals(request.getMethod())
-        || !Set.of("/service/users/2fa/app", "/users/2fa/app").contains(request.getRequestURI()))
+        || !((kind == Operation.DELETE) ? "DELETE" : "PUT").equals(request.getMethod())
+        || !(kind == Operation.EMAIL_START
+            ? Set.of("/service/users/2fa/email", "/users/2fa/email")
+            : Set.of("/service/users/2fa/app", "/users/2fa/app")).contains(request.getRequestURI()))
       throw forbidden();
     var jwt = authentication.getToken();
     String authorization = request.getHeader("Authorization");
@@ -629,6 +659,22 @@ public final class SelfAppOtpMaintenance {
 
   private static ForbiddenException forbidden() {
     return new ForbiddenException("Current self account is not permitted");
+  }
+
+  private enum Operation {
+    APP("otp.app-setup", "PUT", "setup-otp"),
+    DELETE("otp.delete", "DELETE", "delete-otp"),
+    EMAIL_START("otp.email-start", "PUT", "send-verification-mail");
+
+    private final String command;
+    private final String method;
+    private final String route;
+
+    Operation(String command, String method, String route) {
+      this.command = command;
+      this.method = method;
+      this.route = route;
+    }
   }
 
   private record Self(
