@@ -429,8 +429,13 @@ class JdbcProtectedAccountActivationTest {
     assertEquals("LOCAL_CLEANED", state());
     assertEquals(cleaned, restart().discard(claim, recovered));
     assertEquals(1, cleaned.journalVersion());
-    assertEquals("still-owned", jdbc.queryForObject("SELECT active_recipient_key FROM account_invite", String.class));
-    assertEquals(ACCOUNT, jdbc.queryForObject("SELECT account_id FROM protected_invitation_acceptance", String.class));
+    assertEquals(
+        "still-owned",
+        jdbc.queryForObject("SELECT active_recipient_key FROM account_invite", String.class));
+    assertEquals(
+        ACCOUNT,
+        jdbc.queryForObject(
+            "SELECT account_id FROM protected_invitation_acceptance", String.class));
     verify(otp, times(1)).discardWithinOwner(any());
     var foreign = recovery();
     assertThrows(RuntimeException.class, () -> restart().discard(claim, foreign));
@@ -439,10 +444,13 @@ class JdbcProtectedAccountActivationTest {
   @Test
   void encryptedOtpCleanupFailureRollsBackAdminEnrollmentAndCleanupJournal() {
     assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy));
-    doAnswer(call -> {
-      jdbc.update("DELETE FROM synthetic_otp_stage");
-      throw new IllegalStateException("synthetic encrypted-row failure");
-    }).when(otp).discardWithinOwner(any());
+    doAnswer(
+            call -> {
+              jdbc.update("DELETE FROM synthetic_otp_stage");
+              throw new IllegalStateException("synthetic encrypted-row failure");
+            })
+        .when(otp)
+        .discardWithinOwner(any());
     assertThrows(RuntimeException.class, () -> restart().discard(claim, recovery()));
     assertEquals(1, count("admin"));
     assertEquals(1, count("account_inactivity"));
@@ -483,7 +491,8 @@ class JdbcProtectedAccountActivationTest {
     var complete = completion();
     allowCompletion(complete);
     restart().ready(claim, complete);
-    jdbc.update("UPDATE account_invite SET status='REVOKED',token_hash=NULL,active_recipient_key='still-owned'");
+    jdbc.update(
+        "UPDATE account_invite SET status='REVOKED',token_hash=NULL,active_recipient_key='still-owned'");
     jdbc.update("UPDATE protected_invitation_authorization SET state='CANCEL_REQUESTED'");
     Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
     var historical = acceptanceAt(late).historical(73);
@@ -494,7 +503,9 @@ class JdbcProtectedAccountActivationTest {
     assertEquals("LOCAL_CLEANED", state());
     assertEquals(0, count("admin"));
     assertEquals("REVOKED", jdbc.queryForObject("SELECT status FROM account_invite", String.class));
-    assertEquals("still-owned", jdbc.queryForObject("SELECT active_recipient_key FROM account_invite", String.class));
+    assertEquals(
+        "still-owned",
+        jdbc.queryForObject("SELECT active_recipient_key FROM account_invite", String.class));
   }
 
   private VerifiedRecovery recovery() {
@@ -511,18 +522,21 @@ class JdbcProtectedAccountActivationTest {
   }
 
   private void allowDiscard(UUID incarnation) {
-    doAnswer(call -> {
-      assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-      JdbcProtectedAccountActivation.VerifiedDiscard exact = call.getArgument(0);
-      assertEquals(73, exact.inviteId());
-      assertEquals(claim.claimId(), exact.claimId());
-      assertEquals(claim.attemptId(), exact.attemptId());
-      assertEquals(claim.executionId(), exact.executionId());
-      assertEquals(ACCOUNT, exact.accountId());
-      assertEquals(incarnation, exact.bootstrapIncarnation());
-      assertEquals(1, jdbc.update("DELETE FROM synthetic_otp_stage WHERE invite_id=73"));
-      return null;
-    }).when(otp).discardWithinOwner(any());
+    doAnswer(
+            call -> {
+              assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+              JdbcProtectedAccountActivation.VerifiedDiscard exact = call.getArgument(0);
+              assertEquals(73, exact.inviteId());
+              assertEquals(claim.claimId(), exact.claimId());
+              assertEquals(claim.attemptId(), exact.attemptId());
+              assertEquals(claim.executionId(), exact.executionId());
+              assertEquals(ACCOUNT, exact.accountId());
+              assertEquals(incarnation, exact.bootstrapIncarnation());
+              assertEquals(1, jdbc.update("DELETE FROM synthetic_otp_stage WHERE invite_id=73"));
+              return null;
+            })
+        .when(otp)
+        .discardWithinOwner(any());
   }
 
   private VerifiedCommitted committed(AccountLifecycleDtos.LocalOutcome local) {
