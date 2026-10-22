@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.TreeMap;
 import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -42,7 +43,7 @@ class MaintenanceNoEffectCodecTest {
   void receiverVectorAndBothDefiniteStatusesProduceOnlyVerifiedBoundOutcomes() throws Exception {
     JsonNode body = vector.path("requestBody");
     String original = json.writeValueAsString(vector.path("outer"));
-    var verified = verify(original, body);
+    var verified = assertDoesNotThrow(() -> verify(original, body));
     assertEquals(409, verified.status());
     assertEquals(vector.path("outer").path("receipt").textValue(), verified.receipt());
     assertEquals(UUID.fromString(body.path("operationId").textValue()), verified.operationId());
@@ -170,10 +171,14 @@ class MaintenanceNoEffectCodecTest {
   }
 
   private String reply(ObjectNode outcome) throws Exception {
+    // Independent signing must retain malformed numeric representations so they reach the verifier.
+    var sorted = new TreeMap<String, Object>();
+    outcome.fields().forEachRemaining(entry ->
+        sorted.put(entry.getKey(), json.convertValue(entry.getValue(), Object.class)));
     String payload =
         Base64.getUrlEncoder()
             .withoutPadding()
-            .encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
+            .encodeToString(json.writeValueAsString(sorted).getBytes(StandardCharsets.UTF_8));
     ObjectNode outer = json.createObjectNode();
     for (String field : List.of("operationId", "accountId", "result", "status"))
       outer.set(field, outcome.path(field));

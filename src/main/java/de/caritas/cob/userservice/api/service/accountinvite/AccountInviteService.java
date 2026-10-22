@@ -1284,6 +1284,9 @@ public class AccountInviteService {
         TwoFactorGateStatus.PENDING_SETUP,
         TwoFactorGateStatus.ACTIVE,
         checkedInviteIds(inviteIds));
+    // The C owner verifies its SQL postcondition before recording the native ACK.
+    // Flush the same owning persistence context, including the preceding email change.
+    accountInviteRepository.flush();
   }
 
   /** Reopens only the invite membership frozen by the verified C deletion. */

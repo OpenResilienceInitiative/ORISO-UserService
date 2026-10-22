@@ -118,6 +118,48 @@ public class AccountLifecycleCallerConfiguration {
   }
 
   @Bean
+  de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+      humanAdminAccountMaintenance(
+          de.caritas.cob.userservice.api.port.out.IdentityClientConfig identities,
+          AuthenticatedUser user,
+          de.caritas.cob.userservice.api.admin.service.admin.AdminScope scope,
+          JdbcTemplate jdbc,
+          PlatformTransactionManager manager,
+          jakarta.servlet.http.HttpServletRequest request,
+          TaskActorConfiguration actors,
+          TaskActorTokenBroker broker,
+          AccountLifecycleCodec codec,
+          @Qualifier("keycloakRestTemplate") RestTemplate http,
+          KeycloakConfig keycloak) {
+    String publicServer = keycloak.getAuthServerUrl();
+    String internalServer =
+        environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
+    if (publicServer == null
+        || publicServer.isBlank()
+        || internalServer == null
+        || internalServer.isBlank()) throw invalid();
+    var transport =
+        new de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakHumanAdminMaintenance(
+            http,
+            actors,
+            broker,
+            codec,
+            internalServer,
+            keycloak.getRealm(),
+            required("KEYCLOAK_REALM_INTERNAL_ID"));
+    return new de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance(
+        identities,
+        user,
+        scope,
+        jdbc,
+        manager,
+        request,
+        transport,
+        Clock.systemUTC(),
+        publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm());
+  }
+
+  @Bean
   JdbcAccountLifecycleJournal accountLifecycleJournal(
       JdbcTemplate jdbc, PlatformTransactionManager manager, AccountLifecycleCodec codec) {
     return new JdbcAccountLifecycleJournal(jdbc, manager, codec, Clock.systemUTC(), 300);
