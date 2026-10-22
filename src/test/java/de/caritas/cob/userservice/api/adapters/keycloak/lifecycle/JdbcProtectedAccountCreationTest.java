@@ -149,7 +149,7 @@ class JdbcProtectedAccountCreationTest {
   }
 
   @Test
-  void onlyAnExactVerifiedCreatedResultBecomesDurableOwnershipAcrossRestart() {
+  void onlyAnExactVerifiedCreatedResultBecomesDurableOwnershipAcrossRestart() throws Exception {
     var prepared = prepared();
     assertDoesNotThrow(() -> owner().prepare(claim, prepared));
     assertThrows(IllegalStateException.class, () -> owner().created(claim));
@@ -158,6 +158,18 @@ class JdbcProtectedAccountCreationTest {
             prepared,
             json.canonical(vector.path("createdResponse")).getBytes(StandardCharsets.UTF_8));
     assertDoesNotThrow(() -> owner().recordCreated(claim, created));
+    var wrongAccount = new AccountCreation(account().username(), account().email(), "Other", account().lastName(), account().preferredLanguage(), account().password(), false);
+    var foreignPrepared = accounts.prepare(claim, vector.path("registration"), wrongAccount);
+    assertThrows(IllegalStateException.class, () -> owner().prepare(claim, foreignPrepared));
+    var foreignResponse = (com.fasterxml.jackson.databind.node.ObjectNode) vector.path("createdResponse").deepCopy();
+    var payload = (com.fasterxml.jackson.databind.node.ObjectNode) vector.path("creationProofPayload").deepCopy();
+    payload.put("creationFingerprint", foreignPrepared.creationFingerprint());
+    String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(json.canonical(payload).getBytes(StandardCharsets.UTF_8));
+    var mac = javax.crypto.Mac.getInstance("HmacSHA256");
+    mac.init(new javax.crypto.spec.SecretKeySpec(HexFormat.of().parseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"), "HmacSHA256"));
+    foreignResponse.put("creationProof", encoded + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(mac.doFinal(("creation-proof\n" + encoded).getBytes(StandardCharsets.UTF_8))));
+    var foreignCreated = assertDoesNotThrow(() -> accounts.verifyCreated(foreignPrepared, json.canonical(foreignResponse).getBytes(StandardCharsets.UTF_8)));
+    assertThrows(IllegalStateException.class, () -> owner().recordCreated(claim, foreignCreated));
     var restored = owner().created(claim);
     assertEquals(created.accountId(), restored.accountId());
     assertEquals(created.creationProof(), restored.creationProof());
@@ -178,6 +190,9 @@ class JdbcProtectedAccountCreationTest {
     String original =
         jdbc.queryForObject(
             "SELECT prepared_checkpoint FROM protected_account_creation", String.class);
+    var changedRegistration = vector.path("registration").deepCopy();
+    ((com.fasterxml.jackson.databind.node.ObjectNode) changedRegistration).put("password", "different synthetic password");
+    assertThrows(IllegalArgumentException.class, () -> accounts.prepare(claim, changedRegistration, account()));
     jdbc.update("UPDATE account_invite SET token_hash=? WHERE id=73", "c".repeat(64));
     assertThrows(IllegalStateException.class, () -> owner().metadata(claim));
     assertThrows(IllegalStateException.class, () -> owner().recovery(claim, 0));

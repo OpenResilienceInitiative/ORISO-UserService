@@ -89,6 +89,11 @@ public final class ProtectedAccountRecovery {
     }
   }
 
+  public ProtectedAccountCodec.VerifiedCommitted consumedStatus(
+      ProtectedAccountCodec.VerifiedCreated created, LocalOutcome local) {
+    throw invalid();
+  }
+
   private TaskActorCredentials cleanupActor() {
     var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
     if (actor == null

@@ -190,6 +190,33 @@ class ProtectedAccountRecoveryTest {
     verifyNoInteractions(broker, actors);
   }
 
+  @Test
+  void terminalReconciliationUsesFreshSetupStatusOnlyAndNeverTheCommitRoute() {
+    var created = mock(VerifiedCreated.class);
+    var committed = mock(VerifiedCommitted.class);
+    when(created.approvalId()).thenReturn(approval);
+    when(actors.require(TaskPurpose.INVITE_RESERVATIONS)).thenReturn(new TaskActorCredentials(TaskActor.SETUP, "backend-setup", "synthetic", "0a14b4d5-c41e-44aa-acd5-4c77126f42bf"));
+    when(broker.issue(TaskPurpose.INVITE_RESERVATIONS)).thenReturn(new TaskActorTokenBroker.TaskToken(TaskActor.SETUP, "public-synthetic-setup", 60));
+    when(codec.consumedStatusBody(created)).thenReturn(body);
+    when(codec.consumedStatusProof(eq(created), any())).thenReturn("public-synthetic-status-proof");
+    when(codec.verifyConsumedStatus(eq(created), eq(local), aryEq(response))).thenReturn(committed);
+    server.expect(requestTo("https://auth.example.test/realms/oriso/oriso-protected-invitations/v1/approvals/" + approval + "/status"))
+        .andExpect(method(HttpMethod.POST)).andExpect(header("Authorization", "Bearer public-synthetic-setup"))
+        .andExpect(header("X-ORISO-Task-Context", "public-synthetic-status-proof"))
+        .andExpect(content().bytes(body)).andRespond(withSuccess(response, MediaType.APPLICATION_JSON));
+    assertSame(committed, assertDoesNotThrow(() -> transport.consumedStatus(created, local)));
+    verify(broker).issue(TaskPurpose.INVITE_RESERVATIONS);
+    verify(broker, never()).issue(TaskPurpose.ACCOUNT_PROVISIONING);
+    verify(broker, never()).issue(TaskPurpose.ACCOUNT_MAINTENANCE);
+    server.verify();
+    clearInvocations(actors, broker, codec);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      assertThrows(IllegalStateException.class, () -> transport.consumedStatus(created, local));
+      verifyNoInteractions(actors, broker, codec);
+    } finally { TransactionSynchronizationManager.setActualTransactionActive(false); }
+  }
+
   private void expect(String suffix, String proof) {
     server
         .expect(requestTo(url(suffix)))

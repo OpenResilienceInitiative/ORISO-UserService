@@ -56,8 +56,8 @@ jobs:
 
           floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedAccountActivationTest'] = 4
 
-          floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountRecoveryCodecTest'] = 9
-          floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountRecoveryTest'] = 8
+          floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountRecoveryCodecTest'] = 11
+          floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountRecoveryTest'] = 9
 
           floors['de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedAccountCreationTest'] = 6
 

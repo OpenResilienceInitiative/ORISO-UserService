@@ -280,6 +280,51 @@ class ProtectedAccountRecoveryCodecTest {
     assertEquals(account().preferredLanguage(), created.preferredLanguage());
   }
 
+  @Test
+  void consumedStatusReconcilesOnlyTheExactSavedCommitAfterExpiryWithoutAnActivationCommand() throws Exception {
+    var claim = claim();
+    var prepared = codec.prepare(claim, original.path("registration"), account());
+    var created = codec.verifyCreated(prepared, bytes(original.path("createdResponse")));
+    var status = resource("protected-consumed-status-v1.json");
+    clock.now = Instant.parse("2031-01-01T00:00:00Z");
+    assertEquals(status.path("statusBody"), assertDoesNotThrow(() -> parse(codec.consumedStatusBody(created))));
+    var committed = assertDoesNotThrow(() -> codec.verifyConsumedStatus(created, local(), bytes(status.path("response"))));
+    assertNotNull(committed);
+    assertEquals(local(), committed.localOutcome());
+    assertEquals(created.accountId(), committed.accountId());
+    var scope = original.path("approvalVector").path("request").path("scope");
+    var setup = new TaskActorCredentials(TaskActor.SETUP, "backend-setup", "synthetic", scope.path("setupSubject").asText());
+    var proof = assertDoesNotThrow(() -> codec.consumedStatusProof(created, setup));
+    String[] parts = proof.split("\\.");
+    assertTrue(MessageDigest.isEqual(mac("protected-invitation-proof/v1\n" + parts[0]), Base64.getUrlDecoder().decode(parts[1])));
+    var claims = nodes.readTree(Base64.getUrlDecoder().decode(parts[0]));
+    assertEquals("INVITE_RESERVATIONS", claims.path("purpose").asText());
+    assertEquals("protected-invitation.status", claims.path("operation").asText());
+    assertEquals("realm/" + original.path("realmId").asText() + "/protected-invitation/" + created.approvalId(), claims.path("target").asText());
+    assertEquals(json.digest("protected-invitation-payload/v1", status.path("statusBody")), claims.path("payloadDigest").asText());
+    assertThrows(IllegalArgumentException.class, () -> codec.consumedStatusProof(created, admin()));
+  }
+
+  @Test
+  void consumedWrapperAndNativeTerminalMustBothAuthenticateTheExactOriginalOutcome() throws Exception {
+    var created = codec.verifyCreated(codec.prepare(claim(), original.path("registration"), account()), bytes(original.path("createdResponse")));
+    var valid = resource("protected-consumed-status-v1.json").path("response");
+    assertNotNull(assertDoesNotThrow(() -> codec.verifyConsumedStatus(created, local(), bytes(valid))));
+    assertThrows(IllegalArgumentException.class, () -> codec.verifyConsumedStatus(created, new LocalOutcome(1, UUID.randomUUID(), "f".repeat(64)), bytes(valid)));
+    for (String field : List.of("state", "approvalId", "scopeDigest", "boundAttemptId", "approvalRequestDigest")) {
+      ObjectNode changed = valid.deepCopy(); changed.put(field, "foreign");
+      assertThrows(IllegalArgumentException.class, () -> codec.verifyConsumedStatus(created, local(), bytes(changed)));
+    }
+    ObjectNode bad = valid.deepCopy(); ((ObjectNode) bad.path("transitionReceipt")).put("receipt", "invalid");
+    assertThrows(IllegalArgumentException.class, () -> codec.verifyConsumedStatus(created, local(), bytes(bad)));
+    ObjectNode nested = valid.deepCopy(); ObjectNode wrapper = (ObjectNode) nested.path("transitionReceipt");
+    wrapper.put("terminalReceipt", "invalid"); ObjectNode payload = wrapper.deepCopy(); payload.remove("receipt");
+    wrapper.put("receipt", signed("protected-approval-consume/v1", payload));
+    assertThrows(IllegalArgumentException.class, () -> codec.verifyConsumedStatus(created, local(), bytes(nested)));
+    ObjectNode extra = valid.deepCopy(); ((ObjectNode) extra.path("transitionReceipt")).put("foreign", true);
+    assertThrows(IllegalArgumentException.class, () -> codec.verifyConsumedStatus(created, local(), bytes(extra)));
+  }
+
   private ProtectedAccountCodec.PreparedRecovery pending() {
     return assertDoesNotThrow(
         () -> {
