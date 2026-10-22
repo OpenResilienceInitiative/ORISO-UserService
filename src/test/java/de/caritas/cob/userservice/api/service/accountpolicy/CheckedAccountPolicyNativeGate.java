@@ -365,7 +365,8 @@ class CheckedAccountPolicyNativeGate {
     var platformHttp = boundedHttp();
     var platformNoStore = new AtomicReference<String>();
     var runtimeActor = new AtomicReference<String>();
-    platformHttp.getInterceptors()
+    platformHttp
+        .getInterceptors()
         .add(
             (request, body, execution) -> {
               var header = request.getHeaders().getFirst("Authorization");
