@@ -39,20 +39,31 @@ class KeycloakProtectedAccountsTest {
   private final PreparedCreation prepared = mock(PreparedCreation.class);
   private final VerifiedCreated created = mock(VerifiedCreated.class);
   private final AcceptanceClaim claim = mock(AcceptanceClaim.class);
-  private final byte[] createBody = "{\"synthetic\":\"create-memory-only\"}".getBytes(StandardCharsets.UTF_8);
-  private final byte[] createdResponse = "{\"synthetic\":\"created\"}".getBytes(StandardCharsets.UTF_8);
+  private final byte[] createBody =
+      "{\"synthetic\":\"create-memory-only\"}".getBytes(StandardCharsets.UTF_8);
+  private final byte[] createdResponse =
+      "{\"synthetic\":\"created\"}".getBytes(StandardCharsets.UTF_8);
   private final byte[] readBody = "{\"synthetic\":\"owned-read\"}".getBytes(StandardCharsets.UTF_8);
-  private final byte[] projection = "{\"synthetic\":\"disabled-owned\"}".getBytes(StandardCharsets.UTF_8);
+  private final byte[] projection =
+      "{\"synthetic\":\"disabled-owned\"}".getBytes(StandardCharsets.UTF_8);
   private KeycloakProtectedAccounts transport;
 
   @BeforeEach
   void bindings() {
     lenient().when(codec.realmName()).thenReturn("oriso");
-    lenient().when(actors.require(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(
-        new TaskActorCredentials(TaskActor.ACCOUNT_CREATE, "backend-account-create", "synthetic-only",
-            "c6c2db59-43dc-49ad-8589-16e91673ce2c"));
-    lenient().when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(
-        new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_CREATE, "public-synthetic-creator", 60));
+    lenient()
+        .when(actors.require(TaskPurpose.ACCOUNT_PROVISIONING))
+        .thenReturn(
+            new TaskActorCredentials(
+                TaskActor.ACCOUNT_CREATE,
+                "backend-account-create",
+                "synthetic-only",
+                "c6c2db59-43dc-49ad-8589-16e91673ce2c"));
+    lenient()
+        .when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
+        .thenReturn(
+            new TaskActorTokenBroker.TaskToken(
+                TaskActor.ACCOUNT_CREATE, "public-synthetic-creator", 60));
     lenient().when(prepared.approvalId()).thenReturn(APPROVAL);
     lenient().when(prepared.claimId()).thenReturn(CLAIM);
     lenient().when(prepared.attemptId()).thenReturn(ATTEMPT);
@@ -65,24 +76,38 @@ class KeycloakProtectedAccountsTest {
     lenient().when(claim.claimId()).thenReturn(CLAIM);
     lenient().when(claim.attemptId()).thenReturn(ATTEMPT);
     lenient().when(claim.executionId()).thenReturn(EXECUTION);
-    lenient().when(claim.frozen()).thenReturn(new ProtectedInvitationCodec.FrozenApproval(
-        APPROVAL, "{}", "synthetic-realm", "synthetic-owner", "c".repeat(64)));
+    lenient()
+        .when(claim.frozen())
+        .thenReturn(
+            new ProtectedInvitationCodec.FrozenApproval(
+                APPROVAL, "{}", "synthetic-realm", "synthetic-owner", "c".repeat(64)));
     lenient().when(codec.createBody(prepared)).thenReturn(createBody);
     lenient().when(codec.ownedReadBody(created)).thenReturn(readBody);
-    lenient().when(codec.createProof(eq(prepared), any())).thenReturn("public-synthetic-create-proof");
-    lenient().when(codec.ownedReadProof(eq(created), any())).thenReturn("public-synthetic-read-proof");
+    lenient()
+        .when(codec.createProof(eq(prepared), any()))
+        .thenReturn("public-synthetic-create-proof");
+    lenient()
+        .when(codec.ownedReadProof(eq(created), any()))
+        .thenReturn("public-synthetic-read-proof");
     lenient().when(codec.verifyCreated(eq(prepared), aryEq(createdResponse))).thenReturn(created);
-    transport = new KeycloakProtectedAccounts(http, actors, broker, codec, "https://auth.example.test", "oriso");
+    transport =
+        new KeycloakProtectedAccounts(
+            http, actors, broker, codec, "https://auth.example.test", "oriso");
     clearInvocations(actors, broker, codec);
   }
 
   @Test
   void createUsesOnlyTheFixedCreatorRouteAndExactMemoryBody() {
-    server.expect(requestTo(url())).andExpect(method(HttpMethod.PUT))
+    server
+        .expect(requestTo(url()))
+        .andExpect(method(HttpMethod.PUT))
         .andExpect(header("Authorization", "Bearer public-synthetic-creator"))
         .andExpect(header("X-ORISO-Task-Context", "public-synthetic-create-proof"))
         .andExpect(content().bytes(createBody))
-        .andRespond(withStatus(HttpStatus.CREATED).body(createdResponse).contentType(MediaType.APPLICATION_JSON));
+        .andRespond(
+            withStatus(HttpStatus.CREATED)
+                .body(createdResponse)
+                .contentType(MediaType.APPLICATION_JSON));
     assertSame(created, assertDoesNotThrow(() -> transport.create(prepared)));
     verify(codec).verifyCreated(eq(prepared), aryEq(createdResponse));
     server.verify();
@@ -90,10 +115,13 @@ class KeycloakProtectedAccountsTest {
 
   @Test
   void onlyAnActualSuccessfulOwnedReadCanMintThePendingHandoff() {
-    server.expect(requestTo(url() + "/owned-read")).andExpect(method(HttpMethod.POST))
+    server
+        .expect(requestTo(url() + "/owned-read"))
+        .andExpect(method(HttpMethod.POST))
         .andExpect(header("Authorization", "Bearer public-synthetic-creator"))
         .andExpect(header("X-ORISO-Task-Context", "public-synthetic-read-proof"))
-        .andExpect(content().bytes(readBody)).andRespond(withSuccess(projection, MediaType.APPLICATION_JSON));
+        .andExpect(content().bytes(readBody))
+        .andRespond(withSuccess(projection, MediaType.APPLICATION_JSON));
     var pending = assertDoesNotThrow(() -> transport.ownedRead(claim, created));
     assertNotNull(pending);
     assertSame(claim, pending.claim());
@@ -109,23 +137,42 @@ class KeycloakProtectedAccountsTest {
   void aCreationReceiptCannotBeReboundToAnotherDurableClaim() {
     var original = claim.frozen();
     assertAll(
-        () -> refusesTuple(
-            () -> when(claim.claimId()).thenReturn(UUID.randomUUID()),
-            () -> when(claim.claimId()).thenReturn(CLAIM)),
-        () -> refusesTuple(
-            () -> when(claim.attemptId()).thenReturn(UUID.randomUUID()),
-            () -> when(claim.attemptId()).thenReturn(ATTEMPT)),
-        () -> refusesTuple(
-            () -> when(claim.executionId()).thenReturn(UUID.randomUUID()),
-            () -> when(claim.executionId()).thenReturn(EXECUTION)),
-        () -> refusesTuple(
-            () -> when(claim.frozen()).thenReturn(new ProtectedInvitationCodec.FrozenApproval(
-                UUID.randomUUID(), "{}", "synthetic-realm", "synthetic-owner", "c".repeat(64))),
-            () -> when(claim.frozen()).thenReturn(original)),
-        () -> refusesTuple(
-            () -> when(claim.frozen()).thenReturn(new ProtectedInvitationCodec.FrozenApproval(
-                APPROVAL, "{}", "other-synthetic-realm", "synthetic-owner", "c".repeat(64))),
-            () -> when(claim.frozen()).thenReturn(original)));
+        () ->
+            refusesTuple(
+                () -> when(claim.claimId()).thenReturn(UUID.randomUUID()),
+                () -> when(claim.claimId()).thenReturn(CLAIM)),
+        () ->
+            refusesTuple(
+                () -> when(claim.attemptId()).thenReturn(UUID.randomUUID()),
+                () -> when(claim.attemptId()).thenReturn(ATTEMPT)),
+        () ->
+            refusesTuple(
+                () -> when(claim.executionId()).thenReturn(UUID.randomUUID()),
+                () -> when(claim.executionId()).thenReturn(EXECUTION)),
+        () ->
+            refusesTuple(
+                () ->
+                    when(claim.frozen())
+                        .thenReturn(
+                            new ProtectedInvitationCodec.FrozenApproval(
+                                UUID.randomUUID(),
+                                "{}",
+                                "synthetic-realm",
+                                "synthetic-owner",
+                                "c".repeat(64))),
+                () -> when(claim.frozen()).thenReturn(original)),
+        () ->
+            refusesTuple(
+                () ->
+                    when(claim.frozen())
+                        .thenReturn(
+                            new ProtectedInvitationCodec.FrozenApproval(
+                                APPROVAL,
+                                "{}",
+                                "other-synthetic-realm",
+                                "synthetic-owner",
+                                "c".repeat(64))),
+                () -> when(claim.frozen()).thenReturn(original)));
   }
 
   @Test
@@ -135,12 +182,16 @@ class KeycloakProtectedAccountsTest {
       assertThrows(IllegalStateException.class, () -> transport.create(prepared));
       assertThrows(IllegalStateException.class, () -> transport.ownedRead(claim, created));
       verifyNoInteractions(actors, broker, codec);
-    } finally { TransactionSynchronizationManager.setActualTransactionActive(false); }
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
   }
 
   @Test
   void anAcceptedButUnconfirmedCreateNeverReturnsOwnership() {
-    server.expect(requestTo(url())).andRespond(withStatus(HttpStatus.ACCEPTED).body(createdResponse));
+    server
+        .expect(requestTo(url()))
+        .andRespond(withStatus(HttpStatus.ACCEPTED).body(createdResponse));
     assertThrows(KeycloakProtectedAccounts.RemoteFailure.class, () -> transport.create(prepared));
     verify(codec, never()).verifyCreated(any(), any());
     server.verify();
@@ -149,18 +200,27 @@ class KeycloakProtectedAccountsTest {
   @Test
   void aRejectedProjectionCannotProduceAnOwnedPendingHandle() {
     doThrow(new IllegalArgumentException("synthetic malformed native projection"))
-        .when(codec).checkOwnedProjection(eq(created), aryEq(projection));
-    server.expect(requestTo(url() + "/owned-read")).andRespond(withSuccess(projection, MediaType.APPLICATION_JSON));
-    assertThrows(KeycloakProtectedAccounts.RemoteFailure.class, () -> transport.ownedRead(claim, created));
+        .when(codec)
+        .checkOwnedProjection(eq(created), aryEq(projection));
+    server
+        .expect(requestTo(url() + "/owned-read"))
+        .andRespond(withSuccess(projection, MediaType.APPLICATION_JSON));
+    assertThrows(
+        KeycloakProtectedAccounts.RemoteFailure.class, () -> transport.ownedRead(claim, created));
     verify(codec).checkOwnedProjection(eq(created), aryEq(projection));
     server.verify();
   }
 
   @Test
   void providerErrorsExposeOnlyStatusWithoutTheirBodyOrCause() {
-    server.expect(requestTo(url())).andRespond(withStatus(HttpStatus.FORBIDDEN)
-        .body("synthetic-password-or-bearer-should-never-escape"));
-    var failure = assertThrows(KeycloakProtectedAccounts.RemoteFailure.class, () -> transport.create(prepared));
+    server
+        .expect(requestTo(url()))
+        .andRespond(
+            withStatus(HttpStatus.FORBIDDEN)
+                .body("synthetic-password-or-bearer-should-never-escape"));
+    var failure =
+        assertThrows(
+            KeycloakProtectedAccounts.RemoteFailure.class, () -> transport.create(prepared));
     assertEquals(403, failure.status());
     assertNull(failure.getCause());
     assertFalse(failure.toString().contains("synthetic-password-or-bearer"));
@@ -169,22 +229,39 @@ class KeycloakProtectedAccountsTest {
 
   @Test
   void anotherBrokerActorCannotUseTheCreatorTransport() {
-    when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(
-        new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_ADMIN, "public-synthetic-admin", 60));
+    when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
+        .thenReturn(
+            new TaskActorTokenBroker.TaskToken(
+                TaskActor.ACCOUNT_ADMIN, "public-synthetic-admin", 60));
     assertThrows(IllegalArgumentException.class, () -> transport.create(prepared));
     server.verify();
   }
 
   @Test
   void unpinnedOrCredentialBearingReceiverUrlsAreRefused() {
-    for (String invalid : new String[]{"https://user:password@auth.example.test", "https://auth.example.test?query=1", "https://auth.example.test#fragment", "file:///tmp/native"}) {
-      assertThrows(IllegalArgumentException.class, () -> new KeycloakProtectedAccounts(http, actors, broker, codec, invalid, "oriso"));
+    for (String invalid :
+        new String[] {
+          "https://user:password@auth.example.test",
+          "https://auth.example.test?query=1",
+          "https://auth.example.test#fragment",
+          "file:///tmp/native"
+        }) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> new KeycloakProtectedAccounts(http, actors, broker, codec, invalid, "oriso"));
     }
-    assertThrows(IllegalArgumentException.class, () -> new KeycloakProtectedAccounts(http, actors, broker, codec, "https://auth.example.test", "other-realm"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new KeycloakProtectedAccounts(
+                http, actors, broker, codec, "https://auth.example.test", "other-realm"));
   }
 
   private String url() {
-    return "https://auth.example.test/realms/oriso/oriso-protected-invitations/v1/approvals/" + APPROVAL + "/attempts/" + ATTEMPT;
+    return "https://auth.example.test/realms/oriso/oriso-protected-invitations/v1/approvals/"
+        + APPROVAL
+        + "/attempts/"
+        + ATTEMPT;
   }
 
   private void refusesTuple(Runnable mutate, Runnable restore) {
@@ -192,6 +269,8 @@ class KeycloakProtectedAccountsTest {
       mutate.run();
       assertThrows(IllegalArgumentException.class, () -> transport.ownedRead(claim, created));
       verifyNoInteractions(actors, broker, codec);
-    } finally { restore.run(); }
+    } finally {
+      restore.run();
+    }
   }
 }

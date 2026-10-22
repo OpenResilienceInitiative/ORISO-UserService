@@ -94,7 +94,8 @@ class ProtectedInvitationSqlViewJpaIT extends ProtectedInvitationIssuanceJpaFixt
       assertThat(osiv.contains(warm)).isTrue();
       assertThat(warm.getSupersededByInviteId()).isNull();
       assertThat(warm.getTenantIdReservationToken()).isEqualTo(held);
-      var requestSession = ((Number) osiv.createNativeQuery("SELECT SESSION_ID()").getSingleResult()).longValue();
+      var requestSession =
+          ((Number) osiv.createNativeQuery("SELECT SESSION_ID()").getSingleResult()).longValue();
       assertThat(driverSession.get()).isPositive().isNotEqualTo(requestSession);
       doAnswer(
               call -> {
@@ -108,7 +109,8 @@ class ProtectedInvitationSqlViewJpaIT extends ProtectedInvitationIssuanceJpaFixt
                 assertThat(
                         jdbc.queryForObject(
                             "SELECT superseded_by_invite_id FROM account_invite WHERE id=?",
-                            Long.class, old.getId()))
+                            Long.class,
+                            old.getId()))
                     .isEqualTo(replacement.getId());
                 return null;
               })
@@ -117,30 +119,36 @@ class ProtectedInvitationSqlViewJpaIT extends ProtectedInvitationIssuanceJpaFixt
       when(cancellation.withAcknowledged(eq(old.getId()), any()))
           .thenAnswer(
               call ->
-                  transaction().execute(
-                      tx -> {
-                        assertThat(EntityManagerFactoryUtils.getTransactionalEntityManager(factory))
-                            .isSameAs(osiv);
-                        return ((Supplier<?>) call.getArgument(1)).get();
-                      }));
+                  transaction()
+                      .execute(
+                          tx -> {
+                            assertThat(
+                                    EntityManagerFactoryUtils.getTransactionalEntityManager(
+                                        factory))
+                                .isSameAs(osiv);
+                            return ((Supplier<?>) call.getArgument(1)).get();
+                          }));
 
       assertDoesNotThrow(service::expireElapsedInvites);
 
       assertThat(
               jdbc.queryForObject(
                   "SELECT superseded_by_invite_id FROM account_invite WHERE id=?",
-                  Long.class, old.getId()))
+                  Long.class,
+                  old.getId()))
           .as("Committed replacement must survive stale request EntityManager cleanup")
           .isEqualTo(replacement.getId());
       assertThat(
               jdbc.queryForObject(
                   "SELECT tenant_id_reservation_token FROM account_invite WHERE id=?",
-                  String.class, old.getId()))
+                  String.class,
+                  old.getId()))
           .isNull();
       assertThat(
               jdbc.queryForObject(
                   "SELECT tenant_id_reservation_token FROM account_invite WHERE id=?",
-                  String.class, replacement.getId()))
+                  String.class,
+                  replacement.getId()))
           .isEqualTo(held);
       assertThat(releases.count()).isZero();
       verify(cancellation).withAcknowledged(eq(old.getId()), any());

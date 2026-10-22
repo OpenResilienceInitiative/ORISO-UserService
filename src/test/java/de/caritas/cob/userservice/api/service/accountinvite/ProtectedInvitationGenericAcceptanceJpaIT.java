@@ -23,8 +23,11 @@ class ProtectedInvitationGenericAcceptanceJpaIT extends ProtectedInvitationIssua
   private static final String CALLER_CHOSEN_SUBJECT = "4775e840-038d-435e-a25c-3f9d416d43a6";
 
   @ParameterizedTest
-  @EnumSource(value = AccountInviteTargetRole.class, names = {"TENANT_ADMIN", "PLATFORM_ADMIN"})
-  void aGenericCallerCannotClaimAProtectedInvitationWithItsOwnSubject(AccountInviteTargetRole role) {
+  @EnumSource(
+      value = AccountInviteTargetRole.class,
+      names = {"TENANT_ADMIN", "PLATFORM_ADMIN"})
+  void aGenericCallerCannotClaimAProtectedInvitationWithItsOwnSubject(
+      AccountInviteTargetRole role) {
     var sent = deliveredRow(role);
 
     assertThatThrownBy(() -> service.acceptInvite(TOKEN, CALLER_CHOSEN_SUBJECT))
@@ -94,7 +97,8 @@ class ProtectedInvitationGenericAcceptanceJpaIT extends ProtectedInvitationIssua
 
 /** A real legacy send/token remains acceptable through the historical generic path. */
 @TestPropertySource(properties = "TASK_IDENTITY_MODEL=LEGACY")
-class ProtectedInvitationGenericAcceptanceLegacyJpaIT extends ProtectedInvitationIssuanceJpaFixture {
+class ProtectedInvitationGenericAcceptanceLegacyJpaIT
+    extends ProtectedInvitationIssuanceJpaFixture {
   @Test
   void legacyProtectedInvitationKeepsAcceptanceAndPendingTwoFactorResume() {
     var sent = assertDoesNotThrow(() -> service.createAndSendInvite(command(), template.getId()));
