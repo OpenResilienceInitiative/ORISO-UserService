@@ -131,13 +131,18 @@ class ProtectedOtpBootstrapTest {
   }
 
   @Test
-  void theExactOwningTransactionCanReadCommittedSetupWithoutAnotherRemoteRequest() throws Exception {
+  void theExactOwningTransactionCanReadCommittedSetupWithoutAnotherRemoteRequest()
+      throws Exception {
     try (var f = new Fixture()) {
       f.expectPrepare();
       var prepared = assertDoesNotThrow(() -> f.adapter().prepare(f.claim, f.pending));
-      new TransactionTemplate(f.manager).executeWithoutResult(tx -> f.adapter().stagePrepared(f.claim, prepared));
-      var setup = assertDoesNotThrow(() -> new TransactionTemplate(f.manager)
-          .execute(tx -> f.adapter().currentSetupWithinOwner(f.claim)));
+      new TransactionTemplate(f.manager)
+          .executeWithoutResult(tx -> f.adapter().stagePrepared(f.claim, prepared));
+      var setup =
+          assertDoesNotThrow(
+              () ->
+                  new TransactionTemplate(f.manager)
+                      .execute(tx -> f.adapter().currentSetupWithinOwner(f.claim)));
       assertNotNull(setup);
       assertEquals("SyntheticSetupSecret1234567890", setup.secret());
       f.server.verify();
