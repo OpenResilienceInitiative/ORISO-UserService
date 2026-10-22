@@ -121,6 +121,10 @@ class CreateConsultantSagaTest {
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private AppointmentService appointmentService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads
+      checkedPolicyReads;
+
   // The resolver is the single place that decides which name may reach Matrix (ADR-002 §2), so the
   // saga tests exercise the real rule instead of a mock that would answer null.
   @Spy
@@ -153,6 +157,48 @@ class CreateConsultantSagaTest {
       /* observe native effect independently */
     }
     verify(identityClient, never()).createUser(any(), anyString(), anyString());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void checkedImportQuotaAndOutageRefuseBeforeCreationWithoutFullTenantFallback(
+      boolean unavailable) {
+    var workflow =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+                .class);
+    var provider = org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(workflow);
+    ReflectionTestUtils.setField(createConsultantSaga, "ordinaryAccountCreation", provider);
+    ReflectionTestUtils.setField(
+        createConsultantSaga,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    ReflectionTestUtils.setField(createConsultantSaga, "checkedPolicyReads", checkedPolicyReads);
+    var row = new ImportRecord();
+    row.setTenantId(7L);
+    if (unavailable) {
+      when(checkedPolicyReads.read(7))
+          .thenThrow(new IllegalStateException("Synthetic unavailable projection"));
+    } else {
+      when(checkedPolicyReads.read(7))
+          .thenReturn(
+              new de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads
+                  .Policy(7L, 1));
+      when(consultantService.getNumberOfActiveConsultants(7L)).thenReturn(1L);
+    }
+    var failure =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () ->
+                createConsultantSaga.createImportedConsultant(
+                    row, Set.of("consultant"), Set.of(10L), "a".repeat(64), 1, ignored -> {}));
+    assertThat(
+        failure.getCustomHttpHeaders().get("X-Reason").get(0),
+        is((unavailable ? TENANT_LICENSING_NOT_CONFIGURED : NUMBER_OF_LICENSES_EXCEEDED).name()));
+    verify(workflow, never()).create(any(), any(), any());
+    verifyNoInteractions(tenantAdminService, identityClient, identityPasswordUpdater);
   }
 
   @Test

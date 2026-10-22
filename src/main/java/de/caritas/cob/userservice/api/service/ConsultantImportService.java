@@ -72,6 +72,10 @@ public class ConsultantImportService {
   @org.springframework.beans.factory.annotation.Autowired
   private de.caritas.cob.userservice.api.port.out.IdentityClientConfig lifecycleIdentities;
 
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads
+      checkedPolicyReads;
+
   private boolean fiveActors() {
     return lifecycleEnvironment != null
         && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
@@ -283,16 +287,32 @@ public class ConsultantImportService {
 
         if (importRecord.getConsultantId() == null) {
           if (fiveActors()) {
-            consultant =
-                this.createConsultantSaga.createImportedConsultant(
-                    importRecord,
-                    roles,
-                    agencyIds,
-                    sourceDigest,
-                    record.getRecordNumber(),
-                    created ->
-                        this.consultantAgencyRelationCreatorService.createConsultantAgencyRelations(
-                            created.getId(), agencyIds, roles, this::writeToImportLog));
+            if (checkedPolicyReads == null)
+              throw new ImportException("Checked import policy is unavailable");
+            var checkedOrigin =
+                new CheckedPolicyOrigin(
+                    importRecord, roles, agencyIds, sourceDigest, record.getRecordNumber());
+            try {
+              consultant =
+                  checkedPolicyReads.withConfiguredImport(
+                      checkedOrigin,
+                      () ->
+                          this.createConsultantSaga.createImportedConsultant(
+                              importRecord,
+                              roles,
+                              agencyIds,
+                              sourceDigest,
+                              record.getRecordNumber(),
+                              created ->
+                                  this.consultantAgencyRelationCreatorService
+                                      .createConsultantAgencyRelations(
+                                          created.getId(),
+                                          agencyIds,
+                                          roles,
+                                          this::writeToImportLog)));
+            } finally {
+              checkedOrigin.open = false;
+            }
             relationsCompletedInCreation = true;
           } else consultant = this.createConsultantSaga.createNewConsultant(importRecord, roles);
 
@@ -406,5 +426,130 @@ public class ConsultantImportService {
     String agenciesAndRoleSets;
     boolean formalLanguage = FORMAL_LANGUAGE_DEFAULT;
     boolean isTeamConsultant = TEAM_CONSULTANT_DEFAULT;
+  }
+
+  /**
+   * Constructed only here, after this configured source's exact row and current agencies passed.
+   */
+  public static final class CheckedPolicyOrigin {
+    private final ImportRecord row;
+    private final Long tenantId;
+    private final List<Long> agencies;
+    private final String profile;
+    private final String source;
+    private final long number;
+    private final Map<String, Object> frozen;
+    private final Thread owner = Thread.currentThread();
+    private boolean open = true;
+
+    private CheckedPolicyOrigin(
+        ImportRecord row,
+        java.util.Set<String> roles,
+        java.util.Set<Long> agencies,
+        String source,
+        long number) {
+      this.row = row;
+      this.tenantId = row.getTenantId();
+      this.agencies = agencies.stream().sorted().toList();
+      this.profile = policyProfile(roles);
+      this.source = source;
+      this.number = number;
+      if (tenantId == null
+          || tenantId < 1
+          || this.agencies.isEmpty()
+          || this.agencies.size() > 100
+          || this.agencies.stream().anyMatch(id -> id == null || id < 1)
+          || profile == null
+          || source == null
+          || !source.matches("[a-f0-9]{64}")
+          || number < 1) throw new ImportException("Configured import policy origin is invalid");
+      this.frozen =
+          java.util.Collections.unmodifiableMap(snapshotRow(row, roles.stream().sorted().toList()));
+    }
+
+    public void requireLive() {
+      if (!open || owner != Thread.currentThread())
+        throw new org.springframework.security.access.AccessDeniedException(
+            "Configured import owner is no longer live");
+      try {
+        if (!java.security.MessageDigest.isEqual(
+            de.caritas.cob.userservice.api.service.accountpolicy.TaskContextProof.canonical(frozen),
+            de.caritas.cob.userservice.api.service.accountpolicy.TaskContextProof.canonical(
+                snapshotRow(row, (List<?>) frozen.get("roles")))))
+          throw new org.springframework.security.access.AccessDeniedException(
+              "Configured import row changed");
+      } catch (org.springframework.security.access.AccessDeniedException denied) {
+        throw denied;
+      } catch (Exception invalid) {
+        throw new org.springframework.security.access.AccessDeniedException(
+            "Configured import row is invalid");
+      }
+    }
+
+    public Long tenantId() {
+      requireLive();
+      return tenantId;
+    }
+
+    public List<Long> agencyIds() {
+      requireLive();
+      return agencies;
+    }
+
+    public String profile() {
+      requireLive();
+      return profile;
+    }
+
+    public String sourceDigest() {
+      requireLive();
+      return source;
+    }
+
+    public String reference() {
+      requireLive();
+      return "import:" + source + ":" + number;
+    }
+
+    public Map<String, Object> snapshot() {
+      requireLive();
+      return frozen;
+    }
+
+    @Override
+    public String toString() {
+      return "CheckedPolicyOrigin[configured import]";
+    }
+
+    private static Map<String, Object> snapshotRow(ImportRecord row, List<?> roles) {
+      Map<String, Object> snapshot = new java.util.TreeMap<>();
+      snapshot.put("tenantId", row.getTenantId());
+      snapshot.put("username", row.getUsername());
+      snapshot.put("email", row.getEmail());
+      snapshot.put("firstName", row.getFirstName());
+      snapshot.put("lastName", row.getLastName());
+      snapshot.put("consultantId", row.getConsultantId());
+      snapshot.put("oldId", row.getIdOld());
+      snapshot.put("usernameEncoded", row.getUsernameEncoded());
+      snapshot.put("agenciesAndRoleSets", row.getAgenciesAndRoleSets());
+      snapshot.put("roles", roles);
+      snapshot.put("absent", row.isAbsent());
+      snapshot.put("absenceMessage", row.getAbsenceMessage());
+      snapshot.put("formalLanguage", row.isFormalLanguage());
+      snapshot.put("teamConsultant", row.isTeamConsultant());
+      return snapshot;
+    }
+
+    private static String policyProfile(java.util.Set<String> roles) {
+      if (roles.equals(java.util.Set.of("consultant"))
+          || roles.equals(java.util.Set.of("consultant", "group-chat-consultant")))
+        return "CONSULTANT";
+      if (roles.equals(java.util.Set.of("consultant", "restricted-agency-admin", "user-admin"))
+          || roles.equals(
+              java.util.Set.of(
+                  "consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin")))
+        return "CONSULTANT_AGENCY_ADMIN";
+      return null;
+    }
   }
 }

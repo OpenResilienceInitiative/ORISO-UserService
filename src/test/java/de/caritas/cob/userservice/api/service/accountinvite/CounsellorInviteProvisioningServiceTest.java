@@ -724,6 +724,13 @@ class CounsellorInviteProvisioningServiceTest {
 
   @Test
   void fiveActorInvitationIncludesAcceptanceAndRelationsInTheCheckedCreationCallback() {
+    var policyReads =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads.class);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "checkedPolicyReads", policyReads);
+    when(policyReads.withInvitation(eq("raw-token"), eq("CONSULTANT"), any()))
+        .thenAnswer(call -> ((java.util.function.Supplier<?>) call.getArgument(2)).get());
     var invite = activeCounsellorInvite();
     invite.setId(41L);
     when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
