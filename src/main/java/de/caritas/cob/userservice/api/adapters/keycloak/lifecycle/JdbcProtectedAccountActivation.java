@@ -76,7 +76,7 @@ public final class JdbcProtectedAccountActivation {
       PendingOwnedAccount pending,
       PreparedBootstrap prepared,
       Policy policy,
-      VerifiedTenant tenant) {
+      VerifiedTenant verifiedTenant) {
     outsideSql();
     if (pending == null || prepared == null || policy == null) throw unavailable();
     return owned(
@@ -86,7 +86,7 @@ public final class JdbcProtectedAccountActivation {
           sameClaim(claim, pending.claim());
           requireCreated(claim, created);
           JsonNode scope = scope(claim);
-          String tenantReceipt = checkedTenant(claim, scope, tenant);
+          String tenantReceipt = checkedTenant(claim, scope, verifiedTenant);
           var previous = rows(claim);
           if (!previous.isEmpty()) {
             var saved = checked(claim, previous.getFirst());
