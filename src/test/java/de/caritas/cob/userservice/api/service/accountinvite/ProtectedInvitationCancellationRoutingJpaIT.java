@@ -54,7 +54,8 @@ class ProtectedInvitationCancellationRoutingJpaIT extends ProtectedInvitationIss
     assertThat(invalid.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
     assertThat(invalid.getActiveRecipientKey()).isNull();
     assertThat(invalid.getTokenHash()).isNull();
-    assertThat(invalid.getTenantIdReservationToken()).isEqualTo(draft.getTenantIdReservationToken());
+    assertThat(invalid.getTenantIdReservationToken())
+        .isEqualTo(draft.getTenantIdReservationToken());
     assertThat(releases.count()).isZero();
     verify(tenantIds, never()).release(17L);
     verifyNoInteractions(sender);
@@ -65,27 +66,34 @@ class ProtectedInvitationCancellationRoutingJpaIT extends ProtectedInvitationIss
     var draft = service.createInvite(command());
     var acknowledged = new AtomicBoolean();
     var withinAcknowledgement = new AtomicBoolean();
-    doAnswer(call -> {
-      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-      transaction().executeWithoutResult(tx -> ((Runnable) call.getArgument(2)).run());
-      acknowledged.set(true);
-      return null;
-    }).when(cancellation).cancel(eq(draft.getId()), eq(Reason.REVOKED), any());
-    when(cancellation.withAcknowledged(eq(draft.getId()), any())).thenAnswer(call -> {
-      assertThat(acknowledged).isTrue();
-      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-      withinAcknowledgement.set(true);
-      try {
-        return transaction().execute(tx -> ((Supplier<?>) call.getArgument(1)).get());
-      } finally {
-        withinAcknowledgement.set(false);
-      }
-    });
-    when(tenantIds.release(17L)).thenAnswer(call -> {
-      assertThat(acknowledged).isTrue();
-      assertThat(withinAcknowledgement).isTrue();
-      return true;
-    });
+    doAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              transaction().executeWithoutResult(tx -> ((Runnable) call.getArgument(2)).run());
+              acknowledged.set(true);
+              return null;
+            })
+        .when(cancellation)
+        .cancel(eq(draft.getId()), eq(Reason.REVOKED), any());
+    when(cancellation.withAcknowledged(eq(draft.getId()), any()))
+        .thenAnswer(
+            call -> {
+              assertThat(acknowledged).isTrue();
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              withinAcknowledgement.set(true);
+              try {
+                return transaction().execute(tx -> ((Supplier<?>) call.getArgument(1)).get());
+              } finally {
+                withinAcknowledgement.set(false);
+              }
+            });
+    when(tenantIds.release(17L))
+        .thenAnswer(
+            call -> {
+              assertThat(acknowledged).isTrue();
+              assertThat(withinAcknowledgement).isTrue();
+              return true;
+            });
 
     var revoked = assertDoesNotThrow(() -> service.revokeInvite(draft.getId()));
 
@@ -103,7 +111,8 @@ class ProtectedInvitationCancellationRoutingJpaIT extends ProtectedInvitationIss
     invites.saveAndFlush(old);
     unknownCancellation(old.getId(), Reason.SUPERSEDED);
 
-    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(old.getId(), template.getId())))
+    assertThatThrownBy(
+            () -> service.resendInvite(new SendInviteCommand(old.getId(), template.getId())))
         .isInstanceOf(KeycloakProtectedInvitations.RemoteFailure.class);
 
     var invalid = invites.findById(old.getId()).orElseThrow();
@@ -144,11 +153,24 @@ class ProtectedInvitationCancellationRoutingJpaIT extends ProtectedInvitationIss
     when(identityEmailOwnerLookup.findByEmail(recipient)).thenReturn(Optional.empty());
     when(agencyIds.reserve(null, 17L)).thenReturn(23L);
     when(agencyIds.getAvailability(23L)).thenReturn(IdAllocationStatus.RESERVED);
-    when(sender.send(any(), any(), any(), any(), any(), any(), any())).thenAnswer(
-        call -> new InviteMailSendReceipt(call.getArgument(0), Instant.now()));
-    var queued = service.createAndSendInvite(new CreateAccountInviteCommand(
-        AccountInviteTargetRole.AGENCY_ADMIN, 17L, recipient, "Ada", "Lovelace", null, null,
-        30L, IdAllocationMode.MANUAL, IdAllocationMode.AUTO), template.getId()).invite();
+    when(sender.send(any(), any(), any(), any(), any(), any(), any()))
+        .thenAnswer(call -> new InviteMailSendReceipt(call.getArgument(0), Instant.now()));
+    var queued =
+        service
+            .createAndSendInvite(
+                new CreateAccountInviteCommand(
+                    AccountInviteTargetRole.AGENCY_ADMIN,
+                    17L,
+                    recipient,
+                    "Ada",
+                    "Lovelace",
+                    null,
+                    null,
+                    30L,
+                    IdAllocationMode.MANUAL,
+                    IdAllocationMode.AUTO),
+                template.getId())
+            .invite();
     assertThat(queued.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
     assertThat(queued.getTokenHash()).isNull();
     verifyNoInteractions(sender);
@@ -182,11 +204,14 @@ class ProtectedInvitationCancellationRoutingJpaIT extends ProtectedInvitationIss
   }
 
   private void unknownCancellation(long inviteId, Reason reason) {
-    doAnswer(call -> {
-      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-      transaction().executeWithoutResult(tx -> ((Runnable) call.getArgument(2)).run());
-      throw new KeycloakProtectedInvitations.RemoteFailure(0);
-    }).when(cancellation).cancel(eq(inviteId), eq(reason), any());
+    doAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              transaction().executeWithoutResult(tx -> ((Runnable) call.getArgument(2)).run());
+              throw new KeycloakProtectedInvitations.RemoteFailure(0);
+            })
+        .when(cancellation)
+        .cancel(eq(inviteId), eq(reason), any());
   }
 
   private TransactionTemplate transaction() {

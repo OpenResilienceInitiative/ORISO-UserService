@@ -28,10 +28,20 @@ class ProtectedInvitationIssuanceScopeJpaIT extends ProtectedInvitationIssuanceJ
   @Test
   void mixedCaseRecipientIsCommittedCanonicallyBeforeTheExactProposalAndHumanRpc() {
     doThrow(new KeycloakProtectedInvitations.RemoteFailure(0))
-        .when(approvals).approve(any(), anyString());
-    var command = new CreateAccountInviteCommand(AccountInviteTargetRole.TENANT_ADMIN, null,
-        "  PROTECTED-OWNER@EXAMPLE.TEST  ", "Ada", "Lovelace", null, null, 30L,
-        IdAllocationMode.AUTO, null);
+        .when(approvals)
+        .approve(any(), anyString());
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            null,
+            "  PROTECTED-OWNER@EXAMPLE.TEST  ",
+            "Ada",
+            "Lovelace",
+            null,
+            null,
+            30L,
+            IdAllocationMode.AUTO,
+            null);
 
     assertThatThrownBy(() -> service.createAndSendInvite(command, template.getId()))
         .isInstanceOf(KeycloakProtectedInvitations.RemoteFailure.class);
@@ -47,9 +57,20 @@ class ProtectedInvitationIssuanceScopeJpaIT extends ProtectedInvitationIssuanceJ
   @Test
   void platformInvitationUsesActualPlatformTenantZeroAndNeverReservesATenant() {
     doThrow(new KeycloakProtectedInvitations.RemoteFailure(0))
-        .when(approvals).approve(any(), anyString());
-    var command = new CreateAccountInviteCommand(AccountInviteTargetRole.PLATFORM_ADMIN, null,
-        RECIPIENT, "Ada", "Lovelace", null, null, 30L, null, null);
+        .when(approvals)
+        .approve(any(), anyString());
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.PLATFORM_ADMIN,
+            null,
+            RECIPIENT,
+            "Ada",
+            "Lovelace",
+            null,
+            null,
+            30L,
+            null,
+            null);
 
     assertThatThrownBy(() -> service.createAndSendInvite(command, template.getId()))
         .isInstanceOf(KeycloakProtectedInvitations.RemoteFailure.class);
@@ -79,8 +100,10 @@ class ProtectedInvitationIssuanceScopeJpaIT extends ProtectedInvitationIssuanceJ
     assertThat(frozen).isNotNull();
     assertThat(frozen.issuerSubject()).isEqualTo(originalCreator);
     assertThat(frozen.requestJson()).doesNotContain("synthetic-immediate-human-memory-only");
-    assertThat(jdbc.queryForObject(
-        "SELECT COUNT(*) FROM protected_invitation_authorization", Integer.class)).isZero();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT COUNT(*) FROM protected_invitation_authorization", Integer.class))
+        .isZero();
     verifyNoInteractions(human, approvals, sender);
   }
 
@@ -97,8 +120,12 @@ class ProtectedInvitationIssuanceScopeJpaIT extends ProtectedInvitationIssuanceJ
   }
 
   private JsonNode scope(long inviteId) {
-    return json.read(jdbc.queryForObject(
-        "SELECT request_json FROM protected_invitation_authorization WHERE invite_id=?",
-        String.class, inviteId), JsonNode.class).path("scope");
+    return json.read(
+            jdbc.queryForObject(
+                "SELECT request_json FROM protected_invitation_authorization WHERE invite_id=?",
+                String.class,
+                inviteId),
+            JsonNode.class)
+        .path("scope");
   }
 }
