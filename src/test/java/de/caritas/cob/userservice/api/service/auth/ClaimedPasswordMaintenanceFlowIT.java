@@ -512,7 +512,8 @@ class ClaimedPasswordMaintenanceFlowIT {
   }
 
   @Test
-  void actualAppConsultantResetUsesItsCoherentAdministratorPrimaryWithoutCallerKind() throws Exception {
+  void actualAppConsultantResetUsesItsCoherentAdministratorPrimaryWithoutCallerKind()
+      throws Exception {
     for (String kind : List.of("AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")) {
       try (var f = new Fixture(kind, true)) {
         f.service.requestPasswordReset("testuser", "en");

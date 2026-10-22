@@ -264,7 +264,9 @@ class UserSelfPasswordScenarioCBoundaryTest {
       String metadata =
           f.jdbc.queryForObject(
               "select metadata_json from identity_self_password_intent", String.class);
-      String originalIntentDigest = f.jdbc.queryForObject("select intent_digest from identity_self_password_intent", String.class);
+      String originalIntentDigest =
+          f.jdbc.queryForObject(
+              "select intent_digest from identity_self_password_intent", String.class);
       long deadline =
           f.jdbc.queryForObject(
               "select authority_valid_until from identity_self_password_intent", Long.class);
@@ -280,7 +282,9 @@ class UserSelfPasswordScenarioCBoundaryTest {
               f.now.get().plusSeconds(30 * 86400).getEpochSecond(),
               operation);
       }
-      f.jdbc.update("update identity_self_password_intent set intent_digest=null where operation_id=?", f.operation); // Existing pre-column custody remains recoverable from its original AEAD.
+      f.jdbc.update(
+          "update identity_self_password_intent set intent_digest=null where operation_id=?",
+          f.operation); // Existing pre-column custody remains recoverable from its original AEAD.
       assertEquals(0, f.maintenance.expireSecretCustody());
       f.now.set(f.now.get().plusSeconds(9 * 86400));
       assertEquals(100, f.maintenance.expireSecretCustody());
@@ -299,7 +303,12 @@ class UserSelfPasswordScenarioCBoundaryTest {
               "select authority_valid_until from identity_self_password_intent where operation_id=?",
               Long.class,
               f.operation));
-      assertEquals(originalIntentDigest, f.jdbc.queryForObject("select intent_digest from identity_self_password_intent where operation_id=?", String.class, f.operation));
+      assertEquals(
+          originalIntentDigest,
+          f.jdbc.queryForObject(
+              "select intent_digest from identity_self_password_intent where operation_id=?",
+              String.class,
+              f.operation));
       assertEquals(
           1,
           f.jdbc.queryForObject(
@@ -399,9 +408,13 @@ class UserSelfPasswordScenarioCBoundaryTest {
       jdbc.execute(
           "create table identity_self_password_intent(operation_id varchar(36) primary key,realm_id varchar(512),account_id varchar(36),tenant_id bigint,owner_client varchar(255),owner_subject varchar(36),request_digest varchar(64),target_json clob,authority_valid_until bigint,metadata_json clob,intent_envelope clob,status varchar(32),receipt clob,updated_at timestamp)");
       try (var migration = source.getConnection()) {
-        org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(migration,
-            new org.springframework.core.io.ClassPathResource("db/changelog/changeset/20261023_identity_self_password_retention_367/migrate.sql"));
-      } catch (java.sql.SQLException failure) { throw new IllegalStateException(failure); }
+        org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(
+            migration,
+            new org.springframework.core.io.ClassPathResource(
+                "db/changelog/changeset/20261023_identity_self_password_retention_367/migrate.sql"));
+      } catch (java.sql.SQLException failure) {
+        throw new IllegalStateException(failure);
+      }
       var human =
           new AuthenticatedUser(
               ACCOUNT,

@@ -52,33 +52,48 @@ public final class SelfPasswordMaintenance {
 
   /** Existing secret retention only. No operation or authority may be allocated by a sweep. */
   public int expireSecretCustody() {
-    if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
-    return transaction(() -> {
-      long cutoff = clock.instant().minusSeconds(7 * 86400L).getEpochSecond();
-      var operations = jdbc.query(
-          "select operation_id from identity_self_password_intent where intent_envelope is not null and authority_valid_until<=? order by authority_valid_until,operation_id limit 100 for update",
-          (rs, index) -> rs.getString("operation_id"), cutoff);
-      int erased = 0;
-      for (String operation : operations) {
-        var row = Objects.requireNonNull(find(operation));
-        String digest = row.intentDigest;
-        if (digest == null) {
-          // Pre-column custody is opened only to retain its exact nonsecret command digest.
-          if (!realmId.equals(row.realm)) throw unavailable();
-          var saved = codec.read(row.metadata, JsonNode.class);
-          var checked = metadata(row, saved.path("expectedState").textValue());
-          if (!codec.canonical(checked).equals(row.metadata)) throw unavailable();
-          var wrapper = codec.read(codec.utf8(codec.openSelfPasswordIntent(checked, row.envelope)), JsonNode.class);
-          digest = codec.digest("maintenance-intent", wrapper.path("body"));
-        }
-        if (!digest.matches("[0-9a-f]{64}")) throw unavailable();
-        String terminal = Set.of("ACKNOWLEDGED", "REJECTED", "REFUSED").contains(row.status) ? "EXPIRED" : "EXPIRED_UNKNOWN";
-        erased += jdbc.update(
-            "update identity_self_password_intent set intent_envelope=null,intent_digest=?,status=?,updated_at=? where operation_id=? and intent_envelope is not null and authority_valid_until<=?",
-            digest, terminal, now(), operation, cutoff);
-      }
-      return erased;
-    });
+    if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
+      throw unavailable();
+    return transaction(
+        () -> {
+          long cutoff = clock.instant().minusSeconds(7 * 86400L).getEpochSecond();
+          var operations =
+              jdbc.query(
+                  "select operation_id from identity_self_password_intent where intent_envelope is not null and authority_valid_until<=? order by authority_valid_until,operation_id limit 100 for update",
+                  (rs, index) -> rs.getString("operation_id"),
+                  cutoff);
+          int erased = 0;
+          for (String operation : operations) {
+            var row = Objects.requireNonNull(find(operation));
+            String digest = row.intentDigest;
+            if (digest == null) {
+              // Pre-column custody is opened only to retain its exact nonsecret command digest.
+              if (!realmId.equals(row.realm)) throw unavailable();
+              var saved = codec.read(row.metadata, JsonNode.class);
+              var checked = metadata(row, saved.path("expectedState").textValue());
+              if (!codec.canonical(checked).equals(row.metadata)) throw unavailable();
+              var wrapper =
+                  codec.read(
+                      codec.utf8(codec.openSelfPasswordIntent(checked, row.envelope)),
+                      JsonNode.class);
+              digest = codec.digest("maintenance-intent", wrapper.path("body"));
+            }
+            if (!digest.matches("[0-9a-f]{64}")) throw unavailable();
+            String terminal =
+                Set.of("ACKNOWLEDGED", "REJECTED", "REFUSED").contains(row.status)
+                    ? "EXPIRED"
+                    : "EXPIRED_UNKNOWN";
+            erased +=
+                jdbc.update(
+                    "update identity_self_password_intent set intent_envelope=null,intent_digest=?,status=?,updated_at=? where operation_id=? and intent_envelope is not null and authority_valid_until<=?",
+                    digest,
+                    terminal,
+                    now(),
+                    operation,
+                    cutoff);
+          }
+          return erased;
+        });
   }
 
   /** Only a verified committed native terminal can construct these existing HTTP status types. */
@@ -440,7 +455,9 @@ public final class SelfPasswordMaintenance {
         var wrapper =
             codec.read(
                 codec.utf8(codec.openSelfPasswordIntent(stored, row.envelope)), JsonNode.class);
-        if (row.intentDigest != null && !codec.digest("maintenance-intent", wrapper.path("body")).equals(row.intentDigest)) throw unavailable();
+        if (row.intentDigest != null
+            && !codec.digest("maintenance-intent", wrapper.path("body")).equals(row.intentDigest))
+          throw unavailable();
         if (Set.of("REJECTED", "REFUSED").contains(row.status)) {
           var proof =
               codec.verifyMaintenanceNoEffectReceipt(
