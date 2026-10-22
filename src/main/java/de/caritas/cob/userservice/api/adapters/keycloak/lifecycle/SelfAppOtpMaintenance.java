@@ -77,7 +77,8 @@ public final class SelfAppOtpMaintenance {
     if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
       throw unavailable();
     if ((kind == Operation.APP && (!text(initialCode, 128) || !text(secret, 4096)))
-        || (kind == Operation.EMAIL_START && !text(pendingEmail, 320)) || markActive == null)
+        || (kind == Operation.EMAIL_START && !text(pendingEmail, 320))
+        || markActive == null)
       throw new BadRequestException("A complete app OTP request is required");
     var self = actualSelf(kind);
     String operation = operationId();
@@ -86,9 +87,11 @@ public final class SelfAppOtpMaintenance {
     String requestDigest =
         codec.digest(
             "oriso/user-maintenance-intent/request/v1",
-            kind == Operation.DELETE ? Map.of("operation", "otp.delete")
-                : kind == Operation.EMAIL_START ? Map.of("email", pendingEmail)
-                : Map.of("otp", initialCode, "secret", secret));
+            kind == Operation.DELETE
+                ? Map.of("operation", "otp.delete")
+                : kind == Operation.EMAIL_START
+                    ? Map.of("email", pendingEmail)
+                    : Map.of("otp", initialCode, "secret", secret));
     // Check actual local ownership before even the token HTTP call, outside every RPC lock.
     CheckedIntent checked =
         transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
@@ -101,8 +104,7 @@ public final class SelfAppOtpMaintenance {
               clock.instant().getEpochSecond() + 600);
       try {
         checked =
-            transaction(
-                () -> prepare(self, operation, requestDigest, actor, originalExpiry, kind));
+            transaction(() -> prepare(self, operation, requestDigest, actor, originalExpiry, kind));
       } catch (RuntimeException uncertain) {
         checked = transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
         if (checked == null) throw unavailable();
@@ -151,14 +153,16 @@ public final class SelfAppOtpMaintenance {
         if (first.status() == 202) {
           var completed = invoke(self, frozen.row, actor, command, kind);
           outcome = codec.verifySelfEmailStartOtpReceipt(completed.body, realmId, actor, command);
-          if (completed.status != 200 || outcome.status() != 200
+          if (completed.status != 200
+              || outcome.status() != 200
               || !first.sameEmailDelivery(outcome)) throw unavailable();
         } else outcome = first;
         if (outcome.status() != 200) throw unavailable();
       } else {
-        outcome = kind == Operation.DELETE
-            ? codec.verifySelfDeleteOtpReceipt(reply.body, realmId, actor, command)
-            : codec.verifySelfAppOtpReceipt(reply.body, realmId, actor, command);
+        outcome =
+            kind == Operation.DELETE
+                ? codec.verifySelfDeleteOtpReceipt(reply.body, realmId, actor, command)
+                : codec.verifySelfAppOtpReceipt(reply.body, realmId, actor, command);
         if (outcome.status() != reply.status) throw unavailable();
       }
     } catch (RuntimeException unknown) {
@@ -178,8 +182,7 @@ public final class SelfAppOtpMaintenance {
                   kind));
     } catch (RuntimeException uncertain) {
       // A fresh durable row is the only commit witness. Do not rerun the domain callback here.
-      var resolved =
-          transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
+      var resolved = transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
       if (resolved == null
           || !terminal(resolved.row.status)
           || !Objects.equals(outcome.receipt(), resolved.row.receipt)
@@ -280,13 +283,17 @@ public final class SelfAppOtpMaintenance {
     boolean success = outcome.status() == 200 || outcome.status() == 201;
     if (success) {
       if (kind == Operation.EMAIL_START) {
-        var pending = jdbc.queryForList(
-            "select start_operation_id from identity_self_otp_pending_email where account_id=? for update",
-            String.class, self.account);
+        var pending =
+            jdbc.queryForList(
+                "select start_operation_id from identity_self_otp_pending_email where account_id=? for update",
+                String.class,
+                self.account);
         if (pending.size() > 1) throw unavailable();
-        if (pending.isEmpty()) jdbc.update(
-            "insert into identity_self_otp_pending_email(account_id,start_operation_id) values(?,?)",
-            self.account, operation);
+        if (pending.isEmpty())
+          jdbc.update(
+              "insert into identity_self_otp_pending_email(account_id,start_operation_id) values(?,?)",
+              self.account,
+              operation);
         else if (!operation.equals(pending.getFirst()))
           throw new ConflictException("A different email setup is already owned");
       } else markActive.run();
@@ -445,18 +452,17 @@ public final class SelfAppOtpMaintenance {
     headers.set(
         "X-ORISO-Task-Context",
         kind == Operation.DELETE
-            ? codec.selfDeleteOtpProof(realmName, realmId, self.account, actor, materialized, expiry)
+            ? codec.selfDeleteOtpProof(
+                realmName, realmId, self.account, actor, materialized, expiry)
             : kind == Operation.EMAIL_START
-                ? codec.selfEmailStartOtpProof(realmName, realmId, self.account, actor, materialized, expiry)
-                : codec.selfAppOtpProof(realmName, realmId, self.account, actor, materialized, expiry));
+                ? codec.selfEmailStartOtpProof(
+                    realmName, realmId, self.account, actor, materialized, expiry)
+                : codec.selfAppOtpProof(
+                    realmName, realmId, self.account, actor, materialized, expiry));
     var uri =
         UriComponentsBuilder.fromUriString(authServer)
             .pathSegment(
-                "realms",
-                realmName,
-                "otp-config",
-                kind.route,
-                command.path("username").textValue())
+                "realms", realmName, "otp-config", kind.route, command.path("username").textValue())
             .build()
             .encode()
             .toUri();
@@ -554,9 +560,9 @@ public final class SelfAppOtpMaintenance {
         || !authentication.isAuthenticated()
         || !((kind == Operation.DELETE) ? "DELETE" : "PUT").equals(request.getMethod())
         || !(kind == Operation.EMAIL_START
-            ? Set.of("/service/users/2fa/email", "/users/2fa/email")
-            : Set.of("/service/users/2fa/app", "/users/2fa/app")).contains(request.getRequestURI()))
-      throw forbidden();
+                ? Set.of("/service/users/2fa/email", "/users/2fa/email")
+                : Set.of("/service/users/2fa/app", "/users/2fa/app"))
+            .contains(request.getRequestURI())) throw forbidden();
     var jwt = authentication.getToken();
     String authorization = request.getHeader("Authorization");
     String account = jwt.getSubject();

@@ -167,8 +167,10 @@ public final class AccountLifecycleCodec {
     String operation = intentText(value, "command", 64);
     boolean deletion = "otp.delete".equals(operation);
     boolean emailStart = "otp.email-start".equals(operation);
-    String route = deletion ? "otp-config/delete-otp"
-        : emailStart ? "otp-config/send-verification-mail" : "otp-config/setup-otp";
+    String route =
+        deletion
+            ? "otp-config/delete-otp"
+            : emailStart ? "otp-config/send-verification-mail" : "otp-config/setup-otp";
     if (!operationId.equals(workflowId)
         || !(deletion || emailStart || "otp.app-setup".equals(operation))
         || !(deletion ? "DELETE" : "PUT").equals(intentText(value, "method", 16))
@@ -213,12 +215,16 @@ public final class AccountLifecycleCodec {
     intentText(value, "username", 512);
     JsonNode body = value.path("body");
     boolean emailStart = "otp.email-start".equals(metadata.command());
-    intentFields(body, emailStart
-        ? java.util.Set.of("target", "operationId", "expectedState", "otp", "authorityValidUntil")
-        : java.util.Set.of("target", "operationId", "expectedState", "otp"));
-    if (emailStart && (!body.path("authorityValidUntil").isIntegralNumber()
-        || !body.path("authorityValidUntil").canConvertToLong()
-        || body.path("authorityValidUntil").longValue() != metadata.authorityValidUntil()))
+    intentFields(
+        body,
+        emailStart
+            ? java.util.Set.of(
+                "target", "operationId", "expectedState", "otp", "authorityValidUntil")
+            : java.util.Set.of("target", "operationId", "expectedState", "otp"));
+    if (emailStart
+        && (!body.path("authorityValidUntil").isIntegralNumber()
+            || !body.path("authorityValidUntil").canConvertToLong()
+            || body.path("authorityValidUntil").longValue() != metadata.authorityValidUntil()))
       throw invalidSecretIntent();
     if (!metadata.operationId().equals(intentUuid(body, "operationId"))
         || !metadata.expectedState().equals(intentDigest(body, "expectedState")))
@@ -359,10 +365,21 @@ public final class AccountLifecycleCodec {
   }
 
   String selfEmailStartOtpProof(
-      String realmName, String realmId, String accountId, TaskActorCredentials actor,
-      JsonNode materialized, long authorityValidUntil) {
-    return selfOtpProof(realmName, realmId, accountId, actor, materialized,
-        authorityValidUntil, "otp.email-start", "PUT");
+      String realmName,
+      String realmId,
+      String accountId,
+      TaskActorCredentials actor,
+      JsonNode materialized,
+      long authorityValidUntil) {
+    return selfOtpProof(
+        realmName,
+        realmId,
+        accountId,
+        actor,
+        materialized,
+        authorityValidUntil,
+        "otp.email-start",
+        "PUT");
   }
 
   private String selfOtpProof(
@@ -417,8 +434,10 @@ public final class AccountLifecycleCodec {
     }
 
     boolean sameEmailDelivery(VerifiedSelfAppOutcome other) {
-      return other != null && emailCredential != null
-          && emailCredential.equals(other.emailCredential) && emailExpiresAt == other.emailExpiresAt;
+      return other != null
+          && emailCredential != null
+          && emailCredential.equals(other.emailCredential)
+          && emailExpiresAt == other.emailExpiresAt;
     }
 
     int status() {
@@ -448,18 +467,21 @@ public final class AccountLifecycleCodec {
   VerifiedSelfAppOutcome verifySelfEmailStartOtpReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozenCommand) {
     try {
-      if (reply == null || reply.length() > 16384
+      if (reply == null
+          || reply.length() > 16384
           || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
         throw invalidSecretIntent();
       JsonNode result = read(reply, JsonNode.class);
-      intentFields(result, java.util.Set.of(
-          "operationId", "accountId", "status", "deliveryState", "result", "receipt"));
+      intentFields(
+          result,
+          java.util.Set.of(
+              "operationId", "accountId", "status", "deliveryState", "result", "receipt"));
       JsonNode body = frozenCommand.path("body");
       JsonNode target = body.path("target");
       if (!intentUuid(body, "operationId").equals(intentUuid(result, "operationId"))
           || !intentUuid(target, "accountId").equals(intentUuid(result, "accountId"))
-          || !result.path("status").isIntegralNumber() || !result.path("status").canConvertToInt())
-        throw invalidSecretIntent();
+          || !result.path("status").isIntegralNumber()
+          || !result.path("status").canConvertToInt()) throw invalidSecretIntent();
       int status = result.path("status").intValue();
       String delivery = intentText(result, "deliveryState", 16);
       if (!(status == 202 && "READY".equals(delivery))
@@ -488,8 +510,8 @@ public final class AccountLifecycleCodec {
           || saved.path("authorityValidUntil").longValue() <= 0
           || !body.path("authorityValidUntil").isIntegralNumber()
           || !body.path("authorityValidUntil").canConvertToLong()
-          || saved.path("authorityValidUntil").longValue() > body.path("authorityValidUntil").longValue())
-        throw invalidSecretIntent();
+          || saved.path("authorityValidUntil").longValue()
+              > body.path("authorityValidUntil").longValue()) throw invalidSecretIntent();
       long expiry = saved.path("authorityValidUntil").longValue();
       var expected = json.createObjectNode();
       expected.put("realmId", realmId);
