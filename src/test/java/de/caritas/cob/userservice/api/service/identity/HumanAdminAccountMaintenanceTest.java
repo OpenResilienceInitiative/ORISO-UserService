@@ -704,8 +704,7 @@ class HumanAdminAccountMaintenanceTest {
     if (unknown)
       server
           .expect(requestTo(URL + "/profile"))
-          .andExpect(
-              r -> assertEquals(frozen.get(), ((MockClientHttpRequest) r).getBodyAsString()))
+          .andExpect(r -> assertEquals(frozen.get(), ((MockClientHttpRequest) r).getBodyAsString()))
           .andRespond(profileReceipt(null));
     if (unknown || "rollback".equals(scenario)) readReply(true);
     if ("drift".equals(scenario)) {
