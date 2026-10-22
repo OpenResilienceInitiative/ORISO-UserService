@@ -40,22 +40,38 @@ class ExistingAccountSetupCausalClaimsTest {
     assertEquals("ACKNOWLEDGED", f.journalPhase());
     assertEquals(1, f.passwords.effects.size());
     assertEquals(1, f.passwords.supportChecks);
+    assertDoesNotThrow(() -> f.service.confirm(Fixture.TOKEN, "new-one"));
+    assertEquals(1, f.passwords.calls.size());
+    assertThrows(RuntimeException.class, () -> f.service.confirm(Fixture.TOKEN, "different"));
+    verify(f.invites, times(1))
+        .completeExistingAccountSetup(
+            anyLong(), any(), any(), any(), any(), any(), any(), anyString(), any());
     assertThrows(
         ScopedIdentityCommandRequiredException.class, f.passwords.lastHandle::checkedClaim);
     verifyNoInteractions(f.identities, f.roles, f.requirement);
 
     var unsupported = new Fixture();
     unsupported.passwords.supported = false;
-    assertThrows(ScopedIdentityCommandRequiredException.class,
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class,
         () -> unsupported.service.confirm(Fixture.TOKEN, "new-one"));
     assertEquals("PENDING", unsupported.phase());
-    assertEquals(0, unsupported.jdbc.queryForObject("select count(*) from identity_setup_password_claim", Integer.class));
+    assertEquals(
+        0,
+        unsupported.jdbc.queryForObject(
+            "select count(*) from identity_setup_password_claim", Integer.class));
     var ambient = new Fixture();
     new org.springframework.transaction.support.TransactionTemplate(ambient.transactions)
-        .executeWithoutResult(status -> assertThrows(ScopedIdentityCommandRequiredException.class,
-            () -> ambient.service.confirm(Fixture.TOKEN, "new-one")));
+        .executeWithoutResult(
+            status ->
+                assertThrows(
+                    ScopedIdentityCommandRequiredException.class,
+                    () -> ambient.service.confirm(Fixture.TOKEN, "new-one")));
     assertEquals("PENDING", ambient.phase());
-    assertEquals(0, ambient.jdbc.queryForObject("select count(*) from identity_setup_password_claim", Integer.class));
+    assertEquals(
+        0,
+        ambient.jdbc.queryForObject(
+            "select count(*) from identity_setup_password_claim", Integer.class));
   }
 
   @Test
