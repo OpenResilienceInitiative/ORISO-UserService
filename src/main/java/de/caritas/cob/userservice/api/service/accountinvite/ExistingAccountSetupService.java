@@ -361,7 +361,8 @@ public class ExistingAccountSetupService {
             saved.email());
     // Pure keyed binding only; this port operation cannot issue a bearer or call the provider.
     String digest = passwords.existingSetupRequestDigest(binding, chosenPassword);
-    return new CausalTarget(saved, setupPasswordClaims.claimWithinOwner(binding, digest), completed);
+    return new CausalTarget(
+        saved, setupPasswordClaims.claimWithinOwner(binding, digest), completed);
   }
 
   private void releaseDefinitive(CausalTarget target, String reason) {
