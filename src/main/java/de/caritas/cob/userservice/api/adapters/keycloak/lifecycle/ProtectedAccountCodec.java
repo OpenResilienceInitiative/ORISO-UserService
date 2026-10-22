@@ -205,6 +205,14 @@ public final class ProtectedAccountCodec {
     }
   }
 
+  public String checkpoint(VerifiedCreated created) {
+    throw invalid();
+  }
+
+  public VerifiedCreated restore(AcceptanceClaim claim, String checkpoint) {
+    throw invalid();
+  }
+
   public byte[] ownedReadBody(VerifiedCreated created) {
     require(created);
     return json.canonical(existingBody(created)).getBytes(StandardCharsets.UTF_8);

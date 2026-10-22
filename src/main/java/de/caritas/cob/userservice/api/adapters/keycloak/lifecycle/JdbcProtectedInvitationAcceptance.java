@@ -110,6 +110,10 @@ public final class JdbcProtectedInvitationAcceptance {
         });
   }
 
+  public AcceptanceClaim resume(long inviteId, String tokenHash) {
+    throw unavailable();
+  }
+
   private java.util.List<Row> rows(long inviteId) {
     return jdbc.query(
         "SELECT * FROM protected_invitation_acceptance WHERE invite_id=? FOR UPDATE",
