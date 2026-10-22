@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedI
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedAccounts.PendingOwnedAccount;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCommitted;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCreated;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedRecovery;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedOtpBootstrap.Completion;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedOtpBootstrap.PreparedBootstrap;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
@@ -413,6 +414,115 @@ class JdbcProtectedAccountActivationTest {
         RuntimeException.class,
         () -> restart().stageReserved(claim, pending, prepared, policy, tenant));
     assertEquals(1, count("admin"));
+  }
+
+  @Test
+  void verifiedRecoveryCleansOnlyTheOwnedLocalRowsAtomicallyAndReplaysItsStableOutcome() {
+    assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy));
+    jdbc.update("UPDATE account_invite SET active_recipient_key='still-owned'");
+    var recovered = recovery();
+    allowDiscard(claim.executionId());
+    var cleaned = assertDoesNotThrow(() -> restart().discard(claim, recovered));
+    assertEquals(0, count("admin"));
+    assertEquals(0, count("account_inactivity"));
+    assertEquals(0, count("synthetic_otp_stage"));
+    assertEquals("LOCAL_CLEANED", state());
+    assertEquals(cleaned, restart().discard(claim, recovered));
+    assertEquals(1, cleaned.journalVersion());
+    assertEquals("still-owned", jdbc.queryForObject("SELECT active_recipient_key FROM account_invite", String.class));
+    assertEquals(ACCOUNT, jdbc.queryForObject("SELECT account_id FROM protected_invitation_acceptance", String.class));
+    verify(otp, times(1)).discardWithinOwner(any());
+    var foreign = recovery();
+    assertThrows(RuntimeException.class, () -> restart().discard(claim, foreign));
+  }
+
+  @Test
+  void encryptedOtpCleanupFailureRollsBackAdminEnrollmentAndCleanupJournal() {
+    assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy));
+    doAnswer(call -> {
+      jdbc.update("DELETE FROM synthetic_otp_stage");
+      throw new IllegalStateException("synthetic encrypted-row failure");
+    }).when(otp).discardWithinOwner(any());
+    assertThrows(RuntimeException.class, () -> restart().discard(claim, recovery()));
+    assertEquals(1, count("admin"));
+    assertEquals(1, count("account_inactivity"));
+    assertEquals(1, count("synthetic_otp_stage"));
+    assertEquals("WAITING_OTP", state());
+    verify(otp).discardWithinOwner(any());
+  }
+
+  @Test
+  void recoveryRefusesDriftForeignProofAndCommittedAccountsBeforeAnyDeletion() {
+    assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy));
+    var recovered = recovery();
+    jdbc.update("UPDATE admin SET tenant_id=8");
+    assertThrows(RuntimeException.class, () -> restart().discard(claim, recovered));
+    jdbc.update("UPDATE admin SET tenant_id=7");
+    when(recovered.creationProof()).thenReturn("foreign-creation-proof");
+    assertThrows(RuntimeException.class, () -> restart().discard(claim, recovered));
+    when(recovered.creationProof()).thenReturn("synthetic-authenticated-creation-proof");
+    when(recovered.generation()).thenReturn(0L);
+    assertThrows(RuntimeException.class, () -> restart().discard(claim, recovered));
+    when(recovered.generation()).thenReturn(1L);
+    when(recovered.state()).thenReturn("COMMITTED");
+    assertThrows(RuntimeException.class, () -> restart().discard(claim, recovered));
+    when(recovered.state()).thenReturn("RECOVERY_CLAIMED");
+    var complete = completion();
+    allowCompletion(complete);
+    var ready = restart().ready(claim, complete);
+    restart().acknowledge(ready, committed(ready.outcome()));
+    assertThrows(RuntimeException.class, () -> restart().discard(claim, recovered));
+    assertEquals(1, count("admin"));
+    assertEquals("COMMITTED", state());
+    verify(otp, never()).discardWithinOwner(any());
+  }
+
+  @Test
+  void reducingCleanupAfterExpiryAndRevocationUsesSavedIncarnationWithoutLiveCredential() {
+    assertDoesNotThrow(() -> restart().stage(claim, pending, prepared, policy));
+    var complete = completion();
+    allowCompletion(complete);
+    restart().ready(claim, complete);
+    jdbc.update("UPDATE account_invite SET status='REVOKED',token_hash=NULL,active_recipient_key='still-owned'");
+    jdbc.update("UPDATE protected_invitation_authorization SET state='CANCEL_REQUESTED'");
+    Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
+    var historical = acceptanceAt(late).historical(73);
+    allowDiscard(complete.bootstrapIncarnation());
+    var recovered = recovery();
+    var cleaned = assertDoesNotThrow(() -> activationAt(late).discard(historical, recovered));
+    assertEquals(cleaned, activationAt(late).discard(historical, recovered));
+    assertEquals("LOCAL_CLEANED", state());
+    assertEquals(0, count("admin"));
+    assertEquals("REVOKED", jdbc.queryForObject("SELECT status FROM account_invite", String.class));
+    assertEquals("still-owned", jdbc.queryForObject("SELECT active_recipient_key FROM account_invite", String.class));
+  }
+
+  private VerifiedRecovery recovery() {
+    when(created.creationProof()).thenReturn("synthetic-authenticated-creation-proof");
+    var recovered = mock(VerifiedRecovery.class);
+    when(recovered.approvalId()).thenReturn(claim.frozen().approvalId());
+    when(recovered.attemptId()).thenReturn(claim.attemptId());
+    when(recovered.executionId()).thenReturn(UUID.randomUUID());
+    when(recovered.accountId()).thenReturn(ACCOUNT);
+    when(recovered.generation()).thenReturn(1L);
+    when(recovered.state()).thenReturn("RECOVERY_CLAIMED");
+    when(recovered.creationProof()).thenReturn("synthetic-authenticated-creation-proof");
+    return recovered;
+  }
+
+  private void allowDiscard(UUID incarnation) {
+    doAnswer(call -> {
+      assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+      JdbcProtectedAccountActivation.VerifiedDiscard exact = call.getArgument(0);
+      assertEquals(73, exact.inviteId());
+      assertEquals(claim.claimId(), exact.claimId());
+      assertEquals(claim.attemptId(), exact.attemptId());
+      assertEquals(claim.executionId(), exact.executionId());
+      assertEquals(ACCOUNT, exact.accountId());
+      assertEquals(incarnation, exact.bootstrapIncarnation());
+      assertEquals(1, jdbc.update("DELETE FROM synthetic_otp_stage WHERE invite_id=73"));
+      return null;
+    }).when(otp).discardWithinOwner(any());
   }
 
   private VerifiedCommitted committed(AccountLifecycleDtos.LocalOutcome local) {

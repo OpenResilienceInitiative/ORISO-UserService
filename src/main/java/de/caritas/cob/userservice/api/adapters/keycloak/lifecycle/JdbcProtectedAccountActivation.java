@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedI
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.KeycloakProtectedAccounts.PendingOwnedAccount;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCommitted;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedCreated;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedAccountCodec.VerifiedRecovery;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedOtpBootstrap.Completion;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedOtpBootstrap.PreparedBootstrap;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
@@ -425,6 +426,14 @@ public final class JdbcProtectedAccountActivation {
     public String toString() {
       return "ProtectedHistoricalReady[redacted]";
     }
+  }
+
+  public LocalOutcome discard(AcceptanceClaim claim, VerifiedRecovery recovery) {
+    throw unavailable();
+  }
+
+  public LocalOutcome discard(HistoricalAcceptance historical, VerifiedRecovery recovery) {
+    throw unavailable();
   }
 
   /** Only this account-effects owner can authorize removal of its exact encrypted OTP rows. */

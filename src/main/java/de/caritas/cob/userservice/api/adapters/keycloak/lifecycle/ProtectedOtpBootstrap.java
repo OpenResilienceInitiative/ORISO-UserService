@@ -867,6 +867,12 @@ public final class ProtectedOtpBootstrap {
   }
 
   /** Reconstruct opaque success only from the independently checked committed private journal. */
+  /** Pure exact-owner cleanup, unavailable until its recovery counterfactual is qualified. */
+  public void discardWithinOwner(JdbcProtectedAccountActivation.VerifiedDiscard discarded) {
+    owningSql();
+    throw unavailable();
+  }
+
   public Completion completed(AcceptanceClaim claim) {
     outsideSql();
     return transactions.execute(tx -> completedWithinOwner(claim));
