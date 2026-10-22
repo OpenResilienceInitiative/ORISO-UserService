@@ -32,8 +32,11 @@ class ProtectedInvitationProfilesTest {
   void onlyTheTwoProtectedKindsMaySelectAnInstalledProfile() {
     assertThatThrownBy(() -> new ProtectedInvitationProfiles("actual-native-realm", Map.of()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> new ProtectedInvitationProfiles("actual-native-realm",
-        Map.of(AccountInviteTargetRole.TENANT_ADMIN, "tenant-reviewed")))
+    assertThatThrownBy(
+            () ->
+                new ProtectedInvitationProfiles(
+                    "actual-native-realm",
+                    Map.of(AccountInviteTargetRole.TENANT_ADMIN, "tenant-reviewed")))
         .isInstanceOf(IllegalArgumentException.class);
     var ordinary = new HashMap<>(reviewed());
     ordinary.put(AccountInviteTargetRole.COUNSELLOR, "ordinary-profile");
@@ -49,14 +52,23 @@ class ProtectedInvitationProfilesTest {
       assertThatThrownBy(() -> new ProtectedInvitationProfiles("actual-native-realm", invalid))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(() -> new ProtectedInvitationProfiles("actual-native-realm",
-        Map.of(AccountInviteTargetRole.TENANT_ADMIN, "shared",
-            AccountInviteTargetRole.PLATFORM_ADMIN, "shared")))
+    assertThatThrownBy(
+            () ->
+                new ProtectedInvitationProfiles(
+                    "actual-native-realm",
+                    Map.of(
+                        AccountInviteTargetRole.TENANT_ADMIN,
+                        "shared",
+                        AccountInviteTargetRole.PLATFORM_ADMIN,
+                        "shared")))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
   private static Map<AccountInviteTargetRole, String> reviewed() {
-    return Map.of(AccountInviteTargetRole.TENANT_ADMIN, "tenant-reviewed",
-        AccountInviteTargetRole.PLATFORM_ADMIN, "platform-reviewed");
+    return Map.of(
+        AccountInviteTargetRole.TENANT_ADMIN,
+        "tenant-reviewed",
+        AccountInviteTargetRole.PLATFORM_ADMIN,
+        "platform-reviewed");
   }
 }

@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
@@ -45,20 +46,25 @@ class ProtectedInvitationIssuanceOutboxJpaIT extends ProtectedInvitationIssuance
   void approvedPublicSendCommitsTheLinkAndSendingBeforeSmtpAndKeepsTheAuditRedacted() {
     approveAndReconcile();
     var observed = new AtomicInteger();
-    when(sender.send(any(), any(), any(), any(), any(), any(), any())).thenAnswer(call -> {
-      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-      var saved = invites.findAll().getFirst();
-      String link = call.getArgument(3);
-      String token = link.substring(link.lastIndexOf('/') + 1);
-      assertThat(saved.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
-      assertThat(saved.getTokenHash()).isEqualTo(AccountInviteService.hash(token));
-      assertThat(state(saved.getId())).isEqualTo("SENDING");
-      assertThat(jdbc.queryForObject(
-          "SELECT sealed_mail FROM protected_invitation_mail_outbox WHERE invite_id=?",
-          String.class, saved.getId())).doesNotContain(token, link);
-      observed.incrementAndGet();
-      return new InviteMailSendReceipt(RECIPIENT, Instant.now());
-    });
+    when(sender.send(any(), any(), any(), any(), any(), any(), any()))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              var saved = invites.findAll().getFirst();
+              String link = call.getArgument(3);
+              String token = link.substring(link.lastIndexOf('/') + 1);
+              assertThat(saved.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+              assertThat(saved.getTokenHash()).isEqualTo(AccountInviteService.hash(token));
+              assertThat(state(saved.getId())).isEqualTo("SENDING");
+              assertThat(
+                      jdbc.queryForObject(
+                          "SELECT sealed_mail FROM protected_invitation_mail_outbox WHERE invite_id=?",
+                          String.class,
+                          saved.getId()))
+                  .doesNotContain(token, link);
+              observed.incrementAndGet();
+              return new InviteMailSendReceipt(RECIPIENT, Instant.now());
+            });
 
     var result = service.createAndSendInvite(command(), template.getId());
 
@@ -70,16 +76,19 @@ class ProtectedInvitationIssuanceOutboxJpaIT extends ProtectedInvitationIssuance
     assertThat(result.delivery().getBodySnapshot()).doesNotContain("https://", "{{inviteLink}}");
     assertThat(result.rawToken()).isNull();
     assertThat(result.acceptUrl()).isNull();
-    assertThat(jdbc.queryForObject(
-        "SELECT request_json FROM protected_invitation_authorization WHERE invite_id=?",
-        String.class, result.invite().getId())).doesNotContain(human.getAccessToken());
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT request_json FROM protected_invitation_authorization WHERE invite_id=?",
+                String.class,
+                result.invite().getId()))
+        .doesNotContain(human.getAccessToken());
     verify(approvals).approve(any(), anyString());
   }
 
   @Test
   void lostApprovalReplyRecoversTheSameDurableProposalThroughSetupWithoutReapproval() {
-    when(approvals.approve(any(), anyString())).thenThrow(
-        new KeycloakProtectedInvitations.RemoteFailure(0));
+    when(approvals.approve(any(), anyString()))
+        .thenThrow(new KeycloakProtectedInvitations.RemoteFailure(0));
     when(approvals.reconcile(any())).thenAnswer(call -> verified(call.getArgument(0)));
     assertThatThrownBy(() -> service.createAndSendInvite(command(), template.getId()))
         .isInstanceOf(KeycloakProtectedInvitations.RemoteFailure.class);
@@ -98,18 +107,17 @@ class ProtectedInvitationIssuanceOutboxJpaIT extends ProtectedInvitationIssuance
 
   @Test
   void missingRemoteApprovalNeverSubstitutesAnotherCurrentHumanForTheOriginalIssuer() {
-    when(approvals.approve(any(), anyString())).thenThrow(
-        new KeycloakProtectedInvitations.RemoteFailure(0));
+    when(approvals.approve(any(), anyString()))
+        .thenThrow(new KeycloakProtectedInvitations.RemoteFailure(0));
     assertThatThrownBy(() -> service.createAndSendInvite(command(), template.getId()))
         .isInstanceOf(KeycloakProtectedInvitations.RemoteFailure.class);
     var saved = invites.findAll().getFirst();
     String original = proposal(saved.getId());
-    when(approvals.reconcile(any())).thenThrow(
-        new KeycloakProtectedInvitations.RemoteFailure(404));
+    when(approvals.reconcile(any())).thenThrow(new KeycloakProtectedInvitations.RemoteFailure(404));
     human.setUserId("f171689a-59f5-43c3-aa40-623ba9cf624f");
 
-    assertThatThrownBy(() -> service.sendInvite(
-        new SendInviteCommand(saved.getId(), template.getId())))
+    assertThatThrownBy(
+            () -> service.sendInvite(new SendInviteCommand(saved.getId(), template.getId())))
         .isInstanceOf(AccessDeniedException.class);
 
     assertThat(proposal(saved.getId())).isEqualTo(original);
@@ -125,10 +133,17 @@ class ProtectedInvitationIssuanceOutboxJpaIT extends ProtectedInvitationIssuance
     var first = service.createAndSendInvite(command(), template.getId());
     assertThat(first).isNotNull();
     String originalTokenHash = first.invite().getTokenHash();
-    var another = templates.saveAndFlush(InviteEmailTemplate.builder()
-        .kind(InviteEmailTemplateKind.TENANT_INVITE).name("Later template")
-        .subject("Later subject").body("Different {{inviteLink}} text").language("en")
-        .active(true).createDate(LocalDateTime.now()).build());
+    var another =
+        templates.saveAndFlush(
+            InviteEmailTemplate.builder()
+                .kind(InviteEmailTemplateKind.TENANT_INVITE)
+                .name("Later template")
+                .subject("Later subject")
+                .body("Different {{inviteLink}} text")
+                .language("en")
+                .active(true)
+                .createDate(LocalDateTime.now())
+                .build());
 
     var retry = service.sendInvite(new SendInviteCommand(first.invite().getId(), another.getId()));
 
@@ -146,11 +161,14 @@ class ProtectedInvitationIssuanceOutboxJpaIT extends ProtectedInvitationIssuance
     approveAndReconcile();
     var first = service.createAndSendInvite(command(), template.getId());
     assertThat(first).isNotNull();
-    jdbc.update("UPDATE account_invite SET status='EXPIRED',expires_at=?,token_hash=NULL,"
-        + "active_recipient_key=NULL WHERE id=?",
-        Timestamp.valueOf(LocalDateTime.now().minusDays(1)), first.invite().getId());
+    jdbc.update(
+        "UPDATE account_invite SET status='EXPIRED',expires_at=?,token_hash=NULL,"
+            + "active_recipient_key=NULL WHERE id=?",
+        Timestamp.valueOf(LocalDateTime.now().minusDays(1)),
+        first.invite().getId());
 
-    var retry = service.sendInvite(new SendInviteCommand(first.invite().getId(), template.getId()));
+    var command = new SendInviteCommand(first.invite().getId(), template.getId());
+    var retry = assertDoesNotThrow(() -> service.sendInvite(command));
 
     assertThat(retry).isNotNull();
     assertThat(retry.invite().getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
@@ -188,14 +206,18 @@ class ProtectedInvitationIssuanceOutboxJpaIT extends ProtectedInvitationIssuance
   }
 
   private void approveAndReconcile() {
-    when(approvals.approve(any(), anyString())).thenAnswer(call -> {
-      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-      return verified(call.getArgument(0));
-    });
-    when(approvals.reconcile(any())).thenAnswer(call -> {
-      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-      return verified(call.getArgument(0));
-    });
+    when(approvals.approve(any(), anyString()))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return verified(call.getArgument(0));
+            });
+    when(approvals.reconcile(any()))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return verified(call.getArgument(0));
+            });
   }
 
   private VerifiedApproval verified(FrozenApproval frozen) throws Exception {
@@ -208,13 +230,21 @@ class ProtectedInvitationIssuanceOutboxJpaIT extends ProtectedInvitationIssuance
     receipt.put("profileVersion", 1L);
     receipt.put("validUntil", scope.path("validUntil").asText());
     receipt.put("approvalRequestDigest", frozen.requestDigest());
-    String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(
-        json.canonical(receipt).getBytes(StandardCharsets.UTF_8));
+    String encoded =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(json.canonical(receipt).getBytes(StandardCharsets.UTF_8));
     Mac mac = Mac.getInstance("HmacSHA256");
     mac.init(new SecretKeySpec(KEY, "HmacSHA256"));
-    receipt.put("receipt", encoded + "." + HexFormat.of().formatHex(
-        mac.doFinal(("protected-approval-receipt/v1\n" + encoded)
-            .getBytes(StandardCharsets.UTF_8))));
+    receipt.put(
+        "receipt",
+        encoded
+            + "."
+            + HexFormat.of()
+                .formatHex(
+                    mac.doFinal(
+                        ("protected-approval-receipt/v1\n" + encoded)
+                            .getBytes(StandardCharsets.UTF_8))));
     var response = new LinkedHashMap<String, Object>();
     response.put("approvalId", frozen.approvalId().toString());
     response.put("scopeDigest", receipt.get("scopeDigest"));
@@ -231,12 +261,16 @@ class ProtectedInvitationIssuanceOutboxJpaIT extends ProtectedInvitationIssuance
   private String proposal(long id) {
     return jdbc.queryForObject(
         "SELECT request_json FROM protected_invitation_authorization WHERE invite_id=?",
-        String.class, id);
+        String.class,
+        id);
   }
 
   private String state(long id) {
-    var values = jdbc.queryForList(
-        "SELECT state FROM protected_invitation_mail_outbox WHERE invite_id=?", String.class, id);
+    var values =
+        jdbc.queryForList(
+            "SELECT state FROM protected_invitation_mail_outbox WHERE invite_id=?",
+            String.class,
+            id);
     return values.isEmpty() ? "ABSENT" : values.getFirst();
   }
 }

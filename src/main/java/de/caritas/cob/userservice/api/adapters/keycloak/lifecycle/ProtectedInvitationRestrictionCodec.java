@@ -9,8 +9,12 @@ import java.util.UUID;
 /** Restriction acknowledgements are distinct from permission to issue or activate an account. */
 public final class ProtectedInvitationRestrictionCodec {
   public ProtectedInvitationRestrictionCodec(
-      ProtectedInvitationCodec approvals, AccountLifecycleCodec json, byte[] key, Clock clock,
-      String realmId, String issuer) {}
+      ProtectedInvitationCodec approvals,
+      AccountLifecycleCodec json,
+      byte[] key,
+      Clock clock,
+      String realmId,
+      String issuer) {}
 
   public FrozenCancellation freeze(
       FrozenApproval approval, String knownScopeDigest, UUID cancellationId, Reason reason) {
@@ -27,20 +31,37 @@ public final class ProtectedInvitationRestrictionCodec {
   }
 
   public record FrozenCancellation(
-      FrozenApproval approval, String knownScopeDigest, UUID cancellationId, Reason reason,
+      FrozenApproval approval,
+      String knownScopeDigest,
+      UUID cancellationId,
+      Reason reason,
       String bodyJson) {
-    @Override public String toString() { return "FrozenCancellation[scope=redacted]"; }
+    @Override
+    public String toString() {
+      return "FrozenCancellation[scope=redacted]";
+    }
   }
 
   public static final class VerifiedRestriction {
     private final String responseJson;
     private final boolean cleanupRequired;
+
     private VerifiedRestriction(String responseJson, boolean cleanupRequired) {
       this.responseJson = responseJson;
       this.cleanupRequired = cleanupRequired;
     }
-    public String responseJson() { return responseJson; }
-    public boolean cleanupRequired() { return cleanupRequired; }
-    @Override public String toString() { return "VerifiedRestriction[scope=redacted]"; }
+
+    public String responseJson() {
+      return responseJson;
+    }
+
+    public boolean cleanupRequired() {
+      return cleanupRequired;
+    }
+
+    @Override
+    public String toString() {
+      return "VerifiedRestriction[scope=redacted]";
+    }
   }
 }
