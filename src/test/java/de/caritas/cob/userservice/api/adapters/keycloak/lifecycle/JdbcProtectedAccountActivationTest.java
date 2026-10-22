@@ -654,13 +654,15 @@ class JdbcProtectedAccountActivationTest {
   @Test
   void historicalPhaseDistinguishesPendingAndCommittedWithoutGrantingLiveRecipientAccess() {
     var before = acceptanceAt(clock).historical(73);
-    assertEquals(JdbcProtectedAccountActivation.Phase.UNSTAGED,
+    assertEquals(
+        JdbcProtectedAccountActivation.Phase.UNSTAGED,
         assertDoesNotThrow(() -> restart().phase(before)));
     restart().stage(claim, pending, prepared, policy);
     Clock late = Clock.fixed(Instant.parse("2030-01-03T00:00:00Z"), ZoneOffset.UTC);
     var pendingHistory = acceptanceAt(late).historical(73);
     clearInvocations(otp);
-    assertEquals(JdbcProtectedAccountActivation.Phase.WAITING_OTP,
+    assertEquals(
+        JdbcProtectedAccountActivation.Phase.WAITING_OTP,
         assertDoesNotThrow(() -> activationAt(late).phase(pendingHistory)));
     assertThrows(RuntimeException.class, () -> acceptanceAt(late).resume(73, TOKEN));
     verifyNoInteractions(otp);
@@ -668,11 +670,13 @@ class JdbcProtectedAccountActivationTest {
     allowCompletion(complete);
     var ready = restart().ready(claim, complete);
     clearInvocations(otp);
-    assertEquals(JdbcProtectedAccountActivation.Phase.READY,
+    assertEquals(
+        JdbcProtectedAccountActivation.Phase.READY,
         assertDoesNotThrow(() -> activationAt(late).phase(pendingHistory)));
     var saved = activationAt(late).historicalReady(pendingHistory);
     activationAt(late).acknowledge(saved, committed(ready.outcome()));
-    assertEquals(JdbcProtectedAccountActivation.Phase.COMMITTED,
+    assertEquals(
+        JdbcProtectedAccountActivation.Phase.COMMITTED,
         assertDoesNotThrow(() -> activationAt(late).phase(pendingHistory)));
     verifyNoInteractions(otp);
   }

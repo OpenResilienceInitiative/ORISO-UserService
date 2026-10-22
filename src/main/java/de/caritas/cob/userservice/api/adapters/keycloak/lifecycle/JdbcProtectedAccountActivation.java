@@ -477,22 +477,29 @@ public final class JdbcProtectedAccountActivation {
         || !TransactionSynchronizationManager.isActualTransactionActive()
         || !TransactionSynchronizationManager.isSynchronizationActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
-        || !TransactionSynchronizationManager.hasResource(jdbc.getDataSource())) throw unavailable();
+        || !TransactionSynchronizationManager.hasResource(jdbc.getDataSource()))
+      throw unavailable();
     var claim = historical.claim();
-    owned(claim, true, () -> {
-      Row row = checked(claim, one(claim), true);
-      if (!Set.of("WAITING_OTP", "READY").contains(row.state())) throw unavailable();
-      if ("READY".equals(row.state())) historicallyChecked(claim, row);
-      Instant deadline = Instant.parse(scope(claim).path("validUntil").asText());
-      if (deadline.isAfter(clock.instant())) throw unavailable();
-      if (jdbc.update(
-          "UPDATE account_invite SET status='EXPIRED',token_hash=NULL,update_date=?"
-              + " WHERE id=? AND status='ACCEPTED' AND provisioning_status='IN_PROGRESS'"
-              + " AND accepted_by_user_id=? AND expires_at=?",
-          Timestamp.from(clock.instant()), inviteId(claim), row.accountId(), Timestamp.from(deadline)) != 1)
-        throw unavailable();
-      return null;
-    });
+    owned(
+        claim,
+        true,
+        () -> {
+          Row row = checked(claim, one(claim), true);
+          if (!Set.of("WAITING_OTP", "READY").contains(row.state())) throw unavailable();
+          if ("READY".equals(row.state())) historicallyChecked(claim, row);
+          Instant deadline = Instant.parse(scope(claim).path("validUntil").asText());
+          if (deadline.isAfter(clock.instant())) throw unavailable();
+          if (jdbc.update(
+                  "UPDATE account_invite SET status='EXPIRED',token_hash=NULL,update_date=?"
+                      + " WHERE id=? AND status='ACCEPTED' AND provisioning_status='IN_PROGRESS'"
+                      + " AND accepted_by_user_id=? AND expires_at=?",
+                  Timestamp.from(clock.instant()),
+                  inviteId(claim),
+                  row.accountId(),
+                  Timestamp.from(deadline))
+              != 1) throw unavailable();
+          return null;
+        });
   }
 
   private LocalOutcome discardOwned(
@@ -606,8 +613,8 @@ public final class JdbcProtectedAccountActivation {
       throw unavailable();
     String account = recovery.accountId();
     boolean abandoned = "ABANDONED".equals(recovery.state());
-    if (abandoned != (account == null)
-        || abandoned != (recovery.creationProof() == null)) throw unavailable();
+    if (abandoned != (account == null) || abandoned != (recovery.creationProof() == null))
+      throw unavailable();
     if (account != null) {
       canonicalUuid(account);
       if (count("SELECT COUNT(*) FROM admin WHERE admin_id=?", account) != 0
@@ -621,11 +628,14 @@ public final class JdbcProtectedAccountActivation {
           || !equal(recovery.creationProof(), original.get().creationProof())) throw unavailable();
     }
     if (jdbc.queryForObject(
-        "SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?",
-        String.class, inviteId(claim)) != null) throw unavailable();
+            "SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?",
+            String.class,
+            inviteId(claim))
+        != null) throw unavailable();
     var previous = cleanupRows(claim);
     if (previous.size() > 1) throw unavailable();
-    UUID outbox = previous.isEmpty() ? UUID.randomUUID() : UUID.fromString(previous.getFirst().outbox());
+    UUID outbox =
+        previous.isEmpty() ? UUID.randomUUID() : UUID.fromString(previous.getFirst().outbox());
     Map<String, Object> fields = new TreeMap<>();
     fields.put("inviteId", Long.toString(inviteId(claim)));
     fields.put("approvalId", claim.frozen().approvalId().toString());
@@ -648,12 +658,24 @@ public final class JdbcProtectedAccountActivation {
       if (!body.equals(old.body()) || !equal(digest, old.digest())) throw unavailable();
       return old.outcome();
     }
-    otp.discardWithinOwner(new VerifiedDiscard(inviteId(claim), claim.claimId(), claim.attemptId(),
-        claim.executionId(), account, claim.executionId(), recovery.executionId(), recovery.generation()));
+    otp.discardWithinOwner(
+        new VerifiedDiscard(
+            inviteId(claim),
+            claim.claimId(),
+            claim.attemptId(),
+            claim.executionId(),
+            account,
+            claim.executionId(),
+            recovery.executionId(),
+            recovery.generation()));
     if (jdbc.update(
-        "INSERT INTO protected_account_cleanup (invite_id,body_json,effects_digest,outbox_id,created_at) VALUES (?,?,?,?,?)",
-        inviteId(claim), body, digest, outbox.toString(), Timestamp.from(clock.instant())) != 1)
-      throw unavailable();
+            "INSERT INTO protected_account_cleanup (invite_id,body_json,effects_digest,outbox_id,created_at) VALUES (?,?,?,?,?)",
+            inviteId(claim),
+            body,
+            digest,
+            outbox.toString(),
+            Timestamp.from(clock.instant()))
+        != 1) throw unavailable();
     return new LocalOutcome(1, outbox, digest);
   }
 
