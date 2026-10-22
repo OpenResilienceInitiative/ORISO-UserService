@@ -45,19 +45,26 @@ public final class HumanAdminAccountMaintenance {
   private final Clock clock;
   private final String publicIssuer;
   private final TransactionTemplate transactions;
-  private final ObjectMapper json = new ObjectMapper()
-      .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
-      .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-      .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-      .enable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
-      .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
-      .enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES)
-      .disable(com.fasterxml.jackson.databind.MapperFeature.ALLOW_COERCION_OF_SCALARS);
+  private final ObjectMapper json =
+      new ObjectMapper()
+          .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .enable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+          .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+          .enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES)
+          .disable(com.fasterxml.jackson.databind.MapperFeature.ALLOW_COERCION_OF_SCALARS);
 
   public HumanAdminAccountMaintenance(
-      IdentityClientConfig mode, AuthenticatedUser actor, AdminScope scope, JdbcTemplate jdbc,
-      PlatformTransactionManager transactions, HttpServletRequest request,
-      HumanAdminMaintenanceTransport transport, Clock clock, String publicIssuer) {
+      IdentityClientConfig mode,
+      AuthenticatedUser actor,
+      AdminScope scope,
+      JdbcTemplate jdbc,
+      PlatformTransactionManager transactions,
+      HttpServletRequest request,
+      HumanAdminMaintenanceTransport transport,
+      Clock clock,
+      String publicIssuer) {
     this.mode = Objects.requireNonNull(mode);
     this.actor = Objects.requireNonNull(actor);
     this.scope = Objects.requireNonNull(scope);
@@ -84,7 +91,7 @@ public final class HumanAdminAccountMaintenance {
     AdminRow row = authorizedRow(accountId, false);
     try (var checked = new CheckedAccount(row, row, human, UUID.randomUUID(), null)) {
       var result = transport.read(checked);
-      requireProjection(row,result);
+      requireProjection(row, result);
       return result;
     }
   }
@@ -104,9 +111,10 @@ public final class HumanAdminAccountMaintenance {
       if (digest == null || !digest.matches("[0-9a-f]{64}")) throw unavailable();
       String originalJson = encode(original);
       String desiredJson = encode(profile);
-      Intent intent = recoverCommit(
-          () -> transaction(() -> prepare(checked, digest, originalJson, desiredJson)),
-          () -> transaction(() -> checkedIntent(checked, digest, originalJson, desiredJson)));
+      Intent intent =
+          recoverCommit(
+              () -> transaction(() -> prepare(checked, digest, originalJson, desiredJson)),
+              () -> transaction(() -> checkedIntent(checked, digest, originalJson, desiredJson)));
       if ("APPLIED".equals(intent.status)) {
         requireDesired(authorizedRow(accountId, false), original, profile);
         transport.verifyProfileReceipt(checked, frozen(intent), intent.receipt);
@@ -114,17 +122,21 @@ public final class HumanAdminAccountMaintenance {
       }
       if ("PREPARED".equals(intent.status)) {
         var state = transport.read(checked);
-        requireProjection(current,state);
+        requireProjection(current, state);
         FrozenProfile frozen = transport.freezeProfile(checked, profile, operation, state.state());
         String body = encode(frozen);
-        intent = recoverCommit(
-            () -> transaction(() -> freeze(checked, digest, originalJson, desiredJson, body)),
-            () -> transaction(() -> {
-              var found = checkedIntent(checked, digest, originalJson, desiredJson);
-              if (found == null || !Set.of("FROZEN", "ACKNOWLEDGED", "APPLIED").contains(found.status)
-                  || !body.equals(found.body)) throw unavailable();
-              return found;
-            }));
+        intent =
+            recoverCommit(
+                () -> transaction(() -> freeze(checked, digest, originalJson, desiredJson, body)),
+                () ->
+                    transaction(
+                        () -> {
+                          var found = checkedIntent(checked, digest, originalJson, desiredJson);
+                          if (found == null
+                              || !Set.of("FROZEN", "ACKNOWLEDGED", "APPLIED").contains(found.status)
+                              || !body.equals(found.body)) throw unavailable();
+                          return found;
+                        }));
       }
       FrozenProfile frozen = frozen(intent);
       String receipt;
@@ -133,32 +145,50 @@ public final class HumanAdminAccountMaintenance {
       } else if ("FROZEN".equals(intent.status)) {
         receipt = transport.updateProfile(checked, frozen);
         final Intent originalIntent = intent;
-        intent = recoverCommit(
-            () -> transaction(() -> acknowledge(checked, digest, originalJson, desiredJson,
-                originalIntent.body, receipt)),
-            () -> transaction(() -> {
-              var found = checkedIntent(checked, digest, originalJson, desiredJson);
-              if (found == null || !Set.of("ACKNOWLEDGED", "APPLIED").contains(found.status)
-                  || !Objects.equals(receipt, found.receipt)
-                  || !Objects.equals(originalIntent.body, found.body)) throw unavailable();
-              return found;
-            }));
+        intent =
+            recoverCommit(
+                () ->
+                    transaction(
+                        () ->
+                            acknowledge(
+                                checked,
+                                digest,
+                                originalJson,
+                                desiredJson,
+                                originalIntent.body,
+                                receipt)),
+                () ->
+                    transaction(
+                        () -> {
+                          var found = checkedIntent(checked, digest, originalJson, desiredJson);
+                          if (found == null
+                              || !Set.of("ACKNOWLEDGED", "APPLIED").contains(found.status)
+                              || !Objects.equals(receipt, found.receipt)
+                              || !Objects.equals(originalIntent.body, found.body))
+                            throw unavailable();
+                          return found;
+                        }));
       } else throw unavailable();
       // No other legitimate admin-profile issuer may pass this account's pending SQL intent.
       // Confirm that the actual native fields still describe this acknowledged request.
       transport.verifyProfileReceipt(checked, frozen, receipt);
       var currentNative = transport.read(checked);
-      requireProjection(checked.actual,currentNative);
-      if (!Objects.equals(currentNative.firstName(),profile.firstName())
-          || !Objects.equals(currentNative.lastName(),profile.lastName())
-          || !Objects.equals(currentNative.email(),profile.email())) throw conflict();
+      requireProjection(checked.actual, currentNative);
+      if (!Objects.equals(currentNative.firstName(), profile.firstName())
+          || !Objects.equals(currentNative.lastName(), profile.lastName())
+          || !Objects.equals(currentNative.email(), profile.email())) throw conflict();
       try {
-        transaction(() -> { apply(checked, digest, originalJson, desiredJson, receipt); return null; });
+        transaction(
+            () -> {
+              apply(checked, digest, originalJson, desiredJson, receipt);
+              return null;
+            });
       } catch (ConflictException | ForbiddenException refusal) {
         throw refusal;
       } catch (RuntimeException uncertain) {
         var found = transaction(() -> checkedIntent(checked, digest, originalJson, desiredJson));
-        if (found == null || !"APPLIED".equals(found.status)
+        if (found == null
+            || !"APPLIED".equals(found.status)
             || !Objects.equals(receipt, found.receipt)) throw unavailable();
         requireDesired(authorizedRow(accountId, false), original, profile);
       }
@@ -173,17 +203,32 @@ public final class HumanAdminAccountMaintenance {
       return found;
     }
     if (!row.equals(checked.original)) throw conflict();
-    if (!jdbc.queryForList("select operation_id from general_admin_identity_intent where account_id=? and operation_id<>? and status<>'APPLIED' for update",
-        String.class,row.account,checked.workflow.toString()).isEmpty()) throw conflict();
+    if (!jdbc.queryForList(
+            "select operation_id from general_admin_identity_intent where account_id=? and operation_id<>? and status<>'APPLIED' for update",
+            String.class,
+            row.account,
+            checked.workflow.toString())
+        .isEmpty()) throw conflict();
     Instant now = clock.instant();
-    if (jdbc.update("insert into general_admin_identity_intent(operation_id,account_id,tenant_id,human_subject,human_issuer,human_client,request_digest,original_json,desired_json,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,'PREPARED',?,?)",
-        checked.workflow.toString(), row.account, row.tenant, checked.human.subject,
-        checked.human.issuer, checked.human.client, digest, original, desired,
-        Timestamp.from(now), Timestamp.from(now)) != 1) throw unavailable();
+    if (jdbc.update(
+            "insert into general_admin_identity_intent(operation_id,account_id,tenant_id,human_subject,human_issuer,human_client,request_digest,original_json,desired_json,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,'PREPARED',?,?)",
+            checked.workflow.toString(),
+            row.account,
+            row.tenant,
+            checked.human.subject,
+            checked.human.issuer,
+            checked.human.client,
+            digest,
+            original,
+            desired,
+            Timestamp.from(now),
+            Timestamp.from(now))
+        != 1) throw unavailable();
     return Objects.requireNonNull(checkedIntent(checked, digest, original, desired));
   }
 
-  private Intent freeze(CheckedAccount checked, String digest, String original, String desired, String body) {
+  private Intent freeze(
+      CheckedAccount checked, String digest, String original, String desired, String body) {
     var row = authorizedRow(checked.actual.account, true);
     var found = Objects.requireNonNull(checkedIntent(checked, digest, original, desired));
     requireOwnedRow(row, checked.original, checked.profile, found.status);
@@ -191,13 +236,22 @@ public final class HumanAdminAccountMaintenance {
       if (!body.equals(found.body)) throw conflict();
       return found;
     }
-    if (jdbc.update("update general_admin_identity_intent set native_body=?,status='FROZEN',updated_at=? where operation_id=? and status='PREPARED' and native_body is null and native_receipt is null",
-        body, Timestamp.from(clock.instant()), checked.workflow.toString()) != 1) throw conflict();
+    if (jdbc.update(
+            "update general_admin_identity_intent set native_body=?,status='FROZEN',updated_at=? where operation_id=? and status='PREPARED' and native_body is null and native_receipt is null",
+            body,
+            Timestamp.from(clock.instant()),
+            checked.workflow.toString())
+        != 1) throw conflict();
     return Objects.requireNonNull(checkedIntent(checked, digest, original, desired));
   }
 
-  private Intent acknowledge(CheckedAccount checked, String digest, String original, String desired,
-      String body, String receipt) {
+  private Intent acknowledge(
+      CheckedAccount checked,
+      String digest,
+      String original,
+      String desired,
+      String body,
+      String receipt) {
     var row = authorizedRow(checked.actual.account, true);
     var found = Objects.requireNonNull(checkedIntent(checked, digest, original, desired));
     requireOwnedRow(row, checked.original, checked.profile, found.status);
@@ -206,14 +260,19 @@ public final class HumanAdminAccountMaintenance {
       if (!Objects.equals(receipt, found.receipt)) throw conflict();
       return found;
     }
-    if (!"FROZEN".equals(found.status) || receipt == null
-        || jdbc.update("update general_admin_identity_intent set native_receipt=?,status='ACKNOWLEDGED',updated_at=? where operation_id=? and status='FROZEN' and native_receipt is null",
-            receipt, Timestamp.from(clock.instant()), checked.workflow.toString()) != 1) throw conflict();
+    if (!"FROZEN".equals(found.status)
+        || receipt == null
+        || jdbc.update(
+                "update general_admin_identity_intent set native_receipt=?,status='ACKNOWLEDGED',updated_at=? where operation_id=? and status='FROZEN' and native_receipt is null",
+                receipt,
+                Timestamp.from(clock.instant()),
+                checked.workflow.toString())
+            != 1) throw conflict();
     return Objects.requireNonNull(checkedIntent(checked, digest, original, desired));
   }
 
-  private void apply(CheckedAccount checked, String digest, String original, String desired,
-      String receipt) {
+  private void apply(
+      CheckedAccount checked, String digest, String original, String desired, String receipt) {
     var row = authorizedRow(checked.actual.account, true);
     var found = Objects.requireNonNull(checkedIntent(checked, digest, original, desired));
     if (!receipt.equals(found.receipt)) throw unavailable();
@@ -223,16 +282,34 @@ public final class HumanAdminAccountMaintenance {
     }
     if (!"ACKNOWLEDGED".equals(found.status) || !row.equals(checked.original)) throw conflict();
     var profile = checked.profile;
-    if (jdbc.update("update admin set first_name=?,last_name=?,email=?,update_date=? where admin_id=? and username=? and type=? and ((tenant_id=?) or (tenant_id is null and ? is null)) and first_name=? and last_name=? and email=? and ((update_date=?) or (update_date is null and ? is null))",
-        profile.firstName(), profile.lastName(), profile.email(), Timestamp.from(clock.instant()),
-        row.account, row.username, row.type, row.tenant, row.tenant, row.firstName, row.lastName,
-        row.email, timestamp(row.updated), timestamp(row.updated)) != 1) throw conflict();
+    if (jdbc.update(
+            "update admin set first_name=?,last_name=?,email=?,update_date=? where admin_id=? and username=? and type=? and ((tenant_id=?) or (tenant_id is null and ? is null)) and first_name=? and last_name=? and email=? and ((update_date=?) or (update_date is null and ? is null))",
+            profile.firstName(),
+            profile.lastName(),
+            profile.email(),
+            Timestamp.from(clock.instant()),
+            row.account,
+            row.username,
+            row.type,
+            row.tenant,
+            row.tenant,
+            row.firstName,
+            row.lastName,
+            row.email,
+            timestamp(row.updated),
+            timestamp(row.updated))
+        != 1) throw conflict();
     requireDesired(authorizedRow(row.account, true), row, profile);
-    if (jdbc.update("update general_admin_identity_intent set status='APPLIED',updated_at=? where operation_id=? and status='ACKNOWLEDGED' and native_receipt=?",
-        Timestamp.from(clock.instant()), checked.workflow.toString(), receipt) != 1) throw conflict();
+    if (jdbc.update(
+            "update general_admin_identity_intent set status='APPLIED',updated_at=? where operation_id=? and status='ACKNOWLEDGED' and native_receipt=?",
+            Timestamp.from(clock.instant()),
+            checked.workflow.toString(),
+            receipt)
+        != 1) throw conflict();
   }
 
-  private Intent checkedIntent(CheckedAccount checked, String digest, String original, String desired) {
+  private Intent checkedIntent(
+      CheckedAccount checked, String digest, String original, String desired) {
     currentHumanMatching(checked.human);
     var found = intent(checked.workflow, true);
     if (found == null) return null;
@@ -241,7 +318,8 @@ public final class HumanAdminAccountMaintenance {
         || !checked.human.subject.equals(found.humanSubject)
         || !checked.human.issuer.equals(found.humanIssuer)
         || !checked.human.client.equals(found.humanClient)
-        || !digest.equals(found.digest) || !original.equals(found.original)
+        || !digest.equals(found.digest)
+        || !original.equals(found.original)
         || !desired.equals(found.desired)) throw conflict();
     if (!Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED", "APPLIED").contains(found.status)
         || "PREPARED".equals(found.status) && (found.body != null || found.receipt != null)
@@ -252,58 +330,98 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private Intent intent(UUID operation, boolean lock) {
-    var rows = jdbc.query("select * from general_admin_identity_intent where operation_id=?"
-        + (lock ? " for update" : ""), (r, index) -> new Intent(r.getString("account_id"),
-            nullableLong(r, "tenant_id"), r.getString("human_subject"), r.getString("human_issuer"),
-            r.getString("human_client"), r.getString("request_digest"), r.getString("original_json"),
-            r.getString("desired_json"), r.getString("native_body"), r.getString("native_receipt"),
-            r.getString("status")), operation.toString());
+    var rows =
+        jdbc.query(
+            "select * from general_admin_identity_intent where operation_id=?"
+                + (lock ? " for update" : ""),
+            (r, index) ->
+                new Intent(
+                    r.getString("account_id"),
+                    nullableLong(r, "tenant_id"),
+                    r.getString("human_subject"),
+                    r.getString("human_issuer"),
+                    r.getString("human_client"),
+                    r.getString("request_digest"),
+                    r.getString("original_json"),
+                    r.getString("desired_json"),
+                    r.getString("native_body"),
+                    r.getString("native_receipt"),
+                    r.getString("status")),
+            operation.toString());
     if (rows.size() > 1) throw unavailable();
     return rows.isEmpty() ? null : rows.getFirst();
   }
 
   private AdminRow authorizedRow(String account, boolean lock) {
     canonicalUuid(account);
-    var rows = jdbc.query("select admin_id,tenant_id,username,type,first_name,last_name,email,update_date from admin where admin_id=?"
-        + (lock ? " for update" : ""), (r, index) -> new AdminRow(r.getString("admin_id"),
-            nullableLong(r,"tenant_id"), r.getString("username"), r.getString("type"),
-            r.getString("first_name"), r.getString("last_name"), r.getString("email"),
-            r.getTimestamp("update_date") == null ? null : r.getTimestamp("update_date").toInstant().toString()), account);
+    var rows =
+        jdbc.query(
+            "select admin_id,tenant_id,username,type,first_name,last_name,email,update_date from admin where admin_id=?"
+                + (lock ? " for update" : ""),
+            (r, index) ->
+                new AdminRow(
+                    r.getString("admin_id"),
+                    nullableLong(r, "tenant_id"),
+                    r.getString("username"),
+                    r.getString("type"),
+                    r.getString("first_name"),
+                    r.getString("last_name"),
+                    r.getString("email"),
+                    r.getTimestamp("update_date") == null
+                        ? null
+                        : r.getTimestamp("update_date").toInstant().toString()),
+            account);
     if (rows.isEmpty()) throw new NotFoundException("Managed account was not found");
     if (rows.size() != 1) throw forbidden();
     var row = rows.getFirst();
     var authorities = actor.getGrantedAuthorities();
-    if (authorities == null || !("TENANT".equals(row.type)
-            && authorities.contains(Authority.AuthorityValue.TENANT_ADMIN)
-        || "AGENCY".equals(row.type) && authorities.contains(Authority.AuthorityValue.USER_ADMIN)
-        || "SUPER".equals(row.type) && actor.isPlatformAdmin()
-            && authorities.contains(Authority.AuthorityValue.TENANT_ADMIN))) throw forbidden();
+    if (authorities == null
+        || !("TENANT".equals(row.type)
+                && authorities.contains(Authority.AuthorityValue.TENANT_ADMIN)
+            || "AGENCY".equals(row.type)
+                && authorities.contains(Authority.AuthorityValue.USER_ADMIN)
+            || "SUPER".equals(row.type)
+                && actor.isPlatformAdmin()
+                && authorities.contains(Authority.AuthorityValue.TENANT_ADMIN))) throw forbidden();
     scope.assertMay(AdminScope.Target.admin(account));
     return row;
   }
 
   private Human currentHuman() {
-    if (!mode.isFiveActorMode() || !(request.getUserPrincipal() instanceof JwtAuthenticationToken authentication)
+    if (!mode.isFiveActorMode()
+        || !(request.getUserPrincipal() instanceof JwtAuthenticationToken authentication)
         || !authentication.isAuthenticated()) throw forbidden();
     var jwt = authentication.getToken();
     Object azp = jwt.getClaims().get("azp");
     String raw = request.getHeader("Authorization");
-    if (raw == null || raw.length() > 32775 || !raw.regionMatches(true,0,"Bearer ",0,7)
+    if (raw == null
+        || raw.length() > 32775
+        || !raw.regionMatches(true, 0, "Bearer ", 0, 7)
         || !jwt.getTokenValue().equals(raw.substring(7))
         || !jwt.getTokenValue().equals(actor.getAccessToken())
         || !Objects.equals(jwt.getSubject(), actor.getUserId())
-        || jwt.getIssuer() == null || !publicIssuer.equals(jwt.getIssuer().toString())
-        || !(azp instanceof String client) || client.isBlank() || client.length() > 255
-        || jwt.getIssuedAt() == null || jwt.getIssuedAt().getEpochSecond() <= 0
+        || jwt.getIssuer() == null
+        || !publicIssuer.equals(jwt.getIssuer().toString())
+        || !(azp instanceof String client)
+        || client.isBlank()
+        || client.length() > 255
+        || jwt.getIssuedAt() == null
+        || jwt.getIssuedAt().getEpochSecond() <= 0
         || jwt.getIssuedAt().isAfter(clock.instant().plusSeconds(5))
-        || jwt.getExpiresAt() == null || !jwt.getExpiresAt().isAfter(jwt.getIssuedAt())
+        || jwt.getExpiresAt() == null
+        || !jwt.getExpiresAt().isAfter(jwt.getIssuedAt())
         || !jwt.getExpiresAt().isAfter(clock.instant())) throw forbidden();
     canonicalUuid(jwt.getSubject());
     Object suppliedTenant = jwt.getClaims().get("tenantId");
     Long tenant = null;
     if (jwt.getClaims().containsKey("tenantId")) {
-      if (!(suppliedTenant instanceof String value) || !value.matches("0|[1-9][0-9]{0,18}")) throw forbidden();
-      try { tenant = Long.valueOf(value); } catch (NumberFormatException invalid) { throw forbidden(); }
+      if (!(suppliedTenant instanceof String value) || !value.matches("0|[1-9][0-9]{0,18}"))
+        throw forbidden();
+      try {
+        tenant = Long.valueOf(value);
+      } catch (NumberFormatException invalid) {
+        throw forbidden();
+      }
     }
     if (!Objects.equals(tenant, actor.getTenantId())) throw forbidden();
     return new Human(jwt.getSubject(), publicIssuer, client, raw, jwt.getExpiresAt());
@@ -314,14 +432,20 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private void requireOutsideSql() {
-    if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.hasResource(Objects.requireNonNull(jdbc.getDataSource()))) throw unavailable();
+    if (!mode.isFiveActorMode()
+        || TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.hasResource(
+            Objects.requireNonNull(jdbc.getDataSource()))) throw unavailable();
   }
 
   private UUID operationId() {
     String supplied = request.getHeader("Idempotency-Key");
-    try { return canonicalUuid(supplied); }
-    catch (RuntimeException invalid) { throw new BadRequestException("A canonical Idempotency-Key is required for this account change"); }
+    try {
+      return canonicalUuid(supplied);
+    } catch (RuntimeException invalid) {
+      throw new BadRequestException(
+          "A canonical Idempotency-Key is required for this account change");
+    }
   }
 
   private static UUID canonicalUuid(String value) {
@@ -329,38 +453,53 @@ public final class HumanAdminAccountMaintenance {
       UUID parsed = UUID.fromString(value);
       if (!parsed.toString().equals(value)) throw new IllegalArgumentException();
       return parsed;
-    } catch (RuntimeException invalid) { throw forbidden(); }
+    } catch (RuntimeException invalid) {
+      throw forbidden();
+    }
   }
 
-  private static void requireProjection(AdminRow row, HumanAdminMaintenanceTransport.Projection projection) {
-    if (projection == null || !row.account.equals(projection.id())
-        || !Objects.equals(row.tenant,projection.tenantId())
+  private static void requireProjection(
+      AdminRow row, HumanAdminMaintenanceTransport.Projection projection) {
+    if (projection == null
+        || !row.account.equals(projection.id())
+        || !Objects.equals(row.tenant, projection.tenantId())
         || !new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
-            .decodeUsername(row.username).equals(projection.username())) throw unavailable();
+            .decodeUsername(row.username)
+            .equals(projection.username())) throw unavailable();
   }
 
   private static void validateProfile(AdminRow row, IdentityProfileUpdate profile) {
-    if (profile == null || !Objects.equals(row.username, profile.username())
+    if (profile == null
+        || !Objects.equals(row.username, profile.username())
         || !Objects.equals(row.tenant, profile.tenantId())) throw forbidden();
-    for (String value : List.of(profile.firstName() == null ? "" : profile.firstName(),
-        profile.lastName() == null ? "" : profile.lastName(), profile.email() == null ? "" : profile.email()))
-      if (value.isBlank() || value.length() > 255 || value.chars().anyMatch(Character::isISOControl))
+    for (String value :
+        List.of(
+            profile.firstName() == null ? "" : profile.firstName(),
+            profile.lastName() == null ? "" : profile.lastName(),
+            profile.email() == null ? "" : profile.email()))
+      if (value.isBlank()
+          || value.length() > 255
+          || value.chars().anyMatch(Character::isISOControl))
         throw new BadRequestException("Managed profile fields are invalid");
   }
 
-  private static void requireOwnedRow(AdminRow row, AdminRow original, IdentityProfileUpdate desired, String status) {
-    if ("APPLIED".equals(status)) requireDesired(row,original,desired);
+  private static void requireOwnedRow(
+      AdminRow row, AdminRow original, IdentityProfileUpdate desired, String status) {
+    if ("APPLIED".equals(status)) requireDesired(row, original, desired);
     else if (!row.equals(original)) throw conflict();
   }
 
-  private static void requireDesired(AdminRow row, AdminRow original, IdentityProfileUpdate desired) {
-    if (!row.sameIdentity(original) || !Objects.equals(row.firstName,desired.firstName())
-        || !Objects.equals(row.lastName,desired.lastName()) || !Objects.equals(row.email,desired.email())) throw conflict();
+  private static void requireDesired(
+      AdminRow row, AdminRow original, IdentityProfileUpdate desired) {
+    if (!row.sameIdentity(original)
+        || !Objects.equals(row.firstName, desired.firstName())
+        || !Objects.equals(row.lastName, desired.lastName())
+        || !Objects.equals(row.email, desired.email())) throw conflict();
   }
 
   private FrozenProfile frozen(Intent intent) {
     if (intent == null || intent.body == null) throw unavailable();
-    return decode(intent.body,FrozenProfile.class);
+    return decode(intent.body, FrozenProfile.class);
   }
 
   private <T> T transaction(Supplier<T> action) {
@@ -368,9 +507,11 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private <T> T recoverCommit(Supplier<T> action, Supplier<T> resolve) {
-    try { return action.get(); }
-    catch (ConflictException | ForbiddenException | BadRequestException refusal) { throw refusal; }
-    catch (RuntimeException unknown) {
+    try {
+      return action.get();
+    } catch (ConflictException | ForbiddenException | BadRequestException refusal) {
+      throw refusal;
+    } catch (RuntimeException unknown) {
       T saved = resolve.get();
       if (saved == null) throw unavailable();
       return saved;
@@ -378,13 +519,19 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private String encode(Object value) {
-    try { return json.writeValueAsString(value); }
-    catch (Exception invalid) { throw unavailable(); }
+    try {
+      return json.writeValueAsString(value);
+    } catch (Exception invalid) {
+      throw unavailable();
+    }
   }
 
   private <T> T decode(String value, Class<T> type) {
-    try { return json.readValue(value,type); }
-    catch (Exception invalid) { throw unavailable(); }
+    try {
+      return json.readValue(value, type);
+    } catch (Exception invalid) {
+      throw unavailable();
+    }
   }
 
   private static Long nullableLong(ResultSet row, String name) throws SQLException {
@@ -396,21 +543,52 @@ public final class HumanAdminAccountMaintenance {
     return value == null ? null : Timestamp.from(Instant.parse(value));
   }
 
-  private record Human(String subject, String issuer, String client, String rawBearer, Instant expires) {
-    @Override public String toString() { return "Human[authorization=redacted]"; }
-  }
-  private record AdminRow(String account, Long tenant, String username, String type, String firstName,
-      String lastName, String email, String updated) {
-    boolean sameIdentity(AdminRow other) {
-      return account.equals(other.account) && Objects.equals(tenant,other.tenant)
-          && username.equals(other.username) && type.equals(other.type);
+  private record Human(
+      String subject, String issuer, String client, String rawBearer, Instant expires) {
+    @Override
+    public String toString() {
+      return "Human[authorization=redacted]";
     }
-    @Override public String toString() { return "AdminRow[profile=redacted]"; }
   }
-  private record Intent(String account, Long tenant, String humanSubject, String humanIssuer,
-      String humanClient, String digest, String original, String desired, String body,
-      String receipt, String status) {
-    @Override public String toString() { return "Intent[ownership=redacted]"; }
+
+  private record AdminRow(
+      String account,
+      Long tenant,
+      String username,
+      String type,
+      String firstName,
+      String lastName,
+      String email,
+      String updated) {
+    boolean sameIdentity(AdminRow other) {
+      return account.equals(other.account)
+          && Objects.equals(tenant, other.tenant)
+          && username.equals(other.username)
+          && type.equals(other.type);
+    }
+
+    @Override
+    public String toString() {
+      return "AdminRow[profile=redacted]";
+    }
+  }
+
+  private record Intent(
+      String account,
+      Long tenant,
+      String humanSubject,
+      String humanIssuer,
+      String humanClient,
+      String digest,
+      String original,
+      String desired,
+      String body,
+      String receipt,
+      String status) {
+    @Override
+    public String toString() {
+      return "Intent[ownership=redacted]";
+    }
   }
 
   /** Only the actual SQL/human issuer creates this live frame. DTOs and saved tuples cannot. */
@@ -425,39 +603,96 @@ public final class HumanAdminAccountMaintenance {
     private final Instant deadline = clock.instant().plusSeconds(60);
     private boolean active = true;
 
-    private CheckedAccount(AdminRow actual, AdminRow original, Human human, UUID workflow,
+    private CheckedAccount(
+        AdminRow actual,
+        AdminRow original,
+        Human human,
+        UUID workflow,
         IdentityProfileUpdate profile) {
-      this.actual=actual;this.original=original;this.human=human;this.workflow=workflow;this.profile=profile;
+      this.actual = actual;
+      this.original = original;
+      this.human = human;
+      this.workflow = workflow;
+      this.profile = profile;
     }
 
-    public String accountId() { return actual.account; }
-    public Long tenantId() { return actual.tenant; }
-    public String humanSubject() { return human.subject; }
-    public String humanIssuer() { return human.issuer; }
-    public String humanClient() { return human.client; }
-    public String rawHumanBearer() { requireCurrent(); return human.rawBearer; }
-    public UUID workflowId() { return workflow; }
-    public String requestMethod() { return method; }
-    public String requestPath() { return path; }
-    public String originalSqlState() { return encode(original); }
-    public IdentityProfileUpdate desiredProfile() { return profile; }
+    public String accountId() {
+      return actual.account;
+    }
+
+    public Long tenantId() {
+      return actual.tenant;
+    }
+
+    public String humanSubject() {
+      return human.subject;
+    }
+
+    public String humanIssuer() {
+      return human.issuer;
+    }
+
+    public String humanClient() {
+      return human.client;
+    }
+
+    public String rawHumanBearer() {
+      requireCurrent();
+      return human.rawBearer;
+    }
+
+    public UUID workflowId() {
+      return workflow;
+    }
+
+    public String requestMethod() {
+      return method;
+    }
+
+    public String requestPath() {
+      return path;
+    }
+
+    public String originalSqlState() {
+      return encode(original);
+    }
+
+    public IdentityProfileUpdate desiredProfile() {
+      return profile;
+    }
 
     public void requireCurrent() {
-      if (!active || owner != Thread.currentThread() || !clock.instant().isBefore(deadline)
+      if (!active
+          || owner != Thread.currentThread()
+          || !clock.instant().isBefore(deadline)
           || !clock.instant().isBefore(human.expires)
-          || !Objects.equals(method,request.getMethod()) || !Objects.equals(path,request.getRequestURI())) throw forbidden();
-      requireOutsideSql();currentHumanMatching(human);
-      if (!actual.equals(authorizedRow(actual.account,false))) throw conflict();
+          || !Objects.equals(method, request.getMethod())
+          || !Objects.equals(path, request.getRequestURI())) throw forbidden();
+      requireOutsideSql();
+      currentHumanMatching(human);
+      if (!actual.equals(authorizedRow(actual.account, false))) throw conflict();
     }
 
     @Override
-    public void close() { active=false; }
+    public void close() {
+      active = false;
+    }
 
     @Override
-    public String toString() { return "CheckedAccount[authorization=redacted]"; }
+    public String toString() {
+      return "CheckedAccount[authorization=redacted]";
+    }
   }
 
-  private static ConflictException conflict() { return new ConflictException("The account operation conflicts with current state"); }
-  private static ForbiddenException forbidden() { return new ForbiddenException("Managed account operation is not authorized"); }
-  private static ServiceUnavailableException unavailable() { return new ServiceUnavailableException("Checked admin maintenance is unavailable"); }
+  private static ConflictException conflict() {
+    return new ConflictException("The account operation conflicts with current state");
+  }
+
+  private static ForbiddenException forbidden() {
+    return new ForbiddenException("Managed account operation is not authorized");
+  }
+
+  private static ServiceUnavailableException unavailable() {
+    return new ServiceUnavailableException("Checked admin maintenance is unavailable");
+  }
 }

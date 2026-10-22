@@ -127,24 +127,37 @@ class HumanAdminAccountMaintenanceTest {
   @Test
   void actualAdminSqlAndCurrentHumanReachOnlyTheFixedScopedNativeRead() {
     readReply();
-    List<String> malformed = List.of("extra", "missing", "null-enabled", "string-enabled", "numeric-tenant", "numeric-role", "duplicate");
+    List<String> malformed =
+        List.of(
+            "extra",
+            "missing",
+            "null-enabled",
+            "string-enabled",
+            "numeric-tenant",
+            "numeric-role",
+            "duplicate");
     for (String variant : malformed) {
-      server.expect(requestTo(URL + "/read")).andRespond(r -> {
-        var body=projection(false);
-        switch (variant) {
-          case "extra" -> body.put("extra",true);
-          case "missing" -> body.remove("enabled");
-          case "null-enabled" -> body.putNull("enabled");
-          case "string-enabled" -> body.put("enabled","true");
-          case "numeric-tenant" -> body.put("tenantId",7);
-          case "numeric-role" -> body.putArray("effectiveRoles").add(1);
-          default -> { }
-        }
-        String raw=codec.canonical(body);
-        if (variant.equals("duplicate")) raw=raw.substring(0,raw.length()-1)+",\"enabled\":false}";
-        var response=withSuccess(raw,MediaType.APPLICATION_JSON).createResponse(r);
-        response.getHeaders().setCacheControl("no-store");return response;
-      });
+      server
+          .expect(requestTo(URL + "/read"))
+          .andRespond(
+              r -> {
+                var body = projection(false);
+                switch (variant) {
+                  case "extra" -> body.put("extra", true);
+                  case "missing" -> body.remove("enabled");
+                  case "null-enabled" -> body.putNull("enabled");
+                  case "string-enabled" -> body.put("enabled", "true");
+                  case "numeric-tenant" -> body.put("tenantId", 7);
+                  case "numeric-role" -> body.putArray("effectiveRoles").add(1);
+                  default -> {}
+                }
+                String raw = codec.canonical(body);
+                if (variant.equals("duplicate"))
+                  raw = raw.substring(0, raw.length() - 1) + ",\"enabled\":false}";
+                var response = withSuccess(raw, MediaType.APPLICATION_JSON).createResponse(r);
+                response.getHeaders().setCacheControl("no-store");
+                return response;
+              });
     }
     var result = assertDoesNotThrow(() -> service.read(ACCOUNT));
     assertEquals(ACCOUNT, result.id());
@@ -153,7 +166,8 @@ class HumanAdminAccountMaintenanceTest {
     assertEquals(
         0,
         jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
-    for (String variant : malformed) assertThrows(RuntimeException.class, () -> service.read(ACCOUNT),variant);
+    for (String variant : malformed)
+      assertThrows(RuntimeException.class, () -> service.read(ACCOUNT), variant);
     verify(scope, atLeastOnce()).assertMay(any());
     verify(broker, atLeastOnce()).issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
     verify(broker, never()).issue(any());
@@ -375,7 +389,9 @@ class HumanAdminAccountMaintenanceTest {
             .build());
   }
 
-  private void readReply() { readReply(false); }
+  private void readReply() {
+    readReply(false);
+  }
 
   private void readReply(boolean applied) {
     server
@@ -399,22 +415,31 @@ class HumanAdminAccountMaintenanceTest {
                   "PROTECTED_ACCOUNT_OPERATIONS_V1",
                   body.path("target").path("origin").path("humanAuthority").textValue());
             })
-        .andRespond(r -> {
-          var projection = projection(applied);
-          var response=withSuccess(codec.canonical(projection),MediaType.APPLICATION_JSON).createResponse(r);
-          response.getHeaders().setCacheControl("no-store");return response;
-        });
+        .andRespond(
+            r -> {
+              var projection = projection(applied);
+              var response =
+                  withSuccess(codec.canonical(projection), MediaType.APPLICATION_JSON)
+                      .createResponse(r);
+              response.getHeaders().setCacheControl("no-store");
+              return response;
+            });
   }
 
   private com.fasterxml.jackson.databind.node.ObjectNode projection(boolean applied) {
-    var body=codec.read("{}",com.fasterxml.jackson.databind.node.ObjectNode.class);
-    body.put("id",ACCOUNT);body.put("username","original-admin");
-    body.put("email",applied?"new@example.test":"old@example.test");
-    body.put("firstName",applied?"New":"Old");body.put("lastName","Name");
-    body.put("enabled",true);body.put("emailVerified",true);
-    body.put("tenantId","7");body.put("preferredLanguage","de");
+    var body = codec.read("{}", com.fasterxml.jackson.databind.node.ObjectNode.class);
+    body.put("id", ACCOUNT);
+    body.put("username", "original-admin");
+    body.put("email", applied ? "new@example.test" : "old@example.test");
+    body.put("firstName", applied ? "New" : "Old");
+    body.put("lastName", "Name");
+    body.put("enabled", true);
+    body.put("emailVerified", true);
+    body.put("tenantId", "7");
+    body.put("preferredLanguage", "de");
     body.putArray("effectiveRoles").add("tenant-admin");
-    body.put("passwordChangeRequired",false);body.put("state","a".repeat(64));
+    body.put("passwordChangeRequired", false);
+    body.put("state", "a".repeat(64));
     return body;
   }
 
@@ -449,20 +474,22 @@ class HumanAdminAccountMaintenanceTest {
                 .encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
         String receipt = encoded + "." + mac("maintenance-operation-receipt\n" + encoded);
         if (beforeReply != null) beforeReply.run();
-        var response=withSuccess(
-                codec.canonical(
-                    Map.of(
-                        "operationId",
-                        OPERATION,
-                        "accountId",
-                        ACCOUNT,
-                        "result",
-                        "UPDATED",
-                        "receipt",
-                        receipt)),
-                MediaType.APPLICATION_JSON)
-            .createResponse(request);
-        response.getHeaders().setCacheControl("no-store");return response;
+        var response =
+            withSuccess(
+                    codec.canonical(
+                        Map.of(
+                            "operationId",
+                            OPERATION,
+                            "accountId",
+                            ACCOUNT,
+                            "result",
+                            "UPDATED",
+                            "receipt",
+                            receipt)),
+                    MediaType.APPLICATION_JSON)
+                .createResponse(request);
+        response.getHeaders().setCacheControl("no-store");
+        return response;
       } catch (Exception failure) {
         throw new IOException(failure);
       }
