@@ -236,7 +236,8 @@ class ProtectedInvitationCodecTest {
             original.issuerSubject(),
             original.requestDigest());
     assertThrows(
-        IllegalArgumentException.class, () -> codec.verifyAuthorized(forged, response().toString()));
+        IllegalArgumentException.class,
+        () -> codec.verifyAuthorized(forged, response().toString()));
     assertThrows(IllegalArgumentException.class, () -> codec.statusBody(forged));
   }
 
