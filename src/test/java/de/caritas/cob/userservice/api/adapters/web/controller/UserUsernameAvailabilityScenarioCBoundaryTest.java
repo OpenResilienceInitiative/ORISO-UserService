@@ -39,7 +39,11 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
   void publicCReportsOccupiedRawUsernameThroughBothExactSelectors() {
     var fixture = new Fixture(true);
     fixture.install(name -> !NAME.equals(name));
-    assertEquals(409, fixture.controller.usernameAvailability(NAME).getStatusCode().value());
+    assertEquals(
+        409,
+        assertDoesNotThrow(() -> fixture.controller.usernameAvailability(NAME))
+            .getStatusCode()
+            .value());
     assertEquals(List.of(NAME, ENCODED), fixture.calls);
     verifyNoInteractions(fixture.nativeClient);
   }
@@ -48,7 +52,11 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
   void publicCReportsOccupiedEncodedUsernameThroughBothExactSelectors() {
     var fixture = new Fixture(true);
     fixture.install(name -> !ENCODED.equals(name));
-    assertEquals(409, fixture.controller.usernameAvailability(ENCODED).getStatusCode().value());
+    assertEquals(
+        409,
+        assertDoesNotThrow(() -> fixture.controller.usernameAvailability(ENCODED))
+            .getStatusCode()
+            .value());
     assertEquals(List.of(NAME, ENCODED), fixture.calls);
     verifyNoInteractions(fixture.nativeClient);
   }
@@ -57,7 +65,11 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
   void publicCReportsAvailableOnlyAfterBothExactSelectorsConfirm() {
     var fixture = new Fixture(true);
     fixture.install(name -> true);
-    assertEquals(204, fixture.controller.usernameAvailability(NAME).getStatusCode().value());
+    assertEquals(
+        204,
+        assertDoesNotThrow(() -> fixture.controller.usernameAvailability(NAME))
+            .getStatusCode()
+            .value());
     assertEquals(List.of(NAME, ENCODED), fixture.calls);
     verifyNoInteractions(fixture.nativeClient);
   }
@@ -197,9 +209,10 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
                   "backend-account-create",
                   "fixture-secret",
                   "33333333-3333-4333-8333-333333333333"));
-      when(broker.issue(TaskPurpose.ACCOUNT_PROVISIONING))
-          .thenReturn(
-              new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_CREATE, "fixture-create", 60));
+      var creator = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+      when(creator.actor()).thenReturn(TaskActor.ACCOUNT_CREATE);
+      when(creator.accessToken()).thenReturn("fixture-create");
+      when(broker.issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING)).thenReturn(creator);
       gateway =
           new KeycloakUsernameAvailability(
               http,
