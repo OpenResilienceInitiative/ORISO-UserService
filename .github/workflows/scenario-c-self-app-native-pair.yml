@@ -1,7 +1,11 @@
 name: Scenario C public SELF app native pair
 'on':
+  pull_request:
+    branches: [dev]
   push:
     branches:
+    - dev
+    - codex/367-c-caller-finish-20261021
     - codex/367-c-maintenance-user-20261021
     paths:
     - src/**
@@ -33,7 +37,7 @@ jobs:
       uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       with:
         repository: OpenResilienceInitiative/ORISO-Keycloak
-        ref: 3256a5ffade50f3607264d456345c6ba1cdeaaa8
+        ref: a9483e4b44578f10badf70c5265a37a2c1d3d26e
         path: native-keycloak
         persist-credentials: false
     - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
@@ -81,7 +85,7 @@ jobs:
       env:
         MAVEN_OPTS: -Xmx384m -XX:MaxMetaspaceSize=128m -XX:ActiveProcessorCount=2
       run: mvn -B -ntp -q clean install '-DargLine=-Xmx256m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2'
-    - name: Require all36 lifecycle units with exact method inventory
+    - name: Require all46 lifecycle units with exact method inventory
       if: always()
       run: 'cd native-keycloak
 
