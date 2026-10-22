@@ -1194,6 +1194,12 @@ public final class ProtectedOtpBootstrap {
     return found;
   }
 
+  /** Pure exact-owner cleanup, unavailable until its recovery counterfactual is qualified. */
+  public void discardWithinOwner(JdbcProtectedAccountActivation.VerifiedDiscard discarded) {
+    owningSql();
+    throw unavailable();
+  }
+
   /** Reconstruct opaque success only from the independently checked committed private journal. */
   public Completion completed(AcceptanceClaim claim) {
     outsideSql();

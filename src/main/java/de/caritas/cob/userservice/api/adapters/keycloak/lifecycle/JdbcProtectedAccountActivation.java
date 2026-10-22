@@ -288,6 +288,60 @@ public final class JdbcProtectedAccountActivation {
     }
   }
 
+  /** Only this account-effects owner can authorize removal of its exact encrypted OTP rows. */
+  public static final class VerifiedDiscard {
+    private final long inviteId;
+    private final UUID claimId;
+    private final UUID attemptId;
+    private final UUID executionId;
+    private final String accountId;
+    private final UUID bootstrapIncarnation;
+
+    private VerifiedDiscard(
+        long inviteId,
+        UUID claimId,
+        UUID attemptId,
+        UUID executionId,
+        String accountId,
+        UUID bootstrapIncarnation) {
+      this.inviteId = inviteId;
+      this.claimId = claimId;
+      this.attemptId = attemptId;
+      this.executionId = executionId;
+      this.accountId = accountId;
+      this.bootstrapIncarnation = bootstrapIncarnation;
+    }
+
+    public long inviteId() {
+      return inviteId;
+    }
+
+    public UUID claimId() {
+      return claimId;
+    }
+
+    public UUID attemptId() {
+      return attemptId;
+    }
+
+    public UUID executionId() {
+      return executionId;
+    }
+
+    public String accountId() {
+      return accountId;
+    }
+
+    public UUID bootstrapIncarnation() {
+      return bootstrapIncarnation;
+    }
+
+    @Override
+    public String toString() {
+      return "ProtectedVerifiedDiscard[redacted]";
+    }
+  }
+
   private <T> T owned(AcceptanceClaim claim, Supplier<T> action) {
     long invite = inviteId(claim);
     return journal.withRecipientInvite(
