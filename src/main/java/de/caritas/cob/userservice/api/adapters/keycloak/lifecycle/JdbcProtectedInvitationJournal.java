@@ -25,6 +25,7 @@ public final class JdbcProtectedInvitationJournal {
   private final Clock clock;
   private final TransactionTemplate local;
   private final TransactionTemplate durable;
+  private final PlatformTransactionManager manager;
 
   public JdbcProtectedInvitationJournal(
       JdbcTemplate jdbc,
@@ -33,6 +34,7 @@ public final class JdbcProtectedInvitationJournal {
       AccountLifecycleCodec json,
       Clock clock) {
     ProtectedInvitationSqlOwner.require(jdbc, manager);
+    this.manager = manager;
     this.jdbc = jdbc;
     this.codec = codec;
     this.json = json;
@@ -40,6 +42,11 @@ public final class JdbcProtectedInvitationJournal {
     local = new TransactionTemplate(manager);
     durable = new TransactionTemplate(manager);
     durable.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+  }
+
+  void requireOwner(JdbcTemplate selected, PlatformTransactionManager transactions) {
+    if (selected.getDataSource() != jdbc.getDataSource() || transactions != manager)
+      throw new IllegalArgumentException("Protected invitation journal transaction owner mismatch");
   }
 
   public FrozenApproval propose(long inviteId, FrozenApproval proposal) {

@@ -916,22 +916,29 @@ public class AccountInviteService {
             throw new BadRequestException("The cancellation state changed");
           }
         });
-    // A superseded capability remains held until the foreground replacement transaction.
-    if (reason != Reason.SUPERSEDED) {
-      cancellation.withAcknowledged(
-          initial.getId(),
-          () -> {
-            AccountInvite current =
-                InviteRowHold.lock(accountInviteRepository, initial.getId())
-                    .orElseThrow(() -> new NotFoundException("Account invite not found"));
-            if (current.getStatus() != AccountInviteStatus.EXPIRED
-                && current.getStatus() != AccountInviteStatus.REVOKED) {
+    cancellation.withAcknowledged(
+        initial.getId(),
+        () -> {
+          AccountInvite current =
+              InviteRowHold.lock(accountInviteRepository, initial.getId())
+                  .orElseThrow(() -> new NotFoundException("Account invite not found"));
+          if (reason == Reason.SUPERSEDED) {
+            if (current.getStatus() != AccountInviteStatus.SUPERSEDED) {
               throw new BadRequestException("The cancellation state changed");
             }
-            releaseProtectedReservation(current, now);
-            return null;
-          });
-    }
+            // An interrupted resend retains its capability until its original deadline. A live
+            // source or a replacement recorded while the native RPC was in flight still owns it.
+            if (current.getExpiresAt() == null
+                || current.getExpiresAt().isAfter(now)
+                || current.getSupersededByInviteId() != null
+                || current.getTenantIdReservationToken() == null) return null;
+          } else if (current.getStatus() != AccountInviteStatus.EXPIRED
+              && current.getStatus() != AccountInviteStatus.REVOKED) {
+            throw new BadRequestException("The cancellation state changed");
+          }
+          releaseProtectedReservation(current, now);
+          return null;
+        });
     return expired[0];
   }
 
