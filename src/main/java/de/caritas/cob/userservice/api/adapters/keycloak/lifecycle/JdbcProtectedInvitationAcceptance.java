@@ -112,8 +112,9 @@ public final class JdbcProtectedInvitationAcceptance {
 
   public AcceptanceClaim resume(long inviteId, String tokenHash) {
     if (TransactionSynchronizationManager.isActualTransactionActive()
-        || inviteId < 1 || tokenHash == null || !tokenHash.matches("[0-9a-f]{64}"))
-      throw unavailable();
+        || inviteId < 1
+        || tokenHash == null
+        || !tokenHash.matches("[0-9a-f]{64}")) throw unavailable();
     return journal.withRecipientInvite(
         inviteId,
         () -> {
@@ -127,23 +128,35 @@ public final class JdbcProtectedInvitationAcceptance {
           String response =
               jdbc.queryForObject(
                   "SELECT response_json FROM protected_invitation_authorization WHERE invite_id=? AND state='READY'",
-                  String.class, inviteId);
+                  String.class,
+                  inviteId);
           VerifiedApproval approval = approvals.verifyAuthorized(frozen, response);
           var found = rows(inviteId);
           if (found.size() != 1) throw unavailable();
           var saved = found.getFirst();
           if (!frozen.approvalId().toString().equals(saved.approvalId())
-              || saved.version() != 1 || !saved.digest().matches("[0-9a-f]{64}")) throw unavailable();
+              || saved.version() != 1
+              || !saved.digest().matches("[0-9a-f]{64}")) throw unavailable();
           if ("ACCEPTED".equals(invites.getFirst()[0])) {
-            String accepted = jdbc.queryForObject(
-                "SELECT accepted_by_user_id FROM account_invite WHERE id=?", String.class, inviteId);
-            String owned = jdbc.queryForObject(
-                "SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?", String.class, inviteId);
+            String accepted =
+                jdbc.queryForObject(
+                    "SELECT accepted_by_user_id FROM account_invite WHERE id=?",
+                    String.class,
+                    inviteId);
+            String owned =
+                jdbc.queryForObject(
+                    "SELECT account_id FROM protected_invitation_acceptance WHERE invite_id=?",
+                    String.class,
+                    inviteId);
             if (owned == null || !uuid(owned).toString().equals(accepted)) throw unavailable();
           }
           return new AcceptanceClaim(
-              frozen, approval, uuid(saved.claimId()), uuid(saved.attemptId()),
-              uuid(saved.executionId()), saved.digest());
+              frozen,
+              approval,
+              uuid(saved.claimId()),
+              uuid(saved.attemptId()),
+              uuid(saved.executionId()),
+              saved.digest());
         });
   }
 

@@ -308,15 +308,21 @@ public final class JdbcProtectedInvitationJournal {
   }
 
   private void requireCurrent(
-      long inviteId, Invite invite, FrozenApproval proposal,
-      boolean live, boolean released, boolean recipient) {
+      long inviteId,
+      Invite invite,
+      FrozenApproval proposal,
+      boolean live,
+      boolean released,
+      boolean recipient) {
     JsonNode scope = scope(proposal);
     Instant deadline = Instant.parse(scope.path("validUntil").asText());
     if (!Long.toString(inviteId).equals(scope.path("inviteId").asText())
         || !"INVITE".equals(invite.purpose())
-        || !(recipient ? Set.of("EMAIL_SENT", "ACCEPTED") : live
-                ? Set.of("DRAFT", "EMAIL_SENT")
-                : Set.of("DRAFT", "EMAIL_SENT", "EXPIRED", "REVOKED", "SUPERSEDED"))
+        || !(recipient
+                ? Set.of("EMAIL_SENT", "ACCEPTED")
+                : live
+                    ? Set.of("DRAFT", "EMAIL_SENT")
+                    : Set.of("DRAFT", "EMAIL_SENT", "EXPIRED", "REVOKED", "SUPERSEDED"))
             .contains(invite.status())
         || !scope.path("protectedKind").asText().equals(invite.role())
         || invite.tenant() == null

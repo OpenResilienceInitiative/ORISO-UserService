@@ -247,9 +247,24 @@ public final class ProtectedAccountCodec {
       if (claim == null || claim.frozen() == null || claim.approval() == null) throw invalid();
       JsonNode saved = decode(checkpoint, "protected-created-checkpoint/v1", true);
       fields(
-          saved, "v", "realmName", "realmId", "approvalId", "claimId", "attemptId", "executionId",
-          "scope", "acceptance", "approvalReceipt", "issuerSubject", "scopeDigest",
-          "creationFingerprint", "profile", "validUntil", "accountId", "creationProof");
+          saved,
+          "v",
+          "realmName",
+          "realmId",
+          "approvalId",
+          "claimId",
+          "attemptId",
+          "executionId",
+          "scope",
+          "acceptance",
+          "approvalReceipt",
+          "issuerSubject",
+          "scopeDigest",
+          "creationFingerprint",
+          "profile",
+          "validUntil",
+          "accountId",
+          "creationProof");
       JsonNode original =
           json.read(approvals.approvalBody(claim.frozen()), JsonNode.class).path("scope");
       if (number(saved, "v") != 1
@@ -265,28 +280,57 @@ public final class ProtectedAccountCodec {
           || !claim.frozen().issuerSubject().equals(text(saved, "issuerSubject", 36))
           || !equal(claim.approval().scopeDigest(), text(saved, "scopeDigest", 64))
           || !json.canonical(saved.path("approvalReceipt")).equals(claim.approval().receiptJson())
-          || !text(original, "validUntil", 30).equals(text(saved, "validUntil", 30))) throw invalid();
+          || !text(original, "validUntil", 30).equals(text(saved, "validUntil", 30)))
+        throw invalid();
       JsonNode acceptance = saved.path("acceptance");
-      fields(acceptance, "workflowId", "inviteId", "authorizationRevision", "claimId", "journalVersion");
+      fields(
+          acceptance,
+          "workflowId",
+          "inviteId",
+          "authorizationRevision",
+          "claimId",
+          "journalVersion");
       if (!text(original, "workflowId", 36).equals(text(acceptance, "workflowId", 36))
           || !text(original, "inviteId", 255).equals(text(acceptance, "inviteId", 255))
-          || number(original, "authorizationRevision") != number(acceptance, "authorizationRevision")
+          || number(original, "authorizationRevision")
+              != number(acceptance, "authorizationRevision")
           || !claim.claimId().equals(uuid(text(acceptance, "claimId", 36)))
           || number(acceptance, "journalVersion") != 1) throw invalid();
       JsonNode profile = saved.path("profile");
-      fields(profile, "username", "email", "firstName", "lastName", "preferredLanguage", "passwordTemporary");
+      fields(
+          profile,
+          "username",
+          "email",
+          "firstName",
+          "lastName",
+          "preferredLanguage",
+          "passwordTemporary");
       AccountCreation account =
           new AccountCreation(
-              text(profile, "username", 255), text(profile, "email", 255),
-              optionalText(profile, "firstName", 255), optionalText(profile, "lastName", 255),
-              optionalText(profile, "preferredLanguage", 20), null, bool(profile, "passwordTemporary"));
+              text(profile, "username", 255),
+              text(profile, "email", 255),
+              optionalText(profile, "firstName", 255),
+              optionalText(profile, "lastName", 255),
+              optionalText(profile, "preferredLanguage", 20),
+              null,
+              bool(profile, "passwordTemporary"));
       if (!account.email().equals(text(original, "recipient", 320))) throw invalid();
       var prepared =
           new PreparedCreation(
-              this, claim.frozen().approvalId(), claim.claimId(), claim.attemptId(), claim.executionId(),
-              original, acceptance, saved.path("approvalReceipt"), claim.frozen().issuerSubject(),
-              text(saved, "scopeDigest", 64), hex(text(saved, "creationFingerprint", 64)), account,
-              null, Instant.parse(text(saved, "validUntil", 30)));
+              this,
+              claim.frozen().approvalId(),
+              claim.claimId(),
+              claim.attemptId(),
+              claim.executionId(),
+              original,
+              acceptance,
+              saved.path("approvalReceipt"),
+              claim.frozen().issuerSubject(),
+              text(saved, "scopeDigest", 64),
+              hex(text(saved, "creationFingerprint", 64)),
+              account,
+              null,
+              Instant.parse(text(saved, "validUntil", 30)));
       ObjectNode response = nodes.createObjectNode();
       response.put("attemptId", prepared.attemptId.toString());
       response.put("accountId", text(saved, "accountId", 255));
