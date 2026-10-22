@@ -85,7 +85,8 @@ class UserAccountControllerDelegate {
 
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   void setSelfAppOtpMaintenance(
-      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance maintenance) {
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance
+          maintenance) {
     this.selfAppOtpMaintenance = maintenance;
   }
 

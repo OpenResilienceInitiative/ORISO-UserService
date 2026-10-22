@@ -62,10 +62,14 @@ class UserSelfOtpReadScenarioCBoundaryTest {
   }
 
   @Test
-  void publicCurrentSelfReadPreservesUnconfiguredSecretAndQrWithoutIntentHeaderOrStorage() throws Exception {
+  void publicCurrentSelfReadPreservesUnconfiguredSecretAndQrWithoutIntentHeaderOrStorage()
+      throws Exception {
     try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
       configure(fixture, true, true);
-      expectRead(fixture, "{\"otpSetup\":false,\"otpSecret\":\"synthetic-secret\",\"otpSecretQrCode\":\"synthetic-qr\"}", false);
+      expectRead(
+          fixture,
+          "{\"otpSetup\":false,\"otpSecret\":\"synthetic-secret\",\"otpSecretQrCode\":\"synthetic-qr\"}",
+          false);
       var response = assertDoesNotThrow(() -> fixture.controller.getUserData());
       assertEquals(200, response.getStatusCode().value());
       assertFalse(response.getBody().getTwoFactorAuth().getIsActive());
@@ -80,7 +84,10 @@ class UserSelfOtpReadScenarioCBoundaryTest {
   void publicCurrentSelfReadPreservesExistingEmailFactorType() throws Exception {
     try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
       configure(fixture, true, true);
-      expectRead(fixture, "{\"otpSetup\":true,\"otpType\":\"EMAIL\",\"otpSecret\":\"synthetic-secret\",\"otpSecretQrCode\":\"synthetic-qr\"}", false);
+      expectRead(
+          fixture,
+          "{\"otpSetup\":true,\"otpType\":\"EMAIL\",\"otpSecret\":\"synthetic-secret\",\"otpSecretQrCode\":\"synthetic-qr\"}",
+          false);
       var response = assertDoesNotThrow(() -> fixture.controller.getUserData());
       assertTrue(response.getBody().getTwoFactorAuth().getIsActive());
       assertEquals(OtpType.EMAIL, response.getBody().getTwoFactorAuth().getType());
@@ -90,7 +97,8 @@ class UserSelfOtpReadScenarioCBoundaryTest {
   }
 
   @Test
-  void publicCurrentSelfReadRefusesForeignCurrentDomainBeforeTokenOrNativeLookup() throws Exception {
+  void publicCurrentSelfReadRefusesForeignCurrentDomainBeforeTokenOrNativeLookup()
+      throws Exception {
     try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
       configure(fixture, true, true);
       fixture.jdbc.update("update user set tenant_id=8 where user_id=?", fixture.human.getUserId());
@@ -104,8 +112,12 @@ class UserSelfOtpReadScenarioCBoundaryTest {
   void publicCurrentSelfMalformedNativeReadCannotBecomeAnUnconfiguredCredential() throws Exception {
     try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
       configure(fixture, true, true);
-      expectRead(fixture, "{\"otpSetup\":false,\"otpSecret\":\"synthetic-secret\",\"nativeUser\":{}}", false);
-      var failure = assertThrows(ServiceUnavailableException.class, () -> fixture.controller.getUserData());
+      expectRead(
+          fixture,
+          "{\"otpSetup\":false,\"otpSecret\":\"synthetic-secret\",\"nativeUser\":{}}",
+          false);
+      var failure =
+          assertThrows(ServiceUnavailableException.class, () -> fixture.controller.getUserData());
       assertFalse(failure.getMessage().contains("synthetic-secret"));
       assertReadOnly(fixture);
       fixture.server.verify();
@@ -124,7 +136,8 @@ class UserSelfOtpReadScenarioCBoundaryTest {
   }
 
   @Test
-  void publicOtpDisabledPolicyKeepsCurrentUserDataWorkingWithoutAnyCredentialRead() throws Exception {
+  void publicOtpDisabledPolicyKeepsCurrentUserDataWorkingWithoutAnyCredentialRead()
+      throws Exception {
     try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
       configure(fixture, true, false);
       var response = assertDoesNotThrow(() -> fixture.controller.getUserData());
@@ -149,7 +162,8 @@ class UserSelfOtpReadScenarioCBoundaryTest {
       info.setOtpSetup(false);
       info.setOtpSecret("legacy-secret");
       info.setOtpSecretQrCode("legacy-qr");
-      when(fixture.nativeClient.get(any(), any(), eq(OtpInfoDTO.class))).thenReturn(ResponseEntity.ok(info));
+      when(fixture.nativeClient.get(any(), any(), eq(OtpInfoDTO.class)))
+          .thenReturn(ResponseEntity.ok(info));
       var response = assertDoesNotThrow(() -> fixture.controller.getUserData());
       assertEquals(200, response.getStatusCode().value());
       assertEquals("legacy-secret", response.getBody().getTwoFactorAuth().getSecret());
@@ -158,7 +172,8 @@ class UserSelfOtpReadScenarioCBoundaryTest {
     }
   }
 
-  private void configure(UserSelfAppOtpScenarioCBoundaryTest.Fixture fixture, boolean scoped, boolean allowed) {
+  private void configure(
+      UserSelfAppOtpScenarioCBoundaryTest.Fixture fixture, boolean scoped, boolean allowed) {
     fixture.request.setMethod("GET");
     fixture.request.setRequestURI("/service/users/data");
     fixture.request.removeHeader("Idempotency-Key");
@@ -169,48 +184,105 @@ class UserSelfOtpReadScenarioCBoundaryTest {
     user.setUserId(fixture.human.getUserId());
     when(users.retrieveValidatedUser()).thenReturn(user);
     var provider = mock(AskerDataProvider.class);
-    when(provider.retrieveData(user)).thenReturn(new UserDataResponseDTO().userRoles(Set.of("user")));
-    var identity = (IdentityManaging) ReflectionTestUtils.getField(fixture.delegate, "identityManager");
-    var delegate = new UserAccountControllerDelegate(
-        users, fixture.human, mock(DecryptionService.class), mock(ConsultantDataFacade.class),
-        policy, identity, fixture.accounts, mock(Messaging.class), mock(ConsultantDtoMapper.class),
-        new UserDtoMapper(policy), mock(ConsultantService.class), mock(ConsultantUpdateService.class),
-        mock(ConsultantDataProvider.class), provider, mock(VideoChatConfig.class),
-        mock(KeycloakUserDataProvider.class), mock(AgencyAdminDataProvider.class), new UsernameTranscoder());
-    if (scoped) delegate.setSelfAppOtpMaintenance((SelfAppOtpMaintenance) ReflectionTestUtils.getField(fixture.delegate, "selfAppOtpMaintenance"));
+    var data = new UserDataResponseDTO();
+    data.setUserRoles(Set.of("user"));
+    when(provider.retrieveData(user)).thenReturn(data);
+    var identity =
+        (IdentityManaging) ReflectionTestUtils.getField(fixture.delegate, "identityManager");
+    var delegate =
+        new UserAccountControllerDelegate(
+            users,
+            fixture.human,
+            mock(DecryptionService.class),
+            mock(ConsultantDataFacade.class),
+            policy,
+            identity,
+            fixture.accounts,
+            mock(Messaging.class),
+            mock(ConsultantDtoMapper.class),
+            new UserDtoMapper(policy),
+            mock(ConsultantService.class),
+            mock(ConsultantUpdateService.class),
+            mock(ConsultantDataProvider.class),
+            provider,
+            mock(VideoChatConfig.class),
+            mock(KeycloakUserDataProvider.class),
+            mock(AgencyAdminDataProvider.class),
+            new UsernameTranscoder());
+    if (scoped)
+      delegate.setSelfAppOtpMaintenance(
+          (SelfAppOtpMaintenance)
+              ReflectionTestUtils.getField(fixture.delegate, "selfAppOtpMaintenance"));
     ReflectionTestUtils.setField(fixture.controller, "userAccountControllerDelegate", delegate);
   }
 
-  private void expectRead(UserSelfAppOtpScenarioCBoundaryTest.Fixture fixture, String response, boolean unavailable) {
+  private void expectRead(
+      UserSelfAppOtpScenarioCBoundaryTest.Fixture fixture, String response, boolean unavailable) {
     var account = fixture.human.getUserId();
-    fixture.server.expect(requestTo(fixture.issuer.issuer() + "/oriso-account-maintenance/v1/accounts/" + account + "/read"))
-        .andExpect(method(HttpMethod.POST)).andRespond(outbound -> {
-          assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-          assertReadOnly(fixture);
-          var body = fixture.codec.read(((MockClientHttpRequest) outbound).getBodyAsString(), JsonNode.class);
-          fixture.checkProof(outbound.getHeaders(), body, "account.read", "ACCOUNT_MAINTENANCE", "oriso-account-maintenance", "POST");
-          assertEquals(account, body.path("target").path("accountId").asText());
-          return withSuccess("{\"id\":\"" + account + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\"" + "a".repeat(64) + "\"}", MediaType.APPLICATION_JSON).createResponse(outbound);
-        });
-    fixture.server.expect(requestTo(fixture.issuer.issuer() + "/otp-config/fetch-otp-setup-info/ordinary"))
-        .andExpect(method(HttpMethod.GET)).andRespond(outbound -> {
-          assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-          var target = fixture.codec.read(outbound.getHeaders().getFirst("X-ORISO-Account-Target"), ObjectNode.class);
-          assertEquals(account, target.path("accountId").asText());
-          assertEquals(account, target.path("origin").path("humanSubject").asText());
-          assertEquals("SELF", target.path("origin").path("kind").asText());
-          var materialized = fixture.codec.read("{}", ObjectNode.class);
-          materialized.set("target", target);
-          materialized.put("username", "ordinary");
-          materialized.putNull("otp");
-          fixture.checkProof(outbound.getHeaders(), materialized, "otp.read", "OTP", "oriso-otp", "GET");
-          return (unavailable ? withStatus(HttpStatus.SERVICE_UNAVAILABLE) : withSuccess())
-              .body(response).contentType(MediaType.APPLICATION_JSON).createResponse(outbound);
-        });
+    fixture
+        .server
+        .expect(
+            requestTo(
+                fixture.issuer.issuer()
+                    + "/oriso-account-maintenance/v1/accounts/"
+                    + account
+                    + "/read"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(
+            outbound -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              assertReadOnly(fixture);
+              var body =
+                  fixture.codec.read(
+                      ((MockClientHttpRequest) outbound).getBodyAsString(), JsonNode.class);
+              fixture.checkProof(
+                  outbound.getHeaders(),
+                  body,
+                  "account.read",
+                  "ACCOUNT_MAINTENANCE",
+                  "oriso-account-maintenance",
+                  "POST");
+              assertEquals(account, body.path("target").path("accountId").asText());
+              return withSuccess(
+                      "{\"id\":\""
+                          + account
+                          + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""
+                          + "a".repeat(64)
+                          + "\"}",
+                      MediaType.APPLICATION_JSON)
+                  .createResponse(outbound);
+            });
+    fixture
+        .server
+        .expect(requestTo(fixture.issuer.issuer() + "/otp-config/fetch-otp-setup-info/ordinary"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(
+            outbound -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              var target =
+                  fixture.codec.read(
+                      outbound.getHeaders().getFirst("X-ORISO-Account-Target"), ObjectNode.class);
+              assertEquals(account, target.path("accountId").asText());
+              assertEquals(account, target.path("origin").path("humanSubject").asText());
+              assertEquals("SELF", target.path("origin").path("kind").asText());
+              var materialized = fixture.codec.read("{}", ObjectNode.class);
+              materialized.set("target", target);
+              materialized.put("username", "ordinary");
+              materialized.putNull("otp");
+              fixture.checkProof(
+                  outbound.getHeaders(), materialized, "otp.read", "OTP", "oriso-otp", "GET");
+              return (unavailable ? withStatus(HttpStatus.SERVICE_UNAVAILABLE) : withSuccess())
+                  .body(response)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .createResponse(outbound);
+            });
   }
 
   private void assertReadOnly(UserSelfAppOtpScenarioCBoundaryTest.Fixture fixture) {
-    assertEquals(0, fixture.jdbc.queryForObject("select count(*) from identity_self_app_otp_intent", Integer.class));
+    assertEquals(
+        0,
+        fixture.jdbc.queryForObject(
+            "select count(*) from identity_self_app_otp_intent", Integer.class));
     assertEquals(0, fixture.domainWrites());
     assertEquals(0, fixture.nativeExecutions.get());
     verify(fixture.nativeClient, never()).getUsersResource();
