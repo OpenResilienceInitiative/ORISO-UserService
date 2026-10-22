@@ -5,7 +5,6 @@ import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.session.DeactivateSessionActionCommand;
-import de.caritas.cob.userservice.api.actions.session.PostMatrixUserLeftMessageActionCommand;
 import de.caritas.cob.userservice.api.actions.session.SendFinishedAnonymousConversationEventActionCommand;
 import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -14,20 +13,25 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService.EndedBy;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /** Facade to encapsulate logic to finish an anonymous conversation. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class FinishAnonymousConversationFacade {
 
   private final @NonNull SessionService sessionService;
   private final @NonNull ActionsRegistry actionsRegistry;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
+  private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
   /**
    * Finishes the anonymous session with given id.
@@ -44,10 +48,7 @@ public class FinishAnonymousConversationFacade {
     verifyPermissionToFinish(session);
 
     // Notify the room first while user/consultant Matrix credentials are still valid.
-    this.actionsRegistry
-        .buildContainerForType(Session.class)
-        .addActionToExecute(PostMatrixUserLeftMessageActionCommand.class)
-        .executeActions(session);
+    postUserLeftChatMessage(session);
 
     this.actionsRegistry
         .buildContainerForType(User.class)
@@ -59,6 +60,16 @@ public class FinishAnonymousConversationFacade {
         .addActionToExecute(DeactivateSessionActionCommand.class)
         .addActionToExecute(SendFinishedAnonymousConversationEventActionCommand.class)
         .executeActions(session);
+  }
+
+  private void postUserLeftChatMessage(Session session) {
+    var endedBy = authenticatedUser.isConsultant() ? EndedBy.CONSULTANT : EndedBy.ADVICE_SEEKER;
+    try {
+      matrixSessionSystemMessageService.postUserLeftChatMessage(session, endedBy);
+    } catch (Exception e) {
+      // A Matrix failure must never block finishing the conversation.
+      log.error("Unable to post Matrix user-left message for session {}", session.getId(), e);
+    }
   }
 
   private void verifyPermissionToFinish(Session session) {
