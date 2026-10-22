@@ -27,7 +27,10 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Actual public service + owning SQL claim/ACK; the provider/digest port is an explicit test double. */
+/**
+ * Actual public service + owning SQL claim/ACK; the provider/digest port is an explicit test
+ * double.
+ */
 class ExistingAccountSetupCausalClaimsTest {
   @Test
   void actualOwnedSetupUsesOnlyTheTypedHandleAndClosesItAfterTheRequest() throws Exception {
@@ -37,7 +40,8 @@ class ExistingAccountSetupCausalClaimsTest {
     assertEquals("ACKNOWLEDGED", f.journalPhase());
     assertEquals(1, f.passwords.effects.size());
     assertEquals(1, f.passwords.supportChecks);
-    assertThrows(ScopedIdentityCommandRequiredException.class, f.passwords.lastHandle::checkedClaim);
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class, f.passwords.lastHandle::checkedClaim);
     verifyNoInteractions(f.identities, f.roles, f.requirement);
   }
 
@@ -72,7 +76,8 @@ class ExistingAccountSetupCausalClaimsTest {
   }
 
   @Test
-  void localCompletionRollbackRetainsTheSameClaimWithoutRepeatingTheProviderEffect() throws Exception {
+  void localCompletionRollbackRetainsTheSameClaimWithoutRepeatingTheProviderEffect()
+      throws Exception {
     var f = new Fixture();
     f.failCompletionOnce = true;
     assertThrows(IllegalStateException.class, () -> f.service.confirm(Fixture.TOKEN, "new-one"));
@@ -90,8 +95,9 @@ class ExistingAccountSetupCausalClaimsTest {
     static final String TOKEN = "synthetic-existing-setup-token";
     final LocalDateTime deadline = LocalDateTime.now().withNano(0).plusDays(1);
     final String tokenHash = AccountInviteService.hash(TOKEN);
-    final DriverManagerDataSource source = new DriverManagerDataSource(
-        "jdbc:h2:mem:setup-service-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", "");
+    final DriverManagerDataSource source =
+        new DriverManagerDataSource(
+            "jdbc:h2:mem:setup-service-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", "");
     final JdbcTemplate jdbc = new JdbcTemplate(source);
     final DataSourceTransactionManager transactions = new DataSourceTransactionManager(source);
     final AccountInviteRepository invites = mock(AccountInviteRepository.class);
@@ -99,69 +105,122 @@ class ExistingAccountSetupCausalClaimsTest {
     final ConsultantRepository consultants = mock(ConsultantRepository.class);
     final IdentityProfileLookup identities = mock(IdentityProfileLookup.class);
     final IdentityRoleLookup roles = mock(IdentityRoleLookup.class);
-    final IdentityPasswordChangeRequirement requirement = mock(IdentityPasswordChangeRequirement.class);
+    final IdentityPasswordChangeRequirement requirement =
+        mock(IdentityPasswordChangeRequirement.class);
     final InitialPasswordVerifier initial = mock(InitialPasswordVerifier.class);
     final TypedPasswords passwords = new TypedPasswords();
-    final ExistingAccountSetupService service = new ExistingAccountSetupService(
-        invites, admins, consultants, identities, roles, requirement, initial, passwords, transactions);
+    final ExistingAccountSetupService service =
+        new ExistingAccountSetupService(
+            invites,
+            admins,
+            consultants,
+            identities,
+            roles,
+            requirement,
+            initial,
+            passwords,
+            transactions);
     boolean failCompletionOnce;
 
     Fixture() throws Exception {
-      jdbc.execute("create table account_invite(id bigint primary key,purpose varchar(64),status varchar(32),"
-          + "provisioning_status varchar(32),provisioned_user_id varchar(36),token_hash varchar(64),"
-          + "expires_at timestamp,target_role varchar(64),tenant_id bigint,setup_bound_username varchar(512),"
-          + "recipient_email varchar(512),initial_password_verifier varchar(255),"
-          + "provisioning_failure_reason varchar(1024),update_date timestamp)");
-      jdbc.update("insert into account_invite values(11,'EXISTING_ACCOUNT_SETUP','EMAIL_SENT','PENDING',"
-          + "'ordinary-admin-11',?,?,'AGENCY_ADMIN',42,'existing@example.test','existing@example.test',"
-          + "'synthetic-salted-verifier',null,null)", tokenHash, Timestamp.valueOf(deadline));
+      jdbc.execute(
+          "create table account_invite(id bigint primary key,purpose varchar(64),status varchar(32),"
+              + "provisioning_status varchar(32),provisioned_user_id varchar(36),token_hash varchar(64),"
+              + "expires_at timestamp,target_role varchar(64),tenant_id bigint,setup_bound_username varchar(512),"
+              + "recipient_email varchar(512),initial_password_verifier varchar(255),"
+              + "provisioning_failure_reason varchar(1024),update_date timestamp)");
+      jdbc.update(
+          "insert into account_invite values(11,'EXISTING_ACCOUNT_SETUP','EMAIL_SENT','PENDING',"
+              + "'ordinary-admin-11',?,?,'AGENCY_ADMIN',42,'existing@example.test','existing@example.test',"
+              + "'synthetic-salted-verifier',null,null)",
+          tokenHash,
+          Timestamp.valueOf(deadline));
       try (var connection = source.getConnection()) {
-        ScriptUtils.executeSqlScript(connection, new ClassPathResource(
-            "db/changelog/changeset/20261022_identity_setup_password_claim_367/migrate.sql"));
+        ScriptUtils.executeSqlScript(
+            connection,
+            new ClassPathResource(
+                "db/changelog/changeset/20261022_identity_setup_password_claim_367/migrate.sql"));
       }
-      service.setSetupPasswordClaims(new JdbcExistingSetupPasswordClaims(jdbc, Clock.systemDefaultZone()));
-      when(invites.findByTokenHash(anyString())).thenAnswer(a -> read("token_hash", a.getArgument(0)));
+      service.setSetupPasswordClaims(
+          new JdbcExistingSetupPasswordClaims(jdbc, Clock.systemDefaultZone()));
+      when(invites.findByTokenHash(anyString()))
+          .thenAnswer(a -> read("token_hash", a.getArgument(0)));
       when(invites.findByIdForUpdate(anyLong())).thenAnswer(a -> read("id", a.getArgument(0)));
-      when(admins.findByIdAndType("ordinary-admin-11", Admin.AdminType.AGENCY)).thenReturn(Optional.of(
-          Admin.builder().id("ordinary-admin-11").type(Admin.AdminType.AGENCY).tenantId(42L)
-              .username("existing@example.test").email("existing@example.test").build()));
-      when(initial.matches(anyString(), anyString())).thenAnswer(a -> "initial".equals(a.getArgument(0)));
-      when(invites.releaseExistingAccountSetup(anyLong(), any(), any(), any(), any(), anyString(), any()))
-          .thenAnswer(a -> jdbc.update("update account_invite set provisioning_status='FAILED' where id=11 and provisioning_status='IN_PROGRESS'"));
-      when(invites.recordIndeterminateExistingAccountSetup(anyLong(), any(), any(), any(), anyString(), any()))
-          .thenAnswer(a -> jdbc.update("update account_invite set provisioning_failure_reason='SETUP_OUTCOME_INDETERMINATE' where id=11 and provisioning_status='IN_PROGRESS'"));
-      when(invites.completeExistingAccountSetup(anyLong(), any(), any(), any(), any(), any(), any(), anyString(), any()))
-          .thenAnswer(a -> {
-            assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-            int changed = jdbc.update("update account_invite set status='ACCEPTED',provisioning_status='COMPLETED',initial_password_verifier=null where id=11 and status='EMAIL_SENT' and provisioning_status='IN_PROGRESS'");
-            if (failCompletionOnce) {
-              failCompletionOnce = false;
-              throw new IllegalStateException("synthetic owning SQL failure");
-            }
-            return changed;
-          });
+      when(admins.findByIdAndType("ordinary-admin-11", Admin.AdminType.AGENCY))
+          .thenReturn(
+              Optional.of(
+                  Admin.builder()
+                      .id("ordinary-admin-11")
+                      .type(Admin.AdminType.AGENCY)
+                      .tenantId(42L)
+                      .username("existing@example.test")
+                      .email("existing@example.test")
+                      .build()));
+      when(initial.matches(anyString(), anyString()))
+          .thenAnswer(a -> "initial".equals(a.getArgument(0)));
+      when(invites.releaseExistingAccountSetup(
+              anyLong(), any(), any(), any(), any(), anyString(), any()))
+          .thenAnswer(
+              a ->
+                  jdbc.update(
+                      "update account_invite set provisioning_status='FAILED' where id=11 and provisioning_status='IN_PROGRESS'"));
+      when(invites.recordIndeterminateExistingAccountSetup(
+              anyLong(), any(), any(), any(), anyString(), any()))
+          .thenAnswer(
+              a ->
+                  jdbc.update(
+                      "update account_invite set provisioning_failure_reason='SETUP_OUTCOME_INDETERMINATE' where id=11 and provisioning_status='IN_PROGRESS'"));
+      when(invites.completeExistingAccountSetup(
+              anyLong(), any(), any(), any(), any(), any(), any(), anyString(), any()))
+          .thenAnswer(
+              a -> {
+                assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+                int changed =
+                    jdbc.update(
+                        "update account_invite set status='ACCEPTED',provisioning_status='COMPLETED',initial_password_verifier=null where id=11 and status='EMAIL_SENT' and provisioning_status='IN_PROGRESS'");
+                if (failCompletionOnce) {
+                  failCompletionOnce = false;
+                  throw new IllegalStateException("synthetic owning SQL failure");
+                }
+                return changed;
+              });
     }
 
     Optional<AccountInvite> read(String field, Object value) {
       assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-      var rows = jdbc.query("select * from account_invite where " + field + "=? for update", (rs, n) ->
-          AccountInvite.builder().id(rs.getLong("id")).purpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP)
-              .status(AccountInviteStatus.valueOf(rs.getString("status")))
-              .provisioningStatus(AccountInviteProvisioningStatus.valueOf(rs.getString("provisioning_status")))
-              .provisioningFailureReason(rs.getString("provisioning_failure_reason"))
-              .provisionedUserId(rs.getString("provisioned_user_id")).tokenHash(rs.getString("token_hash"))
-              .expiresAt(rs.getTimestamp("expires_at").toLocalDateTime()).targetRole(AccountInviteTargetRole.AGENCY_ADMIN)
-              .tenantId(42L).setupBoundUsername("existing@example.test").recipientEmail("existing@example.test")
-              .initialPasswordVerifier(rs.getString("initial_password_verifier")).build(), value);
+      var rows =
+          jdbc.query(
+              "select * from account_invite where " + field + "=? for update",
+              (rs, n) ->
+                  AccountInvite.builder()
+                      .id(rs.getLong("id"))
+                      .purpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP)
+                      .status(AccountInviteStatus.valueOf(rs.getString("status")))
+                      .provisioningStatus(
+                          AccountInviteProvisioningStatus.valueOf(
+                              rs.getString("provisioning_status")))
+                      .provisioningFailureReason(rs.getString("provisioning_failure_reason"))
+                      .provisionedUserId(rs.getString("provisioned_user_id"))
+                      .tokenHash(rs.getString("token_hash"))
+                      .expiresAt(rs.getTimestamp("expires_at").toLocalDateTime())
+                      .targetRole(AccountInviteTargetRole.AGENCY_ADMIN)
+                      .tenantId(42L)
+                      .setupBoundUsername("existing@example.test")
+                      .recipientEmail("existing@example.test")
+                      .initialPasswordVerifier(rs.getString("initial_password_verifier"))
+                      .build(),
+              value);
       return rows.stream().findFirst();
     }
 
     String phase() {
-      return jdbc.queryForObject("select provisioning_status from account_invite where id=11", String.class);
+      return jdbc.queryForObject(
+          "select provisioning_status from account_invite where id=11", String.class);
     }
 
     String journalPhase() {
-      return jdbc.queryForObject("select status from identity_setup_password_claim where invite_id=11", String.class);
+      return jdbc.queryForObject(
+          "select status from identity_setup_password_claim where invite_id=11", String.class);
     }
   }
 
@@ -173,29 +232,64 @@ class ExistingAccountSetupCausalClaimsTest {
     int supportChecks;
     boolean unknownOnce;
 
-    @Override public boolean requiresCausalPasswordClaims() { return true; }
-    @Override public void requireExistingSetupPasswordSupport() { supportChecks++; }
-    @Override public String existingSetupRequestDigest(ExistingSetupPasswordClaims.Binding binding, String password) {
+    @Override
+    public boolean requiresCausalPasswordClaims() {
+      return true;
+    }
+
+    @Override
+    public void requireExistingSetupPasswordSupport() {
+      supportChecks++;
+    }
+
+    @Override
+    public String existingSetupRequestDigest(
+        ExistingSetupPasswordClaims.Binding binding, String password) {
       assertNotNull(binding);
       return ("initial".equals(password) ? "b" : "new-one".equals(password) ? "c" : "d").repeat(64);
     }
-    @Override public void updateExistingSetupPassword(ExistingAccountSetupService.ClaimedSetup handle, String password) {
+
+    @Override
+    public void updateExistingSetupPassword(
+        ExistingAccountSetupService.ClaimedSetup handle, String password) {
       assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
       var claim = handle.checkedClaim();
       lastHandle = handle;
       calls.add(claim);
       var crossThread = new AtomicReference<Throwable>();
-      Thread other = new Thread(() -> {
-        try { handle.checkedClaim(); } catch (Throwable failure) { crossThread.set(failure); }
-      });
+      Thread other =
+          new Thread(
+              () -> {
+                try {
+                  handle.checkedClaim();
+                } catch (Throwable failure) {
+                  crossThread.set(failure);
+                }
+              });
       other.start();
-      try { other.join(2000); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IllegalStateException(); }
+      try {
+        other.join(2000);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException();
+      }
       assertFalse(other.isAlive());
       assertInstanceOf(ScopedIdentityCommandRequiredException.class, crossThread.get());
       effects.add(claim.id());
-      if (unknownOnce) { unknownOnce = false; throw new IllegalStateException("synthetic unknown reply"); }
+      if (unknownOnce) {
+        unknownOnce = false;
+        throw new IllegalStateException("synthetic unknown reply");
+      }
     }
-    @Override public void updatePassword(String id, String password) { fail("target-only updater used"); }
-    @Override public void updateTemporaryPassword(String id, String password) { fail("temporary updater used"); }
+
+    @Override
+    public void updatePassword(String id, String password) {
+      fail("target-only updater used");
+    }
+
+    @Override
+    public void updateTemporaryPassword(String id, String password) {
+      fail("temporary updater used");
+    }
   }
 }

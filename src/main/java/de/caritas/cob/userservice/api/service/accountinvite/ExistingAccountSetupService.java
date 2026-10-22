@@ -65,7 +65,8 @@ public class ExistingAccountSetupService {
   public static final class ClaimedSetup {
     private ClaimedSetup() {}
 
-    public de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims.Claim checkedClaim() {
+    public de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims.Claim
+        checkedClaim() {
       throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
     }
 
