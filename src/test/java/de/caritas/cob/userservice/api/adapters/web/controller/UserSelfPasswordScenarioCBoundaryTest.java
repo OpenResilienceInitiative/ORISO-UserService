@@ -100,18 +100,23 @@ class UserSelfPasswordScenarioCBoundaryTest {
   @Test
   void publicPasswordSupportsEveryOwnedKindAndLegitimateAdministratorConsultantPair()
       throws Exception {
-    for (String kind : List.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")) {
+    for (String kind :
+        List.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")) {
       boolean admin = kind.endsWith("ADMIN");
       for (boolean dual : admin ? List.of(false, true) : List.of(false)) {
         try (var f = new Fixture(true, true, "PLATFORM_ADMIN".equals(kind) ? 0L : 7L, kind, dual)) {
           f.expectNative();
-          assertEquals(200, f.controller.updatePassword(f.password()).getStatusCode().value(), kind + "/" + dual);
+          assertEquals(
+              200,
+              f.controller.updatePassword(f.password()).getStatusCode().value(),
+              kind + "/" + dual);
           assertEquals("ACKNOWLEDGED", f.status());
           assertEquals(1, f.effects.get());
           assertEquals(dual || "CONSULTANT".equals(kind) ? 1 : 0, f.clears());
           var origin = f.frozenBodyFromIndependentDecryption().path("target").path("origin");
           if (Set.of("TENANT_ADMIN", "PLATFORM_ADMIN").contains(kind))
-            assertEquals("PROTECTED_ACCOUNT_OPERATIONS_V1", origin.path("humanAuthority").textValue());
+            assertEquals(
+                "PROTECTED_ACCOUNT_OPERATIONS_V1", origin.path("humanAuthority").textValue());
           else assertTrue(origin.path("humanAuthority").isNull());
           verifyNoInteractions(f.legacy);
           f.server.verify();
@@ -224,11 +229,23 @@ class UserSelfPasswordScenarioCBoundaryTest {
           java.sql.Timestamp.from(Instant.parse("2026-01-01T00:00:00Z")));
       jdbc.execute(
           "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512),email varchar(320))");
-      jdbc.execute("create table admin(admin_id varchar(36) primary key,tenant_id bigint,type varchar(16),email varchar(320))");
+      jdbc.execute(
+          "create table admin(admin_id varchar(36) primary key,tenant_id bigint,type varchar(16),email varchar(320))");
       if (!"CONSULTANT".equals(kind) && !dual) jdbc.update("delete from consultant");
-      if ("USER".equals(kind)) jdbc.update("insert into user values(?,?,null,'ordinary','fixture@example.org')", ACCOUNT, tenant);
-      if (kind.endsWith("ADMIN")) jdbc.update("insert into admin values(?,?,?,'fixture@example.org')", ACCOUNT, tenant,
-          switch (kind) { case "AGENCY_ADMIN" -> "AGENCY"; case "TENANT_ADMIN" -> "TENANT"; case "PLATFORM_ADMIN" -> "SUPER"; default -> throw new IllegalArgumentException(); });
+      if ("USER".equals(kind))
+        jdbc.update(
+            "insert into user values(?,?,null,'ordinary','fixture@example.org')", ACCOUNT, tenant);
+      if (kind.endsWith("ADMIN"))
+        jdbc.update(
+            "insert into admin values(?,?,?,'fixture@example.org')",
+            ACCOUNT,
+            tenant,
+            switch (kind) {
+              case "AGENCY_ADMIN" -> "AGENCY";
+              case "TENANT_ADMIN" -> "TENANT";
+              case "PLATFORM_ADMIN" -> "SUPER";
+              default -> throw new IllegalArgumentException();
+            });
       jdbc.execute(
           "create table identity_self_password_intent(operation_id varchar(36) primary key,realm_id varchar(512),account_id varchar(36),tenant_id bigint,owner_client varchar(255),owner_subject varchar(36),request_digest varchar(64),target_json clob,authority_valid_until bigint,metadata_json clob,intent_envelope clob,status varchar(32),receipt clob,updated_at timestamp)");
       var human =
@@ -275,8 +292,11 @@ class UserSelfPasswordScenarioCBoundaryTest {
       when(consultants.getConsultant(ACCOUNT))
           .thenAnswer(
               ignored -> {
-                if (jdbc.queryForObject("select count(*) from consultant where consultant_id=?", Integer.class, ACCOUNT) == 0)
-                  return Optional.empty();
+                if (jdbc.queryForObject(
+                        "select count(*) from consultant where consultant_id=?",
+                        Integer.class,
+                        ACCOUNT)
+                    == 0) return Optional.empty();
                 var c = new Consultant();
                 c.setId(ACCOUNT);
                 c.setPasswordChangeRequired(
@@ -345,7 +365,9 @@ class UserSelfPasswordScenarioCBoundaryTest {
 
     int clears() {
       return jdbc.queryForObject(
-          "select coalesce(sum(clear_count),0) from consultant where consultant_id=?", Integer.class, ACCOUNT);
+          "select coalesce(sum(clear_count),0) from consultant where consultant_id=?",
+          Integer.class,
+          ACCOUNT);
     }
 
     String status() {

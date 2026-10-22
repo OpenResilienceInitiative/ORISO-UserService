@@ -174,36 +174,56 @@ class ClaimedPasswordMaintenanceFlowIT {
   @Test
   void expiredUnknownResetRecoversOnlyItsExactSavedOutcome() throws Exception {
     try (var f = new Fixture()) {
-      String token = f.requestLink(); f.loseReply = true;
-      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42")).isInstanceOf(RuntimeException.class);
+      String token = f.requestLink();
+      f.loseReply = true;
+      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
+          .isInstanceOf(RuntimeException.class);
       f.now.set(f.now.get().plusSeconds(3 * 3600));
       assertThat(f.service.confirmPasswordReset(token, "fixture-new-password!42")).isTrue();
-      assertThat(f.effects).isEqualTo(1); assertThat(f.phase()).isEqualTo("ACKNOWLEDGED");
+      assertThat(f.effects).isEqualTo(1);
+      assertThat(f.phase()).isEqualTo("ACKNOWLEDGED");
     }
   }
 
   @Test
   void expiredAbsentAndForeignUsernameCannotDispatchAClaimedPassword() throws Exception {
     try (var f = new Fixture()) {
-      String token = f.requestLink(); f.foreignUsername = true;
-      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42")).isInstanceOf(RuntimeException.class);
-      assertThat(f.effects).isZero(); assertThat(f.required()).isTrue();
-      f.foreignUsername = false; f.expiredAbsent = true; f.now.set(f.now.get().plusSeconds(3 * 3600));
-      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42")).isInstanceOf(RuntimeException.class);
-      assertThat(f.effects).isZero(); assertThat(f.required()).isTrue();
+      String token = f.requestLink();
+      f.foreignUsername = true;
+      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(f.effects).isZero();
+      assertThat(f.required()).isTrue();
+      f.foreignUsername = false;
+      f.expiredAbsent = true;
+      f.now.set(f.now.get().plusSeconds(3 * 3600));
+      assertThatThrownBy(() -> f.service.confirmPasswordReset(token, "fixture-new-password!42"))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(f.effects).isZero();
+      assertThat(f.required()).isTrue();
     }
   }
 
   @Test
-  void expiredUnknownSetupRecoversOriginalSavedReceiptWithoutFreshPasswordEffect() throws Exception {
+  void expiredUnknownSetupRecoversOriginalSavedReceiptWithoutFreshPasswordEffect()
+      throws Exception {
     try (var f = new Fixture()) {
-      var setup = f.setupService(); f.loseReply = true;
-      assertThatThrownBy(() -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42")).isInstanceOf(RuntimeException.class);
-      assertThat(f.effects).isEqualTo(1); String envelope = f.envelope();
+      var setup = f.setupService();
+      f.loseReply = true;
+      assertThatThrownBy(
+              () -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(f.effects).isEqualTo(1);
+      String envelope = f.envelope();
       f.now.set(f.now.get().plusSeconds(3 * 3600));
-      assertThatCode(() -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42")).doesNotThrowAnyException();
-      assertThat(f.effects).isEqualTo(1); assertThat(f.envelope()).isEqualTo(envelope);
-      assertThat(f.jdbc.queryForObject("select status from identity_setup_password_claim", String.class)).isEqualTo("ACKNOWLEDGED");
+      assertThatCode(() -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
+          .doesNotThrowAnyException();
+      assertThat(f.effects).isEqualTo(1);
+      assertThat(f.envelope()).isEqualTo(envelope);
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select status from identity_setup_password_claim", String.class))
+          .isEqualTo("ACKNOWLEDGED");
     }
   }
 
@@ -243,12 +263,22 @@ class ClaimedPasswordMaintenanceFlowIT {
     final PasswordResetService service;
     final String sqlUsername = new UsernameTranscoder().encodeUsername("testuser");
     final String nativeUsername = sqlUsername.toLowerCase(Locale.ROOT);
-    final java.util.concurrent.atomic.AtomicReference<Instant> now = new java.util.concurrent.atomic.AtomicReference<>(Instant.now());
-    final Clock clock = new Clock() {
-      public ZoneId getZone() { return ZoneId.systemDefaultZone(); }
-      public Clock withZone(ZoneId zone) { return this; }
-      public Instant instant() { return now.get(); }
-    };
+    final java.util.concurrent.atomic.AtomicReference<Instant> now =
+        new java.util.concurrent.atomic.AtomicReference<>(Instant.now());
+    final Clock clock =
+        new Clock() {
+          public ZoneId getZone() {
+            return ZoneId.systemDefaultZone();
+          }
+
+          public Clock withZone(ZoneId zone) {
+            return this;
+          }
+
+          public Instant instant() {
+            return now.get();
+          }
+        };
     String resetUrl, savedReply;
     int effects;
     boolean loseReply, corruptReceipt, failSetupCompletion, expiredAbsent, foreignUsername;
@@ -285,9 +315,9 @@ class ClaimedPasswordMaintenanceFlowIT {
       when(checked.clientId()).thenReturn(actor.clientId());
       when(checked.subject()).thenReturn(SUBJECT);
       when(checked.validatedJwtIssuedAt())
-          .thenAnswer(x -> Instant.now().minusSeconds(1).getEpochSecond());
+          .thenAnswer(x -> clock.instant().minusSeconds(1).getEpochSecond());
       when(checked.validatedJwtExpiresAt())
-          .thenAnswer(x -> Instant.now().plusSeconds(300).getEpochSecond());
+          .thenAnswer(x -> clock.instant().plusSeconds(300).getEpochSecond());
       when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
       server.createContext(
           "/realms/fixture/oriso-account-maintenance/v1/accounts/" + ACCOUNT + "/password-reset",
@@ -306,7 +336,10 @@ class ClaimedPasswordMaintenanceFlowIT {
                       JsonNode.class);
               String reply;
               if (exchange.getRequestURI().getPath().endsWith("/read")) {
-                if (savedReply == null && expiredAbsent) { exchange.sendResponseHeaders(400, -1); return; }
+                if (savedReply == null && expiredAbsent) {
+                  exchange.sendResponseHeaders(400, -1);
+                  return;
+                }
                 reply = savedReply == null ? projection() : savedReply;
               } else {
                 if (savedReply == null) {
