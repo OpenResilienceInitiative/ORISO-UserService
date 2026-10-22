@@ -197,6 +197,21 @@ jobs:
           if not stable:
               raise SystemExit('Missing or changed full source/resource manifest')
           PY
+      - name: Export a formatting proposal for the two owned protected approval sources
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          protected_codec=src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/ProtectedInvitationCodec.java
+          protected_tests=src/test/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/ProtectedInvitationCodecTest.java
+          trap 'git restore --source=HEAD -- "$protected_codec" "$protected_tests"' EXIT
+          ./mvnw -B -ntp -q spotless:apply \
+            "-DspotlessFiles=$GITHUB_WORKSPACE/$protected_codec|$GITHUB_WORKSPACE/$protected_tests"
+          git diff --binary -- "$protected_codec" "$protected_tests" \
+            > target/scenario-c-caller-proof/protected-format.patch
+          git restore --source=HEAD -- "$protected_codec" "$protected_tests"
+          trap - EXIT
+          git diff --exit-code
       - name: Upload complete caller proof, including diagnostic RED evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
