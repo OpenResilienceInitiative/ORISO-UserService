@@ -966,6 +966,7 @@ public final class ProtectedOtpBootstrap {
   public enum AttemptState {
     COMPLETE,
     INVALID,
+    SENT,
     PENDING,
     UNKNOWN
   }
