@@ -945,13 +945,19 @@ public class AccountInviteService {
   /** Applies a verified C enrollment only to the privately frozen invite membership. */
   public void markTwoFactorActiveOwned(String userId, Set<Long> inviteIds) {
     transitionTwoFactorStatus(
-        userId, TwoFactorGateStatus.PENDING_SETUP, TwoFactorGateStatus.ACTIVE, checkedInviteIds(inviteIds));
+        userId,
+        TwoFactorGateStatus.PENDING_SETUP,
+        TwoFactorGateStatus.ACTIVE,
+        checkedInviteIds(inviteIds));
   }
 
   /** Reopens only the invite membership frozen by the verified C deletion. */
   public void markTwoFactorPendingSetupOwned(String userId, Set<Long> inviteIds) {
     transitionTwoFactorStatus(
-        userId, TwoFactorGateStatus.ACTIVE, TwoFactorGateStatus.PENDING_SETUP, checkedInviteIds(inviteIds));
+        userId,
+        TwoFactorGateStatus.ACTIVE,
+        TwoFactorGateStatus.PENDING_SETUP,
+        checkedInviteIds(inviteIds));
   }
 
   private Set<Long> checkedInviteIds(Set<Long> inviteIds) {
@@ -959,7 +965,8 @@ public class AccountInviteService {
         || inviteIds == null
         || inviteIds.size() > 1024
         || inviteIds.stream().anyMatch(id -> id == null || id <= 0))
-      throw new IllegalStateException("An owning transaction and frozen invite membership are required");
+      throw new IllegalStateException(
+          "An owning transaction and frozen invite membership are required");
     return Set.copyOf(inviteIds);
   }
 

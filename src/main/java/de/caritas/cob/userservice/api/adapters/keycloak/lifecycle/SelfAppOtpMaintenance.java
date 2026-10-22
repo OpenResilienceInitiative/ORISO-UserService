@@ -80,7 +80,11 @@ public final class SelfAppOtpMaintenance {
   }
 
   private boolean execute(
-      String initialCode, String secret, String pendingEmail, Consumer<Set<Long>> markActive, Operation kind) {
+      String initialCode,
+      String secret,
+      String pendingEmail,
+      Consumer<Set<Long>> markActive,
+      Operation kind) {
     return execute(initialCode, secret, pendingEmail, markActive, kind, null);
   }
 
@@ -117,11 +121,16 @@ public final class SelfAppOtpMaintenance {
         codec.digest(
             "oriso/user-maintenance-intent/request/v1",
             Map.of(
-                "subject", self.account,
-                "idempotencyKey", operation,
-                "method", request.getMethod(),
-                "path", request.getRequestURI(),
-                "request", relevantRequest));
+                "subject",
+                self.account,
+                "idempotencyKey",
+                operation,
+                "method",
+                request.getMethod(),
+                "path",
+                request.getRequestURI(),
+                "request",
+                relevantRequest));
     // Check actual local ownership before even the token HTTP call, outside every RPC lock.
     CheckedIntent checked =
         transaction(() -> findChecked(self, operation, requestDigest, actor, kind));
@@ -340,7 +349,8 @@ public final class SelfAppOtpMaintenance {
               : legacyLocalEffect(kind, command, nowLocal);
       // A historical native ACK cannot reapply an older local enrollment or pointer.
       if (apply) {
-        var inviteIds = ownedInviteIds(command.has("localState") ? command.path("localState") : nowLocal);
+        var inviteIds =
+            ownedInviteIds(command.has("localState") ? command.path("localState") : nowLocal);
         if (kind == Operation.EMAIL_START) {
           var pending =
               jdbc.queryForList(
