@@ -529,6 +529,11 @@ class JdbcProtectedAccountActivationTest {
     verify(accounts, times(2)).checkRecovery(any(), same(recovered));
     verify(otp, times(1)).discardWithinOwner(any());
     assertThrows(RuntimeException.class, () -> activationWithCustody().phase(claim));
+    assertEquals(
+        JdbcProtectedAccountActivation.Phase.LOCAL_CLEANED,
+        activationWithCustody().phase(historical));
+    jdbc.update("UPDATE protected_account_cleanup SET effects_digest=?", "0".repeat(64));
+    assertThrows(RuntimeException.class, () -> activationWithCustody().phase(historical));
   }
 
   @Test
@@ -555,6 +560,9 @@ class JdbcProtectedAccountActivationTest {
     assertEquals(0, count("admin"));
     assertEquals(0, count("protected_account_activation"));
     verify(otp, times(1)).discardWithinOwner(any());
+    assertEquals(
+        JdbcProtectedAccountActivation.Phase.LOCAL_CLEANED,
+        activationWithCustody().phase(historical));
     assertFalse(
         jdbc.queryForObject("SELECT body_json FROM protected_account_cleanup", String.class)
             .contains(ACCOUNT));
