@@ -32,7 +32,8 @@ class ProtectedRecoveryBrokerTest {
       var actors = FiveActorConfigurationTest.configured(environment);
       var identity = new IdentityConfig();
       identity.setOpenidConnectUrl(issuer.base());
-      var authentication = new KeycloakAuthClient(new RestTemplate(), new AuthenticatedUser(), identity);
+      var authentication =
+          new KeycloakAuthClient(new RestTemplate(), new AuthenticatedUser(), identity);
       ReflectionTestUtils.setField(authentication, "keycloakClientId", "app");
       var keycloak = new KeycloakConfig();
       keycloak.setAuthServerUrl(issuer.base());
@@ -42,7 +43,8 @@ class ProtectedRecoveryBrokerTest {
       var checked = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
       assertEquals(issuer.adminSubject, checked.subject());
       assertEquals(1, issuer.calls.get());
-      assertThrows(IllegalStateException.class, () -> broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE));
+      assertThrows(
+          IllegalStateException.class, () -> broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE));
       assertEquals(1, issuer.calls.get());
       var codec = mock(ProtectedAccountCodec.class);
       var prepared = mock(ProtectedAccountCodec.PreparedRecovery.class);
@@ -58,25 +60,34 @@ class ProtectedRecoveryBrokerTest {
       when(codec.verifyRecovery(eq(prepared), any())).thenReturn(recovered);
       var http = new RestTemplate();
       var server = MockRestServiceServer.bindTo(http).build();
-      server.expect(requestTo("https://receiver.example.test/realms/synthetic/oriso-protected-invitations/v1/approvals/"
-          + approval + "/attempts/" + attempt + "/recover"))
+      server
+          .expect(
+              requestTo(
+                  "https://receiver.example.test/realms/synthetic/oriso-protected-invitations/v1/approvals/"
+                      + approval
+                      + "/attempts/"
+                      + attempt
+                      + "/recover"))
           .andExpect(method(HttpMethod.POST))
           .andExpect(header("X-ORISO-Task-Context", "synthetic-proof"))
-          .andExpect(request -> {
-            String bearer = request.getHeaders().getFirst("Authorization");
-            assertNotNull(bearer);
-            assertTrue(bearer.startsWith("Bearer "));
-            var actual = decoder.decode(bearer.substring(7));
-            assertEquals(issuer.adminSubject, actual.getSubject());
-            assertEquals("backend-account-admin", actual.getClaimAsString("azp"));
-          })
+          .andExpect(
+              request -> {
+                String bearer = request.getHeaders().getFirst("Authorization");
+                assertNotNull(bearer);
+                assertTrue(bearer.startsWith("Bearer "));
+                var actual = decoder.decode(bearer.substring(7));
+                assertEquals(issuer.adminSubject, actual.getSubject());
+                assertEquals("backend-account-admin", actual.getClaimAsString("azp"));
+              })
           .andRespond(withSuccess(response, MediaType.APPLICATION_JSON));
-      var transport = new ProtectedAccountRecovery(http, actors, broker, codec,
-          "https://receiver.example.test", "synthetic");
+      var transport =
+          new ProtectedAccountRecovery(
+              http, actors, broker, codec, "https://receiver.example.test", "synthetic");
       assertSame(recovered, assertDoesNotThrow(() -> transport.recover(prepared)));
       assertEquals(2, issuer.calls.get());
       server.verify();
-      assertThrows(IllegalStateException.class, () -> broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE));
+      assertThrows(
+          IllegalStateException.class, () -> broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE));
       assertEquals(2, issuer.calls.get());
     }
   }
