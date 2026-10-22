@@ -80,15 +80,26 @@ public class ExistingAccountSetupService {
 
     /** Journal data only; the provider must independently verify its finite native result. */
     public Claim checkedClaim() {
-      if (!active
-          || Thread.currentThread() != requestThread
-          || !target.claim().binding().expiresAt().isAfter(LocalDateTime.now(owner.clock))) {
+      if (!target.claim().binding().expiresAt().isAfter(LocalDateTime.now(owner.clock))) {
         throw new ScopedIdentityCommandRequiredException();
       }
+      return currentClaim(true);
+    }
+
+    /** Exact existing custody only; cannot authorize a fresh password write after expiry. */
+    public Claim checkedRecoveryClaim() {
+      return currentClaim(false);
+    }
+
+    private Claim currentClaim(boolean fresh) {
+      if (!active || Thread.currentThread() != requestThread)
+        throw new ScopedIdentityCommandRequiredException();
       return owner.inTransaction(
           () -> {
-            owner.setupPasswordClaims.requireCurrentWithinOwner(target.claim());
-            owner.requireSameSavedIdentity(target.saved());
+            if (fresh) {
+              owner.setupPasswordClaims.requireCurrentWithinOwner(target.claim());
+              owner.requireSameSavedIdentity(target.saved());
+            } else owner.setupPasswordClaims.requireRecoveryWithinOwner(target.claim());
             AccountInvite current =
                 owner
                     .invites
@@ -323,8 +334,7 @@ public class ExistingAccountSetupService {
     if (invite.getPurpose() != SETUP || (invite.getStatus() != SENT && !completed)) {
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.NOT_ACTIVE);
     }
-    if (invite.getExpiresAt() == null
-        || (!completed && !invite.getExpiresAt().isAfter(LocalDateTime.now(clock)))) {
+    if (invite.getExpiresAt() == null) {
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
     if (isBlank(invite.getProvisionedUserId())
@@ -349,7 +359,6 @@ public class ExistingAccountSetupService {
             invite.getRecipientEmail(),
             invite.getSetupBoundUsername(),
             invite.getInitialPasswordVerifier());
-    requireSameSavedIdentity(saved);
     Binding binding =
         new Binding(
             invite.getId(),
@@ -362,6 +371,13 @@ public class ExistingAccountSetupService {
             saved.email());
     // Pure keyed binding only; this port operation cannot issue a bearer or call the provider.
     String digest = passwords.existingSetupRequestDigest(binding, chosenPassword);
+    if (!completed) {
+      var recovered = setupPasswordClaims.recoverWithinOwner(binding, digest);
+      if (recovered.isPresent()) return new CausalTarget(saved, recovered.get(), false);
+      if (!invite.getExpiresAt().isAfter(LocalDateTime.now(clock)))
+        throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
+    }
+    requireSameSavedIdentity(saved);
     return new CausalTarget(
         saved, setupPasswordClaims.claimWithinOwner(binding, digest), completed);
   }

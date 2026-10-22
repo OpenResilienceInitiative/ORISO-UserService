@@ -35,6 +35,16 @@ public interface ExistingSetupPasswordClaims {
    */
   Claim claimWithinOwner(Binding binding, String completeKeyedRequestDigest);
 
+  /** Existing exact custody only, bounded to original expiry plus seven days; never allocates. */
+  default java.util.Optional<Claim> recoverWithinOwner(Binding binding, String requestDigest) {
+    throw new IllegalStateException("Existing setup recovery unavailable");
+  }
+
+  /** Recovery data only; expiry still forbids another native mutation. */
+  default void requireRecoveryWithinOwner(Claim claim) {
+    throw new IllegalStateException("Existing setup recovery unavailable");
+  }
+
   void requireCurrentWithinOwner(Claim claim);
 
   void markUnknownWithinOwner(Claim claim);

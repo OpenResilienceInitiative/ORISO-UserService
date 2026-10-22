@@ -65,10 +65,17 @@ public final class ClaimedPasswordMaintenance {
       throw new ScopedIdentityCommandRequiredException();
     for (var entry : profiles.entrySet()) {
       var candidates = entry.getValue();
-      if (candidates == null || candidates.isEmpty() || candidates.size() > 20
+      if (candidates == null
+          || candidates.isEmpty()
+          || candidates.size() > 20
           || new HashSet<>(candidates).size() != candidates.size()) throw unavailable();
-      String expectedKind = Set.of("TENANT_ADMIN", "PLATFORM_ADMIN").contains(entry.getKey()) ? "PROTECTED" : "ORDINARY";
-      if (candidates.stream().anyMatch(candidate -> candidate == null || !expectedKind.equals(candidate.kind()))) throw unavailable();
+      String expectedKind =
+          Set.of("TENANT_ADMIN", "PLATFORM_ADMIN").contains(entry.getKey())
+              ? "PROTECTED"
+              : "ORDINARY";
+      if (candidates.stream()
+          .anyMatch(candidate -> candidate == null || !expectedKind.equals(candidate.kind())))
+        throw unavailable();
     }
   }
 
@@ -115,7 +122,7 @@ public final class ClaimedPasswordMaintenance {
 
   public void setup(ExistingAccountSetupService.ClaimedSetup claim, String password) {
     requireSupport();
-    var checked = claim.checkedClaim();
+    var checked = claim.checkedRecoveryClaim();
     var b = checked.binding();
     String kind =
         switch (b.role()) {
@@ -139,7 +146,7 @@ public final class ClaimedPasswordMaintenance {
             null,
             b.expiresAt().atZone(ZoneId.systemDefault()).toInstant().getEpochSecond(),
             digest);
-    execute(binding, password, claim::checkedClaim, claim::checkedClaim);
+    execute(binding, password, claim::checkedClaim, claim::checkedRecoveryClaim);
   }
 
   public void reset(PasswordResetService.ClaimedReset claim, String password) {

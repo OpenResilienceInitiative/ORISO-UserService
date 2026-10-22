@@ -106,6 +106,32 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
   }
 
   @Override
+  public java.util.Optional<Claim> recoverWithinOwner(Binding binding, String requestDigest) {
+    return owned(() -> {
+      requireBinding(binding);
+      require(digest(requestDigest));
+      Invite invite = lockInvite(binding);
+      var rows = lockSaved(binding.inviteId());
+      if (rows.isEmpty() || !Set.of("FROZEN", "UNKNOWN").contains(rows.getFirst().status()))
+        return java.util.Optional.empty();
+      var saved = rows.getFirst();
+      require(saved.bindingMatches(binding) && saved.requestDigest().equals(requestDigest));
+      require("EMAIL_SENT".equals(invite.status()) && "IN_PROGRESS".equals(invite.phase()) && invite.hasVerifier());
+      require(binding.expiresAt().plusDays(7).isAfter(LocalDateTime.now(clock)));
+      return java.util.Optional.of(saved.claim(binding));
+    });
+  }
+
+  @Override
+  public void requireRecoveryWithinOwner(Claim claim) {
+    owned(() -> {
+      active(claim, "EMAIL_SENT", "IN_PROGRESS");
+      require(claim.binding().expiresAt().plusDays(7).isAfter(LocalDateTime.now(clock)));
+      return null;
+    });
+  }
+
+  @Override
   public void requireCurrentWithinOwner(Claim claim) {
     owned(
         () -> {
