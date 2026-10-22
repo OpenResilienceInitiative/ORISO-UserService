@@ -247,7 +247,9 @@ public final class SelfAppOtpMaintenance {
                         projection,
                         initialCode,
                         secret,
-                        pendingEmail,
+                        kind == Operation.EMAIL_START
+                            ? pendingEmail.toLowerCase(java.util.Locale.ROOT)
+                            : pendingEmail,
                         kind));
       } catch (RuntimeException uncertain) {
         checked = transaction(() -> findChecked(self, operation, requestDigest, actor, kind));

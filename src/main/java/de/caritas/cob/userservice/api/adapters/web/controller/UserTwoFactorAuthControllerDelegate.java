@@ -47,7 +47,7 @@ class UserTwoFactorAuthControllerDelegate {
     var email = emailDTO.getEmail().toLowerCase(Locale.ROOT);
 
     if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
-      if (!selfAppOtpMaintenance.startEmail(email))
+      if (!selfAppOtpMaintenance.startEmail(emailDTO.getEmail()))
         throw new de.caritas.cob.userservice.api.exception.httpresponses
             .ServiceUnavailableException("OTP email delivery unavailable");
       return ResponseEntity.noContent().build();

@@ -11,7 +11,6 @@ import de.caritas.cob.userservice.api.config.auth.*;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
-import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -68,30 +67,33 @@ class AccountLifecycleCallerConfigurationTest {
             context -> {
               context.getEnvironment().merge(valid());
               context.addBeanFactoryPostProcessor(
-                  factory -> factory.registerSingleton("fixtureKeycloakConfiguration", keycloak));
+                  factory -> {
+                    factory.registerSingleton("fixtureKeycloakConfiguration", keycloak);
+                    factory.registerSingleton("keycloakRestTemplate", http);
+                    factory.registerSingleton("fixtureTaskActors", actors);
+                    factory.registerSingleton("fixtureTaskBroker", broker);
+                    factory.registerSingleton("fixtureIdentityMode", mode);
+                    factory.registerSingleton("fixtureHuman", new AuthenticatedUser());
+                    factory.registerSingleton("fixtureRequest", new MockHttpServletRequest());
+                    factory.registerSingleton("fixtureJdbc", jdbc);
+                    factory.registerSingleton(
+                        "fixtureTransactions", mock(PlatformTransactionManager.class));
+                    factory.registerSingleton("fixtureMatrix", mock(MatrixSynapseService.class));
+                    factory.registerSingleton("fixtureMatrixConfiguration", mock(MatrixConfig.class));
+                    factory.registerSingleton("fixtureAppointments", mock(AppointmentService.class));
+                    factory.registerSingleton(
+                        "fixtureTenants",
+                        mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class));
+                    factory.registerSingleton(
+                        "fixtureAgencies",
+                        mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class));
+                  });
             })
         .withPropertyValues(
             "ORISO_ACCOUNT_LIFECYCLE_ENABLED=true",
             "ORISO_ACCOUNT_LIFECYCLE_REALM=fixture",
             "KEYCLOAK_REALM_INTERNAL_ID=22222222-2222-4222-8222-222222222222")
         .withUserConfiguration(AccountLifecycleCallerConfiguration.class)
-        .withBean("keycloakRestTemplate", RestTemplate.class, () -> http)
-        .withBean(TaskActorConfiguration.class, () -> actors)
-        .withBean(TaskActorTokenBroker.class, () -> broker)
-        .withBean(IdentityClientConfig.class, () -> mode)
-        .withBean(AuthenticatedUser.class, AuthenticatedUser::new)
-        .withBean(HttpServletRequest.class, MockHttpServletRequest::new)
-        .withBean(JdbcTemplate.class, () -> jdbc)
-        .withBean(PlatformTransactionManager.class, () -> mock(PlatformTransactionManager.class))
-        .withBean(MatrixSynapseService.class, () -> mock(MatrixSynapseService.class))
-        .withBean(MatrixConfig.class, () -> mock(MatrixConfig.class))
-        .withBean(AppointmentService.class, () -> mock(AppointmentService.class))
-        .withBean(
-            de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class,
-            () -> mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class))
-        .withBean(
-            de.caritas.cob.userservice.api.service.agency.AgencyService.class,
-            () -> mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class))
         .run(
             context -> {
               assertNull(context.getStartupFailure());
