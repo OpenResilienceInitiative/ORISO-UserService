@@ -219,21 +219,36 @@ class JdbcProtectedCleanupStatusTest {
 
   @Test
   void unboundPreparedCustodyCannotUseAnOldAbsentAckBeforeIndependentCompensationStatus() {
-    jdbc.update("UPDATE protected_account_creation SET state='PREPARED',account_id=NULL,created_checkpoint=NULL WHERE invite_id=73");
+    jdbc.update(
+        "UPDATE protected_account_creation SET state='PREPARED',account_id=NULL,created_checkpoint=NULL WHERE invite_id=73");
     jdbc.update("DELETE FROM protected_account_recovery WHERE invite_id=73");
-    jdbc.update("INSERT INTO protected_account_recovery(invite_id,expected_generation,recovery_id,created_at) VALUES(73,0,?,?)",
-        recover.path("recoveryId").asText(), Timestamp.from(before.instant()));
-    jdbc.update("UPDATE protected_invitation_cancellation SET response_json=? WHERE invite_id=73",
+    jdbc.update(
+        "INSERT INTO protected_account_recovery(invite_id,expected_generation,recovery_id,created_at) VALUES(73,0,?,?)",
+        recover.path("recoveryId").asText(),
+        Timestamp.from(before.instant()));
+    jdbc.update(
+        "UPDATE protected_invitation_cancellation SET response_json=? WHERE invite_id=73",
         json.canonical(vector.path("absentRestriction")));
     var history = acceptance.historical(73);
-    var abandoned = accounts.verifyRecovery(creation.recovery(history, 0), bytes(recover.path("abandonedResponse")));
+    var abandoned =
+        accounts.verifyRecovery(
+            creation.recovery(history, 0), bytes(recover.path("abandonedResponse")));
     assertEquals("ABANDONED", abandoned.state());
     assertNull(abandoned.accountId());
     assertFalse(service().verifiedRestriction(73).cleanupRequired());
-    assertThrows(RuntimeException.class, () -> service().withAcknowledged(73, () -> released.incrementAndGet()));
+    assertThrows(
+        RuntimeException.class,
+        () -> service().withAcknowledged(73, () -> released.incrementAndGet()));
     assertEquals(0, released.get());
-    when(receiver.cleanupStatus(any(), any(), any(), any())).thenAnswer(call -> cleanup.verify(
-        call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3), bytes(vector.path("absent"))));
+    when(receiver.cleanupStatus(any(), any(), any(), any()))
+        .thenAnswer(
+            call ->
+                cleanup.verify(
+                    call.getArgument(0),
+                    call.getArgument(1),
+                    call.getArgument(2),
+                    call.getArgument(3),
+                    bytes(vector.path("absent"))));
     assertDoesNotThrow(() -> service().refreshAfterCleanup(73, abandoned, local()));
     assertEquals(1, service().withAcknowledged(73, () -> released.incrementAndGet()));
     assertEquals(1, released.get());

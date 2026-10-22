@@ -131,9 +131,13 @@ class ProtectedInvitationRecipientKeyReleaseJpaIT extends ProtectedInvitationIss
     distinctReservationForRejectedNewInvite();
     var original = service.createInvite(command());
     String held = original.getActiveRecipientKey();
-    failAfterCommittedInvalidation(original.getId(), ProtectedInvitationCancellation.Reason.SUPERSEDED);
-    assertThrows(KeycloakProtectedInvitations.RemoteFailure.class, () -> service.resendInvite(
-        new AccountInviteService.SendInviteCommand(original.getId(), template.getId())));
+    failAfterCommittedInvalidation(
+        original.getId(), ProtectedInvitationCancellation.Reason.SUPERSEDED);
+    assertThrows(
+        KeycloakProtectedInvitations.RemoteFailure.class,
+        () ->
+            service.resendInvite(
+                new AccountInviteService.SendInviteCommand(original.getId(), template.getId())));
     var retired = invites.findById(original.getId()).orElseThrow();
     assertThat(retired.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
     assertThat(retired.getTokenHash()).isNull();
@@ -151,13 +155,15 @@ class ProtectedInvitationRecipientKeyReleaseJpaIT extends ProtectedInvitationIss
     String held = original.getActiveRecipientKey();
     original.setExpiresAt(LocalDateTime.now().minusDays(1));
     invites.saveAndFlush(original);
-    failAfterCommittedInvalidation(original.getId(), ProtectedInvitationCancellation.Reason.ISSUANCE_ABORTED);
+    failAfterCommittedInvalidation(
+        original.getId(), ProtectedInvitationCancellation.Reason.ISSUANCE_ABORTED);
     assertThrows(KeycloakProtectedInvitations.RemoteFailure.class, service::expireElapsedInvites);
     var expired = invites.findById(original.getId()).orElseThrow();
     assertThat(expired.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
     assertThat(expired.getTokenHash()).isNull();
     assertThat(expired.getActiveRecipientKey()).isEqualTo(held);
-    assertThat(expired.getTenantIdReservationToken()).isEqualTo(original.getTenantIdReservationToken());
+    assertThat(expired.getTenantIdReservationToken())
+        .isEqualTo(original.getTenantIdReservationToken());
     assertThatThrownBy(() -> service.createInvite(command())).isInstanceOf(RuntimeException.class);
     verify(cancellation, never()).withAcknowledged(anyLong(), any());
     verify(tenantIds, never()).release(17L);
@@ -165,18 +171,23 @@ class ProtectedInvitationRecipientKeyReleaseJpaIT extends ProtectedInvitationIss
   }
 
   private void distinctReservationForRejectedNewInvite() {
-    when(tenantIds.reserve(null)).thenReturn(
-        new TenantIdReservation(17L, "9eb4c868-16d4-4be5-8c0b-5fb9d2b866b3"),
-        new TenantIdReservation(18L, "59ba921a-849d-4f32-a492-98d03ff582b0"));
+    when(tenantIds.reserve(null))
+        .thenReturn(
+            new TenantIdReservation(17L, "9eb4c868-16d4-4be5-8c0b-5fb9d2b866b3"),
+            new TenantIdReservation(18L, "59ba921a-849d-4f32-a492-98d03ff582b0"));
     when(tenantIds.getAvailability(18L)).thenReturn(IdAllocationStatus.RESERVED);
   }
 
-  private void failAfterCommittedInvalidation(long id, ProtectedInvitationCancellation.Reason reason) {
-    doAnswer(call -> {
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      transaction().executeWithoutResult(tx -> ((Runnable) call.getArgument(2)).run());
-      throw new KeycloakProtectedInvitations.RemoteFailure(0);
-    }).when(cancellation).cancel(eq(id), eq(reason), any());
+  private void failAfterCommittedInvalidation(
+      long id, ProtectedInvitationCancellation.Reason reason) {
+    doAnswer(
+            call -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              transaction().executeWithoutResult(tx -> ((Runnable) call.getArgument(2)).run());
+              throw new KeycloakProtectedInvitations.RemoteFailure(0);
+            })
+        .when(cancellation)
+        .cancel(eq(id), eq(reason), any());
   }
 
   @Test

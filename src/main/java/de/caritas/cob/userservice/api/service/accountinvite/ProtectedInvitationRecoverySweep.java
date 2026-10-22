@@ -1,15 +1,15 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcProtectedInvitationCancellation;
-import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.ProtectedAdminOnboardingService;
+import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
-import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
-import de.caritas.cob.userservice.api.service.accountinvite.onboarding.ProtectedAdminOnboardingService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Clock;
 import java.time.Duration;
@@ -62,7 +62,8 @@ public final class ProtectedInvitationRecoverySweep {
     this.coordinator = Objects.requireNonNull(coordinator);
     this.invites = Objects.requireNonNull(invites);
     this.clock = Objects.requireNonNull(clock);
-    if ((identity != null) != (authentication != null) || (identity != null) != (tenantContext != null))
+    if ((identity != null) != (authentication != null)
+        || (identity != null) != (tenantContext != null))
       throw new IllegalArgumentException("Configure the complete protected recovery runtime");
     this.identity = identity;
     this.authentication = authentication;
@@ -97,8 +98,11 @@ public final class ProtectedInvitationRecoverySweep {
       if (lease.claimedUntil().isAfter(LocalDateTime.now(clock))) {
         if (identity == null) invites.expireElapsedInvites();
         else {
-          if (!identity.isFiveActorMode()) throw new IllegalStateException("Protected recovery requires five actors");
-          String token = RoutineTaskAuthentication.accessToken(TaskPurpose.INVITE_RESERVATIONS, identity, authentication);
+          if (!identity.isFiveActorMode())
+            throw new IllegalStateException("Protected recovery requires five actors");
+          String token =
+              RoutineTaskAuthentication.accessToken(
+                  TaskPurpose.INVITE_RESERVATIONS, identity, authentication);
           TechnicalAccessTokenContext.offerDuring(token, invites::expireElapsedInvites);
         }
       }

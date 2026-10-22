@@ -112,13 +112,23 @@ class ProtectedInvitationIssuanceConfigurationTest {
                 "ORISO_PROTECTED_INVITATION_PROFILE_IDS=" + REVIEWED,
                 "ORISO_TASK_CONTEXT_KEY="
                     + java.util.Base64.getEncoder().encodeToString(new byte[32]))
-            .withInitializer(context -> context.addBeanFactoryPostProcessor(factory -> {
-              factory.registerSingleton("fixtureJdbc", new org.springframework.jdbc.core.JdbcTemplate(source));
-              factory.registerSingleton("fixtureManager", manager);
-              factory.registerSingleton("fixtureCodec", new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec(new byte[32]));
-              factory.registerSingleton("fixtureKeycloakConfig", keycloak);
-              factory.registerSingleton("keycloakRestTemplate", new org.springframework.web.client.RestTemplate());
-            }));
+            .withInitializer(
+                context ->
+                    context.addBeanFactoryPostProcessor(
+                        factory -> {
+                          factory.registerSingleton(
+                              "fixtureJdbc",
+                              new org.springframework.jdbc.core.JdbcTemplate(source));
+                          factory.registerSingleton("fixtureManager", manager);
+                          factory.registerSingleton(
+                              "fixtureCodec",
+                              new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+                                  .AccountLifecycleCodec(new byte[32]));
+                          factory.registerSingleton("fixtureKeycloakConfig", keycloak);
+                          factory.registerSingleton(
+                              "keycloakRestTemplate",
+                              new org.springframework.web.client.RestTemplate());
+                        }));
     for (Class<?> type :
         new Class<?>[] {
           jakarta.persistence.EntityManager.class,
@@ -157,8 +167,12 @@ class ProtectedInvitationIssuanceConfigurationTest {
       org.springframework.boot.test.context.runner.ApplicationContextRunner registerMock(
           org.springframework.boot.test.context.runner.ApplicationContextRunner runner,
           Class<T> type) {
-    return runner.withInitializer(context -> context.addBeanFactoryPostProcessor(factory ->
-        factory.registerSingleton("fixture-" + type.getName(), org.mockito.Mockito.mock(type))));
+    return runner.withInitializer(
+        context ->
+            context.addBeanFactoryPostProcessor(
+                factory ->
+                    factory.registerSingleton(
+                        "fixture-" + type.getName(), org.mockito.Mockito.mock(type))));
   }
 
   private static MockEnvironment installed() {
