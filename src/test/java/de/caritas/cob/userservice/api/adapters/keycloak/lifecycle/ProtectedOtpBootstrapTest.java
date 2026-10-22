@@ -72,8 +72,11 @@ class ProtectedOtpBootstrapTest {
       assertEquals(f.claim.executionId(), completion.bootstrapIncarnation());
       assertEquals(f.pending.created().accountId(), completion.accountId());
       assertEquals(completion.receipt(), f.adapter().completed(f.claim).receipt());
-      assertEquals(completion.receipt(), new TransactionTemplate(f.manager)
-          .execute(tx -> f.adapter().completedWithinOwner(f.claim)).receipt());
+      assertEquals(
+          completion.receipt(),
+          new TransactionTemplate(f.manager)
+              .execute(tx -> f.adapter().completedWithinOwner(f.claim))
+              .receipt());
       assertFalse(completion.toString().contains("123456"));
       assertFalse(completion.receipt().contains("SyntheticSetupSecret1234567890"));
       assertEquals(

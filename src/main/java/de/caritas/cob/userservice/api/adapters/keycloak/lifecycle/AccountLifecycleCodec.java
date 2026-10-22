@@ -482,17 +482,32 @@ public final class AccountLifecycleCodec {
       throw invalidSecretIntent();
   }
 
-  String protectedBootstrapAppProof(String realmName, String realmId, String accountId,
-      TaskActorCredentials actor, JsonNode materialized, long authorityValidUntil) {
-    return selfOtpProof(realmName, realmId, accountId, actor, materialized, authorityValidUntil,
-        "otp.bootstrap-app-setup", "PUT");
+  String protectedBootstrapAppProof(
+      String realmName,
+      String realmId,
+      String accountId,
+      TaskActorCredentials actor,
+      JsonNode materialized,
+      long authorityValidUntil) {
+    return selfOtpProof(
+        realmName,
+        realmId,
+        accountId,
+        actor,
+        materialized,
+        authorityValidUntil,
+        "otp.bootstrap-app-setup",
+        "PUT");
   }
 
   void checkProtectedBootstrapCompleteReceipt(String receipt, JsonNode independentlyExpected) {
     if (receipt == null || receipt.length() > 8192) throw invalidSecretIntent();
     String encoded = encode(canonical(independentlyExpected).getBytes(StandardCharsets.UTF_8));
-    String expected = encoded + "." + HexFormat.of().formatHex(mac("otp-bootstrap-complete/v1\n" + encoded));
-    if (!java.security.MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8), receipt.getBytes(StandardCharsets.UTF_8))) throw invalidSecretIntent();
+    String expected =
+        encoded + "." + HexFormat.of().formatHex(mac("otp-bootstrap-complete/v1\n" + encoded));
+    if (!java.security.MessageDigest.isEqual(
+        expected.getBytes(StandardCharsets.UTF_8), receipt.getBytes(StandardCharsets.UTF_8)))
+      throw invalidSecretIntent();
   }
 
   private String selfOtpProof(
