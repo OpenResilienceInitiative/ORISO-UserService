@@ -3,10 +3,10 @@ package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 import com.fasterxml.jackson.databind.JsonNode;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationCodec.FrozenApproval;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationCodec.VerifiedApproval;
-import java.time.Clock;
-import java.sql.Timestamp;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.sql.Timestamp;
+import java.time.Clock;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -41,48 +41,87 @@ public final class JdbcProtectedInvitationAcceptance {
 
   public AcceptanceClaim claim(long inviteId, String tokenHash, JsonNode registration) {
     if (TransactionSynchronizationManager.isActualTransactionActive()
-        || inviteId < 1 || tokenHash == null || !tokenHash.matches("[0-9a-f]{64}")
-        || registration == null || !registration.isObject()) throw unavailable();
+        || inviteId < 1
+        || tokenHash == null
+        || !tokenHash.matches("[0-9a-f]{64}")
+        || registration == null
+        || !registration.isObject()) throw unavailable();
     // Freeze the caller's mutable JSON before acquiring a lock; no password is persisted.
     JsonNode frozenRegistration = json.read(json.canonical(registration), JsonNode.class);
-    return journal.withReadyInvite(inviteId, () -> {
-      var invites = jdbc.query(
-          "SELECT status,token_hash FROM account_invite WHERE id=?",
-          (rs, index) -> new String[]{rs.getString("status"), rs.getString("token_hash")}, inviteId);
-      if (invites.size() != 1 || !"EMAIL_SENT".equals(invites.getFirst()[0])
-          || !equal(tokenHash, invites.getFirst()[1])) throw unavailable();
-      FrozenApproval frozen = journal.pending(inviteId);
-      String response = jdbc.queryForObject(
-          "SELECT response_json FROM protected_invitation_authorization WHERE invite_id=? AND state='READY'",
-          String.class, inviteId);
-      VerifiedApproval approval = approvals.verifyAuthorized(frozen, response);
-      String digest = json.digest("protected-recipient-registration/v1", Map.of(
-          "inviteId", Long.toString(inviteId), "approvalId", frozen.approvalId().toString(),
-          "approvalRequestDigest", frozen.requestDigest(), "registration", frozenRegistration));
-      var rows = rows(inviteId);
-      if (rows.isEmpty()) {
-        Timestamp now = Timestamp.from(clock.instant());
-        jdbc.update("INSERT INTO protected_invitation_acceptance"
-            + " (invite_id,approval_id,claim_id,attempt_id,execution_id,journal_version,registration_digest,created_at,updated_at)"
-            + " VALUES (?,?,?,?,?,1,?,?,?)", inviteId, frozen.approvalId().toString(),
-            UUID.randomUUID().toString(), UUID.randomUUID().toString(), UUID.randomUUID().toString(),
-            digest, now, now);
-        rows = rows(inviteId);
-      }
-      if (rows.size() != 1) throw unavailable();
-      var saved = rows.getFirst();
-      if (!frozen.approvalId().toString().equals(saved.approvalId())
-          || saved.version() != 1 || !equal(digest, saved.digest())) throw unavailable();
-      return new AcceptanceClaim(frozen, approval, uuid(saved.claimId()), uuid(saved.attemptId()),
-          uuid(saved.executionId()), saved.digest());
-    });
+    return journal.withReadyInvite(
+        inviteId,
+        () -> {
+          var invites =
+              jdbc.query(
+                  "SELECT status,token_hash FROM account_invite WHERE id=?",
+                  (rs, index) -> new String[] {rs.getString("status"), rs.getString("token_hash")},
+                  inviteId);
+          if (invites.size() != 1
+              || !"EMAIL_SENT".equals(invites.getFirst()[0])
+              || !equal(tokenHash, invites.getFirst()[1])) throw unavailable();
+          FrozenApproval frozen = journal.pending(inviteId);
+          String response =
+              jdbc.queryForObject(
+                  "SELECT response_json FROM protected_invitation_authorization WHERE invite_id=? AND state='READY'",
+                  String.class,
+                  inviteId);
+          VerifiedApproval approval = approvals.verifyAuthorized(frozen, response);
+          String digest =
+              json.digest(
+                  "protected-recipient-registration/v1",
+                  Map.of(
+                      "inviteId",
+                      Long.toString(inviteId),
+                      "approvalId",
+                      frozen.approvalId().toString(),
+                      "approvalRequestDigest",
+                      frozen.requestDigest(),
+                      "registration",
+                      frozenRegistration));
+          var rows = rows(inviteId);
+          if (rows.isEmpty()) {
+            Timestamp now = Timestamp.from(clock.instant());
+            jdbc.update(
+                "INSERT INTO protected_invitation_acceptance"
+                    + " (invite_id,approval_id,claim_id,attempt_id,execution_id,journal_version,registration_digest,created_at,updated_at)"
+                    + " VALUES (?,?,?,?,?,1,?,?,?)",
+                inviteId,
+                frozen.approvalId().toString(),
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                digest,
+                now,
+                now);
+            rows = rows(inviteId);
+          }
+          if (rows.size() != 1) throw unavailable();
+          var saved = rows.getFirst();
+          if (!frozen.approvalId().toString().equals(saved.approvalId())
+              || saved.version() != 1
+              || !equal(digest, saved.digest())) throw unavailable();
+          return new AcceptanceClaim(
+              frozen,
+              approval,
+              uuid(saved.claimId()),
+              uuid(saved.attemptId()),
+              uuid(saved.executionId()),
+              saved.digest());
+        });
   }
 
   private java.util.List<Row> rows(long inviteId) {
-    return jdbc.query("SELECT * FROM protected_invitation_acceptance WHERE invite_id=? FOR UPDATE",
-        (rs, index) -> new Row(rs.getString("approval_id"), rs.getString("claim_id"),
-            rs.getString("attempt_id"), rs.getString("execution_id"), rs.getLong("journal_version"),
-            rs.getString("registration_digest")), inviteId);
+    return jdbc.query(
+        "SELECT * FROM protected_invitation_acceptance WHERE invite_id=? FOR UPDATE",
+        (rs, index) ->
+            new Row(
+                rs.getString("approval_id"),
+                rs.getString("claim_id"),
+                rs.getString("attempt_id"),
+                rs.getString("execution_id"),
+                rs.getLong("journal_version"),
+                rs.getString("registration_digest")),
+        inviteId);
   }
 
   private static UUID uuid(String value) {
@@ -90,21 +129,33 @@ public final class JdbcProtectedInvitationAcceptance {
       UUID parsed = UUID.fromString(value);
       if (!parsed.toString().equals(value)) throw unavailable();
       return parsed;
-    } catch (RuntimeException failure) { throw unavailable(); }
+    } catch (RuntimeException failure) {
+      throw unavailable();
+    }
   }
 
   private static boolean equal(String expected, String actual) {
-    return expected != null && actual != null && MessageDigest.isEqual(
-        expected.getBytes(StandardCharsets.UTF_8), actual.getBytes(StandardCharsets.UTF_8));
+    return expected != null
+        && actual != null
+        && MessageDigest.isEqual(
+            expected.getBytes(StandardCharsets.UTF_8), actual.getBytes(StandardCharsets.UTF_8));
   }
 
   private static AccessDeniedException unavailable() {
     return new AccessDeniedException("Protected recipient acceptance is pending or unavailable");
   }
 
-  private record Row(String approvalId, String claimId, String attemptId, String executionId,
-      long version, String digest) {
-    @Override public String toString() { return "ProtectedAcceptanceRow[redacted]"; }
+  private record Row(
+      String approvalId,
+      String claimId,
+      String attemptId,
+      String executionId,
+      long version,
+      String digest) {
+    @Override
+    public String toString() {
+      return "ProtectedAcceptanceRow[redacted]";
+    }
   }
 
   /** Only this SQL owner can mint the native creation handoff. */
