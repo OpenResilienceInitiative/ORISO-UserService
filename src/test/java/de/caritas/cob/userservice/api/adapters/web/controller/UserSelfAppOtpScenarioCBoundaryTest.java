@@ -135,6 +135,34 @@ class UserSelfAppOtpScenarioCBoundaryTest {
   }
 
   @Test
+  void deleteCannotBorrowTheAppEnrollmentRouteBeforeAnyOwnedEffect() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.request.setMethod("DELETE");
+      fixture.request.setRequestURI("/service/users/2fa/app");
+      assertThrows(ForbiddenException.class, () -> fixture.controller.deactivateTwoFactorAuthByApp());
+      assertNull(fixture.status());
+      assertEquals(0, fixture.nativeExecutions.get());
+      assertEquals(0, fixture.domainWrites());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void emailValidationPathMustMatchTheActualCodeBeforeAnyNewOwnedEffect() throws Exception {
+    try (var fixture = new Fixture(true, true)) {
+      fixture.prepareDeliveredEmail();
+      assertThrows(
+          ForbiddenException.class,
+          () -> fixture.controller.finishTwoFactorAuthByEmailSetup("654321"));
+      assertNull(fixture.status());
+      assertEquals(fixture.emailStartOperation, fixture.pendingEmailOperation());
+      assertEquals(1, fixture.nativeExecutions.get());
+      assertEquals(0, fixture.domainWrites());
+      fixture.server.verify();
+    }
+  }
+
+  @Test
   void publicAppSetupValidatesThePublicIssuerWhileUsingTheConfiguredInternalTransport()
       throws Exception {
     try (var fixture = new Fixture(true, true)) {
@@ -797,6 +825,7 @@ class UserSelfAppOtpScenarioCBoundaryTest {
       fixture.request.removeHeader("Idempotency-Key");
       fixture.request.addHeader("Idempotency-Key", fixture.operation);
       fixture.request.setMethod("PUT");
+      fixture.request.setRequestURI("/service/users/2fa/email");
       String cipher = fixture.envelope();
       fixture.installOwner(fixture.afterOriginalExpiry());
       assertEquals(

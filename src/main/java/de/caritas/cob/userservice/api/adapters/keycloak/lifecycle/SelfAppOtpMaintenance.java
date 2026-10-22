@@ -188,7 +188,7 @@ public final class SelfAppOtpMaintenance {
                 || applyEmailAndInvite == null))
         || markActive == null)
       throw new BadRequestException("A complete app OTP request is required");
-    var self = actualSelf(kind);
+    var self = actualSelf(kind, initialCode);
     String operation = operationId();
     var actor = actors.require(TaskPurpose.OTP);
     if (!canonicalUuid(actor.serviceSubject())) throw unavailable();
@@ -841,12 +841,15 @@ public final class SelfAppOtpMaintenance {
         nativeStatus);
   }
 
-  private Self actualSelf(Operation kind) {
-    return actualSelf(
-        kind.method,
-        kind == Operation.EMAIL_START || kind == Operation.EMAIL_FINISH
-            ? Set.of("/service/users/2fa/email", "/users/2fa/email")
-            : Set.of("/service/users/2fa/app", "/users/2fa/app"));
+  private Self actualSelf(Operation kind, String code) {
+    String path =
+        switch (kind) {
+          case APP -> "/users/2fa/app";
+          case DELETE -> "/users/2fa";
+          case EMAIL_START -> "/users/2fa/email";
+          case EMAIL_FINISH -> "/users/2fa/email/validate/" + code;
+        };
+    return actualSelf(kind.method, Set.of("/service" + path, path));
   }
 
   private Self actualSelf(String method, Set<String> paths) {
