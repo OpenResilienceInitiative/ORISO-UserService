@@ -719,16 +719,19 @@ public final class ProtectedOtpBootstrap {
   /** Reconstruct opaque success only from the independently checked committed private journal. */
   public Completion completed(AcceptanceClaim claim) {
     outsideSql();
-    return transactions.execute(tx -> {
-      checkClaim(claim); row(claim);
-      var ids = jdbc.queryForList("SELECT public_intent_id FROM protected_otp_bootstrap_operation WHERE invite_id=? AND claim_id=? AND state='ACKNOWLEDGED' ORDER BY public_intent_id", String.class, invite(claim), claim.claimId().toString());
-      Completion found = null;
-      for (String id : ids) {
-        var checked = checkedOutcome(claim, Objects.requireNonNull(operation(claim, id)));
-        if (checked.state() == AttemptState.COMPLETE) { if (found != null) throw unavailable(); found = checked.completion(); }
-      }
-      if (found == null) throw unavailable(); return found;
-    });
+    return transactions.execute(tx -> completedWithinOwner(claim));
+  }
+
+  /** Pure committed outcome read while the exact activation owner holds its SQL locks. */
+  public Completion completedWithinOwner(AcceptanceClaim claim) {
+    owningSql(); checkClaim(claim); row(claim);
+    var ids = jdbc.queryForList("SELECT public_intent_id FROM protected_otp_bootstrap_operation WHERE invite_id=? AND claim_id=? AND state='ACKNOWLEDGED' ORDER BY public_intent_id", String.class, invite(claim), claim.claimId().toString());
+    Completion found = null;
+    for (String id : ids) {
+      var checked = checkedOutcome(claim, Objects.requireNonNull(operation(claim, id)));
+      if (checked.state() == AttemptState.COMPLETE) { if (found != null) throw unavailable(); found = checked.completion(); }
+    }
+    if (found == null) throw unavailable(); return found;
   }
 
   private Operation operation(AcceptanceClaim claim, String id) {
