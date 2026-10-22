@@ -160,6 +160,59 @@ class JdbcAccountLifecycleJournalTest {
   }
 
   @Test
+  void unreadableExpiredPageDoesNotAbortOrStarveTheNextHealthyRecovery() {
+    journal.begin(id, identity);
+    jdbc.update(
+        "UPDATE identity_lifecycle_attempt SET lease_until=NULL,update_date=? WHERE id=?",
+        java.sql.Timestamp.from(Instant.parse("2026-10-21T11:00:00Z")),
+        id.toString());
+    for (int index = 0; index < 100; index++) {
+      UUID poisoned = UUID.randomUUID();
+      var scope = identity.scope();
+      var origin = scope.origin();
+      var distinct =
+          new CreationIdentity(
+              new CreationScope(
+                  scope.tenantId(),
+                  scope.registrationKind(),
+                  scope.initialGroup(),
+                  new Origin(
+                      origin.kind(),
+                      "registration:poison:" + index,
+                      origin.provenance(),
+                      origin.humanIssuer(),
+                      origin.humanSubject(),
+                      origin.humanAuthority(),
+                      origin.agencyIds())),
+              identity.creationFingerprint());
+      journal.begin(poisoned, distinct);
+      jdbc.update(
+          "UPDATE identity_lifecycle_attempt SET identity_json=?,lease_until=NULL,update_date=? WHERE id=?",
+          "{invalid-private-row}",
+          java.sql.Timestamp.from(Instant.parse("2026-10-21T10:00:00Z")),
+          poisoned.toString());
+    }
+    assertDoesNotThrow(journal::claimExpired);
+    assertEquals(0, pending());
+    assertEquals(
+        100,
+        jdbc.queryForObject(
+            "SELECT COUNT(*) FROM identity_lifecycle_attempt WHERE identity_json=? AND status='CREATION_REQUESTED' AND journal_version=1 AND update_date=?",
+            Integer.class,
+            "{invalid-private-row}",
+            java.sql.Timestamp.from(Instant.parse("2026-10-21T12:00:00Z"))));
+    assertDoesNotThrow(journal::claimExpired);
+    assertEquals("RECOVERY_REQUESTED", status());
+    assertEquals(1, pending());
+    assertEquals(
+        100,
+        jdbc.queryForObject(
+            "SELECT COUNT(*) FROM identity_lifecycle_attempt WHERE identity_json=? AND status='CREATION_REQUESTED' AND journal_version=1",
+            Integer.class,
+            "{invalid-private-row}"));
+  }
+
+  @Test
   void staleEffectScopeCannotStartDownstreamWorkAfterRecoveryClaim() {
     var execution = opened();
     var effects =

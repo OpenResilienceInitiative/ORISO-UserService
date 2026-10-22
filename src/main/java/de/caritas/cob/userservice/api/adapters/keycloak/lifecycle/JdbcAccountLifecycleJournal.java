@@ -182,28 +182,57 @@ public final class JdbcAccountLifecycleJournal implements AccountLifecycleJourna
 
   /** Stale candidates are re-read under the very same lock held by every local saga. */
   public void claimExpired() {
-    for (UUID id :
+    for (String candidate :
         jdbc.query(
             """
         SELECT id FROM identity_lifecycle_attempt
         WHERE status IN ('CREATION_REQUESTED','CREATE_UNCERTAIN','OPEN')
-        AND (lease_until IS NULL OR lease_until<=?) ORDER BY update_date LIMIT 100
+        AND (lease_until IS NULL OR lease_until<=?) ORDER BY update_date,id LIMIT 100
         """,
-            (rs, i) -> UUID.fromString(rs.getString(1)),
+            (rs, i) -> rs.getString(1),
             now())) {
-      separately(
-          () -> {
-            var row = lock(id);
-            var lease =
-                jdbc.queryForObject(
-                    "SELECT lease_until FROM identity_lifecycle_attempt WHERE id=?",
-                    Timestamp.class,
-                    id.toString());
-            if (Set.of("CREATION_REQUESTED", "CREATE_UNCERTAIN", "OPEN").contains(row.status())
-                && (lease == null || !lease.toInstant().isAfter(clock.instant())))
-              requestRecoveryLocked(row);
-            return null;
-          });
+      UUID parsed = null;
+      try {
+        UUID id = UUID.fromString(candidate);
+        if (!id.toString().equals(candidate)) throw denied();
+        parsed = id;
+        separately(
+            () -> {
+              var row = lock(id);
+              var lease =
+                  jdbc.queryForObject(
+                      "SELECT lease_until FROM identity_lifecycle_attempt WHERE id=?",
+                      Timestamp.class,
+                      id.toString());
+              if (Set.of("CREATION_REQUESTED", "CREATE_UNCERTAIN", "OPEN").contains(row.status())
+                  && (lease == null || !lease.toInstant().isAfter(clock.instant())))
+                requestRecoveryLocked(row);
+              return null;
+            });
+      } catch (RuntimeException refused) {
+        // A malformed private row cannot create an intent, abort later accounts, or own every
+        // bounded page. Rotate only its scan timestamp after the failed transaction has rolled
+        // back.
+        boolean rotated = false;
+        try {
+          rotated =
+              separately(
+                      () ->
+                          jdbc.update(
+                              "UPDATE identity_lifecycle_attempt SET update_date=? WHERE id=? AND status IN ('CREATION_REQUESTED','CREATE_UNCERTAIN','OPEN') AND (lease_until IS NULL OR lease_until<=?)",
+                              now(),
+                              candidate,
+                              now()))
+                  == 1;
+        } catch (RuntimeException unavailable) {
+          // No rollback/success is guessed when the independent fairness marker cannot commit.
+        }
+        org.slf4j.LoggerFactory.getLogger(JdbcAccountLifecycleJournal.class)
+            .warn(
+                "Expired lifecycle recovery refused; attempt={}, scanTimestampRecorded={}",
+                parsed == null ? "INVALID_ID" : parsed,
+                rotated);
+      }
     }
   }
 
