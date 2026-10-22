@@ -82,6 +82,24 @@ def select_slice(name):
             "de/caritas/cob/userservice/api/service/accountinvite/AccountInviteService",
         ]
         TEST_CLASS = SUITE.replace(".", "/")
+    elif name == "app-jpa":
+        SLICE = name
+        SUITE = "de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenanceJpaTest"
+        LEGACY = ""
+        CASES = {
+            "actualJpaInviteAndReceiptCommitTogetherOnlyAfterVerifiedNativeOutcome",
+            "actualJpaActivationFlushFailureRollsBackInviteAndReceiptThenExactOwnerRetryRecovers",
+            "actualJpaCommittedReplyLossResolvesFreshReceiptWithoutSecondDomainCallback",
+            "actualJpaInvalidNativeCodeCommitsTerminalRefusalAndNeverMarksInviteActive",
+        }
+        COMPILED_CLASSES += [
+            "de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/SelfAppOtpMaintenance",
+            "de/caritas/cob/userservice/api/service/accountinvite/AccountInviteService",
+            "de/caritas/cob/userservice/api/model/User",
+            "de/caritas/cob/userservice/api/model/AccountInvite",
+            "de/caritas/cob/userservice/api/port/out/AccountInviteRepository",
+        ]
+        TEST_CLASS = SUITE.replace(".", "/")
     elif name == "availability":
         SLICE = name
         SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserUsernameAvailabilityScenarioCBoundaryTest"
@@ -157,6 +175,8 @@ def select_slice(name):
         CONTROLS.add("defaultOffRuntimeConfigurationCreatesNoSelectorWithoutBindings")
     elif name == "deletion":
         CONTROLS.update({"legacyModeRetainsItsExistingConsultantDeletionWorkflow", "legacyMissingScopedSchedulerDelegateKeepsActualStartup"})
+    elif name == "app-jpa":
+        CONTROLS = {"actualJpaInviteAndReceiptCommitTogetherOnlyAfterVerifiedNativeOutcome"}
     elif name == "jpa":
         CONTROLS = {"actualJpaCommitPrecedesNativeDispatchEvenWhenReplyIsUnknown"}
 
@@ -382,7 +402,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["snapshot", "collect"])
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--slice", choices=["adapter", "deletion", "locale", "jpa", "availability", "app"], default="adapter")
+    parser.add_argument("--slice", choices=["adapter", "deletion", "locale", "jpa", "availability", "app", "app-jpa"], default="adapter")
     args = parser.parse_args()
     select_slice(args.slice)
     root = Path(__file__).resolve().parents[2]

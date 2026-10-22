@@ -296,3 +296,28 @@ class SelfAppBoundaryEvidenceTest(unittest.TestCase):
                 ET.ElementTree(suite).write(root / "TEST-app.xml")
                 result = proof.sanitize(root, root / "clean.xml")
                 self.assertFalse(result["all_passed"] or result["adapter_behavior_red"])
+
+
+class SelfAppJpaEvidenceTest(unittest.TestCase):
+    def test_actual_jpa_four_cases_require_known_success_control_and_no_skips(self):
+        proof = importlib.util.module_from_spec(SPEC)
+        SPEC.loader.exec_module(proof)
+        proof.select_slice("app-jpa")
+        self.assertEqual(4, len(proof.CASES))
+        for kind in ("green", "failure", "skipped", "error", "missing", "control-failure"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                suite = ET.Element("testsuite", name=proof.SUITE)
+                target = sorted(proof.CASES - proof.CONTROLS)[0]
+                for name in proof.CASES:
+                    if kind == "missing" and name == target:
+                        continue
+                    row = ET.SubElement(suite, "testcase", classname=proof.SUITE, name=name)
+                    if name == target and kind in {"failure", "skipped", "error"}:
+                        ET.SubElement(row, kind, type="org.opentest4j.AssertionFailedError" if kind == "failure" else "java.lang.IllegalStateException")
+                    if kind == "control-failure" and name in proof.CONTROLS:
+                        ET.SubElement(row, "failure", type="org.opentest4j.AssertionFailedError")
+                ET.ElementTree(suite).write(root / "TEST-app-jpa.xml")
+                result = proof.sanitize(root, root / "clean.xml")
+                self.assertEqual(kind == "green", result["all_passed"])
+                self.assertEqual(kind == "failure", result["adapter_behavior_red"])
