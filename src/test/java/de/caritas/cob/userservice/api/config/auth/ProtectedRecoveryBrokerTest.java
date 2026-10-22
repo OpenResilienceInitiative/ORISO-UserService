@@ -46,18 +46,24 @@ class ProtectedRecoveryBrokerTest {
       assertThrows(
           IllegalStateException.class, () -> broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE));
       assertEquals(1, issuer.calls.get());
-      var codec = mock(ProtectedAccountCodec.class);
+      byte[] key = new byte[32];
+      var clock = java.time.Clock.systemUTC();
+      var approvals =
+          new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationCodec(
+              key, clock, "synthetic", "synthetic-realm");
+      var codec =
+          spy(new ProtectedAccountCodec(
+              key, clock, approvals, "synthetic", "synthetic-realm", issuer.issuer()));
       var prepared = mock(ProtectedAccountCodec.PreparedRecovery.class);
       var recovered = mock(ProtectedAccountCodec.VerifiedRecovery.class);
       UUID approval = UUID.fromString("7f56c348-9785-4c78-b905-3d008dd42482");
       UUID attempt = UUID.fromString("39fe99aa-fd8e-44c8-9b48-71ea6cc09d38");
       byte[] response = "{}".getBytes(StandardCharsets.UTF_8);
-      when(codec.realmName()).thenReturn("synthetic");
       when(prepared.approvalId()).thenReturn(approval);
       when(prepared.attemptId()).thenReturn(attempt);
-      when(codec.recoverBody(prepared)).thenReturn(response);
-      when(codec.recoverProof(eq(prepared), any())).thenReturn("synthetic-proof");
-      when(codec.verifyRecovery(eq(prepared), any())).thenReturn(recovered);
+      doReturn(response).when(codec).recoverBody(prepared);
+      doReturn("synthetic-proof").when(codec).recoverProof(eq(prepared), any());
+      doReturn(recovered).when(codec).verifyRecovery(eq(prepared), any());
       var http = new RestTemplate();
       var server = MockRestServiceServer.bindTo(http).build();
       server
