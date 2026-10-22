@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -47,6 +48,7 @@ def sanitize(reports, destination):
     clean = ET.Element("testsuite", name=SUITE)
     paths = list(reports.glob("TEST-*.xml"))
     names = []
+    locations = []
     valid = len(paths) == 1
     for path in paths:
         suite = ET.parse(path).getroot()
@@ -62,6 +64,7 @@ def sanitize(reports, destination):
                 if row.find(kind) is not None:
                     local[key] += 1
                     ET.SubElement(child, kind, message="Sensitive native pair diagnostic omitted")
+                    locations.extend(re.findall(r"UserSelfAppOtpNativePairProof\.java:[0-9]+", row.find(kind).text or ""))
         for key, value in local.items():
             valid &= suite.get(key) is None or int(suite.get(key)) == value
             counts[key] += value
@@ -71,7 +74,7 @@ def sanitize(reports, destination):
         clean.set(key, str(value))
     destination.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(clean).write(destination, encoding="utf-8", xml_declaration=True)
-    return {**counts, "exact_inventory": valid, "accepted": accepted}
+    return {**counts, "exact_inventory": valid, "accepted": accepted, "failure_source_locations": sorted(set(locations))}
 
 
 def native(kc, report):
@@ -137,7 +140,7 @@ def native(kc, report):
         receipt["native_preconditions"] = {"actual_user_registration": True, "current_user_group_role": True, "actual_native_human_session": True, "canonical_admin3": True, "stock_native_denied": True, "no_app_credential": True}
         phase = "actual-public-java-native-pair"
         environment = dict(os.environ)
-        environment.update({"PAIR_NATIVE_BASE": fixture.base, "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id, "PAIR_ACCOUNT_ID": fixture.account_id, "PAIR_USERNAME": fixture.creation_input["account"]["username"], "PAIR_PASSWORD": fixture.creation_input["account"]["password"], "PAIR_HUMAN_CLIENT": CLIENT, "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode()})
+        environment.update({"PAIR_NATIVE_BASE": fixture.base, "PAIR_REALM": lifecycle.REALM, "PAIR_REALM_ID": fixture.realm_id, "PAIR_ACCOUNT_ID": fixture.account_id, "PAIR_USERNAME": fixture.creation_input["account"]["username"], "PAIR_PASSWORD": fixture.creation_input["account"]["password"], "PAIR_HUMAN_CLIENT": CLIENT, "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(), "PAIR_WITNESS": str(report.with_name("self-app-native-witness.json").resolve())})
         for actor, (client, roles) in lifecycle.ACTORS.items():
             environment.update({"PAIR_" + actor + "_CLIENT": client, "PAIR_" + actor + "_SECRET": "synthetic-lifecycle-" + actor, "PAIR_" + actor + "_SUBJECT": lifecycle.SUBJECTS[actor]})
         reports = ROOT / "target/surefire-reports"
@@ -146,6 +149,12 @@ def native(kc, report):
         child = subprocess.run(["mvn", "-B", "-ntp", "-q", "surefire:test", "-Dtest=" + SUITE, "-DfailIfNoTests=true", "-Dsurefire.failIfNoSpecifiedTests=true", "-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2"], cwd=ROOT, env=environment, capture_output=True, timeout=180)
         result = sanitize(reports, report.with_suffix(".xml"))
         receipt.update(result)
+        witness = report.with_name("self-app-native-witness.json")
+        if witness.is_file():
+            observed = json.loads(witness.read_text())
+            if not isinstance(observed, list) or len(observed) > 100 or any(set(row) != {"phase", "status"} or not re.fullmatch(r"[a-z-]{1,50}", row["phase"]) or not isinstance(row["status"], int) or row["status"] < 0 or row["status"] > 599 for row in observed):
+                raise ValueError("Invalid nonsecret native pair witness")
+            receipt["public_phases"] = observed
         receipt["executed"] = result["tests"]
         receipt["java_exit"] = child.returncode
         receipt["accepted"] = result["accepted"] and child.returncode == 0
@@ -162,8 +171,12 @@ def native(kc, report):
             raise
     finally:
         receipt["phase"] = phase
+        receipt["native_fixture_phases"] = UserPair.phase_receipts
         try:
             UserPair.doClassCleanups()
+            if getattr(UserPair, "tearDown_exceptions", []):
+                receipt["cleanup_failure_count"] = len(UserPair.tearDown_exceptions)
+                receipt["accepted"] = False
         except BaseException as error:
             receipt["cleanup_category"] = type(error).__name__
             receipt["accepted"] = False

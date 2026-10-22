@@ -50,6 +50,14 @@ import org.springframework.web.client.RestTemplate;
 
 /** Selected explicitly only by the isolated native workflow; missing fixture is a failure. */
 class UserSelfAppOtpNativePairProof {
+  private static final List<Map<String, Object>> PHASES = new ArrayList<>();
+
+  private static void phase(String name, int status) throws java.io.IOException {
+    if (!Set.of("owner-ready", "human-signed", "machine-signed", "stock-denied", "public-first-call", "public-after-first-call", "public-retry", "public-success", "native-read-http", "native-app-http", "native-token-http", "native-stock-http").contains(name) || status < 0 || status > 599 || PHASES.size() >= 100) throw new IllegalArgumentException("Invalid fixture observation");
+    PHASES.add(Map.of("phase", name, "status", status));
+    java.nio.file.Files.writeString(java.nio.file.Path.of(required("PAIR_WITNESS")), new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(PHASES));
+  }
+
   private static String required(String name) {
     String value = System.getenv(name);
     assertTrue(
@@ -60,6 +68,7 @@ class UserSelfAppOtpNativePairProof {
   @Test
   void actualPublicUserAppLostNativeReplyReplaysOneCredentialAndCommitsOwnedInvite()
       throws Exception {
+    PHASES.clear();
     assertEquals("true", required("GITHUB_ACTIONS"));
     assertEquals("Linux", System.getProperty("os.name"));
     String base = required("PAIR_NATIVE_BASE");
@@ -149,6 +158,7 @@ class UserSelfAppOtpNativePairProof {
                   nativeCalls.incrementAndGet();
                 }
                 var response = execution.execute(mapped, bytes);
+              phase(mutation ? "native-app-http" : logical.getPath().endsWith("/read") ? "native-read-http" : logical.getPath().endsWith("/token") ? "native-token-http" : "native-stock-http", response.getStatusCode().value());
                 if (mutation && lost.getAndIncrement() == 0) {
                   assertEquals(201, response.getStatusCode().value());
                   response.getBody().readAllBytes();
@@ -157,6 +167,7 @@ class UserSelfAppOtpNativePairProof {
                 }
                 return response;
               });
+      phase("owner-ready", 0);
       var form = new LinkedMultiValueMap<String, String>();
       form.add("grant_type", "password");
       form.add("client_id", required("PAIR_HUMAN_CLIENT"));
@@ -186,6 +197,7 @@ class UserSelfAppOtpNativePairProof {
           Set.of("user"),
           Set.copyOf((List<?>) ((Map<?, ?>) jwt.getClaims().get("realm_access")).get("roles")));
       assertEquals("11", jwt.getClaimAsString("tenantId"));
+      phase("human-signed", 0);
       var identity = new IdentityConfig();
       identity.setOpenidConnectUrl(issuer + "/protocol/openid-connect");
       identity.setOtpAllowedForUsers(true);
@@ -213,6 +225,7 @@ class UserSelfAppOtpNativePairProof {
       var checkedMachine = broker.issueCheckedMaintenance(TaskPurpose.OTP);
       assertEquals(actors.require(TaskPurpose.OTP).serviceSubject(), checkedMachine.subject());
       var machineJwt = decoder.decode(checkedMachine.accessToken());
+      phase("machine-signed", 0);
       assertEquals(
           Set.of("userservice", "oriso-account-lifecycle", "oriso-otp"),
           Set.copyOf(machineJwt.getAudience()));
@@ -226,6 +239,7 @@ class UserSelfAppOtpNativePairProof {
       } catch (org.springframework.web.client.HttpClientErrorException denied) {
         assertEquals(403, denied.getStatusCode().value());
       }
+      phase("stock-denied", 403);
       var request = new MockHttpServletRequest("PUT", "/service/users/2fa/app");
       var authentication =
           new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_USER")));
@@ -306,7 +320,9 @@ class UserSelfAppOtpNativePairProof {
               "http://maintenance-human-fixture.invalid",
               realm,
               realmId));
+      phase("public-first-call", 0);
       assertThrows(RuntimeException.class, () -> controller.activateTwoFactorAuthByApp(dto));
+      phase("public-after-first-call", 0);
       assertEquals(
           "FROZEN",
           jdbc.queryForObject(
@@ -330,6 +346,7 @@ class UserSelfAppOtpNativePairProof {
               "http://maintenance-human-fixture.invalid",
               realm,
               realmId));
+      phase("public-retry", 0);
       assertEquals(200, controller.activateTwoFactorAuthByApp(dto).getStatusCode().value());
       assertEquals(200, controller.activateTwoFactorAuthByApp(dto).getStatusCode().value());
       assertEquals(
@@ -370,6 +387,7 @@ class UserSelfAppOtpNativePairProof {
           List.of(humanBearer, checkedMachine.accessToken(), dto.getSecret(), dto.getOtp()))
         assertFalse(
             flat.contains(secret), "No plaintext secret or JWT may enter the private durable row");
+      phase("public-success", 200);
       verifyNoInteractions(legacy);
     } finally {
       SecurityContextHolder.clearContext();

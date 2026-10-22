@@ -39,7 +39,7 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
-/** Owned ordinary SELF app enrollment; runtime registration and native pairing remain separate. */
+/** Owned ordinary SELF app enrollment and removal; runtime registration remains separate. */
 @RequiredArgsConstructor
 public final class SelfAppOtpMaintenance {
   private final @NonNull IdentityClientConfig mode;
@@ -60,26 +60,29 @@ public final class SelfAppOtpMaintenance {
     return mode.isFiveActorMode();
   }
 
-  /** Signature-only next public mutation diagnostic; no deletion effect is implemented here. */
   public boolean delete(Runnable markPending) {
-    return false;
+    return execute(null, null, markPending, true);
   }
 
   public boolean setup(String initialCode, String secret, Runnable markActive) {
+    return execute(initialCode, secret, markActive, false);
+  }
+
+  private boolean execute(String initialCode, String secret, Runnable markActive, boolean deletion) {
     if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
       throw unavailable();
-    if (!text(initialCode, 128) || !text(secret, 4096) || markActive == null)
+    if ((!deletion && (!text(initialCode, 128) || !text(secret, 4096))) || markActive == null)
       throw new BadRequestException("A complete app OTP request is required");
-    var self = actualSelf();
+    var self = actualSelf(deletion);
     String operation = operationId();
     var actor = actors.require(TaskPurpose.OTP);
     if (!canonicalUuid(actor.serviceSubject())) throw unavailable();
     String requestDigest =
         codec.digest(
             "oriso/user-maintenance-intent/request/v1",
-            Map.of("otp", initialCode, "secret", secret));
+            deletion ? Map.of("operation", "otp.delete") : Map.of("otp", initialCode, "secret", secret));
     // Check actual local ownership before even the token HTTP call, outside every RPC lock.
-    CheckedIntent checked = transaction(() -> findChecked(self, operation, requestDigest, actor));
+    CheckedIntent checked = transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
     if (checked == null) {
       // Only a native-validated original grant can set the immutable first lifetime minimum.
       var originalMachine = machine(self, actor, TaskPurpose.OTP);
@@ -88,9 +91,9 @@ public final class SelfAppOtpMaintenance {
               Math.min(self.expires, originalMachine.validatedJwtExpiresAt()),
               clock.instant().getEpochSecond() + 600);
       try {
-        checked = transaction(() -> prepare(self, operation, requestDigest, actor, originalExpiry));
+        checked = transaction(() -> prepare(self, operation, requestDigest, actor, originalExpiry, deletion));
       } catch (RuntimeException uncertain) {
-        checked = transaction(() -> findChecked(self, operation, requestDigest, actor));
+        checked = transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
         if (checked == null) throw unavailable();
       }
     }
@@ -101,9 +104,9 @@ public final class SelfAppOtpMaintenance {
         checked =
             transaction(
                 () ->
-                    freeze(self, operation, requestDigest, actor, projection, initialCode, secret));
+                    freeze(self, operation, requestDigest, actor, projection, initialCode, secret, deletion));
       } catch (RuntimeException uncertain) {
-        checked = transaction(() -> findChecked(self, operation, requestDigest, actor));
+        checked = transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
         if (checked == null
             || !Set.of("FROZEN", "ACKNOWLEDGED", "TERMINAL_REFUSAL").contains(checked.row.status))
           throw unavailable();
@@ -111,7 +114,7 @@ public final class SelfAppOtpMaintenance {
     }
     if (terminal(checked.row.status)) return "ACKNOWLEDGED".equals(checked.row.status);
     // This capability comes only from current locked owned data, never from envelope parsing.
-    checked = transaction(() -> findChecked(self, operation, requestDigest, actor));
+    checked = transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
     if (checked == null || !"FROZEN".equals(checked.row.status)) throw unavailable();
     final CheckedIntent frozen = checked;
     final JsonNode command;
@@ -121,8 +124,8 @@ public final class SelfAppOtpMaintenance {
           codec.read(
               codec.utf8(codec.openSelfAppIntent(frozen.metadata, frozen.row.envelope)),
               JsonNode.class);
-      var reply = invoke(self, frozen.row, actor, command);
-      outcome = codec.verifySelfAppOtpReceipt(reply.body, realmId, actor, command);
+      var reply = invoke(self, frozen.row, actor, command, deletion);
+      outcome = deletion ? codec.verifySelfDeleteOtpReceipt(reply.body, realmId, actor, command) : codec.verifySelfAppOtpReceipt(reply.body, realmId, actor, command);
       if (outcome.status() != reply.status) throw unavailable();
     } catch (RuntimeException unknown) {
       throw unavailable();
@@ -131,10 +134,10 @@ public final class SelfAppOtpMaintenance {
       return transaction(
           () ->
               acknowledge(
-                  self, operation, requestDigest, actor, frozen.row.envelope, outcome, markActive));
+                  self, operation, requestDigest, actor, frozen.row.envelope, outcome, markActive, deletion));
     } catch (RuntimeException uncertain) {
       // A fresh durable row is the only commit witness. Do not rerun the domain callback here.
-      var resolved = transaction(() -> findChecked(self, operation, requestDigest, actor));
+      var resolved = transaction(() -> findChecked(self, operation, requestDigest, actor, deletion));
       if (resolved == null
           || !terminal(resolved.row.status)
           || !Objects.equals(outcome.receipt(), resolved.row.receipt)
@@ -144,10 +147,10 @@ public final class SelfAppOtpMaintenance {
   }
 
   private CheckedIntent prepare(
-      Self self, String operation, String digest, TaskActorCredentials actor, long expiry) {
+      Self self, String operation, String digest, TaskActorCredentials actor, long expiry, boolean deletion) {
     lockedDomain(self);
     var prior = find(operation);
-    if (prior != null) return checked(self, prior, digest, actor);
+    if (prior != null) return checked(self, prior, digest, actor, deletion);
     if (expiry <= clock.instant().getEpochSecond()) throw unavailable();
     jdbc.update(
         "insert into identity_self_app_otp_intent(operation_id,realm_id,realm_name,account_id,tenant_id,owner_client,owner_subject,request_digest,target_json,status,authority_valid_until,pending_marker,updated_at) values(?,?,?,?,?,?,?,?,?,'PREPARED',?,false,?)",
@@ -162,7 +165,7 @@ public final class SelfAppOtpMaintenance {
         codec.canonical(target(self, operation)),
         expiry,
         now());
-    return checked(self, Objects.requireNonNull(find(operation)), digest, actor);
+    return checked(self, Objects.requireNonNull(find(operation)), digest, actor, deletion);
   }
 
   private CheckedIntent freeze(
@@ -172,22 +175,25 @@ public final class SelfAppOtpMaintenance {
       TaskActorCredentials actor,
       JsonNode projection,
       String code,
-      String secret) {
-    var current = findChecked(self, operation, digest, actor);
+      String secret, boolean deletion) {
+    var current = findChecked(self, operation, digest, actor, deletion);
     if (current == null) throw unavailable();
     if (!"PREPARED".equals(current.row.status)) return current;
     var body = codec.read("{}", ObjectNode.class);
     body.set("target", codec.read(current.row.target, JsonNode.class));
     body.put("operationId", operation);
     body.put("expectedState", projection.path("state").textValue());
-    var otp = body.putObject("otp");
-    otp.put("initialCode", code);
-    otp.put("secret", secret);
-    otp.putNull("email");
+    if (deletion) body.putNull("otp");
+    else {
+      var otp = body.putObject("otp");
+      otp.put("initialCode", code);
+      otp.put("secret", secret);
+      otp.putNull("email");
+    }
     var command = codec.read("{}", ObjectNode.class);
     command.put("username", projection.path("username").textValue());
     command.set("body", body);
-    var metadata = metadata(current.row, projection.path("state").textValue());
+    var metadata = metadata(current.row, projection.path("state").textValue(), deletion);
     String envelope =
         codec.sealSelfAppIntent(
             metadata, codec.canonical(command).getBytes(StandardCharsets.UTF_8));
@@ -199,7 +205,7 @@ public final class SelfAppOtpMaintenance {
             now(),
             operation)
         != 1) throw unavailable();
-    return checked(self, Objects.requireNonNull(find(operation)), digest, actor);
+    return checked(self, Objects.requireNonNull(find(operation)), digest, actor, deletion);
   }
 
   private boolean acknowledge(
@@ -209,8 +215,8 @@ public final class SelfAppOtpMaintenance {
       TaskActorCredentials actor,
       String envelope,
       AccountLifecycleCodec.VerifiedSelfAppOutcome outcome,
-      Runnable markActive) {
-    var current = findChecked(self, operation, digest, actor);
+      Runnable markActive, boolean deletion) {
+    var current = findChecked(self, operation, digest, actor, deletion);
     if (current == null || !Objects.equals(envelope, current.row.envelope)) throw unavailable();
     if (terminal(current.row.status)) {
       if (!Objects.equals(outcome.receipt(), current.row.receipt)
@@ -232,13 +238,13 @@ public final class SelfAppOtpMaintenance {
   }
 
   private CheckedIntent findChecked(
-      Self self, String operation, String digest, TaskActorCredentials actor) {
+      Self self, String operation, String digest, TaskActorCredentials actor, boolean deletion) {
     lockedDomain(self);
     var row = find(operation);
-    return row == null ? null : checked(self, row, digest, actor);
+    return row == null ? null : checked(self, row, digest, actor, deletion);
   }
 
-  private CheckedIntent checked(Self self, Intent row, String digest, TaskActorCredentials actor) {
+  private CheckedIntent checked(Self self, Intent row, String digest, TaskActorCredentials actor, boolean deletion) {
     if (!realmId.equals(row.realm)
         || !realmName.equals(row.realmName)
         || !self.account.equals(row.account)
@@ -262,27 +268,27 @@ public final class SelfAppOtpMaintenance {
       String state = metadata.path("expectedState").textValue();
       if (state == null
           || !state.matches("[a-f0-9]{64}")
-          || !codec.canonical(metadata(row, state)).equals(row.metadata)
+          || !codec.canonical(metadata(row, state, deletion)).equals(row.metadata)
           || !row.metadata.equals(codec.canonical(metadata))) throw unavailable();
       if ("FROZEN".equals(row.status)) {
         if (row.receipt != null || row.nativeStatus != null) throw unavailable();
       } else if (row.receipt == null
           || row.nativeStatus == null
           || ("ACKNOWLEDGED".equals(row.status)
-              ? !Set.of(200, 201).contains(row.nativeStatus)
-              : row.nativeStatus != 401)) throw unavailable();
+              ? !(deletion ? Set.of(200) : Set.of(200, 201)).contains(row.nativeStatus)
+              : deletion || row.nativeStatus != 401)) throw unavailable();
     } else throw unavailable();
     return new CheckedIntent(row, metadata);
   }
 
-  private ObjectNode metadata(Intent row, String state) {
+  private ObjectNode metadata(Intent row, String state, boolean deletion) {
     var value = codec.read("{}", ObjectNode.class);
     value.put("v", 1);
     value.put("realmId", row.realm);
     value.put("operationId", row.operation);
-    value.put("command", "otp.app-setup");
-    value.put("method", "PUT");
-    value.put("route", "otp-config/setup-otp");
+    value.put("command", deletion ? "otp.delete" : "otp.app-setup");
+    value.put("method", deletion ? "DELETE" : "PUT");
+    value.put("route", deletion ? "otp-config/delete-otp" : "otp-config/setup-otp");
     value.put("accountId", row.account);
     if (row.tenant == null) value.putNull("tenantId");
     else value.put("tenantId", row.tenant);
@@ -361,7 +367,7 @@ public final class SelfAppOtpMaintenance {
     return projection;
   }
 
-  private Reply invoke(Self self, Intent row, TaskActorCredentials actor, JsonNode command) {
+  private Reply invoke(Self self, Intent row, TaskActorCredentials actor, JsonNode command, boolean deletion) {
     outsideLocks(self, row);
     var token = machine(self, actor, TaskPurpose.OTP);
     var body = command.path("body");
@@ -371,14 +377,14 @@ public final class SelfAppOtpMaintenance {
     long expiry = Math.min(Math.min(row.expiry, self.expires), token.validatedJwtExpiresAt());
     headers.set(
         "X-ORISO-Task-Context",
-        codec.selfAppOtpProof(realmName, realmId, self.account, actor, materialized, expiry));
+        (deletion ? codec.selfDeleteOtpProof(realmName, realmId, self.account, actor, materialized, expiry) : codec.selfAppOtpProof(realmName, realmId, self.account, actor, materialized, expiry)));
     var uri =
         UriComponentsBuilder.fromUriString(authServer)
             .pathSegment(
                 "realms",
                 realmName,
                 "otp-config",
-                "setup-otp",
+                deletion ? "delete-otp" : "setup-otp",
                 command.path("username").textValue())
             .build()
             .encode()
@@ -386,7 +392,7 @@ public final class SelfAppOtpMaintenance {
     try {
       var response =
           http.exchange(
-              uri, HttpMethod.PUT, new HttpEntity<>(codec.canonical(body), headers), String.class);
+              uri, deletion ? HttpMethod.DELETE : HttpMethod.PUT, new HttpEntity<>(codec.canonical(body), headers), String.class);
       return new Reply(response.getStatusCode().value(), response.getBody());
     } catch (RestClientResponseException failure) {
       if (failure.getStatusCode().value() != 401
@@ -469,10 +475,10 @@ public final class SelfAppOtpMaintenance {
         nativeStatus);
   }
 
-  private Self actualSelf() {
+  private Self actualSelf(boolean deletion) {
     if (!(request.getUserPrincipal() instanceof JwtAuthenticationToken authentication)
         || !authentication.isAuthenticated()
-        || !"PUT".equals(request.getMethod())
+        || !(deletion ? "DELETE" : "PUT").equals(request.getMethod())
         || !Set.of("/service/users/2fa/app", "/users/2fa/app").contains(request.getRequestURI()))
       throw forbidden();
     var jwt = authentication.getToken();

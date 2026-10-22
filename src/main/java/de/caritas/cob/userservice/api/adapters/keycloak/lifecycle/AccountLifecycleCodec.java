@@ -164,10 +164,12 @@ public final class AccountLifecycleCodec {
         || value.path("v").intValue() != 1) throw invalidSecretIntent();
     String operationId = intentUuid(value, "operationId");
     String workflowId = intentUuid(value, "workflowId");
+    String operation = intentText(value, "command", 64);
+    boolean deletion = "otp.delete".equals(operation);
     if (!operationId.equals(workflowId)
-        || !"otp.app-setup".equals(intentText(value, "command", 64))
-        || !"PUT".equals(intentText(value, "method", 16))
-        || !"otp-config/setup-otp".equals(intentText(value, "route", 128))
+        || !(deletion || "otp.app-setup".equals(operation))
+        || !(deletion ? "DELETE" : "PUT").equals(intentText(value, "method", 16))
+        || !(deletion ? "otp-config/delete-otp" : "otp-config/setup-otp").equals(intentText(value, "route", 128))
         || !"FROZEN_HTTP_V1".equals(intentText(value, "representation", 64)))
       throw invalidSecretIntent();
     JsonNode tenant = value.get("tenantId");
@@ -184,9 +186,9 @@ public final class AccountLifecycleCodec {
         1,
         intentText(value, "realmId", 512),
         operationId,
-        "otp.app-setup",
-        "PUT",
-        "otp-config/setup-otp",
+        operation,
+        deletion ? "DELETE" : "PUT",
+        deletion ? "otp-config/delete-otp" : "otp-config/setup-otp",
         intentUuid(value, "accountId"),
         tenantId,
         intentText(value, "ownerClient", 512),
@@ -233,10 +235,15 @@ public final class AccountLifecycleCodec {
     intentText(origin, "humanClient", 512);
     intentText(origin, "humanIssuer", 2048);
     JsonNode otp = body.path("otp");
-    intentFields(otp, java.util.Set.of("initialCode", "secret", "email"));
-    intentText(otp, "initialCode", 128);
-    intentText(otp, "secret", 4096);
-    if (!otp.get("email").isNull() || !raw.equals(canonical(value))) throw invalidSecretIntent();
+    if ("otp.delete".equals(metadata.command())) {
+      if (!otp.isNull()) throw invalidSecretIntent();
+    } else {
+      intentFields(otp, java.util.Set.of("initialCode", "secret", "email"));
+      intentText(otp, "initialCode", 128);
+      intentText(otp, "secret", 4096);
+      if (!otp.get("email").isNull()) throw invalidSecretIntent();
+    }
+    if (!raw.equals(canonical(value))) throw invalidSecretIntent();
     return snapshot;
   }
 
@@ -306,6 +313,26 @@ public final class AccountLifecycleCodec {
       TaskActorCredentials actor,
       JsonNode materialized,
       long authorityValidUntil) {
+    return selfOtpProof(realmName, realmId, accountId, actor, materialized, authorityValidUntil, "otp.app-setup", "PUT");
+  }
+
+  String selfDeleteOtpProof(
+      String realmName,
+      String realmId,
+      String accountId,
+      TaskActorCredentials actor,
+      JsonNode materialized,
+      long authorityValidUntil) {
+    return selfOtpProof(realmName, realmId, accountId, actor, materialized, authorityValidUntil, "otp.delete", "DELETE");
+  }
+
+  private String selfOtpProof(
+      String realmName,
+      String realmId,
+      String accountId,
+      TaskActorCredentials actor,
+      JsonNode materialized,
+      long authorityValidUntil, String operation, String method) {
     long now = clock.instant().getEpochSecond();
     long expiry = Math.min(now + 60, authorityValidUntil);
     if (actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN
@@ -314,8 +341,8 @@ public final class AccountLifecycleCodec {
     claims.put("iss", "userservice");
     claims.put("aud", "oriso-otp");
     claims.put("purpose", TaskPurpose.OTP.name());
-    claims.put("operation", "otp.app-setup");
-    claims.put("method", "PUT");
+    claims.put("operation", operation);
+    claims.put("method", method);
     claims.put("actor", actor.actor().name());
     claims.put("realm", realmName);
     claims.put("target", "realm/" + realmId + "/account/" + accountId);
@@ -356,6 +383,16 @@ public final class AccountLifecycleCodec {
 
   VerifiedSelfAppOutcome verifySelfAppOtpReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozenCommand) {
+    return verifySelfOtpReceipt(reply, realmId, actor, frozenCommand, false);
+  }
+
+  VerifiedSelfAppOutcome verifySelfDeleteOtpReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozenCommand) {
+    return verifySelfOtpReceipt(reply, realmId, actor, frozenCommand, true);
+  }
+
+  private VerifiedSelfAppOutcome verifySelfOtpReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozenCommand, boolean deletion) {
     try {
       if (reply == null
           || reply.length() > 16384
@@ -372,10 +409,10 @@ public final class AccountLifecycleCodec {
           || !result.path("status").canConvertToInt()) throw invalidSecretIntent();
       int status = result.path("status").intValue();
       JsonNode nativeResult = result.path("result");
-      if (status == 200 || status == 201) {
+      if (status == 200 || (!deletion && status == 201)) {
         intentFields(nativeResult, java.util.Set.of("info"));
         intentText(nativeResult, "info", 512);
-      } else if (status == 401) {
+      } else if (!deletion && status == 401) {
         intentFields(nativeResult, java.util.Set.of("error", "error_description"));
         if (!"invalid_grant".equals(intentText(nativeResult, "error", 100)))
           throw invalidSecretIntent();
@@ -393,7 +430,7 @@ public final class AccountLifecycleCodec {
       expected.put("realmId", realmId);
       expected.put("accountId", target.path("accountId").textValue());
       expected.put("operationId", body.path("operationId").textValue());
-      expected.put("operation", "otp.app-setup");
+      expected.put("operation", deletion ? "otp.delete" : "otp.app-setup");
       expected.put("ownerClient", actor.clientId());
       expected.put("ownerSubject", actor.serviceSubject());
       var materialized = ((ObjectNode) body).deepCopy();

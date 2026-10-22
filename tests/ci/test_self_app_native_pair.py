@@ -20,7 +20,7 @@ class SelfAppNativePairEvidenceTest(unittest.TestCase):
                 if kind != "missing":
                     row = ET.SubElement(suite, "testcase", classname=PROOF.SUITE, name=PROOF.CASE)
                     if kind in {"failure", "error", "skipped"}:
-                        ET.SubElement(row, kind, message="raw JWT/password/native body").text = "secret"
+                        ET.SubElement(row, kind, message="raw JWT/password/native body").text = "secret\nat example.UserSelfAppOtpNativePairProof.method(UserSelfAppOtpNativePairProof.java:123)"
                 if kind == "duplicate": ET.SubElement(suite, "testcase", classname=PROOF.SUITE, name=PROOF.CASE)
                 if kind == "stale": suite.set("name", "other.suite")
                 if kind == "wrong-count": suite.set("tests", "2")
@@ -30,6 +30,7 @@ class SelfAppNativePairEvidenceTest(unittest.TestCase):
                 self.assertEqual(kind == "green", result["accepted"])
                 self.assertNotIn("secret", output.read_text())
                 self.assertNotIn("password", output.read_text())
+                self.assertEqual(["UserSelfAppOtpNativePairProof.java:123"] if kind in {"failure", "error", "skipped"} else [], result["failure_source_locations"])
 
     def test_native_workflow_has_read_only_pins_required_builds_and_bounded_cleanup(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/scenario-c-self-app-native-pair.yml").read_text())
