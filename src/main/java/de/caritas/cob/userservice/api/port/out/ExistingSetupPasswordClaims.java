@@ -51,5 +51,10 @@ public interface ExistingSetupPasswordClaims {
 
   void rejectWithinOwner(Claim claim);
 
+  /** A native signed policy terminal; its exact same request remains a historical refusal. */
+  default void rejectPolicyWithinOwner(Claim claim) {
+    throw new IllegalStateException("Existing setup policy custody unavailable");
+  }
+
   void acknowledgeWithinOwner(Claim claim);
 }

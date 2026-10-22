@@ -159,6 +159,26 @@ class UserSelfPasswordScenarioCBoundaryTest {
   }
 
   @Test
+  void signedNonPolicySelfRefusalKeepsItsOriginalKeyAndPublicStatus() {
+    for (int status : List.of(403, 409)) {
+      try (var f = new Fixture(true, true)) {
+        f.policyResponse = 2;
+        f.policyStatus = status;
+        f.expectNative();
+        Class<? extends RuntimeException> expected = status == 403
+            ? de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class
+            : ConflictException.class;
+        assertThrows(expected, () -> f.controller.updatePassword(f.password()));
+        assertEquals("REFUSED", f.status());
+        assertThrows(expected, () -> f.controller.updatePassword(f.password()));
+        assertEquals(0, f.effects.get());
+        assertEquals(0, f.clears());
+        f.server.verify();
+      }
+    }
+  }
+
+  @Test
   void unsupportedOuterEnvelopeVersionCannotResumeUnknownPasswordOrClearSetup() {
     try (var f = new Fixture(true, true)) {
       f.expectNative(true);
@@ -229,6 +249,7 @@ class UserSelfPasswordScenarioCBoundaryTest {
     final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
     final AtomicInteger effects = new AtomicInteger();
     int policyResponse;
+    int policyStatus = 400;
     final Long tenant;
     final String ownedKind;
     final boolean ownsConsultant;
@@ -507,7 +528,7 @@ class UserSelfPasswordScenarioCBoundaryTest {
                 assertEquals("FROZEN", status());
                 assertEquals(0, clears());
                 if (policyResponse == 1)
-                  return withStatus(HttpStatus.BAD_REQUEST)
+                  return withStatus(HttpStatus.valueOf(policyStatus))
                       .body("{\"error\":\"Password rejected\"}")
                       .contentType(MediaType.APPLICATION_JSON)
                       .createResponse(out);
@@ -541,7 +562,7 @@ class UserSelfPasswordScenarioCBoundaryTest {
                     codec.digest("maintenance-origin", body.path("target").path("origin")));
                 String result = policyResponse == 0 ? "UPDATED" : "NO_EFFECT";
                 facts.put("result", result);
-                if (policyResponse != 0) facts.put("status", 400);
+                if (policyResponse != 0) facts.put("status", policyStatus);
                 String encoded =
                     Base64.getUrlEncoder()
                         .withoutPadding()
@@ -569,8 +590,8 @@ class UserSelfPasswordScenarioCBoundaryTest {
                   reply.put("accountId", ACCOUNT);
                   reply.put("result", result);
                   reply.put("receipt", receipt);
-                  if (policyResponse != 0) reply.put("status", 400);
-                  return withStatus(policyResponse == 0 ? HttpStatus.OK : HttpStatus.BAD_REQUEST)
+                  if (policyResponse != 0) reply.put("status", policyStatus);
+                  return withStatus(policyResponse == 0 ? HttpStatus.OK : HttpStatus.valueOf(policyStatus))
                       .body(codec.canonical(reply))
                       .contentType(MediaType.APPLICATION_JSON)
                       .createResponse(out);

@@ -38,6 +38,11 @@ public interface OneTimeTokenStore {
     throw new IllegalStateException("Causal password-reset storage unavailable");
   }
 
+  /** Atomic live-state data check. Terminal recovery never passes this fresh-write gate. */
+  default void requireFreshPasswordResetClaim(PasswordResetClaim claim) {
+    throw new IllegalStateException("Causal password-reset storage unavailable");
+  }
+
   default void finishPasswordResetClaim(PasswordResetClaim claim, boolean accepted) {
     throw new IllegalStateException("Causal password-reset storage unavailable");
   }

@@ -113,7 +113,11 @@ public final class SelfPasswordMaintenance {
       String reply = call("self-password", self, codec.canonical(command), actor);
       verified = codec.verifyMaintenanceSelfPasswordReceipt(reply, realmId, actor, command);
     } catch (DefiniteRejection refused) {
-      reject(self, operation, digest, actor);
+      try {
+        rejectSigned(self, frozen, digest, actor, refused.reply);
+      } catch (RuntimeException uncertain) {
+        throw unavailable();
+      }
       return false;
     } catch (ConflictException | ForbiddenException refused) {
       throw refused;
@@ -246,6 +250,24 @@ public final class SelfPasswordMaintenance {
         != 1) throw unavailable();
   }
 
+  private void rejectSigned(
+      Self self, Intent frozen, String digest, TaskActorCredentials actor, String reply) {
+    transaction(() -> {
+      var current = findChecked(self, frozen.operation, digest, actor);
+      if (current == null || !"FROZEN".equals(current.status)
+          || !Objects.equals(current.envelope, frozen.envelope)
+          || !Objects.equals(current.metadata, frozen.metadata)) throw unavailable();
+      var body = openChecked(self, current, digest, actor).path("body");
+      var proof = codec.verifyMaintenanceNoEffectReceipt(reply, realmId, actor, body, "self-password");
+      if (proof.status() != 400) throw unavailable();
+      String terminal = codec.canonical(codec.read(reply, JsonNode.class));
+      if (jdbc.update(
+          "update identity_self_password_intent set status='REJECTED',receipt=?,updated_at=? where operation_id=? and status='FROZEN'",
+          terminal, now(), current.operation) != 1) throw unavailable();
+      return null;
+    });
+  }
+
   private void reject(Self self, String operation, String digest, TaskActorCredentials actor) {
     transaction(
         () -> {
@@ -284,14 +306,20 @@ public final class SelfPasswordMaintenance {
     if ("PREPARED".equals(row.status)
         && (row.metadata != null || row.envelope != null || row.receipt != null))
       throw unavailable();
-    if (Set.of("FROZEN", "ACKNOWLEDGED").contains(row.status)) {
+    if (Set.of("FROZEN", "ACKNOWLEDGED").contains(row.status)
+        || ("REJECTED".equals(row.status) && row.envelope != null)) {
       if (row.metadata == null || row.envelope == null) throw unavailable();
       try {
         var stored = codec.read(row.metadata, JsonNode.class);
         if (!row.metadata.equals(
             codec.canonical(metadata(row, stored.path("expectedState").asText()))))
           throw unavailable();
-        codec.openSelfPasswordIntent(stored, row.envelope);
+        var wrapper = codec.read(codec.utf8(codec.openSelfPasswordIntent(stored, row.envelope)), JsonNode.class);
+        if ("REJECTED".equals(row.status)) {
+          var proof = codec.verifyMaintenanceNoEffectReceipt(
+              row.receipt, realmId, actor, wrapper.path("body"), "self-password");
+          if (proof.status() != 400) throw unavailable();
+        }
       } catch (IllegalArgumentException invalidPrivateIntent) {
         throw unavailable();
       }
@@ -328,31 +356,28 @@ public final class SelfPasswordMaintenance {
   }
 
   private JsonNode lockedDomain(Self self) {
-    var users =
-        jdbc.queryForList(
-            "select tenant_id,delete_date from user where user_id=? for update", self.account);
-    var consultants =
-        jdbc.queryForList(
-            "select tenant_id,delete_date,update_date,password_change_required from consultant where consultant_id=? for update",
-            self.account);
-    if (users.size() + consultants.size() != 1) throw forbidden();
-    var row = users.isEmpty() ? consultants.get(0) : users.get(0);
-    Object tenant = row.get("tenant_id");
-    Long actual = tenant == null ? null : ((Number) tenant).longValue();
-    if (row.get("delete_date") != null || !Objects.equals(self.tenant, actual)) throw forbidden();
+    var owner = SelfAccountOwner.inspect(jdbc, self.account, self.tenant);
     var local = codec.read("{}", ObjectNode.class);
-    if (!users.isEmpty()) {
-      local.put("kind", "USER");
+    local.put("kind", owner.kind().name());
+    local.put("consultant", owner.consultant());
+    if (owner.email() == null) local.putNull("email");
+    else local.put("email", owner.email());
+    if (owner.consultantEmail() == null) local.putNull("consultantEmail");
+    else local.put("consultantEmail", owner.consultantEmail());
+    if (owner.kind() != SelfAccountOwner.Kind.CONSULTANT && !owner.consultant()) {
       local.putNull("updateDate");
       local.putNull("passwordChangeRequired");
     } else {
-      local.put("kind", "CONSULTANT");
+      var rows = jdbc.queryForList(
+          "select update_date,password_change_required from consultant where consultant_id=? for update",
+          self.account);
+      if (rows.size() != 1) throw forbidden();
+      var row = rows.getFirst();
       Object updated = row.get("update_date"), required = row.get("password_change_required");
       if (updated == null || !(required instanceof Boolean || required instanceof Number))
         throw unavailable();
       local.put("updateDate", updated.toString());
-      local.put(
-          "passwordChangeRequired",
+      local.put("passwordChangeRequired",
           required instanceof Boolean b ? b.booleanValue() : ((Number) required).intValue() != 0);
     }
     return local;
@@ -393,7 +418,9 @@ public final class SelfPasswordMaintenance {
     origin.put("humanSubject", self.account);
     origin.put("humanIssuer", self.issuer);
     origin.put("humanClient", self.client);
-    origin.putNull("humanAuthority");
+    if (SelfAccountOwner.inspect(jdbc, self.account, self.tenant).kind().protectedTarget())
+      origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
+    else origin.putNull("humanAuthority");
     return value;
   }
 
@@ -462,10 +489,7 @@ public final class SelfPasswordMaintenance {
       return reply.getBody();
     } catch (HttpStatusCodeException refused) {
       if ("self-password".equals(command) && refused.getStatusCode().value() == 400)
-        throw new DefiniteRejection();
-      if (refused.getStatusCode().value() == 409)
-        throw new ConflictException("Current password intent conflicts");
-      if (Set.of(401, 403).contains(refused.getStatusCode().value())) throw forbidden();
+        throw new DefiniteRejection(refused.getResponseBodyAsString());
       throw unavailable();
     } catch (DefiniteRejection | ConflictException | ForbiddenException refused) {
       throw refused;
@@ -485,6 +509,7 @@ public final class SelfPasswordMaintenance {
         || !actor.serviceSubject().equals(token.subject())
         || !publicIssuer.equals(token.issuer())
         || token.validatedJwtIssuedAt() <= 0
+        || token.validatedJwtIssuedAt() > now
         || token.validatedJwtExpiresAt() <= token.validatedJwtIssuedAt()
         || token.validatedJwtExpiresAt() <= now) throw unavailable();
     return token;
@@ -573,8 +598,11 @@ public final class SelfPasswordMaintenance {
   }
 
   private static final class DefiniteRejection extends RuntimeException {
-    private DefiniteRejection() {
-      super("Password intent refused");
+    private final String reply;
+
+    private DefiniteRejection(String reply) {
+      super("Native password policy refused the request");
+      this.reply = reply;
     }
   }
 

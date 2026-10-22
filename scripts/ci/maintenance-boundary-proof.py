@@ -157,7 +157,8 @@ def select_slice(name):
                  "unsupportedOuterEnvelopeVersionCannotResumeUnknownPasswordOrClearSetup",
                  "publicPasswordSupportsEveryOwnedKindAndLegitimateAdministratorConsultantPair",
                  "unsignedOrForgedPolicy400KeepsTheActualSelfPasswordIntentFrozen",
-                 "signedPolicy400StoresItsExactTerminalReceiptBeforeSelfPasswordRefusal"}
+                 "signedPolicy400StoresItsExactTerminalReceiptBeforeSelfPasswordRefusal",
+                 "signedNonPolicySelfRefusalKeepsItsOriginalKeyAndPublicStatus"}
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/adapters/web/controller/UserController",
             "de/caritas/cob/userservice/api/adapters/web/controller/UserAccountControllerDelegate",

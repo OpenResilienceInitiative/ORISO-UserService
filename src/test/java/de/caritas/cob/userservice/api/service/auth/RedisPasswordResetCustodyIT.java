@@ -152,6 +152,27 @@ class RedisPasswordResetCustodyIT {
   }
 
   @Test
+  void exactPolicyReplayRetainsItsVersionAndCannotPassTheAtomicFreshGate() {
+    var original = sent("policy");
+    var firstClaim = first.claimPasswordReset("policy", digest).orElseThrow();
+    assertThatCode(() -> first.requireFreshPasswordResetClaim(firstClaim)).doesNotThrowAnyException();
+    first.finishPasswordResetClaim(firstClaim, false);
+    var historical = second.claimPasswordReset("policy", digest).orElseThrow();
+    assertThat(historical.status()).isEqualTo("REJECTED");
+    assertThat(historical.version()).isEqualTo(firstClaim.version());
+    assertThat(historical.binding()).isEqualTo(original);
+    assertThatThrownBy(() -> first.requireFreshPasswordResetClaim(firstClaim))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> second.requireFreshPasswordResetClaim(historical))
+        .isInstanceOf(IllegalStateException.class);
+    var next = first.claimPasswordReset("policy", "c".repeat(64)).orElseThrow();
+    assertThat(next.version()).isEqualTo(2);
+    assertThatThrownBy(() -> second.finishPasswordResetClaim(firstClaim, true))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatCode(() -> first.requireFreshPasswordResetClaim(next)).doesNotThrowAnyException();
+  }
+
+  @Test
   void acknowledgementCannotBeChangedOrReplayedWithAnotherPassword() {
     sent("token");
     var initial = first.claimPasswordReset("token", digest).orElseThrow();
@@ -217,7 +238,12 @@ class RedisPasswordResetCustodyIT {
     assertThat(second.claimPasswordReset("held", digest)).contains(claim);
     assertThat(second.claimPasswordReset("held", "c".repeat(64))).isEmpty();
     second.finishPasswordResetClaim(claim, false);
-    assertThat(first.claimPasswordReset("held", digest)).isEmpty();
+    var terminal = first.claimPasswordReset("held", digest).orElseThrow();
+    assertThat(terminal.status()).isEqualTo("REJECTED");
+    assertThat(terminal.claimId()).isEqualTo(claim.claimId());
+    assertThat(terminal.version()).isEqualTo(claim.version());
+    assertThatThrownBy(() -> first.requireFreshPasswordResetClaim(terminal))
+        .isInstanceOf(IllegalStateException.class);
     assertThat(first.claimPasswordReset("held", "c".repeat(64))).isEmpty();
   }
 

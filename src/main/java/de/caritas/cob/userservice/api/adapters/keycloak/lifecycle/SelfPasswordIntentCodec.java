@@ -145,15 +145,31 @@ final class SelfPasswordIntentCodec {
     var wrapper = codec.read(raw, JsonNode.class);
     fields(wrapper, Set.of("body", "localSetup"));
     var local = wrapper.path("localSetup");
-    fields(local, Set.of("kind", "updateDate", "passwordChangeRequired"));
-    String kind = text(local, "kind", 16);
-    if ("USER".equals(kind)) {
-      if (!local.get("updateDate").isNull() || !local.get("passwordChangeRequired").isNull())
-        throw invalid();
-    } else if ("CONSULTANT".equals(kind)) {
+    boolean owned = local.has("consultant");
+    fields(local, owned
+        ? Set.of("kind", "consultant", "email", "consultantEmail", "updateDate", "passwordChangeRequired")
+        : Set.of("kind", "updateDate", "passwordChangeRequired"));
+    String kind = text(local, "kind", 32);
+    boolean admin = Set.of("AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN").contains(kind);
+    if (!admin && !Set.of("USER", "CONSULTANT").contains(kind)) throw invalid();
+    if (admin && !owned) throw invalid();
+    boolean consultant = false;
+    if (owned) {
+      if (!local.path("consultant").isBoolean()) throw invalid();
+      consultant = local.path("consultant").booleanValue();
+      if (consultant && !admin) throw invalid();
+      for (String email : Set.of("email", "consultantEmail")) {
+        var value = local.get(email);
+        if (!value.isNull() && (!value.isTextual() || value.textValue().length() > 320
+            || value.textValue().chars().anyMatch(c -> c < 32 || c == 127))) throw invalid();
+      }
+      if (!consultant && !local.get("consultantEmail").isNull()) throw invalid();
+    }
+    if ("CONSULTANT".equals(kind) || consultant) {
       text(local, "updateDate", 128);
       if (!local.path("passwordChangeRequired").isBoolean()) throw invalid();
-    } else throw invalid();
+    } else if (!local.get("updateDate").isNull() || !local.get("passwordChangeRequired").isNull())
+      throw invalid();
     var body = wrapper.path("body");
     fields(body, Set.of("target", "operationId", "expectedState", "change", "authorityValidUntil"));
     if (!metadata.operationId().equals(uuid(body, "operationId"))
@@ -176,7 +192,9 @@ final class SelfPasswordIntentCodec {
         Set.of(
             "kind", "workflowId", "humanSubject", "humanIssuer", "humanClient", "humanAuthority"));
     if (!"SELF".equals(text(origin, "kind", 16))
-        || !origin.get("humanAuthority").isNull()
+        || (Set.of("TENANT_ADMIN", "PLATFORM_ADMIN").contains(kind)
+            ? !"PROTECTED_ACCOUNT_OPERATIONS_V1".equals(origin.path("humanAuthority").textValue())
+            : !origin.get("humanAuthority").isNull())
         || !metadata.workflowId().equals(uuid(origin, "workflowId"))
         || !metadata.accountId().equals(uuid(origin, "humanSubject"))
         || !metadata.originDigest().equals(codec.digest("maintenance-origin", origin)))

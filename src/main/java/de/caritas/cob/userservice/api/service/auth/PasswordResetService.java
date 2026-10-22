@@ -73,8 +73,11 @@ public class PasswordResetService {
      * Fresh data check. Provider authorization and its native result remain independently checked.
      */
     public OneTimeTokenStore.PasswordResetClaim checkedClaim() {
-      if (!claim.binding().expiresAt().isAfter(Instant.now())) throw unavailable();
-      return checkedRecoveryClaim();
+      if (!"FROZEN".equals(claim.status()) || !claim.binding().expiresAt().isAfter(Instant.now()))
+        throw unavailable();
+      var checked = checkedRecoveryClaim();
+      owner.oneTimeTokenStore.requireFreshPasswordResetClaim(checked);
+      return checked;
     }
 
     /**

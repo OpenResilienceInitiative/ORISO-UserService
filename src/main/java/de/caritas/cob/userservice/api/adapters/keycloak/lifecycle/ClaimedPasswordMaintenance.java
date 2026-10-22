@@ -56,6 +56,12 @@ public final class ClaimedPasswordMaintenance {
     }
   }
 
+  /** Retention maintenance only; it cannot issue, rebind or acknowledge any native command. */
+  public int expireSecretCustody() {
+    requireSupport();
+    return 0;
+  }
+
   public void requireSupport() {
     if (!mode.isFiveActorMode()
         || !profiles
@@ -191,6 +197,7 @@ public final class ClaimedPasswordMaintenance {
       String local,
       String metadata,
       String envelope,
+      String intentDigest,
       String status,
       String receipt) {}
 
@@ -207,12 +214,16 @@ public final class ClaimedPasswordMaintenance {
       verifySaved(b, actor, row);
       return;
     }
+    if ("REJECTED".equals(row.status())) {
+      final Intent rejected = row;
+      var body = transaction(() -> open(b, actor, rejected)).path("body");
+      policy(b, actor, rejected, body, codec.read(rejected.receipt(), JsonNode.class));
+    }
     if ("PREPARED".equals(row.status())) {
       fresh.get();
-      JsonNode read = read(b, actor, row);
-      String state = liveProjection(b, read);
+      var selected = select(b, actor, row, fresh);
       final Intent prepared = row;
-      row = transaction(() -> freeze(b, actor, prepared, state, password));
+      row = transaction(() -> freeze(b, actor, prepared, selected, password));
     }
     if (!"FROZEN".equals(row.status())) throw unavailable();
     final Intent frozen = row;
@@ -221,12 +232,14 @@ public final class ClaimedPasswordMaintenance {
     JsonNode response = read(b, actor, frozen);
     String verified;
     if (response.has("receipt")) {
+      if ("NO_EFFECT".equals(response.path("result").textValue()))
+        policy(b, actor, frozen, body, response);
       verified =
           codec.verifyMaintenancePasswordResetReceipt(
               codec.canonical(response), realmId, actor, body);
     } else {
       fresh.get();
-      String state = liveProjection(b, response);
+      String state = liveProjection(b, response, frozen);
       if (!body.path("expectedState").textValue().equals(state)) throw unavailable();
       transaction(
           () -> {
@@ -234,6 +247,9 @@ public final class ClaimedPasswordMaintenance {
             return null;
           });
       String reply = call(b, actor, body, false);
+      var result = codec.read(reply, JsonNode.class);
+      if ("NO_EFFECT".equals(result.path("result").textValue()))
+        policy(b, actor, frozen, body, result);
       verified = codec.verifyMaintenancePasswordResetReceipt(reply, realmId, actor, body);
     }
     recovery.get();
@@ -275,6 +291,29 @@ public final class ClaimedPasswordMaintenance {
         });
   }
 
+  private void policy(Bound b, TaskActorCredentials actor, Intent frozen, JsonNode body, JsonNode result) {
+    String reply = codec.canonical(result);
+    var proof = codec.verifyMaintenanceNoEffectReceipt(reply, realmId, actor, body, "password-reset");
+    if (proof.status() != 400) throw unavailable();
+    transaction(() -> {
+      var current = find(b, actor);
+      if (current == null || !Objects.equals(current.envelope(), frozen.envelope())
+          || !Objects.equals(current.metadata(), frozen.metadata())) throw unavailable();
+      if ("REJECTED".equals(current.status())) {
+        if (!reply.equals(current.receipt())) throw unavailable();
+        return null;
+      }
+      if (!"FROZEN".equals(current.status())) throw unavailable();
+      if (jdbc.update(
+          "update identity_claimed_password_intent set status='REJECTED',receipt=?,updated_at=? where claim_id=? and claim_version=? and status='FROZEN'",
+          reply, java.sql.Timestamp.from(clock.instant()), b.claim().toString(), b.version()) != 1)
+        throw unavailable();
+      return null;
+    });
+    throw new de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException(
+        de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.PASSWORD_NOT_VALID);
+  }
+
   private Intent prepare(Bound b, TaskActorCredentials actor) {
     var existing = find(b, actor);
     if (existing != null) return existing;
@@ -282,27 +321,7 @@ public final class ClaimedPasswordMaintenance {
     var local = localAccounts().lock(b.account());
     checkLocal(b, local);
     String operation = UUID.randomUUID().toString();
-    var target = codec.read("{}", ObjectNode.class);
-    target.put("accountId", b.account());
-    if (b.tenant() == null) target.putNull("tenantId");
-    else target.put("tenantId", b.tenant().toString());
-    var origin = target.putObject("origin");
-    origin.put("kind", "PASSWORD_RESET").put("workflowId", b.claim().toString());
-    for (String field : List.of("humanSubject", "humanIssuer", "humanClient", "humanAuthority"))
-      origin.putNull(field);
-    var profile = profiles.get(local.kind()).getFirst();
-    var workflow = codec.read("{}", ObjectNode.class);
-    workflow
-        .put("v", 1)
-        .put("kind", b.kind())
-        .put("claimId", b.claim().toString())
-        .put("claimVersion", b.version())
-        .put("authorityValidUntil", b.expires())
-        .put("expectedUsername", b.username())
-        .put("expectedEmailDigest", b.emailDigest())
-        .put("profileKind", profile.kind())
-        .put("profileId", profile.id())
-        .put("profileVersion", profile.version());
+    var target = target(b);
     jdbc.update(
         "insert into identity_claimed_password_intent(claim_id,claim_version,operation_id,workflow_kind,realm_id,account_id,tenant_id,owner_client,owner_subject,request_digest,authority_valid_until,target_json,workflow_json,local_state_json,status,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'PREPARED',?)",
         b.claim().toString(),
@@ -317,7 +336,7 @@ public final class ClaimedPasswordMaintenance {
         b.digest(),
         b.expires(),
         codec.canonical(target),
-        codec.canonical(workflow),
+        null,
         codec.canonical(local.state()),
         java.sql.Timestamp.from(clock.instant()));
     return find(b, actor);
@@ -344,6 +363,7 @@ public final class ClaimedPasswordMaintenance {
                   rs.getString("local_state_json"),
                   rs.getString("metadata_json"),
                   rs.getString("intent_envelope"),
+                  rs.getString("intent_digest"),
                   rs.getString("status"),
                   rs.getString("receipt"));
             },
@@ -352,33 +372,38 @@ public final class ClaimedPasswordMaintenance {
     if (found.size() > 1) throw unavailable();
     if (found.isEmpty()) return null;
     var row = found.getFirst();
+    if (!codec.canonical(target(b)).equals(row.target())) throw unavailable();
+    if ("PREPARED".equals(row.status())) {
+      if (row.workflow() != null || row.envelope() != null || row.metadata() != null
+          || row.intentDigest() != null || row.receipt() != null) throw unavailable();
+      return row;
+    }
     var workflow = codec.read(row.workflow(), JsonNode.class);
-    var profile = profiles.get(b.accountKind()).getFirst();
-    if (!b.username().equals(workflow.path("expectedUsername").textValue())
-        || !b.emailDigest().equals(workflow.path("expectedEmailDigest").textValue())
-        || !b.claim().toString().equals(workflow.path("claimId").textValue())
-        || b.version() != workflow.path("claimVersion").longValue()
-        || b.expires() != workflow.path("authorityValidUntil").longValue()
-        || !b.kind().equals(workflow.path("kind").textValue())
-        || workflow.path("v").intValue() != 1
-        || !profile.kind().equals(workflow.path("profileKind").textValue())
-        || !profile.id().equals(workflow.path("profileId").textValue())
-        || profile.version() != workflow.path("profileVersion").longValue()) throw unavailable();
+    var profile = new ProfileSelector(workflow.path("profileKind").textValue(),
+        workflow.path("profileId").textValue(), workflow.path("profileVersion").longValue());
+    if (!profiles.get(b.accountKind()).contains(profile)
+        || !codec.canonical(workflow(b, profile)).equals(row.workflow())
+        || row.intentDigest() == null || !row.intentDigest().matches("[0-9a-f]{64}"))
+      throw unavailable();
     return row;
   }
 
   private Intent freeze(
-      Bound b, TaskActorCredentials actor, Intent prepared, String state, String password) {
+      Bound b, TaskActorCredentials actor, Intent prepared, Selected selected, String password) {
     var row = find(b, actor);
     if (row == null) throw unavailable();
     if (!"PREPARED".equals(row.status())) return row;
     requireSameLocal(b, row);
+    if (!row.operation().equals(prepared.operation()) || row.workflow() != null) throw unavailable();
+    var checked = new Intent(row.operation(), row.target(), codec.canonical(selected.workflow()),
+        row.local(), null, null, null, row.status(), null);
+    String state = selected.state();
     var body = codec.read("{}", ObjectNode.class);
     body.set("target", codec.read(row.target(), JsonNode.class));
-    body.set("workflow", codec.read(row.workflow(), JsonNode.class));
+    body.set("workflow", selected.workflow());
     body.put("operationId", row.operation()).put("expectedState", state);
     body.putObject("change").put("password", password).put("temporary", false);
-    var metadata = metadata(b, actor, row, state);
+    var metadata = metadata(b, actor, checked, state);
     var wrapper = codec.read("{}", ObjectNode.class);
     wrapper.set("body", body);
     wrapper.set("localState", codec.read(row.local(), JsonNode.class));
@@ -386,9 +411,11 @@ public final class ClaimedPasswordMaintenance {
         codec.sealClaimedPasswordIntent(
             metadata, codec.canonical(wrapper).getBytes(StandardCharsets.UTF_8));
     if (jdbc.update(
-            "update identity_claimed_password_intent set metadata_json=?,intent_envelope=?,status='FROZEN',updated_at=? where claim_id=? and claim_version=? and status='PREPARED'",
+            "update identity_claimed_password_intent set workflow_json=?,metadata_json=?,intent_envelope=?,intent_digest=?,status='FROZEN',updated_at=? where claim_id=? and claim_version=? and status='PREPARED'",
+            checked.workflow(),
             codec.canonical(metadata),
             envelope,
+            codec.digest("maintenance-intent", body),
             java.sql.Timestamp.from(clock.instant()),
             b.claim().toString(),
             b.version())
@@ -404,7 +431,8 @@ public final class ClaimedPasswordMaintenance {
     var wrapper =
         codec.read(
             codec.utf8(codec.openClaimedPasswordIntent(checked, row.envelope())), JsonNode.class);
-    if (!codec.canonical(wrapper.path("localState")).equals(row.local())
+    if (!codec.digest("maintenance-intent", wrapper.path("body")).equals(row.intentDigest())
+        || !codec.canonical(wrapper.path("localState")).equals(row.local())
         || !codec.canonical(wrapper.path("body").path("target")).equals(row.target())
         || !codec.canonical(wrapper.path("body").path("workflow")).equals(row.workflow()))
       throw unavailable();
@@ -450,6 +478,54 @@ public final class ClaimedPasswordMaintenance {
       throw unavailable();
   }
 
+  private record Selected(ObjectNode workflow, String state) {}
+
+  private Selected select(Bound b, TaskActorCredentials actor, Intent row, Supplier<?> fresh) {
+    Selected selected = null;
+    for (var candidate : profiles.get(b.accountKind())) {
+      fresh.get();
+      var workflow = workflow(b, candidate);
+      var body = codec.read("{}", ObjectNode.class);
+      body.set("target", codec.read(row.target(), JsonNode.class));
+      body.set("workflow", workflow);
+      JsonNode response;
+      try {
+        response = codec.read(call(b, actor, body, true), JsonNode.class);
+      } catch (ReadRefused noAuthority) {
+        continue;
+      }
+      String state = liveProjection(b, response, row);
+      if (selected != null) throw unavailable();
+      selected = new Selected(workflow, state);
+    }
+    if (selected == null) throw unavailable();
+    return selected;
+  }
+
+  private ObjectNode target(Bound b) {
+    var value = codec.read("{}", ObjectNode.class);
+    value.put("accountId", b.account());
+    if (b.tenant() == null) value.putNull("tenantId");
+    else value.put("tenantId", b.tenant().toString());
+    var origin = value.putObject("origin");
+    origin.put("kind", "PASSWORD_RESET").put("workflowId", b.claim().toString());
+    for (String field : List.of("humanSubject", "humanIssuer", "humanClient", "humanAuthority"))
+      origin.putNull(field);
+    return value;
+  }
+
+  private ObjectNode workflow(Bound b, ProfileSelector profile) {
+    var value = codec.read("{}", ObjectNode.class);
+    value.put("v", 1).put("kind", b.kind()).put("claimId", b.claim().toString())
+        .put("claimVersion", b.version()).put("authorityValidUntil", b.expires())
+        .put("expectedUsername", b.username()).put("expectedEmailDigest", b.emailDigest())
+        .put("profileKind", profile.kind()).put("profileId", profile.id())
+        .put("profileVersion", profile.version());
+    return value;
+  }
+
+  private static final class ReadRefused extends RuntimeException {}
+
   private JsonNode read(Bound b, TaskActorCredentials actor, Intent row) {
     var body = codec.read("{}", ObjectNode.class);
     body.set("target", codec.read(row.target(), JsonNode.class));
@@ -457,7 +533,7 @@ public final class ClaimedPasswordMaintenance {
     return codec.read(call(b, actor, body, true), JsonNode.class);
   }
 
-  private String liveProjection(Bound b, JsonNode read) {
+  private String liveProjection(Bound b, JsonNode read, Intent row) {
     var expected =
         Set.of(
             "id",
@@ -490,6 +566,24 @@ public final class ClaimedPasswordMaintenance {
             && !read.path("passwordChangeRequired").booleanValue())
         || !read.path("state").isTextual()
         || !read.path("state").textValue().matches("[0-9a-f]{64}")) throw unavailable();
+    if (!read.path("emailVerified").isBoolean() || !read.path("effectiveRoles").isArray()
+        || read.path("effectiveRoles").size() > 64) throw unavailable();
+    var roles = new HashSet<String>();
+    for (var role : read.path("effectiveRoles")) {
+      if (!role.isTextual() || role.textValue().isBlank() || role.textValue().length() > 255
+          || role.textValue().chars().anyMatch(c -> c < 32 || c == 127)
+          || !roles.add(role.textValue())) throw unavailable();
+    }
+    if (!Set.of("TENANT_ADMIN", "PLATFORM_ADMIN").contains(b.accountKind())) {
+      String expectedKind = switch (b.accountKind()) {
+        case "USER" -> "ASKER";
+        case "CONSULTANT" -> "CONSULTANT";
+        case "AGENCY_ADMIN" -> codec.read(row.local(), JsonNode.class).path("consultantVersion").isNull()
+            ? "AGENCY_ADMIN" : "CONSULTANT_AGENCY_ADMIN";
+        default -> throw unavailable();
+      };
+      if (!expectedKind.equals(OrdinaryAccountCreation.kind(roles))) throw unavailable();
+    }
     if (b.expires() <= clock.instant().getEpochSecond()) throw unavailable();
     return read.path("state").textValue();
   }
@@ -530,11 +624,30 @@ public final class ClaimedPasswordMaintenance {
             .toUriString();
     if (read) url += "/read";
     try {
-      return http.postForObject(
-          url, new HttpEntity<>(codec.canonical(body), headers), String.class);
+      var response = http.postForEntity(url, new HttpEntity<>(codec.canonical(body), headers), String.class);
+      if (response.getStatusCode().value() != 200) throw unavailable();
+      return checkedReply(response.getBody());
     } catch (HttpStatusCodeException unknown) {
+      int status = unknown.getStatusCode().value();
+      if (Set.of(400, 403, 409).contains(status)) {
+        String reply = unknown.getResponseBodyAsString();
+        if (reply != null && !reply.isBlank() && reply.length() <= 32768) {
+          JsonNode value = codec.read(reply, JsonNode.class);
+          // This is transport data only. The fixed Root verifier checks the exact frozen command.
+          if ("NO_EFFECT".equals(value.path("result").textValue())
+              && value.path("status").isIntegralNumber()
+              && value.path("status").canConvertToInt()
+              && value.path("status").intValue() == status) return reply;
+        }
+      }
+      if (read && status == 403) throw new ReadRefused();
       throw unavailable();
     }
+  }
+
+  private static String checkedReply(String reply) {
+    if (reply == null || reply.isBlank() || reply.length() > 32768) throw unavailable();
+    return reply;
   }
 
   private void checkLocal(Bound b, ClaimedPasswordLocalAccounts.Owned local) {

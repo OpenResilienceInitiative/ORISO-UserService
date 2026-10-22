@@ -275,7 +275,10 @@ public class ExistingAccountSetupService {
       // adapter verifies current identity/roles/required action when no saved outcome exists.
       passwords.updateExistingSetupPassword(handle, chosenPassword);
     } catch (CustomValidationHttpStatusException rejected) {
-      releaseDefinitive(target, "SETUP_PASSWORD_REJECTED");
+      inTransaction(() -> {
+        setupPasswordClaims.rejectPolicyWithinOwner(target.claim());
+        return null;
+      });
       throw rejected;
     } catch (RuntimeException uncertain) {
       recordIndeterminate(target);
