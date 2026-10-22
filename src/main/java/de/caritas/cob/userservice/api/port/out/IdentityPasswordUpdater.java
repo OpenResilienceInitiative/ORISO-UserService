@@ -8,6 +8,29 @@ public interface IdentityPasswordUpdater {
     throw new ScopedIdentityCommandRequiredException();
   }
 
+  /** Selects the application-owned causal setup workflow; legacy adapters keep their old path. */
+  default boolean requiresCausalPasswordClaims() {
+    return false;
+  }
+
+  /** Pure preflight: an unsupported typed adapter must refuse before claiming the invitation. */
+  default void requireExistingSetupPasswordSupport() {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
+  /** Pure keyed binding supplied by the checked adapter; it must perform no remote operation. */
+  default String existingSetupRequestDigest(
+      ExistingSetupPasswordClaims.Binding binding, String chosenPassword) {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
+  default void updateExistingSetupPassword(
+      de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupService.ClaimedSetup
+          claimedSetup,
+      String password) {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
   void updatePassword(String userId, String password);
 
   /** Sets an administrator-chosen password that must be replaced at first sign-in. */

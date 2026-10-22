@@ -52,6 +52,29 @@ public class ExistingAccountSetupService {
   private final @NonNull IdentityPasswordUpdater passwords;
   private final @NonNull PlatformTransactionManager transactions;
 
+  private de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims setupPasswordClaims;
+
+  /** Optional until the checked typed adapter and its same-database journal are installed. */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setSetupPasswordClaims(
+      de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims claims) {
+    this.setupPasswordClaims = claims;
+  }
+
+  /** Only this service may issue a live setup handle after the actual owned claim. */
+  public static final class ClaimedSetup {
+    private ClaimedSetup() {}
+
+    public de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims.Claim checkedClaim() {
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+
+    @Override
+    public String toString() {
+      return "ClaimedExistingSetup[redacted]";
+    }
+  }
+
   @Value("${multitenancy.enabled:true}")
   private boolean multitenancyEnabled;
 
