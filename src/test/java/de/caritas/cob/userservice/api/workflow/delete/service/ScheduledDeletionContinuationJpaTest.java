@@ -196,7 +196,8 @@ class ScheduledDeletionContinuationJpaTest {
               String command = outbound.getURI().getPath().endsWith("/read") ? "read" : "delete";
               String raw = ((MockClientHttpRequest) outbound).getBodyAsString();
               var body = codec.read(raw, JsonNode.class);
-              verifyCapturedProof(outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
+              verifyCapturedProof(
+                  outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
               if ("read".equals(command)) {
                 nativeReads.incrementAndGet();
                 return withSuccess(projection(), MediaType.APPLICATION_JSON)
@@ -351,41 +352,57 @@ class ScheduledDeletionContinuationJpaTest {
 
   @Test
   void actualJpaFlushAndFinalCommitMarkAppliedWithoutErasingOriginalNativeProof() {
-    owner(true, frame -> {
-      inspectActualPrivateFrame(frame);
-      assertFalse(frame.completed());
-      assertTrue(frame.completeOwnedLocalDeletion(() -> users.deleteById(ACCOUNT)));
-      assertTrue(frame.completed());
-      frame.requireCurrent();
-    }).performDeletionWorkflow();
+    owner(
+            true,
+            frame -> {
+              inspectActualPrivateFrame(frame);
+              assertFalse(frame.completed());
+              assertTrue(frame.completeOwnedLocalDeletion(() -> users.deleteById(ACCOUNT)));
+              assertTrue(frame.completed());
+              frame.requireCurrent();
+            })
+        .performDeletionWorkflow();
     assertEquals(1, callbacks.get());
     assertEquals("APPLIED", status());
     assertTrue(users.findById(ACCOUNT).isEmpty());
-    assertNotNull(jdbc.queryForObject(
-        "select receipt_json from identity_maintenance_intent where subject_id=?",
-        String.class, ACCOUNT));
-    assertNotNull(jdbc.queryForObject(
-        "select frozen_body from identity_maintenance_intent where subject_id=?",
-        String.class, ACCOUNT));
+    assertNotNull(
+        jdbc.queryForObject(
+            "select receipt_json from identity_maintenance_intent where subject_id=?",
+            String.class,
+            ACCOUNT));
+    assertNotNull(
+        jdbc.queryForObject(
+            "select frozen_body from identity_maintenance_intent where subject_id=?",
+            String.class,
+            ACCOUNT));
     assertEquals(1, nativeEffects.get());
   }
 
   @Test
   void lostFinalJpaCommitReplyRecoversAppliedBeforeColdRestartCanRepeatCleanup() {
-    var uncertain = new LostCommitReplyJpaManager(
-        ((JpaTransactionManager) transactions).getEntityManagerFactory(), dataSource);
-    owner(true, frame -> {
-      inspectActualPrivateFrame(frame);
-      try {
-        assertTrue(frame.completeOwnedLocalDeletion(() -> {
-          users.deleteById(ACCOUNT);
-          uncertain.loseNextCommit = true;
-        }));
-      } catch (RuntimeException lostReply) {
-        assertTrue(frame.completed(), "Only fresh APPLIED/absence proof resolves lost commit reply");
-      }
-      assertTrue(frame.completed());
-    }, uncertain).performDeletionWorkflow();
+    var uncertain =
+        new LostCommitReplyJpaManager(
+            ((JpaTransactionManager) transactions).getEntityManagerFactory(), dataSource);
+    owner(
+            true,
+            frame -> {
+              inspectActualPrivateFrame(frame);
+              try {
+                assertTrue(
+                    frame.completeOwnedLocalDeletion(
+                        () -> {
+                          users.deleteById(ACCOUNT);
+                          uncertain.loseNextCommit = true;
+                        }));
+              } catch (RuntimeException lostReply) {
+                assertTrue(
+                    frame.completed(),
+                    "Only fresh APPLIED/absence proof resolves lost commit reply");
+              }
+              assertTrue(frame.completed());
+            },
+            uncertain)
+        .performDeletionWorkflow();
     assertEquals(1, callbacks.get());
     assertEquals("APPLIED", status());
     assertTrue(users.findById(ACCOUNT).isEmpty());
@@ -397,19 +414,25 @@ class ScheduledDeletionContinuationJpaTest {
 
   @Test
   void retainedExactOriginalUserKeepsAcknowledgedRetryableInsteadOfApplied() {
-    owner(true, frame -> {
-      inspectActualPrivateFrame(frame);
-      assertFalse(frame.completeOwnedLocalDeletion(() -> {}));
-      assertFalse(frame.completed());
-      frame.requireCurrent();
-    }).performDeletionWorkflow();
+    owner(
+            true,
+            frame -> {
+              inspectActualPrivateFrame(frame);
+              assertFalse(frame.completeOwnedLocalDeletion(() -> {}));
+              assertFalse(frame.completed());
+              frame.requireCurrent();
+            })
+        .performDeletionWorkflow();
     assertEquals(1, callbacks.get());
     assertEquals("ACKNOWLEDGED", status());
     assertTrue(users.findById(ACCOUNT).isPresent());
-    owner(true, frame -> {
-      inspectActualPrivateFrame(frame);
-      assertTrue(frame.completeOwnedLocalDeletion(() -> users.deleteById(ACCOUNT)));
-    }).performDeletionWorkflow();
+    owner(
+            true,
+            frame -> {
+              inspectActualPrivateFrame(frame);
+              assertTrue(frame.completeOwnedLocalDeletion(() -> users.deleteById(ACCOUNT)));
+            })
+        .performDeletionWorkflow();
     assertEquals(2, callbacks.get());
     assertEquals("APPLIED", status());
     assertEquals(1, nativeCalls.get());
@@ -417,10 +440,15 @@ class ScheduledDeletionContinuationJpaTest {
 
   @Test
   void fakeAppliedStatusCannotAuthorizeCleanupWhileOriginalUserStillExists() {
-    owner(true, frame -> { throw new IllegalStateException("fixture retains original"); })
+    owner(
+            true,
+            frame -> {
+              throw new IllegalStateException("fixture retains original");
+            })
         .performDeletionWorkflow();
     assertEquals("ACKNOWLEDGED", status());
-    jdbc.update("update identity_maintenance_intent set status='APPLIED' where subject_id=?", ACCOUNT);
+    jdbc.update(
+        "update identity_maintenance_intent set status='APPLIED' where subject_id=?", ACCOUNT);
     owner(true, this::inspectActualPrivateFrame).performDeletionWorkflow();
     assertEquals(0, callbacks.get());
     assertTrue(users.findById(ACCOUNT).isPresent());
@@ -429,15 +457,25 @@ class ScheduledDeletionContinuationJpaTest {
 
   @Test
   void appliedTombstoneCannotAdoptARecreatedSqlAccountWithTheSameId() {
-    var deletionStarted = jdbc.queryForObject("select delete_date from user where user_id=?",
-        java.sql.Timestamp.class, ACCOUNT).toLocalDateTime();
-    owner(true, frame -> {
-      inspectActualPrivateFrame(frame);
-      assertTrue(frame.completeOwnedLocalDeletion(() -> users.deleteById(ACCOUNT)));
-    }).performDeletionWorkflow();
+    var deletionStarted =
+        jdbc.queryForObject(
+                "select delete_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT)
+            .toLocalDateTime();
+    owner(
+            true,
+            frame -> {
+              inspectActualPrivateFrame(frame);
+              assertTrue(frame.completeOwnedLocalDeletion(() -> users.deleteById(ACCOUNT)));
+            })
+        .performDeletionWorkflow();
     assertEquals("APPLIED", status());
-    var replacement = new User(ACCOUNT, null,
-        new UsernameTranscoder().encodeUsername("replacement-cleanup"), "replacement@fixture.invalid", false);
+    var replacement =
+        new User(
+            ACCOUNT,
+            null,
+            new UsernameTranscoder().encodeUsername("replacement-cleanup"),
+            "replacement@fixture.invalid",
+            false);
     replacement.setTenantId(7L);
     replacement.setDeleteDate(deletionStarted);
     replacement.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
@@ -456,52 +494,87 @@ class ScheduledDeletionContinuationJpaTest {
   @Test
   void changedLeaseVersionStopsTheNextOwnedCallbackAndCannotClearTheNewLease() {
     var localEffects = new AtomicInteger();
-    owner(true, frame -> {
-      inspectActualPrivateFrame(frame);
-      jdbc.update("update scheduled_task_claim set claimed_until=dateadd('SECOND',1,claimed_until) where task_name='account-deletion'");
-      assertThrows(RuntimeException.class, () -> frame.runOwnedLocal(localEffects::incrementAndGet));
-    }).performDeletionWorkflow();
+    owner(
+            true,
+            frame -> {
+              inspectActualPrivateFrame(frame);
+              jdbc.update(
+                  "update scheduled_task_claim set claimed_until=dateadd('SECOND',1,claimed_until) where task_name='account-deletion'");
+              assertThrows(
+                  RuntimeException.class, () -> frame.runOwnedLocal(localEffects::incrementAndGet));
+            })
+        .performDeletionWorkflow();
     assertEquals(1, callbacks.get());
     assertEquals(0, localEffects.get());
-    assertEquals(1, jdbc.queryForObject("select count(*) from scheduled_task_claim where task_name='account-deletion'", Integer.class));
+    assertEquals(
+        1,
+        jdbc.queryForObject(
+            "select count(*) from scheduled_task_claim where task_name='account-deletion'",
+            Integer.class));
     assertTrue(users.findById(ACCOUNT).isPresent());
   }
 
   @Test
   void callerSwappedUserMatrixOrUsernameCannotPassOriginalProjectionComparison() {
-    owner(true, frame -> {
-      inspectActualPrivateFrame(frame);
-      var projected = new AtomicReference<User>();
-      frame.runOwnedLocal(() -> projected.set(users.findById(ACCOUNT).orElseThrow()));
-      projected.get().setMatrixUserId("@foreign:fixture.invalid");
-      assertThrows(RuntimeException.class, () -> frame.requireCurrentUser(projected.get()));
-      projected.get().setMatrixUserId("@owned-cleanup:fixture.invalid");
-      projected.get().setUsername(new UsernameTranscoder().encodeUsername("foreign-cleanup"));
-      assertThrows(RuntimeException.class, () -> frame.requireCurrentUser(projected.get()));
-    }).performDeletionWorkflow();
+    owner(
+            true,
+            frame -> {
+              inspectActualPrivateFrame(frame);
+              var projected = new AtomicReference<User>();
+              frame.runOwnedLocal(() -> projected.set(users.findById(ACCOUNT).orElseThrow()));
+              projected.get().setMatrixUserId("@foreign:fixture.invalid");
+              assertThrows(RuntimeException.class, () -> frame.requireCurrentUser(projected.get()));
+              projected.get().setMatrixUserId("@owned-cleanup:fixture.invalid");
+              projected
+                  .get()
+                  .setUsername(new UsernameTranscoder().encodeUsername("foreign-cleanup"));
+              assertThrows(RuntimeException.class, () -> frame.requireCurrentUser(projected.get()));
+            })
+        .performDeletionWorkflow();
     assertEquals(1, callbacks.get());
-    assertEquals("@owned-cleanup:fixture.invalid", users.findById(ACCOUNT).orElseThrow().getMatrixUserId());
+    assertEquals(
+        "@owned-cleanup:fixture.invalid", users.findById(ACCOUNT).orElseThrow().getMatrixUserId());
   }
 
   @Test
   void changedActualSqlSnapshotStopsTheNextOwnedCallbackWithinTheSameFrame() {
     var localEffects = new AtomicInteger();
-    owner(true, frame -> {
-      inspectActualPrivateFrame(frame);
-      jdbc.update("update user set matrix_user_id=? where user_id=?", "@foreign:fixture.invalid", ACCOUNT);
-      assertThrows(RuntimeException.class, () -> frame.runOwnedLocal(localEffects::incrementAndGet));
-    }).performDeletionWorkflow();
+    owner(
+            true,
+            frame -> {
+              inspectActualPrivateFrame(frame);
+              jdbc.update(
+                  "update user set matrix_user_id=? where user_id=?",
+                  "@foreign:fixture.invalid",
+                  ACCOUNT);
+              assertThrows(
+                  RuntimeException.class, () -> frame.runOwnedLocal(localEffects::incrementAndGet));
+            })
+        .performDeletionWorkflow();
     assertEquals(1, callbacks.get());
     assertEquals(0, localEffects.get());
     assertEquals("ACKNOWLEDGED", status());
     assertEquals(1, nativeCalls.get());
   }
 
-  private ScheduledAskerMaintenance owner(boolean configureJpa, Consumer<AcknowledgedDeletion> cleanup,
+  private ScheduledAskerMaintenance owner(
+      boolean configureJpa,
+      Consumer<AcknowledgedDeletion> cleanup,
       PlatformTransactionManager manager) {
-    var owner = new ScheduledAskerMaintenance(jdbc, manager, claims, clock,
-        new DeletionLifecycleService(), actors, broker, codec, http,
-        "https://identity.test", "fixture", REALM);
+    var owner =
+        new ScheduledAskerMaintenance(
+            jdbc,
+            manager,
+            claims,
+            clock,
+            new DeletionLifecycleService(),
+            actors,
+            broker,
+            codec,
+            http,
+            "https://identity.test",
+            "fixture",
+            REALM);
     if (configureJpa) owner.configureJpaCleanupOwner(entities);
     if (cleanup != null) owner.configureAcknowledgedCleanup(cleanup);
     return owner;
@@ -509,12 +582,16 @@ class ScheduledDeletionContinuationJpaTest {
 
   private static final class LostCommitReplyJpaManager extends JpaTransactionManager {
     private boolean loseNextCommit;
-    private LostCommitReplyJpaManager(jakarta.persistence.EntityManagerFactory factory, DataSource source) {
+
+    private LostCommitReplyJpaManager(
+        jakarta.persistence.EntityManagerFactory factory, DataSource source) {
       super(Objects.requireNonNull(factory));
       setDataSource(source);
     }
+
     @Override
-    protected void doCommit(org.springframework.transaction.support.DefaultTransactionStatus status) {
+    protected void doCommit(
+        org.springframework.transaction.support.DefaultTransactionStatus status) {
       super.doCommit(status);
       if (loseNextCommit) {
         loseNextCommit = false;
@@ -582,8 +659,24 @@ class ScheduledDeletionContinuationJpaTest {
     String raw = new String(decoder.decode(parts[0]), StandardCharsets.UTF_8);
     var claims = codec.read(raw, JsonNode.class);
     assertEquals(codec.canonical(claims), raw);
-    assertEquals(Set.of("iss", "aud", "purpose", "operation", "method", "actor", "realm", "target",
-        "taskClient", "taskSubject", "payloadDigest", "jti", "nonce", "iat", "exp"), fields(claims));
+    assertEquals(
+        Set.of(
+            "iss",
+            "aud",
+            "purpose",
+            "operation",
+            "method",
+            "actor",
+            "realm",
+            "target",
+            "taskClient",
+            "taskSubject",
+            "payloadDigest",
+            "jti",
+            "nonce",
+            "iat",
+            "exp"),
+        fields(claims));
     assertEquals("userservice", claims.path("iss").textValue());
     assertEquals("oriso-account-maintenance", claims.path("aud").textValue());
     assertEquals("ACCOUNT_MAINTENANCE", claims.path("purpose").textValue());
@@ -595,13 +688,16 @@ class ScheduledDeletionContinuationJpaTest {
     assertEquals("backend-account-admin", claims.path("taskClient").textValue());
     assertEquals(SUBJECT, claims.path("taskSubject").textValue());
     assertEquals(codec.digest("payload", body), claims.path("payloadDigest").textValue());
-    assertEquals(UUID.fromString(claims.path("jti").textValue()).toString(), claims.path("jti").textValue());
+    assertEquals(
+        UUID.fromString(claims.path("jti").textValue()).toString(), claims.path("jti").textValue());
     assertTrue(claims.path("nonce").textValue().matches("[0-9a-f]{32}"));
     long issued = claims.path("iat").longValue();
     assertTrue(issued > 0 && issued <= clock.instant().getEpochSecond());
     assertEquals(issued + 60, claims.path("exp").longValue());
     assertTrue(claims.path("exp").longValue() > clock.instant().getEpochSecond());
-    assertEquals(Base64.getUrlEncoder().withoutPadding().encodeToString(hmac("proof\n" + parts[0])), parts[1]);
+    assertEquals(
+        Base64.getUrlEncoder().withoutPadding().encodeToString(hmac("proof\n" + parts[0])),
+        parts[1]);
   }
 
   private static byte[] hmac(String input) {
