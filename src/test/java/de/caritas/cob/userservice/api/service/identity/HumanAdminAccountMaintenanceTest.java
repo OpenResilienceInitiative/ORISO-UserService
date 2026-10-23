@@ -949,7 +949,7 @@ class HumanAdminAccountMaintenanceTest {
               OPERATION,
               "self-unchanged".equals(scenario) ? "old@example.test" : "new@example.test"));
     if (!unknown && !"drift".equals(scenario))
-      readReply(true, roleEdit ? desiredRoles : null, self, "self-unchanged".equals(scenario));
+      readReply(true, roleEdit ? desiredRoles : self ? projectedRoles : null, self, "self-unchanged".equals(scenario));
     if (unknown)
       server
           .expect(requestTo(URL + "/" + command))
@@ -957,7 +957,7 @@ class HumanAdminAccountMaintenanceTest {
           .andRespond(
               profileReceipt(command, roleEdit ? "/human-roles/test-consultant-chat" : null, null));
     if (unknown || "rollback".equals(scenario))
-      readReply(true, roleEdit ? desiredRoles : null, self, "self-unchanged".equals(scenario));
+      readReply(true, roleEdit ? desiredRoles : self ? projectedRoles : null, self, "self-unchanged".equals(scenario));
     if (coherenceNegative) {
       assertAll(
           () ->
