@@ -84,7 +84,8 @@ class HumanAdminAccountMaintenanceTest {
         "create table admin(admin_id varchar(36) primary key,tenant_id bigint,username varchar(255) not null,type varchar(6) not null,first_name varchar(255),last_name varchar(255),email varchar(255),managed_paused boolean not null,update_date timestamp,id_old bigint,create_date timestamp)");
     jdbc.execute(
         "create table consultant(consultant_id varchar(36) primary key,tenant_id bigint,username varchar(255),first_name varchar(255),last_name varchar(255),email varchar(255),delete_date timestamp,update_date timestamp,managed_paused boolean not null,is_absent boolean not null default false,two_factor_required boolean,status varchar(11),deletion_lifecycle_state varchar(32),create_date timestamp)");
-    jdbc.execute("create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,email varchar(255))");
+    jdbc.execute(
+        "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,email varchar(255))");
     jdbc.execute("create table language(consultant_id varchar(36),language_code varchar(2))");
     jdbc.execute(
         "create table consultant_topic(consultant_id varchar(36),topic_id bigint,agency_id bigint)");
@@ -590,7 +591,14 @@ class HumanAdminAccountMaintenanceTest {
 
   @Test
   void actualSelfConsultantProfileKeepsTheWholeCallbackAndCanonicalDualOwner() {
-    for (String scenario : List.of("self-single", "self-dual", "self-platform", "self-unchanged", "self-unknown", "self-replay")) {
+    for (String scenario :
+        List.of(
+            "self-single",
+            "self-dual",
+            "self-platform",
+            "self-unchanged",
+            "self-unknown",
+            "self-replay")) {
       server.reset();
       actualSchemaAndValidatedHumanFixture();
       runActualConsultantEdit(scenario);
@@ -625,24 +633,29 @@ class HumanAdminAccountMaintenanceTest {
     request.setUserPrincipal(authentication("synthetic-current-human", ISSUER, HUMAN, "admin", 7L));
     request.setMethod("PUT");
     request.setRequestURI("/service/useradmin/consultants/" + ACCOUNT);
-    var actualScope = self ? scope : actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
+    var actualScope =
+        self ? scope : actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
     if (self) {
       human.setUserId("self-foreign".equals(scenario) ? HUMAN : ACCOUNT);
       human.setTenantId("self-platform".equals(scenario) ? 0L : 7L);
       human.setRoles(Set.of(UserRole.CONSULTANT.getValue()));
       human.setGrantedAuthorities(Set.of());
-      request.setUserPrincipal(authentication("synthetic-current-human", ISSUER, human.getUserId(), "app", human.getTenantId()));
+      request.setUserPrincipal(
+          authentication(
+              "synthetic-current-human", ISSUER, human.getUserId(), "app", human.getTenantId()));
       request.setRequestURI("/service/users/data");
-      doThrow(new AssertionError("SELF never obtains human AdminScope")).when(scope).assertMay(any());
+      doThrow(new AssertionError("SELF never obtains human AdminScope"))
+          .when(scope)
+          .assertMay(any());
     } else {
-    var actualScope = actualScope(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
-    assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
-    assertEquals(new AdminScope.Tenant(7L), actualScope.current());
-    assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.counsellor(ACCOUNT)));
-    jdbc.update("update consultant set tenant_id=8 where consultant_id=?", ACCOUNT);
-    assertThrows(
-        RuntimeException.class, () -> actualScope.assertMay(AdminScope.Target.counsellor(ACCOUNT)));
-    jdbc.update("update consultant set tenant_id=7 where consultant_id=?", ACCOUNT);
+      assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
+      assertEquals(new AdminScope.Tenant(7L), actualScope.current());
+      assertDoesNotThrow(() -> actualScope.assertMay(AdminScope.Target.counsellor(ACCOUNT)));
+      jdbc.update("update consultant set tenant_id=8 where consultant_id=?", ACCOUNT);
+      assertThrows(
+          RuntimeException.class,
+          () -> actualScope.assertMay(AdminScope.Target.counsellor(ACCOUNT)));
+      jdbc.update("update consultant set tenant_id=7 where consultant_id=?", ACCOUNT);
     }
     service =
         new HumanAdminAccountMaintenance(
@@ -742,7 +755,9 @@ class HumanAdminAccountMaintenanceTest {
     if ("self-roles".equals(scenario)) dto.setIsGroupchatConsultant(true);
     if (Set.of("self-foreign", "self-roles").contains(scenario)) {
       assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, false));
-      assertEquals(0, jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
+      assertEquals(
+          0,
+          jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
       verifyNoInteractions(broker);
       server.verify();
       return;
@@ -773,7 +788,10 @@ class HumanAdminAccountMaintenanceTest {
         "roles-remove".equals(scenario)
             ? List.of("consultant")
             : List.of("consultant", "group-chat-consultant");
-    String command = self && !"self-unchanged".equals(scenario) ? "email" : roleEdit ? "ordinary-profile" : "profile";
+    String command =
+        self && !"self-unchanged".equals(scenario)
+            ? "email"
+            : roleEdit ? "ordinary-profile" : "profile";
     readReply(false, roleEdit ? originalRoles : null, self, "self-unchanged".equals(scenario));
     if ("roles-preserve".equals(scenario)) {
       assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, !self));
@@ -788,18 +806,27 @@ class HumanAdminAccountMaintenanceTest {
     var mutation =
         server
             .expect(requestTo(URL + "/" + command))
-            .andExpect(r -> {
-              frozen.set(((MockClientHttpRequest) r).getBodyAsString());
-              if (self) {
-                var body = json.readTree(frozen.get());
-                assertEquals("SELF", body.path("target").path("origin").path("kind").textValue());
-                assertEquals(ACCOUNT, body.path("target").path("origin").path("humanSubject").textValue());
-                var fields = new HashSet<String>(); body.path("change").fieldNames().forEachRemaining(fields::add);
-                assertEquals(Set.of("email", "firstName", "lastName"), fields);
-                assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
-                assertEquals("Old", jdbc.queryForObject("select first_name from consultant", String.class));
-              }
-            });
+            .andExpect(
+                r -> {
+                  frozen.set(((MockClientHttpRequest) r).getBodyAsString());
+                  if (self) {
+                    var body = json.readTree(frozen.get());
+                    assertEquals(
+                        "SELF", body.path("target").path("origin").path("kind").textValue());
+                    assertEquals(
+                        ACCOUNT,
+                        body.path("target").path("origin").path("humanSubject").textValue());
+                    var fields = new HashSet<String>();
+                    body.path("change").fieldNames().forEachRemaining(fields::add);
+                    assertEquals(Set.of("email", "firstName", "lastName"), fields);
+                    assertFalse(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isActualTransactionActive());
+                    assertEquals(
+                        "Old",
+                        jdbc.queryForObject("select first_name from consultant", String.class));
+                  }
+                });
     boolean unknown = Set.of("unknown", "changed-body", "roles-unknown").contains(scenario);
     if (unknown)
       mutation.andRespond(withException(new IOException("synthetic lost profile response")));
@@ -816,15 +843,19 @@ class HumanAdminAccountMaintenanceTest {
                   ? () ->
                       jdbc.update(
                           "update consultant set is_absent=true where consultant_id=?", ACCOUNT)
-                  : null, OPERATION, "self-unchanged".equals(scenario) ? "old@example.test" : "new@example.test"));
-    if (!unknown && !"drift".equals(scenario)) readReply(true, roleEdit ? desiredRoles : null, self, "self-unchanged".equals(scenario));
+                  : null,
+              OPERATION,
+              "self-unchanged".equals(scenario) ? "old@example.test" : "new@example.test"));
+    if (!unknown && !"drift".equals(scenario))
+      readReply(true, roleEdit ? desiredRoles : null, self, "self-unchanged".equals(scenario));
     if (unknown)
       server
           .expect(requestTo(URL + "/" + command))
           .andExpect(r -> assertEquals(frozen.get(), ((MockClientHttpRequest) r).getBodyAsString()))
           .andRespond(
               profileReceipt(command, roleEdit ? "/human-roles/test-consultant-chat" : null, null));
-    if (unknown || "rollback".equals(scenario)) readReply(true, roleEdit ? desiredRoles : null, self, "self-unchanged".equals(scenario));
+    if (unknown || "rollback".equals(scenario))
+      readReply(true, roleEdit ? desiredRoles : null, self, "self-unchanged".equals(scenario));
     if ("drift".equals(scenario)) {
       assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, !self));
       assertEquals(
@@ -862,7 +893,8 @@ class HumanAdminAccountMaintenanceTest {
               OPERATION));
       if ("changed-body".equals(scenario)) {
         dto.setAbsent(false);
-        assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, !self));
+        assertThrows(
+            RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, !self));
         dto.setAbsent(true);
       }
     }
@@ -905,7 +937,8 @@ class HumanAdminAccountMaintenanceTest {
     if (Set.of("replay", "roles-replay", "self-replay").contains(scenario)) {
       assertEquals(
           "New",
-          assertDoesNotThrow(() -> publicEdit.updateConsultant(ACCOUNT, dto, !self)).getFirstName());
+          assertDoesNotThrow(() -> publicEdit.updateConsultant(ACCOUNT, dto, !self))
+              .getFirstName());
       verify(consultants, times(1)).saveConsultant(any());
       jdbc.update("update consultant set is_absent=false where consultant_id=?", ACCOUNT);
       assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, !self));
@@ -1649,7 +1682,8 @@ class HumanAdminAccountMaintenanceTest {
     readReply(applied, roles, false, false);
   }
 
-  private void readReply(boolean applied, List<String> roles, boolean self, boolean unchangedEmail) {
+  private void readReply(
+      boolean applied, List<String> roles, boolean self, boolean unchangedEmail) {
     server
         .expect(requestTo(URL + "/read"))
         .andExpect(method(HttpMethod.POST))
@@ -1664,11 +1698,21 @@ class HumanAdminAccountMaintenanceTest {
               verifyProof(r.getHeaders().getFirst("X-ORISO-Task-Context"), "read", body);
               assertEquals(Set.of("target"), fieldNames(body));
               assertEquals(ACCOUNT, body.path("target").path("accountId").textValue());
-              assertEquals(self ? human.getTenantId().toString() : "7", body.path("target").path("tenantId").textValue());
               assertEquals(
-                  self ? "SELF" : "HUMAN_ADMIN", body.path("target").path("origin").path("kind").textValue());
-              boolean protectedSelf = self && jdbc.queryForObject("select count(*) from admin where admin_id=? and type in ('TENANT','SUPER')", Integer.class, ACCOUNT) == 1;
-              assertEquals(!self || protectedSelf ? "PROTECTED_ACCOUNT_OPERATIONS_V1" : null,
+                  self ? human.getTenantId().toString() : "7",
+                  body.path("target").path("tenantId").textValue());
+              assertEquals(
+                  self ? "SELF" : "HUMAN_ADMIN",
+                  body.path("target").path("origin").path("kind").textValue());
+              boolean protectedSelf =
+                  self
+                      && jdbc.queryForObject(
+                              "select count(*) from admin where admin_id=? and type in ('TENANT','SUPER')",
+                              Integer.class,
+                              ACCOUNT)
+                          == 1;
+              assertEquals(
+                  !self || protectedSelf ? "PROTECTED_ACCOUNT_OPERATIONS_V1" : null,
                   body.path("target").path("origin").path("humanAuthority").textValue());
             })
         .andRespond(
@@ -1677,9 +1721,10 @@ class HumanAdminAccountMaintenanceTest {
               if (self) {
                 projection.put("tenantId", human.getTenantId().toString());
                 if (unchangedEmail) projection.put("email", "old@example.test");
-                var selfRoles=projection.putArray("effectiveRoles").add("consultant");
-                if (jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT) == 1)
-                  selfRoles.add("tenant-admin");
+                var selfRoles = projection.putArray("effectiveRoles").add("consultant");
+                if (jdbc.queryForObject(
+                        "select count(*) from admin where admin_id=?", Integer.class, ACCOUNT)
+                    == 1) selfRoles.add("tenant-admin");
               }
               if (roles != null) {
                 var values = projection.putArray("effectiveRoles");
