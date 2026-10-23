@@ -22,6 +22,13 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class IdentityReactivationRepairService {
 
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setIdentityMode(de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    this.identityMode = java.util.Objects.requireNonNull(mode);
+  }
+
   static final String REPAIR_METRIC = "userservice.identity.reactivation.repair";
 
   private final @NonNull IdentityReactivationRepairWriter repairWriter;

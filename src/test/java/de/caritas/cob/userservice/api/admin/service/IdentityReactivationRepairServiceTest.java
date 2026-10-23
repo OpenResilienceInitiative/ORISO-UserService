@@ -44,6 +44,16 @@ class IdentityReactivationRepairServiceTest {
   }
 
   @Test
+  void fiveActorsGenericRepairCannotScanOrCompensateHumanOwnedPendingWork() {
+    var mode = org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    org.mockito.Mockito.when(mode.isFiveActorMode()).thenReturn(true);
+    repairService.setIdentityMode(mode);
+    assertThrows(de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class, () -> repairService.compensate(operation(), databaseFailure()));
+    repairService.retryOutstandingRepairs();
+    org.mockito.Mockito.verifyNoInteractions(userRepository, repairWriter);
+  }
+
+  @Test
   void compensateResolvesCurrentGeneration() {
     when(repairWriter.compensate(org.mockito.ArgumentMatchers.eq(operation()), any()))
         .thenReturn(true);

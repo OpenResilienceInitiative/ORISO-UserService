@@ -1339,6 +1339,7 @@ public class KeycloakService
       String expectedEmail,
       Long expectedTenantId,
       String password) {
+    requireLegacyAccountAccess();
     var userResource = keycloakClient.getUsersResource().get(userId);
     final UserRepresentation identity;
     try {

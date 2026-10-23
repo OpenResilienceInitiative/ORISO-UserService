@@ -42,6 +42,14 @@ public class AskerUserAdminFacade {
     this.identityMode = java.util.Objects.requireNonNull(mode);
   }
 
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation scopedReactivation;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setScopedReactivation(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation owner) {
+    this.scopedReactivation = java.util.Objects.requireNonNull(owner);
+  }
+
   /**
    * Marks the asker with the given id for deletion.
    *
@@ -86,7 +94,10 @@ public class AskerUserAdminFacade {
    */
   public void reactivateAsker(AskerReactivationRequestDTO request) {
     if (identityMode != null && identityMode.isFiveActorMode()) {
-      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      if (scopedReactivation == null)
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      scopedReactivation.reactivate(request);
+      return;
     }
     assertCallerMayAccessTenant(request.getTenantId());
     var operation =

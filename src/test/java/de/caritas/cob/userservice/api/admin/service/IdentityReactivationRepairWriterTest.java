@@ -30,6 +30,16 @@ class IdentityReactivationRepairWriterTest {
   @Mock private IdentityDeactivator identityDeactivator;
 
   @Test
+  void fiveActorsGenericWriterCannotCompensateOrRetryScopedCustody() {
+    var mode = org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    org.mockito.Mockito.when(mode.isFiveActorMode()).thenReturn(true);
+    writer.setIdentityMode(mode);
+    assertThrows(de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class, () -> writer.compensate(operation("operation-1"), databaseFailure()));
+    assertThrows(de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class, () -> writer.retry("user-1", "operation-1"));
+    verifyNoInteractions(userRepository, identityDeactivator);
+  }
+
+  @Test
   void compensateDisablesCurrentGenerationWhileHoldingClaimAndThenReleasesIt() {
     User user = claimedUser("operation-1", DeletionLifecycleState.REACTIVATION_IN_PROGRESS);
     when(userRepository.findByUserIdForUpdate("user-1")).thenReturn(Optional.of(user));
