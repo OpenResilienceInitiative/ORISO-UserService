@@ -144,6 +144,30 @@ class ClaimedScheduledDeletionIntentCodecTest {
         IllegalArgumentException.class, () -> codec.claimedInactivityDeletionIntentDigest(badRow));
   }
 
+  @Test
+  void preparedScheduledEnvelopeBindsOriginalSqlWithOnlyExplicitNullNativeBody() throws Exception {
+    var prepared = envelope();
+    prepared.putNull("body");
+    String digest = assertDoesNotThrow(() -> codec.claimedScheduledDeletionIntentDigest(prepared));
+    assertEquals(independent(prepared), digest);
+    assertEquals(29, prepared.path("originalSql").size());
+    var changed = prepared.deepCopy();
+    ((ObjectNode) changed.path("originalSql")).put("create_date", "2018-01-02T00:00:00Z");
+    assertNotEquals(digest, codec.claimedScheduledDeletionIntentDigest(changed));
+    var missing = prepared.deepCopy();
+    missing.remove("body");
+    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(missing));
+    var invalid = prepared.deepCopy();
+    invalid.putObject("body");
+    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(invalid));
+    var foreign = prepared.deepCopy();
+    foreign.put("representation", "CLAIMED_INACTIVITY_DELETE_V1");
+    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(foreign));
+    var noOriginal = prepared.deepCopy();
+    noOriginal.putNull("originalSql");
+    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(noOriginal));
+  }
+
   private ObjectNode inactivityEnvelope(boolean local) throws Exception {
     var result = envelope();
     result.put("representation", "CLAIMED_INACTIVITY_DELETE_V1");
