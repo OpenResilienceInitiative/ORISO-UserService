@@ -93,7 +93,8 @@ class UserServiceStartupNativePairProof {
             witness.put("actualApplication", prepared instanceof ConfigurableWebApplicationContext);
             witness.put(
                 "testingProfile",
-                Arrays.asList(prepared.getEnvironment().getActiveProfiles()).equals(List.of("testing")));
+                Arrays.asList(prepared.getEnvironment().getActiveProfiles())
+                    .equals(List.of("testing")));
             var environment = prepared.getEnvironment();
             var clients = new HashSet<String>();
             var secrets = new HashSet<String>();
