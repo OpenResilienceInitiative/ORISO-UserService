@@ -18,7 +18,8 @@ final class InactivityClaimJournal {
       String phase,
       String body,
       String receipt,
-      String suspension) {
+      String suspension,
+      Instant claimedAt) {
     @Override
     public String toString() {
       return "Saved[claimed-work=redacted]";
@@ -39,7 +40,7 @@ final class InactivityClaimJournal {
   Saved saved(String id, boolean lock) {
     return jdbc
         .query(
-            "select identity_id,work_id,claimed_json,source_json,native_phase,native_body,native_receipt,suspension_operation_id from account_inactivity where identity_id=?"
+            "select identity_id,work_id,claimed_json,source_json,native_phase,native_body,native_receipt,suspension_operation_id,claimed_at from account_inactivity where identity_id=?"
                 + (lock ? " for update" : ""),
             (r, n) ->
                 new Saved(
@@ -50,7 +51,8 @@ final class InactivityClaimJournal {
                     r.getString(5),
                     r.getString(6),
                     r.getString(7),
-                    r.getString(8)),
+                    r.getString(8),
+                    r.getTimestamp(9) == null ? null : r.getTimestamp(9).toInstant()),
             id)
         .stream()
         .findFirst()
@@ -59,6 +61,8 @@ final class InactivityClaimJournal {
 
   Saved claim(
       Snapshot row, String action, Map<String, Object> initiator, Instant now, String suspension) {
+    // MySQL DATETIME(6) is the owning timestamp precision; persist the same original microseconds.
+    now = now.truncatedTo(java.time.temporal.ChronoUnit.MICROS);
     String status =
         switch (action) {
           case "SUSPEND" -> "SUSPENDING";

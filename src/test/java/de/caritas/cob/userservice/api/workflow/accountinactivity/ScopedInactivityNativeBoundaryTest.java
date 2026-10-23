@@ -187,6 +187,104 @@ class ScopedInactivityNativeBoundaryTest {
     f.server.verify();
   }
 
+  @Test
+  void signedRestoreRefusalReclosesOnlyItsOwnedAcknowledgedAccessBeforeTerminalSuspension()
+      throws Exception {
+    for (int status : List.of(403, 409)) {
+      var f = new Fixture(true, false);
+      f.read(false);
+      f.mutate("deactivate", false, false);
+      f.read(true);
+      f.refuseRestore(status);
+      f.service.scan(false);
+      f.platformHuman();
+      assertThrows(RuntimeException.class, () -> f.service.reactivate(ACCOUNT));
+      assertEquals(
+          List.of("matrix-read", "native-deactivate", "matrix-true", "media-revoke",
+              "matrix-false", "media-restore", "native-reactivate-no-effect-" + status,
+              "matrix-true", "media-revoke"),
+          f.order,
+          "Only the saved acknowledged restore effects may be compensated");
+      assertEquals(AccountInactivityService.Status.SUSPENDED,
+          f.service.snapshot(ACCOUNT).orElseThrow().status());
+      assertEquals("NO_EFFECT", f.value("native_phase"));
+      assertNotNull(f.value("native_receipt"));
+      assertFalse(f.jdbc.queryForObject(
+          "select restored from account_inactivity_access_state where identity_id=?",
+          Boolean.class, ACCOUNT));
+      verifyNoInteractions(f.sdk);
+      f.server.verify();
+    }
+  }
+
+  @Test
+  void unknownOwnedCompensationRetainsTheExactRestoreAndRetriesWithoutAnotherNativeCommand()
+      throws Exception {
+    var f = new Fixture(true, false);
+    f.read(false);
+    f.mutate("deactivate", false, false);
+    f.read(true);
+    f.refuseRestore(409);
+    f.service.scan(false);
+    var compensations = new java.util.concurrent.atomic.AtomicInteger();
+    doAnswer(inv -> {
+      f.outside();
+      f.order.add("media-revoke");
+      assertEquals(AccountInactivityService.Status.REACTIVATING,
+          f.service.snapshot(ACCOUNT).orElseThrow().status());
+      assertEquals("NO_EFFECT", f.value("native_phase"));
+      assertNotNull(f.value("native_receipt"));
+      if (compensations.incrementAndGet() == 1)
+        throw new ResourceAccessException("Synthetic unknown compensation reply");
+      return null;
+    }).when(f.media).revoke(List.of(MATRIX));
+    f.platformHuman();
+    assertThrows(RuntimeException.class, () -> f.service.reactivate(ACCOUNT));
+    assertEquals(AccountInactivityService.Status.REACTIVATING,
+        f.service.snapshot(ACCOUNT).orElseThrow().status());
+    assertEquals("NO_EFFECT", f.value("native_phase"));
+    String operation = f.value("work_id"), body = f.value("native_body"),
+        original = f.value("claimed_json"), receipt = f.value("native_receipt");
+    assertThrows(RuntimeException.class, () -> f.service.reactivate(ACCOUNT));
+    assertEquals(operation, f.value("work_id"));
+    assertEquals(body, f.value("native_body"));
+    assertEquals(original, f.value("claimed_json"));
+    assertEquals(receipt, f.value("native_receipt"));
+    assertEquals(2, compensations.get());
+    assertEquals(AccountInactivityService.Status.SUSPENDED,
+        f.service.snapshot(ACCOUNT).orElseThrow().status());
+    assertEquals(1, f.order.stream().filter("media-restore"::equals).count());
+    assertEquals(1, f.order.stream().filter("native-reactivate-no-effect-409"::equals).count());
+    verifyNoInteractions(f.sdk);
+    f.server.verify();
+  }
+
+  @Test
+  void olderRestoreCannotRevokeMediaAfterANewerOwnerReplacesItsClaim() throws Exception {
+    var f = new Fixture(true, false);
+    f.read(false);
+    f.mutate("deactivate", false, false);
+    f.read(true);
+    f.refuseRestore(403);
+    f.service.scan(false);
+    String newer = "83000000-0000-4000-8000-000000000099";
+    when(f.matrix.setAccountSuspended(MATRIX, true)).thenAnswer(inv -> {
+      f.outside();f.order.add("matrix-true");
+      assertEquals("NO_EFFECT", f.value("native_phase"));
+      f.jdbc.update("update account_inactivity set work_id=?,status='ACTIVE' where identity_id=?", newer, ACCOUNT);
+      return true;
+    });
+    f.platformHuman();
+    assertThrows(RuntimeException.class, () -> f.service.reactivate(ACCOUNT));
+    assertEquals(newer, f.value("work_id"));
+    assertEquals(AccountInactivityService.Status.ACTIVE,
+        f.service.snapshot(ACCOUNT).orElseThrow().status());
+    assertEquals(1, f.order.stream().filter("media-revoke"::equals).count(),
+        "A stale restore must not compensate resources after losing its exact owner");
+    verifyNoInteractions(f.sdk);
+    f.server.verify();
+  }
+
   private static final class Fixture {
     final ObjectMapper json = new ObjectMapper();
     final AccountLifecycleCodec codec = new AccountLifecycleCodec(KEY);
@@ -466,6 +564,36 @@ class ScopedInactivityNativeBoundaryTest {
                   throw new java.io.IOException(invalid);
                 }
               });
+    }
+
+    void refuseRestore(int status) {
+      server.expect(requestTo(URL + "/reactivate"))
+          .andExpect(method(HttpMethod.POST))
+          .andRespond(outbound -> {
+            try {
+              var body = body(outbound, "reactivate", true);
+              restore = body;
+              assertEquals("FROZEN", value("native_phase"));
+              assertEquals(canonical(body), value("native_body"));
+              order.add("native-reactivate-no-effect-" + status);
+              var signed = new TreeMap<String, Object>();
+              signed.put("realmId", "realm-1");signed.put("accountId", ACCOUNT);
+              signed.put("operationId", body.path("operationId").textValue());
+              signed.put("command", "reactivate");signed.put("ownerClient", actor.clientId());
+              signed.put("ownerSubject", SUBJECT);signed.put("intentDigest", digest("maintenance-intent", body));
+              signed.put("previousState", body.path("expectedState").textValue());
+              signed.put("tenantId", "7");signed.put("originDigest", digest("maintenance-origin", body.path("target").path("origin")));
+              signed.put("result", "NO_EFFECT");signed.put("status", status);
+              String encoded = Base64.getUrlEncoder().withoutPadding()
+                  .encodeToString(canonical(signed).getBytes(StandardCharsets.UTF_8));
+              String receipt = encoded + "." + mac("maintenance-no-effect-receipt/v1\n" + encoded);
+              var response = withStatus(HttpStatus.valueOf(status)).contentType(MediaType.APPLICATION_JSON)
+                  .body(canonical(Map.of("operationId", body.path("operationId").textValue(),
+                      "accountId", ACCOUNT, "result", "NO_EFFECT", "status", status, "receipt", receipt)))
+                  .createResponse(outbound);
+              response.getHeaders().setCacheControl("no-store");return response;
+            } catch (Exception invalid) {throw new java.io.IOException(invalid);}
+          });
     }
 
     JsonNode body(

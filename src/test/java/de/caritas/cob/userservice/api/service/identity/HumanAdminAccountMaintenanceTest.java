@@ -986,6 +986,7 @@ class HumanAdminAccountMaintenanceTest {
         mvc.perform(
                 org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch(
                         "/profile-outcome")
+                    .header("Idempotency-Key", OPERATION)
                     .requestAttr("X-ORISO-Mutation-Outcome", "NO_EFFECT")
                     .requestAttr("X-ORISO-Mutation-Operation", OPERATION))
             .andReturn()
@@ -1006,6 +1007,19 @@ class HumanAdminAccountMaintenanceTest {
     assertFalse(response.getContentAsString().contains("receipt"));
     assertFalse(response.getContentAsString().contains("synthetic"));
     assertEquals("", response.getContentAsString());
+    if (definite) {
+      for (String otherKey : Arrays.asList(null, "81000000-0000-4000-8000-000000000099", "not-a-canonical-uuid", OPERATION + " ")) {
+        var replay = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/profile-outcome")
+            .requestAttr("X-ORISO-Mutation-Outcome", "NO_EFFECT")
+            .requestAttr("X-ORISO-Mutation-Operation", OPERATION);
+        if (otherKey != null) replay.header("Idempotency-Key", otherKey);
+        var unbound = mvc.perform(replay).andReturn().getResponse();
+        assertAll(
+            () -> assertEquals(status, unbound.getStatus()),
+            () -> assertNull(unbound.getHeader("X-ORISO-Mutation-Outcome")),
+            () -> assertNull(unbound.getHeader("X-ORISO-Mutation-Operation")));
+      }
+    }
   }
 
   @org.springframework.web.bind.annotation.RestController

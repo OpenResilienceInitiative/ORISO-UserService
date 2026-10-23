@@ -1000,6 +1000,11 @@ public class AccountInactivityService {
       if (!saved.work().equals(current.work())
           || !saved.claimed().equals(current.claimed())
           || !saved.source().equals(current.source())
+          || current.claimedAt() == null
+          || !java.util.Objects.equals(saved.claimedAt(), current.claimedAt())
+          || original.path("claimedAtMicros").longValue()
+              != InactivityClaimJournal.micros(current.claimedAt())
+          || !java.util.Objects.equals(saved.suspension(), current.suspension())
           || !java.util.Objects.equals(tenantId(), row.tenantId())
           || original.path("assignedMonths").intValue() != row.assignedMonths()
           || original.path("revision").longValue() != row.revision()

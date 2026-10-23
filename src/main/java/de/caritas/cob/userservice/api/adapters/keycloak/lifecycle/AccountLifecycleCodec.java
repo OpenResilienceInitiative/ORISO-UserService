@@ -124,11 +124,13 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
   }
 
   String sealReactivationIntent(JsonNode independentlyCheckedOwnedMetadata, byte[] frozenCommand) {
-    throw new IllegalArgumentException("Reactivation intent is unavailable");
+    return new SelfPasswordIntentCodec(this, this::mac)
+        .sealReactivation(independentlyCheckedOwnedMetadata, frozenCommand);
   }
 
   byte[] openReactivationIntent(JsonNode independentlyCheckedOwnedMetadata, String envelope) {
-    throw new IllegalArgumentException("Reactivation intent is unavailable");
+    return new SelfPasswordIntentCodec(this, this::mac)
+        .openReactivation(independentlyCheckedOwnedMetadata, envelope);
   }
 
   String sealSelfPasswordIntent(JsonNode independentlyCheckedOwnedMetadata, byte[] frozenCommand) {
@@ -1284,6 +1286,11 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
   public String claimedInactivityRowDigest(JsonNode exactOwnedRow) {
     return digest(
         "claimed-inactivity-row/v1", ClaimedInactivityRowSchema.require(exactOwnedRow, false));
+  }
+
+  public String verifyMaintenanceProfileTransitionReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    throw new IllegalArgumentException("Profile transition receipt is unavailable");
   }
 
   public String verifyMaintenanceOrdinaryProfileReceipt(
