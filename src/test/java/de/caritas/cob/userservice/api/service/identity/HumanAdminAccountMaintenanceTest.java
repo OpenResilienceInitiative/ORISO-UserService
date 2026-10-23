@@ -639,6 +639,21 @@ class HumanAdminAccountMaintenanceTest {
     }
   }
 
+  @Test
+  void appliedSelfAndAdminReplayRechecksOriginalNativeGrantWithoutRepeatingLocalEffects() {
+    assertAll(
+        () -> {
+          server.reset();
+          actualSchemaAndValidatedHumanFixture();
+          runActualConsultantEdit("self-replay-revoked");
+        },
+        () -> {
+          server.reset();
+          actualSchemaAndValidatedHumanFixture();
+          runActualConsultantEdit("replay-revoked");
+        });
+  }
+
   private void runActualConsultantEdit(String scenario) {
     boolean self = scenario.startsWith("self-");
     if (!Set.of(
@@ -966,6 +981,16 @@ class HumanAdminAccountMaintenanceTest {
           roleEdit ? desiredRoles : self ? projectedRoles : null,
           self,
           "self-unchanged".equals(scenario));
+    boolean revokedReplay = scenario.endsWith("replay-revoked");
+    var authorityChecks = new java.util.concurrent.atomic.AtomicInteger();
+    if (revokedReplay)
+      server.expect(requestTo(URL + "/" + command))
+          .andExpect(r -> {
+            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            assertEquals(frozen.get(), ((MockClientHttpRequest) r).getBodyAsString());
+            authorityChecks.incrementAndGet();
+          })
+          .andRespond(withStatus(org.springframework.http.HttpStatus.FORBIDDEN));
     if (coherenceNegative) {
       assertAll(
           () ->
@@ -1057,6 +1082,18 @@ class HumanAdminAccountMaintenanceTest {
             "select applied_json from general_admin_identity_intent where operation_id=?",
             String.class,
             OPERATION));
+    if (revokedReplay) {
+      String originalReceipt = jdbc.queryForObject("select native_receipt from general_admin_identity_intent where operation_id=?", String.class, OPERATION);
+      var refusal = assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+          () -> publicEdit.updateConsultant(ACCOUNT, dto, !self));
+      assertDoesNotThrow(() -> assertPublicMutationOutcome(refusal, 403, false));
+      assertEquals(1, authorityChecks.get());
+      assertEquals("APPLIED", jdbc.queryForObject("select status from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+      assertEquals(originalReceipt, jdbc.queryForObject("select native_receipt from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+      verify(consultants, times(1)).saveConsultant(any());
+      server.verify();
+      return;
+    }
     if (Set.of("dual", "self-dual", "self-agency", "self-single-tenant-dual", "self-platform")
         .contains(scenario)) {
       assertEquals(
