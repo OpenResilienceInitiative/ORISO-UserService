@@ -808,6 +808,30 @@ class ConsultantDeletionContinuationJpaTest {
     }
   }
 
+  @Test void actualConsultantConsumerRejectsForeignGenerationBeforeFirstMatrixEffect() {
+    try (var actual = actualActions()) {
+      actual.beforeMatrixAction = target -> jdbc.update("update identity_maintenance_intent set claim_token=? where subject_id=?", UUID.randomUUID().toString(), ACCOUNT);
+      runActual(actual); assertEquals(1, nativeEffects.get()); assertEquals(1, actual.serviceEntries.get());
+      assertTrue(actual.events.isEmpty()); assertTrue(consultants.findById(ACCOUNT).isPresent()); assertEquals("ACKNOWLEDGED", status());
+    }
+  }
+
+  @Test void actualConsultantConsumerRejectsExpiredHeldLeaseBeforeFirstMatrixEffect() {
+    try (var actual = actualActions()) {
+      actual.beforeMatrixAction = target -> jdbc.update("update scheduled_task_claim set claimed_until=? where task_name='account-deletion'", java.sql.Timestamp.from(Instant.now().minusSeconds(60)));
+      runActual(actual); assertEquals(1, nativeEffects.get()); assertEquals(1, actual.serviceEntries.get());
+      assertTrue(actual.events.isEmpty()); assertTrue(consultants.findById(ACCOUNT).isPresent()); assertEquals("ACKNOWLEDGED", status());
+    }
+  }
+
+  @Test void actualConsultantConsumerRejectsChangedActorBeforeFirstMatrixEffect() {
+    try (var actual = actualActions()) {
+      actual.beforeMatrixAction = target -> when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(new TaskActorCredentials(TaskActor.ACCOUNT_ADMIN, "foreign-account-admin", "fixture-secret", "44444444-4444-4444-8444-444444444444"));
+      runActual(actual); assertEquals(1, nativeEffects.get()); assertEquals(1, actual.serviceEntries.get());
+      assertTrue(actual.events.isEmpty()); assertTrue(consultants.findById(ACCOUNT).isPresent()); assertEquals("ACKNOWLEDGED", status());
+    }
+  }
+
   private void assertFinalVetoThenRetry(
       AcknowledgedConsultantActionsFixture actual, Runnable recover) {
     runActual(actual);
