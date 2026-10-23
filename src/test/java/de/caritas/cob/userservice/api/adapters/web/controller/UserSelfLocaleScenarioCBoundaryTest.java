@@ -140,10 +140,16 @@ class UserSelfLocaleScenarioCBoundaryTest {
     assertThrows(RuntimeException.class, () -> fixture.controller.patchUser(fixture.patch(false)));
     assertEquals(1, fixture.domainCalls());
     assertEquals(1, fixture.nativeEffects.get());
-    var target = fixture.codec.read(fixture.jdbc.queryForObject(
-        "select target_json from identity_account_operation_intent where operation_id=?",
-        String.class, fixture.operation), JsonNode.class);
-    assertEquals("PROTECTED_ACCOUNT_OPERATIONS_V1", target.path("origin").path("humanAuthority").textValue());
+    var target =
+        fixture.codec.read(
+            fixture.jdbc.queryForObject(
+                "select target_json from identity_account_operation_intent where operation_id=?",
+                String.class,
+                fixture.operation),
+            JsonNode.class);
+    assertEquals(
+        "PROTECTED_ACCOUNT_OPERATIONS_V1",
+        target.path("origin").path("humanAuthority").textValue());
     fixture.installOwner();
     assertDoesNotThrow(() -> fixture.controller.patchUser(fixture.patch(false)));
     assertEquals("ACKNOWLEDGED", fixture.status());
@@ -333,7 +339,10 @@ class UserSelfLocaleScenarioCBoundaryTest {
           "create table consultant(consultant_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,email varchar(320),create_date timestamp(6),language_code varchar(8),encourage2fa boolean,patch_count int)");
       jdbc.execute(
           "create table admin(admin_id varchar(36) primary key,tenant_id bigint,type varchar(32),email varchar(320),create_date timestamp(6))");
-      jdbc.update("insert into user(user_id,tenant_id,delete_date,language_code,encourage2fa,patch_count) values(?,?,null,'en',false,0)", ACCOUNT, 7L);
+      jdbc.update(
+          "insert into user(user_id,tenant_id,delete_date,language_code,encourage2fa,patch_count) values(?,?,null,'en',false,0)",
+          ACCOUNT,
+          7L);
       new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
               new org.springframework.core.io.ClassPathResource(
                   "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"),
@@ -365,8 +374,9 @@ class UserSelfLocaleScenarioCBoundaryTest {
       when(users.findByUserIdAndDeleteDateIsNull(ACCOUNT))
           .thenAnswer(
               ignored -> {
-                if (jdbc.queryForObject("select count(*) from user where user_id=?", Integer.class, ACCOUNT) == 0)
-                  return Optional.empty();
+                if (jdbc.queryForObject(
+                        "select count(*) from user where user_id=?", Integer.class, ACCOUNT)
+                    == 0) return Optional.empty();
                 var user = new User();
                 user.setUserId(ACCOUNT);
                 user.setUsername("ordinary");
@@ -396,26 +406,40 @@ class UserSelfLocaleScenarioCBoundaryTest {
                 return saved;
               });
       var consultants = mock(ConsultantRepository.class);
-      when(consultants.findByIdAndDeleteDateIsNull(ACCOUNT)).thenAnswer(ignored -> {
-        if (jdbc.queryForObject("select count(*) from consultant where consultant_id=?", Integer.class, ACCOUNT) == 0)
-          return Optional.empty();
-        var consultant = new de.caritas.cob.userservice.api.model.Consultant();
-        consultant.setId(ACCOUNT);
-        consultant.setTenantId(7L);
-        consultant.setUsername("ordinary");
-        consultant.setEmail("ordinary@fixture.invalid");
-        consultant.setLanguageCode(com.neovisionaries.i18n.LanguageCode.valueOf(
-            jdbc.queryForObject("select language_code from consultant where consultant_id=?", String.class, ACCOUNT)));
-        return Optional.of(consultant);
-      });
+      when(consultants.findByIdAndDeleteDateIsNull(ACCOUNT))
+          .thenAnswer(
+              ignored -> {
+                if (jdbc.queryForObject(
+                        "select count(*) from consultant where consultant_id=?",
+                        Integer.class,
+                        ACCOUNT)
+                    == 0) return Optional.empty();
+                var consultant = new de.caritas.cob.userservice.api.model.Consultant();
+                consultant.setId(ACCOUNT);
+                consultant.setTenantId(7L);
+                consultant.setUsername("ordinary");
+                consultant.setEmail("ordinary@fixture.invalid");
+                consultant.setLanguageCode(
+                    com.neovisionaries.i18n.LanguageCode.valueOf(
+                        jdbc.queryForObject(
+                            "select language_code from consultant where consultant_id=?",
+                            String.class,
+                            ACCOUNT)));
+                return Optional.of(consultant);
+              });
       var consultantPatch = mock(PatchConsultantSaga.class);
-      when(consultantPatch.executeTransactional(any(), anyMap())).thenAnswer(invocation -> {
-        assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-        de.caritas.cob.userservice.api.model.Consultant changed = invocation.getArgument(0);
-        jdbc.update("update consultant set language_code=?,encourage2fa=?,patch_count=patch_count+1 where consultant_id=?",
-            changed.getLanguageCode().toString(), changed.getEncourage2fa(), ACCOUNT);
-        return Map.<String,Object>of("id", ACCOUNT);
-      });
+      when(consultantPatch.executeTransactional(any(), anyMap()))
+          .thenAnswer(
+              invocation -> {
+                assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+                de.caritas.cob.userservice.api.model.Consultant changed = invocation.getArgument(0);
+                jdbc.update(
+                    "update consultant set language_code=?,encourage2fa=?,patch_count=patch_count+1 where consultant_id=?",
+                    changed.getLanguageCode().toString(),
+                    changed.getEncourage2fa(),
+                    ACCOUNT);
+                return Map.<String, Object>of("id", ACCOUNT);
+              });
       var transcoder = new UsernameTranscoder();
       var accounts =
           new AccountManager(
@@ -458,8 +482,12 @@ class UserSelfLocaleScenarioCBoundaryTest {
 
     void installTenantConsultantPair() {
       jdbc.update("delete from user where user_id=?", ACCOUNT);
-      jdbc.update("insert into consultant values(?,7,null,'ordinary@fixture.invalid','2026-10-20 10:11:12.123456','en',false,0)", ACCOUNT);
-      jdbc.update("insert into admin values(?,7,'TENANT','ordinary@fixture.invalid','2026-10-20 10:11:12.123456')", ACCOUNT);
+      jdbc.update(
+          "insert into consultant values(?,7,null,'ordinary@fixture.invalid','2026-10-20 10:11:12.123456','en',false,0)",
+          ACCOUNT);
+      jdbc.update(
+          "insert into admin values(?,7,'TENANT','ordinary@fixture.invalid','2026-10-20 10:11:12.123456')",
+          ACCOUNT);
     }
 
     void installOwner() {
@@ -492,7 +520,8 @@ class UserSelfLocaleScenarioCBoundaryTest {
 
     int domainCalls() {
       return jdbc.queryForObject(
-          "select coalesce((select sum(patch_count) from user),0)+coalesce((select sum(patch_count) from consultant),0)", Integer.class);
+          "select coalesce((select sum(patch_count) from user),0)+coalesce((select sum(patch_count) from consultant),0)",
+          Integer.class);
     }
 
     String status() {
