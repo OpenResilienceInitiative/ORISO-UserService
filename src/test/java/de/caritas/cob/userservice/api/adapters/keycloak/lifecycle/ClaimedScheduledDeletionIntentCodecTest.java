@@ -13,7 +13,8 @@ import org.junit.jupiter.api.Test;
 
 /** Independent fixed metadata MAC; these data objects never construct a live deletion frame. */
 class ClaimedScheduledDeletionIntentCodecTest {
-  private static final byte[] KEY = "synthetic-scheduled-deletion-intent-key".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] KEY =
+      "synthetic-scheduled-deletion-intent-key".getBytes(StandardCharsets.UTF_8);
   private static final String ACCOUNT = "71000000-0000-4000-8000-000000000001";
   private static final String OP = "71000000-0000-4000-8000-000000000002";
   private final ObjectMapper json = new ObjectMapper();
@@ -27,7 +28,8 @@ class ClaimedScheduledDeletionIntentCodecTest {
     assertEquals(29, envelope.path("originalSql").size());
     for (String field : List.of("username", "email", "matrix_user_id", "create_date")) {
       var changed = envelope.deepCopy();
-      ((ObjectNode) changed.path("originalSql")).put(field, field.equals("create_date") ? "2018-01-02T00:00:00Z" : "changed-original");
+      ((ObjectNode) changed.path("originalSql"))
+          .put(field, field.equals("create_date") ? "2018-01-02T00:00:00Z" : "changed-original");
       assertEquals(independent(changed), codec.claimedScheduledDeletionIntentDigest(changed));
       assertNotEquals(digest, codec.claimedScheduledDeletionIntentDigest(changed));
     }
@@ -43,71 +45,103 @@ class ClaimedScheduledDeletionIntentCodecTest {
     for (String field : fields(valid)) {
       var missing = valid.deepCopy();
       missing.remove(field);
-      assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(missing));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> codec.claimedScheduledDeletionIntentDigest(missing));
     }
     for (String field : fields(valid.path("originalSql"))) {
       var missing = valid.deepCopy();
       ((ObjectNode) missing.path("originalSql")).remove(field);
-      assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(missing), field);
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> codec.claimedScheduledDeletionIntentDigest(missing),
+          field);
     }
     for (String extra : List.of("password", "bearer", "mobile_token", "frozen_intent")) {
       var changed = valid.deepCopy();
       ((ObjectNode) changed.path("originalSql")).put(extra, "synthetic-forbidden");
-      assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(changed), extra);
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> codec.claimedScheduledDeletionIntentDigest(changed),
+          extra);
     }
-    for (String field : List.of("user_id", "tenant_id", "deletion_lifecycle_state", "delete_date", "create_date")) {
+    for (String field :
+        List.of("user_id", "tenant_id", "deletion_lifecycle_state", "delete_date", "create_date")) {
       var changed = valid.deepCopy();
       ((ObjectNode) changed.path("originalSql")).put(field, "wrong");
-      assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(changed), field);
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> codec.claimedScheduledDeletionIntentDigest(changed),
+          field);
     }
     for (String name : List.of("representation", "body", "originalSql")) {
       var changed = valid.deepCopy();
       changed.put(name, "arbitrary");
-      assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(changed), name);
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> codec.claimedScheduledDeletionIntentDigest(changed),
+          name);
     }
     var foreign = valid.deepCopy();
     ((ObjectNode) foreign.path("body").path("target")).put("accountId", OP);
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(foreign));
+    assertThrows(
+        IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(foreign));
     var extra = valid.deepCopy();
     extra.put("bindingDigest", "a".repeat(64));
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(extra));
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(valid.path("body")));
+    assertThrows(
+        IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(extra));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.claimedScheduledDeletionIntentDigest(valid.path("body")));
   }
 
   @Test
-  void inactivityBindingPreservesActualActiveUserOrExplicitCapturedAbsenceWithoutCreatingWork() throws Exception {
+  void inactivityBindingPreservesActualActiveUserOrExplicitCapturedAbsenceWithoutCreatingWork()
+      throws Exception {
     for (boolean local : List.of(true, false)) {
       var envelope = inactivityEnvelope(local);
-      String digest = assertDoesNotThrow(() -> codec.claimedInactivityDeletionIntentDigest(envelope));
+      String digest =
+          assertDoesNotThrow(() -> codec.claimedInactivityDeletionIntentDigest(envelope));
       assertEquals(independent(envelope, "claimed-inactivity-deletion-intent/v1"), digest);
-      assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(envelope));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> codec.claimedScheduledDeletionIntentDigest(envelope));
       if (local) {
-        assertEquals("ACTIVE", envelope.path("originalSql").path("deletion_lifecycle_state").textValue());
+        assertEquals(
+            "ACTIVE", envelope.path("originalSql").path("deletion_lifecycle_state").textValue());
         assertTrue(envelope.path("originalSql").path("delete_date").isNull());
       } else assertTrue(envelope.path("originalSql").isNull());
     }
   }
 
   @Test
-  void inactivityEnvelopeRejectsForeignBodyRowDigestAndMissingOrAddedOwnershipData() throws Exception {
+  void inactivityEnvelopeRejectsForeignBodyRowDigestAndMissingOrAddedOwnershipData()
+      throws Exception {
     var valid = inactivityEnvelope(true);
     for (String field : fields(valid)) {
       var missing = valid.deepCopy();
       missing.remove(field);
-      assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivityDeletionIntentDigest(missing), field);
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> codec.claimedInactivityDeletionIntentDigest(missing),
+          field);
     }
     var foreign = valid.deepCopy();
     ((ObjectNode) foreign.path("body")).put("operationId", ACCOUNT);
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivityDeletionIntentDigest(foreign));
+    assertThrows(
+        IllegalArgumentException.class, () -> codec.claimedInactivityDeletionIntentDigest(foreign));
     var changed = valid.deepCopy();
     ((ObjectNode) changed.path("originalRow")).put("claimedAtMicros", 1769904000123457L);
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivityDeletionIntentDigest(changed));
+    assertThrows(
+        IllegalArgumentException.class, () -> codec.claimedInactivityDeletionIntentDigest(changed));
     var extra = valid.deepCopy();
     extra.put("bindingDigest", "a".repeat(64));
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivityDeletionIntentDigest(extra));
+    assertThrows(
+        IllegalArgumentException.class, () -> codec.claimedInactivityDeletionIntentDigest(extra));
     var badRow = valid.deepCopy();
     badRow.put("rowDigest", "a".repeat(64));
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivityDeletionIntentDigest(badRow));
+    assertThrows(
+        IllegalArgumentException.class, () -> codec.claimedInactivityDeletionIntentDigest(badRow));
   }
 
   private ObjectNode inactivityEnvelope(boolean local) throws Exception {
@@ -151,7 +185,19 @@ class ClaimedScheduledDeletionIntentCodecTest {
     row.put("delete_date", "2020-01-01T00:00:00Z");
     row.put("deletion_lifecycle_state", "HARD_DELETE_IN_PROGRESS");
     row.put("deletion_read_only_until", "2020-01-03T00:00:00Z");
-    for (String field : List.of("deletion_paused_until", "deletion_pause_reason", "deletion_paused_by", "deletion_pause_created_at", "reactivation_operation_id", "reactivation_operation_started_at", "update_date", "terms_and_conditions_confirmation", "data_privacy_confirmation", "notifications_settings", "avatar_id")) row.put(field, null);
+    for (String field :
+        List.of(
+            "deletion_paused_until",
+            "deletion_pause_reason",
+            "deletion_paused_by",
+            "deletion_pause_created_at",
+            "reactivation_operation_id",
+            "reactivation_operation_started_at",
+            "update_date",
+            "terms_and_conditions_confirmation",
+            "data_privacy_confirmation",
+            "notifications_settings",
+            "avatar_id")) row.put(field, null);
     row.put("tenant_id", 7L);
     row.put("create_date", "2019-01-01T00:00:00Z");
     row.put("encourage_2fa", true);
@@ -162,8 +208,24 @@ class ClaimedScheduledDeletionIntentCodecTest {
     var origin = new TreeMap<String, Object>();
     origin.put("kind", "DELETION");
     origin.put("workflowId", OP);
-    for (String field : List.of("humanSubject", "humanIssuer", "humanClient", "humanAuthority")) origin.put(field, null);
-    return json.valueToTree(Map.of("representation", "CLAIMED_SCHEDULED_ASKER_DELETE_V1", "originalSql", row, "body", Map.of("target", Map.of("accountId", ACCOUNT, "tenantId", "7", "origin", origin), "operationId", OP, "expectedState", "a".repeat(64), "change", Map.of())));
+    for (String field : List.of("humanSubject", "humanIssuer", "humanClient", "humanAuthority"))
+      origin.put(field, null);
+    return json.valueToTree(
+        Map.of(
+            "representation",
+            "CLAIMED_SCHEDULED_ASKER_DELETE_V1",
+            "originalSql",
+            row,
+            "body",
+            Map.of(
+                "target",
+                Map.of("accountId", ACCOUNT, "tenantId", "7", "origin", origin),
+                "operationId",
+                OP,
+                "expectedState",
+                "a".repeat(64),
+                "change",
+                Map.of())));
   }
 
   private Set<String> fields(JsonNode node) {
@@ -177,9 +239,13 @@ class ClaimedScheduledDeletionIntentCodecTest {
   }
 
   private String independent(JsonNode node, String domain) throws Exception {
-    String canonical = json.writer().with(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).writeValueAsString(json.convertValue(node, Object.class));
+    String canonical =
+        json.writer()
+            .with(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+            .writeValueAsString(json.convertValue(node, Object.class));
     var mac = Mac.getInstance("HmacSHA256");
     mac.init(new SecretKeySpec(KEY, "HmacSHA256"));
-    return HexFormat.of().formatHex(mac.doFinal((domain + "\n" + canonical).getBytes(StandardCharsets.UTF_8)));
+    return HexFormat.of()
+        .formatHex(mac.doFinal((domain + "\n" + canonical).getBytes(StandardCharsets.UTF_8)));
   }
 }
