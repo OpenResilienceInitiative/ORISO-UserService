@@ -35,8 +35,14 @@ public class TaskActorTokenBroker {
     try {
       var binding = configuration.require(TaskPurpose.CONSULTANT_IMPORT);
       if (binding.actor() != TaskActor.SETUP
-          || !java.util.UUID.fromString(binding.serviceSubject()).toString().equals(binding.serviceSubject())
-          || rawToken == null || rawToken.isBlank() || rawToken.length() > 32768
+          || !java.util
+              .UUID
+              .fromString(binding.serviceSubject())
+              .toString()
+              .equals(binding.serviceSubject())
+          || rawToken == null
+          || rawToken.isBlank()
+          || rawToken.length() > 32768
           || rawToken.chars().anyMatch(c -> Character.isWhitespace(c) || c < 32 || c == 127))
         throw importUnavailable();
       Jwt token = decodeBoundNativeToken(binding, rawToken);
@@ -68,10 +74,13 @@ public class TaskActorTokenBroker {
 
     public void requireLive() {
       try {
-        if (!live || owner != Thread.currentThread() || issuedAt.isAfter(Instant.now())
+        if (!live
+            || owner != Thread.currentThread()
+            || issuedAt.isAfter(Instant.now())
             || !expiresAt.isAfter(Instant.now())) throw importUnavailable();
         var binding = broker.configuration.require(TaskPurpose.CONSULTANT_IMPORT);
-        if (binding.actor() != TaskActor.SETUP || !client.equals(binding.clientId())
+        if (binding.actor() != TaskActor.SETUP
+            || !client.equals(binding.clientId())
             || !subject.equals(binding.serviceSubject())) throw importUnavailable();
       } catch (RuntimeException invalid) {
         throw importUnavailable();
@@ -79,10 +88,14 @@ public class TaskActorTokenBroker {
     }
 
     @Override
-    public void close() { live = false; }
+    public void close() {
+      live = false;
+    }
 
     @Override
-    public String toString() { return "VerifiedConsultantImportTrigger[redacted]"; }
+    public String toString() {
+      return "VerifiedConsultantImportTrigger[redacted]";
+    }
   }
 
   private static IllegalStateException importUnavailable() {

@@ -348,7 +348,8 @@ class ConsultantImportServiceTest {
               return created;
             });
 
-    try (var trigger = de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
       consultantImportService.startImport(trigger);
     }
 
@@ -387,7 +388,8 @@ class ConsultantImportServiceTest {
   @Test
   void fiveActorExistingImportRefusesForeignConsultantBeforeAnyRelationMutation() throws Exception {
     configuredExistingImport(7L);
-    try (var trigger = de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
       consultantImportService.startImport(trigger);
     }
     verify(consultantAgencyRelationCreatorService, never())
@@ -400,7 +402,8 @@ class ConsultantImportServiceTest {
   void fiveActorExistingImportRefusesUnassignedConsultantBeforeAnyRelationMutation()
       throws Exception {
     configuredExistingImport(null);
-    try (var trigger = de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
       consultantImportService.startImport(trigger);
     }
     verify(consultantAgencyRelationCreatorService, never())
@@ -412,7 +415,8 @@ class ConsultantImportServiceTest {
   @Test
   void fiveActorExistingImportKeepsExactConsultantRowAndAgencyTenantBinding() throws Exception {
     configuredExistingImport(5L);
-    try (var trigger = de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
       consultantImportService.startImport(trigger);
     }
     verify(consultantAgencyRelationCreatorService)
