@@ -12,6 +12,8 @@ import de.caritas.cob.userservice.api.port.out.SessionTopicRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
+import de.caritas.cob.userservice.api.model.TeamDiscussion;
 import de.caritas.cob.userservice.api.workflow.delete.service.TeamDiscussionPurgeService;
 import java.util.List;
 import lombok.NonNull;
@@ -117,6 +119,22 @@ abstract class DeleteRoomsAndSessionAction {
               .timestamp(nowInUtc())
               .build());
     }
+  }
+
+  void deleteTeamDiscussion(
+      Session session, List<DeletionWorkflowError> errors, AskerDeletionWorkflowDTO owned) {
+    var discussion = new java.util.concurrent.atomic.AtomicReference<TeamDiscussion>();
+    owned.runOwnedLocal(() -> {
+      try {
+        discussion.set(teamDiscussionRepository.findBySessionId(session.getId()).orElse(null));
+      } catch (Exception failure) {
+        log.error("UserService delete workflow error: ", failure);
+        errors.add(DeletionWorkflowError.builder().deletionSourceType(ASKER)
+            .deletionTargetType(DeletionTargetType.DATABASE).identifier(String.valueOf(session.getId()))
+            .reason("Unable to delete team discussion for session").timestamp(nowInUtc()).build());
+      }
+    });
+    if (discussion.get() != null) teamDiscussionPurgeService.purge(discussion.get(), errors, owned);
   }
 
   protected void deleteSession(Session session, List<DeletionWorkflowError> workflowErrors) {

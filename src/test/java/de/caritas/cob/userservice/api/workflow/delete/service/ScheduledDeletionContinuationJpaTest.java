@@ -579,6 +579,7 @@ class ScheduledDeletionContinuationJpaTest {
       TenantContext.setCurrentSubdomain("original-caller");
       var caller = TenantContext.getCurrentTenantData();
       owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      assertEquals(1, actions.serviceEntries.get(), "Only the actual private owner may enter the service");
       actions.assertAllNineActionBoundaries();
       assertEquals(
           0,
@@ -743,6 +744,44 @@ class ScheduledDeletionContinuationJpaTest {
           RuntimeException.class, () -> actions.service.continueAcknowledgedDeletion(null));
       assertEquals(List.of(), actions.events);
       assertTrue(users.findById(ACCOUNT).isPresent());
+      verifyNoInteractions(actions.forbiddenNative);
+    }
+  }
+
+  @Test
+  void actualFrameCannotAuthorizeAnotherPersistedUserInsertedIntoTheActionDto() {
+    var other = new User("44444444-4444-4444-8444-444444444444", null,
+        new UsernameTranscoder().encodeUsername("unrelated-cleanup"), "other@fixture.invalid", false);
+    other.setTenantId(7L);
+    other.setLanguageCode(LanguageCode.en);
+    other.setMatrixUserId("@other:fixture.invalid");
+    var persisted = users.save(other);
+    try (var actions = actions()) {
+      actions.beforeMatrixAction = target -> target.setUser(persisted);
+      owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      assertEquals(1, actions.serviceEntries.get());
+      assertEquals(1, actions.matrixEntries.get());
+      assertEquals(List.of(), actions.events);
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertTrue(users.findById(persisted.getUserId()).isPresent());
+      assertEquals("ACKNOWLEDGED", status());
+      verifyNoInteractions(actions.forbiddenNative);
+    }
+  }
+
+  @Test
+  void actualFrameRejectsSameIdDtoWithChangedMatrixAndUsernameBeforeAnyAction() {
+    try (var actions = actions()) {
+      actions.beforeMatrixAction = target -> {
+        target.getUser().setMatrixUserId("@other:fixture.invalid");
+        target.getUser().setUsername(new UsernameTranscoder().encodeUsername("other-cleanup"));
+      };
+      owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      assertEquals(1, actions.serviceEntries.get());
+      assertEquals(1, actions.matrixEntries.get());
+      assertEquals(List.of(), actions.events);
+      assertEquals("@owned-cleanup:fixture.invalid", users.findById(ACCOUNT).orElseThrow().getMatrixUserId());
+      assertEquals("ACKNOWLEDGED", status());
       verifyNoInteractions(actions.forbiddenNative);
     }
   }

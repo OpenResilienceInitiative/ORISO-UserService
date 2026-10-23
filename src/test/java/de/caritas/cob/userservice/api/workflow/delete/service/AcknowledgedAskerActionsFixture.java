@@ -18,6 +18,8 @@ import de.caritas.cob.userservice.api.workflow.teamdiscussionretention.service.T
 import jakarta.persistence.EntityManager;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.concurrent.atomic.AtomicInteger;
+import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import org.mockito.Answers;
 import org.mockito.stubbing.Answer;
 import org.springframework.aop.framework.ProxyFactory;
@@ -37,6 +39,9 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
   final IdentityAccountRemover forbiddenNative = mock(IdentityAccountRemover.class);
   final WorkflowErrorMailService errorMail = mock(WorkflowErrorMailService.class);
   Consumer<String> afterExternal = event -> {};
+  Consumer<AskerDeletionWorkflowDTO> beforeMatrixAction = target -> {};
+  final AtomicInteger serviceEntries = new AtomicInteger();
+  final AtomicInteger matrixEntries = new AtomicInteger();
   boolean failDrafts;
   boolean failMemberships;
   private final GenericApplicationContext context = new GenericApplicationContext();
@@ -186,7 +191,13 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
         .when(tombstoneService)
         .recordDeletedUser(any());
     register(new DeleteKeycloakAskerAction(forbiddenNative));
-    register(new DeleteMatrixAskerAction(matrix, sessionRepository));
+    var matrixAction = spy(new DeleteMatrixAskerAction(matrix, sessionRepository));
+    doAnswer(invocation -> {
+      matrixEntries.incrementAndGet();
+      beforeMatrixAction.accept(invocation.getArgument(0));
+      return invocation.callRealMethod();
+    }).when(matrixAction).execute(any());
+    register(matrixAction);
     register(
         new DeleteAskerRoomsAndSessionsAction(
             sessionRepository, sessionData, handovers, supervisors, topics, teams, teamPurge));
@@ -198,14 +209,18 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
     register(new DeleteAskerReplyEmailDeliveriesAction(replies));
     register(new DeleteDatabaseAskerAction(users, chats, tokens, tombstoneService));
     context.refresh();
-    service =
+    service = spy(
         new DeleteUserAccountService(
             users,
             mock(ConsultantRepository.class),
             new ActionsRegistry(context),
             errorMail,
             new DeletionLifecycleService(),
-            mock(UserHardDeleteClaimService.class));
+            mock(UserHardDeleteClaimService.class)));
+    doAnswer(invocation -> {
+      serviceEntries.incrementAndGet();
+      return invocation.callRealMethod();
+    }).when(service).continueAcknowledgedDeletion(any());
   }
 
   private void register(ActionCommand<?> action) {

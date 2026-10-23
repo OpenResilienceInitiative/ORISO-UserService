@@ -3,11 +3,13 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
+import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAnonymousRegistryIdAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAppointmentServiceAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerDraftMessagesAction;
@@ -54,7 +56,42 @@ public class DeleteUserAccountService {
   /** Continues only an acknowledgement issued by the held scheduled-deletion owner. */
   public void continueAcknowledgedDeletion(
       ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
-    throw new ScopedIdentityCommandRequiredException();
+    java.util.Objects.requireNonNull(acknowledged);
+    acknowledged.requireCurrent();
+    if (acknowledged.completed()) return;
+    if (!acknowledged.hasLocalUser()) throw new ScopedIdentityCommandRequiredException();
+    TenantContext.runIn(
+        acknowledged.tenantId(),
+        () -> {
+          var original = new java.util.concurrent.atomic.AtomicReference<User>();
+          acknowledged.runOwnedLocal(
+              () -> {
+                var loaded = userRepository.findById(acknowledged.accountId()).orElseThrow();
+                acknowledged.requireCurrentUser(loaded);
+                original.set(loaded);
+              });
+          var target = new AskerDeletionWorkflowDTO(original.get(), new ArrayList<>(), acknowledged);
+          executeAcknowledged(target, DeleteMatrixAskerAction.class);
+          executeAcknowledged(target, DeleteAskerRoomsAndSessionsAction.class);
+          target.runOwnedLocal(() -> executeAcknowledged(target, DeleteDatabaseAskerAgencyAction.class));
+          target.runOwnedLocal(() -> executeAcknowledged(target, DeleteAnonymousRegistryIdAction.class));
+          target.runOwnedExternal(() -> executeAcknowledged(target, DeleteAppointmentServiceAskerAction.class));
+          target.runOwnedLocal(() -> executeAcknowledged(target, DeleteAskerDraftMessagesAction.class));
+          target.runOwnedLocal(() -> executeAcknowledged(target, DeleteAskerEventNotificationsAction.class));
+          target.runOwnedLocal(() -> executeAcknowledged(target, DeleteAskerReplyEmailDeliveriesAction.class));
+          target.completeOwnedLocalDeletion(() -> executeAcknowledged(target, DeleteDatabaseAskerAction.class));
+          if (isNotEmpty(target.getDeletionWorkflowErrors())) {
+            acknowledged.requireCurrent();
+            workflowErrorMailService.buildAndSendErrorMail(target.getDeletionWorkflowErrors());
+            acknowledged.requireCurrent();
+          }
+        });
+  }
+
+  private void executeAcknowledged(
+      AskerDeletionWorkflowDTO target, Class<? extends ActionCommand<AskerDeletionWorkflowDTO>> action) {
+    actionsRegistry.buildContainerForType(AskerDeletionWorkflowDTO.class)
+        .addActionToExecute(action).executeActions(target);
   }
 
   /** Deletes all user accounts marked as deleted in database. */
