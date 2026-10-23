@@ -380,6 +380,40 @@ public final class KeycloakInactivityMaintenance implements AccountInactivityIde
         receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
   }
 
+  @Override
+  public void verifyCompletedInactivityRestoreReceipt(
+      String frozenBody, String receipt, String originalRowJson) {
+    if (originalRowJson == null
+        || originalRowJson.getBytes(StandardCharsets.UTF_8).length > 8192) throw unavailable();
+    verifyCompletedInactivityRestoreReceipt(frozenBody, receipt);
+    var row = codec.read(originalRowJson, JsonNode.class);
+    String digest = codec.claimedInactivityRowDigest(row);
+    var body = codec.read(frozenBody, JsonNode.class);
+    var workflow = body.path("workflow");
+    if (!originalRowJson.equals(codec.canonical(row))
+        || !"RESTORE".equals(row.path("action").textValue())
+        || !"REACTIVATING".equals(row.path("status").textValue())
+        || !java.security.MessageDigest.isEqual(
+            digest.getBytes(StandardCharsets.US_ASCII),
+            workflow.path("rowDigest").textValue().getBytes(StandardCharsets.US_ASCII))
+        || !row.path("identityId").equals(body.path("target").path("accountId"))
+        || !row.path("tenantId").equals(body.path("target").path("tenantId"))
+        || !row.path("workId").equals(body.path("operationId"))
+        || !row.path("suspensionOperationId").equals(workflow.path("suspensionOperationId"))
+        || row.path("revision").longValue() != workflow.path("revision").longValue()
+        || row.path("assignedMonths").intValue() != workflow.path("assignedMonths").intValue()
+        || row.path("lastActivityMicros").longValue() / 1_000_000L != workflow.path("lastActivity").longValue()
+        || row.path("dueAtMicros").longValue() / 1_000_000L != workflow.path("dueAt").longValue()) throw unavailable();
+    var initiator = row.path("initiator");
+    var origin = body.path("target").path("origin");
+    if ("SCHEDULED".equals(initiator.path("kind").textValue())) {
+      if (!"INACTIVITY".equals(origin.path("kind").textValue())) throw unavailable();
+    } else if (!"HUMAN_ADMIN".equals(origin.path("kind").textValue())
+        || !initiator.path("subject").equals(origin.path("humanSubject"))
+        || !initiator.path("issuer").equals(origin.path("humanIssuer"))
+        || !initiator.path("client").equals(origin.path("humanClient"))) throw unavailable();
+  }
+
   private static String historicalUuid(JsonNode value) {
     if (!value.isTextual()) throw unavailable();
     try {

@@ -576,45 +576,55 @@ class ScopedInactivityNativeBoundaryTest {
   @Test
   void aColdRestartAfterClaimCommitRetainsCapturedSourceBeforeClassificationOrAnyMutation()
       throws Exception {
-    var f = new Fixture(true, false);
-    f.server
-        .expect(requestTo(URL + "/read"))
-        .andExpect(method(HttpMethod.POST))
-        .andRespond(
-            outbound -> {
-              try {
-                f.body(outbound, "read", false);
-              } catch (Exception invalid) {
-                throw new java.io.IOException(invalid);
-              }
-              throw new ResourceAccessException(
-                  "Synthetic lost classification reply after actual claim commit");
-            });
-    f.read(false);
-    f.mutate("deactivate", false, false);
-    f.service.scan(false);
-    assertEquals("CLAIMED", f.value("native_phase"));
-    assertNull(f.value("native_body"));
-    assertTrue(f.order.isEmpty());
-    String work = f.value("work_id"),
-        original = f.value("claimed_json"),
-        source = f.value("source_json");
-    String custody = f.value("suspension_source_json");
-    assertNotNull(custody, "CAPTURED commits atomically with the actual SUSPEND claim");
-    assertEquals("CAPTURED", f.json.readTree(custody).path("phase").textValue());
-    var restarted = f.freshService();
-    restarted.scan(false);
-    assertEquals(
-        AccountInactivityService.Status.SUSPENDED,
-        restarted.snapshot(ACCOUNT).orElseThrow().status());
-    assertEquals(work, f.value("work_id"));
-    assertEquals(original, f.value("claimed_json"));
-    assertEquals(source, f.value("source_json"));
-    assertEquals(
-        "ACKNOWLEDGED",
-        f.json.readTree(f.value("suspension_source_json")).path("phase").textValue());
-    verifyNoInteractions(f.sdk);
-    f.server.verify();
+    for (boolean releasedPrior : List.of(false, true)) {
+      var f = new Fixture(true, false);
+      String oldCustody = null;
+      if (releasedPrior) {
+        f.read(false);
+        f.mutate("deactivate", false, false);
+        f.read(true);
+        f.mutate("reactivate", true, false);
+      }
+      f.server.expect(requestTo(URL + "/read"))
+          .andExpect(method(HttpMethod.POST))
+          .andRespond(outbound -> {
+            try { f.body(outbound, "read", false); }
+            catch (Exception invalid) { throw new java.io.IOException(invalid); }
+            throw new ResourceAccessException("Synthetic lost classification reply after actual claim commit");
+          });
+      f.read(false);
+      f.mutate("deactivate", false, false);
+      if (releasedPrior) {
+        f.service.scan(false);
+        f.platformHuman();
+        assertTrue(f.service.reactivate(ACCOUNT));
+        oldCustody = f.value("suspension_source_json");
+        f.clock = Clock.offset(CLOCK, java.time.Duration.ofDays(800));
+      }
+      var before = List.copyOf(f.order);
+      f.freshService().scan(false);
+      assertEquals("CLAIMED", f.value("native_phase"));
+      assertNull(f.value("native_body"));
+      assertEquals(before, f.order);
+      String work = f.value("work_id"), original = f.value("claimed_json"), source = f.value("source_json");
+      String custody = f.value("suspension_source_json");
+      assertNotNull(custody, "CAPTURED commits atomically with the actual SUSPEND claim");
+      assertEquals("CAPTURED", f.json.readTree(custody).path("phase").textValue());
+      if (releasedPrior) {
+        assertNotEquals(oldCustody, custody);
+        assertEquals(0, f.jdbc.queryForObject("select count(*) from account_inactivity_access_state where identity_id=?", Integer.class, ACCOUNT));
+        assertEquals(0, f.jdbc.queryForObject("select count(*) from account_inactivity_matrix_state where identity_id=?", Integer.class, ACCOUNT));
+      }
+      var restarted = f.freshService();
+      restarted.scan(false);
+      assertEquals(AccountInactivityService.Status.SUSPENDED, restarted.snapshot(ACCOUNT).orElseThrow().status());
+      assertEquals(work, f.value("work_id"));
+      assertEquals(original, f.value("claimed_json"));
+      assertEquals(source, f.value("source_json"));
+      assertEquals("ACKNOWLEDGED", f.json.readTree(f.value("suspension_source_json")).path("phase").textValue());
+      verifyNoInteractions(f.sdk);
+      f.server.verify();
+    }
   }
 
   @Test
@@ -668,6 +678,7 @@ class ScopedInactivityNativeBoundaryTest {
     final AccountInactivityService service;
     final AuthenticatedUser human = new AuthenticatedUser();
     final MockHttpServletRequest request = new MockHttpServletRequest();
+    Clock clock = CLOCK;
     final boolean originalEnabled;
     JsonNode suspend, restore;
 
@@ -786,7 +797,7 @@ class ScopedInactivityNativeBoundaryTest {
       var mode = mock(IdentityClientConfig.class);
       when(mode.isFiveActorMode()).thenReturn(true);
       effects.setIdentityMode(mode);
-      var current = new AccountInactivityService(jdbc, manager, CLOCK, effects);
+      var current = new AccountInactivityService(jdbc, manager, clock, effects);
       current.setIdentityMode(mode);
       current.configureScopedInactivity(
           new KeycloakInactivityMaintenance(
