@@ -166,33 +166,76 @@ class MaintenanceNoEffectCodecTest {
   }
 
   @Test
-  void chosenPasswordReactivationPolicy400RequiresTheExactThreeTextualFieldsWithoutWorkflow() throws Exception {
+  void chosenPasswordReactivationPolicy400RequiresTheExactThreeTextualFieldsWithoutWorkflow()
+      throws Exception {
     ObjectNode body = vector.path("requestBody").deepCopy();
-    body.set("change",json.createObjectNode().put("expectedUsername","exact-native-asker").put("expectedEmail","native@fixture.invalid").put("password","synthetic-policy-rejected"));
+    body.set(
+        "change",
+        json.createObjectNode()
+            .put("expectedUsername", "exact-native-asker")
+            .put("expectedEmail", "native@fixture.invalid")
+            .put("password", "synthetic-policy-rejected"));
     ObjectNode outcome = vector.path("payload").deepCopy();
-    outcome.put("command","reactivate");outcome.put("status",400);
-    outcome.put("intentDigest",hmac("maintenance-intent\n"+codec.canonical(body)));
-    String realm=vector.path("payload").path("realmId").textValue();
-    var verified=assertDoesNotThrow(() -> codec.verifyMaintenanceNoEffectReceipt(reply(outcome),realm,actor,body,"reactivate"));
-    assertEquals(400,verified.status());assertEquals("reactivate",verified.command());
-    for (String scenario:List.of("workflow","extra-body","extra-change","missing-field","nontext-username","nontext-email","nontext-password","blank-password","oversized-password","restore")) {
-      ObjectNode changed=body.deepCopy();
-      ObjectNode change=(ObjectNode)changed.path("change");
-      switch(scenario) {
-        case "workflow" -> changed.set("workflow",json.createObjectNode().put("kind","INACTIVITY"));
-        case "extra-body" -> changed.put("authorityValidUntil",32503680000L);
-        case "extra-change" -> change.put("temporary",false);
+    outcome.put("command", "reactivate");
+    outcome.put("status", 400);
+    outcome.put("intentDigest", hmac("maintenance-intent\n" + codec.canonical(body)));
+    String realm = vector.path("payload").path("realmId").textValue();
+    var verified =
+        assertDoesNotThrow(
+            () ->
+                codec.verifyMaintenanceNoEffectReceipt(
+                    reply(outcome), realm, actor, body, "reactivate"));
+    assertEquals(400, verified.status());
+    assertEquals("reactivate", verified.command());
+    for (String scenario :
+        List.of(
+            "workflow",
+            "extra-body",
+            "extra-change",
+            "missing-field",
+            "nontext-username",
+            "nontext-email",
+            "nontext-password",
+            "blank-password",
+            "oversized-password",
+            "restore")) {
+      ObjectNode changed = body.deepCopy();
+      ObjectNode change = (ObjectNode) changed.path("change");
+      switch (scenario) {
+        case "workflow" ->
+            changed.set("workflow", json.createObjectNode().put("kind", "INACTIVITY"));
+        case "extra-body" -> changed.put("authorityValidUntil", 32503680000L);
+        case "extra-change" -> change.put("temporary", false);
         case "missing-field" -> change.remove("expectedEmail");
-        case "nontext-username" -> change.put("expectedUsername",17);
-        case "nontext-email" -> change.put("expectedEmail",17);
-        case "nontext-password" -> change.put("password",17);
-        case "blank-password" -> change.put("password"," ");
-        case "oversized-password" -> change.put("password","x".repeat(4097));
-        case "restore" -> {changed.set("change",json.createObjectNode().put("restoreEnabled",true));changed.set("workflow",json.createObjectNode().put("v",1).put("kind","INACTIVITY").put("workId","77777777-7777-4777-8777-777777777777").put("action","RESTORE").put("rowDigest","b".repeat(64)).put("revision",0).put("assignedMonths",3).put("lastActivity",1700000000L).put("dueAt",1710000000L).put("suspensionOperationId","88888888-8888-4888-8888-888888888888"));}
+        case "nontext-username" -> change.put("expectedUsername", 17);
+        case "nontext-email" -> change.put("expectedEmail", 17);
+        case "nontext-password" -> change.put("password", 17);
+        case "blank-password" -> change.put("password", " ");
+        case "oversized-password" -> change.put("password", "x".repeat(4097));
+        case "restore" -> {
+          changed.set("change", json.createObjectNode().put("restoreEnabled", true));
+          changed.set(
+              "workflow",
+              json.createObjectNode()
+                  .put("v", 1)
+                  .put("kind", "INACTIVITY")
+                  .put("workId", "77777777-7777-4777-8777-777777777777")
+                  .put("action", "RESTORE")
+                  .put("rowDigest", "b".repeat(64))
+                  .put("revision", 0)
+                  .put("assignedMonths", 3)
+                  .put("lastActivity", 1700000000L)
+                  .put("dueAt", 1710000000L)
+                  .put("suspensionOperationId", "88888888-8888-4888-8888-888888888888"));
+        }
       }
-      ObjectNode resigned=outcome.deepCopy();resigned.put("intentDigest",hmac("maintenance-intent\n"+codec.canonical(changed)));
-      String proof=reply(resigned);
-      assertThrows(IllegalArgumentException.class,()->codec.verifyMaintenanceNoEffectReceipt(proof,realm,actor,changed,"reactivate"),scenario);
+      ObjectNode resigned = outcome.deepCopy();
+      resigned.put("intentDigest", hmac("maintenance-intent\n" + codec.canonical(changed)));
+      String proof = reply(resigned);
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> codec.verifyMaintenanceNoEffectReceipt(proof, realm, actor, changed, "reactivate"),
+          scenario);
     }
   }
 
