@@ -68,6 +68,7 @@ import org.springframework.web.client.RestTemplate;
 @TestPropertySource(
     properties = {
       "multitenancy.enabled=true",
+      "logging.level.org.springframework.transaction.support.TransactionTemplate=DEBUG",
       "spring.datasource.url=jdbc:h2:mem:role-addition-${random.uuid};DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=USER,VALUE,DAY"
     })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -347,7 +348,9 @@ class AccountRoleAdditionScopedJpaTest {
     assertEquals(
         "AGENCY",
         jdbc.queryForObject("select type from admin where admin_id=?", String.class, ACCOUNT));
-    assertEquals("owned-counsellor", admins.findById(ACCOUNT).orElseThrow().getUsername());
+    assertEquals(
+        "owned-counsellor",
+        jdbc.queryForObject("select username from admin where admin_id=?", String.class, ACCOUNT));
     assertEquals(
         List.of(71L),
         jdbc.queryForList(
@@ -361,7 +364,7 @@ class AccountRoleAdditionScopedJpaTest {
     assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
     assertEquals(1, effects.get(), "The actual native operation must have reached the lost reply");
     assertEquals("FROZEN", phase());
-    assertFalse(admins.existsById(ACCOUNT));
+    assertNoLocalAdmin();
     String originalBody = nativeBody;
     assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
     assertEquals(originalBody, nativeBody);
@@ -419,7 +422,7 @@ class AccountRoleAdditionScopedJpaTest {
     assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
     assertEquals(priorCalls, calls.get());
     assertEquals(priorReads, reads.get());
-    assertFalse(admins.existsById(ACCOUNT));
+    assertNoLocalAdmin();
   }
 
   @Test
@@ -429,7 +432,7 @@ class AccountRoleAdditionScopedJpaTest {
     assertThrows(ForbiddenException.class, () -> service.add(ACCOUNT, COMMAND));
     assertEquals(0, reads.get());
     assertEquals(0, effects.get());
-    assertFalse(admins.existsById(ACCOUNT));
+    assertNoLocalAdmin();
     verifyNoInteractions(generic);
   }
 
@@ -454,7 +457,7 @@ class AccountRoleAdditionScopedJpaTest {
     assertThrows(ForbiddenException.class, () -> service.add(ACCOUNT, COMMAND));
     assertEquals(0, reads.get());
     assertEquals(0, effects.get());
-    assertFalse(admins.existsById(ACCOUNT));
+    assertNoLocalAdmin();
     verifyNoInteractions(generic);
   }
 
@@ -471,7 +474,7 @@ class AccountRoleAdditionScopedJpaTest {
     assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
     assertEquals(1, effects.get());
     assertEquals("ACKNOWLEDGED", phase());
-    assertFalse(admins.existsById(ACCOUNT));
+    assertNoLocalAdmin();
     assertFalse(
         jdbc.queryForObject(
             "select is_absent from consultant where consultant_id=?", Boolean.class, ACCOUNT));
@@ -504,7 +507,29 @@ class AccountRoleAdditionScopedJpaTest {
     var originalAdmin =
         new TreeMap<>(jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT));
     nativeRoles = DESIRED;
-    assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
+    var callbackFailure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+    var callbackAttempts = new AtomicInteger();
+    doAnswer(
+            invocation -> {
+              callbackAttempts.incrementAndGet();
+              try {
+                return invocation.callRealMethod();
+              } catch (Throwable failure) {
+                callbackFailure.set(failure);
+                throw failure;
+              }
+            })
+        .when(localGrant)
+        .bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
+    assertDoesNotThrow(
+        () -> service.add(ACCOUNT, COMMAND),
+        () ->
+            "phase="
+                + phase()
+                + ";callbackAttempts="
+                + callbackAttempts.get()
+                + ";callbackCause="
+                + callbackFailure.get());
     assertEquals(DESIRED, nativeRoles);
     assertEquals(
         originalAdmin,
@@ -552,8 +577,50 @@ class AccountRoleAdditionScopedJpaTest {
             "select native_body from general_admin_identity_intent where operation_id=?",
             String.class,
             OPERATION));
-    assertFalse(admins.existsById(ACCOUNT));
+    assertNoLocalAdmin();
     verifyNoInteractions(generic);
+  }
+
+  @Test
+  void theActualCallbackCannotChangeUnrequestedNewAdminFieldsAndItsAckRemainsRetryable() {
+    doAnswer(
+            invocation -> {
+              invocation.callRealMethod();
+              entities.flush();
+              assertEquals(
+                  1,
+                  jdbc.update(
+                      "update admin set managed_paused=true,id_old=17 where admin_id=?", ACCOUNT));
+              return null;
+            })
+        .when(localGrant)
+        .bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
+    assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
+    assertEquals(1, effects.get());
+    verify(localGrant, times(1)).bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
+    assertEquals("ACKNOWLEDGED", phase());
+    assertNoLocalAdmin();
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from admin_agency where admin_id=?", Integer.class, ACCOUNT));
+    doCallRealMethod()
+        .when(localGrant)
+        .bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
+    assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
+    assertEquals(1, effects.get());
+    assertEquals("APPLIED", phase());
+    assertFalse(
+        jdbc.queryForObject(
+            "select managed_paused from admin where admin_id=?", Boolean.class, ACCOUNT));
+    assertNull(jdbc.queryForObject("select id_old from admin where admin_id=?", Long.class, ACCOUNT));
+    verifyNoInteractions(generic);
+  }
+
+  private void assertNoLocalAdmin() {
+    assertEquals(
+        0,
+        jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT));
   }
 
   private String phase() {
