@@ -860,10 +860,17 @@ class HumanAdminAccountMaintenanceTest {
             : "roles-remove".equals(scenario)
                 ? List.of("consultant", "group-chat-consultant")
                 : List.of("consultant");
-    if (self && jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT) == 1) {
-      originalRoles = "AGENCY".equals(jdbc.queryForObject("select type from admin where admin_id=?", String.class, ACCOUNT))
-          ? List.of("consultant", "restricted-agency-admin", "user-admin")
-          : List.of("consultant", "tenant-admin");
+    if (self
+        && jdbc.queryForObject(
+                "select count(*) from admin where admin_id=?", Integer.class, ACCOUNT)
+            == 1) {
+      originalRoles =
+          "AGENCY"
+                  .equals(
+                      jdbc.queryForObject(
+                          "select type from admin where admin_id=?", String.class, ACCOUNT))
+              ? List.of("consultant", "restricted-agency-admin", "user-admin")
+              : List.of("consultant", "tenant-admin");
     }
     if ("self-native-user".equals(scenario)) originalRoles = List.of("user");
     if (Set.of("self-native-combined", "self-native-agency-as-protected").contains(scenario))
@@ -882,10 +889,7 @@ class HumanAdminAccountMaintenanceTest {
             ? "email"
             : roleEdit ? "ordinary-profile" : "profile";
     readReply(
-        false,
-        roleEdit || self ? projectedRoles : null,
-        self,
-        "self-unchanged".equals(scenario));
+        false, roleEdit || self ? projectedRoles : null, self, "self-unchanged".equals(scenario));
     if ("roles-preserve".equals(scenario)) {
       assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, !self));
       assertEquals(
