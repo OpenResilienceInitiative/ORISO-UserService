@@ -139,6 +139,15 @@ class UserScheduledDeletionNativePairProof {
     var codec =
         new AccountLifecycleCodec(Base64.getDecoder().decode(required("PAIR_CONTEXT_KEY_B64")));
     var jdbc = new JdbcTemplate(source);
+    var protocol = new TreeMap<String, Integer>();
+    for (String counter :
+        List.of(
+            "creatorCreate201",
+            "creatorOwnedRead200",
+            "creatorCommit200",
+            "cleanupRead200",
+            "cleanupDelete200",
+            "cleanupDeleteAttempts")) protocol.put(counter, 0);
     try {
       assertInstanceOf(JpaTransactionManager.class, transactions);
       assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
@@ -181,12 +190,27 @@ class UserScheduledDeletionNativePairProof {
                     assertEquals(
                         frozen.get(), body, "Unknown must retain exact original native body");
                   deleteCalls.incrementAndGet();
+                  protocol.compute("cleanupDeleteAttempts", (key, count) -> count + 1);
                 }
                 var response = execution.execute(mapped, bytes);
+                if (logical.getPath().contains("/oriso-account-lifecycle/")) {
+                  String counter = null;
+                  if (request.getMethod() == HttpMethod.PUT
+                      && response.getStatusCode().value() == 201) counter = "creatorCreate201";
+                  if (logical.getPath().endsWith("/owned-read")
+                      && response.getStatusCode().value() == 200) counter = "creatorOwnedRead200";
+                  if (logical.getPath().endsWith("/commit")
+                      && response.getStatusCode().value() == 200) counter = "creatorCommit200";
+                  if (counter != null) protocol.compute(counter, (key, count) -> count + 1);
+                }
                 if (maintenance
                     && logical.getPath().endsWith("/read")
-                    && response.getStatusCode().value() == 200) facts.put("realNativeRead", true);
+                    && response.getStatusCode().value() == 200) {
+                  facts.put("realNativeRead", true);
+                  protocol.compute("cleanupRead200", (key, count) -> count + 1);
+                }
                 if (delete && response.getStatusCode().value() == 200) {
+                  protocol.compute("cleanupDelete200", (key, count) -> count + 1);
                   String reply =
                       codec.canonical(
                           codec.read(
@@ -492,6 +516,7 @@ class UserScheduledDeletionNativePairProof {
     } finally {
       TenantContext.clear();
       SecurityContextHolder.clearContext();
+      Files.writeString(Path.of(required("PAIR_PROTOCOL_WITNESS")), codec.canonical(protocol));
       Files.writeString(Path.of(required("PAIR_WITNESS")), codec.canonical(facts));
     }
   }

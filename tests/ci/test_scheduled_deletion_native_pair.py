@@ -61,6 +61,22 @@ class ScheduledDeletionPairControls(unittest.TestCase):
         self.assertIn('strictRealReceipt', pair.WITNESS_FLAGS)
         self.assertIn('oneLocalCallback', pair.WITNESS_FLAGS)
 
+    def test_creator_and_cleanup_protocol_counts_are_separately_closed(self):
+        for kind in pair.CASES:
+            value = {'creatorCreate201': 1, 'creatorOwnedRead200': 1, 'creatorCommit200': 1,
+                'cleanupRead200': 2 if kind == 'inactivity' else 1,
+                'cleanupDelete200': 2 if kind == 'asker' else 1,
+                'cleanupDeleteAttempts': 2 if kind == 'asker' else 1}
+            self.assertTrue(pair.checked_protocol(value, kind))
+            value['creatorCommit200'] = 0
+            self.assertFalse(pair.checked_protocol(value, kind))
+
+    def test_protocol_counts_reject_foreign_schema_and_noninteger_counts(self):
+        value = {'creatorCreate201': 1, 'creatorOwnedRead200': 1, 'creatorCommit200': 1,
+            'cleanupRead200': 1, 'cleanupDelete200': 2, 'cleanupDeleteAttempts': 2}
+        for malformed in [{}, {**value, 'rawReceipt': 'forbidden'}, {**value, 'creatorCreate201': True}]:
+            with self.assertRaises(ValueError): pair.checked_protocol(malformed, 'asker')
+
     def test_new_workflow_retains_fixed_resource_caps_and_three_kinds(self):
         import yaml
         value = yaml.safe_load((ROOT / '.github/workflows/scenario-c-scheduled-deletion-native-pair.yml').read_text())

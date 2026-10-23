@@ -40,6 +40,17 @@ def checked_witness(value, kind):
             and all(value[key] for key in WITNESS_FLAGS - {'lostReplyRetainedBeforeRetry'}))
 
 
+def checked_protocol(value, kind):
+    keys = {'creatorCreate201', 'creatorOwnedRead200', 'creatorCommit200',
+        'cleanupRead200', 'cleanupDelete200', 'cleanupDeleteAttempts'}
+    if (kind not in CASES or not isinstance(value, dict) or set(value) != keys
+            or any(type(value[key]) is not int or not 0 <= value[key] <= 10 for key in keys)):
+        raise ValueError('Exact finite nonsecret protocol counts required')
+    return (all(value[key] == 1 for key in ['creatorCreate201', 'creatorOwnedRead200', 'creatorCommit200'])
+        and value['cleanupRead200'] == (2 if kind == 'inactivity' else 1)
+        and value['cleanupDelete200'] == value['cleanupDeleteAttempts'] == (2 if kind == 'asker' else 1))
+
+
 def source_frame_catalog(paths):
     """Known source definitions only; the native caller supplies four fixed repository files."""
     result = {}
@@ -268,6 +279,7 @@ def native(kc, report):
             'PAIR_CONTEXT_KEY_B64': base64.b64encode(lifecycle.CONTEXT_KEY).decode(),
             'PAIR_CONTROL_BASE': 'http://127.0.0.1:' + str(control.server_address[1]),
             'PAIR_TIME_WITNESS': str(report.with_name('scheduled-deletion-native-time-fixture.json').resolve()),
+            'PAIR_PROTOCOL_WITNESS': str(report.with_name('scheduled-deletion-native-protocol.json').resolve()),
             'PAIR_WITNESS': str(report.with_name('scheduled-deletion-native-witness.json').resolve())})
         for actor, (client, _) in lifecycle.ACTORS.items():
             environment.update({'PAIR_' + actor + '_CLIENT': client,
@@ -291,6 +303,13 @@ def native(kc, report):
         receipt['genuine_behavior_red'] = (inventory['exact_method_inventory']
             and inventory['tests'] == inventory['failures'] == 1 and inventory['errors'] == inventory['skipped'] == 0
             and all(witness[key] for key in ['actualJpa', 'canonicalAdmin', 'actualCreatorCommitted']))
+        protocol_file = report.with_name('scheduled-deletion-native-protocol.json')
+        try:
+            protocol = json.loads(protocol_file.read_text())
+            receipt['protocol_counts_complete'] = checked_protocol(protocol, kind)
+            receipt['protocol_counts'] = protocol
+        except (OSError, ValueError, TypeError):
+            save(protocol_file, {'protocolSchemaRejected': True}); raise ValueError('Protocol count witness rejected')
         if kind == 'inactivity':
             time_file = report.with_name('scheduled-deletion-native-time-fixture.json')
             value = json.loads(time_file.read_text())
@@ -310,6 +329,7 @@ def native(kc, report):
         receipt['installer_identity_verified'] = bool(receipt['installer_identity_checks']) and all(
             check.get('sameActualEnabledMasterInstallerAndNativeSessionVerified') is True for check in receipt['installer_identity_checks'])
         receipt['accepted'] = (inventory['accepted'] and receipt['child_exit'] == 0 and receipt['java_witness_complete']
+            and receipt['protocol_counts_complete']
             and receipt['one_actual_native_effect_event'] and receipt['installer_identity_verified'])
         receipt['phase'] = 'complete'
     except BaseException as error:
