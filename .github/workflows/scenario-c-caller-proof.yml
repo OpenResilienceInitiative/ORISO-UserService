@@ -228,6 +228,9 @@ jobs:
         run: |
           set -euo pipefail
           owned_sources=(
+            src/test/java/de/caritas/cob/userservice/api/facade/TeamDiscussionFacadeTest.java
+            src/test/java/de/caritas/cob/userservice/api/picture/ConsultantPictureHttpTest.java
+            src/test/java/de/caritas/cob/userservice/api/workflow/accountinactivity/AccountInactivitySchedulerTest.java
             src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/AccountLifecycleRetryScheduler.java
             src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/lifecycle/ReactivationUserSnapshotSchema.java
             src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSupportControllerDelegate.java

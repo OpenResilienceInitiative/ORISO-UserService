@@ -255,6 +255,21 @@ class TeamDiscussionFacadeTest {
   @EnableWebMvc
   @Import({SecurityConfig.class, ApiResponseEntityExceptionHandler.class})
   static class TeamHttpSecurityFixture {
+    @Bean
+    org.springframework.jdbc.core.JdbcTemplate fixtureJdbc() {
+      return new org.springframework.jdbc.core.JdbcTemplate(
+          new org.springframework.jdbc.datasource.DriverManagerDataSource(
+              "jdbc:h2:mem:team-security-" + java.util.UUID.randomUUID() + ";DB_CLOSE_DELAY=-1",
+              "sa",
+              ""));
+    }
+
+    @Bean
+    org.springframework.transaction.PlatformTransactionManager fixtureTransactions(
+        org.springframework.jdbc.core.JdbcTemplate jdbc) {
+      return new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource());
+    }
+
     @org.springframework.context.annotation.Bean
     de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService
         accountOperationalStatus() {

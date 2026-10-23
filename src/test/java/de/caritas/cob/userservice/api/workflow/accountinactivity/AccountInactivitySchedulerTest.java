@@ -52,6 +52,14 @@ class AccountInactivitySchedulerTest {
             + " TIMESTAMP(6) NOT NULL,due_at TIMESTAMP(6) NOT NULL,status VARCHAR(20) NOT"
             + " NULL,last_error VARCHAR(1000),attempts INT DEFAULT 0 NOT NULL)");
     var context = new AnnotationConfigApplicationContext();
+    context.registerBean(
+        de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class,
+        () -> {
+          var legacy = org.mockito.Mockito.mock(
+              de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+          org.mockito.Mockito.when(legacy.isFiveActorMode()).thenReturn(false);
+          return legacy;
+        });
     if (enabled)
       context
           .getEnvironment()

@@ -513,6 +513,7 @@ class SelfLocaleMaintenanceJpaTest {
   }
 
   @org.springframework.web.bind.annotation.RestController
+  @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
   static final class LocaleFailureBoundary {
     private final RuntimeException failure;
     LocaleFailureBoundary(RuntimeException failure) { this.failure = failure; }
