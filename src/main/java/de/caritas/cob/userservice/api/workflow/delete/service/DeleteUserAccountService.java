@@ -85,12 +85,16 @@ public class DeleteUserAccountService {
     acknowledged.requireCurrent();
     if (acknowledged.completed()) return;
     if (acknowledged.inactivityCause()) {
-      if (acknowledgedFinalAction == null || absentAppointments == null || absentDrafts == null || absentNotifications == null)
-        throw new ScopedIdentityCommandRequiredException();
-      TenantContext.runIn(acknowledged.tenantId(), () -> {
-        if (acknowledged.hasLocalUser()) continueInactiveUser(acknowledged);
-        else continueInactiveAbsence(acknowledged);
-      });
+      if (acknowledgedFinalAction == null
+          || absentAppointments == null
+          || absentDrafts == null
+          || absentNotifications == null) throw new ScopedIdentityCommandRequiredException();
+      TenantContext.runIn(
+          acknowledged.tenantId(),
+          () -> {
+            if (acknowledged.hasLocalUser()) continueInactiveUser(acknowledged);
+            else continueInactiveAbsence(acknowledged);
+          });
       return;
     }
     if (!acknowledged.hasLocalUser()) throw new ScopedIdentityCommandRequiredException();
@@ -131,38 +135,43 @@ public class DeleteUserAccountService {
   }
 
   private void continueInactiveUser(ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
-    var original=new java.util.concurrent.atomic.AtomicReference<User>();
-    acknowledged.runOwnedLocal(()->{
-      var loaded=userRepository.findById(acknowledged.accountId()).orElseThrow();
-      acknowledged.requireCurrentUser(loaded);original.set(loaded);
-    });
-    var target=new AskerDeletionWorkflowDTO(original.get(),new ArrayList<>(),acknowledged);
-    executeAcknowledged(target,DeleteMatrixAskerAction.class);
-    if(isNotEmpty(target.getDeletionWorkflowErrors())) return;
-    executeAcknowledged(target,DeleteAskerRoomsAndSessionsAction.class);
-    if(isNotEmpty(target.getDeletionWorkflowErrors())) return;
-    target.runOwnedLocal(()->executeAcknowledged(target,DeleteDatabaseAskerAgencyAction.class));
-    if(isNotEmpty(target.getDeletionWorkflowErrors())) return;
-    target.runOwnedLocal(()->executeAcknowledged(target,DeleteAnonymousRegistryIdAction.class));
-    if(isNotEmpty(target.getDeletionWorkflowErrors())) return;
-    target.runOwnedExternal(()->executeAcknowledged(target,DeleteAppointmentServiceAskerAction.class));
-    if(isNotEmpty(target.getDeletionWorkflowErrors())) return;
-    target.runOwnedLocal(()->executeAcknowledged(target,DeleteAskerDraftMessagesAction.class));
-    if(isNotEmpty(target.getDeletionWorkflowErrors())) return;
-    target.runOwnedLocal(()->executeAcknowledged(target,DeleteAskerEventNotificationsAction.class));
-    if(isNotEmpty(target.getDeletionWorkflowErrors())) return;
-    var prepared=acknowledgedFinalAction.prepareAcknowledged(target);
-    if(prepared.isEmpty()) return;
+    var original = new java.util.concurrent.atomic.AtomicReference<User>();
+    acknowledged.runOwnedLocal(
+        () -> {
+          var loaded = userRepository.findById(acknowledged.accountId()).orElseThrow();
+          acknowledged.requireCurrentUser(loaded);
+          original.set(loaded);
+        });
+    var target = new AskerDeletionWorkflowDTO(original.get(), new ArrayList<>(), acknowledged);
+    executeAcknowledged(target, DeleteMatrixAskerAction.class);
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    executeAcknowledged(target, DeleteAskerRoomsAndSessionsAction.class);
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    target.runOwnedLocal(() -> executeAcknowledged(target, DeleteDatabaseAskerAgencyAction.class));
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    target.runOwnedLocal(() -> executeAcknowledged(target, DeleteAnonymousRegistryIdAction.class));
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    target.runOwnedExternal(
+        () -> executeAcknowledged(target, DeleteAppointmentServiceAskerAction.class));
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    target.runOwnedLocal(() -> executeAcknowledged(target, DeleteAskerDraftMessagesAction.class));
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    target.runOwnedLocal(
+        () -> executeAcknowledged(target, DeleteAskerEventNotificationsAction.class));
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    var prepared = acknowledgedFinalAction.prepareAcknowledged(target);
+    if (prepared.isEmpty()) return;
     acknowledged.beforeFinalLocalDeletion(prepared.orElseThrow());
     acknowledgedFinalAction.completeAcknowledged(prepared.orElseThrow());
   }
 
-  private void continueInactiveAbsence(ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
-    if(isNotEmpty(absentAppointments.executeOriginallyAbsent(acknowledged))) return;
-    if(isNotEmpty(absentDrafts.executeOriginallyAbsent(acknowledged))) return;
-    if(isNotEmpty(absentNotifications.executeOriginallyAbsent(acknowledged))) return;
+  private void continueInactiveAbsence(
+      ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
+    if (isNotEmpty(absentAppointments.executeOriginallyAbsent(acknowledged))) return;
+    if (isNotEmpty(absentDrafts.executeOriginallyAbsent(acknowledged))) return;
+    if (isNotEmpty(absentNotifications.executeOriginallyAbsent(acknowledged))) return;
     acknowledged.beforeFinalLocalAbsence();
-    acknowledged.completeOwnedLocalDeletion(()->{});
+    acknowledged.completeOwnedLocalDeletion(() -> {});
   }
 
   private void executeAcknowledged(

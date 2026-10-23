@@ -694,7 +694,12 @@ class InactivityDeletionContinuationJpaTest {
       inactivity(true, false).scan(false);
       assertEquals(1, nativeEffects.get());
       assertEquals(1, actual.serviceEntries.get());
-      assertEquals(1L, actual.events.stream().filter(event -> event.startsWith("purgeRoom:") || event.startsWith("deactivateUser:")).count());
+      assertEquals(
+          1L,
+          actual.events.stream()
+              .filter(
+                  event -> event.startsWith("purgeRoom:") || event.startsWith("deactivateUser:"))
+              .count());
       assertTrue(actual.events.stream().noneMatch(event -> event.equals("sessions.delete")));
       assertTrue(forgotten.isEmpty());
       assertTrue(users.findById(ACCOUNT).isPresent());

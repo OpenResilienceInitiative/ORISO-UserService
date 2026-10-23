@@ -625,17 +625,29 @@ class ConsultantDeletionContinuationJpaTest {
     }
   }
 
-  @Test void uppercaseOriginalSqlUsernameMatchesOnlyTheExistingNativeCaseContract() {
-    jdbc.update("update consultant set username=? where consultant_id=?",new UsernameTranscoder().encodeUsername("Owned-Cleanup"),ACCOUNT);
-    owner(true,this::complete).performDeletionWorkflow();
-    assertEquals(1,nativeEffects.get()); assertEquals(1,callbacks.get()); assertEquals("APPLIED",status());
-    assertEquals(new UsernameTranscoder().encodeUsername("Owned-Cleanup"),codec.read(envelopeRaw(),JsonNode.class).path("originalSql").path("username").textValue());
+  @Test
+  void uppercaseOriginalSqlUsernameMatchesOnlyTheExistingNativeCaseContract() {
+    jdbc.update(
+        "update consultant set username=? where consultant_id=?",
+        new UsernameTranscoder().encodeUsername("Owned-Cleanup"),
+        ACCOUNT);
+    owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeEffects.get());
+    assertEquals(1, callbacks.get());
+    assertEquals("APPLIED", status());
+    assertEquals(
+        new UsernameTranscoder().encodeUsername("Owned-Cleanup"),
+        codec.read(envelopeRaw(), JsonNode.class).path("originalSql").path("username").textValue());
     assertEnvelope();
   }
 
-  @Test void foreignNativeUsernameNeverAdoptsTheOriginalSqlAccount() {
-    projectedUsername="foreign-person"; owner(true,this::complete).performDeletionWorkflow();
-    assertEquals(1,nativeReads.get()); assertEquals(0,nativeEffects.get()); assertEquals(0,callbacks.get());
+  @Test
+  void foreignNativeUsernameNeverAdoptsTheOriginalSqlAccount() {
+    projectedUsername = "foreign-person";
+    owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeReads.get());
+    assertEquals(0, nativeEffects.get());
+    assertEquals(0, callbacks.get());
     assertTrue(consultants.findById(ACCOUNT).isPresent());
   }
 

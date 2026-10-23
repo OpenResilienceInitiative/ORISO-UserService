@@ -107,7 +107,8 @@ public final class ScheduledConsultantMaintenance {
       if (independentlyLoadedOriginal == null
           || !owner.sameSnapshot(
               frozen.originalSql,
-              ConsultantDeletionSqlSnapshot.from(independentlyLoadedOriginal, owner.codec))) throw unavailable();
+              ConsultantDeletionSqlSnapshot.from(independentlyLoadedOriginal, owner.codec)))
+        throw unavailable();
     }
 
     public String accountId() {
@@ -119,10 +120,6 @@ public final class ScheduledConsultantMaintenance {
       requireCurrent();
       return frozen.claim.intent.tenant;
     }
-
-
-
-
 
     public boolean completed() {
       outsideSql();
@@ -260,65 +257,130 @@ public final class ScheduledConsultantMaintenance {
     }
   }
 
-  private ClaimedConsultantDeletion prepare(ScheduledTaskClaimService.ClaimLease lease,String account) {
-    if(!held(lease)) return null;
-    Consultant consultant=lockedConsultant(account);
-    if(consultant==null||consultant.getDeleteDate()==null) return null;
+  private ClaimedConsultantDeletion prepare(
+      ScheduledTaskClaimService.ClaimLease lease, String account) {
+    if (!held(lease)) return null;
+    Consultant consultant = lockedConsultant(account);
+    if (consultant == null || consultant.getDeleteDate() == null) return null;
     requireExclusiveLocalConsultant(account);
-    if(!UUID.fromString(account).toString().equals(account)) throw unavailable();
+    if (!UUID.fromString(account).toString().equals(account)) throw unavailable();
     // All existing operations for this UUID fence reincarnation/date reminting, including UNKNOWN.
-    var rows=jdbc.query("select * from identity_maintenance_intent where subject_type='CONSULTANT' and subject_id=? order by deletion_started_at,operation_id for update",(rs,index)->intent(rs),account);
-    if(rows.size()>1) throw unavailable();
-    Intent intent=rows.isEmpty()?null:rows.get(0);
-    if(intent!=null&&!consultant.getDeleteDate().equals(intent.deletionStarted)) throw unavailable();
+    var rows =
+        jdbc.query(
+            "select * from identity_maintenance_intent where subject_type='CONSULTANT' and subject_id=? order by deletion_started_at,operation_id for update",
+            (rs, index) -> intent(rs),
+            account);
+    if (rows.size() > 1) throw unavailable();
+    Intent intent = rows.isEmpty() ? null : rows.get(0);
+    if (intent != null && !consultant.getDeleteDate().equals(intent.deletionStarted))
+      throw unavailable();
     lifecycle.normalizeConsultantLifecycle(consultant);
     saveLifecycle(consultant);
-    if(!lifecycle.isReadyForHardDelete(consultant)) return null;
-    var actual=ConsultantDeletionSqlSnapshot.capture(jdbc,codec,account,true);
-    if(actual==null) throw unavailable();
-    var actor=actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
-    if(intent==null) {
-      String operation=UUID.randomUUID().toString();
-      jdbc.update("insert into identity_maintenance_intent(operation_id,realm_id,realm_name,subject_type,subject_id,deletion_started_at,tenant_id,claim_token,claim_until,status,owner_client,owner_subject) values(?,?,?,'CONSULTANT',?,?,?,?,?,'PREPARED',?,?)",
-          operation,realmId,realmName,account,consultant.getDeleteDate(),consultant.getTenantId(),UUID.randomUUID().toString(),lease.claimedUntil(),actor.clientId(),actor.serviceSubject());
-      intent=jdbc.queryForObject("select * from identity_maintenance_intent where operation_id=? for update",(rs,index)->intent(rs),operation);
+    if (!lifecycle.isReadyForHardDelete(consultant)) return null;
+    var actual = ConsultantDeletionSqlSnapshot.capture(jdbc, codec, account, true);
+    if (actual == null) throw unavailable();
+    var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
+    if (intent == null) {
+      String operation = UUID.randomUUID().toString();
+      jdbc.update(
+          "insert into identity_maintenance_intent(operation_id,realm_id,realm_name,subject_type,subject_id,deletion_started_at,tenant_id,claim_token,claim_until,status,owner_client,owner_subject) values(?,?,?,'CONSULTANT',?,?,?,?,?,'PREPARED',?,?)",
+          operation,
+          realmId,
+          realmName,
+          account,
+          consultant.getDeleteDate(),
+          consultant.getTenantId(),
+          UUID.randomUUID().toString(),
+          lease.claimedUntil(),
+          actor.clientId(),
+          actor.serviceSubject());
+      intent =
+          jdbc.queryForObject(
+              "select * from identity_maintenance_intent where operation_id=? for update",
+              (rs, index) -> intent(rs),
+              operation);
     }
-    if(intent==null||!realmId.equals(intent.realmId)||!realmName.equals(intent.realmName)
-        ||!Objects.equals(consultant.getTenantId(),intent.tenant)||!actor.clientId().equals(intent.ownerClient)
-        ||!actor.serviceSubject().equals(intent.ownerSubject)||!"CONSULTANT".equals(intent.subjectType)
-        ||!account.equals(intent.subjectId)||!consultant.getDeleteDate().equals(intent.deletionStarted)
-        ||!Set.of("PREPARED","FROZEN","ACKNOWLEDGED").contains(intent.status)) throw unavailable();
-    if("PREPARED".equals(intent.status)&&(intent.frozen!=null||intent.receipt!=null)
-        ||"FROZEN".equals(intent.status)&&(intent.frozen==null||intent.receipt!=null)
-        ||"ACKNOWLEDGED".equals(intent.status)&&(intent.frozen==null||intent.receipt==null)) throw unavailable();
-    String generation=UUID.randomUUID().toString();
-    if(jdbc.update("update identity_maintenance_intent set claim_token=?,claim_until=?,last_attempt_at=? where operation_id=?",
-        generation,lease.claimedUntil(),LocalDateTime.now(clock),intent.operation)!=1) throw unavailable();
-    var claim=new ClaimedConsultantDeletion(lease,account,consultant.getDeleteDate(),generation,intent,actual);
-    if(intent.frozen!=null) {
-      var original=frozen(claim,intent.frozen).originalSql;
-      if(!sameSnapshot(original,actual)) throw unavailable();
-      claim=new ClaimedConsultantDeletion(lease,account,consultant.getDeleteDate(),generation,intent,original);
+    if (intent == null
+        || !realmId.equals(intent.realmId)
+        || !realmName.equals(intent.realmName)
+        || !Objects.equals(consultant.getTenantId(), intent.tenant)
+        || !actor.clientId().equals(intent.ownerClient)
+        || !actor.serviceSubject().equals(intent.ownerSubject)
+        || !"CONSULTANT".equals(intent.subjectType)
+        || !account.equals(intent.subjectId)
+        || !consultant.getDeleteDate().equals(intent.deletionStarted)
+        || !Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED").contains(intent.status))
+      throw unavailable();
+    if ("PREPARED".equals(intent.status) && (intent.frozen != null || intent.receipt != null)
+        || "FROZEN".equals(intent.status) && (intent.frozen == null || intent.receipt != null)
+        || "ACKNOWLEDGED".equals(intent.status)
+            && (intent.frozen == null || intent.receipt == null)) throw unavailable();
+    String generation = UUID.randomUUID().toString();
+    if (jdbc.update(
+            "update identity_maintenance_intent set claim_token=?,claim_until=?,last_attempt_at=? where operation_id=?",
+            generation,
+            lease.claimedUntil(),
+            LocalDateTime.now(clock),
+            intent.operation)
+        != 1) throw unavailable();
+    var claim =
+        new ClaimedConsultantDeletion(
+            lease, account, consultant.getDeleteDate(), generation, intent, actual);
+    if (intent.frozen != null) {
+      var original = frozen(claim, intent.frozen).originalSql;
+      if (!sameSnapshot(original, actual)) throw unavailable();
+      claim =
+          new ClaimedConsultantDeletion(
+              lease, account, consultant.getDeleteDate(), generation, intent, original);
     }
     return claim;
   }
 
   private String read(ClaimedConsultantDeletion claim) {
-    var result=codec.read(request("read",claim,codec.canonical(Map.of("target",target(claim)))),JsonNode.class);
-    Set<String> fields=new java.util.HashSet<>();result.fieldNames().forEachRemaining(fields::add);
-    if(!fields.equals(Set.of("id","username","email","firstName","lastName","enabled","emailVerified","tenantId","preferredLanguage","effectiveRoles","passwordChangeRequired","state"))
-        ||!claim.account.equals(result.path("id").textValue())
-        ||!(result.path("tenantId").isNull()||result.path("tenantId").isTextual())
-        ||!Objects.equals(claim.intent.tenant==null?null:claim.intent.tenant.toString(),result.path("tenantId").isNull()?null:result.path("tenantId").textValue())
-        ||!result.path("state").isTextual()||!result.path("state").textValue().matches("[0-9a-f]{64}")
-        ||!new de.caritas.cob.userservice.api.helper.UsernameTranscoder().decodeUsername(claim.originalSql.path("username").textValue()).equalsIgnoreCase(result.path("username").textValue())
-        ||!result.path("effectiveRoles").isArray()||result.path("effectiveRoles").size()<1||result.path("effectiveRoles").size()>2) throw unavailable();
-    Set<String> roles=new java.util.HashSet<>();
-    for(var role:result.path("effectiveRoles")) if(!role.isTextual()||!roles.add(role.textValue())) throw unavailable();
-    if(!roles.equals(Set.of("consultant"))&&!roles.equals(Set.of("consultant","group-chat-consultant"))) throw unavailable();
-    for(String field:java.util.List.of("enabled","emailVerified","passwordChangeRequired")) if(!result.path(field).isBoolean()) throw unavailable();
-    for(String field:java.util.List.of("email","firstName","lastName","preferredLanguage"))
-      if(!result.path(field).isNull()&&(!result.path(field).isTextual()||result.path(field).textValue().length()>255)) throw unavailable();
+    var result =
+        codec.read(
+            request("read", claim, codec.canonical(Map.of("target", target(claim)))),
+            JsonNode.class);
+    Set<String> fields = new java.util.HashSet<>();
+    result.fieldNames().forEachRemaining(fields::add);
+    if (!fields.equals(
+            Set.of(
+                "id",
+                "username",
+                "email",
+                "firstName",
+                "lastName",
+                "enabled",
+                "emailVerified",
+                "tenantId",
+                "preferredLanguage",
+                "effectiveRoles",
+                "passwordChangeRequired",
+                "state"))
+        || !claim.account.equals(result.path("id").textValue())
+        || !(result.path("tenantId").isNull() || result.path("tenantId").isTextual())
+        || !Objects.equals(
+            claim.intent.tenant == null ? null : claim.intent.tenant.toString(),
+            result.path("tenantId").isNull() ? null : result.path("tenantId").textValue())
+        || !result.path("state").isTextual()
+        || !result.path("state").textValue().matches("[0-9a-f]{64}")
+        || !new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+            .decodeUsername(claim.originalSql.path("username").textValue())
+            .equalsIgnoreCase(result.path("username").textValue())
+        || !result.path("effectiveRoles").isArray()
+        || result.path("effectiveRoles").size() < 1
+        || result.path("effectiveRoles").size() > 2) throw unavailable();
+    Set<String> roles = new java.util.HashSet<>();
+    for (var role : result.path("effectiveRoles"))
+      if (!role.isTextual() || !roles.add(role.textValue())) throw unavailable();
+    if (!roles.equals(Set.of("consultant"))
+        && !roles.equals(Set.of("consultant", "group-chat-consultant"))) throw unavailable();
+    for (String field : java.util.List.of("enabled", "emailVerified", "passwordChangeRequired"))
+      if (!result.path(field).isBoolean()) throw unavailable();
+    for (String field : java.util.List.of("email", "firstName", "lastName", "preferredLanguage"))
+      if (!result.path(field).isNull()
+          && (!result.path(field).isTextual() || result.path(field).textValue().length() > 255))
+        throw unavailable();
     return result.path("state").textValue();
   }
 
@@ -354,18 +416,32 @@ public final class ScheduledConsultantMaintenance {
     return frozen(claim, envelope);
   }
 
-  private boolean acknowledge(FrozenConsultantDeletion frozen,String receipt) {
-    var claim=frozen.claim;
-    if(!current(claim)) return false;
-    var intent=requireIntent(claim);
-    if(!claim.generation.equals(intent.generation)) return false;
-    if(!"FROZEN".equals(intent.status)||!frozen.envelope.equals(intent.frozen)) throw unavailable();
-    if(!receipt.equals(codec.verifyMaintenanceDeleteReceipt(receipt,realmId,actor(claim),codec.read(frozen.body,JsonNode.class)))) throw unavailable();
-    if(jdbc.update("update identity_maintenance_intent set receipt_json=?,status='ACKNOWLEDGED' where operation_id=? and claim_token=? and status='FROZEN' and frozen_body=? and receipt_json is null",
-        receipt,intent.operation,claim.generation,frozen.envelope)!=1) throw unavailable();
-    var saved=requireIntent(claim);
-    if(!"ACKNOWLEDGED".equals(saved.status)||!frozen.envelope.equals(saved.frozen)||!receipt.equals(saved.receipt)
-        ||!sameSnapshot(frozen.originalSql,ConsultantDeletionSqlSnapshot.capture(jdbc,codec,claim.account,true))) throw unavailable();
+  private boolean acknowledge(FrozenConsultantDeletion frozen, String receipt) {
+    var claim = frozen.claim;
+    if (!current(claim)) return false;
+    var intent = requireIntent(claim);
+    if (!claim.generation.equals(intent.generation)) return false;
+    if (!"FROZEN".equals(intent.status) || !frozen.envelope.equals(intent.frozen))
+      throw unavailable();
+    if (!receipt.equals(
+        codec.verifyMaintenanceDeleteReceipt(
+            receipt, realmId, actor(claim), codec.read(frozen.body, JsonNode.class))))
+      throw unavailable();
+    if (jdbc.update(
+            "update identity_maintenance_intent set receipt_json=?,status='ACKNOWLEDGED' where operation_id=? and claim_token=? and status='FROZEN' and frozen_body=? and receipt_json is null",
+            receipt,
+            intent.operation,
+            claim.generation,
+            frozen.envelope)
+        != 1) throw unavailable();
+    var saved = requireIntent(claim);
+    if (!"ACKNOWLEDGED".equals(saved.status)
+        || !frozen.envelope.equals(saved.frozen)
+        || !receipt.equals(saved.receipt)
+        || !sameSnapshot(
+            frozen.originalSql,
+            ConsultantDeletionSqlSnapshot.capture(jdbc, codec, claim.account, true)))
+      throw unavailable();
     return true;
   }
 
@@ -386,12 +462,18 @@ public final class ScheduledConsultantMaintenance {
   }
 
   private void requireExclusiveLocalConsultant(String account) {
-    for(String table:java.util.List.of("user","admin"))
-      if(jdbc.queryForObject("select count(*) from "+table+" where "+table+"_id=?",Long.class,account)!=0L) throw unavailable();
+    for (String table : java.util.List.of("user", "admin"))
+      if (jdbc.queryForObject(
+              "select count(*) from " + table + " where " + table + "_id=?", Long.class, account)
+          != 0L) throw unavailable();
   }
 
-  private boolean sameSnapshot(JsonNode original,JsonNode actual) {
-    return original!=null&&actual!=null&&original.isObject()&&actual.isObject()&&original.equals(actual);
+  private boolean sameSnapshot(JsonNode original, JsonNode actual) {
+    return original != null
+        && actual != null
+        && original.isObject()
+        && actual.isObject()
+        && original.equals(actual);
   }
 
   private Intent requireIntent(ClaimedConsultantDeletion claim) {
@@ -440,7 +522,8 @@ public final class ScheduledConsultantMaintenance {
 
   private Intent requireAcknowledged(AcknowledgedConsultantDeletion frame) {
     var intent = requireAcknowledgedIntent(frame);
-    var actual = ConsultantDeletionSqlSnapshot.capture(jdbc, codec, frame.frozen.claim.account, true);
+    var actual =
+        ConsultantDeletionSqlSnapshot.capture(jdbc, codec, frame.frozen.claim.account, true);
     if ("APPLIED".equals(intent.status)
         ? actual != null
         : !sameSnapshot(frame.frozen.originalSql, actual)) throw unavailable();
@@ -529,7 +612,8 @@ public final class ScheduledConsultantMaintenance {
         || !envelope.equals(codec.canonical(saved))
         || !saved.path("bindingDigest").isTextual()) throw unavailable();
     String binding = saved.remove("bindingDigest").textValue();
-    if (!binding.equals(codec.claimedScheduledConsultantDeletionIntentDigest(saved))) throw unavailable();
+    if (!binding.equals(codec.claimedScheduledConsultantDeletionIntentDigest(saved)))
+      throw unavailable();
     var value = saved.path("body");
     String body = codec.canonical(value);
     var fields = new java.util.HashSet<String>();
@@ -602,7 +686,7 @@ public final class ScheduledConsultantMaintenance {
     var actor = actor(claim);
     var token = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
     if (token.actor() != TaskActor.ACCOUNT_ADMIN
-        || token.purpose()!=TaskPurpose.ACCOUNT_MAINTENANCE
+        || token.purpose() != TaskPurpose.ACCOUNT_MAINTENANCE
         || !actor.clientId().equals(token.clientId())
         || !actor.serviceSubject().equals(token.subject())) throw unavailable();
     var headers = new HttpHeaders();
