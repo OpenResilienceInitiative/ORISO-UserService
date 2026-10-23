@@ -849,17 +849,25 @@ class CounsellorInviteProvisioningServiceTest {
                       jdbc.update("insert into consultant_tx_probe values(1)");
                       if (concurrentCompletion) {
                         org.springframework.transaction.support.TransactionSynchronizationManager
-                            .registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
-                              @Override
-                              public void afterCompletion(int status) {
-                                if (status != STATUS_ROLLED_BACK) return;
-                                var changed = new org.springframework.transaction.support.TransactionTemplate(manager);
-                                changed.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-                                changed.executeWithoutResult(ignoredStatus -> jdbc.update(
-                                    "update invite_tx_probe set provisioning='COMPLETED',updated_at=? where id=41",
-                                    LocalDateTime.of(2026, 10, 22, 13, 0)));
-                              }
-                            });
+                            .registerSynchronization(
+                                new org.springframework.transaction.support
+                                    .TransactionSynchronization() {
+                                  @Override
+                                  public void afterCompletion(int status) {
+                                    if (status != STATUS_ROLLED_BACK) return;
+                                    var changed =
+                                        new org.springframework.transaction.support
+                                            .TransactionTemplate(manager);
+                                    changed.setPropagationBehavior(
+                                        org.springframework.transaction.TransactionDefinition
+                                            .PROPAGATION_REQUIRES_NEW);
+                                    changed.executeWithoutResult(
+                                        ignoredStatus ->
+                                            jdbc.update(
+                                                "update invite_tx_probe set provisioning='COMPLETED',updated_at=? where id=41",
+                                                LocalDateTime.of(2026, 10, 22, 13, 0)));
+                                  }
+                                });
                       }
                       throw refused;
                     }));

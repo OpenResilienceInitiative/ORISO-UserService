@@ -225,31 +225,38 @@ public class CounsellorInviteProvisioningService {
   private void preserveFailureAfterRollback(FailedInviteOwner original) {
     // An inner REQUIRED failure already marked the transaction rollback-only. Mark our local
     // owner too, preserving the typed failure rather than attempting an impossible commit.
-    org.springframework.transaction.interceptor.TransactionAspectSupport
-        .currentTransactionStatus().setRollbackOnly();
-    org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-        new org.springframework.transaction.support.TransactionSynchronization() {
-          @Override
-          public void afterCompletion(int status) {
-            if (status != STATUS_ROLLED_BACK) return;
-            var independent =
-                new org.springframework.transaction.support.TransactionTemplate(lifecycleTransactions);
-            independent.setPropagationBehavior(
-                org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-            independent.executeWithoutResult(
-                ignored ->
-                    InviteRowHold.lock(accountInviteRepository, original.id()).ifPresent(
-                        current -> {
-                          // The outer row lock is gone. A revoke, resend or newer attempt may
-                          // already own this invite; only the unchanged original may be marked.
-                          if (!original.equals(FailedInviteOwner.capture(current))) return;
-                          current.setProvisioningStatus(AccountInviteProvisioningStatus.FAILED);
-                          current.setProvisioningFailureReason("Scoped account provisioning failed");
-                          current.setUpdateDate(LocalDateTime.now());
-                          accountInviteRepository.save(current);
-                        }));
-          }
-        });
+    org.springframework.transaction.interceptor.TransactionAspectSupport.currentTransactionStatus()
+        .setRollbackOnly();
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCompletion(int status) {
+                if (status != STATUS_ROLLED_BACK) return;
+                var independent =
+                    new org.springframework.transaction.support.TransactionTemplate(
+                        lifecycleTransactions);
+                independent.setPropagationBehavior(
+                    org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                independent.executeWithoutResult(
+                    ignored ->
+                        InviteRowHold.lock(accountInviteRepository, original.id())
+                            .ifPresent(
+                                current -> {
+                                  // The outer row lock is gone. A revoke, resend or newer attempt
+                                  // may
+                                  // already own this invite; only the unchanged original may be
+                                  // marked.
+                                  if (!original.equals(FailedInviteOwner.capture(current))) return;
+                                  current.setProvisioningStatus(
+                                      AccountInviteProvisioningStatus.FAILED);
+                                  current.setProvisioningFailureReason(
+                                      "Scoped account provisioning failed");
+                                  current.setUpdateDate(LocalDateTime.now());
+                                  accountInviteRepository.save(current);
+                                }));
+              }
+            });
   }
 
   private record FailedInviteOwner(
@@ -269,10 +276,19 @@ public class CounsellorInviteProvisioningService {
       LocalDateTime expiresAt) {
     private static FailedInviteOwner capture(AccountInvite invite) {
       return new FailedInviteOwner(
-          invite.getId(), invite.getTokenHash(), invite.getPurpose(), invite.getTargetRole(),
-          invite.getTenantId(), invite.getAgencyId(), invite.getDepartmentId(),
-          invite.getRecipientEmail(), invite.getStatus(), invite.getProvisioningStatus(),
-          invite.getProvisionedUserId(), invite.getCreateDate(), invite.getUpdateDate(),
+          invite.getId(),
+          invite.getTokenHash(),
+          invite.getPurpose(),
+          invite.getTargetRole(),
+          invite.getTenantId(),
+          invite.getAgencyId(),
+          invite.getDepartmentId(),
+          invite.getRecipientEmail(),
+          invite.getStatus(),
+          invite.getProvisioningStatus(),
+          invite.getProvisionedUserId(),
+          invite.getCreateDate(),
+          invite.getUpdateDate(),
           invite.getExpiresAt());
     }
 
