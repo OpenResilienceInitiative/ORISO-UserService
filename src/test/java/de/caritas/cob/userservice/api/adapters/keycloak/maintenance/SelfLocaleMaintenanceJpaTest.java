@@ -79,7 +79,8 @@ class SelfLocaleMaintenanceJpaTest {
     new ResourceDatabasePopulator(
             new ClassPathResource(
                 "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"),
-                new ClassPathResource("db/changelog/changeset/20261023_existing_import_intent_367/migrate.sql"))
+            new ClassPathResource(
+                "db/changelog/changeset/20261023_existing_import_intent_367/migrate.sql"))
         .execute(dataSource);
     users.findById(ACCOUNT).ifPresent(users::delete);
     var user = new User(ACCOUNT, null, "ordinary-jpa", "ordinary@fixture.invalid", false);

@@ -64,12 +64,23 @@ class ExistingConsultantImportCodecTest {
     assertNotEquals(digest, codec.existingImportRowDigest(changed));
     changed = row.deepCopy();
     changed.put("createdAtMicros", 1760000000000001L);
-    ((com.fasterxml.jackson.databind.node.ArrayNode)changed.path("originalSql").path("consultant"))
-        .set(0,json.getNodeFactory().textNode(changed.path("originalSql").path("consultant").get(0).textValue()
-            .replace("2025-10-09T08:53:20Z","2025-10-09T08:53:20.000001Z")));
+    ((com.fasterxml.jackson.databind.node.ArrayNode) changed.path("originalSql").path("consultant"))
+        .set(
+            0,
+            json.getNodeFactory()
+                .textNode(
+                    changed
+                        .path("originalSql")
+                        .path("consultant")
+                        .get(0)
+                        .textValue()
+                        .replace("2025-10-09T08:53:20Z", "2025-10-09T08:53:20.000001Z")));
     assertNotEquals(digest, codec.existingImportRowDigest(changed));
-    var inconsistentIncarnation=row.deepCopy();inconsistentIncarnation.put("createdAtMicros",1760000000000001L);
-    assertThrows(IllegalArgumentException.class,() -> codec.existingImportRowDigest(inconsistentIncarnation));
+    var inconsistentIncarnation = row.deepCopy();
+    inconsistentIncarnation.put("createdAtMicros", 1760000000000001L);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.existingImportRowDigest(inconsistentIncarnation));
     changed = row.deepCopy();
     ((ObjectNode) changed.path("record")).put("absenceMessage", "Original message changed");
     assertNotEquals(digest, codec.existingImportRowDigest(changed));

@@ -1255,12 +1255,16 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
 
   /** Fixed configured-existing-import source tuple, never an authority factory. */
   public String existingImportSourceKey(JsonNode exactSourceTuple) {
-    return digest("existing-consultant-import-source/v1",ExistingConsultantImportSourceSchema.source(exactSourceTuple));
+    return digest(
+        "existing-consultant-import-source/v1",
+        ExistingConsultantImportSourceSchema.source(exactSourceTuple));
   }
 
   /** Exact persisted nonsecret existing-import ownership snapshot. */
   public String existingImportRowDigest(JsonNode exactOwnedSource) {
-    return digest("existing-consultant-import-row/v1",ExistingConsultantImportSourceSchema.row(exactOwnedSource));
+    return digest(
+        "existing-consultant-import-row/v1",
+        ExistingConsultantImportSourceSchema.row(exactOwnedSource));
   }
 
   public String claimedInactivityDeletionRowDigest(JsonNode exactOwnedRow) {

@@ -288,7 +288,8 @@ class UserSelfLocaleScenarioCBoundaryTest {
       new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
               new org.springframework.core.io.ClassPathResource(
                   "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"),
-                new ClassPathResource("db/changelog/changeset/20261023_existing_import_intent_367/migrate.sql"))
+              new ClassPathResource(
+                  "db/changelog/changeset/20261023_existing_import_intent_367/migrate.sql"))
           .execute(source);
       when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(actor);
       when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))
