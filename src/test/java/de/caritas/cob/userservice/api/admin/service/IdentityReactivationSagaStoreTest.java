@@ -54,19 +54,20 @@ class IdentityReactivationSagaStoreTest {
         org.mockito.Mockito.mock(
             de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
     lenient().when(mode.isFiveActorMode()).thenReturn(true);
-    sagaStore.setIdentityMode(mode);
+    var scopedStore = new IdentityReactivationSagaStore(userRepository, new UsernameTranscoder(), identityReactivator, deletionLifecycleService);
+    scopedStore.setIdentityMode(mode);
     var operation =
         new IdentityReactivationOperation(
             "user-1", "operation-1", "actual-asker", "actual@fixture.invalid", 7L);
     org.junit.jupiter.api.Assertions.assertThrows(
         de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class,
-        () -> sagaStore.begin("actual-asker", "actual@fixture.invalid", 7L));
+        () -> scopedStore.begin("actual-asker", "actual@fixture.invalid", 7L));
     org.junit.jupiter.api.Assertions.assertThrows(
         de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class,
-        () -> sagaStore.reactivateAndCommit(operation, "synthetic-password"));
+        () -> scopedStore.reactivateAndCommit(operation, "synthetic-password"));
     org.junit.jupiter.api.Assertions.assertThrows(
         de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class,
-        () -> sagaStore.abortUnmutated(operation));
+        () -> scopedStore.abortUnmutated(operation));
     org.mockito.Mockito.verifyNoInteractions(
         userRepository, identityReactivator, deletionLifecycleService);
   }

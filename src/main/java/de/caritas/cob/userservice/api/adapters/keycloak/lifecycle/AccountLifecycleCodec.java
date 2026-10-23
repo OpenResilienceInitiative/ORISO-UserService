@@ -1341,6 +1341,11 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "deactivate", "UPDATED");
   }
 
+  public String verifyMaintenanceReactivationReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "reactivate", "UPDATED");
+  }
+
   public String verifyMaintenanceInactivityRestoreReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "reactivate", "UPDATED");

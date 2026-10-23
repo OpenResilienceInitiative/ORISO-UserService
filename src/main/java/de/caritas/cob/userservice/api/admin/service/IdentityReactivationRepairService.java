@@ -49,6 +49,7 @@ public class IdentityReactivationRepairService {
   /** Compensates a failed request without permitting a stale generation to affect a newer one. */
   public void compensate(
       IdentityReactivationOperation operation, RuntimeException reactivationFailure) {
+    requireLegacy();
     metric("attempt");
     try {
       boolean repaired = repairWriter.compensate(operation, reactivationFailure);
@@ -82,6 +83,7 @@ public class IdentityReactivationRepairService {
    * reactivations, which is transient by construction.
    */
   public void retryOutstandingRepairs() {
+    if (identityMode != null && identityMode.isFiveActorMode()) return;
     LocalDateTime staleBefore = LocalDateTime.now(ZoneOffset.UTC).minus(staleAfter);
     Stream.concat(
             userRepository
@@ -140,4 +142,9 @@ public class IdentityReactivationRepairService {
   private void metric(String outcome) {
     meterRegistry.counter(REPAIR_METRIC, "outcome", outcome).increment();
   }
+  private void requireLegacy() {
+    if (identityMode != null && identityMode.isFiveActorMode())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
 }

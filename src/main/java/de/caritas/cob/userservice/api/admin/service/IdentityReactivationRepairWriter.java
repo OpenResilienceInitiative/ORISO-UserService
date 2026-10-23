@@ -35,6 +35,7 @@ public class IdentityReactivationRepairWriter {
       noRollbackFor = IdentityReactivationCompensationException.class)
   public boolean compensate(
       IdentityReactivationOperation operation, RuntimeException reactivationFailure) {
+    requireLegacy();
     return repairCurrentOperation(operation.userId(), operation.operationId(), reactivationFailure);
   }
 
@@ -42,6 +43,7 @@ public class IdentityReactivationRepairWriter {
       propagation = Propagation.REQUIRES_NEW,
       noRollbackFor = IdentityReactivationCompensationException.class)
   public boolean retry(String userId, String operationId) {
+    requireLegacy();
     return repairCurrentOperation(
         userId,
         operationId,
@@ -82,4 +84,9 @@ public class IdentityReactivationRepairWriter {
     return user.getDeletionLifecycleState() == DeletionLifecycleState.REACTIVATION_IN_PROGRESS
         || user.getDeletionLifecycleState() == DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED;
   }
+  private void requireLegacy() {
+    if (identityMode != null && identityMode.isFiveActorMode())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
 }
