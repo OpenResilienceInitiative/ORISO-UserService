@@ -1104,6 +1104,9 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
                 "locale",
                 "profile",
                 "email",
+                "ordinary-profile",
+                "deactivate",
+                "reactivate",
                 "self-password",
                 "password-reset.read",
                 "password-reset")
@@ -1319,6 +1322,44 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
   public String verifyMaintenanceProfileReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "profile", "UPDATED");
+  }
+
+  public String verifyMaintenanceInactivitySuspendReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "deactivate", "UPDATED");
+  }
+
+  public String verifyMaintenanceInactivityRestoreReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "reactivate", "UPDATED");
+  }
+
+  public String existingImportSourceKey(JsonNode exactSourceTuple) {
+    return digest(
+        "existing-consultant-import-source/v1",
+        ExistingConsultantImportSourceSchema.source(exactSourceTuple));
+  }
+
+  public String existingImportRowDigest(JsonNode exactOwnedSource) {
+    return digest(
+        "existing-consultant-import-row/v1",
+        ExistingConsultantImportSourceSchema.row(exactOwnedSource));
+  }
+
+  public String claimedInactivityDeletionRowDigest(JsonNode exactOwnedRow) {
+    return digest(
+        "claimed-inactivity-deletion-row/v1",
+        ClaimedInactivityRowSchema.require(exactOwnedRow, true));
+  }
+
+  public String claimedInactivityRowDigest(JsonNode exactOwnedRow) {
+    return digest(
+        "claimed-inactivity-row/v1", ClaimedInactivityRowSchema.require(exactOwnedRow, false));
+  }
+
+  public String verifyMaintenanceOrdinaryProfileReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "ordinary-profile", "UPDATED");
   }
 
   public String verifyMaintenanceEmailReceipt(

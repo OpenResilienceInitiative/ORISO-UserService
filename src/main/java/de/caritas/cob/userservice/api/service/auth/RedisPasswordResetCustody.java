@@ -61,7 +61,8 @@ final class RedisPasswordResetCustody {
       if not raw then return nil end
       local state = cjson.decode(raw)
       if state.locator ~= KEYS[1] then return nil end
-      if state.status == 'FROZEN' or state.status == 'ACKNOWLEDGED' then
+      if state.status == 'FROZEN' or state.status == 'ACKNOWLEDGED' or state.status == 'REFUSED' or
+          (state.status == 'REJECTED' and state.requestDigest == ARGV[1]) then
         if state.requestDigest == ARGV[1] then return raw end
         return nil
       end
@@ -94,6 +95,22 @@ final class RedisPasswordResetCustody {
       return 1
       """,
           Long.class);
+  private static final DefaultRedisScript<Long> REQUIRE_FRESH =
+      new DefaultRedisScript<>(
+          """
+      local raw = redis.call('GET', KEYS[1])
+      if not raw then return 0 end
+      local state = cjson.decode(raw)
+      if state.status ~= 'FROZEN' or state.binding ~= ARGV[1] or
+          state.claimId ~= ARGV[2] or state.version ~= tonumber(ARGV[3]) or
+          state.requestDigest ~= ARGV[4] then return 0 end
+      local time = redis.call('TIME')
+      local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+      if state.expires <= now then return 0 end
+      return 1
+      """,
+          Long.class);
+
   private final StringRedisTemplate redis;
   private final String prefix;
 
@@ -159,10 +176,32 @@ final class RedisPasswordResetCustody {
         || !actual.claimId().equals(claim.claimId())
         || actual.version() != claim.version()
         || !actual.requestDigest().equals(claim.requestDigest())
-        || !Set.of("FROZEN", "ACKNOWLEDGED").contains(actual.status())) throw invalid();
+        || !Set.of("FROZEN", "ACKNOWLEDGED", "REJECTED", "REFUSED").contains(actual.status()))
+      throw invalid();
+  }
+
+  void requireFresh(PasswordResetClaim claim) {
+    validateClaim(claim);
+    if (!Long.valueOf(1)
+        .equals(
+            redis.execute(
+                REQUIRE_FRESH,
+                List.of(flow(claim.binding())),
+                encodeBinding(claim.binding()),
+                claim.claimId().toString(),
+                Long.toString(claim.version()),
+                claim.requestDigest()))) throw invalid();
   }
 
   void finish(PasswordResetClaim claim, boolean accepted) {
+    finish(claim, accepted ? "ACKNOWLEDGED" : "REJECTED");
+  }
+
+  void refuse(PasswordResetClaim claim) {
+    finish(claim, "REFUSED");
+  }
+
+  private void finish(PasswordResetClaim claim, String terminal) {
     validateClaim(claim);
     if (!Long.valueOf(1)
         .equals(
@@ -173,7 +212,7 @@ final class RedisPasswordResetCustody {
                 claim.claimId().toString(),
                 Long.toString(claim.version()),
                 claim.requestDigest(),
-                accepted ? "ACKNOWLEDGED" : "REJECTED"))) throw invalid();
+                terminal))) throw invalid();
   }
 
   private static void validateClaim(PasswordResetClaim claim) {
@@ -264,7 +303,8 @@ final class RedisPasswordResetCustody {
     long expiry = positive(value, "expires"), until = positive(value, "recoverUntil");
     if (until != expiry + RECOVERY_RETENTION.toMillis()) throw invalid();
     if (binding(text(value, "binding")).expiresAt().toEpochMilli() != expiry) throw invalid();
-    if (!Set.of("ISSUED", "FROZEN", "REJECTED", "ACKNOWLEDGED").contains(text(value, "status"))
+    if (!Set.of("ISSUED", "FROZEN", "REJECTED", "ACKNOWLEDGED", "REFUSED")
+            .contains(text(value, "status"))
         || !Set.of("PENDING", "ATTEMPTED", "SENT", "UNKNOWN").contains(text(value, "delivery")))
       throw invalid();
     return value;

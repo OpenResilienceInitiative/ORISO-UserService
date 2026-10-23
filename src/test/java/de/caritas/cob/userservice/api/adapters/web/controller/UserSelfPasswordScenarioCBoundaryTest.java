@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.mapping.*;
 import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.auth.*;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.facade.userdata.*;
@@ -98,6 +99,100 @@ class UserSelfPasswordScenarioCBoundaryTest {
   }
 
   @Test
+  void publicPasswordSupportsEveryOwnedKindAndLegitimateAdministratorConsultantPair()
+      throws Exception {
+    for (String kind :
+        List.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")) {
+      boolean admin = kind.endsWith("ADMIN");
+      for (boolean dual : admin ? List.of(false, true) : List.of(false)) {
+        try (var f = new Fixture(true, true, "PLATFORM_ADMIN".equals(kind) ? 0L : 7L, kind, dual)) {
+          f.expectNative();
+          var response = assertDoesNotThrow(() -> f.controller.updatePassword(f.password()));
+          assertEquals(200, response.getStatusCode().value(), kind + "/" + dual);
+          assertEquals("ACKNOWLEDGED", f.status());
+          assertEquals(1, f.effects.get());
+          assertEquals(dual || "CONSULTANT".equals(kind) ? 1 : 0, f.clears());
+          var origin = f.frozenBodyFromIndependentDecryption().path("target").path("origin");
+          if (Set.of("TENANT_ADMIN", "PLATFORM_ADMIN").contains(kind))
+            assertEquals(
+                "PROTECTED_ACCOUNT_OPERATIONS_V1", origin.path("humanAuthority").textValue());
+          else assertTrue(origin.path("humanAuthority").isNull());
+          verifyNoInteractions(f.legacy);
+          f.server.verify();
+        }
+      }
+    }
+  }
+
+  @Test
+  void unsignedOrForgedPolicy400KeepsTheActualSelfPasswordIntentFrozen() {
+    for (int status : List.of(400, 403, 409))
+      for (int refusal : List.of(1, 3)) {
+        try (var f = new Fixture(true, true)) {
+          f.policyResponse = refusal;
+          f.policyStatus = status;
+          f.expectNative();
+          assertThrows(
+              ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
+          assertEquals("FROZEN", f.status());
+          assertEquals(0, f.clears());
+          assertEquals(0, f.effects.get());
+          f.server.verify();
+        }
+      }
+  }
+
+  @Test
+  void signedPolicy400StoresItsExactTerminalReceiptBeforeSelfPasswordRefusal() {
+    try (var f = new Fixture(true, true)) {
+      f.policyResponse = 2;
+      f.expectNative();
+      var refused =
+          assertThrows(BadRequestException.class, () -> f.controller.updatePassword(f.password()));
+      assertTrue(refused instanceof SelfPasswordMaintenance.VerifiedTerminal);
+      assertEquals(400, ((SelfPasswordMaintenance.VerifiedTerminal) refused).status());
+      assertEquals(
+          UUID.fromString(f.operation),
+          ((SelfPasswordMaintenance.VerifiedTerminal) refused).operationId());
+      assertEquals("REJECTED", f.status());
+      String terminal =
+          f.jdbc.queryForObject("select receipt from identity_self_password_intent", String.class);
+      assertNotNull(terminal);
+      assertTrue(terminal.contains("NO_EFFECT"));
+      assertThrows(BadRequestException.class, () -> f.controller.updatePassword(f.password()));
+      assertEquals(0, f.clears());
+      assertEquals(0, f.effects.get());
+      f.server.verify();
+    }
+  }
+
+  @Test
+  void signedNonPolicySelfRefusalKeepsItsOriginalKeyAndPublicStatus() {
+    for (int status : List.of(403, 409)) {
+      try (var f = new Fixture(true, true)) {
+        f.policyResponse = 2;
+        f.policyStatus = status;
+        f.expectNative();
+        Class<? extends RuntimeException> expected =
+            status == 403
+                ? de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class
+                : ConflictException.class;
+        var refused = assertThrows(expected, () -> f.controller.updatePassword(f.password()));
+        assertTrue(refused instanceof SelfPasswordMaintenance.VerifiedTerminal);
+        assertEquals(status, ((SelfPasswordMaintenance.VerifiedTerminal) refused).status());
+        assertEquals(
+            UUID.fromString(f.operation),
+            ((SelfPasswordMaintenance.VerifiedTerminal) refused).operationId());
+        assertEquals("REFUSED", f.status());
+        assertThrows(expected, () -> f.controller.updatePassword(f.password()));
+        assertEquals(0, f.effects.get());
+        assertEquals(0, f.clears());
+        f.server.verify();
+      }
+    }
+  }
+
+  @Test
   void unsupportedOuterEnvelopeVersionCannotResumeUnknownPasswordOrClearSetup() {
     try (var f = new Fixture(true, true)) {
       f.expectNative(true);
@@ -160,6 +255,75 @@ class UserSelfPasswordScenarioCBoundaryTest {
     }
   }
 
+  @Test
+  void boundedSelfSecretSweepKeepsOriginalDeadlineAndNonsecretUnknownAudit() {
+    try (var f = new Fixture(true, true)) {
+      f.expectNative(true);
+      assertThrows(
+          ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
+      String metadata =
+          f.jdbc.queryForObject(
+              "select metadata_json from identity_self_password_intent", String.class);
+      String originalIntentDigest =
+          f.jdbc.queryForObject(
+              "select intent_digest from identity_self_password_intent", String.class);
+      long deadline =
+          f.jdbc.queryForObject(
+              "select authority_valid_until from identity_self_password_intent", Long.class);
+      for (int i = 0; i < 101; i++) {
+        String operation = UUID.randomUUID().toString();
+        f.jdbc.update(
+            "insert into identity_self_password_intent select ?,realm_id,account_id,tenant_id,owner_client,owner_subject,request_digest,target_json,authority_valid_until,metadata_json,intent_envelope,status,receipt,updated_at,intent_digest from identity_self_password_intent where operation_id=?",
+            operation,
+            f.operation);
+        if (i == 100)
+          f.jdbc.update(
+              "update identity_self_password_intent set authority_valid_until=? where operation_id=?",
+              f.now.get().plusSeconds(30 * 86400).getEpochSecond(),
+              operation);
+      }
+      f.jdbc.update(
+          "update identity_self_password_intent set intent_digest=null where operation_id=?",
+          f.operation); // Existing pre-column custody remains recoverable from its original AEAD.
+      assertEquals(0, f.maintenance.expireSecretCustody());
+      f.now.set(f.now.get().plusSeconds(9 * 86400));
+      assertEquals(100, f.maintenance.expireSecretCustody());
+      assertEquals(1, f.maintenance.expireSecretCustody());
+      assertEquals(0, f.maintenance.expireSecretCustody());
+      assertEquals("EXPIRED_UNKNOWN", f.status());
+      assertEquals(
+          metadata,
+          f.jdbc.queryForObject(
+              "select metadata_json from identity_self_password_intent where operation_id=?",
+              String.class,
+              f.operation));
+      assertEquals(
+          deadline,
+          f.jdbc.queryForObject(
+              "select authority_valid_until from identity_self_password_intent where operation_id=?",
+              Long.class,
+              f.operation));
+      assertEquals(
+          originalIntentDigest,
+          f.jdbc.queryForObject(
+              "select intent_digest from identity_self_password_intent where operation_id=?",
+              String.class,
+              f.operation));
+      assertEquals(
+          1,
+          f.jdbc.queryForObject(
+              "select count(*) from identity_self_password_intent where intent_envelope is not null",
+              Integer.class));
+      assertThrows(RuntimeException.class, () -> f.controller.updatePassword(f.password()));
+      assertEquals(
+          102,
+          f.jdbc.queryForObject(
+              "select count(*) from identity_self_password_intent", Integer.class));
+      assertEquals(0, f.clears());
+      f.server.verify();
+    }
+  }
+
   private static final class Fixture implements AutoCloseable {
     final UserController controller = mock(UserController.class, CALLS_REAL_METHODS);
     final IdentityManaging legacy = mock(IdentityManaging.class);
@@ -167,7 +331,28 @@ class UserSelfPasswordScenarioCBoundaryTest {
     final RestTemplate http = new RestTemplate();
     final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
     final AtomicInteger effects = new AtomicInteger();
+    SelfPasswordMaintenance maintenance;
+    final java.util.concurrent.atomic.AtomicReference<Instant> now =
+        new java.util.concurrent.atomic.AtomicReference<>(Instant.now());
+    final Clock clock =
+        new Clock() {
+          public java.time.ZoneId getZone() {
+            return java.time.ZoneOffset.UTC;
+          }
+
+          public Clock withZone(java.time.ZoneId zone) {
+            return this;
+          }
+
+          public Instant instant() {
+            return now.get();
+          }
+        };
+    int policyResponse;
+    int policyStatus = 400;
     final Long tenant;
+    final String ownedKind;
+    final boolean ownsConsultant;
     final String operation = UUID.randomUUID().toString();
     final AccountLifecycleCodec codec = new AccountLifecycleCodec(KEY);
     final TaskActorCredentials actor =
@@ -179,7 +364,13 @@ class UserSelfPasswordScenarioCBoundaryTest {
     }
 
     Fixture(boolean five, boolean installed, Long tenant) {
+      this(five, installed, tenant, "CONSULTANT", false);
+    }
+
+    Fixture(boolean five, boolean installed, Long tenant, String kind, boolean dual) {
       this.tenant = tenant;
+      this.ownedKind = kind;
+      this.ownsConsultant = dual || "CONSULTANT".equals(kind);
       var source =
           new DriverManagerDataSource(
               "jdbc:h2:mem:password-"
@@ -189,16 +380,41 @@ class UserSelfPasswordScenarioCBoundaryTest {
               "");
       jdbc = new JdbcTemplate(source);
       jdbc.execute(
-          "create table consultant(consultant_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512),password_change_required boolean,update_date timestamp,clear_count int)");
+          "create table consultant(consultant_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512),password_change_required boolean,update_date timestamp,clear_count int,email varchar(320))");
       jdbc.update(
-          "insert into consultant values(?,?,null,'ordinary',true,?,0)",
+          "insert into consultant values(?,?,null,'ordinary',true,?,0,'fixture@example.org')",
           ACCOUNT,
           tenant,
           java.sql.Timestamp.from(Instant.parse("2026-01-01T00:00:00Z")));
       jdbc.execute(
-          "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512))");
+          "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,username varchar(512),email varchar(320))");
+      jdbc.execute(
+          "create table admin(admin_id varchar(36) primary key,tenant_id bigint,type varchar(16),email varchar(320))");
+      if (!"CONSULTANT".equals(kind) && !dual) jdbc.update("delete from consultant");
+      if ("USER".equals(kind))
+        jdbc.update(
+            "insert into user values(?,?,null,'ordinary','fixture@example.org')", ACCOUNT, tenant);
+      if (kind.endsWith("ADMIN"))
+        jdbc.update(
+            "insert into admin values(?,?,?,'fixture@example.org')",
+            ACCOUNT,
+            tenant,
+            switch (kind) {
+              case "AGENCY_ADMIN" -> "AGENCY";
+              case "TENANT_ADMIN" -> "TENANT";
+              case "PLATFORM_ADMIN" -> "SUPER";
+              default -> throw new IllegalArgumentException();
+            });
       jdbc.execute(
           "create table identity_self_password_intent(operation_id varchar(36) primary key,realm_id varchar(512),account_id varchar(36),tenant_id bigint,owner_client varchar(255),owner_subject varchar(36),request_digest varchar(64),target_json clob,authority_valid_until bigint,metadata_json clob,intent_envelope clob,status varchar(32),receipt clob,updated_at timestamp)");
+      try (var migration = source.getConnection()) {
+        org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(
+            migration,
+            new org.springframework.core.io.ClassPathResource(
+                "db/changelog/changeset/20261023_identity_self_password_retention_367/migrate.sql"));
+      } catch (java.sql.SQLException failure) {
+        throw new IllegalStateException(failure);
+      }
       var human =
           new AuthenticatedUser(
               ACCOUNT,
@@ -243,6 +459,11 @@ class UserSelfPasswordScenarioCBoundaryTest {
       when(consultants.getConsultant(ACCOUNT))
           .thenAnswer(
               ignored -> {
+                if (jdbc.queryForObject(
+                        "select count(*) from consultant where consultant_id=?",
+                        Integer.class,
+                        ACCOUNT)
+                    == 0) return Optional.empty();
                 var c = new Consultant();
                 c.setId(ACCOUNT);
                 c.setPasswordChangeRequired(
@@ -282,8 +503,8 @@ class UserSelfPasswordScenarioCBoundaryTest {
               mock(AgencyAdminDataProvider.class),
               new UsernameTranscoder());
       delegate.setPasswordIdentityConfig(mode);
-      if (installed)
-        delegate.setSelfPasswordMaintenance(
+      if (installed) {
+        maintenance =
             new SelfPasswordMaintenance(
                 mode,
                 human,
@@ -294,11 +515,13 @@ class UserSelfPasswordScenarioCBoundaryTest {
                 broker,
                 codec,
                 http,
-                Clock.systemUTC(),
+                clock,
                 "https://internal.identity.test",
                 "https://public.identity.test/realms/fixture",
                 "fixture",
-                REALM));
+                REALM);
+        delegate.setSelfPasswordMaintenance(maintenance);
+      }
       ReflectionTestUtils.setField(controller, "userAccountControllerDelegate", delegate);
     }
 
@@ -311,7 +534,9 @@ class UserSelfPasswordScenarioCBoundaryTest {
 
     int clears() {
       return jdbc.queryForObject(
-          "select clear_count from consultant where consultant_id=?", Integer.class, ACCOUNT);
+          "select coalesce(sum(clear_count),0) from consultant where consultant_id=?",
+          Integer.class,
+          ACCOUNT);
     }
 
     String status() {
@@ -357,8 +582,10 @@ class UserSelfPasswordScenarioCBoundaryTest {
                     StandardCharsets.UTF_8),
                 JsonNode.class);
         Arrays.fill(key, (byte) 0);
-        assertEquals("CONSULTANT", plain.path("localSetup").path("kind").textValue());
-        assertTrue(plain.path("localSetup").path("passwordChangeRequired").booleanValue());
+        assertEquals(ownedKind, plain.path("localSetup").path("kind").textValue());
+        if (ownsConsultant)
+          assertTrue(plain.path("localSetup").path("passwordChangeRequired").booleanValue());
+        else assertTrue(plain.path("localSetup").path("passwordChangeRequired").isNull());
         return plain.path("body");
       } catch (java.security.GeneralSecurityException failure) {
         throw new AssertionError("Private password intent could not be verified");
@@ -410,7 +637,12 @@ class UserSelfPasswordScenarioCBoundaryTest {
                 assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
                 assertEquals("FROZEN", status());
                 assertEquals(0, clears());
-                int nativeAttempt = effects.incrementAndGet();
+                if (policyResponse == 1)
+                  return withStatus(HttpStatus.valueOf(policyStatus))
+                      .body("{\"error\":\"Password rejected\"}")
+                      .contentType(MediaType.APPLICATION_JSON)
+                      .createResponse(out);
+                int nativeAttempt = policyResponse == 0 ? effects.incrementAndGet() : 0;
                 if (unknownFirst && nativeAttempt == 1)
                   return withStatus(HttpStatus.SERVICE_UNAVAILABLE).createResponse(out);
                 JsonNode body =
@@ -438,7 +670,9 @@ class UserSelfPasswordScenarioCBoundaryTest {
                 facts.put(
                     "originDigest",
                     codec.digest("maintenance-origin", body.path("target").path("origin")));
-                facts.put("result", "UPDATED");
+                String result = policyResponse == 0 ? "UPDATED" : "NO_EFFECT";
+                facts.put("result", result);
+                if (policyResponse != 0) facts.put("status", policyStatus);
                 String encoded =
                     Base64.getUrlEncoder()
                         .withoutPadding()
@@ -452,20 +686,25 @@ class UserSelfPasswordScenarioCBoundaryTest {
                           + HexFormat.of()
                               .formatHex(
                                   mac.doFinal(
-                                      ("maintenance-operation-receipt\n" + encoded)
+                                      ((policyResponse == 0
+                                                  ? "maintenance-operation-receipt\n"
+                                                  : "maintenance-no-effect-receipt/v1\n")
+                                              + encoded)
                                           .getBytes(StandardCharsets.UTF_8)));
-                  return withSuccess(
-                          codec.canonical(
-                              Map.of(
-                                  "operationId",
-                                  operation,
-                                  "accountId",
-                                  ACCOUNT,
-                                  "result",
-                                  "UPDATED",
-                                  "receipt",
-                                  receipt)),
-                          MediaType.APPLICATION_JSON)
+                  if (policyResponse == 3)
+                    receipt =
+                        receipt.substring(0, receipt.length() - 1)
+                            + (receipt.endsWith("0") ? "1" : "0");
+                  var reply = new TreeMap<String, Object>();
+                  reply.put("operationId", operation);
+                  reply.put("accountId", ACCOUNT);
+                  reply.put("result", result);
+                  reply.put("receipt", receipt);
+                  if (policyResponse != 0) reply.put("status", policyStatus);
+                  return withStatus(
+                          policyResponse == 0 ? HttpStatus.OK : HttpStatus.valueOf(policyStatus))
+                      .body(codec.canonical(reply))
+                      .contentType(MediaType.APPLICATION_JSON)
                       .createResponse(out);
                 } catch (Exception e) {
                   throw new IllegalStateException("Synthetic receipt unavailable");

@@ -37,6 +37,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 /** Actual SQL authorization, private native scope and exact profile roll-forward after unknowns. */
 public final class HumanAdminAccountMaintenance {
   private final IdentityClientConfig mode;
+  private ReviewedOrdinaryGroups reviewedGroups = new ReviewedOrdinaryGroups(java.util.Map.of());
   private final AuthenticatedUser actor;
   private final AdminScope scope;
   private final JdbcTemplate jdbc;
@@ -54,6 +55,11 @@ public final class HumanAdminAccountMaintenance {
           .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
           .enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES)
           .disable(com.fasterxml.jackson.databind.MapperFeature.ALLOW_COERCION_OF_SCALARS);
+
+  /** Root supplies only the already validated immutable lifecycle group map. */
+  public void configureReviewedOrdinaryGroups(java.util.Map<String, Set<String>> groups) {
+    reviewedGroups = new ReviewedOrdinaryGroups(groups);
+  }
 
   public HumanAdminAccountMaintenance(
       IdentityClientConfig mode,
@@ -157,6 +163,32 @@ public final class HumanAdminAccountMaintenance {
     try (var checked =
         new CheckedAccount(current, original, human, operation, profile, edit, fullSql)) {
       checked.applied = prior != null && "APPLIED".equals(prior.status);
+      checked.terminalOnly = prior != null && "NO_EFFECT".equals(prior.status);
+      HumanAdminMaintenanceTransport.Projection initialRoleProjection = null;
+      if (edit != null && edit.groupChatRequested() != null) {
+        reviewedGroups.requireConfigured();
+        java.util.List<String> roles;
+        if (prior == null) {
+          initialRoleProjection = transport.read(checked);
+          requireProjection(current, initialRoleProjection);
+          roles = initialRoleProjection.effectiveRoles();
+        } else {
+          try {
+            var savedRoles = json.readTree(prior.desired).path("roleOriginal");
+            if (!savedRoles.isArray() || savedRoles.isEmpty()) throw conflict();
+            var values = new java.util.ArrayList<String>();
+            for (var role : savedRoles) {
+              if (!role.isTextual()) throw conflict();
+              values.add(role.textValue());
+            }
+            roles = values;
+          } catch (java.io.IOException invalid) {
+            throw unavailable();
+          }
+        }
+        checked.role = reviewedGroups.groupChat(edit.groupChatRequested(), roles);
+      }
+      final var initialRoleState = initialRoleProjection;
       String digest = transport.profileRequestDigest(checked, profile, operation);
       if (digest == null || !digest.matches("[0-9a-f]{64}")) throw unavailable();
       String originalJson =
@@ -164,11 +196,29 @@ public final class HumanAdminAccountMaintenance {
       String desiredJson =
           edit == null
               ? encode(profile)
-              : encode(java.util.Map.of("profile", profile, "publicEdit", edit.intentJson()));
+              : checked.role == null
+                  ? encode(java.util.Map.of("profile", profile, "publicEdit", edit.intentJson()))
+                  : encode(
+                      java.util.Map.of(
+                          "profile",
+                          profile,
+                          "publicEdit",
+                          edit.intentJson(),
+                          "roleOriginal",
+                          checked.role.original(),
+                          "roleDesired",
+                          checked.role.desired(),
+                          "group",
+                          checked.role.group()));
+      checked.terminals = verifiedTerminals(checked);
       Intent intent =
           recoverCommit(
               () -> transaction(() -> prepare(checked, digest, originalJson, desiredJson)),
               () -> transaction(() -> checkedIntent(checked, digest, originalJson, desiredJson)));
+      if ("NO_EFFECT".equals(intent.status)) {
+        var verified = transport.verifyProfileNoEffect(checked, frozen(intent), intent.receipt);
+        throw definiteProfileRefusal(checked, verified.status());
+      }
       if ("APPLIED".equals(intent.status)) {
         checked.applied = true;
         requireDesired(authorizedRow(accountId, false), original, profile);
@@ -176,8 +226,11 @@ public final class HumanAdminAccountMaintenance {
         return profileResultOrConsultant(checked);
       }
       if ("PREPARED".equals(intent.status)) {
-        var state = transport.read(checked);
+        var state = initialRoleState == null ? transport.read(checked) : initialRoleState;
         requireProjection(current, state);
+        if (checked.role != null
+            && !java.util.Set.copyOf(checked.role.original())
+                .equals(java.util.Set.copyOf(state.effectiveRoles()))) throw conflict();
         FrozenProfile frozen = transport.freezeProfile(checked, profile, operation, state.state());
         String body = encode(frozen);
         intent =
@@ -198,7 +251,37 @@ public final class HumanAdminAccountMaintenance {
       if ("ACKNOWLEDGED".equals(intent.status)) {
         receipt = transport.verifyProfileReceipt(checked, frozen, intent.receipt);
       } else if ("FROZEN".equals(intent.status)) {
-        receipt = transport.updateProfile(checked, frozen);
+        var outcome = transport.executeProfile(checked, frozen);
+        if (outcome instanceof HumanAdminMaintenanceTransport.ProfileNoEffect refused) {
+          var verified = transport.verifyProfileNoEffect(checked, frozen, refused.receipt());
+          final var priorFrozen = intent;
+          recoverCommit(
+              () ->
+                  transaction(
+                      () ->
+                          markNoEffect(
+                              checked,
+                              digest,
+                              originalJson,
+                              desiredJson,
+                              priorFrozen.body,
+                              verified.receipt())),
+              () ->
+                  transaction(
+                      () -> {
+                        var saved = checkedIntent(checked, digest, originalJson, desiredJson);
+                        if (saved == null
+                            || !"NO_EFFECT".equals(saved.status)
+                            || !Objects.equals(saved.body, priorFrozen.body)
+                            || !Objects.equals(saved.receipt, verified.receipt()))
+                          throw unavailable();
+                        return saved;
+                      }));
+          throw definiteProfileRefusal(checked, verified.status());
+        }
+        if (!(outcome instanceof HumanAdminMaintenanceTransport.ProfileApplied applied))
+          throw unavailable();
+        receipt = applied.receipt();
         final Intent originalIntent = intent;
         intent =
             recoverCommit(
@@ -229,6 +312,9 @@ public final class HumanAdminAccountMaintenance {
       transport.verifyProfileReceipt(checked, frozen, receipt);
       var currentNative = transport.read(checked);
       requireProjection(checked.actual, currentNative);
+      if (checked.role != null
+          && !java.util.Set.copyOf(checked.role.desired())
+              .equals(java.util.Set.copyOf(currentNative.effectiveRoles()))) throw conflict();
       if (!Objects.equals(currentNative.firstName(), profile.firstName())
           || !Objects.equals(currentNative.lastName(), profile.lastName())
           || !Objects.equals(currentNative.email(), profile.email())) throw conflict();
@@ -271,38 +357,7 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private String consultantSnapshot(String id, boolean lock) {
-    var tables = new java.util.TreeMap<String, List<String>>();
-    for (String table :
-        List.of(
-            "admin",
-            "consultant",
-            "language",
-            "consultant_topic",
-            "consultant_agency",
-            "admin_agency")) {
-      String column = table.startsWith("admin") ? "admin_id" : "consultant_id";
-      var rows =
-          jdbc.queryForList(
-              "select * from " + table + " where " + column + "=?" + (lock ? " for update" : ""),
-              id);
-      var encoded = new java.util.ArrayList<String>();
-      for (var row : rows) {
-        var normalized = new java.util.TreeMap<String, Object>();
-        row.forEach(
-            (field, value) ->
-                normalized.put(
-                    field,
-                    value instanceof java.sql.Timestamp t
-                        ? t.toInstant().toString()
-                        : value instanceof byte[] bytes
-                            ? java.util.HexFormat.of().formatHex(bytes)
-                            : value));
-        encoded.add(encode(normalized));
-      }
-      java.util.Collections.sort(encoded);
-      tables.put(table, List.copyOf(encoded));
-    }
-    return encode(tables);
+    return ConsultantProfileSqlSnapshot.capture(jdbc, id, lock, this::encode);
   }
 
   private void requireConsultantPostcondition(CheckedAccount checked, Intent intent) {
@@ -315,7 +370,7 @@ public final class HumanAdminAccountMaintenance {
 
   private void requireConsultantSnapshot(CheckedAccount checked, String status) {
     if (checked.edit != null
-        && !"APPLIED".equals(status)
+        && !Set.of("APPLIED", "NO_EFFECT").contains(status)
         && !Objects.equals(checked.fullSql, consultantSnapshot(checked.actual.account, true)))
       throw conflict();
   }
@@ -353,7 +408,107 @@ public final class HumanAdminAccountMaintenance {
         });
   }
 
+  private record StoredTerminal(
+      String operation, String digest, String body, String receipt, String status) {}
+
+  private java.util.Map<String, StoredTerminal> verifiedTerminals(CheckedAccount checked) {
+    var rows =
+        jdbc.query(
+            "select operation_id,request_digest,native_body,native_receipt,status from general_admin_identity_intent where account_id=? and operation_id<>? and status='NO_EFFECT'",
+            (r, n) ->
+                new StoredTerminal(
+                    r.getString(1), r.getString(2), r.getString(3), r.getString(4), r.getString(5)),
+            checked.accountId(),
+            checked.workflowId().toString());
+    var verified = new java.util.HashMap<String, StoredTerminal>();
+    for (var row : rows) {
+      transport.verifyStoredProfileNoEffect(
+          checked,
+          canonicalUuid(row.operation),
+          row.digest,
+          decode(row.body, FrozenProfile.class),
+          row.receipt);
+      if (verified.put(row.operation, row) != null) throw unavailable();
+    }
+    return java.util.Map.copyOf(verified);
+  }
+
+  private Intent markNoEffect(
+      CheckedAccount checked,
+      String digest,
+      String original,
+      String desired,
+      String frozen,
+      String receipt) {
+    var saved = checkedIntent(checked, digest, original, desired);
+    requireConsultantSnapshot(checked, saved.status);
+    var current = authorizedRow(checked.actual.account, true);
+    if (!"FROZEN".equals(saved.status)
+        || !Objects.equals(saved.body, frozen)
+        || saved.receipt != null
+        || !current.equals(checked.original)) throw conflict();
+    if (jdbc.update(
+            "update general_admin_identity_intent set status='NO_EFFECT',native_receipt=?,updated_at=? where operation_id=? and status='FROZEN' and native_body=? and native_receipt is null",
+            receipt,
+            Timestamp.from(clock.instant()),
+            checked.workflow.toString(),
+            frozen)
+        != 1) throw unavailable();
+    return Objects.requireNonNull(checkedIntent(checked, digest, original, desired));
+  }
+
+  /** A closed signal minted only after a verified refusal is durably terminal. */
+  public sealed interface DefiniteProfileNoEffect
+      permits DefiniteProfileForbidden, DefiniteProfileConflict {
+    UUID operationId();
+  }
+
+  public static final class DefiniteProfileForbidden extends ForbiddenException
+      implements DefiniteProfileNoEffect {
+    private final UUID operation;
+
+    private DefiniteProfileForbidden(UUID operation) {
+      super("Managed account operation is not authorized");
+      this.operation = operation;
+    }
+
+    @Override
+    public UUID operationId() {
+      return operation;
+    }
+  }
+
+  public static final class DefiniteProfileConflict extends ConflictException
+      implements DefiniteProfileNoEffect {
+    private final UUID operation;
+
+    private DefiniteProfileConflict(UUID operation) {
+      super("Managed account operation conflicts with its current state");
+      this.operation = operation;
+    }
+
+    @Override
+    public UUID operationId() {
+      return operation;
+    }
+  }
+
+  private RuntimeException definiteProfileRefusal(CheckedAccount checked, int status) {
+    if (status == 403) return new DefiniteProfileForbidden(checked.workflow);
+    if (status == 409) return new DefiniteProfileConflict(checked.workflow);
+    throw unavailable();
+  }
+
   private Intent prepare(CheckedAccount checked, String digest, String original, String desired) {
+    if (checked.role != null) {
+      var lifecycle =
+          jdbc.queryForList(
+              "select status from account_inactivity where identity_id=? for update",
+              String.class,
+              checked.actual.account);
+      if (lifecycle.size() > 1 || !lifecycle.isEmpty() && !"ACTIVE".equals(lifecycle.getFirst()))
+        throw conflict();
+    }
     var row = authorizedRow(checked.actual.account, true);
     var found = checkedIntent(checked, digest, original, desired);
     requireConsultantSnapshot(checked, found == null ? "PREPARED" : found.status);
@@ -362,12 +517,17 @@ public final class HumanAdminAccountMaintenance {
       return found;
     }
     if (!row.equals(checked.original)) throw conflict();
-    if (!jdbc.queryForList(
-            "select operation_id from general_admin_identity_intent where account_id=? and operation_id<>? and status<>'APPLIED' for update",
-            String.class,
+    var pending =
+        jdbc.query(
+            "select operation_id,request_digest,native_body,native_receipt,status from general_admin_identity_intent where account_id=? and operation_id<>? and status<>'APPLIED' for update",
+            (r, n) ->
+                new StoredTerminal(
+                    r.getString(1), r.getString(2), r.getString(3), r.getString(4), r.getString(5)),
             row.account,
-            checked.workflow.toString())
-        .isEmpty()) throw conflict();
+            checked.workflow.toString());
+    for (var other : pending)
+      if (!"NO_EFFECT".equals(other.status)
+          || !other.equals(checked.terminals.get(other.operation))) throw conflict();
     Instant now = clock.instant();
     if (jdbc.update(
             "insert into general_admin_identity_intent(operation_id,account_id,tenant_id,human_subject,human_issuer,human_client,request_digest,original_json,desired_json,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,'PREPARED',?,?)",
@@ -524,10 +684,11 @@ public final class HumanAdminAccountMaintenance {
         || !digest.equals(found.digest)
         || !original.equals(found.original)
         || !desired.equals(found.desired)) throw conflict();
-    if (!Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED", "APPLIED").contains(found.status)
+    if (!Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED", "APPLIED", "NO_EFFECT").contains(found.status)
         || "PREPARED".equals(found.status) && (found.body != null || found.receipt != null)
         || !"PREPARED".equals(found.status) && found.body == null
-        || Set.of("ACKNOWLEDGED", "APPLIED").contains(found.status) && found.receipt == null
+        || Set.of("ACKNOWLEDGED", "APPLIED", "NO_EFFECT").contains(found.status)
+            && found.receipt == null
         || "FROZEN".equals(found.status) && found.receipt != null
         || !"APPLIED".equals(found.status) && found.applied != null
         || checked.edit != null && "APPLIED".equals(found.status) && found.applied == null)
@@ -728,7 +889,9 @@ public final class HumanAdminAccountMaintenance {
   private static void requireOwnedRow(
       AdminRow row, AdminRow original, IdentityProfileUpdate desired, String status) {
     if ("APPLIED".equals(status)) requireDesired(row, original, desired);
-    else if (!row.equals(original)) throw conflict();
+    else if ("NO_EFFECT".equals(status)) {
+      if (!row.sameIdentity(original)) throw conflict();
+    } else if (!row.equals(original)) throw conflict();
   }
 
   private static void requireDesired(
@@ -884,7 +1047,9 @@ public final class HumanAdminAccountMaintenance {
             .ConsultantUpdateService.ScopedEdit
         edit;
     private final String fullSql;
-    private boolean applied;
+    private boolean applied, terminalOnly;
+    private java.util.Map<String, StoredTerminal> terminals = java.util.Map.of();
+    private ReviewedOrdinaryGroups.Transition role;
     private final String method = request.getMethod();
     private final String path = request.getRequestURI();
     private final Thread owner = Thread.currentThread();
@@ -964,6 +1129,18 @@ public final class HumanAdminAccountMaintenance {
       return profile;
     }
 
+    public String reviewedGroup() {
+      return role == null ? null : role.group();
+    }
+
+    public java.util.List<String> originalRoles() {
+      return role == null ? java.util.List.of() : role.original();
+    }
+
+    public java.util.List<String> desiredRoles() {
+      return role == null ? java.util.List.of() : role.desired();
+    }
+
     public void requireCurrent() {
       if (!active
           || owner != Thread.currentThread()
@@ -976,6 +1153,7 @@ public final class HumanAdminAccountMaintenance {
       if (!actual.equals(authorizedRow(actual.account, false))) throw conflict();
       if (edit != null
           && !applied
+          && !terminalOnly
           && !Objects.equals(fullSql, consultantSnapshot(actual.account, false))) throw conflict();
     }
 

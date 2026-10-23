@@ -211,6 +211,7 @@
   <include file="db/changelog/changeset/20260917_consultant_picture_visibility_1049/changeSet.xml"/>
   <include file="db/changelog/changeset/20260916_account_inactivity_bootstrap/changeSet.xml"/>
   <include file="db/changelog/changeset/20260916_account_inactivity/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261023_inactivity_claimed_work_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20260916_account_inactivity_access/changeSet.xml"/>
   <include file="db/changelog/changeset/20260919_consultant_two_factor_required/changeSet.xml"/>
   <include file="db/changelog/changeset/20260919_consultant_password_change_required/changeSet.xml"/>
@@ -253,6 +254,7 @@
   <include file="db/changelog/changeset/20261021_identity_lifecycle_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261021_identity_maintenance_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261021_identity_self_locale_367/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261023_existing_import_intent_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_identity_self_app_otp_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_identity_self_otp_email_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_identity_self_otp_local_367/changeSet.xml"/>
@@ -268,5 +270,7 @@
   <include file="db/changelog/changeset/20261022_protected_invitation_cleanup_status_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_general_admin_identity_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_identity_self_password_367/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261023_identity_self_password_retention_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261022_identity_setup_password_claim_367/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261023_identity_claimed_password_intent_367/changeSet.xml"/>
 </databaseChangeLog>

@@ -98,6 +98,7 @@ class AccountLifecycleCallerConfigurationTest {
                     factory.registerSingleton(
                         "fixtureTransactions", new DataSourceTransactionManager(source));
                     factory.registerSingleton("fixtureAdminScope", mock(AdminScope.class));
+                    factory.registerSingleton("fixtureAccountInactivity", mock(de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.class));
                     factory.registerSingleton("fixtureMatrix", mock(MatrixSynapseService.class));
                     factory.registerSingleton(
                         "fixtureMatrixConfiguration", mock(MatrixConfig.class));
@@ -167,6 +168,20 @@ class AccountLifecycleCallerConfigurationTest {
                                 de.caritas.cob.userservice.api.adapters.persistence.password
                                     .JdbcExistingSetupPasswordClaims.class)
                             .size())));
+  }
+
+  @Test
+  void enabledCallerGraphJoinsTheExistingInactivityServiceToItsFiniteTransport() {
+    withEnabledCallerGraph(
+        context -> {
+          assertEquals(1, context.getBeansOfType(de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.class).size());
+          var transport = context.getBean(de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.class);
+          var existing = context.getBean(de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.class);
+          verify(existing).configureScopedInactivity(
+              same(transport), same(context.getBean(AuthenticatedUser.class)),
+              same(context.getBean(jakarta.servlet.http.HttpServletRequest.class)),
+              eq("https://identity.fixture.invalid/realms/fixture"), eq(java.util.Set.of("human-admin")));
+        });
   }
 
   @Test

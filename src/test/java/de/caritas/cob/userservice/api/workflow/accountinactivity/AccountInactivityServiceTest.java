@@ -11,6 +11,338 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 class AccountInactivityServiceTest {
   @Test
+  void scopedDueRoleDiscoveryUsesTheActualRevisionZeroRowOutsideSql() {
+    var service =
+        createService(
+            new Effects() {
+              @Override
+              public Set<Role> currentRoles(String id) {
+                org.junit.jupiter.api.Assertions.assertFalse(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive(),
+                    "Native role discovery must not hold the owning SQL transaction");
+                return Set.of(Role.ASKER);
+              }
+            });
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    org.mockito.Mockito.when(mode.isFiveActorMode()).thenReturn(true);
+    service.setIdentityMode(mode);
+    String id = "61000000-0000-4000-8000-000000000001";
+    service.assignAtCreation(id, 7L, 24, 0, Instant.parse("2023-01-01T00:00:00Z"));
+    assertThat(service.snapshot(id).orElseThrow().revision()).isZero();
+    assertThat(service.snapshot(id).orElseThrow().dueAt())
+        .isBefore(Instant.parse("2026-02-01T00:00:00Z"));
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> service.scan(false));
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.DELETED);
+  }
+
+  @Test
+  void scopedClaimedSuspensionCallsTheExternalEffectOutsideSql() {
+    var service =
+        createService(
+            new Effects() {
+              @Override
+              public Set<Role> currentRoles(String id) {
+                return Set.of(Role.CONSULTANT);
+              }
+
+              @Override
+              public boolean suspend(String id) {
+                org.junit.jupiter.api.Assertions.assertFalse(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive(),
+                    "Native suspension must not hold the owning SQL transaction");
+                return true;
+              }
+            });
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    org.mockito.Mockito.when(mode.isFiveActorMode()).thenReturn(true);
+    service.setIdentityMode(mode);
+    String id = "61000000-0000-4000-8000-000000000002";
+    service.assignAtCreation(id, 7L, 24, 0, Instant.parse("2023-01-01T00:00:00Z"));
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.ACTIVE);
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> service.scan(false));
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.SUSPENDED);
+  }
+
+  @Test
+  void privateClaimIsSavedBeforeTheEffectAndClosesAfterReturnOrAcrossThreads() throws Exception {
+    var escaped =
+        new java.util.concurrent.atomic.AtomicReference<AccountInactivityService.ClaimedWork>();
+    var service =
+        createService(
+            new Effects() {
+              public Set<Role> currentRoles(String id) {
+                return Set.of(Role.CONSULTANT);
+              }
+
+              public boolean suspend(AccountInactivityService.ClaimedWork work) {
+                work.requireCurrent();
+                escaped.set(work);
+                var row = new com.fasterxml.jackson.databind.ObjectMapper();
+                try {
+                  var binding = row.readTree(work.originalRowJson());
+                  assertThat(binding.size()).isEqualTo(14);
+                  assertThat(binding.path("identityId").textValue()).isEqualTo(work.identityId());
+                  assertThat(binding.path("workId").textValue()).isEqualTo(work.workId());
+                  assertThat(binding.path("action").textValue()).isEqualTo("SUSPEND");
+                  assertThat(binding.path("status").textValue()).isEqualTo("SUSPENDING");
+                  assertThat(work.rawHumanBearer()).isNull();
+                  try (var pool = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                    pool.submit(
+                            () ->
+                                org.junit.jupiter.api.Assertions.assertThrows(
+                                    RuntimeException.class, work::requireCurrent))
+                        .get(5, java.util.concurrent.TimeUnit.SECONDS);
+                  }
+                } catch (Exception invalid) {
+                  throw new IllegalStateException(invalid);
+                }
+                return true;
+              }
+            });
+    scopedMode(service);
+    String id = "61000000-0000-4000-8000-000000000003";
+    service.assignAtCreation(id, 7L, 24, 0, Instant.parse("2023-01-01T00:00:00Z"));
+    service.scan(false);
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.SUSPENDED);
+    org.junit.jupiter.api.Assertions.assertThrows(
+        RuntimeException.class, escaped.get()::requireCurrent);
+  }
+
+  @Test
+  void schedulerNeverResumesThePersistedHumanClaimWithAMachineOrigin() {
+    var count = new java.util.concurrent.atomic.AtomicInteger();
+    var service =
+        createService(
+            new Effects() {
+              public boolean suspend(String id) {
+                count.incrementAndGet();
+                return false;
+              }
+            });
+    scopedMode(service);
+    var human = new de.caritas.cob.userservice.api.helper.AuthenticatedUser();
+    String subject = "61000000-0000-4000-8000-000000000004";
+    human.setUserId(subject);
+    human.setTenantId(0L);
+    human.setRoles(Set.of("agency-admin", "tenant-admin"));
+    var request = new org.springframework.mock.web.MockHttpServletRequest();
+    String issuer = "https://auth.example.test/realms/test";
+    var jwt =
+        org.springframework.security.oauth2.jwt.Jwt.withTokenValue("synthetic-platform-human")
+            .header("alg", "RS256")
+            .issuer(issuer)
+            .subject(subject)
+            .claim("azp", "admin")
+            .claim("tenantId", 0)
+            .claim(
+                "realm_access",
+                java.util.Map.of("roles", java.util.List.of("agency-admin", "tenant-admin")))
+            .issuedAt(Instant.parse("2026-02-01T00:00:00Z"))
+            .expiresAt(Instant.parse("2026-02-01T00:10:00Z"))
+            .build();
+    request.setUserPrincipal(
+        new org.springframework.security.oauth2.server.resource.authentication
+            .JwtAuthenticationToken(
+            jwt,
+            java.util.List.of(
+                new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                    "user-admin"))));
+    request.addHeader("Authorization", "Bearer synthetic-platform-human");
+    service.configureScopedInactivity(
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.class),
+        human,
+        request,
+        issuer,
+        Set.of("admin"));
+    String id = "61000000-0000-4000-8000-000000000005";
+    service.assignAtCreation(id, 7L, 24, 0, Instant.parse("2023-01-01T00:00:00Z"));
+    assertThat(service.suspend(id)).isFalse();
+    var jdbc = inactivityJdbc();
+    String original =
+        jdbc.queryForObject(
+            "select claimed_json from account_inactivity where identity_id=?", String.class, id);
+    assertThat(original).contains("HUMAN_ADMIN", subject, issuer);
+    assertThat(original).doesNotContain("synthetic-platform-human");
+    service.scan(false);
+    service.scan(false);
+    assertThat(count.get()).isEqualTo(1);
+    assertThat(
+            jdbc.queryForObject(
+                "select claimed_json from account_inactivity where identity_id=?",
+                String.class,
+                id))
+        .isEqualTo(original);
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.SUSPENDING);
+  }
+
+  @Test
+  void unresolvedGeneralIntentPreventsAnInactivityRoleClaimBeforeAnyRemoteEffect() {
+    var count = new java.util.concurrent.atomic.AtomicInteger();
+    var service =
+        createService(
+            new Effects() {
+              public Set<Role> currentRoles(String id) {
+                count.incrementAndGet();
+                return Set.of(Role.CONSULTANT);
+              }
+            });
+    scopedMode(service);
+    String id = "61000000-0000-4000-8000-000000000006";
+    service.assignAtCreation(id, 7L, 24, 0, Instant.parse("2023-01-01T00:00:00Z"));
+    var jdbc = inactivityJdbc();
+    jdbc.update(
+        "insert into general_admin_identity_intent(operation_id,account_id,status) values(?,?,'FROZEN')",
+        "61000000-0000-4000-8000-000000000007",
+        id);
+    service.scan(false);
+    assertThat(count.get()).isZero();
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.ACTIVE);
+    jdbc.update("update general_admin_identity_intent set status='APPLIED'");
+    service.scan(false);
+    assertThat(count.get()).isEqualTo(1);
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.SUSPENDED);
+  }
+
+  @Test
+  void claimedTenantDriftCannotAcknowledgeOrRebindTheSavedSource() {
+    var count = new java.util.concurrent.atomic.AtomicInteger();
+    var service =
+        createService(
+            new Effects() {
+              public Set<Role> currentRoles(String id) {
+                return Set.of(Role.CONSULTANT);
+              }
+
+              public boolean suspend(String id) {
+                count.incrementAndGet();
+                inactivityJdbc()
+                    .update("update account_inactivity set tenant_id=8 where identity_id=?", id);
+                return true;
+              }
+            });
+    scopedMode(service);
+    String id = "61000000-0000-4000-8000-000000000008";
+    service.assignAtCreation(id, 7L, 24, 0, Instant.parse("2023-01-01T00:00:00Z"));
+    service.scan(false);
+    var jdbc = inactivityJdbc();
+    String original =
+        jdbc.queryForObject(
+            "select claimed_json from account_inactivity where identity_id=?", String.class, id);
+    assertThat(original).contains("\"tenantId\":\"7\"");
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.SUSPENDING);
+    service.scan(false);
+    assertThat(count.get()).isEqualTo(1);
+    assertThat(
+            jdbc.queryForObject(
+                "select claimed_json from account_inactivity where identity_id=?",
+                String.class,
+                id))
+        .isEqualTo(original);
+    assertThat(service.snapshot(id).orElseThrow().tenantId()).isEqualTo(8L);
+  }
+
+  @Test
+  void failedClaimedEffectKeepsTheOriginalWorkAndOriginalFourteenFieldsAcrossRetries() {
+    var calls = new java.util.concurrent.atomic.AtomicInteger();
+    var original = new java.util.concurrent.atomic.AtomicReference<String>();
+    var operation = new java.util.concurrent.atomic.AtomicReference<String>();
+    var service =
+        createService(
+            new Effects() {
+              public Set<Role> currentRoles(String id) {
+                return Set.of(Role.CONSULTANT);
+              }
+
+              public boolean suspend(AccountInactivityService.ClaimedWork work) {
+                work.requireCurrent();
+                if (calls.getAndIncrement() == 0) {
+                  original.set(work.originalRowJson());
+                  operation.set(work.workId());
+                  throw new AccountInactivityEffectException(
+                      AccountInactivityEffectException.Target.KEYCLOAK,
+                      AccountInactivityEffectException.Code.UNCONFIRMED);
+                }
+                assertThat(work.originalRowJson()).isEqualTo(original.get());
+                assertThat(work.workId()).isEqualTo(operation.get());
+                return true;
+              }
+            });
+    scopedMode(service);
+    String id = "61000000-0000-4000-8000-000000000009";
+    service.assignAtCreation(id, 7L, 24, 0, Instant.parse("2023-01-01T00:00:00Z"));
+    service.scan(false);
+    assertThat(service.snapshot(id).orElseThrow().attempts()).isEqualTo(1);
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.SUSPENDING);
+    service.scan(false);
+    assertThat(calls.get()).isEqualTo(2);
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.SUSPENDED);
+    assertThat(
+            inactivityJdbc()
+                .queryForObject(
+                    "select claimed_json from account_inactivity where identity_id=?",
+                    String.class,
+                    id))
+        .isEqualTo(original.get());
+  }
+
+  @Test
+  void aForeignTransactionManagerCannotClaimTheActualInactivityRow() {
+    createService(new Effects());
+    var calls = new java.util.concurrent.atomic.AtomicInteger();
+    var unrelated =
+        new DriverManagerDataSource("jdbc:h2:mem:foreign-owner;DB_CLOSE_DELAY=-1", "sa", "");
+    var service =
+        new AccountInactivityService(
+            inactivityJdbc(),
+            new DataSourceTransactionManager(unrelated),
+            Clock.fixed(Instant.parse("2026-02-01T00:00:00Z"), ZoneOffset.UTC),
+            new Effects() {
+              public Set<Role> currentRoles(String id) {
+                calls.incrementAndGet();
+                return Set.of(Role.CONSULTANT);
+              }
+            });
+    scopedMode(service);
+    String id = "61000000-0000-4000-8000-000000000010";
+    service.assignAtCreation(id, 7L, 24, 0, Instant.parse("2023-01-01T00:00:00Z"));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalStateException.class, () -> service.scan(false));
+    assertThat(calls.get()).isZero();
+    assertThat(service.snapshot(id).orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.ACTIVE);
+  }
+
+  private void scopedMode(AccountInactivityService service) {
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    org.mockito.Mockito.when(mode.isFiveActorMode()).thenReturn(true);
+    service.setIdentityMode(mode);
+  }
+
+  private JdbcTemplate inactivityJdbc() {
+    return new JdbcTemplate(
+        new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", ""));
+  }
+
+  @Test
   void disappearingCandidateDoesNotAbortOtherTenants() {
     var captured = Instant.parse("2023-01-01T00:00:00Z");
     var owner = new java.util.concurrent.atomic.AtomicReference<AccountInactivityService>();
@@ -442,6 +774,33 @@ class AccountInactivityServiceTest {
             + " BIGINT,assigned_months INT NOT NULL,revision BIGINT NOT NULL,last_activity"
             + " TIMESTAMP(6) NOT NULL,due_at TIMESTAMP(6) NOT NULL,status VARCHAR(20) NOT"
             + " NULL,last_error VARCHAR(1000),attempts INT DEFAULT 0 NOT NULL)");
+    for (String column :
+        java.util.List.of(
+            "work_id VARCHAR(36)",
+            "claimed_at TIMESTAMP(6)",
+            "claimed_json CLOB",
+            "source_json CLOB",
+            "native_phase VARCHAR(24)",
+            "native_body CLOB",
+            "native_receipt CLOB",
+            "suspension_operation_id VARCHAR(36)",
+            "suspension_body CLOB",
+            "suspension_receipt CLOB",
+            "access_work_id VARCHAR(36)"))
+      jdbc.execute("ALTER TABLE account_inactivity ADD COLUMN " + column);
+    for (String table : java.util.List.of("user", "consultant", "admin")) {
+      jdbc.execute("DROP TABLE IF EXISTS `" + table + "`");
+      String key = table.equals("user") ? "user_id" : table + "_id";
+      jdbc.execute(
+          "CREATE TABLE `"
+              + table
+              + "`("
+              + key
+              + " VARCHAR(36), tenant_id BIGINT, username VARCHAR(255), create_date TIMESTAMP(6))");
+    }
+    jdbc.execute("DROP TABLE IF EXISTS general_admin_identity_intent");
+    jdbc.execute(
+        "CREATE TABLE general_admin_identity_intent(operation_id VARCHAR(36), account_id VARCHAR(36), status VARCHAR(20))");
     return createServiceWithoutReset(effects);
   }
 
@@ -455,6 +814,28 @@ class AccountInactivityServiceTest {
   }
 
   static class Effects implements AccountInactivityEffects {
+    public Set<Role> currentRoles(AccountInactivityService.ClaimedWork work) {
+      work.requireCurrent();
+      assertThat(work.originalRowJson())
+          .contains("\"revision\":0", "\"initiator\":{\"kind\":\"SCHEDULED\"}");
+      return currentRoles(work.identityId());
+    }
+
+    public boolean suspend(AccountInactivityService.ClaimedWork work) {
+      work.requireCurrent();
+      return suspend(work.identityId());
+    }
+
+    public boolean reactivate(AccountInactivityService.ClaimedWork work) {
+      work.requireCurrent();
+      return reactivate(work.identityId());
+    }
+
+    public boolean delete(AccountInactivityService.ClaimedWork work) {
+      work.requireCurrent();
+      return delete(work.identityId());
+    }
+
     public Set<Role> currentRoles(String id) {
       return Set.of(Role.ASKER);
     }

@@ -31,6 +31,13 @@ public interface IdentityPasswordUpdater {
     throw new ScopedIdentityCommandRequiredException();
   }
 
+  /** Data-only completion check; joins the actual setup owner's SQL transaction, never an RPC. */
+  default boolean requireExistingSetupCompletionWithinOwner(
+      de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupService.ClaimedSetup
+          claimedSetup) {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
   default void requirePasswordResetSupport() {
     throw new ScopedIdentityCommandRequiredException();
   }

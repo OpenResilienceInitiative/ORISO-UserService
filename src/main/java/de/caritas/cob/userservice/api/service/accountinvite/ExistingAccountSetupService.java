@@ -58,6 +58,7 @@ public class ExistingAccountSetupService {
   private final @NonNull PlatformTransactionManager transactions;
 
   private ExistingSetupPasswordClaims setupPasswordClaims;
+  private java.time.Clock clock = java.time.Clock.systemDefaultZone();
 
   /** Optional until the checked typed adapter and its same-database journal are installed. */
   @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -79,15 +80,26 @@ public class ExistingAccountSetupService {
 
     /** Journal data only; the provider must independently verify its finite native result. */
     public Claim checkedClaim() {
-      if (!active
-          || Thread.currentThread() != requestThread
-          || !target.claim().binding().expiresAt().isAfter(LocalDateTime.now())) {
+      if (!target.claim().binding().expiresAt().isAfter(LocalDateTime.now(owner.clock))) {
         throw new ScopedIdentityCommandRequiredException();
       }
+      return currentClaim(true);
+    }
+
+    /** Exact existing custody only; cannot authorize a fresh password write after expiry. */
+    public Claim checkedRecoveryClaim() {
+      return currentClaim(false);
+    }
+
+    private Claim currentClaim(boolean fresh) {
+      if (!active || Thread.currentThread() != requestThread)
+        throw new ScopedIdentityCommandRequiredException();
       return owner.inTransaction(
           () -> {
-            owner.setupPasswordClaims.requireCurrentWithinOwner(target.claim());
-            owner.requireSameSavedIdentity(target.saved());
+            if (fresh) {
+              owner.setupPasswordClaims.requireCurrentWithinOwner(target.claim());
+              owner.requireSameSavedIdentity(target.saved());
+            } else owner.setupPasswordClaims.requireRecoveryWithinOwner(target.claim());
             AccountInvite current =
                 owner
                     .invites
@@ -158,7 +170,7 @@ public class ExistingAccountSetupService {
                 IN_PROGRESS,
                 AccountInviteStatus.REVOKED,
                 stale.reason,
-                LocalDateTime.now());
+                LocalDateTime.now(clock));
             return null;
           });
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.REVOKED);
@@ -221,7 +233,7 @@ public class ExistingAccountSetupService {
                     AccountInviteProvisioningStatus.COMPLETED,
                     EmailVerificationStatus.VERIFIED,
                     target.identityId(),
-                    LocalDateTime.now());
+                    LocalDateTime.now(clock));
             if (completed != 1) {
               throw new IllegalStateException(
                   "Existing-account setup claim could not be finalized");
@@ -259,57 +271,75 @@ public class ExistingAccountSetupService {
 
     ClaimedSetup handle = new ClaimedSetup(this, target);
     try {
-      // Resolve this exact saved command before mutable provider checks on retries. The checked
-      // adapter verifies current identity/roles/required action when no saved outcome exists.
-      passwords.updateExistingSetupPassword(handle, chosenPassword);
-    } catch (CustomValidationHttpStatusException rejected) {
-      releaseDefinitive(target, "SETUP_PASSWORD_REJECTED");
-      throw rejected;
-    } catch (RuntimeException uncertain) {
-      recordIndeterminate(target);
-      throw new IllegalStateException(
-          "Password setup outcome is indeterminate; operator review is required");
+      try {
+        // Resolve this exact saved command before mutable provider checks on retries. The checked
+        // adapter verifies current identity/roles/required action when no saved outcome exists.
+        passwords.updateExistingSetupPassword(handle, chosenPassword);
+      } catch (
+          de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ClaimedPasswordMaintenance
+                  .Refusal
+              refused) {
+        if (!refused.matches(handle)) throw new ScopedIdentityCommandRequiredException();
+        inTransaction(
+            () -> {
+              setupPasswordClaims.refuseWithinOwner(target.claim());
+              return null;
+            });
+        throw refused.publicResponse();
+      } catch (CustomValidationHttpStatusException rejected) {
+        inTransaction(
+            () -> {
+              setupPasswordClaims.rejectPolicyWithinOwner(target.claim());
+              return null;
+            });
+        throw rejected;
+      } catch (RuntimeException uncertain) {
+        recordIndeterminate(target);
+        throw new IllegalStateException(
+            "Password setup outcome is indeterminate; operator review is required");
+      }
+
+      try {
+        inTransaction(
+            () -> {
+              requireSameSavedIdentity(target.saved());
+              boolean consultantOwned = passwords.requireExistingSetupCompletionWithinOwner(handle);
+              if (consultantOwned) {
+                inTenantOf(
+                    target.saved(),
+                    () -> {
+                      var current =
+                          consultants
+                              .findByIdAndDeleteDateIsNull(target.saved().identityId())
+                              .orElseThrow(ScopedIdentityCommandRequiredException::new);
+                      current.setPasswordChangeRequired(false);
+                      consultants.save(current);
+                    });
+              }
+              int completed =
+                  invites.completeExistingAccountSetup(
+                      target.saved().inviteId(),
+                      SETUP,
+                      SENT,
+                      IN_PROGRESS,
+                      AccountInviteStatus.ACCEPTED,
+                      AccountInviteProvisioningStatus.COMPLETED,
+                      EmailVerificationStatus.VERIFIED,
+                      target.saved().identityId(),
+                      LocalDateTime.now(clock));
+              if (completed != 1) {
+                throw new IllegalStateException(
+                    "Existing-account setup claim could not be finalized");
+              }
+              setupPasswordClaims.acknowledgeWithinOwner(target.claim());
+              return null;
+            });
+      } catch (RuntimeException finalizationFailure) {
+        recordIndeterminate(target);
+        throw new IllegalStateException("Password changed but setup needs operator review");
+      }
     } finally {
       handle.active = false;
-    }
-
-    try {
-      inTransaction(
-          () -> {
-            requireSameSavedIdentity(target.saved());
-            if (target.saved().role() == AccountInviteTargetRole.COUNSELLOR) {
-              inTenantOf(
-                  target.saved(),
-                  () ->
-                      consultants
-                          .findByIdAndDeleteDateIsNull(target.saved().identityId())
-                          .ifPresent(
-                              c -> {
-                                c.setPasswordChangeRequired(false);
-                                consultants.save(c);
-                              }));
-            }
-            int completed =
-                invites.completeExistingAccountSetup(
-                    target.saved().inviteId(),
-                    SETUP,
-                    SENT,
-                    IN_PROGRESS,
-                    AccountInviteStatus.ACCEPTED,
-                    AccountInviteProvisioningStatus.COMPLETED,
-                    EmailVerificationStatus.VERIFIED,
-                    target.saved().identityId(),
-                    LocalDateTime.now());
-            if (completed != 1) {
-              throw new IllegalStateException(
-                  "Existing-account setup claim could not be finalized");
-            }
-            setupPasswordClaims.acknowledgeWithinOwner(target.claim());
-            return null;
-          });
-    } catch (RuntimeException finalizationFailure) {
-      recordIndeterminate(target);
-      throw new IllegalStateException("Password changed but setup needs operator review");
     }
   }
 
@@ -322,8 +352,7 @@ public class ExistingAccountSetupService {
     if (invite.getPurpose() != SETUP || (invite.getStatus() != SENT && !completed)) {
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.NOT_ACTIVE);
     }
-    if (invite.getExpiresAt() == null
-        || (!completed && !invite.getExpiresAt().isAfter(LocalDateTime.now()))) {
+    if (invite.getExpiresAt() == null) {
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
     if (isBlank(invite.getProvisionedUserId())
@@ -348,7 +377,6 @@ public class ExistingAccountSetupService {
             invite.getRecipientEmail(),
             invite.getSetupBoundUsername(),
             invite.getInitialPasswordVerifier());
-    requireSameSavedIdentity(saved);
     Binding binding =
         new Binding(
             invite.getId(),
@@ -361,6 +389,13 @@ public class ExistingAccountSetupService {
             saved.email());
     // Pure keyed binding only; this port operation cannot issue a bearer or call the provider.
     String digest = passwords.existingSetupRequestDigest(binding, chosenPassword);
+    if (!completed) {
+      var recovered = setupPasswordClaims.recoverWithinOwner(binding, digest);
+      if (recovered.isPresent()) return new CausalTarget(saved, recovered.get(), false);
+      if (!invite.getExpiresAt().isAfter(LocalDateTime.now(clock)))
+        throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
+    }
+    requireSameSavedIdentity(saved);
     return new CausalTarget(
         saved, setupPasswordClaims.claimWithinOwner(binding, digest), completed);
   }
@@ -376,7 +411,7 @@ public class ExistingAccountSetupService {
                   IN_PROGRESS,
                   AccountInviteProvisioningStatus.FAILED,
                   reason,
-                  LocalDateTime.now());
+                  LocalDateTime.now(clock));
           if (released != 1)
             throw new IllegalStateException("Account setup rejection could not be recorded");
           setupPasswordClaims.rejectWithinOwner(target.claim());
@@ -394,7 +429,7 @@ public class ExistingAccountSetupService {
                 SENT,
                 IN_PROGRESS,
                 "SETUP_OUTCOME_INDETERMINATE",
-                LocalDateTime.now());
+                LocalDateTime.now(clock));
             setupPasswordClaims.markUnknownWithinOwner(target.claim());
             return null;
           });
@@ -424,7 +459,7 @@ public class ExistingAccountSetupService {
                 List.of(AccountInviteStatus.DRAFT, SENT),
                 AccountInviteStatus.EXPIRED,
                 IN_PROGRESS,
-                LocalDateTime.now()));
+                LocalDateTime.now(clock)));
   }
 
   private SetupTarget claim(String rawToken) {
@@ -451,7 +486,7 @@ public class ExistingAccountSetupService {
               ? AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED
               : AccountInviteLinkException.Reason.SETUP_IN_PROGRESS);
     }
-    LocalDateTime now = LocalDateTime.now();
+    LocalDateTime now = LocalDateTime.now(clock);
     if (invite.getExpiresAt() == null || !invite.getExpiresAt().isAfter(now)) {
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
@@ -603,7 +638,7 @@ public class ExistingAccountSetupService {
               IN_PROGRESS,
               AccountInviteProvisioningStatus.FAILED,
               reason,
-              LocalDateTime.now());
+              LocalDateTime.now(clock));
           return null;
         });
   }
@@ -618,7 +653,7 @@ public class ExistingAccountSetupService {
                 SENT,
                 IN_PROGRESS,
                 "SETUP_OUTCOME_INDETERMINATE",
-                LocalDateTime.now());
+                LocalDateTime.now(clock));
             return null;
           });
     } catch (RuntimeException persistenceFailure) {

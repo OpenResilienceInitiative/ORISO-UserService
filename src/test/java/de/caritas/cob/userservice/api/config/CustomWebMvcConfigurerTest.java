@@ -55,7 +55,14 @@ class CustomWebMvcConfigurerTest {
         java.util.List.of(
             java.util.List.of("/service/users/password/change", "https://foreign.fixture.invalid"),
             java.util.List.of("/service/users/another-operation", "https://app.fixture.invalid"))) {
-      var request = new org.springframework.mock.web.MockHttpServletRequest("POST", input.get(0));
+      // An unconfigured actual request may reach the application without CORS permission;
+      // the browser must first pass this preflight before sending its idempotency header.
+      boolean preflight = input.get(0).equals("/service/users/another-operation");
+      var request = new org.springframework.mock.web.MockHttpServletRequest(preflight ? "OPTIONS" : "POST", input.get(0));
+      if (preflight) {
+        request.addHeader("Access-Control-Request-Method", "POST");
+        request.addHeader("Access-Control-Request-Headers", "Idempotency-Key");
+      }
       request.addHeader("Origin", input.get(1));
       var response = new org.springframework.mock.web.MockHttpServletResponse();
       var reached = new java.util.concurrent.atomic.AtomicBoolean();

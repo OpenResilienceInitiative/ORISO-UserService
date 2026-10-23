@@ -47,6 +47,40 @@ public interface HumanAdminMaintenanceTransport {
   FrozenProfile freezeProfile(
       CheckedAccount account, IdentityProfileUpdate profile, UUID operation, String expectedState);
 
+  sealed interface ProfileOutcome permits ProfileApplied, ProfileNoEffect {}
+
+  record ProfileApplied(String receipt) implements ProfileOutcome {
+    @Override
+    public String toString() {
+      return "ProfileApplied[receipt=redacted]";
+    }
+  }
+
+  record ProfileNoEffect(int status, String receipt) implements ProfileOutcome {
+    @Override
+    public String toString() {
+      return "ProfileNoEffect[receipt=redacted]";
+    }
+  }
+
+  default ProfileOutcome executeProfile(CheckedAccount account, FrozenProfile frozen) {
+    return new ProfileApplied(updateProfile(account, frozen));
+  }
+
+  default ProfileNoEffect verifyProfileNoEffect(
+      CheckedAccount account, FrozenProfile frozen, String receipt) {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
+  default void verifyStoredProfileNoEffect(
+      CheckedAccount current,
+      UUID originalOperation,
+      String requestDigest,
+      FrozenProfile original,
+      String receipt) {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
   String updateProfile(CheckedAccount account, FrozenProfile frozen);
 
   String verifyProfileReceipt(CheckedAccount account, FrozenProfile frozen, String receipt);

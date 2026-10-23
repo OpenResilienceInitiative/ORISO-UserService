@@ -102,7 +102,7 @@ public class CustomWebMvcConfigurer implements WebMvcConfigurer {
     configuration.setAllowedOrigins(List.of(allowedOrigins));
     configuration.setAllowedMethods(List.of("OPTIONS", "GET", "POST", "PUT", "PATCH", "DELETE"));
     configuration.setAllowedHeaders(List.of("*"));
-    configuration.setExposedHeaders(List.of("X-Reason"));
+    configuration.setExposedHeaders(List.of("X-Reason", "X-ORISO-Mutation-Outcome", "X-ORISO-Mutation-Operation"));
 
     var source = new UrlBasedCorsConfigurationSource();
     allowedPaths.forEach(path -> source.registerCorsConfiguration(path, configuration));

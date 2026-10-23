@@ -316,6 +316,15 @@ class ExistingAccountSetupCausalClaimsTest {
     }
 
     @Override
+    public boolean requireExistingSetupCompletionWithinOwner(
+        ExistingAccountSetupService.ClaimedSetup handle) {
+      assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+      assertSame(lastHandle, handle);
+      assertTrue(effects.contains(handle.checkedRecoveryClaim().id()));
+      return false;
+    }
+
+    @Override
     public void updatePassword(String id, String password) {
       fail("target-only updater used");
     }

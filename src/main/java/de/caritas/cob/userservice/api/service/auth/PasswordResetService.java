@@ -73,8 +73,11 @@ public class PasswordResetService {
      * Fresh data check. Provider authorization and its native result remain independently checked.
      */
     public OneTimeTokenStore.PasswordResetClaim checkedClaim() {
-      if (!claim.binding().expiresAt().isAfter(Instant.now())) throw unavailable();
-      return checkedRecoveryClaim();
+      if (!"FROZEN".equals(claim.status()) || !claim.binding().expiresAt().isAfter(Instant.now()))
+        throw unavailable();
+      var checked = checkedRecoveryClaim();
+      owner.oneTimeTokenStore.requireFreshPasswordResetClaim(checked);
+      return checked;
     }
 
     /**
@@ -304,6 +307,13 @@ public class PasswordResetService {
       // The finite provider resolves an exact saved result before considering mutable state.
       // It owns local SQL completion and its verified receipt in the same transaction.
       identityPasswordUpdater.updateClaimedPasswordReset(handle, newPassword);
+    } catch (
+        de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ClaimedPasswordMaintenance
+                .Refusal
+            refused) {
+      if (!refused.matches(handle)) throw ClaimedReset.unavailable();
+      oneTimeTokenStore.refusePasswordResetClaim(claim);
+      throw refused.publicResponse();
     } catch (CustomValidationHttpStatusException rejected) {
       // Only a cryptographically checked native pre-write password-policy terminal may get here.
       oneTimeTokenStore.finishPasswordResetClaim(claim, false);
@@ -433,7 +443,10 @@ public class PasswordResetService {
           || !workflow.equals(issuance.workflowId())
           || !target.getKeycloakUserId().equals(issuance.subjectId())
           || !java.util.Objects.equals(target.getTenantId(), issuance.tenantId())
-          || !target.getAccountKind().equals(issuance.accountKind())
+          || (!target.getAccountKind().equals(issuance.accountKind())
+              && !("CONSULTANT".equals(target.getAccountKind())
+                  && java.util.Set.of("AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")
+                      .contains(issuance.accountKind())))
           || !expiry.equals(issuance.expiresAt()))
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
       oneTimeToken = newResetToken();

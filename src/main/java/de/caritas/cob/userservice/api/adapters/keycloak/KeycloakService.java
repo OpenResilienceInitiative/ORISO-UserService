@@ -158,6 +158,24 @@ public class KeycloakService
     this.scopedUsernameAvailability = availability;
   }
 
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ClaimedPasswordMaintenance
+      claimedPasswordMaintenance;
+
+  @Autowired(required = false)
+  public void setClaimedPasswordMaintenance(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ClaimedPasswordMaintenance
+          maintenance) {
+    this.claimedPasswordMaintenance = maintenance;
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ClaimedPasswordMaintenance
+      checkedClaimedPasswords() {
+    if (!identityClientConfig.isFiveActorMode() || claimedPasswordMaintenance == null)
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    claimedPasswordMaintenance.requireSupport();
+    return claimedPasswordMaintenance;
+  }
+
   private OutboundHttpMetrics outboundHttpMetrics;
 
   @Value("${api.error.keycloakError}")
@@ -880,6 +898,69 @@ public class KeycloakService
    * @param userId Keycloak user ID
    * @param password user password
    */
+  @Override
+  public boolean requiresCausalPasswordClaims() {
+    return identityClientConfig.isFiveActorMode();
+  }
+
+  @Override
+  public void requireExistingSetupPasswordSupport() {
+    checkedClaimedPasswords();
+  }
+
+  @Override
+  public String existingSetupRequestDigest(
+      de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims.Binding binding,
+      String password) {
+    return checkedClaimedPasswords().existingSetupRequestDigest(binding, password);
+  }
+
+  @Override
+  public void updateExistingSetupPassword(
+      de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupService.ClaimedSetup
+          claim,
+      String password) {
+    checkedClaimedPasswords().setup(claim, password);
+  }
+
+  @Override
+  public boolean requireExistingSetupCompletionWithinOwner(
+      de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupService.ClaimedSetup
+          claim) {
+    return checkedClaimedPasswords().requireSetupCompletionWithinOwner(claim);
+  }
+
+  @Override
+  public void requirePasswordResetSupport() {
+    checkedClaimedPasswords();
+  }
+
+  @Override
+  public de.caritas.cob.userservice.api.service.auth.PasswordResetBinding passwordResetIssuance(
+      java.util.UUID workflowId,
+      String accountId,
+      Long tenantId,
+      String username,
+      String recipient,
+      String accountKind,
+      java.time.Instant expiry) {
+    return checkedClaimedPasswords()
+        .issuance(workflowId, accountId, tenantId, username, recipient, accountKind, expiry);
+  }
+
+  @Override
+  public String passwordResetRequestDigest(
+      de.caritas.cob.userservice.api.service.auth.PasswordResetBinding binding, String password) {
+    return checkedClaimedPasswords().passwordResetRequestDigest(binding, password);
+  }
+
+  @Override
+  public void updateClaimedPasswordReset(
+      de.caritas.cob.userservice.api.service.auth.PasswordResetService.ClaimedReset claim,
+      String password) {
+    checkedClaimedPasswords().reset(claim, password);
+  }
+
   @Override
   public void requirePasswordUpdateSupport() {
     requireLegacyAccountAccess();

@@ -152,6 +152,28 @@ class RedisPasswordResetCustodyIT {
   }
 
   @Test
+  void exactPolicyReplayRetainsItsVersionAndCannotPassTheAtomicFreshGate() {
+    var original = sent("policy");
+    var firstClaim = first.claimPasswordReset("policy", digest).orElseThrow();
+    assertThatCode(() -> first.requireFreshPasswordResetClaim(firstClaim))
+        .doesNotThrowAnyException();
+    first.finishPasswordResetClaim(firstClaim, false);
+    var historical = second.claimPasswordReset("policy", digest).orElseThrow();
+    assertThat(historical.status()).isEqualTo("REJECTED");
+    assertThat(historical.version()).isEqualTo(firstClaim.version());
+    assertThat(historical.binding()).isEqualTo(original);
+    assertThatThrownBy(() -> first.requireFreshPasswordResetClaim(firstClaim))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> second.requireFreshPasswordResetClaim(historical))
+        .isInstanceOf(IllegalStateException.class);
+    var next = first.claimPasswordReset("policy", "c".repeat(64)).orElseThrow();
+    assertThat(next.version()).isEqualTo(2);
+    assertThatThrownBy(() -> second.finishPasswordResetClaim(firstClaim, true))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatCode(() -> first.requireFreshPasswordResetClaim(next)).doesNotThrowAnyException();
+  }
+
+  @Test
   void acknowledgementCannotBeChangedOrReplayedWithAnotherPassword() {
     sent("token");
     var initial = first.claimPasswordReset("token", digest).orElseThrow();
@@ -172,5 +194,87 @@ class RedisPasswordResetCustodyIT {
     sent("newer");
     assertThat(first.claimPasswordReset("new", digest)).contains(held);
     assertThat(first.claimPasswordReset("new", "c".repeat(64))).isEmpty();
+  }
+
+  @Test
+  void anUnclaimedExpiredIssuanceCannotBeReminted() {
+    var original = binding();
+    var expiring =
+        new PasswordResetBinding(
+            original.workflowId(),
+            original.subjectId(),
+            original.tenantId(),
+            original.username(),
+            original.accountKind(),
+            original.accountVersion(),
+            original.recipientDigest(),
+            Instant.ofEpochMilli(Instant.now().plusSeconds(3).toEpochMilli()));
+    first.storePasswordReset("expiring", expiring);
+    first.passwordResetDelivery(expiring, "ATTEMPTED");
+    org.awaitility.Awaitility.await()
+        .atMost(java.time.Duration.ofSeconds(10))
+        .untilAsserted(() -> assertThat(second.passwordResetIssuance("expiring")).isEmpty());
+    assertThat(first.claimPasswordReset("expiring", digest)).isEmpty();
+  }
+
+  @Test
+  void expiredUnknownRetainsOnlyItsExactOriginalCommandAndCannotAdvanceVersion() {
+    var original = binding();
+    var expiring =
+        new PasswordResetBinding(
+            original.workflowId(),
+            original.subjectId(),
+            original.tenantId(),
+            original.username(),
+            original.accountKind(),
+            original.accountVersion(),
+            original.recipientDigest(),
+            Instant.ofEpochMilli(Instant.now().plusSeconds(3).toEpochMilli()));
+    first.storePasswordReset("held", expiring);
+    first.passwordResetDelivery(expiring, "ATTEMPTED");
+    var claim = first.claimPasswordReset("held", digest).orElseThrow();
+    org.awaitility.Awaitility.await()
+        .atMost(java.time.Duration.ofSeconds(10))
+        .until(() -> !expiring.expiresAt().isAfter(Instant.now()));
+    assertThat(second.claimPasswordReset("held", digest)).contains(claim);
+    assertThat(second.claimPasswordReset("held", "c".repeat(64))).isEmpty();
+    second.finishPasswordResetClaim(claim, false);
+    var terminal = first.claimPasswordReset("held", digest).orElseThrow();
+    assertThat(terminal.status()).isEqualTo("REJECTED");
+    assertThat(terminal.claimId()).isEqualTo(claim.claimId());
+    assertThat(terminal.version()).isEqualTo(claim.version());
+    assertThatThrownBy(() -> first.requireFreshPasswordResetClaim(terminal))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(first.claimPasswordReset("held", "c".repeat(64))).isEmpty();
+  }
+
+  @Test
+  void heldRecoveryRetentionIsBoundedAndOriginalTokenAndSubjectStayOutOfKeys() {
+    sent("original-unguessable-token");
+    first.claimPasswordReset("original-unguessable-token", digest).orElseThrow();
+    var keys = redis.keys(prefix + "*");
+    assertThat(keys).hasSize(3);
+    for (String key : keys) {
+      assertThat(key)
+          .doesNotContain("original-unguessable-token", "00000000-0000-4000-8000-000000000001");
+      long ttl = redis.getExpire(key, TimeUnit.SECONDS);
+      assertThat(ttl).isBetween(1L, java.time.Duration.ofDays(7).plusMinutes(2).toSeconds());
+      if (key.contains(":flow:") || key.contains(":token:")) {
+        assertThat(ttl).isGreaterThan(java.time.Duration.ofDays(6).toSeconds());
+      }
+    }
+  }
+
+  @Test
+  void lateOldAcknowledgementCannotClearOrRebindTheNewerOriginalToken() {
+    sent("old-held");
+    var old = first.claimPasswordReset("old-held", digest).orElseThrow();
+    var newer = sent("new-live");
+    second.finishPasswordResetClaim(old, true);
+    var current = first.claimPasswordReset("new-live", "c".repeat(64)).orElseThrow();
+    assertThat(current.binding()).isEqualTo(newer);
+    assertThat(current.claimId()).isNotEqualTo(old.claimId());
+    assertThat(first.claimPasswordReset("old-held", digest).orElseThrow().status())
+        .isEqualTo("ACKNOWLEDGED");
   }
 }

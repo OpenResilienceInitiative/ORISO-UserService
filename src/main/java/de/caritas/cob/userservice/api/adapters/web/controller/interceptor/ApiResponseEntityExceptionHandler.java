@@ -22,6 +22,10 @@ import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.picture.PictureDiagnostics;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange.MagicLinkChallenge;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance.VerifiedTerminal;
+import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.DefiniteProfileNoEffect;
+import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.DefiniteProfileForbidden;
+import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.DefiniteProfileConflict;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolationException;
@@ -165,7 +169,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     log.warn(BAD_REQUEST, ex);
 
     return handleExceptionInternal(
-        ex, messageBody(ex.getMessage()), new HttpHeaders(), HttpStatus.BAD_REQUEST, request);
+        ex, messageBody(ex.getMessage()), verifiedMutationHeaders(ex, new HttpHeaders(), HttpStatus.BAD_REQUEST, request), HttpStatus.BAD_REQUEST, request);
   }
 
   /**
@@ -269,7 +273,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
             .map(reason -> new CustomHttpHeader(reason).buildHeader())
             .orElseGet(HttpHeaders::new);
 
-    return handleExceptionInternal(null, null, headers, HttpStatus.CONFLICT, request);
+    return handleExceptionInternal(null, null, verifiedMutationHeaders(ex, headers, HttpStatus.CONFLICT, request), HttpStatus.CONFLICT, request);
   }
 
   /**
@@ -366,7 +370,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final ForbiddenException ex, final WebRequest request) {
     ex.executeLogging();
 
-    return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.FORBIDDEN, request);
+    return handleExceptionInternal(null, null, verifiedMutationHeaders(ex, new HttpHeaders(), HttpStatus.FORBIDDEN, request), HttpStatus.FORBIDDEN, request);
   }
 
   /** Maps service-layer tenant-scope denials to the same explicit 403 contract as role denials. */
@@ -459,5 +463,24 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     }
 
     return new ResponseEntity<>(body, headers, status);
+  }
+  /** Only a private-issued, committed terminal may retire its exact original browser attempt. */
+  private HttpHeaders verifiedMutationHeaders(
+      Exception ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+    java.util.UUID operation = null;
+    if (ex instanceof VerifiedTerminal terminal
+        && terminal.status() == status.value()) {
+      operation = terminal.operationId();
+    } else if (ex instanceof DefiniteProfileNoEffect terminal
+        && (status == HttpStatus.FORBIDDEN && ex instanceof DefiniteProfileForbidden
+            || status == HttpStatus.CONFLICT && ex instanceof DefiniteProfileConflict)) {
+      operation = terminal.operationId();
+    }
+    if (operation != null && operation.toString().equals(request.getHeader("Idempotency-Key"))) {
+      headers.set("X-ORISO-Mutation-Outcome", "NO_EFFECT");
+      headers.set("X-ORISO-Mutation-Operation", operation.toString());
+      headers.setCacheControl("no-store");
+    }
+    return headers;
   }
 }

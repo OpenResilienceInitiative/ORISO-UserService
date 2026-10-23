@@ -60,7 +60,7 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
               require(saved.requestDigest().equals(completeKeyedRequestDigest));
               return saved.claim(binding);
             }
-            require("REJECTED".equals(saved.status()));
+            require(Set.of("REJECTED", "POLICY_REJECTED").contains(saved.status()));
             require(Set.of("PENDING", "FAILED").contains(invite.phase()));
             Claim next =
                 new Claim(
@@ -73,7 +73,7 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
                 jdbc.update(
                         "update identity_setup_password_claim set claim_id=?,claim_version=?,"
                             + "request_digest=?,status='FROZEN',updated_at=? where invite_id=? and claim_id=?"
-                            + " and claim_version=? and status='REJECTED'",
+                            + " and claim_version=? and status in ('REJECTED','POLICY_REJECTED')",
                         next.id().toString(),
                         next.version(),
                         next.requestDigest(),
@@ -106,6 +106,50 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
   }
 
   @Override
+  public java.util.Optional<Claim> recoverWithinOwner(Binding binding, String requestDigest) {
+    return owned(
+        () -> {
+          requireBinding(binding);
+          require(digest(requestDigest));
+          Invite invite = lockInvite(binding);
+          var rows = lockSaved(binding.inviteId());
+          if (!rows.isEmpty() && "POLICY_REJECTED".equals(rows.getFirst().status())) {
+            var saved = rows.getFirst();
+            require(saved.bindingMatches(binding));
+            if (!saved.requestDigest().equals(requestDigest)) return java.util.Optional.empty();
+            require(
+                "EMAIL_SENT".equals(invite.status())
+                    && "FAILED".equals(invite.phase())
+                    && invite.hasVerifier());
+            require(binding.expiresAt().plusDays(7).isAfter(LocalDateTime.now(clock)));
+            return java.util.Optional.of(saved.claim(binding));
+          }
+          if (rows.isEmpty()
+              || !Set.of("FROZEN", "UNKNOWN", "REFUSED").contains(rows.getFirst().status()))
+            return java.util.Optional.empty();
+          var saved = rows.getFirst();
+          require(saved.bindingMatches(binding) && saved.requestDigest().equals(requestDigest));
+          require(
+              "EMAIL_SENT".equals(invite.status())
+                  && "IN_PROGRESS".equals(invite.phase())
+                  && invite.hasVerifier());
+          require(binding.expiresAt().plusDays(7).isAfter(LocalDateTime.now(clock)));
+          return java.util.Optional.of(saved.claim(binding));
+        });
+  }
+
+  @Override
+  public void requireRecoveryWithinOwner(Claim claim) {
+    owned(
+        () -> {
+          var exact = recoverWithinOwner(claim.binding(), claim.requestDigest());
+          require(exact.isPresent() && exact.get().equals(claim));
+          require(claim.binding().expiresAt().plusDays(7).isAfter(LocalDateTime.now(clock)));
+          return null;
+        });
+  }
+
+  @Override
   public void requireCurrentWithinOwner(Claim claim) {
     owned(
         () -> {
@@ -131,6 +175,39 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
         () -> {
           active(claim, "EMAIL_SENT", "FAILED");
           changePhase(claim, "REJECTED");
+          return null;
+        });
+  }
+
+  @Override
+  public void rejectPolicyWithinOwner(Claim claim) {
+    owned(
+        () -> {
+          var exact = recoverWithinOwner(claim.binding(), claim.requestDigest());
+          require(exact.isPresent() && exact.get().equals(claim));
+          var saved = lockSaved(claim.binding().inviteId()).getFirst();
+          if ("POLICY_REJECTED".equals(saved.status())) return null;
+          require(
+              jdbc.update(
+                      "update account_invite set provisioning_status='FAILED',provisioning_failure_reason='SETUP_PASSWORD_REJECTED',update_date=? where id=? and purpose='EXISTING_ACCOUNT_SETUP' and status='EMAIL_SENT' and provisioning_status='IN_PROGRESS'",
+                      now(),
+                      claim.binding().inviteId())
+                  == 1);
+          changePhase(claim, "POLICY_REJECTED");
+          return null;
+        });
+  }
+
+  @Override
+  public void refuseWithinOwner(Claim claim) {
+    owned(
+        () -> {
+          var exact = recoverWithinOwner(claim.binding(), claim.requestDigest());
+          require(exact.isPresent() && exact.get().equals(claim));
+          var saved = lockSaved(claim.binding().inviteId()).getFirst();
+          if ("REFUSED".equals(saved.status())) return null;
+          require(Set.of("FROZEN", "UNKNOWN").contains(saved.status()));
+          changePhase(claim, "REFUSED");
           return null;
         });
   }
