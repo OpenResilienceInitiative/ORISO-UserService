@@ -149,6 +149,22 @@ public final class ScheduledAskerMaintenance {
           });
     }
 
+    /**
+     * The final action must issue its real preparation before owned inactivity media is forgotten.
+     */
+    public void beforeFinalLocalDeletion(
+        de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction
+                .PreparedUserDeletion
+            prepared) {
+      Objects.requireNonNull(prepared);
+      throw unavailable();
+    }
+
+    /** Only original realm-only absence can use the fixed three-action inactivity continuation. */
+    public void beforeFinalLocalAbsence() {
+      throw unavailable();
+    }
+
     public boolean completeOwnedLocalDeletion(Runnable finalDelete) {
       Objects.requireNonNull(finalDelete);
       outsideSql();
@@ -201,6 +217,14 @@ public final class ScheduledAskerMaintenance {
       requireLive();
       if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     }
+  }
+
+  /** Only an actual held inactivity deletion claim may enter this separate existing cause. */
+  public boolean performInactivityDeletion(
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.ClaimedWork
+          work) {
+    Objects.requireNonNull(work);
+    throw unavailable();
   }
 
   public void performDeletionWorkflow() {

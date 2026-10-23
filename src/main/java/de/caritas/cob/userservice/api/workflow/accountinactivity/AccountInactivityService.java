@@ -54,6 +54,21 @@ public class AccountInactivityService {
   private final TransactionTemplate work;
   private final Clock clock;
   private final AccountInactivityEffects effects;
+  private final javax.sql.DataSource transactionSource;
+
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+  private final InactivityClaimJournal claimJournal;
+  private de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport
+      scopedTransport;
+  private de.caritas.cob.userservice.api.helper.AuthenticatedUser scopedHuman;
+  private jakarta.servlet.http.HttpServletRequest scopedRequest;
+  private String scopedIssuer;
+  private java.util.Set<String> scopedClients = java.util.Set.of();
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setIdentityMode(de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    this.identityMode = java.util.Objects.requireNonNull(mode);
+  }
 
   public AccountInactivityService(
       JdbcTemplate jdbc,
@@ -61,6 +76,14 @@ public class AccountInactivityService {
       Clock clock,
       AccountInactivityEffects effects) {
     this.jdbc = jdbc;
+    this.transactionSource =
+        transactionManager instanceof org.springframework.orm.jpa.JpaTransactionManager jpa
+            ? jpa.getDataSource()
+            : transactionManager
+                    instanceof org.springframework.jdbc.datasource.DataSourceTransactionManager sql
+                ? sql.getDataSource()
+                : null;
+    this.claimJournal = new InactivityClaimJournal(jdbc);
     this.tx = new TransactionTemplate(transactionManager);
     this.work = new TransactionTemplate(transactionManager);
     this.work.setPropagationBehavior(
@@ -168,7 +191,24 @@ public class AccountInactivityService {
             snapshot -> {
               java.util.Set<AccountInactivityEffects.Role> roles;
               try {
-                roles = effects.currentRoles(snapshot.identityId());
+                if (scopedMode()) {
+                  roles = java.util.Set.of(AccountInactivityEffects.Role.UNKNOWN);
+                  if (java.util.Set.of(Status.SUSPENDING, Status.DELETING, Status.REACTIVATING)
+                      .contains(snapshot.status())) {
+                    var saved = claimJournal.saved(snapshot.identityId(), false);
+                    if (saved.work() != null
+                        && "SCHEDULED"
+                            .equals(
+                                claimJournal
+                                    .decode(saved.claimed())
+                                    .path("initiator")
+                                    .path("kind")
+                                    .textValue()))
+                      try (var checked = new ClaimedWork(saved, null)) {
+                        roles = effects.currentRoles(checked);
+                      }
+                  }
+                } else roles = effects.currentRoles(snapshot.identityId());
               } catch (RuntimeException unavailable) {
                 roles = java.util.Set.of(AccountInactivityEffects.Role.UNKNOWN);
               }
@@ -188,6 +228,10 @@ public class AccountInactivityService {
   }
 
   public void scan(boolean dryRun) {
+    if (scopedMode()) {
+      if (!dryRun) scopedScan();
+      return;
+    }
     String cursor = "";
     while (true) {
       var page = candidates(cursor, 200);
@@ -240,6 +284,7 @@ public class AccountInactivityService {
 
   /** Caller must enforce platform-administrator authorization. */
   public boolean suspend(String id) {
+    if (scopedMode()) return scopedManual(id, false);
     work.executeWithoutResult(
         ignored -> {
           var row = locked(id).orElseThrow();
@@ -255,6 +300,7 @@ public class AccountInactivityService {
 
   /** Caller must enforce platform-administrator authorization. */
   public boolean reactivate(String id) {
+    if (scopedMode()) return scopedManual(id, true);
     work.executeWithoutResult(
         ignored -> {
           var row = locked(id).orElseThrow();
@@ -364,6 +410,683 @@ public class AccountInactivityService {
               }
               return complete;
             }));
+  }
+
+  private boolean scopedMode() {
+    return identityMode != null && identityMode.isFiveActorMode();
+  }
+
+  /** Root supplies the same configured public issuer/clients as every other checked human path. */
+  public void configureScopedInactivity(
+      de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport transport,
+      de.caritas.cob.userservice.api.helper.AuthenticatedUser human,
+      jakarta.servlet.http.HttpServletRequest request,
+      String issuer,
+      java.util.Set<String> clients) {
+    this.scopedTransport = java.util.Objects.requireNonNull(transport);
+    this.scopedHuman = java.util.Objects.requireNonNull(human);
+    this.scopedRequest = java.util.Objects.requireNonNull(request);
+    this.scopedIssuer = java.util.Objects.requireNonNull(issuer);
+    this.scopedClients = java.util.Set.copyOf(clients);
+  }
+
+  private record ManualHuman(
+      String subject, String issuer, String client, String bearer, Instant expires) {
+    java.util.Map<String, Object> binding() {
+      return java.util.Map.of(
+          "kind", "HUMAN_ADMIN", "subject", subject, "issuer", issuer, "client", client);
+    }
+
+    @Override
+    public String toString() {
+      return "ManualHuman[authorization=redacted]";
+    }
+  }
+
+  private ManualHuman currentPlatformHuman() {
+    if (scopedHuman == null
+        || scopedRequest == null
+        || scopedIssuer == null
+        || !scopedHuman.isPlatformAdmin()
+        || !(scopedRequest.getUserPrincipal()
+            instanceof
+            org.springframework.security.oauth2.server.resource.authentication
+                        .JwtAuthenticationToken
+                    auth)
+        || !auth.isAuthenticated()) throw InactivityClaimJournal.invalid();
+    var jwt = auth.getToken();
+    String subject = jwt.getSubject(), client = jwt.getClaimAsString("azp");
+    String bearer = scopedRequest.getHeader("Authorization");
+    if (subject == null
+        || !java.util.UUID.fromString(subject).toString().equals(subject)
+        || !subject.equals(scopedHuman.getUserId())
+        || jwt.getIssuer() == null
+        || !scopedIssuer.equals(jwt.getIssuer().toString())
+        || !scopedClients.contains(client)
+        || jwt.getExpiresAt() == null
+        || !clock.instant().isBefore(jwt.getExpiresAt())
+        || bearer == null
+        || !bearer.equals("Bearer " + jwt.getTokenValue())) throw InactivityClaimJournal.invalid();
+    return new ManualHuman(subject, scopedIssuer, client, bearer, jwt.getExpiresAt());
+  }
+
+  private void outsideSql() {
+    if (transactionSource == null || transactionSource != jdbc.getDataSource())
+      throw InactivityClaimJournal.invalid();
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+        .isActualTransactionActive()) throw InactivityClaimJournal.invalid();
+  }
+
+  private void scopedScan() {
+    outsideSql();
+    String cursor = "";
+    while (true) {
+      var page = candidates(cursor, 200);
+      if (page.isEmpty()) return;
+      for (var candidate : page) {
+        ClaimedWork checked = null;
+        try {
+          checked = work.execute(ignored -> scheduledClaim(candidate.identityId()));
+          if (checked == null) continue;
+          if (checked.terminalOnly) {
+            if (scopedTransport == null) throw InactivityClaimJournal.invalid();
+            scopedTransport.verifyNoEffect(
+                checked,
+                new de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport
+                    .Frozen(checked.saved.body()),
+                checked.saved.receipt());
+            var previous = checked;
+            checked =
+                work.execute(
+                    ignored -> {
+                      previous.requireOwned(true);
+                      return new ClaimedWork(
+                          claimJournal.claim(
+                              locked(previous.identityId()).orElseThrow(),
+                              "SUSPEND",
+                              java.util.Map.of("kind", "SCHEDULED"),
+                              clock.instant(),
+                              null),
+                          null);
+                    });
+            previous.close();
+          }
+          if (checked.action().equals("SUSPEND") && checked.saved.phase().equals("CLAIMED")) {
+            var roles = effects.currentRoles(checked);
+            if (roles == null
+                || roles.isEmpty()
+                || roles.contains(AccountInactivityEffects.Role.UNKNOWN))
+              throw new AccountInactivityEffectException(
+                  AccountInactivityEffectException.Target.KEYCLOAK,
+                  AccountInactivityEffectException.Code.UNCONFIRMED);
+            if (roles.equals(java.util.Set.of(AccountInactivityEffects.Role.ASKER))) {
+              var previous = checked;
+              checked =
+                  work.execute(
+                      ignored -> {
+                        previous.requireOwned(true);
+                        var row = locked(previous.identityId()).orElseThrow();
+                        var saved =
+                            claimJournal.claim(
+                                row,
+                                "DELETE",
+                                java.util.Map.of("kind", "SCHEDULED"),
+                                clock.instant(),
+                                null);
+                        return new ClaimedWork(saved, null);
+                      });
+              previous.close();
+            }
+          }
+          executeScoped(checked);
+        } catch (RuntimeException failure) {
+          if (checked != null) recordScopedFailure(checked, failure);
+        } finally {
+          if (checked != null) checked.close();
+        }
+      }
+      cursor = page.getLast().identityId();
+    }
+  }
+
+  private ClaimedWork scheduledClaim(String id) {
+    var row = locked(id).orElse(null);
+    if (row == null) return null;
+    if (row.status() == Status.ACTIVE) {
+      if (row.dueAt().isAfter(clock.instant())) return null;
+      var prior = claimJournal.saved(id, true);
+      if (prior.work() != null && "NO_EFFECT".equals(prior.phase()))
+        return new ClaimedWork(prior, null, true);
+      // The same row lock interlocks all role writers while remote work runs outside SQL.
+      if (!jdbc.queryForList(
+              "select operation_id from general_admin_identity_intent where account_id=? and status<>'APPLIED' for update",
+              String.class,
+              id)
+          .isEmpty()) return null;
+      var saved =
+          claimJournal.claim(
+              row, "SUSPEND", java.util.Map.of("kind", "SCHEDULED"), clock.instant(), null);
+      audit(id, "SUSPENDING", "DATABASE", "CLAIMED");
+      return new ClaimedWork(saved, null);
+    }
+    if (!java.util.Set.of(Status.SUSPENDING, Status.DELETING, Status.REACTIVATING)
+        .contains(row.status())) return null;
+    var saved = claimJournal.saved(id, true);
+    if (saved.work() == null
+        || !"SCHEDULED"
+            .equals(
+                claimJournal.decode(saved.claimed()).path("initiator").path("kind").textValue()))
+      return null;
+    var checked = new ClaimedWork(saved, null);
+    checked.requireOwned(true);
+    return checked;
+  }
+
+  private boolean scopedManual(String id, boolean restoring) {
+    outsideSql();
+    ManualHuman human = currentPlatformHuman();
+    InactivityClaimJournal.Saved verifiedTerminal = null;
+    var existingRow = snapshot(id).orElseThrow();
+    if (java.util.Set.of(Status.ACTIVE, Status.SUSPENDED).contains(existingRow.status())) {
+      var prior = claimJournal.saved(id, false);
+      if (prior.work() != null && "NO_EFFECT".equals(prior.phase())) {
+        if (scopedTransport == null) throw InactivityClaimJournal.invalid();
+        try (var terminal = new ClaimedWork(prior, human, true)) {
+          scopedTransport.verifyNoEffect(
+              terminal,
+              new de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Frozen(
+                  prior.body()),
+              prior.receipt());
+          terminal.requireCurrent();
+          verifiedTerminal = prior;
+        }
+      }
+    }
+    final var terminalProof = verifiedTerminal;
+    var checked =
+        work.execute(
+            ignored -> {
+              var row = locked(id).orElseThrow();
+              var before = claimJournal.saved(id, true);
+              if (before.work() != null
+                  && "NO_EFFECT".equals(before.phase())
+                  && java.util.Set.of(Status.ACTIVE, Status.SUSPENDED).contains(row.status())
+                  && !before.equals(terminalProof)) throw InactivityClaimJournal.invalid();
+              if (!restoring && row.status() == Status.SUSPENDED
+                  || restoring && row.status() == Status.ACTIVE) return null;
+              if (row.status() == Status.SUSPENDING || row.status() == Status.REACTIVATING) {
+                var saved = claimJournal.saved(id, true);
+                var existing = new ClaimedWork(saved, human);
+                existing.requireOwned(true);
+                if (!existing.action().equals(restoring ? "RESTORE" : "SUSPEND"))
+                  throw InactivityClaimJournal.invalid();
+                return existing;
+              }
+              if (restoring) {
+                if (row.status() != Status.SUSPENDED) throw InactivityClaimJournal.invalid();
+                var prior = claimJournal.saved(id, true);
+                var proof =
+                    jdbc.queryForMap(
+                        "select suspension_body,suspension_receipt from account_inactivity where identity_id=?",
+                        id);
+                if (prior.suspension() == null
+                    || proof.get("suspension_body") == null
+                    || proof.get("suspension_receipt") == null)
+                  throw InactivityClaimJournal.invalid();
+                return new ClaimedWork(
+                    claimJournal.claim(
+                        row, "RESTORE", human.binding(), clock.instant(), prior.suspension()),
+                    human);
+              }
+              if (row.status() != Status.ACTIVE) throw InactivityClaimJournal.invalid();
+              if (!jdbc.queryForList(
+                      "select operation_id from general_admin_identity_intent where account_id=? and status<>'APPLIED' for update",
+                      String.class,
+                      id)
+                  .isEmpty()) throw InactivityClaimJournal.invalid();
+              var saved =
+                  claimJournal.claim(row, "SUSPEND", human.binding(), clock.instant(), null);
+              audit(id, "SUSPENDING", "DATABASE", "CLAIMED");
+              return new ClaimedWork(saved, human);
+            });
+    if (checked == null) return true;
+    try {
+      return executeScoped(checked);
+    } catch (RuntimeException failure) {
+      recordScopedFailure(checked, failure);
+      throw failure;
+    } finally {
+      checked.close();
+    }
+  }
+
+  private void verifyPriorSuspension(ClaimedWork checked) {
+    checked.requireCurrent();
+    if (checked.terminalOnly || scopedTransport == null || !"RESTORE".equals(checked.action()))
+      throw InactivityClaimJournal.invalid();
+    var prior =
+        jdbc.queryForMap(
+            "select suspension_body,suspension_receipt from account_inactivity where identity_id=? and work_id=?",
+            checked.identityId(),
+            checked.workId());
+    scopedTransport.verifyPriorSuspension(
+        checked, (String) prior.get("suspension_body"), (String) prior.get("suspension_receipt"));
+    checked.requireCurrent();
+  }
+
+  private boolean confirmNative(ClaimedWork checked, boolean restoreEnabled) {
+    checked.requireCurrent();
+    if (checked.terminalOnly
+        || scopedTransport == null
+        || !java.util.Set.of("SUSPEND", "RESTORE").contains(checked.action()))
+      throw InactivityClaimJournal.invalid();
+    if (checked.action().equals("RESTORE")) verifyPriorSuspension(checked);
+    var current = claimJournal.saved(checked.identityId(), false);
+    if ("CLAIMED".equals(current.phase())) {
+      var projection = checked.nativeRead();
+      var frozen = scopedTransport.freeze(checked, projection, restoreEnabled);
+      scopedTransport.verifyFrozen(checked, frozen, restoreEnabled);
+      work.executeWithoutResult(
+          ignored -> {
+            checked.requireOwned(true);
+            if (jdbc.update(
+                    "update account_inactivity set native_phase='FROZEN',native_body=? where identity_id=? and work_id=? and native_phase='CLAIMED' and native_body is null",
+                    frozen.body(),
+                    checked.identityId(),
+                    checked.workId())
+                != 1) throw InactivityClaimJournal.invalid();
+          });
+      current = claimJournal.saved(checked.identityId(), false);
+    }
+    var frozen =
+        new de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Frozen(
+            current.body());
+    scopedTransport.verifyFrozen(checked, frozen, restoreEnabled);
+    if ("ACKNOWLEDGED".equals(current.phase())) {
+      scopedTransport.verifyApplied(checked, frozen, current.receipt());
+      return true;
+    }
+    if ("NO_EFFECT".equals(current.phase())) {
+      var refused = scopedTransport.verifyNoEffect(checked, frozen, current.receipt());
+      if ("RESTORE".equals(checked.action())) return false;
+      throw definiteRefusal(refused.status());
+    }
+    if (!"FROZEN".equals(current.phase()) || current.receipt() != null)
+      throw InactivityClaimJournal.invalid();
+    if ("RESTORE".equals(checked.action()))
+      work.executeWithoutResult(
+          ignored -> {
+            checked.requireOwned(true);
+            InactivityRestoreEffectsJournal.requireRestoredOwned(
+                jdbc, checked, checked.saved.source());
+          });
+    var result = scopedTransport.apply(checked, frozen);
+    if (result
+        instanceof
+        de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.NoEffect
+                refused) {
+      var verified = scopedTransport.verifyNoEffect(checked, frozen, refused.receipt());
+      work.executeWithoutResult(
+          ignored -> {
+            checked.requireOwned(true);
+            if (jdbc.update(
+                    "update account_inactivity set native_phase='NO_EFFECT',native_receipt=?,status=?,attempts=attempts+1,last_error=? where identity_id=? and work_id=? and native_phase='FROZEN' and native_body=? and native_receipt is null",
+                    verified.receipt(),
+                    checked.action().equals("SUSPEND") ? "ACTIVE" : "REACTIVATING",
+                    "KEYCLOAK:NO_EFFECT_" + verified.status(),
+                    checked.identityId(),
+                    checked.workId(),
+                    frozen.body())
+                != 1) throw InactivityClaimJournal.invalid();
+            audit(
+                checked.identityId(),
+                checked.original.path("status").textValue(),
+                "KEYCLOAK",
+                "NO_EFFECT_" + verified.status());
+          });
+      if ("RESTORE".equals(checked.action())) return false;
+      throw definiteRefusal(verified.status());
+    }
+    if (!(result
+        instanceof
+        de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Applied applied))
+      throw InactivityClaimJournal.invalid();
+    String receipt = scopedTransport.verifyApplied(checked, frozen, applied.receipt());
+    work.executeWithoutResult(
+        ignored -> {
+          checked.requireOwned(true);
+          if (jdbc.update(
+                  "update account_inactivity set native_phase='ACKNOWLEDGED',native_receipt=? where identity_id=? and work_id=? and native_phase='FROZEN' and native_body=? and native_receipt is null",
+                  receipt,
+                  checked.identityId(),
+                  checked.workId(),
+                  frozen.body())
+              != 1) throw InactivityClaimJournal.invalid();
+          if (checked.action().equals("SUSPEND"))
+            jdbc.update(
+                "update account_inactivity set suspension_operation_id=?,suspension_body=?,suspension_receipt=? where identity_id=? and work_id=?",
+                checked.workId(),
+                frozen.body(),
+                receipt,
+                checked.identityId(),
+                checked.workId());
+        });
+    return true;
+  }
+
+  private RuntimeException definiteRefusal(int status) {
+    if (status == 403)
+      return new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+          "Inactivity operation is not authorized");
+    if (status == 409)
+      return new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+          "Inactivity operation conflicts with current state");
+    return InactivityClaimJournal.invalid();
+  }
+
+  private boolean executeScoped(ClaimedWork checked) {
+    checked.requireCurrent();
+    boolean complete =
+        switch (checked.action()) {
+          case "SUSPEND" -> effects.suspend(checked);
+          case "RESTORE" -> effects.reactivate(checked);
+          case "DELETE" -> effects.delete(checked);
+          default -> throw InactivityClaimJournal.invalid();
+        };
+    return Boolean.TRUE.equals(
+        work.execute(
+            ignored -> {
+              checked.requireOwned(true);
+              Status next =
+                  switch (checked.action()) {
+                    case "SUSPEND" -> Status.SUSPENDED;
+                    case "RESTORE" -> Status.ACTIVE;
+                    case "DELETE" -> Status.DELETED;
+                    default -> throw InactivityClaimJournal.invalid();
+                  };
+              if (jdbc.update(
+                      "update account_inactivity set attempts=attempts+1,last_error=?,status=? where identity_id=? and work_id=? and status=?",
+                      complete ? null : "OTHER:UNCONFIRMED",
+                      complete ? next.name() : checked.original.path("status").textValue(),
+                      checked.identityId(),
+                      checked.workId(),
+                      checked.original.path("status").textValue())
+                  != 1) throw InactivityClaimJournal.invalid();
+              if (complete && next == Status.SUSPENDED)
+                jdbc.update(
+                    "update account_inactivity set suspension_operation_id=? where identity_id=? and work_id=?",
+                    checked.workId(),
+                    checked.identityId(),
+                    checked.workId());
+              if (complete && next == Status.ACTIVE) {
+                var now = clock.instant();
+                jdbc.update(
+                    "update account_inactivity set last_activity=?,due_at=? where identity_id=? and work_id=?",
+                    utc(now),
+                    utc(due(now, checked.original.path("assignedMonths").intValue())),
+                    checked.identityId(),
+                    checked.workId());
+              }
+              audit(
+                  checked.identityId(),
+                  checked.original.path("status").textValue(),
+                  "ALL",
+                  complete ? "CONFIRMED" : "UNCONFIRMED");
+              return complete;
+            }));
+  }
+
+  private void recordScopedFailure(ClaimedWork checked, RuntimeException failure) {
+    try {
+      work.executeWithoutResult(
+          ignored -> {
+            checked.requireOwned(true);
+            String target =
+                failure instanceof AccountInactivityEffectException e ? e.target().name() : "OTHER";
+            String code =
+                failure instanceof AccountInactivityEffectException e ? e.code().name() : "FAILED";
+            jdbc.update(
+                "update account_inactivity set attempts=attempts+1,last_error=? where identity_id=? and work_id=?",
+                target + ":" + code,
+                checked.identityId(),
+                checked.workId());
+            audit(checked.identityId(), checked.original.path("status").textValue(), target, code);
+          });
+    } catch (RuntimeException changed) {
+      /* A different current owner is never overwritten. */
+    }
+  }
+
+  /** Only this service constructs a live frame from an actual owning persisted claim. */
+  public final class ClaimedWork implements AutoCloseable {
+    private final InactivityClaimJournal.Saved saved;
+    private final com.fasterxml.jackson.databind.JsonNode original;
+    private final ManualHuman human;
+    private final boolean terminalOnly;
+    private de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Projection
+        projection;
+    private final Thread owner = Thread.currentThread();
+    private final Instant deadline = clock.instant().plusSeconds(120);
+    private boolean active = true;
+
+    private ClaimedWork(InactivityClaimJournal.Saved saved, ManualHuman human) {
+      this(saved, human, false);
+    }
+
+    private ClaimedWork(
+        InactivityClaimJournal.Saved saved, ManualHuman human, boolean terminalOnly) {
+      this.terminalOnly = terminalOnly;
+      this.saved = saved;
+      this.human = human;
+      this.original = claimJournal.decode(saved.claimed());
+      if (saved.work() == null
+          || !java.util.UUID.fromString(saved.work()).toString().equals(saved.work())
+          || !saved.work().equals(original.path("workId").textValue())
+          || !saved.id().equals(original.path("identityId").textValue())
+          || !java.util.UUID.fromString(saved.id()).toString().equals(saved.id()))
+        throw InactivityClaimJournal.invalid();
+      boolean manual = "HUMAN_ADMIN".equals(original.path("initiator").path("kind").textValue());
+      if (!terminalOnly && manual != (human != null)) throw InactivityClaimJournal.invalid();
+    }
+
+    public String identityId() {
+      return saved.id();
+    }
+
+    public String workId() {
+      return saved.work();
+    }
+
+    public Long tenantId() {
+      return original.path("tenantId").isNull()
+          ? null
+          : Long.valueOf(original.path("tenantId").textValue());
+    }
+
+    public String action() {
+      return original.path("action").textValue();
+    }
+
+    public String originalRowJson() {
+      requireCurrent();
+      return saved.claimed();
+    }
+
+    public String originalSourceJson() {
+      requireCurrent();
+      return saved.source();
+    }
+
+    public String suspensionOperationId() {
+      return original.path("suspensionOperationId").isNull()
+          ? null
+          : original.path("suspensionOperationId").textValue();
+    }
+
+    public String rawHumanBearer() {
+      requireCurrent();
+      if (human == null) return null;
+      return human.bearer;
+    }
+
+    public boolean humanInitiated() {
+      return human != null;
+    }
+
+    public boolean terminalOnly() {
+      return terminalOnly;
+    }
+
+    public String humanSubject() {
+      return human == null ? null : human.subject;
+    }
+
+    public String humanIssuer() {
+      return human == null ? null : human.issuer;
+    }
+
+    public String humanClient() {
+      return human == null ? null : human.client;
+    }
+
+    public String publicIssuer() {
+      return scopedIssuer;
+    }
+
+    public de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Projection
+        nativeRead() {
+      requireCurrent();
+      if (terminalOnly || scopedTransport == null) throw InactivityClaimJournal.invalid();
+      if (projection == null) projection = scopedTransport.read(this);
+      if (projection == null
+          || !identityId().equals(projection.id())
+          || !java.util.Objects.equals(tenantId(), projection.tenantId()))
+        throw InactivityClaimJournal.invalid();
+      requireCurrent();
+      return projection;
+    }
+
+    public boolean suspendNative() {
+      if (!"SUSPEND".equals(action())) throw InactivityClaimJournal.invalid();
+      return confirmNative(this, false);
+    }
+
+    public void verifyPriorSuspension() {
+      AccountInactivityService.this.verifyPriorSuspension(this);
+    }
+
+    public boolean restoreNative(boolean originalEnabled) {
+      if (!"RESTORE".equals(action())) throw InactivityClaimJournal.invalid();
+      return confirmNative(this, originalEnabled);
+    }
+
+    /** Authenticated durable refusal only; unsigned responses never authorize compensation. */
+    public boolean restoreWasRefused(boolean originalEnabled) {
+      requireCurrent();
+      if (terminalOnly || scopedTransport == null || !"RESTORE".equals(action()))
+        throw InactivityClaimJournal.invalid();
+      var current = claimJournal.saved(identityId(), false);
+      if (!"NO_EFFECT".equals(current.phase())) return false;
+      var frozen =
+          new de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Frozen(
+              current.body());
+      scopedTransport.verifyFrozen(this, frozen, originalEnabled);
+      scopedTransport.verifyNoEffect(this, frozen, current.receipt());
+      requireCurrent();
+      return true;
+    }
+
+    public void finishRefusedRestore(boolean originalEnabled) {
+      if (!restoreWasRefused(originalEnabled)) throw InactivityClaimJournal.invalid();
+      var authenticated = claimJournal.saved(identityId(), false);
+      var frozen =
+          new de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Frozen(
+              authenticated.body());
+      var refused = scopedTransport.verifyNoEffect(this, frozen, authenticated.receipt());
+      work.executeWithoutResult(
+          ignored -> {
+            requireOwned(true);
+            if (!authenticated.equals(claimJournal.saved(identityId(), true)))
+              throw InactivityClaimJournal.invalid();
+            InactivityRestoreEffectsJournal.requireCompensatedOwned(jdbc, this, saved.source());
+            if (jdbc.update(
+                    "update account_inactivity set status='SUSPENDED' where identity_id=? and work_id=? and status='REACTIVATING' and native_phase='NO_EFFECT' and native_body=? and native_receipt=?",
+                    identityId(),
+                    workId(),
+                    authenticated.body(),
+                    authenticated.receipt())
+                != 1) throw InactivityClaimJournal.invalid();
+            audit(identityId(), "SUSPENDED", "ALL", "NO_EFFECT_COMPENSATED");
+          });
+      throw definiteRefusal(refused.status());
+    }
+
+    public void requireCurrent() {
+      outsideSql();
+      requireOwned(false);
+    }
+
+    public void requireOwnedSql() {
+      if (!org.springframework.transaction.support.TransactionSynchronizationManager
+          .isActualTransactionActive()) throw InactivityClaimJournal.invalid();
+      requireOwned(true);
+    }
+
+    private void requireOwned(boolean lock) {
+      if (!active || owner != Thread.currentThread() || !clock.instant().isBefore(deadline))
+        throw InactivityClaimJournal.invalid();
+      if (human != null) {
+        ManualHuman current = currentPlatformHuman();
+        if (!human.subject.equals(current.subject)
+            || !human.issuer.equals(current.issuer)
+            || !human.client.equals(current.client)
+            || !terminalOnly
+                && !claimJournal
+                    .encode(current.binding())
+                    .equals(claimJournal.encode(original.path("initiator"))))
+          throw InactivityClaimJournal.invalid();
+      }
+      var row = lock ? locked(identityId()).orElseThrow() : snapshot(identityId()).orElseThrow();
+      var current = claimJournal.saved(identityId(), lock);
+      if (!saved.work().equals(current.work())
+          || !saved.claimed().equals(current.claimed())
+          || !saved.source().equals(current.source())
+          || current.claimedAt() == null
+          || !java.util.Objects.equals(saved.claimedAt(), current.claimedAt())
+          || original.path("claimedAtMicros").longValue()
+              != InactivityClaimJournal.micros(current.claimedAt())
+          || !java.util.Objects.equals(
+              "SUSPEND".equals(action()) && "ACKNOWLEDGED".equals(current.phase())
+                  ? saved.work()
+                  : saved.suspension(),
+              current.suspension())
+          || !java.util.Objects.equals(tenantId(), row.tenantId())
+          || original.path("assignedMonths").intValue() != row.assignedMonths()
+          || original.path("revision").longValue() != row.revision()
+          || original.path("lastActivityMicros").longValue()
+              != InactivityClaimJournal.micros(row.lastActivity())
+          || original.path("dueAtMicros").longValue() != InactivityClaimJournal.micros(row.dueAt())
+          || !(terminalOnly
+                  ? action().equals("RESTORE") ? "SUSPENDED" : "ACTIVE"
+                  : original.path("status").textValue())
+              .equals(row.status().name())
+          || terminalOnly
+              && (!"NO_EFFECT".equals(current.phase())
+                  || current.receipt() == null
+                  || current.body() == null)
+          || !saved.source().equals(claimJournal.source(identityId(), tenantId(), lock)))
+        throw InactivityClaimJournal.invalid();
+    }
+
+    @Override
+    public void close() {
+      active = false;
+    }
+
+    @Override
+    public String toString() {
+      return "ClaimedWork[ownership=redacted]";
+    }
   }
 
   private Optional<Snapshot> locked(String id) {

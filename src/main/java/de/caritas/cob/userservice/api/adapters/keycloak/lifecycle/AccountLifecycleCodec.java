@@ -1326,6 +1326,16 @@ public final class AccountLifecycleCodec {
     return new IllegalArgumentException("Invalid receiver creation proof");
   }
 
+  public String verifyMaintenanceInactivitySuspendReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "deactivate", "UPDATED");
+  }
+
+  public String verifyMaintenanceInactivityRestoreReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "reactivate", "UPDATED");
+  }
+
   public String claimedScheduledDeletionIntentDigest(JsonNode exactOwnedEnvelope) {
     return digest(
         "claimed-scheduled-deletion-intent/v1",
