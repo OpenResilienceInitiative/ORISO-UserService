@@ -28,11 +28,6 @@ public class DeleteAskerDraftMessagesAction implements ActionCommand<AskerDeleti
 
   private final @NonNull DraftMessageRepository draftMessageRepository;
 
-  /**
-   * Deletes all {@link DraftMessage}s belonging to the {@link User} being deleted.
-   *
-   * @param actionTarget the {@link AskerDeletionWorkflowDTO} containing the user
-   */
   /** Only the actual original-absence inactivity acknowledgement can name this identity. */
   public java.util.List<DeletionWorkflowError> executeOriginallyAbsent(
       de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
@@ -59,6 +54,11 @@ public class DeleteAskerDraftMessagesAction implements ActionCommand<AskerDeleti
     return java.util.List.copyOf(errors);
   }
 
+  /**
+   * Deletes all {@link DraftMessage}s belonging to the {@link User} being deleted.
+   *
+   * @param actionTarget the {@link AskerDeletionWorkflowDTO} containing the user
+   */
   @Override
   public void execute(AskerDeletionWorkflowDTO actionTarget) {
     try {

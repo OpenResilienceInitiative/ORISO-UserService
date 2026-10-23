@@ -30,11 +30,6 @@ public class DeleteAskerEventNotificationsAction
 
   private final @NonNull EventNotificationRepository eventNotificationRepository;
 
-  /**
-   * Deletes the whole notification feed of the {@link User} being deleted.
-   *
-   * @param actionTarget the {@link AskerDeletionWorkflowDTO} containing the user
-   */
   /** Only the actual original-absence inactivity acknowledgement can name this identity. */
   public java.util.List<DeletionWorkflowError> executeOriginallyAbsent(
       de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
@@ -61,6 +56,11 @@ public class DeleteAskerEventNotificationsAction
     return java.util.List.copyOf(errors);
   }
 
+  /**
+   * Deletes the whole notification feed of the {@link User} being deleted.
+   *
+   * @param actionTarget the {@link AskerDeletionWorkflowDTO} containing the user
+   */
   @Override
   public void execute(AskerDeletionWorkflowDTO actionTarget) {
     try {
