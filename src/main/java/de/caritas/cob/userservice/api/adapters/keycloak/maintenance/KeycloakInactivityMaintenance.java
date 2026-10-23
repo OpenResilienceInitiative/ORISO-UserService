@@ -245,6 +245,52 @@ public final class KeycloakInactivityMaintenance implements AccountInactivityIde
         receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), frozen);
   }
 
+  @Override
+  public String bindSuspensionCustody(String exactPrefix) {
+    if (exactPrefix == null || exactPrefix.getBytes(StandardCharsets.UTF_8).length > 8192)
+      throw unavailable();
+    var value = codec.read(exactPrefix, JsonNode.class);
+    String digest = codec.claimedInactivitySuspensionCustodyDigest(value);
+    if (!exactPrefix.equals(codec.canonical(value))) throw unavailable();
+    verifyCustodyNative(value);
+    var sealed = ((com.fasterxml.jackson.databind.node.ObjectNode) value).deepCopy();
+    sealed.put("bindingDigest", digest);
+    String result = codec.canonical(sealed);
+    if (result.getBytes(StandardCharsets.UTF_8).length > 8192) throw unavailable();
+    return result;
+  }
+
+  @Override
+  public void verifySuspensionCustody(String exactSealedCustody) {
+    if (exactSealedCustody == null
+        || exactSealedCustody.getBytes(StandardCharsets.UTF_8).length > 8192) throw unavailable();
+    var value = codec.read(exactSealedCustody, JsonNode.class);
+    fields(value, Set.of("representation", "originalRow", "source", "nativeBody", "nativeReceipt", "phase", "bindingDigest"));
+    if (!exactSealedCustody.equals(codec.canonical(value))
+        || !value.path("bindingDigest").isTextual()
+        || !value.path("bindingDigest").textValue().matches("[0-9a-f]{64}")) throw unavailable();
+    var prefix = ((com.fasterxml.jackson.databind.node.ObjectNode) value).deepCopy();
+    prefix.remove("bindingDigest");
+    String expected = codec.claimedInactivitySuspensionCustodyDigest(prefix);
+    if (!java.security.MessageDigest.isEqual(
+        expected.getBytes(StandardCharsets.US_ASCII),
+        value.path("bindingDigest").textValue().getBytes(StandardCharsets.US_ASCII))) throw unavailable();
+    verifyCustodyNative(prefix);
+  }
+
+  private void verifyCustodyNative(JsonNode prefix) {
+    String phase = prefix.path("phase").textValue();
+    if ("ACKNOWLEDGED".equals(phase))
+      codec.verifyMaintenanceInactivitySuspendReceipt(
+          prefix.path("nativeReceipt").textValue(), realmId,
+          actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), prefix.path("nativeBody"));
+    else if ("NO_EFFECT".equals(phase))
+      codec.verifyMaintenanceNoEffectReceipt(
+          prefix.path("nativeReceipt").textValue(), realmId,
+          actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), prefix.path("nativeBody"), "deactivate");
+    else if (!Set.of("CAPTURED", "FROZEN").contains(phase)) throw unavailable();
+  }
+
   private Map<String, Object> body(ClaimedWork work, String state, boolean restoreEnabled) {
     if (!Set.of("SUSPEND", "RESTORE").contains(work.action())) throw unavailable();
     return Map.of(

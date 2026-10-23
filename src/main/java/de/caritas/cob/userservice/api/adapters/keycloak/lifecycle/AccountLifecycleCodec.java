@@ -1302,9 +1302,18 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
         ClaimedDeletionIntentSchema.inactivity(exactOwnedEnvelope, rowDigest));
   }
 
-  /** Closed fixed-purpose source custody until independent MAC/schema tests witness acceptance. */
+  /** Fixed original SUSPEND source data; actual private SQL ownership is independently required. */
   public String claimedInactivitySuspensionCustodyDigest(JsonNode exactOwnedCustody) {
-    throw new IllegalArgumentException("Original suspension source custody unavailable");
+    if (exactOwnedCustody == null || !exactOwnedCustody.isObject())
+      throw new IllegalArgumentException("Invalid original suspension source custody");
+    var bounded = ((com.fasterxml.jackson.databind.node.ObjectNode) exactOwnedCustody).deepCopy();
+    bounded.put("bindingDigest", "0".repeat(64));
+    if (canonical(bounded).getBytes(StandardCharsets.UTF_8).length > 8192)
+      throw new IllegalArgumentException("Invalid original suspension source custody");
+    ClaimedInactivitySuspensionCustodySchema.require(exactOwnedCustody, null);
+    String rowDigest = claimedInactivityRowDigest(exactOwnedCustody.path("originalRow"));
+    var checked = ClaimedInactivitySuspensionCustodySchema.require(exactOwnedCustody, rowDigest);
+    return digest("claimed-inactivity-suspension-custody/v1", checked);
   }
 
   public String claimedInactivityRowDigest(JsonNode exactOwnedRow) {

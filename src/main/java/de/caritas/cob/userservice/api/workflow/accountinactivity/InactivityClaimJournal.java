@@ -19,6 +19,7 @@ final class InactivityClaimJournal {
       String body,
       String receipt,
       String suspension,
+      String suspensionSource,
       Instant claimedAt) {
     @Override
     public String toString() {
@@ -40,7 +41,7 @@ final class InactivityClaimJournal {
   Saved saved(String id, boolean lock) {
     return jdbc
         .query(
-            "select identity_id,work_id,claimed_json,source_json,native_phase,native_body,native_receipt,suspension_operation_id,claimed_at from account_inactivity where identity_id=?"
+            "select identity_id,work_id,claimed_json,source_json,native_phase,native_body,native_receipt,suspension_operation_id,suspension_source_json,claimed_at from account_inactivity where identity_id=?"
                 + (lock ? " for update" : ""),
             (r, n) ->
                 new Saved(
@@ -52,7 +53,8 @@ final class InactivityClaimJournal {
                     r.getString(6),
                     r.getString(7),
                     r.getString(8),
-                    r.getTimestamp(9) == null ? null : r.getTimestamp(9).toInstant()),
+                    r.getString(9),
+                    r.getTimestamp(10) == null ? null : r.getTimestamp(10).toInstant()),
             id)
         .stream()
         .findFirst()
@@ -129,7 +131,9 @@ final class InactivityClaimJournal {
           Object value = row.get(field);
           selected.put(
               field,
-              value instanceof Timestamp timestamp ? timestamp.toInstant().toString() : value);
+              value instanceof Timestamp timestamp
+                  ? timestamp.toLocalDateTime().toInstant(java.time.ZoneOffset.UTC).toString()
+                  : value);
         }
         rows.add(selected);
       }

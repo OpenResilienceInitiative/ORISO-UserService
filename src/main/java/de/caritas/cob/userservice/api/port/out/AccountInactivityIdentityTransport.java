@@ -63,4 +63,9 @@ public interface AccountInactivityIdentityTransport {
   default void verifySuspensionCustody(String exactSealedCustody) {
     throw new IllegalStateException("Original suspension source custody unavailable");
   }
+
+  /** Historical fixed RESTORE proof only; does not issue work or current write authority. */
+  default void verifyCompletedInactivityRestoreReceipt(String frozenBody, String receipt) {
+    throw new IllegalStateException("Completed inactivity restore proof unavailable");
+  }
 }

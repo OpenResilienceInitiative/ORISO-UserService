@@ -408,7 +408,7 @@ class ScopedInactivityNativeBoundaryTest {
         captured,
         f.value("suspension_source_json"),
         "A RESTORE claim must not overwrite the named SUSPEND birth/Matrix source");
-    assertTrue(f.service.suspend(ACCOUNT));
+    assertTrue(assertDoesNotThrow(() -> f.service.suspend(ACCOUNT)));
     var replaced = f.json.readTree(f.value("suspension_source_json"));
     assertNotEquals(first, replaced.path("originalRow").path("workId").textValue());
     assertEquals(f.value("work_id"), replaced.path("originalRow").path("workId").textValue());

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -123,6 +124,92 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
         () -> codec.claimedInactivitySuspensionCustodyDigest(fractional));
   }
 
+  @Test
+  void fixedTransportCustodySealsOnlyItsClosedSourceAndAuthenticatesOriginalTerminalReceipts() {
+    var transport = dataTransport();
+    for (String phase : List.of("CAPTURED", "FROZEN", "ACKNOWLEDGED", "NO_EFFECT")) {
+      var value = custody(phase, true);
+      String sealed = assertDoesNotThrow(() -> transport.adapter.bindSuspensionCustody(codec.canonical(value)));
+      assertDoesNotThrow(() -> transport.adapter.verifySuspensionCustody(sealed));
+      var parsed = codec.read(sealed, ObjectNode.class);
+      assertEquals(7, parsed.size());
+      String binding = parsed.remove("bindingDigest").textValue();
+      assertEquals(codec.claimedInactivitySuspensionCustodyDigest(value), binding);
+      parsed.put("bindingDigest", "0".repeat(64));
+      assertThrows(RuntimeException.class, () -> transport.adapter.verifySuspensionCustody(codec.canonical(parsed)));
+    }
+    var forged = custody("ACKNOWLEDGED", true);
+    var reply = codec.read(forged.path("nativeReceipt").textValue(), ObjectNode.class);
+    String token = reply.path("receipt").textValue();
+    reply.put("receipt", token.substring(0, token.indexOf('.') + 1) + "0".repeat(64));
+    forged.put("nativeReceipt", codec.canonical(reply));
+    assertThrows(RuntimeException.class, () -> transport.adapter.bindSuspensionCustody(codec.canonical(forged)));
+    verifyNoInteractions(transport.http, transport.broker);
+  }
+
+  @Test
+  void fixedCompletedRestoreReceiptIsHistoricalDataWithoutPendingWorkOrOutboundDispatch() {
+    var transport = dataTransport();
+    var body = completedRestore();
+    String reply = nativeReceipt(body, "reactivate", false);
+    assertDoesNotThrow(() -> transport.adapter.verifyCompletedInactivityRestoreReceipt(codec.canonical(body), reply));
+    verifyNoInteractions(transport.http, transport.broker);
+  }
+
+  @Test
+  void completedRestoreRejectsCrossCommandMalformedWorkflowExtraChangeAndForgedProof() {
+    var transport = dataTransport();
+    var body = completedRestore();
+    for (String command : List.of("delete", "deactivate")) {
+      String reply = nativeReceipt(body, command, false);
+      assertThrows(RuntimeException.class, () -> transport.adapter.verifyCompletedInactivityRestoreReceipt(codec.canonical(body), reply));
+    }
+    var extra = body.deepCopy();
+    ((ObjectNode) extra.path("change")).put("password", "forbidden");
+    String extraReply = nativeReceipt(extra, "reactivate", false);
+    assertThrows(RuntimeException.class, () -> transport.adapter.verifyCompletedInactivityRestoreReceipt(codec.canonical(extra), extraReply));
+    var missing = body.deepCopy();
+    ((ObjectNode) missing.path("workflow")).remove("suspensionOperationId");
+    String missingReply = nativeReceipt(missing, "reactivate", false);
+    assertThrows(RuntimeException.class, () -> transport.adapter.verifyCompletedInactivityRestoreReceipt(codec.canonical(missing), missingReply));
+    var fraction = body.deepCopy();
+    ((ObjectNode) fraction.path("workflow")).put("revision", 0.5);
+    String fractionReply = nativeReceipt(fraction, "reactivate", false);
+    assertThrows(RuntimeException.class, () -> transport.adapter.verifyCompletedInactivityRestoreReceipt(codec.canonical(fraction), fractionReply));
+    var forged = codec.read(nativeReceipt(body, "reactivate", false), ObjectNode.class);
+    String token = forged.path("receipt").textValue();
+    forged.put("receipt", token.substring(0, token.indexOf('.') + 1) + "0".repeat(64));
+    assertThrows(RuntimeException.class, () -> transport.adapter.verifyCompletedInactivityRestoreReceipt(codec.canonical(body), codec.canonical(forged)));
+    verifyNoInteractions(transport.http, transport.broker);
+  }
+
+  private ObjectNode completedRestore() {
+    var body = (ObjectNode) custody("FROZEN", true).path("nativeBody").deepCopy();
+    String restore = "61000000-0000-4000-8000-000000000005";
+    body.put("operationId", restore);
+    ((ObjectNode) body.path("target").path("origin")).put("workflowId", restore);
+    var workflow = (ObjectNode) body.path("workflow");
+    workflow.put("workId", restore);
+    workflow.put("action", "RESTORE");
+    workflow.put("suspensionOperationId", WORK);
+    ((ObjectNode) body.path("change")).put("restoreEnabled", true);
+    return body;
+  }
+
+  private record DataTransport(de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakInactivityMaintenance adapter,
+      org.springframework.web.client.RestTemplate http,
+      de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker broker) {}
+
+  private DataTransport dataTransport() {
+    var http = mock(org.springframework.web.client.RestTemplate.class);
+    var broker = mock(de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker.class);
+    var actors = mock(de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration.class);
+    when(actors.require(de.caritas.cob.userservice.api.config.auth.TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(
+        new de.caritas.cob.userservice.api.config.auth.TaskActorCredentials(de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "synthetic-only", OWNER));
+    return new DataTransport(new de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakInactivityMaintenance(http, actors, broker, codec,
+        "https://internal.example.test", "fixture", REALM, "https://public.example.test/realms/fixture"), http, broker);
+  }
+
   private ObjectNode custody(String phase, boolean local) {
     var value = codec.read("{}", ObjectNode.class);
     value.put("representation", "CLAIMED_INACTIVITY_SUSPENSION_CUSTODY_V1");
@@ -189,11 +276,15 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
   }
 
   private String nativeReceipt(JsonNode body, boolean refused) {
+    return nativeReceipt(body, "deactivate", refused);
+  }
+
+  private String nativeReceipt(JsonNode body, String command, boolean refused) {
     var outcome = new TreeMap<String, Object>();
     outcome.put("realmId", REALM);
     outcome.put("accountId", ACCOUNT);
-    outcome.put("operationId", WORK);
-    outcome.put("command", "deactivate");
+    outcome.put("operationId", body.path("operationId").textValue());
+    outcome.put("command", command);
     outcome.put("ownerClient", "backend-account-admin");
     outcome.put("ownerSubject", OWNER);
     outcome.put("intentDigest", codec.digest("maintenance-intent", body));
@@ -211,7 +302,7 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
     String token = encoded + "." + mac(domain + "\n" + encoded);
     var reply = new TreeMap<String, Object>();
     reply.put("accountId", ACCOUNT);
-    reply.put("operationId", WORK);
+    reply.put("operationId", body.path("operationId").textValue());
     reply.put("result", refused ? "NO_EFFECT" : "UPDATED");
     reply.put("receipt", token);
     if (refused) reply.put("status", 409);
