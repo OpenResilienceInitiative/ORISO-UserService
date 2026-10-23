@@ -641,9 +641,10 @@ class AskerReactivationNativePairProof {
                 + account
                 + "/read",
             new HttpEntity<>(raw, headers),
-            JsonNode.class);
+            String.class);
     assertEquals(200, reply.getStatusCode().value());
-    assertEquals(account, Objects.requireNonNull(reply.getBody()).path("id").textValue());
-    return reply.getBody();
+    var projection = codec.read(Objects.requireNonNull(reply.getBody()), JsonNode.class);
+    assertEquals(account, projection.path("id").textValue());
+    return projection;
   }
 }

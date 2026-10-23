@@ -54,6 +54,7 @@ class AskerReactivationPairControls(unittest.TestCase):
             for java_type, expected in [
                 ("org.springframework.web.client.HttpClientErrorException$Forbidden", "HTTP_403"),
                 ("org.springframework.web.client.HttpClientErrorException$Unauthorized", "HTTP_401"),
+                ("org.springframework.http.converter.HttpMessageConversionException", "RESPONSE_CONVERSION_ERROR"),
                 ("java.lang.RuntimeException.SYNTHETIC_JWT", "OTHER_JAVA_ERROR")]:
                 (reports / ("TEST-" + proof.SUITE + ".xml")).write_text('<testsuite name="' + proof.SUITE + '"><testcase classname="' + proof.SUITE + '" name="' + proof.CASE + '"><error type="' + java_type + '" message="Bearer SYNTHETIC_JWT password=SYNTHETIC_PASSWORD OTP=654321">Bearer SYNTHETIC_JWT</error></testcase></testsuite>')
                 result = proof.sanitize(reports, output)

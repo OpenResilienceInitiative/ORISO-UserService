@@ -80,6 +80,9 @@ def sanitize(reports, output):
                             "org.springframework.web.client.HttpClientErrorException$Conflict": "HTTP_409",
                             "org.springframework.web.client.HttpServerErrorException$InternalServerError": "HTTP_500",
                             "org.springframework.web.client.HttpServerErrorException$ServiceUnavailable": "HTTP_503",
+                            "org.springframework.http.converter.HttpMessageConversionException": "RESPONSE_CONVERSION_ERROR",
+                            "org.springframework.web.client.UnknownContentTypeException": "RESPONSE_CONTENT_TYPE_ERROR",
+                            "org.springframework.web.client.RestClientException": "RESPONSE_CLIENT_ERROR",
                             "org.springframework.web.client.ResourceAccessException": "TRANSPORT_ERROR",
                             "org.opentest4j.AssertionFailedError": "ASSERTION_FAILURE",
                         }.get(problem.get("type"), "OTHER_JAVA_ERROR"))
