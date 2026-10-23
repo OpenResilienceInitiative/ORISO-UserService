@@ -30,6 +30,25 @@ public class TaskActorTokenBroker {
     this.keycloak = keycloak;
   }
 
+  /** Only the fixed configured-import HTTP trigger may obtain this live result. */
+  public VerifiedConsultantImportTrigger verifyConsultantImportTrigger(String rawToken) {
+    throw new IllegalStateException("Consultant import trigger unavailable");
+  }
+
+  public static final class VerifiedConsultantImportTrigger implements AutoCloseable {
+    private VerifiedConsultantImportTrigger() {}
+
+    public void requireLive() {
+      throw new IllegalStateException("Consultant import trigger unavailable");
+    }
+
+    @Override
+    public void close() {}
+
+    @Override
+    public String toString() { return "VerifiedConsultantImportTrigger[redacted]"; }
+  }
+
   public TaskToken issue(TaskPurpose purpose) {
     var binding = configuration.require(purpose);
     if (binding.actor() == TaskActor.ACCOUNT_CREATE || binding.actor() == TaskActor.ACCOUNT_ADMIN) {

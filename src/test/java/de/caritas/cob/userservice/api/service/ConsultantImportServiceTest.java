@@ -73,6 +73,14 @@ class ConsultantImportServiceTest {
     ReflectionTestUtils.setField(consultantImportService, "checkedPolicyReads", checkedPolicyReads);
   }
 
+  @Test
+  void fiveActorNoArgumentEntryRejectsBeforeReadingAnyConfiguredFile() {
+    ReflectionTestUtils.setField(consultantImportService,"lifecycleEnvironment",new org.springframework.mock.env.MockEnvironment().withProperty("TASK_IDENTITY_MODEL","FIVE_ACTORS"));
+    ReflectionTestUtils.setField(consultantImportService,"importFilename",tempDir.resolve("must-not-be-opened.csv").toString());
+    assertThrows(org.springframework.security.access.AccessDeniedException.class,consultantImportService::startImport);
+    org.mockito.Mockito.verifyNoInteractions(identityUsernameAvailability,consultantService,consultingTypeManager,agencyService,userHelper,createConsultantSaga,consultantAgencyRelationCreatorService,lifecycleIdentities,checkedPolicyReads);
+  }
+
   // ---------------------------------------------------------------------------
   // startImport — file read
   // ---------------------------------------------------------------------------

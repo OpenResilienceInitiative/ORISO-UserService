@@ -329,6 +329,31 @@ class AccountInactivityServiceTest {
         .isEqualTo(AccountInactivityService.Status.ACTIVE);
   }
 
+  @Test
+  void changedOrMissingActualClaimTimestampCannotDispatchOrAcknowledgeTheSavedOwner() {
+    for(boolean missing:java.util.List.of(false,true)) {
+      var writes=new java.util.concurrent.atomic.AtomicInteger();
+      var rejected=new java.util.concurrent.atomic.AtomicReference<Throwable>();
+      var service=createService(new Effects() {
+        public Set<Role> currentRoles(String id) {return Set.of(Role.CONSULTANT);}
+        public boolean suspend(AccountInactivityService.ClaimedWork work) {
+          work.requireCurrent();
+          inactivityJdbc().update("update account_inactivity set claimed_at=? where identity_id=?",
+              missing?null:java.sql.Timestamp.from(Instant.parse("2026-02-01T00:00:00.000001Z")),work.identityId());
+          try {work.requireCurrent();writes.incrementAndGet();return true;}
+          catch(RuntimeException invalid) {rejected.set(invalid);return false;}
+        }
+      });
+      scopedMode(service);String id="61000000-0000-4000-8000-000000000011";
+      service.assignAtCreation(id,7L,24,0,Instant.parse("2023-01-01T00:00:00Z"));
+      service.scan(false);
+      org.junit.jupiter.api.Assertions.assertAll(
+          () -> assertThat(rejected.get()).isInstanceOf(IllegalStateException.class),
+          () -> assertThat(writes.get()).isZero(),
+          () -> assertThat(service.snapshot(id).orElseThrow().status()).isEqualTo(AccountInactivityService.Status.SUSPENDING));
+    }
+  }
+
   private void scopedMode(AccountInactivityService service) {
     var mode =
         org.mockito.Mockito.mock(

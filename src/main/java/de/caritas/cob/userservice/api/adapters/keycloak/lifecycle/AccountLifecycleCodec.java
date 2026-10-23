@@ -123,6 +123,14 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     }
   }
 
+  String sealReactivationIntent(JsonNode independentlyCheckedOwnedMetadata, byte[] frozenCommand) {
+    throw new IllegalArgumentException("Reactivation intent is unavailable");
+  }
+
+  byte[] openReactivationIntent(JsonNode independentlyCheckedOwnedMetadata, String envelope) {
+    throw new IllegalArgumentException("Reactivation intent is unavailable");
+  }
+
   String sealSelfPasswordIntent(JsonNode independentlyCheckedOwnedMetadata, byte[] frozenCommand) {
     return new SelfPasswordIntentCodec(this, this::mac)
         .seal(independentlyCheckedOwnedMetadata, frozenCommand);
