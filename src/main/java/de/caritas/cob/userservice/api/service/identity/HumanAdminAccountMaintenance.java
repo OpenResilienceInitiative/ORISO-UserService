@@ -281,7 +281,13 @@ public final class HumanAdminAccountMaintenance {
       if ("APPLIED".equals(intent.status)) {
         checked.applied = true;
         requireDesired(authorizedRow(accountId, false, self), original, profile);
-        transport.verifyProfileReceipt(checked, frozen(intent), intent.receipt);
+        var originalFrozen = frozen(intent);
+        String originalReceipt = transport.verifyProfileReceipt(checked, originalFrozen, intent.receipt);
+        // Rejoin current receiving authority using only the original acknowledged native command.
+        // A refusal here cannot replace the already successful local/native receipt or redo SQL.
+        var replay = transport.executeProfile(checked, originalFrozen);
+        if (!(replay instanceof HumanAdminMaintenanceTransport.ProfileApplied applied)
+            || !originalReceipt.equals(transport.verifyProfileReceipt(checked, originalFrozen, applied.receipt()))) throw unavailable();
         return profileResultOrConsultant(checked);
       }
       if ("PREPARED".equals(intent.status)) {

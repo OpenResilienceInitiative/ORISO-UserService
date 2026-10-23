@@ -990,6 +990,16 @@ class HumanAdminAccountMaintenanceTest {
           "self-unchanged".equals(scenario));
     boolean revokedReplay = scenario.endsWith("replay-revoked");
     var authorityChecks = new java.util.concurrent.atomic.AtomicInteger();
+    boolean successfulReplay = Set.of("replay", "roles-replay", "self-replay").contains(scenario);
+    if (successfulReplay)
+      server
+          .expect(requestTo(URL + "/" + command))
+          .andExpect(r -> {
+            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            assertEquals(frozen.get(), ((MockClientHttpRequest) r).getBodyAsString());
+            authorityChecks.incrementAndGet();
+          })
+          .andRespond(profileReceipt(command, roleEdit ? "/human-roles/test-consultant-chat" : null, null));
     if (revokedReplay)
       server
           .expect(requestTo(URL + "/" + command))
@@ -1132,11 +1142,12 @@ class HumanAdminAccountMaintenanceTest {
           jdbc.queryForObject(
               "select managed_paused from admin where admin_id=?", Boolean.class, ACCOUNT));
     }
-    if (Set.of("replay", "roles-replay", "self-replay").contains(scenario)) {
+    if (successfulReplay) {
       assertEquals(
           "New",
           assertDoesNotThrow(() -> publicEdit.updateConsultant(ACCOUNT, dto, !self))
               .getFirstName());
+      assertEquals(1, authorityChecks.get());
       verify(consultants, times(1)).saveConsultant(any());
       jdbc.update("update consultant set is_absent=? where consultant_id=?", self, ACCOUNT);
       assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, !self));
