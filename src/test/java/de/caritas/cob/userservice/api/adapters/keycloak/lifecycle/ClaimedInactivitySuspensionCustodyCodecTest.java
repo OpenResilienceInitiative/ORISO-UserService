@@ -23,10 +23,12 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
   void capturedOriginalSourceAndOriginalAbsenceHaveTheFixedIndependentMac() throws Exception {
     for (boolean local : List.of(true, false)) {
       var value = custody("CAPTURED", local);
-      String actual = assertDoesNotThrow(() -> codec.claimedInactivitySuspensionCustodyDigest(value));
+      String actual =
+          assertDoesNotThrow(() -> codec.claimedInactivitySuspensionCustodyDigest(value));
       assertEquals(independent(value, "claimed-inactivity-suspension-custody/v1"), actual);
       assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivityRowDigest(value));
-      assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivityDeletionIntentDigest(value));
+      assertThrows(
+          IllegalArgumentException.class, () -> codec.claimedInactivityDeletionIntentDigest(value));
     }
   }
 
@@ -34,22 +36,31 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
   void frozenAndBothBoundTerminalShapesPreserveTheOriginalSourceAndOperation() throws Exception {
     for (String phase : List.of("FROZEN", "ACKNOWLEDGED", "NO_EFFECT")) {
       var value = custody(phase, true);
-      String actual = assertDoesNotThrow(() -> codec.claimedInactivitySuspensionCustodyDigest(value));
+      String actual =
+          assertDoesNotThrow(() -> codec.claimedInactivitySuspensionCustodyDigest(value));
       assertEquals(independent(value, "claimed-inactivity-suspension-custody/v1"), actual);
       assertEquals(WORK, value.path("nativeBody").path("operationId").textValue());
-      assertEquals("2023-01-01T00:00:00.123456Z", value.path("source").path("user").get(0).path("create_date").textValue());
+      assertEquals(
+          "2023-01-01T00:00:00.123456Z",
+          value.path("source").path("user").get(0).path("create_date").textValue());
     }
   }
 
   @Test
   void sourceBirthAndMatrixIdentityChangeTheDigestWithoutCreatingAClaim() throws Exception {
     var original = custody("CAPTURED", true);
-    String originalDigest = assertDoesNotThrow(() -> codec.claimedInactivitySuspensionCustodyDigest(original));
+    String originalDigest =
+        assertDoesNotThrow(() -> codec.claimedInactivitySuspensionCustodyDigest(original));
     for (String field : List.of("create_date", "matrix_user_id")) {
       var changed = original.deepCopy();
-      ((ObjectNode) changed.path("source").path("user").get(0)).put(field,
-          field.equals("create_date") ? "2023-01-02T00:00:00.123456Z" : "@different:fixture.invalid");
-      String digest = assertDoesNotThrow(() -> codec.claimedInactivitySuspensionCustodyDigest(changed));
+      ((ObjectNode) changed.path("source").path("user").get(0))
+          .put(
+              field,
+              field.equals("create_date")
+                  ? "2023-01-02T00:00:00.123456Z"
+                  : "@different:fixture.invalid");
+      String digest =
+          assertDoesNotThrow(() -> codec.claimedInactivitySuspensionCustodyDigest(changed));
       assertNotEquals(originalDigest, digest);
       assertEquals(independent(changed, "claimed-inactivity-suspension-custody/v1"), digest);
     }
@@ -58,29 +69,45 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
   @Test
   void unknownPhasesCrossOperationExtraMissingAndUnboundedDataStayClosed() throws Exception {
     var valid = custody("FROZEN", true);
-    for (String field : List.of("representation", "originalRow", "source", "nativeBody", "nativeReceipt", "phase")) {
+    for (String field :
+        List.of(
+            "representation", "originalRow", "source", "nativeBody", "nativeReceipt", "phase")) {
       var missing = valid.deepCopy();
       missing.remove(field);
-      assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivitySuspensionCustodyDigest(missing));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> codec.claimedInactivitySuspensionCustodyDigest(missing));
     }
     var extra = valid.deepCopy();
     extra.put("bindingDigest", "a".repeat(64));
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivitySuspensionCustodyDigest(extra));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.claimedInactivitySuspensionCustodyDigest(extra));
     var foreign = valid.deepCopy();
     ((ObjectNode) foreign.path("nativeBody")).put("operationId", ACCOUNT);
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivitySuspensionCustodyDigest(foreign));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.claimedInactivitySuspensionCustodyDigest(foreign));
     var wrong = valid.deepCopy();
     wrong.put("phase", "UNKNOWN");
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivitySuspensionCustodyDigest(wrong));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.claimedInactivitySuspensionCustodyDigest(wrong));
     var secret = valid.deepCopy();
     ((ObjectNode) secret.path("source").path("user").get(0)).put("mobile_token", "forbidden");
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivitySuspensionCustodyDigest(secret));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.claimedInactivitySuspensionCustodyDigest(secret));
     var oversized = valid.deepCopy();
     ((ObjectNode) oversized.path("source").path("user").get(0)).put("username", "x".repeat(8193));
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivitySuspensionCustodyDigest(oversized));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.claimedInactivitySuspensionCustodyDigest(oversized));
     var fractional = valid.deepCopy();
     ((ObjectNode) fractional.path("originalRow")).put("revision", 0.5);
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivitySuspensionCustodyDigest(fractional));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.claimedInactivitySuspensionCustodyDigest(fractional));
   }
 
   private ObjectNode custody(String phase, boolean local) {
@@ -126,7 +153,8 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
       var origin = target.putObject("origin");
       origin.put("kind", "INACTIVITY");
       origin.put("workflowId", WORK);
-      for (String field : List.of("humanSubject", "humanIssuer", "humanClient", "humanAuthority")) origin.putNull(field);
+      for (String field : List.of("humanSubject", "humanIssuer", "humanClient", "humanAuthority"))
+        origin.putNull(field);
       var workflow = body.putObject("workflow");
       workflow.put("v", 1);
       workflow.put("kind", "INACTIVITY");
@@ -141,7 +169,8 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
       body.put("operationId", WORK);
       body.put("expectedState", "a".repeat(64));
       body.putObject("change");
-      if (!"FROZEN".equals(phase)) value.put("nativeReceipt", nativeReceipt(body, "NO_EFFECT".equals(phase)));
+      if (!"FROZEN".equals(phase))
+        value.put("nativeReceipt", nativeReceipt(body, "NO_EFFECT".equals(phase)));
     }
     return value;
   }
@@ -157,10 +186,14 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
     outcome.put("intentDigest", codec.digest("maintenance-intent", body));
     outcome.put("previousState", body.path("expectedState").textValue());
     outcome.put("tenantId", "7");
-    outcome.put("originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
+    outcome.put(
+        "originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
     outcome.put("result", refused ? "NO_EFFECT" : "UPDATED");
     if (refused) outcome.put("status", 409);
-    String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
+    String encoded =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
     String domain = refused ? "maintenance-no-effect-receipt/v1" : "maintenance-operation-receipt";
     String token = encoded + "." + mac(domain + "\n" + encoded);
     var reply = new TreeMap<String, Object>();
