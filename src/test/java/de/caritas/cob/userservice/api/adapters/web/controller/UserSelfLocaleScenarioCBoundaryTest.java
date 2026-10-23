@@ -287,7 +287,8 @@ class UserSelfLocaleScenarioCBoundaryTest {
       jdbc.update("insert into user values(?,?,null,'en',false,0)", ACCOUNT, 7L);
       new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
               new org.springframework.core.io.ClassPathResource(
-                  "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"))
+                  "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"),
+                new ClassPathResource("db/changelog/changeset/20261023_existing_import_intent_367/migrate.sql"))
           .execute(source);
       when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(actor);
       when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))

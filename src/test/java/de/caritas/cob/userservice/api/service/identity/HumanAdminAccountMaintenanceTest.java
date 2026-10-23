@@ -106,6 +106,7 @@ class HumanAdminAccountMaintenanceTest {
     request.setMethod("PATCH");
     request.setRequestURI("/service/useradmin/tenantadmins/" + ACCOUNT);
     request.addHeader("Authorization", "Bearer synthetic-current-human");
+    request.removeHeader("Idempotency-Key");
     request.addHeader("Idempotency-Key", OPERATION);
     request.setUserPrincipal(authentication("synthetic-current-human", ISSUER, HUMAN, "admin", 7L));
     assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());

@@ -97,6 +97,7 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
   @Override
   public boolean reactivate(AccountInactivityService.ClaimedWork work) {
     work.requireCurrent();
+    work.verifyPriorSuspension();
     var original =
         state(work.identityId())
             .orElseThrow(() -> new AccountInactivityEffectException(DATABASE, FAILED));

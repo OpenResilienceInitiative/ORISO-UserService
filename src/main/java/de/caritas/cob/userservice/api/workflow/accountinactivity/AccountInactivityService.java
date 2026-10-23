@@ -54,6 +54,7 @@ public class AccountInactivityService {
   private final TransactionTemplate work;
   private final Clock clock;
   private final AccountInactivityEffects effects;
+  private final javax.sql.DataSource transactionSource;
 
   private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
   private final InactivityClaimJournal claimJournal;
@@ -75,6 +76,10 @@ public class AccountInactivityService {
       Clock clock,
       AccountInactivityEffects effects) {
     this.jdbc = jdbc;
+    this.transactionSource = transactionManager instanceof org.springframework.orm.jpa.JpaTransactionManager jpa
+        ? jpa.getDataSource()
+        : transactionManager instanceof org.springframework.jdbc.datasource.DataSourceTransactionManager sql
+            ? sql.getDataSource() : null;
     this.claimJournal = new InactivityClaimJournal(jdbc);
     this.tx = new TransactionTemplate(transactionManager);
     this.work = new TransactionTemplate(transactionManager);
@@ -463,6 +468,8 @@ public class AccountInactivityService {
   }
 
   private void outsideSql() {
+    if (transactionSource == null || transactionSource != jdbc.getDataSource())
+      throw InactivityClaimJournal.invalid();
     if (org.springframework.transaction.support.TransactionSynchronizationManager
         .isActualTransactionActive()) throw InactivityClaimJournal.invalid();
   }
@@ -649,13 +656,10 @@ public class AccountInactivityService {
     }
   }
 
-  private boolean confirmNative(ClaimedWork checked, boolean restoreEnabled) {
+  private void verifyPriorSuspension(ClaimedWork checked) {
     checked.requireCurrent();
-    if (checked.terminalOnly
-        || scopedTransport == null
-        || !java.util.Set.of("SUSPEND", "RESTORE").contains(checked.action()))
+    if (checked.terminalOnly || scopedTransport == null || !"RESTORE".equals(checked.action()))
       throw InactivityClaimJournal.invalid();
-    if (checked.action().equals("RESTORE")) {
       var prior =
           jdbc.queryForMap(
               "select suspension_body,suspension_receipt from account_inactivity where identity_id=? and work_id=?",
@@ -663,7 +667,16 @@ public class AccountInactivityService {
               checked.workId());
       scopedTransport.verifyPriorSuspension(
           checked, (String) prior.get("suspension_body"), (String) prior.get("suspension_receipt"));
-    }
+    checked.requireCurrent();
+  }
+
+  private boolean confirmNative(ClaimedWork checked, boolean restoreEnabled) {
+    checked.requireCurrent();
+    if (checked.terminalOnly
+        || scopedTransport == null
+        || !java.util.Set.of("SUSPEND", "RESTORE").contains(checked.action()))
+      throw InactivityClaimJournal.invalid();
+    if (checked.action().equals("RESTORE")) verifyPriorSuspension(checked);
     var current = claimJournal.saved(checked.identityId(), false);
     if ("CLAIMED".equals(current.phase())) {
       var projection = checked.nativeRead();
@@ -944,6 +957,8 @@ public class AccountInactivityService {
       if (!"SUSPEND".equals(action())) throw InactivityClaimJournal.invalid();
       return confirmNative(this, false);
     }
+
+    public void verifyPriorSuspension() { AccountInactivityService.this.verifyPriorSuspension(this); }
 
     public boolean restoreNative(boolean originalEnabled) {
       if (!"RESTORE".equals(action())) throw InactivityClaimJournal.invalid();

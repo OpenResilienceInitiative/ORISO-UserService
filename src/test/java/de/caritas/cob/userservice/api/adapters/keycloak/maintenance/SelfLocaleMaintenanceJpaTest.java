@@ -78,7 +78,8 @@ class SelfLocaleMaintenanceJpaTest {
     jdbc.execute("drop table if exists identity_account_operation_intent");
     new ResourceDatabasePopulator(
             new ClassPathResource(
-                "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"))
+                "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"),
+                new ClassPathResource("db/changelog/changeset/20261023_existing_import_intent_367/migrate.sql"))
         .execute(dataSource);
     users.findById(ACCOUNT).ifPresent(users::delete);
     var user = new User(ACCOUNT, null, "ordinary-jpa", "ordinary@fixture.invalid", false);
@@ -227,10 +228,6 @@ class SelfLocaleMaintenanceJpaTest {
 
   @Test
   void anIdenticalSavedImportRowCanNeverResumeAsASelfLocaleOperation() {
-    new ResourceDatabasePopulator(
-            new ClassPathResource(
-                "db/changelog/changeset/20261023_existing_import_intent_367/migrate.sql"))
-        .execute(dataSource);
     expectRead();
     server
         .expect(requestTo(ENDPOINT + "/locale"))

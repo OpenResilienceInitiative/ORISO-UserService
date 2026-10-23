@@ -140,7 +140,7 @@ public final class SelfLocaleMaintenance {
           }
           if (!"FROZEN".equals(current.status)) throw unavailable();
           if (jdbc.update(
-                  "update identity_account_operation_intent set status='ACKNOWLEDGED',receipt=?,updated_at=? where operation_id=? and status='FROZEN' and request_digest=?",
+                  "update identity_account_operation_intent set status='ACKNOWLEDGED',receipt=?,updated_at=? where operation_id=? and operation_kind='SELF_LOCALE' and status='FROZEN' and request_digest=?",
                   verified,
                   java.sql.Timestamp.from(clock.instant()),
                   operation,
@@ -158,7 +158,7 @@ public final class SelfLocaleMaintenance {
     if (prior != null) return checked(self, prior, digest, actor);
     String target = codec.canonical(target(self, operation));
     jdbc.update(
-        "insert into identity_account_operation_intent(operation_id,realm_id,realm_name,account_id,tenant_id,owner_client,owner_subject,request_digest,target_json,status,domain_applied,updated_at) values(?,?,?,?,?,?,?,?,?,'PREPARED',false,?)",
+        "insert into identity_account_operation_intent(operation_id,operation_kind,realm_id,realm_name,account_id,tenant_id,owner_client,owner_subject,request_digest,target_json,status,domain_applied,updated_at) values(?,'SELF_LOCALE',?,?,?,?,?,?,?,?,'PREPARED',false,?)",
         operation,
         realmId,
         realmName,
@@ -189,7 +189,7 @@ public final class SelfLocaleMaintenance {
     if (changed == null || changed.isEmpty())
       throw new NotFoundException("Current account was not found");
     if (jdbc.update(
-            "update identity_account_operation_intent set intent_body=?,status='FROZEN',domain_applied=true,updated_at=? where operation_id=? and status='PREPARED' and domain_applied=false",
+            "update identity_account_operation_intent set intent_body=?,status='FROZEN',domain_applied=true,updated_at=? where operation_id=? and operation_kind='SELF_LOCALE' and status='PREPARED' and domain_applied=false",
             body,
             java.sql.Timestamp.from(clock.instant()),
             operation)
@@ -225,7 +225,7 @@ public final class SelfLocaleMaintenance {
   private Intent findIntent(String operation) {
     var rows =
         jdbc.query(
-            "select * from identity_account_operation_intent where operation_id=? for update",
+            "select * from identity_account_operation_intent where operation_id=? and operation_kind='SELF_LOCALE' for update",
             (row, index) -> intent(row),
             operation);
     if (rows.size() > 1) throw unavailable();
