@@ -53,4 +53,14 @@ public interface AccountInactivityIdentityTransport {
   NoEffect verifyNoEffect(ClaimedWork work, Frozen frozen, String receipt);
 
   void verifyPriorSuspension(ClaimedWork restore, String frozenBody, String receipt);
+
+  /** Fixed data binding only; a JSON value cannot issue private claimed work. */
+  default String bindSuspensionCustody(String exactPrefix) {
+    throw new IllegalStateException("Original suspension source custody unavailable");
+  }
+
+  /** Strict fixed source and original native proof validation, never authority from JSON. */
+  default void verifySuspensionCustody(String exactSealedCustody) {
+    throw new IllegalStateException("Original suspension source custody unavailable");
+  }
 }
