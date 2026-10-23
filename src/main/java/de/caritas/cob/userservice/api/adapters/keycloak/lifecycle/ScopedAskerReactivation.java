@@ -438,7 +438,7 @@ public final class ScopedAskerReactivation {
             "state"));
     if (!sql.path("user_id").textValue().equals(read.path("id").textValue())
         || !sql.path("username").textValue().equalsIgnoreCase(read.path("username").textValue())
-        || !sql.path("email").textValue().equals(read.path("email").textValue())
+        || !sql.path("email").textValue().equalsIgnoreCase(read.path("email").textValue())
         || !Long.toString(sql.path("tenant_id").longValue())
             .equals(read.path("tenantId").textValue())
         || !read.path("state").isTextual()

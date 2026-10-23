@@ -160,7 +160,7 @@ class ReactivationIntentCodecTest {
   }
 
   @Test
-  void encodedNativeUsernameAndExactEmailRemainBoundToTheOriginalSqlSpelling() throws Exception {
+  void encodedNativeUsernameAndSameMailboxBindBothExactSqlAndNativeSpellings() throws Exception {
     var metadata = metadata(false);
     var original = (ObjectNode) json.readTree(plaintext(false));
     var transcoder = new de.caritas.cob.userservice.api.helper.UsernameTranscoder();
@@ -184,17 +184,28 @@ class ReactivationIntentCodecTest {
           IllegalArgumentException.class,
           () -> codec.sealReactivationIntent(metadata, bytes(wrong)));
     }
+    var nativeEmailCase = original.deepCopy();
+    ((ObjectNode) nativeEmailCase.path("body").path("change"))
+        .put("expectedEmail", "mixed@example.test");
+    byte[] nativeFrozen = bytes(nativeEmailCase);
+    String nativeSealed = assertDoesNotThrow(() -> codec.sealReactivationIntent(metadata, nativeFrozen));
+    assertArrayEquals(nativeFrozen, codec.openReactivationIntent(metadata, nativeSealed));
+    assertArrayEquals(nativeFrozen, independent(metadata, json.readTree(nativeSealed)));
+    assertEquals("MiXeD@example.test", nativeEmailCase.path("originalSql").path("email").textValue());
+    assertEquals("mixed@example.test", nativeEmailCase.path("body").path("change").path("expectedEmail").textValue());
     var wrongEmail = original.deepCopy();
     ((ObjectNode) wrongEmail.path("body").path("change"))
-        .put("expectedEmail", "mixed@example.test");
+        .put("expectedEmail", "unrelated@example.test");
     assertThrows(
         IllegalArgumentException.class,
         () -> codec.sealReactivationIntent(metadata, bytes(wrongEmail)));
-    var nontextual = original.deepCopy();
-    ((ObjectNode) nontextual.path("body").path("change")).put("expectedUsername", 1);
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> codec.sealReactivationIntent(metadata, bytes(nontextual)));
+    for (String field : List.of("expectedUsername", "expectedEmail")) {
+      var nontextual = original.deepCopy();
+      ((ObjectNode) nontextual.path("body").path("change")).put(field, 1);
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> codec.sealReactivationIntent(metadata, bytes(nontextual)));
+    }
   }
 
   private ObjectNode metadata(boolean self) throws Exception {
