@@ -285,9 +285,7 @@ class InactivityDeletionContinuationJpaTest {
         1, nativeEffects.get(), "The actual due private cause must reach scoped native deletion");
     assertEquals(1, callbacks.get());
     assertEquals(
-        1,
-        preparations.get(),
-        "The actual same-frame preparation precedes final deletion");
+        1, preparations.get(), "The actual same-frame preparation precedes final deletion");
     assertTrue(users.findById(ACCOUNT).isEmpty());
     assertEquals(
         de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
