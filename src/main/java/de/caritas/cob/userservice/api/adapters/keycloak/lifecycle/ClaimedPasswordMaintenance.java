@@ -196,7 +196,8 @@ public final class ClaimedPasswordMaintenance {
           if (!Objects.equals(tenantId, local.tenant())
               || (!accountKind.equals(local.kind())
                   && !("CONSULTANT".equals(accountKind)
-                      && Set.of("AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN").contains(local.kind())
+                      && Set.of("AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")
+                          .contains(local.kind())
                       && local.consultantVersion() != null))
               || !ClaimedPasswordLocalAccounts.canonicalUsername(username).equals(local.username())
               || !recipient.equals(local.email())) throw unavailable();
