@@ -8,6 +8,8 @@ import de.caritas.cob.userservice.api.config.auth.TaskActorCredentials;
 import de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker;
 import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.ClaimedWork;
+import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction.PreparedUserDeletion;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.sql.ResultSet;
@@ -77,6 +79,12 @@ public final class ScheduledAskerMaintenance {
     private final Thread thread = Thread.currentThread();
     private boolean active = true;
     private Object callbackResource;
+    private Object inactivityValidationResource;
+    private PreparedUserDeletion finalPreparation;
+    private boolean finalAbsencePrepared;
+    private PreparedUserDeletion mediaPreparation;
+    private boolean absenceMediaPreparation;
+    private java.util.Map<String, Boolean> inactivityMedia;
 
     private AcknowledgedDeletion(
         ScheduledAskerMaintenance owner, FrozenDeletion frozen, String receipt) {
@@ -108,7 +116,7 @@ public final class ScheduledAskerMaintenance {
           || !owner.sameSnapshot(
               frozen.originalSql,
               AskerDeletionSqlSnapshot.from(independentlyLoadedOriginal, owner.codec),
-              true)) throw unavailable();
+              frozen.claim.inactivity == null)) throw unavailable();
     }
 
     public String accountId() {
@@ -123,12 +131,12 @@ public final class ScheduledAskerMaintenance {
 
     public boolean hasLocalUser() {
       requireCurrent();
-      return true;
+      return !frozen.originalSql.isNull();
     }
 
     public boolean inactivityCause() {
       requireCurrent();
-      return false;
+      return frozen.claim.inactivity != null;
     }
 
     public boolean completed() {
@@ -149,18 +157,13 @@ public final class ScheduledAskerMaintenance {
           });
     }
 
-    /**
-     * The final action must issue its real preparation before owned inactivity media is forgotten.
-     */
-    public void beforeFinalLocalDeletion(
-        de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction
-                .PreparedUserDeletion
-            prepared) {
+    /** Requires the actual prepared final-action proof; closed for the next causal owner tests. */
+    public void beforeFinalLocalDeletion(PreparedUserDeletion prepared) {
       Objects.requireNonNull(prepared);
       throw unavailable();
     }
 
-    /** Only original realm-only absence can use the fixed three-action inactivity continuation. */
+    /** Requires original realm-only absence after its three owned cleanup actions. */
     public void beforeFinalLocalAbsence() {
       throw unavailable();
     }
@@ -172,18 +175,27 @@ public final class ScheduledAskerMaintenance {
           () -> {
             var intent = owner.requireAcknowledged(this);
             if ("APPLIED".equals(intent.status)) return true;
+            if (frozen.claim.inactivity != null) {
+              if (frozen.originalSql.isNull()) {
+                if (!finalAbsencePrepared) throw unavailable();
+              } else {
+                if (finalPreparation == null) throw unavailable();
+                invokeOwned(() -> finalPreparation.requireFor(this));
+              }
+            }
             invokeOwned(finalDelete);
             owner.entities.flush();
             var actual =
                 AskerDeletionSqlSnapshot.capture(
                     owner.jdbc, owner.codec, frozen.claim.account, true);
             if (actual != null) {
-              if (!owner.sameSnapshot(frozen.originalSql, actual, true)) throw unavailable();
+              if (!owner.sameSnapshot(frozen.originalSql, actual, frozen.claim.inactivity == null))
+                throw unavailable();
               owner.requireAcknowledged(this);
               return false;
             }
             // The original envelope and native receipt survive the final local row removal.
-            owner.requireAcknowledgedIntent(this);
+            owner.requireAcknowledgedIntent(this, frozen.claim.inactivity != null);
             if (owner.jdbc.update(
                     "update identity_maintenance_intent set status='APPLIED' where operation_id=? and claim_token=? and status='ACKNOWLEDGED' and frozen_body=? and receipt_json=?",
                     intent.operation,
@@ -191,6 +203,8 @@ public final class ScheduledAskerMaintenance {
                     frozen.envelope,
                     receipt)
                 != 1) throw unavailable();
+            if (frozen.claim.inactivity != null)
+              validateInactivity(() -> frozen.claim.inactivity.completeDeletionOwnedSql(this));
             owner.requireAcknowledged(this);
             return true;
           });
@@ -213,6 +227,69 @@ public final class ScheduledAskerMaintenance {
       if (!active || thread != Thread.currentThread()) throw unavailable();
     }
 
+    /** Only the same private frame in its actual owning SQL resource can check this claim. */
+    public void requireClaimedInactivitySql(ClaimedWork candidate) {
+      requireLive();
+      Object resource =
+          TransactionSynchronizationManager.getResource(
+              Objects.requireNonNull(owner.jdbc.getDataSource()));
+      if (candidate != frozen.claim.inactivity
+          || resource == null
+          || !TransactionSynchronizationManager.isActualTransactionActive()
+          || resource != inactivityValidationResource && resource != callbackResource)
+        throw unavailable();
+    }
+
+    /** A work owner can revoke only its own live frame when its original claim scope ends. */
+    public void closeInactivityClaim(ClaimedWork candidate) {
+      if (candidate != frozen.claim.inactivity || thread != Thread.currentThread())
+        throw unavailable();
+      active = false;
+    }
+
+    public void requireInactivityAppliedIntentSql(ClaimedWork candidate) {
+      requireClaimedInactivitySql(candidate);
+      var actual = owner.requireIntent(frozen.claim);
+      if (!"APPLIED".equals(actual.status)
+          || !frozen.envelope.equals(actual.frozen)
+          || !receipt.equals(actual.receipt)
+          || !receipt.equals(owner.codec.verifyMaintenanceDeleteReceipt(
+              actual.receipt, owner.realmId, owner.actor(frozen.claim),
+              owner.codec.read(frozen.body, JsonNode.class)))) throw unavailable();
+    }
+
+    /** Existing prior access custody needs its actual acknowledged SUSPEND proof. */
+    public void requirePriorInactivityCustody() {
+      requireCurrent();
+      if (frozen.claim.inactivity == null) throw unavailable();
+      owner.requirePriorInactivityCustody(this);
+    }
+
+    /** The actual same preparation must be active around each owned media-forget call. */
+    public void requirePreparedInactivityMedia() {
+      requireCurrent();
+      if (frozen.claim.inactivity == null) throw unavailable();
+      if (frozen.originalSql.isNull()) {
+        if (!absenceMediaPreparation) throw unavailable();
+      } else {
+        if (mediaPreparation == null) throw unavailable();
+        mediaPreparation.requireFor(this);
+      }
+    }
+
+    private void validateInactivity(Runnable check) {
+      if (inactivityValidationResource != null) throw unavailable();
+      inactivityValidationResource =
+          Objects.requireNonNull(
+              TransactionSynchronizationManager.getResource(
+                  Objects.requireNonNull(owner.jdbc.getDataSource())));
+      try {
+        check.run();
+      } finally {
+        inactivityValidationResource = null;
+      }
+    }
+
     private void outsideSql() {
       requireLive();
       if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
@@ -224,7 +301,130 @@ public final class ScheduledAskerMaintenance {
       de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.ClaimedWork
           work) {
     Objects.requireNonNull(work);
-    throw unavailable();
+    if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+    if (cleanup == null || entities == null) return false;
+    requireJpaOwner();
+    work.requireCurrent();
+    String originalRow = work.originalRowJson(), originalSource = work.originalSourceJson();
+    var checked = transaction(() -> prepareInactivity(work, originalRow, originalSource));
+    FrozenDeletion frozen;
+    if (checked.intent.frozen != null) frozen = frozen(checked, checked.intent.frozen);
+    else {
+      String state = read(checked);
+      frozen = transaction(() -> freeze(checked, state));
+    }
+    if (frozen == null) throw unavailable();
+    if (!Set.of("ACKNOWLEDGED", "APPLIED").contains(checked.intent.status)) {
+      String response = request("delete", checked, frozen.body);
+      String receipt =
+          codec.verifyMaintenanceDeleteReceipt(
+              response, realmId, actor(checked), codec.read(frozen.body, JsonNode.class));
+      if (!transaction(() -> acknowledge(frozen, receipt))) throw unavailable();
+    }
+    var durable = transaction(() -> lockedIntent(checked));
+    String receipt =
+        codec.verifyMaintenanceDeleteReceipt(
+            durable.receipt, realmId, actor(checked), codec.read(frozen.body, JsonNode.class));
+    var frame = new AcknowledgedDeletion(this, frozen, receipt);
+    boolean complete = false;
+    try {
+      frame.requireCurrent();
+      if (!frame.completed()) {
+        work.captureDeletionMedia(frame);
+        frame.inactivityMedia = transaction(() -> inactivityMedia(frame));
+        cleanup.accept(frame);
+      }
+      complete = frame.completed();
+      return complete;
+    } catch (RuntimeException uncertain) {
+      // A real final commit may have succeeded before its reply was lost. Only the same
+      // privately issued frame's two-journal/absence proof can resolve that uncertainty.
+      if (frame.completed()) {
+        complete = true;
+        return true;
+      }
+      throw uncertain;
+    } finally {
+      if (!complete) frame.active = false;
+    }
+  }
+
+  private ClaimedDeletion prepareInactivity(
+      ClaimedWork work, String originalRow, String originalSource) {
+    work.requireOwnedSql();
+    var row = codec.read(originalRow, JsonNode.class);
+    codec.claimedInactivityDeletionRowDigest(row);
+    var source = codec.read(originalSource, JsonNode.class);
+    if (!"DELETE".equals(work.action())
+        || work.humanInitiated()
+        || work.terminalOnly()
+        || !source.path("admin").isArray()
+        || !source.path("admin").isEmpty()
+        || !source.path("consultant").isArray()
+        || !source.path("consultant").isEmpty()
+        || !source.path("user").isArray()
+        || source.path("user").size() > 1
+        || row.path("dueAtMicros").longValue()
+            > Math.addExact(Math.multiplyExact(clock.instant().getEpochSecond(), 1_000_000L),
+                clock.instant().getNano() / 1000)) throw unavailable();
+    requireExclusiveLocalUser(work.identityId());
+    var actual = AskerDeletionSqlSnapshot.capture(jdbc, codec, work.identityId(), true);
+    if (source.path("user").isEmpty() != (actual == null)) throw unavailable();
+    var original = actual == null ? com.fasterxml.jackson.databind.node.NullNode.getInstance() : actual;
+    LocalDateTime claimedAt =
+        LocalDateTime.ofInstant(
+            java.time.Instant.ofEpochSecond(
+                row.path("claimedAtMicros").longValue() / 1_000_000L,
+                row.path("claimedAtMicros").longValue() % 1_000_000L * 1000),
+            java.time.ZoneOffset.UTC);
+    var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
+    var rows =
+        jdbc.query(
+            "select * from identity_maintenance_intent where operation_id=? or"
+                + " (subject_type='INACTIVITY_ASKER' and subject_id=? and deletion_started_at=?) for update",
+            (rs, index) -> intent(rs), work.workId(), work.identityId(), claimedAt);
+    if (rows.size() > 1) throw unavailable();
+    if (rows.isEmpty()) {
+      jdbc.update(
+          "insert into identity_maintenance_intent(operation_id,realm_id,realm_name,subject_type,"
+              + "subject_id,deletion_started_at,tenant_id,claim_token,claim_until,status,owner_client,owner_subject)"
+              + " values(?,?,?,'INACTIVITY_ASKER',?,?,?,?,?,'PREPARED',?,?)",
+          work.workId(), realmId, realmName, work.identityId(), claimedAt, work.tenantId(),
+          UUID.randomUUID().toString(), LocalDateTime.now(clock).plusSeconds(120),
+          actor.clientId(), actor.serviceSubject());
+    }
+    var intent = jdbc.queryForObject(
+        "select * from identity_maintenance_intent where operation_id=? for update",
+        (rs, index) -> intent(rs), work.workId());
+    if (intent == null
+        || !"INACTIVITY_ASKER".equals(intent.subjectType)
+        || !work.identityId().equals(intent.subjectId)
+        || !claimedAt.equals(intent.deletionStarted)
+        || !realmId.equals(intent.realmId)
+        || !realmName.equals(intent.realmName)
+        || !Objects.equals(work.tenantId(), intent.tenant)
+        || !actor.clientId().equals(intent.ownerClient)
+        || !actor.serviceSubject().equals(intent.ownerSubject)
+        || !Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED").contains(intent.status)
+        || "PREPARED".equals(intent.status) && (intent.frozen != null || intent.receipt != null)
+        || "FROZEN".equals(intent.status) && (intent.frozen == null || intent.receipt != null)
+        || "ACKNOWLEDGED".equals(intent.status) && (intent.frozen == null || intent.receipt == null))
+      throw unavailable();
+    String generation = UUID.randomUUID().toString();
+    if (jdbc.update(
+        "update identity_maintenance_intent set claim_token=?,claim_until=?,last_attempt_at=? where operation_id=?",
+        generation, LocalDateTime.now(clock).plusSeconds(120), LocalDateTime.now(clock), intent.operation) != 1)
+      throw unavailable();
+    intent = jdbc.queryForObject(
+        "select * from identity_maintenance_intent where operation_id=? for update",
+        (rs, index) -> intent(rs), work.workId());
+    var claim = new ClaimedDeletion(null, work.identityId(), claimedAt, generation, intent,
+        original, work, originalRow, originalSource);
+    if (intent.frozen != null) {
+      var saved = frozen(claim, intent.frozen).originalSql;
+      if (!saved.equals(original)) throw unavailable();
+    }
+    return claim;
   }
 
   public void performDeletionWorkflow() {
@@ -407,7 +607,10 @@ public final class ScheduledAskerMaintenance {
             result.path("tenantId").isNull() ? null : result.path("tenantId").textValue())
         || !result.path("state").isTextual()
         || !result.path("state").asText().matches("[0-9a-f]{64}")
-        || !new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+        || !result.path("username").isTextual()
+        || result.path("username").textValue().isBlank()
+        || result.path("username").textValue().length() > 255
+        || !claim.originalSql.isNull() && !new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
             .decodeUsername(claim.originalSql.path("username").textValue())
             .equals(result.path("username").textValue())
         || !result.path("effectiveRoles").isArray()
@@ -439,7 +642,7 @@ public final class ScheduledAskerMaintenance {
                 state,
                 "change",
                 Map.of()));
-    String envelope = envelope(claim.originalSql, codec.read(body, JsonNode.class));
+    String envelope = envelope(claim, codec.read(body, JsonNode.class));
     if (jdbc.update(
             "update identity_maintenance_intent set expected_state=?,frozen_body=?,status='FROZEN'"
                 + " where operation_id=? and claim_token=? and status='PREPARED' and frozen_body is null and receipt_json is null",
@@ -474,7 +677,7 @@ public final class ScheduledAskerMaintenance {
             frozen.envelope)
         != 1) throw unavailable();
     // Native ACK is durable, while owned downstream cleanup remains pending and irreversible.
-    if (jdbc.update(
+    if (claim.inactivity == null && jdbc.update(
             "update user set deletion_lifecycle_state='HARD_DELETE_PARTIAL_FAILURE' where user_id=? and deletion_lifecycle_state='HARD_DELETE_IN_PROGRESS'",
             claim.account)
         != 1) throw unavailable();
@@ -482,18 +685,21 @@ public final class ScheduledAskerMaintenance {
     if (!"ACKNOWLEDGED".equals(saved.status)
         || !frozen.envelope.equals(saved.frozen)
         || !receipt.equals(saved.receipt)
-        || !sameSnapshot(
-            frozen.originalSql,
-            AskerDeletionSqlSnapshot.capture(jdbc, codec, claim.account, true),
-            true)) throw unavailable();
+        || !(claim.inactivity == null
+            ? sameSnapshot(frozen.originalSql,
+                AskerDeletionSqlSnapshot.capture(jdbc, codec, claim.account, true), true)
+            : Objects.equals(frozen.originalSql.isNull() ? null : frozen.originalSql,
+                AskerDeletionSqlSnapshot.capture(jdbc, codec, claim.account, true)))) throw unavailable();
     return true;
   }
 
   private boolean current(ClaimedDeletion claim) {
-    if (!held(claim.lease)) return false;
+    if (claim.inactivity == null) {
+      if (!held(claim.lease)) return false;
+    } else claim.inactivity.requireOwnedSql();
     requireExclusiveLocalUser(claim.account);
     var actual = AskerDeletionSqlSnapshot.capture(jdbc, codec, claim.account, true);
-    return sameSnapshot(claim.originalSql, actual, false);
+    return claim.originalSql.isNull() ? actual == null : sameSnapshot(claim.originalSql, actual, false);
   }
 
   private void requireJpaOwner() {
@@ -528,10 +734,14 @@ public final class ScheduledAskerMaintenance {
     var actual = lockedIntent(claim);
     actor(claim);
     if (!claim.generation.equals(actual.generation)
-        || !claim.lease.claimedUntil().equals(actual.claimedUntil)
+        || !(claim.inactivity == null
+            ? claim.lease.claimedUntil().equals(actual.claimedUntil)
+            : actual.claimedUntil != null
+                && claim.intent.claimedUntil.equals(actual.claimedUntil)
+                && actual.claimedUntil.isAfter(LocalDateTime.now(clock)))
         || !realmId.equals(actual.realmId)
         || !realmName.equals(actual.realmName)
-        || !"ASKER".equals(actual.subjectType)
+        || !(claim.inactivity == null ? "ASKER" : "INACTIVITY_ASKER").equals(actual.subjectType)
         || !claim.account.equals(actual.subjectId)
         || !claim.deletionStarted.equals(actual.deletionStarted)
         || !Objects.equals(claim.intent.tenant, actual.tenant)
@@ -541,6 +751,10 @@ public final class ScheduledAskerMaintenance {
   }
 
   private Intent requireAcknowledgedIntent(AcknowledgedDeletion frame) {
+    return requireAcknowledgedIntent(frame, false);
+  }
+
+  private Intent requireAcknowledgedIntent(AcknowledgedDeletion frame, boolean removedUser) {
     requireJpaOwner();
     if (!frame.active
         || frame.thread != Thread.currentThread()
@@ -548,7 +762,7 @@ public final class ScheduledAskerMaintenance {
         || !TransactionSynchronizationManager.hasResource(
             Objects.requireNonNull(jdbc.getDataSource()))
         || !entities.isJoinedToTransaction()
-        || !held(frame.frozen.claim.lease)) throw unavailable();
+        || frame.frozen.claim.inactivity == null && !held(frame.frozen.claim.lease)) throw unavailable();
     var intent = requireIntent(frame.frozen.claim);
     if (!Set.of("ACKNOWLEDGED", "APPLIED").contains(intent.status)
         || !frame.frozen.envelope.equals(intent.frozen)
@@ -565,6 +779,14 @@ public final class ScheduledAskerMaintenance {
                 actor(frame.frozen.claim),
                 codec.read(saved.body, JsonNode.class)))) throw unavailable();
     requireExclusiveLocalUser(frame.frozen.claim.account);
+    if (frame.frozen.claim.inactivity != null) {
+      frame.validateInactivity(() -> {
+        if (removedUser) frame.frozen.claim.inactivity.requireDeletionRemovedSql(frame);
+        else frame.frozen.claim.inactivity.requireDeletionCurrentSql(frame);
+      });
+      if (!removedUser && !"APPLIED".equals(intent.status) && frame.inactivityMedia != null
+          && !frame.inactivityMedia.equals(inactivityMedia(frame))) throw unavailable();
+    }
     return intent;
   }
 
@@ -573,8 +795,54 @@ public final class ScheduledAskerMaintenance {
     var actual = AskerDeletionSqlSnapshot.capture(jdbc, codec, frame.frozen.claim.account, true);
     if ("APPLIED".equals(intent.status)
         ? actual != null
-        : !sameSnapshot(frame.frozen.originalSql, actual, true)) throw unavailable();
+        : frame.frozen.originalSql.isNull() ? actual != null
+            : !sameSnapshot(frame.frozen.originalSql, actual, frame.frozen.claim.inactivity == null)) throw unavailable();
     return intent;
+  }
+
+  private java.util.Map<String, Boolean> inactivityMedia(AcknowledgedDeletion frame) {
+    if (frame.frozen.claim.inactivity == null) throw unavailable();
+    String currentOwner = jdbc.queryForObject(
+        "select access_work_id from account_inactivity where identity_id=? and work_id=? for update",
+        String.class, frame.frozen.claim.account, frame.frozen.claim.inactivity.workId());
+    if (!frame.frozen.claim.inactivity.workId().equals(currentOwner)) throw unavailable();
+    var values = new TreeMap<String, Boolean>();
+    jdbc.query("select matrix_user_id,original_locked from account_inactivity_matrix_state where identity_id=? order by matrix_user_id for update",
+        rs -> {
+          String id = rs.getString(1);
+          if (id == null || id.isBlank() || values.put(id, rs.getBoolean(2)) != null
+              || rs.wasNull()) throw unavailable();
+        }, frame.frozen.claim.account);
+    var expected = new java.util.TreeSet<String>();
+    var sql = frame.frozen.originalSql;
+    if (!sql.isNull() && !sql.path("matrix_user_id").isNull())
+      expected.add(sql.path("matrix_user_id").textValue());
+    if (values.size() > 2 || !values.keySet().equals(expected)) throw unavailable();
+    return java.util.Collections.unmodifiableMap(values);
+  }
+
+  private void requirePriorInactivityCustody(AcknowledgedDeletion frame) {
+    if (frame.callbackResource == null
+        || frame.callbackResource != TransactionSynchronizationManager.getResource(jdbc.getDataSource()))
+      throw unavailable();
+    var rows = jdbc.queryForMap(
+        "select access_work_id,suspension_operation_id,suspension_body,suspension_receipt from account_inactivity where identity_id=? and work_id=? for update",
+        frame.frozen.claim.account, frame.frozen.claim.inactivity.workId());
+    Object prior = rows.get("access_work_id");
+    if (prior == null || !prior.equals(rows.get("suspension_operation_id"))
+        || !(rows.get("suspension_body") instanceof String body)
+        || !(rows.get("suspension_receipt") instanceof String receipt)) throw unavailable();
+    var frozen = codec.read(body, JsonNode.class);
+    var target = frozen.path("target");
+    if (!frame.frozen.claim.account.equals(target.path("accountId").textValue())
+        || !Objects.equals(frame.frozen.claim.intent.tenant == null ? null : frame.frozen.claim.intent.tenant.toString(),
+            target.path("tenantId").isNull() ? null : target.path("tenantId").textValue())
+        || !prior.equals(frozen.path("operationId").textValue())
+        || !prior.equals(target.path("origin").path("workflowId").textValue())
+        || !"INACTIVITY".equals(frozen.path("workflow").path("kind").textValue())
+        || !"SUSPEND".equals(frozen.path("workflow").path("action").textValue())
+        || !prior.equals(frozen.path("workflow").path("workId").textValue())) throw unavailable();
+    codec.verifyMaintenanceInactivitySuspendReceipt(receipt, realmId, actor(frame.frozen.claim), frozen);
   }
 
   private boolean held(ScheduledTaskClaimService.ClaimLease lease) {
@@ -655,11 +923,19 @@ public final class ScheduledAskerMaintenance {
     var saved = codec.read(envelope, com.fasterxml.jackson.databind.node.ObjectNode.class);
     var all = new java.util.HashSet<String>();
     saved.fieldNames().forEachRemaining(all::add);
-    if (!all.equals(Set.of("representation", "originalSql", "body", "bindingDigest"))
+    if (!all.equals(claim.inactivity == null
+            ? Set.of("representation", "originalSql", "body", "bindingDigest")
+            : Set.of("representation", "originalRow", "rowDigest", "originalSql", "body", "bindingDigest"))
         || !envelope.equals(codec.canonical(saved))
         || !saved.path("bindingDigest").isTextual()) throw unavailable();
     String binding = saved.remove("bindingDigest").textValue();
-    if (!binding.equals(codec.claimedScheduledDeletionIntentDigest(saved))) throw unavailable();
+    if (!binding.equals(claim.inactivity == null
+            ? codec.claimedScheduledDeletionIntentDigest(saved)
+            : codec.claimedInactivityDeletionIntentDigest(saved))) throw unavailable();
+    if (claim.inactivity != null
+        && (!codec.canonical(saved.path("originalRow")).equals(claim.originalRow)
+            || !Objects.equals(saved.path("rowDigest").textValue(),
+                codec.claimedInactivityDeletionRowDigest(saved.path("originalRow"))))) throw unavailable();
     var value = saved.path("body");
     String body = codec.canonical(value);
     var fields = new java.util.HashSet<String>();
@@ -675,7 +951,17 @@ public final class ScheduledAskerMaintenance {
     return new FrozenDeletion(claim, body, envelope, saved.path("originalSql"));
   }
 
-  private String envelope(JsonNode original, JsonNode body) {
+  private String envelope(ClaimedDeletion claim, JsonNode body) {
+    if (claim.inactivity != null) {
+      var value = codec.read(codec.canonical(Map.of(
+          "representation", "CLAIMED_INACTIVITY_DELETE_V1",
+          "originalRow", codec.read(claim.originalRow, JsonNode.class),
+          "rowDigest", codec.claimedInactivityDeletionRowDigest(codec.read(claim.originalRow, JsonNode.class)),
+          "originalSql", claim.originalSql, "body", body)),
+          com.fasterxml.jackson.databind.node.ObjectNode.class);
+      value.put("bindingDigest", codec.claimedInactivityDeletionIntentDigest(value));
+      return codec.canonical(value);
+    }
     var value =
         codec.read(
             codec.canonical(
@@ -683,7 +969,7 @@ public final class ScheduledAskerMaintenance {
                     "representation",
                     "CLAIMED_SCHEDULED_ASKER_DELETE_V1",
                     "originalSql",
-                    original,
+                    claim.originalSql,
                     "body",
                     body)),
             com.fasterxml.jackson.databind.node.ObjectNode.class);
@@ -800,6 +1086,9 @@ public final class ScheduledAskerMaintenance {
     private final String generation;
     private final Intent intent;
     private final JsonNode originalSql;
+    private final ClaimedWork inactivity;
+    private final String originalRow;
+    private final String originalSource;
 
     private ClaimedDeletion(
         ScheduledTaskClaimService.ClaimLease lease,
@@ -808,12 +1097,22 @@ public final class ScheduledAskerMaintenance {
         String generation,
         Intent intent,
         JsonNode originalSql) {
+      this(lease, account, deletionStarted, generation, intent, originalSql, null, null, null);
+    }
+
+    private ClaimedDeletion(
+        ScheduledTaskClaimService.ClaimLease lease, String account, LocalDateTime deletionStarted,
+        String generation, Intent intent, JsonNode originalSql, ClaimedWork inactivity,
+        String originalRow, String originalSource) {
       this.lease = lease;
       this.account = account;
       this.deletionStarted = deletionStarted;
       this.generation = generation;
       this.intent = intent;
       this.originalSql = originalSql;
+      this.inactivity = inactivity;
+      this.originalRow = originalRow;
+      this.originalSource = originalSource;
     }
   }
 
