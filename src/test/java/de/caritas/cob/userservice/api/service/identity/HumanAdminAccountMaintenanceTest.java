@@ -1752,7 +1752,7 @@ class HumanAdminAccountMaintenanceTest {
         outcome.put("ownerSubject", SUBJECT);
         outcome.put("intentDigest", digest("maintenance-intent", body));
         outcome.put("previousState", "a".repeat(64));
-        outcome.put("tenantId", "7");
+        outcome.put("tenantId", body.path("target").path("tenantId").textValue());
         outcome.put(
             "originDigest", digest("maintenance-origin", body.path("target").path("origin")));
         outcome.put("result", "UPDATED");
