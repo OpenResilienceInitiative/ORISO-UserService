@@ -1308,6 +1308,7 @@ class HumanAdminAccountMaintenanceTest {
   }
 
   @org.springframework.web.bind.annotation.RestController
+  @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
   static final class MutationFailureBoundary {
     private final RuntimeException failure;
 
