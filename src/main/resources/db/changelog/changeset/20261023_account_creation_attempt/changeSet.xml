@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <changeSet id="20261023-account-creation-attempt" author="oriso">
+    <createTable tableName="account_creation_attempt">
+      <column name="id" type="BIGINT" autoIncrement="true"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="operation_key" type="CHAR(36)"><constraints nullable="false" unique="true"/></column>
+      <column name="owner_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="tenant_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="native_identity_id" type="VARCHAR(36)"/>
+      <column name="status" type="VARCHAR(16)"><constraints nullable="false"/></column>
+      <column name="created_at" type="DATETIME(6)"><constraints nullable="false"/></column>
+      <column name="updated_at" type="DATETIME(6)"><constraints nullable="false"/></column>
+    </createTable>
+    <rollback><dropTable tableName="account_creation_attempt"/></rollback>
+  </changeSet>
+</databaseChangeLog>
