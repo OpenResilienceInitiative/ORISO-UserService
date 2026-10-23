@@ -6,6 +6,6 @@
   <comment>#367: immutable owning inactivity source and exact native recovery.</comment>
   <sqlFile path="db/changelog/changeset/20261023_inactivity_claimed_work_367/migrate.sql"
    relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
-  <rollback><sql>ALTER TABLE account_inactivity DROP COLUMN access_work_id, DROP COLUMN suspension_receipt, DROP COLUMN suspension_body, DROP COLUMN suspension_operation_id, DROP COLUMN native_receipt, DROP COLUMN native_body, DROP COLUMN native_phase, DROP COLUMN source_json, DROP COLUMN claimed_json, DROP COLUMN claimed_at, DROP COLUMN work_id;</sql></rollback>
+  <rollback><sql>ALTER TABLE account_inactivity DROP COLUMN suspension_source_json, DROP COLUMN restore_effects_json, DROP COLUMN access_work_id, DROP COLUMN suspension_receipt, DROP COLUMN suspension_body, DROP COLUMN suspension_operation_id, DROP COLUMN native_receipt, DROP COLUMN native_body, DROP COLUMN native_phase, DROP COLUMN source_json, DROP COLUMN claimed_json, DROP COLUMN claimed_at, DROP COLUMN work_id;</sql></rollback>
  </changeSet>
 </databaseChangeLog>

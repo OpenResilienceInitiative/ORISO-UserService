@@ -362,6 +362,120 @@ class ScopedInactivityNativeBoundaryTest {
     f.server.verify();
   }
 
+  @Test
+  void originalSuspensionCustodySurvivesTheFreshRestoreClaimAndOnlyReleasedLineageCanBeReplaced()
+      throws Exception {
+    var f = new Fixture(true, false);
+    f.read(false);
+    f.mutate("deactivate", false, false);
+    f.read(true);
+    f.mutate("reactivate", true, false);
+    f.read(false);
+    f.mutate("deactivate", false, false);
+    f.service.scan(false);
+    assertEquals(AccountInactivityService.Status.SUSPENDED, f.service.snapshot(ACCOUNT).orElseThrow().status());
+    assertEquals(1, f.order.stream().filter("native-deactivate"::equals).count());
+    String captured = f.value("suspension_source_json");
+    assertNotNull(captured, "The acknowledged SUSPEND must retain its original owning source");
+    var custody = f.json.readTree(captured);
+    assertEquals(Set.of("representation", "originalRow", "source", "nativeBody", "nativeReceipt", "phase", "bindingDigest"), Fixture.fields(custody));
+    assertEquals("ACKNOWLEDGED", custody.path("phase").textValue());
+    assertEquals(f.value("claimed_json"), f.canonical(custody.path("originalRow")));
+    assertEquals(f.value("source_json"), f.canonical(custody.path("source")));
+    assertEquals(f.value("native_body"), f.canonical(custody.path("nativeBody")));
+    assertEquals(f.value("native_receipt"), custody.path("nativeReceipt").textValue());
+    var prefix = ((com.fasterxml.jackson.databind.node.ObjectNode) custody).deepCopy();
+    prefix.remove("bindingDigest");
+    assertEquals(f.digest("claimed-inactivity-suspension-custody/v1", prefix), custody.path("bindingDigest").textValue());
+    String first = f.value("work_id");
+    f.platformHuman();
+    assertTrue(f.service.reactivate(ACCOUNT));
+    assertNotEquals(first, f.value("work_id"));
+    assertEquals(captured, f.value("suspension_source_json"), "A RESTORE claim must not overwrite the named SUSPEND birth/Matrix source");
+    assertTrue(f.service.suspend(ACCOUNT));
+    var replaced = f.json.readTree(f.value("suspension_source_json"));
+    assertNotEquals(first, replaced.path("originalRow").path("workId").textValue());
+    assertEquals(f.value("work_id"), replaced.path("originalRow").path("workId").textValue());
+    assertEquals("ACKNOWLEDGED", replaced.path("phase").textValue());
+    assertEquals(2, f.order.stream().filter("native-deactivate"::equals).count());
+    verifyNoInteractions(f.sdk);
+    f.server.verify();
+  }
+
+  @Test
+  void missingForgedOrChangedOriginalBirthAndMatrixCustodyCannotRestoreAnyAccess()
+      throws Exception {
+    for (String changed : List.of("missing", "forged", "birth", "matrix")) {
+      var f = new Fixture(true, false);
+      f.read(false);
+      f.mutate("deactivate", false, false);
+      f.read(true, ExpectedCount.between(0, 1));
+      f.mutate("reactivate", true, false, ExpectedCount.between(0, 1));
+      f.service.scan(false);
+      assertEquals(AccountInactivityService.Status.SUSPENDED, f.service.snapshot(ACCOUNT).orElseThrow().status());
+      var before = List.copyOf(f.order);
+      switch (changed) {
+        case "missing" -> f.jdbc.update("update account_inactivity set suspension_source_json=null where identity_id=?", ACCOUNT);
+        case "forged" -> f.jdbc.update("update account_inactivity set suspension_source_json=? where identity_id=?", "{\"forged\":true}", ACCOUNT);
+        case "birth" -> f.jdbc.update("update consultant set create_date=? where consultant_id=?", java.sql.Timestamp.from(Instant.parse("2025-01-02T00:00:00Z")), ACCOUNT);
+        case "matrix" -> f.jdbc.update("update consultant set matrix_user_id='@replaced:example.test' where consultant_id=?", ACCOUNT);
+        default -> throw new AssertionError(changed);
+      }
+      f.platformHuman();
+      assertThrows(RuntimeException.class, () -> f.service.reactivate(ACCOUNT));
+      assertEquals(before, f.order, "Authenticate original source before any Matrix/media restore: " + changed);
+      verifyNoInteractions(f.sdk);
+      f.server.verify();
+    }
+  }
+
+  @Test
+  void unknownSuspensionRetainsItsOriginalCustodyBodyAndWorkUntilTheSameCommandAcknowledges()
+      throws Exception {
+    var f = new Fixture(true, false);
+    f.read(false);
+    f.mutate("deactivate", false, true);
+    f.mutate("deactivate", false, false);
+    f.service.scan(false);
+    assertEquals("FROZEN", f.value("native_phase"));
+    String captured = f.value("suspension_source_json");
+    assertNotNull(captured, "Unknown native work must retain immutable original source custody");
+    var original = f.json.readTree(captured);
+    assertEquals("FROZEN", original.path("phase").textValue());
+    assertEquals(f.value("native_body"), f.canonical(original.path("nativeBody")));
+    String work = f.value("work_id");
+    f.service.scan(false);
+    var acknowledged = f.json.readTree(f.value("suspension_source_json"));
+    assertEquals("ACKNOWLEDGED", acknowledged.path("phase").textValue());
+    for (String field : List.of("originalRow", "source", "nativeBody")) assertEquals(original.path(field), acknowledged.path(field));
+    assertEquals(work, f.value("work_id"));
+    assertEquals(2, f.order.stream().filter("native-deactivate"::equals).count());
+    verifyNoInteractions(f.sdk);
+    f.server.verify();
+  }
+
+  @Test
+  void unreleasedAcknowledgedSuspensionCannotBeReplacedByANewManualClaim()
+      throws Exception {
+    var f = new Fixture(true, false);
+    f.read(false);
+    f.mutate("deactivate", false, false);
+    f.read(false, ExpectedCount.between(0, 1));
+    f.mutate("deactivate", false, false, ExpectedCount.between(0, 1));
+    f.service.scan(false);
+    String work = f.value("work_id"), original = f.value("claimed_json");
+    var before = List.copyOf(f.order);
+    // A status flag alone cannot stand in for an authenticated completed RESTORE and owned cleanup.
+    f.jdbc.update("update account_inactivity set status='ACTIVE' where identity_id=?", ACCOUNT);
+    f.platformHuman();
+    assertThrows(RuntimeException.class, () -> f.service.suspend(ACCOUNT));
+    assertEquals(work, f.value("work_id"), "Unreleased prior custody must remain bound");
+    assertEquals(original, f.value("claimed_json"));
+    assertEquals(before, f.order);
+    verifyNoInteractions(f.sdk);
+    f.server.verify();
+  }
+
   private static final class Fixture {
     final ObjectMapper json = new ObjectMapper();
     final AccountLifecycleCodec codec = new AccountLifecycleCodec(KEY);
@@ -411,7 +525,7 @@ class ScopedInactivityNativeBoundaryTest {
                 .replaceFirst("(?s)^.*?ALTER TABLE account_inactivity\\s+ADD COLUMN\\s+", "")
                 .replaceFirst(";\\s*$", "")
                 .split(",\\s*ADD COLUMN\\s+");
-        assertEquals(12, columns.length);
+        assertEquals(13, columns.length);
         for (String column : columns)
           jdbc.execute("ALTER TABLE account_inactivity ADD COLUMN " + column);
       } catch (java.io.IOException invalid) {
@@ -428,10 +542,13 @@ class ScopedInactivityNativeBoundaryTest {
                 + "`("
                 + (table.equals("user") ? "user" : table)
                 + "_id varchar(36),tenant_id bigint,username varchar(255),create_date timestamp(6),matrix_user_id varchar(255))");
+      jdbc.execute("alter table consultant add column delete_date timestamp(6)");
+      jdbc.execute("alter table consultant add column status varchar(20) default 'CREATED'");
+      jdbc.execute("alter table consultant add column deletion_lifecycle_state varchar(64) default 'ACTIVE'");
       jdbc.execute(
           "create table general_admin_identity_intent(operation_id varchar(36),account_id varchar(36),status varchar(20))");
       jdbc.update(
-          "insert into consultant values(?,7,'existing-consultant',?,?)",
+          "insert into consultant(consultant_id,tenant_id,username,create_date,matrix_user_id) values(?,7,'existing-consultant',?,?)",
           ACCOUNT,
           java.sql.Timestamp.from(Instant.parse("2025-01-01T00:00:00Z")),
           MATRIX);
@@ -540,8 +657,12 @@ class ScopedInactivityNativeBoundaryTest {
     }
 
     void read(boolean restoring) {
+      read(restoring, ExpectedCount.once());
+    }
+
+    void read(boolean restoring, ExpectedCount count) {
       server
-          .expect(requestTo(URL + "/read"))
+          .expect(count, requestTo(URL + "/read"))
           .andExpect(method(HttpMethod.POST))
           .andRespond(
               outbound -> {
@@ -573,8 +694,12 @@ class ScopedInactivityNativeBoundaryTest {
     }
 
     void mutate(String command, boolean restoring, boolean lost) {
+      mutate(command, restoring, lost, ExpectedCount.once());
+    }
+
+    void mutate(String command, boolean restoring, boolean lost, ExpectedCount count) {
       server
-          .expect(requestTo(URL + "/" + command))
+          .expect(count, requestTo(URL + "/" + command))
           .andExpect(method(HttpMethod.POST))
           .andRespond(
               outbound -> {
@@ -593,7 +718,7 @@ class ScopedInactivityNativeBoundaryTest {
                         originalEnabled, body.path("change").path("restoreEnabled").booleanValue());
                   } else {
                     assertTrue(body.path("change").isEmpty());
-                    if (suspend != null) assertEquals(suspend, body);
+                    if (suspend != null && suspend.path("operationId").equals(body.path("operationId"))) assertEquals(suspend, body);
                     suspend = body;
                   }
                   assertEquals("FROZEN", value("native_phase"));
@@ -709,8 +834,10 @@ class ScopedInactivityNativeBoundaryTest {
       outside();
       assertEquals(
           "Bearer synthetic-checked-admin", outbound.getHeaders().getFirst("Authorization"));
+      var originalClaim = json.readTree(value("claimed_json"));
+      boolean manual = "HUMAN_ADMIN".equals(originalClaim.path("initiator").path("kind").textValue());
       assertEquals(
-          restoring ? "Bearer synthetic-platform-human" : null,
+          manual ? "Bearer synthetic-platform-human" : null,
           outbound.getHeaders().getFirst("X-ORISO-Human-Authorization"));
       var body = json.readTree(((MockClientHttpRequest) outbound).getBodyAsString());
       var workflow = body.path("workflow");
@@ -743,10 +870,10 @@ class ScopedInactivityNativeBoundaryTest {
           original.path("dueAtMicros").longValue() / 1_000_000L,
           workflow.path("dueAt").longValue());
       assertEquals(
-          restoring ? "HUMAN_ADMIN" : "INACTIVITY",
+          manual ? "HUMAN_ADMIN" : "INACTIVITY",
           body.path("target").path("origin").path("kind").textValue());
       assertEquals(
-          restoring ? "PROTECTED_ACCOUNT_OPERATIONS_V1" : null,
+          manual ? "PROTECTED_ACCOUNT_OPERATIONS_V1" : null,
           body.path("target").path("origin").path("humanAuthority").textValue());
       var parts = outbound.getHeaders().getFirst("X-ORISO-Task-Context").split("\\.", -1);
       assertEquals(2, parts.length);
