@@ -35,6 +35,14 @@ public class AskerUserAdminFacade {
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull AdminScope adminScope;
 
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setIdentityMode(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    this.identityMode = java.util.Objects.requireNonNull(mode);
+  }
+
   /**
    * Marks the asker with the given id for deletion.
    *
@@ -78,6 +86,9 @@ public class AskerUserAdminFacade {
    * <p>Username alone is deliberately insufficient because historic data permits duplicates.
    */
   public void reactivateAsker(AskerReactivationRequestDTO request) {
+    if (identityMode != null && identityMode.isFiveActorMode()) {
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
     assertCallerMayAccessTenant(request.getTenantId());
     var operation =
         identityReactivationSagaStore.begin(
