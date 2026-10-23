@@ -88,7 +88,7 @@ final class InactivityClaimJournal {
     binding.put("claimedAtMicros", micros(now));
     String original = encode(binding), source = source(row.identityId(), row.tenantId(), true);
     if (jdbc.update(
-            "update account_inactivity set status=?,work_id=?,claimed_at=?,claimed_json=?,source_json=?,native_phase='CLAIMED',native_body=NULL,native_receipt=NULL,last_error=NULL where identity_id=?",
+            "update account_inactivity set status=?,work_id=?,claimed_at=?,claimed_json=?,source_json=?,native_phase='CLAIMED',native_body=NULL,native_receipt=NULL,restore_effects_json=NULL,last_error=NULL where identity_id=?",
             status,
             work,
             Timestamp.from(now),

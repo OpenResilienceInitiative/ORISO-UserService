@@ -55,7 +55,8 @@ public final class ScheduledAskerMaintenance {
   private final @NonNull String realmId;
 
   /** Closed test-first continuation seam; only the owning ACK issuer may enable it. */
-  public void configureAcknowledgedCleanup(java.util.function.Consumer<AcknowledgedDeletion> cleanup) {
+  public void configureAcknowledgedCleanup(
+      java.util.function.Consumer<AcknowledgedDeletion> cleanup) {
     Objects.requireNonNull(cleanup);
   }
 
@@ -99,7 +100,6 @@ public final class ScheduledAskerMaintenance {
     public boolean completeOwnedLocalDeletion(Runnable finalDelete) {
       throw unavailable();
     }
-
   }
 
   public void performDeletionWorkflow() {

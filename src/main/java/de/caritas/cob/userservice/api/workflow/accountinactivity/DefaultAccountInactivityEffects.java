@@ -103,15 +103,31 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
             .orElseThrow(() -> new AccountInactivityEffectException(DATABASE, FAILED));
     if (!java.util.Objects.equals(work.suspensionOperationId(), accessOwner(work.identityId())))
       throw new AccountInactivityEffectException(DATABASE, FAILED);
-    for (var access : matrixStates(work.identityId())) {
+    var journal = new InactivityRestoreEffectsJournal(jdbc, durable);
+    var owned = journal.prepare(work);
+    var ids = owned.stream().map(InactivityRestoreEffectsJournal.Matrix::id).toList();
+    if (!work.restoreWasRefused(original.enabled())) {
+      for (var access : owned) {
+        if (!journal.start(work, access.id(), false)) continue;
+        work.requireCurrent();
+        if (!matrix.setAccountSuspended(access.id(), access.originalLocked()))
+          throw new AccountInactivityEffectException(MATRIX, UNCONFIRMED);
+        journal.acknowledge(work, access.id(), false);
+      }
+      if (journal.start(work, null, false)) {
+        work.requireCurrent();
+        media.restore(ids);
+        journal.acknowledge(work, null, false);
+      }
       work.requireCurrent();
-      if (!matrix.setAccountSuspended(access.id(), access.locked()))
-        throw new AccountInactivityEffectException(MATRIX, UNCONFIRMED);
+      if (!work.restoreNative(original.enabled())) {
+        compensateRefusedRestore(work, journal, owned, ids, original.enabled());
+        throw new AccountInactivityEffectException(DATABASE, FAILED);
+      }
+    } else {
+      compensateRefusedRestore(work, journal, owned, ids, original.enabled());
+      throw new AccountInactivityEffectException(DATABASE, FAILED);
     }
-    work.requireCurrent();
-    media.restore(matrixStates(work.identityId()).stream().map(MatrixAccess::id).toList());
-    work.requireCurrent();
-    if (!work.restoreNative(original.enabled())) return false;
     durable.executeWithoutResult(
         ignored -> {
           work.requireOwnedSql();
@@ -129,6 +145,33 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
                   != 1) throw new AccountInactivityEffectException(DATABASE, FAILED);
         });
     return true;
+  }
+
+  private void compensateRefusedRestore(
+      AccountInactivityService.ClaimedWork work,
+      InactivityRestoreEffectsJournal journal,
+      List<InactivityRestoreEffectsJournal.Matrix> owned,
+      List<String> ids,
+      boolean originalEnabled) {
+    for (var access : owned) {
+      if (!work.restoreWasRefused(originalEnabled))
+        throw new AccountInactivityEffectException(DATABASE, FAILED);
+      if (!journal.start(work, access.id(), true)) continue;
+      if (!work.restoreWasRefused(originalEnabled))
+        throw new AccountInactivityEffectException(DATABASE, FAILED);
+      if (!matrix.setAccountSuspended(access.id(), true))
+        throw new AccountInactivityEffectException(MATRIX, UNCONFIRMED);
+      journal.acknowledge(work, access.id(), true);
+    }
+    if (!work.restoreWasRefused(originalEnabled))
+      throw new AccountInactivityEffectException(DATABASE, FAILED);
+    if (journal.start(work, null, true)) {
+      if (!work.restoreWasRefused(originalEnabled))
+        throw new AccountInactivityEffectException(DATABASE, FAILED);
+      media.revoke(ids);
+      journal.acknowledge(work, null, true);
+    }
+    work.finishRefusedRestore(originalEnabled);
   }
 
   private void scopedCapture(AccountInactivityService.ClaimedWork work) {

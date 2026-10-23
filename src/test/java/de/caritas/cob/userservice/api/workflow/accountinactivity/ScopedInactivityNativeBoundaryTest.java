@@ -411,7 +411,7 @@ class ScopedInactivityNativeBoundaryTest {
                 .replaceFirst("(?s)^.*?ALTER TABLE account_inactivity\\s+ADD COLUMN\\s+", "")
                 .replaceFirst(";\\s*$", "")
                 .split(",\\s*ADD COLUMN\\s+");
-        assertEquals(11, columns.length);
+        assertEquals(12, columns.length);
         for (String column : columns)
           jdbc.execute("ALTER TABLE account_inactivity ADD COLUMN " + column);
       } catch (java.io.IOException invalid) {
