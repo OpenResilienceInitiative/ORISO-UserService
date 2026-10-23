@@ -34,29 +34,40 @@ public class DeleteMatrixAskerAction extends DeleteMatrixUserAction
   @Override
   public void execute(AskerDeletionWorkflowDTO actionTarget) {
     if (actionTarget.isAcknowledged()) {
-      var sessions = new java.util.concurrent.atomic.AtomicReference<java.util.List<de.caritas.cob.userservice.api.model.Session>>();
-      actionTarget.runOwnedLocal(() -> sessions.set(sessionRepository.findByUser(actionTarget.getUser())));
+      var sessions =
+          new java.util.concurrent.atomic.AtomicReference<
+              java.util.List<de.caritas.cob.userservice.api.model.Session>>();
+      actionTarget.runOwnedLocal(
+          () -> sessions.set(sessionRepository.findByUser(actionTarget.getUser())));
       var incomplete = new java.util.concurrent.atomic.AtomicBoolean();
       for (var session : sessions.get()) {
-        actionTarget.runOwnedExternal(() -> {
-          try {
-            purgeMatrixRoom(session.getMatrixRoomId());
-          } catch (Exception failure) {
-            incomplete.set(true);
-            appendErrorsForSourceType(actionTarget.getDeletionWorkflowErrors(), ASKER,
-                actionTarget.getUser().getMatrixUserId(), failure);
-          }
-        });
+        actionTarget.runOwnedExternal(
+            () -> {
+              try {
+                purgeMatrixRoom(session.getMatrixRoomId());
+              } catch (Exception failure) {
+                incomplete.set(true);
+                appendErrorsForSourceType(
+                    actionTarget.getDeletionWorkflowErrors(),
+                    ASKER,
+                    actionTarget.getUser().getMatrixUserId(),
+                    failure);
+              }
+            });
         if (incomplete.get()) return;
       }
-      actionTarget.runOwnedExternal(() -> {
-        try {
-          deactivateMatrixUser(actionTarget.getUser().getMatrixUserId());
-        } catch (Exception failure) {
-          appendErrorsForSourceType(actionTarget.getDeletionWorkflowErrors(), ASKER,
-              actionTarget.getUser().getMatrixUserId(), failure);
-        }
-      });
+      actionTarget.runOwnedExternal(
+          () -> {
+            try {
+              deactivateMatrixUser(actionTarget.getUser().getMatrixUserId());
+            } catch (Exception failure) {
+              appendErrorsForSourceType(
+                  actionTarget.getDeletionWorkflowErrors(),
+                  ASKER,
+                  actionTarget.getUser().getMatrixUserId(),
+                  failure);
+            }
+          });
       return;
     }
     try {

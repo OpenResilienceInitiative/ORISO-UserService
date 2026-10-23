@@ -1,9 +1,9 @@
 package de.caritas.cob.userservice.api.workflow.teamdiscussionretention.service;
 
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
-import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -37,8 +37,8 @@ public class TeamDiscussionPurgeWriter {
   /** Uses only the already active SQL callback of the same private deletion frame. */
   public void deleteDiscussionAndParticipants(
       TeamDiscussion discussion, AskerDeletionWorkflowDTO owned) {
-    if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
-      throw new ScopedIdentityCommandRequiredException();
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isActualTransactionActive()) throw new ScopedIdentityCommandRequiredException();
     owned.requireOwnedUser();
     participantRepository.deleteByTeamDiscussionId(discussion.getId());
     owned.requireOwnedUser();

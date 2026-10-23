@@ -64,7 +64,8 @@ import org.springframework.web.client.RestTemplate;
 @org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest
 @org.springframework.test.context.ActiveProfiles("testing")
 @org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase(
-    replace = org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace.NONE)
+    replace =
+        org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace.NONE)
 @org.springframework.context.annotation.Import({
   de.caritas.cob.userservice.api.config.JpaAuditingConfiguration.class,
   de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimWriter.class,
@@ -76,9 +77,16 @@ import org.springframework.web.client.RestTemplate;
 class DeleteUserAccountScenarioCBoundaryTest {
   @org.springframework.beans.factory.annotation.Autowired private javax.sql.DataSource actualSource;
   @org.springframework.beans.factory.annotation.Autowired private UserRepository actualUsers;
-  @org.springframework.beans.factory.annotation.Autowired private jakarta.persistence.EntityManager actualEntities;
-  @org.springframework.beans.factory.annotation.Autowired private org.springframework.transaction.PlatformTransactionManager actualTransactions;
-  @org.springframework.beans.factory.annotation.Autowired private ScheduledTaskClaimService actualClaims;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private jakarta.persistence.EntityManager actualEntities;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.transaction.PlatformTransactionManager actualTransactions;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private ScheduledTaskClaimService actualClaims;
+
   @org.springframework.beans.factory.annotation.Autowired private Clock actualClock;
   private final IdentityClientConfig config = mock(IdentityClientConfig.class);
   private final KeycloakClient nativeClient = mock(KeycloakClient.class);
@@ -303,16 +311,23 @@ class DeleteUserAccountScenarioCBoundaryTest {
         .execute(source);
     jdbc.update("delete from scheduled_task_claim where task_name='account-deletion'");
     actualUsers.findById(account).ifPresent(actualUsers::delete);
-    var persisted = new User(account, null,
-        new de.caritas.cob.userservice.api.helper.UsernameTranscoder().encodeUsername("fixture"),
-        "fixture@fixture.invalid", false);
+    var persisted =
+        new User(
+            account,
+            null,
+            new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+                .encodeUsername("fixture"),
+            "fixture@fixture.invalid",
+            false);
     persisted.setTenantId(7L);
     persisted.setLanguageCode(com.neovisionaries.i18n.LanguageCode.en);
     persisted.setDeleteDate(now.minusDays(4));
     persisted.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
     persisted.setDeletionReadOnlyUntil(now.minusDays(1));
     actualUsers.save(persisted);
-    assertEquals(1, jdbc.queryForObject("select count(*) from user where user_id=?", Integer.class, account));
+    assertEquals(
+        1,
+        jdbc.queryForObject("select count(*) from user where user_id=?", Integer.class, account));
     var claims = actualClaims;
     var continued = new AtomicInteger();
     var actor =
@@ -361,7 +376,11 @@ class DeleteUserAccountScenarioCBoundaryTest {
               if (lostLease) {
                 jdbc.update(
                     "update scheduled_task_claim set claimed_until=? where task_name=?",
-                    jdbc.queryForObject("select claimed_until from scheduled_task_claim where task_name='account-deletion'", java.sql.Timestamp.class).toLocalDateTime().plusSeconds(1),
+                    jdbc.queryForObject(
+                            "select claimed_until from scheduled_task_claim where task_name='account-deletion'",
+                            java.sql.Timestamp.class)
+                        .toLocalDateTime()
+                        .plusSeconds(1),
                     "account-deletion");
               }
               return withSuccess(
@@ -398,11 +417,17 @@ class DeleteUserAccountScenarioCBoundaryTest {
                             + " where operation_id=?",
                         operation);
                 assertEquals("FROZEN", frozen.get("STATUS"));
-                var savedEnvelope = codec.read(
-                    jdbc.queryForObject("select frozen_body from identity_maintenance_intent where operation_id=?", String.class, operation),
-                    com.fasterxml.jackson.databind.node.ObjectNode.class);
+                var savedEnvelope =
+                    codec.read(
+                        jdbc.queryForObject(
+                            "select frozen_body from identity_maintenance_intent where operation_id=?",
+                            String.class,
+                            operation),
+                        com.fasterxml.jackson.databind.node.ObjectNode.class);
                 assertEquals(codec.canonical(body), codec.canonical(savedEnvelope.path("body")));
-                assertEquals("CLAIMED_SCHEDULED_ASKER_DELETE_V1", savedEnvelope.path("representation").textValue());
+                assertEquals(
+                    "CLAIMED_SCHEDULED_ASKER_DELETE_V1",
+                    savedEnvelope.path("representation").textValue());
                 assertEquals(29, savedEnvelope.path("originalSql").size());
                 String binding = savedEnvelope.remove("bindingDigest").textValue();
                 assertEquals(binding, codec.claimedScheduledDeletionIntentDigest(savedEnvelope));
@@ -462,30 +487,33 @@ class DeleteUserAccountScenarioCBoundaryTest {
     }
     java.util.function.Supplier<ScheduledAskerMaintenance> freshWorker =
         () -> {
-          var owner = new ScheduledAskerMaintenance(
-                jdbc,
-                actualTransactions,
-                claims,
-                clock,
-                lifecycle,
-                actors,
-                broker,
-                codec,
-                http,
-                "https://identity.test",
-                "fixture",
-                realmId);
+          var owner =
+              new ScheduledAskerMaintenance(
+                  jdbc,
+                  actualTransactions,
+                  claims,
+                  clock,
+                  lifecycle,
+                  actors,
+                  broker,
+                  codec,
+                  http,
+                  "https://identity.test",
+                  "fixture",
+                  realmId);
           owner.configureJpaCleanupOwner(actualEntities);
-          owner.configureAcknowledgedCleanup(frame -> {
-            frame.requireCurrent();
-            assertEquals(account, frame.accountId());
-            assertEquals(7L, frame.tenantId());
-            frame.runOwnedLocal(() -> {
-              assertTrue(actualEntities.isJoinedToTransaction());
-              frame.requireCurrentUser(actualUsers.findById(account).orElseThrow());
-            });
-            continued.incrementAndGet();
-          });
+          owner.configureAcknowledgedCleanup(
+              frame -> {
+                frame.requireCurrent();
+                assertEquals(account, frame.accountId());
+                assertEquals(7L, frame.tenantId());
+                frame.runOwnedLocal(
+                    () -> {
+                      assertTrue(actualEntities.isJoinedToTransaction());
+                      frame.requireCurrentUser(actualUsers.findById(account).orElseThrow());
+                    });
+                continued.incrementAndGet();
+              });
           return owner;
         };
     var scheduler =
@@ -505,8 +533,15 @@ class DeleteUserAccountScenarioCBoundaryTest {
               "select count(*) from identity_maintenance_intent where status='FROZEN'"
                   + " and receipt_json is null and frozen_body is not null",
               Integer.class));
-      assertEquals(firstDelete.get(), codec.canonical(codec.read(
-          jdbc.queryForObject("select frozen_body from identity_maintenance_intent", String.class), JsonNode.class).path("body")));
+      assertEquals(
+          firstDelete.get(),
+          codec.canonical(
+              codec
+                  .read(
+                      jdbc.queryForObject(
+                          "select frozen_body from identity_maintenance_intent", String.class),
+                      JsonNode.class)
+                  .path("body")));
       ReflectionTestUtils.setField(scheduler, "scopedMaintenance", freshWorker.get());
       scheduler.performDeletionWorkflow();
       // A fresh owner may retry an ACK for cleanup, but cannot issue another native effect.
@@ -545,7 +580,9 @@ class DeleteUserAccountScenarioCBoundaryTest {
     }
     assertEquals(lostLease ? 1 : lostReply ? 3 : 2, requests.get());
     server.verify();
-    assertEquals(1, jdbc.queryForObject("select count(*) from user where user_id=?", Integer.class, account));
+    assertEquals(
+        1,
+        jdbc.queryForObject("select count(*) from user where user_id=?", Integer.class, account));
     assertEquals(invalidReceipt || lostLease ? 0 : lostReply ? 2 : 1, continued.get());
     verifyNoInteractions(nativeClient, users, consultants, registry, mail);
   }
