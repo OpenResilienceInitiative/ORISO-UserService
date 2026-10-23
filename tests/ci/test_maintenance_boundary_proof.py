@@ -223,7 +223,7 @@ class JpaBoundaryEvidenceTest(unittest.TestCase):
             path = root / "TEST-jpa.xml"
             ET.ElementTree(suite).write(path)
             result = proof.sanitize(root, root / "clean.xml")
-            self.assertEqual(3, result["floor"])
+            self.assertEqual(10, result["floor"])
             self.assertTrue(result["adapter_behavior_red"])
             self.assertFalse(result["legacy_control_passed"])
             ET.SubElement(control, "failure", type="org.opentest4j.AssertionFailedError")

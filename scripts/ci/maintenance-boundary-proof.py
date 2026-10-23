@@ -203,6 +203,13 @@ def select_slice(name):
             "actualJpaCommitPrecedesNativeDispatchEvenWhenReplyIsUnknown",
             "actualJpaFlushFailureRollsBackDomainAndPreventsDispatchableIntent",
             "anIdenticalSavedImportRowCanNeverResumeAsASelfLocaleOperation",
+            "signedLocaleForbiddenIsCommittedAndReplayedWithoutRepeatingTheLocalPatch",
+            "signedLocaleConflictIsCommittedAndReplayedWithoutRepeatingTheLocalPatch",
+            "unsignedForeignOrWrongMacLocaleErrorsCannotRetireTheFrozenOperation",
+            "terminalReceiptTamperingAndOriginalOwnerBirthDriftCannotProduceMutationHeaders",
+            "failedTerminalSqlCommitPreservesTheFrozenIntentWithoutDefiniteOutcomeHeaders",
+            "acknowledgedLocaleReplayRechecksTheOriginalNativeCommandWithoutRepeatingLocalChanges",
+            "revokedNativeLocaleGrantCannotReplayLocalAcknowledgementAsSuccess",
         }
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance",
