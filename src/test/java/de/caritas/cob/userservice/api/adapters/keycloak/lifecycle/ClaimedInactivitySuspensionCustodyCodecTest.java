@@ -103,6 +103,15 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> codec.claimedInactivitySuspensionCustodyDigest(oversized));
+    for (String phase : List.of("CAPTURED", "ACKNOWLEDGED", "NO_EFFECT")) {
+      var incoherent = custody(phase, true);
+      if ("CAPTURED".equals(phase)) incoherent.set("nativeBody", valid.path("nativeBody"));
+      else incoherent.putNull("nativeReceipt");
+      assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivitySuspensionCustodyDigest(incoherent));
+    }
+    var foreignSource = valid.deepCopy();
+    ((ObjectNode) foreignSource.path("source").path("user").get(0)).put("user_id", WORK);
+    assertThrows(IllegalArgumentException.class, () -> codec.claimedInactivitySuspensionCustodyDigest(foreignSource));
     var fractional = valid.deepCopy();
     ((ObjectNode) fractional.path("originalRow")).put("revision", 0.5);
     assertThrows(

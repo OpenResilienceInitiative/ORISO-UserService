@@ -189,7 +189,7 @@ class InactivityDeletionContinuationJpaTest {
         .thenAnswer(
             call -> {
               assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-              assertEquals(1, nativeEffects.get());
+              assertTrue(enableSuspensionWorkflow || nativeEffects.get() == 1);
               return Optional.of(false);
             });
     doAnswer(
@@ -213,13 +213,12 @@ class InactivityDeletionContinuationJpaTest {
             manyTimes(),
             outbound ->
                 assertTrue(
-                    Set.of(ENDPOINT + "/read", ENDPOINT + "/delete", ENDPOINT + "/deactivate")
+                    Set.of(ENDPOINT + "/read", ENDPOINT + "/delete", ENDPOINT + "/deactivate", ENDPOINT + "/reactivate")
                         .contains(outbound.getURI().toString())))
         .andRespond(
             outbound -> {
               assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
               assertEquals(HttpMethod.POST, outbound.getMethod());
-              assertNull(outbound.getHeaders().getFirst("X-ORISO-Human-Authorization"));
               assertEquals(
                   "Bearer fixture-account-admin", outbound.getHeaders().getFirst("Authorization"));
               String command =
@@ -229,6 +228,9 @@ class InactivityDeletionContinuationJpaTest {
                       .substring(outbound.getURI().getPath().lastIndexOf('/') + 1);
               String raw = ((MockClientHttpRequest) outbound).getBodyAsString();
               var body = codec.read(raw, JsonNode.class);
+              assertEquals(
+                  enableSuspensionWorkflow && "HUMAN_ADMIN".equals(body.path("target").path("origin").path("kind").textValue()) ? "Bearer fixture-platform-human" : null,
+                  outbound.getHeaders().getFirst("X-ORISO-Human-Authorization"));
               verifyCapturedProof(
                   outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
               if ("read".equals(command)) {
@@ -239,6 +241,19 @@ class InactivityDeletionContinuationJpaTest {
                       .createResponse(outbound);
                 var response =
                     withSuccess(projection(), MediaType.APPLICATION_JSON).createResponse(outbound);
+                response.getHeaders().setCacheControl("no-store");
+                return response;
+              }
+              if (enableSuspensionWorkflow && Set.of("deactivate", "reactivate").contains(command)) {
+                String operation = body.path("operationId").textValue();
+                if (workflowBodies.containsKey(operation)) assertEquals(workflowBodies.get(operation), raw);
+                else {
+                  workflowBodies.put(operation, raw);
+                  workflowReplies.put(operation, receipt(body, command, "UPDATED"));
+                  suspensionEffects++;
+                  realmEnabled = "reactivate".equals(command);
+                }
+                var response = withSuccess(workflowReplies.get(operation), MediaType.APPLICATION_JSON).createResponse(outbound);
                 response.getHeaders().setCacheControl("no-store");
                 return response;
               }
@@ -535,8 +550,63 @@ class InactivityDeletionContinuationJpaTest {
     verifyNoInteractions(sdk);
   }
 
+  @Test
+  void newSuspensionAndRestoreRetainOriginalSourceForTheNextActuallyDuePrivateDeletion() {
+    enableSuspensionWorkflow = true;
+    realmEnabled = true;
+    withMatrixIdentity = true;
+    when(matrix.setAccountSuspended(anyString(), anyBoolean())).thenReturn(true);
+    var service = inactivity(true, false);
+    String humanId = "44444444-4444-4444-8444-444444444444";
+    inactivityHuman.setUserId(humanId);
+    inactivityHuman.setTenantId(0L);
+    inactivityHuman.setRoles(Set.of("agency-admin", "tenant-admin"));
+    inactivityHuman.setAccessToken("fixture-platform-human");
+    var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture-platform-human")
+        .header("alg", "RS256").issuer("https://identity.test/realms/fixture")
+        .subject(humanId).claim("azp", "admin").claim("tenantId", 0)
+        .issuedAt(clock.instant().minusSeconds(5)).expiresAt(clock.instant().plusSeconds(300)).build();
+    inactivityRequest.setUserPrincipal(new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt, List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("user-admin"))));
+    inactivityRequest.addHeader("Authorization", "Bearer fixture-platform-human");
+    assertTrue(service.suspend(ACCOUNT));
+    assertEquals(1, suspensionEffects);
+    String original = jdbc.queryForObject("select suspension_source_json from account_inactivity where identity_id=?", String.class, ACCOUNT);
+    assertNotNull(original, "The first actual held SUSPEND must retain source before its native effect");
+    String suspension = codec.read(original, JsonNode.class).path("originalRow").path("workId").textValue();
+    assertTrue(service.reactivate(ACCOUNT));
+    assertEquals(2, suspensionEffects);
+    assertEquals(original, jdbc.queryForObject("select suspension_source_json from account_inactivity where identity_id=?", String.class, ACCOUNT));
+    clock = Clock.offset(clock, Duration.ofDays(800));
+    var future = inactivity(false, false);
+    future.scan(false);
+    assertActualDeletionClaim();
+    assertEquals(1, nativeEffects.get());
+    assertEquals(1, callbacks.get());
+    assertEquals(1, preparations.get());
+    assertEquals("APPLIED", status());
+    assertTrue(users.findById(ACCOUNT).isEmpty());
+    assertEquals(de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status.DELETED, future.snapshot(ACCOUNT).orElseThrow().status());
+    var converted = codec.read(jdbc.queryForObject("select suspension_source_json from account_inactivity where identity_id=?", String.class, ACCOUNT), JsonNode.class);
+    assertEquals("CAPTURED", converted.path("phase").textValue());
+    assertTrue(converted.path("nativeBody").isNull());
+    assertTrue(converted.path("nativeReceipt").isNull());
+    assertEquals(codec.read(original, JsonNode.class).path("source"), converted.path("source"));
+    assertNotEquals(suspension, converted.path("originalRow").path("workId").textValue());
+    assertNotEquals(converted.path("originalRow").path("workId"), envelope().path("originalRow").path("workId"));
+    assertNotEquals(suspension, envelope().path("originalRow").path("workId").textValue());
+    assertEquals(List.of(List.of("@owned-cleanup:fixture.invalid")), forgotten);
+    verifyNoInteractions(sdk);
+  }
+
   private final de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient sdk =
       mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient.class);
+  private boolean enableSuspensionWorkflow;
+  private boolean realmEnabled;
+  private int suspensionEffects;
+  private final Map<String, String> workflowBodies = new HashMap<>();
+  private final Map<String, String> workflowReplies = new HashMap<>();
+  private final de.caritas.cob.userservice.api.helper.AuthenticatedUser inactivityHuman = new de.caritas.cob.userservice.api.helper.AuthenticatedUser();
+  private final org.springframework.mock.web.MockHttpServletRequest inactivityRequest = new org.springframework.mock.web.MockHttpServletRequest();
   private boolean retainLocalUser;
   private boolean withMatrixIdentity;
   private boolean loseMediaReply;
@@ -718,8 +788,8 @@ class InactivityDeletionContinuationJpaTest {
             "fixture",
             REALM,
             "https://identity.test/realms/fixture"),
-        new de.caritas.cob.userservice.api.helper.AuthenticatedUser(),
-        new org.springframework.mock.web.MockHttpServletRequest(),
+        inactivityHuman,
+        inactivityRequest,
         "https://identity.test/realms/fixture",
         Set.of("admin"));
     if (initialize) service.assignAtCreation(ACCOUNT, 7L, 24, 0, enrolledAt);
@@ -792,7 +862,7 @@ class InactivityDeletionContinuationJpaTest {
     row.put("email", "ordinary@fixture.invalid");
     row.put("firstName", "Owned");
     row.put("lastName", "Cleanup");
-    row.put("enabled", false);
+    row.put("enabled", realmEnabled);
     row.put("emailVerified", true);
     row.put("tenantId", "7");
     row.put("preferredLanguage", null);
@@ -843,9 +913,10 @@ class InactivityDeletionContinuationJpaTest {
         UUID.fromString(claims.path("jti").textValue()).toString(), claims.path("jti").textValue());
     assertTrue(claims.path("nonce").textValue().matches("[0-9a-f]{32}"));
     long issued = claims.path("iat").longValue();
-    assertTrue(issued > 0 && issued <= clock.instant().getEpochSecond());
+    long observed = Instant.now().getEpochSecond();
+    assertTrue(issued > 0 && issued <= observed);
     assertEquals(issued + 60, claims.path("exp").longValue());
-    assertTrue(claims.path("exp").longValue() > clock.instant().getEpochSecond());
+    assertTrue(claims.path("exp").longValue() > observed);
     assertEquals(
         Base64.getUrlEncoder().withoutPadding().encodeToString(hmac("proof\n" + parts[0])),
         parts[1]);
@@ -862,11 +933,15 @@ class InactivityDeletionContinuationJpaTest {
   }
 
   private String receipt(JsonNode body) {
+    return receipt(body, "delete", "DELETED");
+  }
+
+  private String receipt(JsonNode body, String command, String result) {
     var outcome = new TreeMap<String, Object>();
     outcome.put("realmId", REALM);
     outcome.put("accountId", ACCOUNT);
     outcome.put("operationId", body.path("operationId").textValue());
-    outcome.put("command", "delete");
+    outcome.put("command", command);
     outcome.put("ownerClient", actor.clientId());
     outcome.put("ownerSubject", SUBJECT);
     outcome.put("intentDigest", codec.digest("maintenance-intent", body));
@@ -874,7 +949,7 @@ class InactivityDeletionContinuationJpaTest {
     outcome.put("tenantId", "7");
     outcome.put(
         "originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
-    outcome.put("result", "DELETED");
+    outcome.put("result", result);
     String encoded =
         Base64.getUrlEncoder()
             .withoutPadding()
@@ -901,7 +976,7 @@ class InactivityDeletionContinuationJpaTest {
             "operationId",
             body.path("operationId").textValue(),
             "result",
-            "DELETED",
+            result,
             "receipt",
             signed));
   }
