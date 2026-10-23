@@ -1326,6 +1326,32 @@ public final class AccountLifecycleCodec {
     return new IllegalArgumentException("Invalid receiver creation proof");
   }
 
+  public String claimedScheduledDeletionIntentDigest(JsonNode exactOwnedEnvelope) {
+    return digest(
+        "claimed-scheduled-deletion-intent/v1",
+        ClaimedDeletionIntentSchema.scheduled(exactOwnedEnvelope));
+  }
+
+  public String claimedInactivityDeletionIntentDigest(JsonNode exactOwnedEnvelope) {
+    if (exactOwnedEnvelope == null || !exactOwnedEnvelope.isObject())
+      throw new IllegalArgumentException("Invalid owned inactivity deletion metadata");
+    String rowDigest = claimedInactivityDeletionRowDigest(exactOwnedEnvelope.path("originalRow"));
+    return digest(
+        "claimed-inactivity-deletion-intent/v1",
+        ClaimedDeletionIntentSchema.inactivity(exactOwnedEnvelope, rowDigest));
+  }
+
+  public String claimedInactivityDeletionRowDigest(JsonNode exactOwnedRow) {
+    return digest(
+        "claimed-inactivity-deletion-row/v1",
+        ClaimedInactivityRowSchema.require(exactOwnedRow, true));
+  }
+
+  public String claimedInactivityRowDigest(JsonNode exactOwnedRow) {
+    return digest(
+        "claimed-inactivity-row/v1", ClaimedInactivityRowSchema.require(exactOwnedRow, false));
+  }
+
   public String canonical(Object value) {
     try {
       return json.writeValueAsString(sorted(json.valueToTree(value)));
