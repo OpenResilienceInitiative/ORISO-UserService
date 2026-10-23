@@ -42,7 +42,8 @@ public class AskerUserAdminFacade {
     this.identityMode = java.util.Objects.requireNonNull(mode);
   }
 
-  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation scopedReactivation;
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+      scopedReactivation;
 
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   public void setScopedReactivation(

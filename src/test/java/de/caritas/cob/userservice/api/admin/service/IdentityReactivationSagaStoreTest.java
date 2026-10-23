@@ -50,14 +50,25 @@ class IdentityReactivationSagaStoreTest {
 
   @Test
   void fiveActorsGenericSagaCannotAllocateReleaseOrDispatchAClaim() {
-    var mode = org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
-    org.mockito.Mockito.when(mode.isFiveActorMode()).thenReturn(true);
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    lenient().when(mode.isFiveActorMode()).thenReturn(true);
     sagaStore.setIdentityMode(mode);
-    var operation = new IdentityReactivationOperation("user-1", "operation-1", "actual-asker", "actual@fixture.invalid", 7L);
-    org.junit.jupiter.api.Assertions.assertThrows(de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class, () -> sagaStore.begin("actual-asker", "actual@fixture.invalid", 7L));
-    org.junit.jupiter.api.Assertions.assertThrows(de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class, () -> sagaStore.reactivateAndCommit(operation, "synthetic-password"));
-    org.junit.jupiter.api.Assertions.assertThrows(de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class, () -> sagaStore.abortUnmutated(operation));
-    org.mockito.Mockito.verifyNoInteractions(userRepository, identityReactivator, deletionLifecycleService);
+    var operation =
+        new IdentityReactivationOperation(
+            "user-1", "operation-1", "actual-asker", "actual@fixture.invalid", 7L);
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class,
+        () -> sagaStore.begin("actual-asker", "actual@fixture.invalid", 7L));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class,
+        () -> sagaStore.reactivateAndCommit(operation, "synthetic-password"));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class,
+        () -> sagaStore.abortUnmutated(operation));
+    org.mockito.Mockito.verifyNoInteractions(
+        userRepository, identityReactivator, deletionLifecycleService);
   }
 
   @Test

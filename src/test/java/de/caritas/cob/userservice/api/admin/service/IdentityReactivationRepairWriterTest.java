@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.admin.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -31,11 +32,17 @@ class IdentityReactivationRepairWriterTest {
 
   @Test
   void fiveActorsGenericWriterCannotCompensateOrRetryScopedCustody() {
-    var mode = org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
-    org.mockito.Mockito.when(mode.isFiveActorMode()).thenReturn(true);
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    lenient().when(mode.isFiveActorMode()).thenReturn(true);
     writer.setIdentityMode(mode);
-    assertThrows(de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class, () -> writer.compensate(operation("operation-1"), databaseFailure()));
-    assertThrows(de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class, () -> writer.retry("user-1", "operation-1"));
+    assertThrows(
+        de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class,
+        () -> writer.compensate(operation("operation-1"), databaseFailure()));
+    assertThrows(
+        de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class,
+        () -> writer.retry("user-1", "operation-1"));
     verifyNoInteractions(userRepository, identityDeactivator);
   }
 
