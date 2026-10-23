@@ -597,7 +597,8 @@ class AccountRoleAdditionScopedJpaTest {
         .bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
     assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
     assertEquals(1, effects.get());
-    verify(localGrant, times(1)).bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
+    verify(localGrant, times(1))
+        .bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
     assertEquals("ACKNOWLEDGED", phase());
     assertNoLocalAdmin();
     assertEquals(
@@ -613,7 +614,8 @@ class AccountRoleAdditionScopedJpaTest {
     assertFalse(
         jdbc.queryForObject(
             "select managed_paused from admin where admin_id=?", Boolean.class, ACCOUNT));
-    assertNull(jdbc.queryForObject("select id_old from admin where admin_id=?", Long.class, ACCOUNT));
+    assertNull(
+        jdbc.queryForObject("select id_old from admin where admin_id=?", Long.class, ACCOUNT));
     verifyNoInteractions(generic);
   }
 
