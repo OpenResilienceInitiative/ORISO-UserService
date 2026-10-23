@@ -59,6 +59,11 @@ public final class ScheduledAskerMaintenance {
     Objects.requireNonNull(cleanup);
   }
 
+  /** Missing or foreign JPA ownership remains closed before any downstream external effect. */
+  public void configureJpaCleanupOwner(jakarta.persistence.EntityManager entities) {
+    Objects.requireNonNull(entities);
+  }
+
   /** Nonconstructible outside this owner. Closed until exact original SQL/ACK qualification. */
   public static final class AcknowledgedDeletion {
     private AcknowledgedDeletion() {}
