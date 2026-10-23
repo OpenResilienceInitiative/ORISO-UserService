@@ -288,6 +288,23 @@ public final class SelfLocaleMaintenance {
   private Optional<Map<String, Object>> recheckAcknowledged(
       CheckedSelf self, Intent original, String digest, TaskActorCredentials actor) {
     try {
+      transaction(
+          () -> {
+            var current = findChecked(self, original.operation, digest, actor);
+            if (!original.equals(current) || !"ACKNOWLEDGED".equals(current.status))
+              throw unavailable();
+            codec.verifyMaintenanceLocaleReceipt(
+                codec.canonical(
+                    Map.of(
+                        "operationId", current.operation,
+                        "accountId", current.account,
+                        "result", "UPDATED",
+                        "receipt", current.receipt)),
+                realmId,
+                actor,
+                codec.read(current.body, JsonNode.class));
+            return null;
+          });
       String reply = request("locale", self, original.body, actor);
       String verified =
           codec.verifyMaintenanceLocaleReceipt(

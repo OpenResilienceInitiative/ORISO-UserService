@@ -99,10 +99,10 @@ public class ConsultantUpdateService {
     if (identityMode != null && identityMode.isFiveActorMode()) {
       if (scopedMaintenance == null || !scopedMaintenance.isFiveActorMode())
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
-      if (!adminEdit)
-        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
-      return scopedMaintenance.updateConsultantProfile(
-          new ScopedEdit(consultantId, dto, adminEdit));
+      var edit = new ScopedEdit(consultantId, dto, adminEdit);
+      return adminEdit
+          ? scopedMaintenance.updateConsultantProfile(edit)
+          : scopedMaintenance.updateOwnConsultantProfile(edit);
     }
     return localWrites == null
         ? updateConsultantLegacy(consultantId, dto, adminEdit)
@@ -138,6 +138,46 @@ public class ConsultantUpdateService {
 
     public String accountId() {
       return id;
+    }
+
+    public boolean selfService() {
+      return !adminEdit;
+    }
+
+    public void requireSelfInput() {
+      if (adminEdit)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+            "SELF profile requires its owning public edit");
+      try {
+        var values = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(dto);
+        var allowed =
+            Set.of(
+                "firstname",
+                "lastname",
+                "email",
+                "formalLanguage",
+                "absent",
+                "absenceMessage",
+                "languages",
+                "publicSlug",
+                "dataPrivacyConfirmation",
+                "termsAndConditionsConfirmation");
+        var fields = values.fields();
+        while (fields.hasNext()) {
+          var field = fields.next();
+          if (!allowed.contains(field.getKey()) && !field.getValue().isNull())
+            throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+                "SELF profile cannot change privileged fields");
+        }
+        Consultant row = current();
+        if (!Objects.equals(dto.getFormalLanguage(), row.isLanguageFormal())
+            || !Objects.equals(dto.getAbsent(), row.isAbsent())
+            || !Objects.equals(dto.getAbsenceMessage(), row.getAbsenceMessage()))
+          throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+              "SELF profile retains the current absence and formal-language fields");
+      } catch (IllegalArgumentException invalid) {
+        throw new BadRequestException("SELF profile edit is invalid");
+      }
     }
 
     public String intentJson() {

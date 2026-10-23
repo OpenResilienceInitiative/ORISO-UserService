@@ -74,6 +74,9 @@ class UserSelfPasswordScenarioCBoundaryTest {
       String stored = f.jdbc.queryForList("select * from identity_self_password_intent").toString();
       for (String secret : List.of(CURRENT, CHOSEN, "fixture-human", "fixture-admin"))
         assertFalse(stored.contains(secret));
+      f.server.verify();
+      f.server.reset();
+      f.expectAcknowledgedReplay(200);
       assertEquals(200, f.controller.updatePassword(f.password()).getStatusCode().value());
       assertEquals(1, f.clears());
       verifyNoInteractions(f.legacy);

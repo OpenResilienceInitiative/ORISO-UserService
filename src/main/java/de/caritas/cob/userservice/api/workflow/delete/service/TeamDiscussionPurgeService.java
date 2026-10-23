@@ -6,6 +6,8 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
+import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.api.workflow.teamdiscussionretention.service.TeamDiscussionPurgeWriter;
@@ -51,6 +53,37 @@ public class TeamDiscussionPurgeService {
       return false;
     }
     return deleteRows(discussion, workflowErrors);
+  }
+
+  /** Matrix stays outside SQL; the same private frame owns both local deletes. */
+  public boolean purge(
+      TeamDiscussion discussion,
+      List<DeletionWorkflowError> errors,
+      AskerDeletionWorkflowDTO owned) {
+    var purged = new java.util.concurrent.atomic.AtomicBoolean();
+    owned.runOwnedExternal(() -> purged.set(purgeMatrixRoom(discussion, errors)));
+    if (!purged.get()) return false;
+    owned.runOwnedLocal(
+        () -> {
+          try {
+            deletionWriter.deleteDiscussionAndParticipants(discussion, owned);
+            purged.set(true);
+          } catch (ScopedIdentityCommandRequiredException refusal) {
+            throw refusal;
+          } catch (Exception failure) {
+            purged.set(false);
+            log.error("UserService delete workflow error: ", failure);
+            errors.add(
+                DeletionWorkflowError.builder()
+                    .deletionSourceType(ASKER)
+                    .deletionTargetType(DeletionTargetType.DATABASE)
+                    .identifier(String.valueOf(discussion.getId()))
+                    .reason(DATABASE_ERROR_REASON)
+                    .timestamp(nowInUtc())
+                    .build());
+          }
+        });
+    return purged.get();
   }
 
   private boolean purgeMatrixRoom(

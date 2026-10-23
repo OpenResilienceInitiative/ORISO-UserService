@@ -207,7 +207,8 @@ public final class SelfPasswordMaintenance {
       intent = transaction(() -> findChecked(self, operation, digest, actor));
       if (intent == null) throw unavailable();
     }
-    if ("ACKNOWLEDGED".equals(intent.status)) return true;
+    if ("ACKNOWLEDGED".equals(intent.status))
+      return recheckAcknowledged(self, intent, digest, actor);
     if ("REJECTED".equals(intent.status)) {
       if (intent.receipt != null) throw verifiedTerminal(intent, actor);
       return false;
@@ -230,7 +231,8 @@ public final class SelfPasswordMaintenance {
           throw unavailable();
       }
     }
-    if ("ACKNOWLEDGED".equals(intent.status)) return true;
+    if ("ACKNOWLEDGED".equals(intent.status))
+      return recheckAcknowledged(self, intent, digest, actor);
     if (!"FROZEN".equals(intent.status)) throw unavailable();
     final Intent frozen = intent;
     // Only independently checked locked metadata may open a saved envelope.
@@ -268,6 +270,47 @@ public final class SelfPasswordMaintenance {
           || !verified.equals(resolved.receipt)) throw unavailable();
     }
     return true;
+  }
+
+  private boolean recheckAcknowledged(
+      Self self, Intent original, String digest, TaskActorCredentials actor) {
+    try {
+      JsonNode command =
+          transaction(
+              () -> {
+                var current = findChecked(self, original.operation, digest, actor);
+                if (!original.equals(current) || !"ACKNOWLEDGED".equals(current.status))
+                  throw unavailable();
+                var body = openChecked(self, current, digest, actor).path("body");
+                codec.verifyMaintenanceSelfPasswordReceipt(
+                    codec.canonical(
+                        Map.of(
+                            "operationId", current.operation,
+                            "accountId", current.account,
+                            "result", "UPDATED",
+                            "receipt", current.receipt)),
+                    realmId,
+                    actor,
+                    body);
+                return body;
+              });
+      String verified =
+          codec.verifyMaintenanceSelfPasswordReceipt(
+              call("self-password", self, codec.canonical(command), actor),
+              realmId,
+              actor,
+              command);
+      transaction(
+          () -> {
+            var current = findChecked(self, original.operation, digest, actor);
+            if (!original.equals(current) || !verified.equals(current.receipt)) throw unavailable();
+            return null;
+          });
+      return true;
+    } catch (RuntimeException unknown) {
+      // A replay cannot replace its successful audit or repeat the setup callback.
+      throw unavailable();
+    }
   }
 
   private Intent prepare(

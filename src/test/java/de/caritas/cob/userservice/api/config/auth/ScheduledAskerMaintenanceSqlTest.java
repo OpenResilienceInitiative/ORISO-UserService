@@ -10,10 +10,18 @@ import com.fasterxml.jackson.databind.JsonNode;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
+import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimWriter;
+import jakarta.persistence.EntityManager;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,21 +29,59 @@ import java.time.*;
 import java.util.*;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import org.h2.jdbcx.JdbcDataSource;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.RestTemplate;
 
-/** Real SQL/receipt/HTTP scheduler; actor doubles are explicit except the real issuer case. */
+/** Same five fairness/receipt oracles with the real JPA owner prerequisites. */
+@DataJpaTest
+@TestPropertySource(properties = "spring.profiles.active=testing")
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@Import({
+  JpaAuditingConfiguration.class,
+  ScheduledTaskClaimWriter.class,
+  ScheduledTaskClaimService.class,
+  ScheduledAskerMaintenanceSqlTest.TimeConfiguration.class
+})
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
+@org.springframework.test.annotation.DirtiesContext(
+    classMode = org.springframework.test.annotation.DirtiesContext.ClassMode.AFTER_CLASS)
 class ScheduledAskerMaintenanceSqlTest {
+  @Autowired private DataSource dataSource;
+  @Autowired private PlatformTransactionManager manager;
+  @Autowired private EntityManager entities;
+  @Autowired private UserRepository users;
+  @Autowired private ScheduledTaskClaimService realClaims;
+  @Autowired private Clock proofClock;
+
+  @TestConfiguration(proxyBeanMethods = false)
+  static class TimeConfiguration {
+    @Bean
+    Clock clock() {
+      return Clock.fixed(
+          Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS), ZoneOffset.UTC);
+    }
+  }
+
   private static final String FIRST = "00000000-0000-4000-8000-000000000001";
   private static final String SECOND = "00000000-0000-4000-8000-000000000002";
   private static final String SUBJECT = "091b8cef-09a8-4e5b-a244-6be3db4b7bee";
@@ -52,7 +98,13 @@ class ScheduledAskerMaintenanceSqlTest {
       assertDoesNotThrow(() -> f.scheduler().performDeletionWorkflow());
       assertEquals("PREPARED", f.status(FIRST));
       assertEquals("ACKNOWLEDGED", f.status(SECOND));
-      assertEquals(2, f.jdbc.queryForObject("SELECT COUNT(*) FROM user", Integer.class));
+      assertEquals(
+          f.initialUserCount + 2,
+          f.jdbc.queryForObject("SELECT COUNT(*) FROM user", Integer.class));
+      assertEquals(
+          2,
+          f.jdbc.queryForObject(
+              "SELECT COUNT(*) FROM user WHERE user_id IN (?,?)", Integer.class, FIRST, SECOND));
       assertNotNull(f.lastAttempt(FIRST));
       assertNotNull(f.lastAttempt(SECOND));
       verify(f.claims).release(f.lease);
@@ -95,7 +147,9 @@ class ScheduledAskerMaintenanceSqlTest {
       f.server.reset();
       f.server
           .expect(requestTo(f.url(FIRST, "delete")))
-          .andExpect(content().string(frozen))
+          .andExpect(
+              content()
+                  .string(f.codec.canonical(f.codec.read(frozen, JsonNode.class).path("body"))))
           .andRespond(request -> f.reply((MockClientHttpRequest) request));
       assertDoesNotThrow(() -> f.scheduler().performDeletionWorkflow());
       assertEquals("ACKNOWLEDGED", f.status(FIRST));
@@ -153,19 +207,20 @@ class ScheduledAskerMaintenanceSqlTest {
     }
   }
 
-  private static final class Fixture implements AutoCloseable {
+  private final class Fixture implements AutoCloseable {
     private final byte[] key = new byte[32];
     private final AccountLifecycleCodec codec = new AccountLifecycleCodec(key);
-    private final Clock clock = Clock.systemUTC();
-    private final JdbcDataSource source = new JdbcDataSource();
+    private final Clock clock = proofClock;
+    private final DataSource source = dataSource;
     private final JdbcTemplate jdbc;
-    private final DataSourceTransactionManager transactions;
-    private final ScheduledTaskClaimService claims = mock(ScheduledTaskClaimService.class);
+    private final int initialUserCount;
+    private final PlatformTransactionManager transactions = manager;
+    private final ScheduledTaskClaimService claims = spy(realClaims);
     private final ScheduledTaskClaimService.ClaimLease lease =
         new ScheduledTaskClaimService.ClaimLease(
             "account-deletion",
             LocalDateTime.now(clock)
-                .plusHours(1)
+                .plusHours(12)
                 .truncatedTo(java.time.temporal.ChronoUnit.MICROS));
     private final RestTemplate http = new RestTemplate();
     private final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
@@ -182,26 +237,17 @@ class ScheduledAskerMaintenanceSqlTest {
       when(checked.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
       when(checked.accessToken()).thenReturn("synthetic-checked-bearer");
       when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
-      // Allows the independent fairness counterfactual to reach the original per-account defect.
-      when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))
-          .thenReturn(
-              new TaskActorTokenBroker.TaskToken(
-                  TaskActor.ACCOUNT_ADMIN, "synthetic-checked-bearer", 300));
     }
 
     Fixture(TaskActorConfiguration actors, TaskActorTokenBroker broker) throws Exception {
       this.actors = actors;
       this.broker = broker;
-      source.setURL(
-          "jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;NON_KEYWORDS=USER;DB_CLOSE_DELAY=-1");
+      TenantContext.clear();
       jdbc = new JdbcTemplate(source);
-      transactions = new DataSourceTransactionManager(source);
-      jdbc.execute(
-          "CREATE TABLE user(user_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,delete_date DATETIME(6),"
-              + "deletion_lifecycle_state VARCHAR(64),deletion_read_only_until DATETIME(6),"
-              + "deletion_paused_until DATETIME(6))");
-      jdbc.execute(
-          "CREATE TABLE scheduled_task_claim(task_name VARCHAR(255) PRIMARY KEY,claimed_until DATETIME(6))");
+      for (String id : List.of(FIRST, SECOND)) users.findById(id).ifPresent(users::delete);
+      initialUserCount = jdbc.queryForObject("select count(*) from user", Integer.class);
+      jdbc.update("delete from scheduled_task_claim where task_name='account-deletion'");
+      jdbc.execute("drop table if exists identity_maintenance_intent");
       for (String migration :
           List.of("20261021_identity_maintenance_367", "20261022_identity_maintenance_retry_367")) {
         for (String sql :
@@ -210,37 +256,51 @@ class ScheduledAskerMaintenanceSqlTest {
                         "src/main/resources/db/changelog/changeset/" + migration + "/migrate.sql"))
                 .split(";")) if (!sql.isBlank()) jdbc.execute(sql);
       }
-      // DATETIME(6) has microsecond precision, matching the persisted scheduler lease contract.
-      var until = lease.claimedUntil().withNano((lease.claimedUntil().getNano() / 1000) * 1000);
-      jdbc.update("INSERT INTO scheduled_task_claim VALUES(?,?)", lease.taskName(), until);
-      when(claims.tryClaimLease(eq("account-deletion"), any()))
-          .thenReturn(
-              Optional.of(new ScheduledTaskClaimService.ClaimLease(lease.taskName(), until)));
     }
 
     ScheduledAskerMaintenance scheduler() {
-      return new ScheduledAskerMaintenance(
-          jdbc,
-          transactions,
-          claims,
-          clock,
-          new DeletionLifecycleService(),
-          actors,
-          broker,
-          codec,
-          http,
-          "https://identity.example.test",
-          "synthetic",
-          "synthetic-realm");
+      var owner =
+          new ScheduledAskerMaintenance(
+              jdbc,
+              transactions,
+              claims,
+              clock,
+              new DeletionLifecycleService(),
+              actors,
+              broker,
+              codec,
+              http,
+              "https://identity.example.test",
+              "synthetic",
+              "synthetic-realm");
+      owner.configureJpaCleanupOwner(entities);
+      owner.configureAcknowledgedCleanup(
+          frame -> {
+            frame.requireCurrent();
+            assertTrue(frame.hasLocalUser());
+            frame.runOwnedLocal(
+                () -> {
+                  assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+                  var actual = users.findById(frame.accountId()).orElseThrow();
+                  frame.requireCurrentUser(actual);
+                });
+          });
+      return owner;
     }
 
     void user(String account) {
-      jdbc.update(
-          "INSERT INTO user(user_id,tenant_id,delete_date,deletion_lifecycle_state,"
-              + "deletion_read_only_until) VALUES(?,7,?,'READ_ONLY_SAFEGUARD',?)",
-          account,
-          DELETION,
-          DELETION.plusHours(48));
+      var user =
+          new User(
+              account,
+              null,
+              new UsernameTranscoder().encodeUsername("synthetic-" + account),
+              "synthetic@fixture.invalid",
+              false);
+      user.setTenantId(7L);
+      user.setDeleteDate(DELETION);
+      user.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+      user.setDeletionReadOnlyUntil(DELETION.plusHours(48));
+      users.save(user);
     }
 
     void previousAttempt(String account) {
@@ -374,7 +434,7 @@ class ScheduledAskerMaintenanceSqlTest {
 
     @Override
     public void close() {
-      jdbc.execute("SHUTDOWN");
+      TenantContext.clear();
     }
   }
 }
