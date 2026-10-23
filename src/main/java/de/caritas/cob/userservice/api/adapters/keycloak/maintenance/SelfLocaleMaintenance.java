@@ -152,12 +152,17 @@ public final class SelfLocaleMaintenance {
     if (!"FROZEN".equals(intent.status) || !intent.domainApplied || intent.body == null)
       throw unavailable();
     final Intent original = intent;
-    Intent ready = transaction(() -> {
-      var current = findChecked(self, operation, digest, actor);
-      if (current == null || !current.domainApplied || !Objects.equals(original.body, current.body)
-          || !Set.of("FROZEN", "ACKNOWLEDGED").contains(current.status)) throw unavailable();
-      return current;
-    });
+    Intent ready =
+        transaction(
+            () -> {
+              var current = findChecked(self, operation, digest, actor);
+              if (current == null
+                  || !current.domainApplied
+                  || !Objects.equals(original.body, current.body)
+                  || !Set.of("FROZEN", "ACKNOWLEDGED").contains(current.status))
+                throw unavailable();
+              return current;
+            });
     if ("ACKNOWLEDGED".equals(ready.status)) return acknowledged(self);
     final Intent frozen = ready;
     String reply = request("locale", self, frozen.body, actor);
@@ -247,7 +252,11 @@ public final class SelfLocaleMaintenance {
   }
 
   private Intent checked(
-      CheckedSelf self, Intent intent, String digest, TaskActorCredentials actor, LocalOwner owner) {
+      CheckedSelf self,
+      Intent intent,
+      String digest,
+      TaskActorCredentials actor,
+      LocalOwner owner) {
     if (!realmId.equals(intent.realm)
         || !realmName.equals(intent.realmName)
         || !self.account.equals(intent.account)
@@ -299,7 +308,8 @@ public final class SelfLocaleMaintenance {
   private LocalOwner lockedDomain(CheckedSelf self) {
     var owner = SelfAccountOwner.inspect(jdbc, self.account, self.tenant);
     if (owner.kind().admin() && !owner.consultant()) throw forbidden();
-    if (self.tenant != null && self.tenant == 0
+    if (self.tenant != null
+        && self.tenant == 0
         && (owner.kind() != SelfAccountOwner.Kind.PLATFORM_ADMIN || !owner.consultant()))
       throw forbidden();
     var source = codec.read("{}", ObjectNode.class);
@@ -314,12 +324,13 @@ public final class SelfLocaleMaintenance {
   }
 
   private String birth(SelfAccountOwner.Kind kind, String account) {
-    String sql = switch (kind) {
-      case USER -> "select create_date from user where user_id=? for update";
-      case CONSULTANT -> "select create_date from consultant where consultant_id=? for update";
-      case AGENCY_ADMIN, TENANT_ADMIN, PLATFORM_ADMIN ->
-          "select create_date from admin where admin_id=? for update";
-    };
+    String sql =
+        switch (kind) {
+          case USER -> "select create_date from user where user_id=? for update";
+          case CONSULTANT -> "select create_date from consultant where consultant_id=? for update";
+          case AGENCY_ADMIN, TENANT_ADMIN, PLATFORM_ADMIN ->
+              "select create_date from admin where admin_id=? for update";
+        };
     var date = jdbc.queryForObject(sql, java.sql.Timestamp.class, account);
     if (date == null) throw forbidden();
     return date.toLocalDateTime().toString();
@@ -497,13 +508,15 @@ public final class SelfLocaleMaintenance {
     var transaction = new TransactionTemplate(transactions);
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     transaction.setTimeout(15);
-    return transaction.execute(status -> {
-      if (!TransactionSynchronizationManager.isActualTransactionActive()
-          || jdbc.getDataSource() == null
-          || !TransactionSynchronizationManager.hasResource(jdbc.getDataSource())
-          || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) throw unavailable();
-      return operation.get();
-    });
+    return transaction.execute(
+        status -> {
+          if (!TransactionSynchronizationManager.isActualTransactionActive()
+              || jdbc.getDataSource() == null
+              || !TransactionSynchronizationManager.hasResource(jdbc.getDataSource())
+              || TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+            throw unavailable();
+          return operation.get();
+        });
   }
 
   private static Optional<Map<String, Object>> acknowledged(CheckedSelf self) {

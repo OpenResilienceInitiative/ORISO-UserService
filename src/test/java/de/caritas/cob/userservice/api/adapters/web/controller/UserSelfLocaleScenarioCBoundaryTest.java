@@ -440,8 +440,9 @@ class UserSelfLocaleScenarioCBoundaryTest {
                 return changed;
               });
       var transcoder = new UsernameTranscoder();
-      var consultantPatch = new PatchConsultantSaga(
-          consultants, new UserServiceMapper(transcoder), mock(AppointmentService.class));
+      var consultantPatch =
+          new PatchConsultantSaga(
+              consultants, new UserServiceMapper(transcoder), mock(AppointmentService.class));
       var accounts =
           new AccountManager(
               consultants,
