@@ -44,8 +44,10 @@ final class ClaimedDeletionIntentSchema {
     keys(envelope, Set.of("representation", "originalSql", "body"));
     if (!"CLAIMED_SCHEDULED_ASKER_DELETE_V1"
         .equals(text(envelope.path("representation"), 64, false))) throw invalid();
-    var binding = envelope.path("body").isNull()
-        ? preparedBinding(envelope.path("originalSql")) : body(envelope.path("body"));
+    var binding =
+        envelope.path("body").isNull()
+            ? preparedBinding(envelope.path("originalSql"))
+            : body(envelope.path("body"));
     user(envelope.path("originalSql"), binding, true);
     return envelope;
   }
@@ -74,12 +76,12 @@ final class ClaimedDeletionIntentSchema {
     String tenant = null;
     var value = original.path("tenant_id");
     if (!value.isNull()) {
-      if (!value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() < 0) throw invalid();
+      if (!value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() < 0)
+        throw invalid();
       tenant = Long.toString(value.longValue());
     }
     return new Binding(uuid(original.path("user_id")), tenant, null);
   }
-
 
   private static Binding body(JsonNode body) {
     keys(body, Set.of("target", "operationId", "expectedState", "change"));

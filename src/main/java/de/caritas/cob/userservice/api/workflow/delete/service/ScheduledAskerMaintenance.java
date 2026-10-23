@@ -638,7 +638,9 @@ public final class ScheduledAskerMaintenance {
     var claimed =
         new ClaimedDeletion(lease, account, user.getDeleteDate(), generation, intent, actual);
     if ("PREPARED".equals(intent.status)) {
-      claimed = new ClaimedDeletion(lease, account, user.getDeleteDate(), generation, intent, preparedOriginal);
+      claimed =
+          new ClaimedDeletion(
+              lease, account, user.getDeleteDate(), generation, intent, preparedOriginal);
     } else if (intent.frozen != null) {
       var original = frozen(claimed, intent.frozen).originalSql;
       if (!sameSnapshot(original, actual, "ACKNOWLEDGED".equals(intent.status)))
@@ -720,7 +722,9 @@ public final class ScheduledAskerMaintenance {
                 "change",
                 Map.of()));
     String envelope = envelope(claim, codec.read(body, JsonNode.class));
-    var parameters = new java.util.ArrayList<Object>(List.of(state, envelope, intent.operation, claim.generation));
+    var parameters =
+        new java.util.ArrayList<Object>(
+            List.of(state, envelope, intent.operation, claim.generation));
     if (previous != null) parameters.add(previous);
     if (jdbc.update(
             "update identity_maintenance_intent set expected_state=?,frozen_body=?,status='FROZEN'"
@@ -1045,11 +1049,17 @@ public final class ScheduledAskerMaintenance {
 
   /** Fixed source data only; an explicit null body cannot dispatch a native command. */
   private String preparedEnvelope(JsonNode original) {
-    var value = codec.read(codec.canonical(Map.of(
-        "representation", "CLAIMED_SCHEDULED_ASKER_DELETE_V1",
-        "originalSql", original,
-        "body", com.fasterxml.jackson.databind.node.NullNode.getInstance())),
-        com.fasterxml.jackson.databind.node.ObjectNode.class);
+    var value =
+        codec.read(
+            codec.canonical(
+                Map.of(
+                    "representation",
+                    "CLAIMED_SCHEDULED_ASKER_DELETE_V1",
+                    "originalSql",
+                    original,
+                    "body",
+                    com.fasterxml.jackson.databind.node.NullNode.getInstance())),
+            com.fasterxml.jackson.databind.node.ObjectNode.class);
     value.put("bindingDigest", codec.claimedScheduledDeletionIntentDigest(value));
     return codec.canonical(value);
   }
@@ -1065,7 +1075,8 @@ public final class ScheduledAskerMaintenance {
         || !value.path("bindingDigest").isTextual()) throw unavailable();
     String binding = value.remove("bindingDigest").textValue();
     String expected = codec.claimedScheduledDeletionIntentDigest(value);
-    if (!java.security.MessageDigest.isEqual(binding.getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+    if (!java.security.MessageDigest.isEqual(
+        binding.getBytes(java.nio.charset.StandardCharsets.US_ASCII),
         expected.getBytes(java.nio.charset.StandardCharsets.US_ASCII))) throw unavailable();
     return value.path("originalSql");
   }
@@ -1134,7 +1145,9 @@ public final class ScheduledAskerMaintenance {
           if (!current(claim)) throw unavailable();
           var intent = requireIntent(claim);
           if ("read".equals(command)) {
-            if (!"PREPARED".equals(intent.status) || intent.expectedState != null || intent.receipt != null) throw unavailable();
+            if (!"PREPARED".equals(intent.status)
+                || intent.expectedState != null
+                || intent.receipt != null) throw unavailable();
             if (claim.inactivity == null) {
               if (!claim.originalSql.equals(preparedSource(intent.frozen))) throw unavailable();
             } else if (intent.frozen != null) throw unavailable();
