@@ -32,6 +32,12 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
     this.identityMode = java.util.Objects.requireNonNull(mode);
   }
 
+  /** Finite optional wiring; the private claimed deletion path remains closed until owned proof. */
+  public void setScopedDeletionMaintenance(
+      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance maintenance) {
+    java.util.Objects.requireNonNull(maintenance);
+  }
+
   private void requireLegacyIdentity() {
     if (identityMode != null && identityMode.isFiveActorMode())
       throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();

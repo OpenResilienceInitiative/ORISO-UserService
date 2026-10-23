@@ -63,6 +63,7 @@ import org.springframework.web.client.RestTemplate;
   ScheduledAskerMaintenanceSqlTest.TimeConfiguration.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
+@org.springframework.test.annotation.DirtiesContext(classMode = org.springframework.test.annotation.DirtiesContext.ClassMode.AFTER_CLASS)
 class ScheduledAskerMaintenanceSqlTest {
   @Autowired private DataSource dataSource;
   @Autowired private PlatformTransactionManager manager;
@@ -96,7 +97,8 @@ class ScheduledAskerMaintenanceSqlTest {
       assertDoesNotThrow(() -> f.scheduler().performDeletionWorkflow());
       assertEquals("PREPARED", f.status(FIRST));
       assertEquals("ACKNOWLEDGED", f.status(SECOND));
-      assertEquals(2, f.jdbc.queryForObject("SELECT COUNT(*) FROM user", Integer.class));
+      assertEquals(f.initialUserCount + 2, f.jdbc.queryForObject("SELECT COUNT(*) FROM user", Integer.class));
+      assertEquals(2, f.jdbc.queryForObject("SELECT COUNT(*) FROM user WHERE user_id IN (?,?)", Integer.class, FIRST, SECOND));
       assertNotNull(f.lastAttempt(FIRST));
       assertNotNull(f.lastAttempt(SECOND));
       verify(f.claims).release(f.lease);
@@ -205,6 +207,7 @@ class ScheduledAskerMaintenanceSqlTest {
     private final Clock clock = proofClock;
     private final DataSource source = dataSource;
     private final JdbcTemplate jdbc;
+    private final int initialUserCount;
     private final PlatformTransactionManager transactions = manager;
     private final ScheduledTaskClaimService claims = spy(realClaims);
     private final ScheduledTaskClaimService.ClaimLease lease =
@@ -236,6 +239,7 @@ class ScheduledAskerMaintenanceSqlTest {
       TenantContext.clear();
       jdbc = new JdbcTemplate(source);
       for (String id : List.of(FIRST, SECOND)) users.findById(id).ifPresent(users::delete);
+      initialUserCount = jdbc.queryForObject("select count(*) from user", Integer.class);
       jdbc.update("delete from scheduled_task_claim where task_name='account-deletion'");
       jdbc.execute("drop table if exists identity_maintenance_intent");
       for (String migration :

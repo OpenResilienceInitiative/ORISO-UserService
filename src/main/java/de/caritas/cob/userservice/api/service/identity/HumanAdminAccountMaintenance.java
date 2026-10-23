@@ -281,6 +281,8 @@ public final class HumanAdminAccountMaintenance {
       if ("APPLIED".equals(intent.status)) {
         checked.applied = true;
         requireDesired(authorizedRow(accountId, false, self), original, profile);
+        // The whole original public callback postcondition must hold before any replay RPC.
+        profileResultOrConsultant(checked);
         var originalFrozen = frozen(intent);
         String originalReceipt =
             transport.verifyProfileReceipt(checked, originalFrozen, intent.receipt);
