@@ -1,0 +1,331 @@
+package de.caritas.cob.userservice.api.service.accountinvite;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+import static org.springframework.test.web.client.ExpectedCount.manyTimes;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
+import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakHumanAdminMaintenance;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
+import de.caritas.cob.userservice.api.config.auth.*;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConsultantStatus;
+import de.caritas.cob.userservice.api.port.out.*;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import jakarta.persistence.EntityManager;
+import java.nio.charset.StandardCharsets;
+import java.time.*;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import javax.sql.DataSource;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Profile;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
+import org.springframework.mock.http.client.MockClientHttpRequest;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestTemplate;
+
+/** Actual public role producer, JPA and signed HTTP boundary; no native acceptance is inferred. */
+@DataJpaTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@ActiveProfiles({"testing", "scenario-c-role-addition-jpa"})
+@TestPropertySource(properties = "multitenancy.enabled=true")
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
+@Import({
+  JpaAuditingConfiguration.class,
+  AccountRoleAddition.class,
+  CounsellorAgencyAdminGrantService.class,
+  AccountInviteAccessPolicy.class,
+  AdminScope.class,
+  AccountRoleAdditionScopedJpaTest.Configuration.class
+})
+class AccountRoleAdditionScopedJpaTest {
+  private static final String ACCOUNT = "71000000-0000-4000-8000-000000000001";
+  private static final String HUMAN = "71000000-0000-4000-8000-000000000002";
+  private static final String OPERATION = "71000000-0000-4000-8000-000000000003";
+  private static final String SUBJECT = "71000000-0000-4000-8000-000000000004";
+  private static final String ISSUER = "https://identity.test/realms/fixture";
+  private static final String ENDPOINT = ISSUER + "/oriso-account-maintenance/v1/accounts/" + ACCOUNT;
+  private static final byte[] KEY = "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
+  private static final Set<String> ORIGINAL = Set.of("consultant", "group-chat-consultant");
+  private static final Set<String> DESIRED =
+      Set.of("consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin");
+  private static final AccountRoleAddition.AddRoleCommand COMMAND =
+      new AccountRoleAddition.AddRoleCommand(AccountInviteTargetRole.AGENCY_ADMIN, 71L);
+
+  @Autowired private AccountRoleAddition service;
+  @Autowired private HumanAdminAccountMaintenance maintenance;
+  @Autowired private ConsultantRepository consultants;
+  @Autowired private ConsultantAgencyRepository consultantAgencies;
+  @Autowired private AdminRepository admins;
+  @Autowired private DataSource dataSource;
+  @Autowired private PlatformTransactionManager transactions;
+  @Autowired private EntityManager entities;
+  @Autowired private AuthenticatedUser human;
+  @Autowired private MockHttpServletRequest request;
+  @Autowired private RestTemplate http;
+  @Autowired private TaskActorConfiguration actors;
+  @Autowired private TaskActorTokenBroker broker;
+  @Autowired private AccountLifecycleCodec codec;
+  @MockitoBean private IdentityClient generic;
+  @MockitoBean private AgencyService agencies;
+  private JdbcTemplate jdbc;
+  private MockRestServiceServer server;
+  private final AtomicInteger reads = new AtomicInteger();
+  private final AtomicInteger calls = new AtomicInteger();
+  private final AtomicInteger effects = new AtomicInteger();
+  private Set<String> nativeRoles = ORIGINAL;
+  private String nativeBody, nativeReply;
+  private boolean lostReply, revoked;
+
+  @BeforeEach
+  void actualCurrentHumanSqlAndScopedReceiver() {
+    TenantContext.clear();
+    jdbc = new JdbcTemplate(dataSource);
+    jdbc.execute("drop table if exists general_admin_identity_intent");
+    new ResourceDatabasePopulator(
+            new ClassPathResource("db/changelog/changeset/20261022_general_admin_identity_367/migrate.sql"),
+            new ClassPathResource("db/changelog/changeset/20260916_account_inactivity/migrate.sql"))
+        .execute(dataSource);
+    jdbc.update("delete from admin_agency where admin_id=?", ACCOUNT);
+    jdbc.update("delete from admin where admin_id=?", ACCOUNT);
+    jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT);
+    consultants.findById(ACCOUNT).ifPresent(consultants::delete);
+    Consultant consultant = Consultant.builder().id(ACCOUNT).tenantId(7L)
+        .username(new UsernameTranscoder().encodeUsername("owned-counsellor"))
+        .firstName("Ada").lastName("Lovelace").email("ada@fixture.invalid")
+        .encourage2fa(true).magicLinkLoginEnabled(false).notifyEnquiriesRepeating(true)
+        .notifyNewChatMessageFromAdviceSeeker(true).languageCode(LanguageCode.en)
+        .status(ConsultantStatus.IN_PROGRESS).build();
+    consultants.save(consultant);
+    consultantAgencies.save(ConsultantAgency.builder().consultant(consultant).agencyId(71L)
+        .tenantId(7L).createDate(LocalDateTime.now(ZoneOffset.UTC)).build());
+    human.setUserId(HUMAN);
+    human.setTenantId(7L);
+    human.setAccessToken("fixture-human");
+    human.setGrantedAuthorities(Set.of(Authority.AuthorityValue.USER_ADMIN, Authority.AuthorityValue.TENANT_ADMIN));
+    request.setMethod("POST");
+    request.setRequestURI("/useradmin/consultants/" + ACCOUNT + "/roles");
+    request.removeHeader("Idempotency-Key");
+    request.addHeader("Idempotency-Key", OPERATION);
+    request.removeHeader("Authorization");
+    request.addHeader("Authorization", "Bearer fixture-human");
+    var jwt = Jwt.withTokenValue("fixture-human").header("alg", "RS256").subject(HUMAN)
+        .issuer(ISSUER).issuedAt(Instant.now().minusSeconds(2)).expiresAt(Instant.now().plusSeconds(300))
+        .claim("azp", "admin").claim("tenantId", "7").build();
+    request.setUserPrincipal(new JwtAuthenticationToken(jwt, List.of()));
+    assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
+    maintenance.configureReviewedOrdinaryGroups(Map.of("/human-roles/consultant-chat", ORIGINAL,
+        "/human-roles/consultant-agency-admin-chat", DESIRED));
+    doThrow(new ScopedIdentityCommandRequiredException()).when(generic).updateRole(anyString(), any());
+    var actor = new TaskActorCredentials(TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "fixture-secret", SUBJECT);
+    when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(actor);
+    var checked = mock(TaskActorTokenBroker.VerifiedMaintenanceToken.class);
+    when(checked.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
+    when(checked.purpose()).thenReturn(TaskPurpose.ACCOUNT_MAINTENANCE);
+    when(checked.clientId()).thenReturn(actor.clientId());
+    when(checked.subject()).thenReturn(SUBJECT);
+    when(checked.issuer()).thenReturn(ISSUER);
+    when(checked.accessToken()).thenReturn("fixture-machine");
+    when(checked.validatedJwtIssuedAt()).thenReturn(Instant.now().minusSeconds(2).getEpochSecond());
+    when(checked.validatedJwtExpiresAt()).thenReturn(Instant.now().plusSeconds(300).getEpochSecond());
+    when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
+    server = MockRestServiceServer.bindTo(http).build();
+    server.expect(manyTimes(), outbound -> assertTrue(Set.of(ENDPOINT + "/read", ENDPOINT + "/profile-transition")
+        .contains(outbound.getURI().toString()))).andRespond(outbound -> {
+      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+      assertEquals(HttpMethod.POST, outbound.getMethod());
+      assertEquals("Bearer fixture-machine", outbound.getHeaders().getFirst("Authorization"));
+      assertEquals("Bearer fixture-human", outbound.getHeaders().getFirst("X-ORISO-Human-Authorization"));
+      JsonNode body = codec.read(((MockClientHttpRequest) outbound).getBodyAsString(), JsonNode.class);
+      String command = outbound.getURI().getPath().endsWith("/read") ? "read" : "profile-transition";
+      verifyProof(outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
+      if ("read".equals(command)) {
+        reads.incrementAndGet();
+        var projection = new TreeMap<String, Object>();
+        projection.put("id", ACCOUNT); projection.put("username", "owned-counsellor");
+        projection.put("firstName", "Ada"); projection.put("lastName", "Lovelace");
+        projection.put("email", "ada@fixture.invalid"); projection.put("enabled", true);
+        projection.put("emailVerified", true); projection.put("tenantId", "7");
+        projection.put("preferredLanguage", "en"); projection.put("effectiveRoles", nativeRoles.stream().sorted().toList());
+        projection.put("passwordChangeRequired", false); projection.put("state", "a".repeat(64));
+        var response = withSuccess(codec.canonical(projection), MediaType.APPLICATION_JSON).createResponse(outbound);
+        response.getHeaders().setCacheControl("no-store"); return response;
+      }
+      calls.incrementAndGet();
+      assertEquals(OPERATION, body.path("operationId").textValue());
+      assertEquals(Map.of("transition", "ADD_AGENCY_ADMIN_IDENTITY", "group", "/human-roles/consultant-agency-admin-chat"),
+          codec.read(codec.canonical(body.path("change")), Map.class));
+      if (revoked) return org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.FORBIDDEN).createResponse(outbound);
+      if (nativeBody == null) {
+        nativeBody = codec.canonical(body); nativeRoles = DESIRED; effects.incrementAndGet();
+        nativeReply = receipt(body);
+      } else assertEquals(nativeBody, codec.canonical(body));
+      if (lostReply) { lostReply = false; throw new ResourceAccessException("Synthetic lost native reply"); }
+      var response = withSuccess(nativeReply, MediaType.APPLICATION_JSON).createResponse(outbound);
+      response.getHeaders().setCacheControl("no-store"); return response;
+    });
+  }
+
+  @Test
+  void actualRoleRouteAppliesOnePreservingTransitionBeforeTheCoherentLocalAdminAndAgency() {
+    var original = consultantSql();
+    assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
+    assertEquals(DESIRED, nativeRoles);
+    assertEquals(1, effects.get());
+    assertEquals("APPLIED", phase());
+    assertEquals(original, consultantSql());
+    assertEquals("AGENCY", jdbc.queryForObject("select type from admin where admin_id=?", String.class, ACCOUNT));
+    assertEquals("owned-counsellor", admins.findById(ACCOUNT).orElseThrow().getUsername());
+    assertEquals(List.of(71L), jdbc.queryForList("select agency_id from admin_agency where admin_id=?", Long.class, ACCOUNT));
+    verifyNoInteractions(generic);
+  }
+
+  @Test
+  void unknownNativeReplyKeepsTheExactHeldCommandAndNoLocalAdminUntilItsStrictAck() {
+    lostReply = true;
+    assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
+    assertEquals(1, effects.get(), "The actual native operation must have reached the lost reply");
+    assertEquals("FROZEN", phase());
+    assertFalse(admins.existsById(ACCOUNT));
+    String originalBody = nativeBody;
+    assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
+    assertEquals(originalBody, nativeBody);
+    assertEquals(1, effects.get());
+    assertEquals("APPLIED", phase());
+    verifyNoInteractions(generic);
+  }
+
+  @Test
+  void appliedReplayRechecksTheOriginalCurrentNativeGrantWithoutRepeatingTheLocalRelation() {
+    assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
+    String applied = jdbc.queryForObject("select applied_json from general_admin_identity_intent where operation_id=?", String.class, OPERATION);
+    int priorCalls = calls.get();
+    revoked = true;
+    assertThrows(ForbiddenException.class, () -> service.add(ACCOUNT, COMMAND));
+    assertEquals(priorCalls + 1, calls.get());
+    assertEquals("APPLIED", phase());
+    assertEquals(applied, jdbc.queryForObject("select applied_json from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+    revoked = false;
+    assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
+    assertEquals(1, effects.get());
+    assertEquals(1, jdbc.queryForObject("select count(*) from admin_agency where admin_id=?", Integer.class, ACCOUNT));
+  }
+
+  @Test
+  void frozenOriginalSqlBirthCannotBeReplacedBeforeTheUnknownNativeCommandReplays() {
+    lostReply = true;
+    assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
+    assertEquals(1, effects.get());
+    new TransactionTemplate(transactions).executeWithoutResult(ignored -> {
+      jdbc.update("update consultant set create_date=? where consultant_id=?", java.sql.Timestamp.from(Instant.now().plusSeconds(10)), ACCOUNT);
+      entities.clear();
+    });
+    int priorCalls = calls.get(), priorReads = reads.get();
+    assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
+    assertEquals(priorCalls, calls.get()); assertEquals(priorReads, reads.get());
+    assertFalse(admins.existsById(ACCOUNT));
+  }
+
+  @Test
+  void actualCurrentScopeRefusesForeignTenantBeforeNativeOrLocalGrant() {
+    human.setTenantId(8L);
+    assertThrows(ForbiddenException.class, () -> service.add(ACCOUNT, COMMAND));
+    assertEquals(0, reads.get()); assertEquals(0, effects.get());
+    assertFalse(admins.existsById(ACCOUNT)); verifyNoInteractions(generic);
+  }
+
+  private String phase() {
+    return jdbc.queryForObject("select status from general_admin_identity_intent where operation_id=?", String.class, OPERATION);
+  }
+
+  private Map<String, Object> consultantSql() {
+    return new TreeMap<>(jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT));
+  }
+
+  private String receipt(JsonNode body) {
+    var value = new TreeMap<String, Object>();
+    value.put("realmId", "fixture-realm"); value.put("accountId", ACCOUNT);
+    value.put("operationId", OPERATION); value.put("command", "profile-transition");
+    value.put("ownerClient", "backend-account-admin"); value.put("ownerSubject", SUBJECT);
+    value.put("intentDigest", digest("maintenance-intent", body)); value.put("previousState", "a".repeat(64));
+    value.put("tenantId", "7"); value.put("originDigest", digest("maintenance-origin", body.path("target").path("origin")));
+    value.put("result", "UPDATED");
+    String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(codec.canonical(value).getBytes(StandardCharsets.UTF_8));
+    return codec.canonical(Map.of("operationId", OPERATION, "accountId", ACCOUNT, "result", "UPDATED", "receipt", encoded + "." + mac("maintenance-operation-receipt\n" + encoded)));
+  }
+
+  private void verifyProof(String proof, String command, JsonNode body) {
+    String[] parts = proof.split("\\.", -1); assertEquals(2, parts.length);
+    assertEquals(mac("proof\n" + parts[0]), parts[1]);
+    var claims = codec.read(new String(Base64.getUrlDecoder().decode(parts[0]), StandardCharsets.UTF_8), JsonNode.class);
+    assertEquals(15, claims.size()); assertEquals("account." + command, claims.path("operation").textValue());
+    assertEquals("ACCOUNT_ADMIN", claims.path("actor").textValue());
+    assertEquals("ACCOUNT_MAINTENANCE", claims.path("purpose").textValue());
+    assertEquals("backend-account-admin", claims.path("taskClient").textValue());
+    assertEquals(SUBJECT, claims.path("taskSubject").textValue());
+    assertEquals(digest("payload", body), claims.path("payloadDigest").textValue());
+    assertEquals("realm/fixture-realm/account/" + ACCOUNT, claims.path("target").textValue());
+    assertTrue(claims.path("nonce").textValue().matches("[0-9a-f]{32}"));
+  }
+
+  private String digest(String domain, Object value) { return mac(domain + "\n" + codec.canonical(value)); }
+  private String mac(String value) {
+    try { var hmac = Mac.getInstance("HmacSHA256"); hmac.init(new SecretKeySpec(KEY, "HmacSHA256"));
+      return HexFormat.of().formatHex(hmac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
+    } catch (Exception invalid) { throw new AssertionError(invalid); }
+  }
+
+  @TestConfiguration(proxyBeanMethods = false)
+  @Profile("scenario-c-role-addition-jpa")
+  static class Configuration {
+    @Bean AuthenticatedUser authenticatedUser() { return new AuthenticatedUser(); }
+    @Bean MockHttpServletRequest currentRoleRequest() { return new MockHttpServletRequest(); }
+    @Bean RestTemplate roleHttp() { return new RestTemplate(); }
+    @Bean AccountLifecycleCodec roleCodec() { return new AccountLifecycleCodec(KEY); }
+    @Bean TaskActorConfiguration roleActors() { return mock(TaskActorConfiguration.class); }
+    @Bean TaskActorTokenBroker roleBroker() { return mock(TaskActorTokenBroker.class); }
+    @Bean IdentityClientConfig roleMode() { var mode = mock(IdentityClientConfig.class); when(mode.isFiveActorMode()).thenReturn(true); return mode; }
+    @Bean HumanAdminAccountMaintenance roleMaintenance(IdentityClientConfig mode, AuthenticatedUser actor,
+        AdminScope scope, DataSource source, PlatformTransactionManager manager, MockHttpServletRequest request,
+        RestTemplate http, TaskActorConfiguration actors, TaskActorTokenBroker broker, AccountLifecycleCodec codec) {
+      return new HumanAdminAccountMaintenance(mode, actor, scope, new JdbcTemplate(source), manager, request,
+          new KeycloakHumanAdminMaintenance(http, actors, broker, codec, "https://identity.test", "fixture", "fixture-realm"), Clock.systemUTC(), ISSUER);
+    }
+  }
+}
