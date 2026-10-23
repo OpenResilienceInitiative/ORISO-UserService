@@ -122,9 +122,18 @@ class AccountRoleAdditionScopedJpaTest {
     jdbc.execute("drop table if exists general_admin_identity_intent");
     new ResourceDatabasePopulator(
             new ClassPathResource(
-                "db/changelog/changeset/20261022_general_admin_identity_367/migrate.sql"),
-            new ClassPathResource("db/changelog/changeset/20260916_account_inactivity/migrate.sql"))
+                "db/changelog/changeset/20261022_general_admin_identity_367/migrate.sql"))
         .execute(dataSource);
+    // The original table DDL is portable; its separate MySQL DATE_ADD rollout is not this test.
+    try (var migration =
+        new ClassPathResource("db/changelog/changeset/20260916_account_inactivity/migrate.sql")
+            .getInputStream()) {
+      String actualSql = new String(migration.readAllBytes(), StandardCharsets.UTF_8);
+      jdbc.execute(actualSql.substring(0, actualSql.indexOf(';') + 1));
+    } catch (java.io.IOException invalid) {
+      throw new AssertionError(invalid);
+    }
+    jdbc.update("delete from account_inactivity where identity_id=?", ACCOUNT);
     jdbc.update("delete from admin_agency where admin_id=?", ACCOUNT);
     jdbc.update("delete from admin where admin_id=?", ACCOUNT);
     jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT);
