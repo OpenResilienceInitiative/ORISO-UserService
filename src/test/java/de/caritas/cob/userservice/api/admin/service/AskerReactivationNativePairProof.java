@@ -630,7 +630,8 @@ class AskerReactivationNativePairProof {
     headers.set("X-ORISO-Human-Authorization", "Bearer " + human);
     headers.set(
         "X-ORISO-Task-Context",
-        codec.maintenanceProof(realmId, actor, raw, body.path("target"), "read"));
+        codec.maintenanceProof(
+            "read", realm, realmId, account, actor, codec.read(raw, JsonNode.class)));
     var reply =
         http.postForEntity(
             logical
