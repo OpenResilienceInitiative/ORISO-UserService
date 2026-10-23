@@ -57,8 +57,12 @@ import org.springframework.web.client.RestTemplate;
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({JpaAuditingConfiguration.class, ScheduledTaskClaimWriter.class,
-    ScheduledTaskClaimService.class, ScheduledDeletionContinuationJpaTest.TimeConfiguration.class})
+@Import({
+  JpaAuditingConfiguration.class,
+  ScheduledTaskClaimWriter.class,
+  ScheduledTaskClaimService.class,
+  ScheduledDeletionContinuationJpaTest.TimeConfiguration.class
+})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ScheduledDeletionContinuationJpaTest {
   private static final String ACCOUNT = "11111111-1111-4111-8111-111111111111";
@@ -69,14 +73,37 @@ class ScheduledDeletionContinuationJpaTest {
   private static final byte[] KEY =
       "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
   private static final String STATE = "a".repeat(64);
-  private static final Set<String> USER_FIELDS = Set.of(
-      "user_id", "id_old", "username", "email", "matrix_user_id", "chat_recovery_mode",
-      "chat_recovery_policy_revision", "language_formal", "delete_date", "deletion_lifecycle_state",
-      "deletion_read_only_until", "deletion_paused_until", "deletion_pause_reason", "deletion_paused_by",
-      "deletion_pause_created_at", "reactivation_operation_id", "reactivation_operation_started_at",
-      "tenant_id", "create_date", "update_date", "encourage_2fa", "magic_link_login_enabled",
-      "language_code", "terms_and_conditions_confirmation", "data_privacy_confirmation",
-      "notifications_enabled", "notifications_settings", "temporary_account", "avatar_id");
+  private static final Set<String> USER_FIELDS =
+      Set.of(
+          "user_id",
+          "id_old",
+          "username",
+          "email",
+          "matrix_user_id",
+          "chat_recovery_mode",
+          "chat_recovery_policy_revision",
+          "language_formal",
+          "delete_date",
+          "deletion_lifecycle_state",
+          "deletion_read_only_until",
+          "deletion_paused_until",
+          "deletion_pause_reason",
+          "deletion_paused_by",
+          "deletion_pause_created_at",
+          "reactivation_operation_id",
+          "reactivation_operation_started_at",
+          "tenant_id",
+          "create_date",
+          "update_date",
+          "encourage_2fa",
+          "magic_link_login_enabled",
+          "language_code",
+          "terms_and_conditions_confirmation",
+          "data_privacy_confirmation",
+          "notifications_enabled",
+          "notifications_settings",
+          "temporary_account",
+          "avatar_id");
   @Autowired private DataSource dataSource;
   @Autowired private UserRepository users;
   @Autowired private PlatformTransactionManager transactions;
@@ -107,13 +134,20 @@ class ScheduledDeletionContinuationJpaTest {
     jdbc = new JdbcTemplate(dataSource);
     jdbc.execute("drop table if exists identity_maintenance_intent");
     new ResourceDatabasePopulator(
-        new ClassPathResource("db/changelog/changeset/20261021_identity_maintenance_367/migrate.sql"),
-        new ClassPathResource("db/changelog/changeset/20261022_identity_maintenance_retry_367/migrate.sql"))
+            new ClassPathResource(
+                "db/changelog/changeset/20261021_identity_maintenance_367/migrate.sql"),
+            new ClassPathResource(
+                "db/changelog/changeset/20261022_identity_maintenance_retry_367/migrate.sql"))
         .execute(dataSource);
     jdbc.update("delete from scheduled_task_claim where task_name='account-deletion'");
     users.findById(ACCOUNT).ifPresent(users::delete);
-    var user = new User(ACCOUNT, null, new UsernameTranscoder().encodeUsername("owned-cleanup"),
-        "ordinary@fixture.invalid", false);
+    var user =
+        new User(
+            ACCOUNT,
+            null,
+            new UsernameTranscoder().encodeUsername("owned-cleanup"),
+            "ordinary@fixture.invalid",
+            false);
     user.setTenantId(7L);
     user.setLanguageCode(LanguageCode.en);
     user.setEncourage2fa(false);
@@ -123,11 +157,13 @@ class ScheduledDeletionContinuationJpaTest {
     user.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
     user.setDeletionReadOnlyUntil(now.minusDays(1));
     users.save(user);
-    assertNotNull(jdbc.queryForObject("select create_date from user where user_id=?",
-        java.sql.Timestamp.class, ACCOUNT));
+    assertNotNull(
+        jdbc.queryForObject(
+            "select create_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT));
     codec = new AccountLifecycleCodec(KEY);
-    actor = new TaskActorCredentials(TaskActor.ACCOUNT_ADMIN, "backend-account-admin",
-        "fixture-secret", SUBJECT);
+    actor =
+        new TaskActorCredentials(
+            TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "fixture-secret", SUBJECT);
     actors = mock(TaskActorConfiguration.class);
     when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(actor);
     broker = mock(TaskActorTokenBroker.class);
@@ -139,43 +175,56 @@ class ScheduledDeletionContinuationJpaTest {
     when(checked.subject()).thenReturn(SUBJECT);
     when(checked.issuer()).thenReturn("https://identity.test/realms/fixture");
     when(checked.validatedJwtIssuedAt()).thenReturn(Instant.now().minusSeconds(1).getEpochSecond());
-    when(checked.validatedJwtExpiresAt()).thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
+    when(checked.validatedJwtExpiresAt())
+        .thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
     when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
     http = new RestTemplate();
     server = MockRestServiceServer.bindTo(http).build();
-    server.expect(manyTimes(), outbound -> assertTrue(Set.of(ENDPOINT + "/read", ENDPOINT + "/delete").contains(outbound.getURI().toString())))
-        .andRespond(outbound -> {
-          assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-          assertEquals(HttpMethod.POST, outbound.getMethod());
-          assertEquals("Bearer fixture-account-admin", outbound.getHeaders().getFirst("Authorization"));
-          String command = outbound.getURI().getPath().endsWith("/read") ? "read" : "delete";
-          String raw = ((MockClientHttpRequest) outbound).getBodyAsString();
-          var body = codec.read(raw, JsonNode.class);
-          assertEquals(codec.maintenanceProof(command, "fixture", REALM, ACCOUNT, actor, body),
-              outbound.getHeaders().getFirst("X-ORISO-Task-Context"));
-          if ("read".equals(command)) {
-            nativeReads.incrementAndGet();
-            return withSuccess(projection(), MediaType.APPLICATION_JSON).createResponse(outbound);
-          }
-          nativeCalls.incrementAndGet();
-          if (savedBody == null) {
-            savedBody = raw;
-            savedReply = receipt(body);
-            nativeEffects.incrementAndGet();
-          } else assertEquals(savedBody, raw, "An uncertain native command cannot be regenerated");
-          if (loseReply) {
-            loseReply = false;
-            throw new ResourceAccessException("fixture lost native reply");
-          }
-          String reply = savedReply;
-          if (forgeReply) {
-            var forged = codec.read(reply, com.fasterxml.jackson.databind.node.ObjectNode.class);
-            String value = forged.path("receipt").textValue();
-            forged.put("receipt", value.substring(0, value.indexOf('.') + 1) + "0".repeat(64));
-            reply = codec.canonical(forged);
-          }
-          return withSuccess(reply, MediaType.APPLICATION_JSON).createResponse(outbound);
-        });
+    server
+        .expect(
+            manyTimes(),
+            outbound ->
+                assertTrue(
+                    Set.of(ENDPOINT + "/read", ENDPOINT + "/delete")
+                        .contains(outbound.getURI().toString())))
+        .andRespond(
+            outbound -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              assertEquals(HttpMethod.POST, outbound.getMethod());
+              assertEquals(
+                  "Bearer fixture-account-admin", outbound.getHeaders().getFirst("Authorization"));
+              String command = outbound.getURI().getPath().endsWith("/read") ? "read" : "delete";
+              String raw = ((MockClientHttpRequest) outbound).getBodyAsString();
+              var body = codec.read(raw, JsonNode.class);
+              assertEquals(
+                  codec.maintenanceProof(command, "fixture", REALM, ACCOUNT, actor, body),
+                  outbound.getHeaders().getFirst("X-ORISO-Task-Context"));
+              if ("read".equals(command)) {
+                nativeReads.incrementAndGet();
+                return withSuccess(projection(), MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
+              }
+              nativeCalls.incrementAndGet();
+              if (savedBody == null) {
+                savedBody = raw;
+                savedReply = receipt(body);
+                nativeEffects.incrementAndGet();
+              } else
+                assertEquals(savedBody, raw, "An uncertain native command cannot be regenerated");
+              if (loseReply) {
+                loseReply = false;
+                throw new ResourceAccessException("fixture lost native reply");
+              }
+              String reply = savedReply;
+              if (forgeReply) {
+                var forged =
+                    codec.read(reply, com.fasterxml.jackson.databind.node.ObjectNode.class);
+                String value = forged.path("receipt").textValue();
+                forged.put("receipt", value.substring(0, value.indexOf('.') + 1) + "0".repeat(64));
+                reply = codec.canonical(forged);
+              }
+              return withSuccess(reply, MediaType.APPLICATION_JSON).createResponse(outbound);
+            });
   }
 
   @Test
@@ -185,27 +234,45 @@ class ScheduledDeletionContinuationJpaTest {
     assertEquals(1, nativeEffects.get());
     assertEquals(1, nativeReads.get());
     assertEquals(1, callbacks.get(), "Durable native ACK must reach the owned continuation");
-    var envelope = codec.read(jdbc.queryForObject(
-        "select frozen_body from identity_maintenance_intent where subject_id=?",
-        String.class, ACCOUNT), JsonNode.class);
-    assertEquals(Set.of("representation", "originalSql", "body", "bindingDigest"), fields(envelope));
+    var envelope =
+        codec.read(
+            jdbc.queryForObject(
+                "select frozen_body from identity_maintenance_intent where subject_id=?",
+                String.class,
+                ACCOUNT),
+            JsonNode.class);
+    assertEquals(
+        Set.of("representation", "originalSql", "body", "bindingDigest"), fields(envelope));
     assertEquals("CLAIMED_SCHEDULED_ASKER_DELETE_V1", envelope.path("representation").textValue());
     assertEquals(USER_FIELDS, fields(envelope.path("originalSql")));
     assertEquals(ACCOUNT, envelope.path("originalSql").path("user_id").textValue());
-    assertEquals(jdbc.queryForObject("select create_date from user where user_id=?",
-        java.sql.Timestamp.class, ACCOUNT).toLocalDateTime().toString(),
+    assertEquals(
+        jdbc.queryForObject(
+                "select create_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT)
+            .toLocalDateTime()
+            .toString(),
         envelope.path("originalSql").path("create_date").textValue());
-    assertEquals("@owned-cleanup:fixture.invalid",
+    assertEquals(
+        "@owned-cleanup:fixture.invalid",
         envelope.path("originalSql").path("matrix_user_id").textValue());
-    assertEquals(Set.of("target", "operationId", "expectedState", "change"), fields(envelope.path("body")));
+    assertEquals(
+        Set.of("target", "operationId", "expectedState", "change"), fields(envelope.path("body")));
     assertTrue(envelope.path("bindingDigest").textValue().matches("[0-9a-f]{64}"));
-    assertEquals(0, jdbc.queryForObject("select count(*) from scheduled_task_claim where task_name='account-deletion'", Integer.class));
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from scheduled_task_claim where task_name='account-deletion'",
+            Integer.class));
     server.verify();
   }
 
   @Test
   void savedAckColdRestartIssuesNewHeldFrameWithoutNativeReinvoke() {
-    owner(true, frame -> { throw new IllegalStateException("fixture retains cleanup for restart"); })
+    owner(
+            true,
+            frame -> {
+              throw new IllegalStateException("fixture retains cleanup for restart");
+            })
         .performDeletionWorkflow();
     assertEquals("ACKNOWLEDGED", status());
     String originalBody = savedBody;
@@ -252,11 +319,17 @@ class ScheduledDeletionContinuationJpaTest {
 
   @Test
   void replacedSqlIncarnationCannotAdoptSavedNativeAcknowledgement() {
-    owner(true, frame -> { throw new IllegalStateException("fixture retains original user"); })
+    owner(
+            true,
+            frame -> {
+              throw new IllegalStateException("fixture retains original user");
+            })
         .performDeletionWorkflow();
     assertEquals("ACKNOWLEDGED", status());
-    jdbc.update("update user set create_date=dateadd('DAY',1,create_date),username=? where user_id=?",
-        new UsernameTranscoder().encodeUsername("replacement-cleanup"), ACCOUNT);
+    jdbc.update(
+        "update user set create_date=dateadd('DAY',1,create_date),username=? where user_id=?",
+        new UsernameTranscoder().encodeUsername("replacement-cleanup"),
+        ACCOUNT);
     owner(true, this::inspectActualPrivateFrame).performDeletionWorkflow();
     assertEquals(0, callbacks.get());
     assertEquals(1, nativeCalls.get());
@@ -264,10 +337,22 @@ class ScheduledDeletionContinuationJpaTest {
     server.verify();
   }
 
-  private ScheduledAskerMaintenance owner(boolean configureJpa, Consumer<AcknowledgedDeletion> cleanup) {
-    var owner = new ScheduledAskerMaintenance(jdbc, transactions, claims, clock,
-        new DeletionLifecycleService(), actors, broker, codec, http,
-        "https://identity.test", "fixture", REALM);
+  private ScheduledAskerMaintenance owner(
+      boolean configureJpa, Consumer<AcknowledgedDeletion> cleanup) {
+    var owner =
+        new ScheduledAskerMaintenance(
+            jdbc,
+            transactions,
+            claims,
+            clock,
+            new DeletionLifecycleService(),
+            actors,
+            broker,
+            codec,
+            http,
+            "https://identity.test",
+            "fixture",
+            REALM);
     if (configureJpa) owner.configureJpaCleanupOwner(entities);
     owner.configureAcknowledgedCleanup(cleanup);
     return owner;
@@ -281,18 +366,19 @@ class ScheduledDeletionContinuationJpaTest {
     assertTrue(frame.hasLocalUser());
     assertFalse(frame.inactivityCause());
     var actual = new AtomicReference<User>();
-    frame.runOwnedLocal(() -> {
-      assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-      actual.set(users.findById(ACCOUNT).orElseThrow());
-      assertTrue(entities.isJoinedToTransaction());
-    });
+    frame.runOwnedLocal(
+        () -> {
+          assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+          actual.set(users.findById(ACCOUNT).orElseThrow());
+          assertTrue(entities.isJoinedToTransaction());
+        });
     frame.requireCurrentUser(actual.get());
     callbacks.incrementAndGet();
   }
 
   private String status() {
-    return jdbc.queryForObject("select status from identity_maintenance_intent where subject_id=?",
-        String.class, ACCOUNT);
+    return jdbc.queryForObject(
+        "select status from identity_maintenance_intent where subject_id=?", String.class, ACCOUNT);
   }
 
   private static Set<String> fields(JsonNode value) {
@@ -329,24 +415,45 @@ class ScheduledDeletionContinuationJpaTest {
     outcome.put("intentDigest", codec.digest("maintenance-intent", body));
     outcome.put("previousState", body.path("expectedState").textValue());
     outcome.put("tenantId", "7");
-    outcome.put("originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
+    outcome.put(
+        "originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
     outcome.put("result", "DELETED");
-    String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
+    String encoded =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
     String signed;
     try {
       Mac mac = Mac.getInstance("HmacSHA256");
       mac.init(new SecretKeySpec(KEY, "HmacSHA256"));
-      signed = encoded + "." + HexFormat.of().formatHex(mac.doFinal(
-          ("maintenance-operation-receipt\n" + encoded).getBytes(StandardCharsets.UTF_8)));
+      signed =
+          encoded
+              + "."
+              + HexFormat.of()
+                  .formatHex(
+                      mac.doFinal(
+                          ("maintenance-operation-receipt\n" + encoded)
+                              .getBytes(StandardCharsets.UTF_8)));
     } catch (java.security.GeneralSecurityException impossibleFixtureFailure) {
       throw new AssertionError("Fixture receipt unavailable", impossibleFixtureFailure);
     }
-    return codec.canonical(Map.of("accountId", ACCOUNT, "operationId", body.path("operationId").textValue(),
-        "result", "DELETED", "receipt", signed));
+    return codec.canonical(
+        Map.of(
+            "accountId",
+            ACCOUNT,
+            "operationId",
+            body.path("operationId").textValue(),
+            "result",
+            "DELETED",
+            "receipt",
+            signed));
   }
 
   @TestConfiguration
   static class TimeConfiguration {
-    @Bean Clock ownedDeletionClock() { return Clock.systemUTC(); }
+    @Bean
+    Clock ownedDeletionClock() {
+      return Clock.systemUTC();
+    }
   }
 }
