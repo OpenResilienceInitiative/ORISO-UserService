@@ -65,7 +65,11 @@ import org.springframework.web.client.RestTemplate;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles({"testing", "scenario-c-role-addition-jpa"})
-@TestPropertySource(properties = "multitenancy.enabled=true")
+@TestPropertySource(
+    properties = {
+      "multitenancy.enabled=true",
+      "spring.datasource.url=jdbc:h2:mem:role-addition-${random.uuid};DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=USER,VALUE,DAY"
+    })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   JpaAuditingConfiguration.class,
@@ -151,10 +155,19 @@ class AccountRoleAdditionScopedJpaTest {
               jdbc.update("delete from admin_agency where admin_id=?", ACCOUNT);
               jdbc.update("delete from admin where admin_id=?", ACCOUNT);
               jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT);
-              consultants.findById(ACCOUNT).ifPresent(consultants::delete);
+              jdbc.update("delete from consultant_topic where consultant_id=?", ACCOUNT);
+              jdbc.update("delete from language where consultant_id=?", ACCOUNT);
+              jdbc.update("delete from consultant where consultant_id=?", ACCOUNT);
               entities.flush();
               entities.clear();
             });
+    assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?", Integer.class, ACCOUNT));
+    var born =
+        LocalDateTime.now(ZoneOffset.UTC).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
     new TransactionTemplate(transactions)
         .executeWithoutResult(
             ignored -> {
@@ -162,6 +175,8 @@ class AccountRoleAdditionScopedJpaTest {
                   Consultant.builder()
                       .id(ACCOUNT)
                       .tenantId(7L)
+                      .createDate(born)
+                      .updateDate(born)
                       .username(new UsernameTranscoder().encodeUsername("owned-counsellor"))
                       .firstName("Ada")
                       .lastName("Lovelace")
@@ -185,6 +200,14 @@ class AccountRoleAdditionScopedJpaTest {
               entities.flush();
               entities.clear();
             });
+    assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+    assertEquals(
+        born,
+        jdbc.queryForObject(
+                "select create_date from consultant where consultant_id=?",
+                java.sql.Timestamp.class,
+                ACCOUNT)
+            .toLocalDateTime());
     human.setUserId(HUMAN);
     human.setTenantId(7L);
     human.setAccessToken("fixture-human");
