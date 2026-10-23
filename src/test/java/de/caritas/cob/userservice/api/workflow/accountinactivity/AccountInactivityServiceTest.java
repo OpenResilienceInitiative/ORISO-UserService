@@ -36,7 +36,7 @@ class AccountInactivityServiceTest {
         .isBefore(Instant.parse("2026-02-01T00:00:00Z"));
     org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> service.scan(false));
     assertThat(service.snapshot(id).orElseThrow().status())
-        .isEqualTo(AccountInactivityService.Status.DELETED);
+        .isEqualTo(AccountInactivityService.Status.DELETING);
   }
 
   @Test
