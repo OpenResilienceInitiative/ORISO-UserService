@@ -157,15 +157,40 @@ public final class ScheduledAskerMaintenance {
           });
     }
 
-    /** Requires the actual prepared final-action proof; closed for the next causal owner tests. */
-    public void beforeFinalLocalDeletion(PreparedUserDeletion prepared) {
+    /**
+     * The final action must issue its real preparation before owned inactivity media is forgotten.
+     */
+    public void beforeFinalLocalDeletion(
+        de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction
+                .PreparedUserDeletion
+            prepared) {
       Objects.requireNonNull(prepared);
-      throw unavailable();
+      outsideSql();
+      if (frozen.claim.inactivity == null || frozen.originalSql.isNull()) throw unavailable();
+      prepared.requireFor(this);
+      mediaPreparation = prepared;
+      try {
+        frozen.claim.inactivity.forgetDeletionMedia(this);
+      } finally {
+        mediaPreparation = null;
+      }
+      prepared.requireFor(this);
+      finalPreparation = prepared;
     }
 
-    /** Requires original realm-only absence after its three owned cleanup actions. */
+    /** Only original realm-only absence can use the fixed three-action inactivity continuation. */
     public void beforeFinalLocalAbsence() {
-      throw unavailable();
+      outsideSql();
+      if (frozen.claim.inactivity == null || !frozen.originalSql.isNull()) throw unavailable();
+      requireCurrent();
+      absenceMediaPreparation = true;
+      try {
+        frozen.claim.inactivity.forgetDeletionMedia(this);
+      } finally {
+        absenceMediaPreparation = false;
+      }
+      requireCurrent();
+      finalAbsencePrepared = true;
     }
 
     public boolean completeOwnedLocalDeletion(Runnable finalDelete) {
@@ -803,6 +828,8 @@ public final class ScheduledAskerMaintenance {
         || !entities.isJoinedToTransaction()
         || frame.frozen.claim.inactivity == null && !held(frame.frozen.claim.lease))
       throw unavailable();
+    if (frame.frozen.claim.inactivity != null)
+      frame.validateInactivity(() -> frame.frozen.claim.inactivity.lockDeletionOwnerSql(frame));
     var intent = requireIntent(frame.frozen.claim);
     if (!Set.of("ACKNOWLEDGED", "APPLIED").contains(intent.status)
         || !frame.frozen.envelope.equals(intent.frozen)
@@ -875,35 +902,9 @@ public final class ScheduledAskerMaintenance {
   }
 
   private void requirePriorInactivityCustody(AcknowledgedDeletion frame) {
-    if (frame.callbackResource == null
-        || frame.callbackResource
-            != TransactionSynchronizationManager.getResource(jdbc.getDataSource()))
-      throw unavailable();
-    var rows =
-        jdbc.queryForMap(
-            "select access_work_id,suspension_operation_id,suspension_body,suspension_receipt from account_inactivity where identity_id=? and work_id=? for update",
-            frame.frozen.claim.account,
-            frame.frozen.claim.inactivity.workId());
-    Object prior = rows.get("access_work_id");
-    if (prior == null
-        || !prior.equals(rows.get("suspension_operation_id"))
-        || !(rows.get("suspension_body") instanceof String body)
-        || !(rows.get("suspension_receipt") instanceof String receipt)) throw unavailable();
-    var frozen = codec.read(body, JsonNode.class);
-    var target = frozen.path("target");
-    if (!frame.frozen.claim.account.equals(target.path("accountId").textValue())
-        || !Objects.equals(
-            frame.frozen.claim.intent.tenant == null
-                ? null
-                : frame.frozen.claim.intent.tenant.toString(),
-            target.path("tenantId").isNull() ? null : target.path("tenantId").textValue())
-        || !prior.equals(frozen.path("operationId").textValue())
-        || !prior.equals(target.path("origin").path("workflowId").textValue())
-        || !"INACTIVITY".equals(frozen.path("workflow").path("kind").textValue())
-        || !"SUSPEND".equals(frozen.path("workflow").path("action").textValue())
-        || !prior.equals(frozen.path("workflow").path("workId").textValue())) throw unavailable();
-    codec.verifyMaintenanceInactivitySuspendReceipt(
-        receipt, realmId, actor(frame.frozen.claim), frozen);
+    // The old row has no independently retained SQL incarnation. Never infer it from
+    // a current row or signed native target alone; the fixed custody column is pending TDD.
+    throw unavailable();
   }
 
   private boolean held(ScheduledTaskClaimService.ClaimLease lease) {

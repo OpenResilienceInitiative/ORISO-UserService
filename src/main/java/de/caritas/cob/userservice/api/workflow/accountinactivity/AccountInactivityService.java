@@ -1076,6 +1076,15 @@ public class AccountInactivityService {
       else throw InactivityClaimJournal.invalid();
     }
 
+    /** Lock ordering only; the same frame must still verify both durable journals afterward. */
+    public void lockDeletionOwnerSql(
+        de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+                .AcknowledgedDeletion
+            frame) {
+      frame.requireClaimedInactivitySql(this);
+      locked(identityId()).orElseThrow();
+    }
+
     public void requireDeletionRemovedSql(
         de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
                 .AcknowledgedDeletion

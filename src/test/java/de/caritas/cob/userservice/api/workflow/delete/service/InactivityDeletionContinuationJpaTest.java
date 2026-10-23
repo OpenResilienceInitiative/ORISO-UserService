@@ -127,6 +127,7 @@ class InactivityDeletionContinuationJpaTest {
   private final AtomicInteger nativeEffects = new AtomicInteger();
   private final AtomicInteger nativeCalls = new AtomicInteger();
   private final AtomicInteger callbacks = new AtomicInteger();
+  private final AtomicInteger preparations = new AtomicInteger();
   private String savedBody;
   private String savedReply;
   private boolean loseReply;
@@ -283,6 +284,10 @@ class InactivityDeletionContinuationJpaTest {
     assertEquals(
         1, nativeEffects.get(), "The actual due private cause must reach scoped native deletion");
     assertEquals(1, callbacks.get());
+    assertEquals(
+        1,
+        preparations.get(),
+        "The actual same-frame preparation precedes final deletion");
     assertTrue(users.findById(ACCOUNT).isEmpty());
     assertEquals(
         de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
@@ -688,9 +693,11 @@ class InactivityDeletionContinuationJpaTest {
                       prepared.isEmpty(), "A real content veto must precede media forgetting");
                   return;
                 }
-                frame.beforeFinalLocalDeletion(prepared.orElseThrow());
+                var proof = prepared.orElseThrow();
+                preparations.incrementAndGet();
+                frame.beforeFinalLocalDeletion(proof);
                 if (uncertainFinal != null) uncertainFinal.loseNextCommit = true;
-                assertTrue(finalAction.completeAcknowledged(prepared.orElseThrow()));
+                assertTrue(finalAction.completeAcknowledged(proof));
               } else {
                 assertTrue(users.findById(ACCOUNT).isEmpty());
                 frame.beforeFinalLocalAbsence();
