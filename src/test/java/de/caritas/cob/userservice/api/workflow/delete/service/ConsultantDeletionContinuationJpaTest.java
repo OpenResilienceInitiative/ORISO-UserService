@@ -186,6 +186,7 @@ class ConsultantDeletionContinuationJpaTest {
   private boolean retain;
   private Consultant originalEntity;
   private PlatformTransactionManager ownerTransactions;
+  private String projectedUsername = "owned-cleanup";
   private List<String> projectedRoles = List.of("consultant");
 
   @BeforeEach
@@ -624,6 +625,20 @@ class ConsultantDeletionContinuationJpaTest {
     }
   }
 
+  @Test void uppercaseOriginalSqlUsernameMatchesOnlyTheExistingNativeCaseContract() {
+    jdbc.update("update consultant set username=? where consultant_id=?",new UsernameTranscoder().encodeUsername("Owned-Cleanup"),ACCOUNT);
+    owner(true,this::complete).performDeletionWorkflow();
+    assertEquals(1,nativeEffects.get()); assertEquals(1,callbacks.get()); assertEquals("APPLIED",status());
+    assertEquals(new UsernameTranscoder().encodeUsername("Owned-Cleanup"),codec.read(envelopeRaw(),JsonNode.class).path("originalSql").path("username").textValue());
+    assertEnvelope();
+  }
+
+  @Test void foreignNativeUsernameNeverAdoptsTheOriginalSqlAccount() {
+    projectedUsername="foreign-person"; owner(true,this::complete).performDeletionWorkflow();
+    assertEquals(1,nativeReads.get()); assertEquals(0,nativeEffects.get()); assertEquals(0,callbacks.get());
+    assertTrue(consultants.findById(ACCOUNT).isPresent());
+  }
+
   private void complete(AcknowledgedConsultantDeletion frame) {
     assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
     frame.requireCurrent();
@@ -769,7 +784,7 @@ class ConsultantDeletionContinuationJpaTest {
   private String projection() {
     var row = new TreeMap<String, Object>();
     row.put("id", ACCOUNT);
-    row.put("username", "owned-cleanup");
+    row.put("username", projectedUsername);
     row.put("email", "ordinary@fixture.invalid");
     row.put("firstName", "Owned");
     row.put("lastName", "Consultant");
