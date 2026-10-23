@@ -321,7 +321,7 @@ class ExistingAccountSetupCausalClaimsTest {
       assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
       assertSame(lastHandle, handle);
       assertTrue(effects.contains(handle.checkedRecoveryClaim().id()));
-      return true;
+      return false;
     }
 
     @Override
