@@ -743,8 +743,11 @@ class HumanAdminAccountMaintenanceTest {
     var publicEdit =
         (de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService)
             proxy.getProxy();
-    var dto =
-        new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO()
+    var dto = self
+        ? new de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper().updateAdminConsultantOf(
+            new de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO()
+                .firstname("New").lastname("Name").email("new@example.test").publicSlug("requested-self-slug"), localConsultant())
+        : new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO()
             .firstname("New")
             .lastname("Name")
             .email("new@example.test")
@@ -900,13 +903,13 @@ class HumanAdminAccountMaintenanceTest {
     }
     var updated = assertDoesNotThrow(() -> publicEdit.updateConsultant(ACCOUNT, dto, !self));
     assertEquals("New", updated.getFirstName());
-    assertTrue(updated.isAbsent());
+    assertEquals(!self, updated.isAbsent());
     assertEquals(
         "New",
         jdbc.queryForObject(
             "select first_name from consultant where consultant_id=?", String.class, ACCOUNT));
     assertEquals(
-        true,
+        !self,
         jdbc.queryForObject(
             "select is_absent from consultant where consultant_id=?", Boolean.class, ACCOUNT));
     assertEquals(
