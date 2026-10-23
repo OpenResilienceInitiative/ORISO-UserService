@@ -119,9 +119,11 @@ class ReviewedMaintenanceProfilesTest {
       ((com.fasterxml.jackson.databind.node.ArrayNode) profile.path("selfOperations"))
           .add("account.email");
     }
-    assertEquals(read(ordinary(), protectedPolicy()).profiles(),
+    assertEquals(
+        read(ordinary(), protectedPolicy()).profiles(),
         assertDoesNotThrow(() -> read(raw, protectedPolicy())).profiles());
-    ((com.fasterxml.jackson.databind.node.ArrayNode) raw.path("ordinaryProfiles").get(0).path("selfOperations"))
+    ((com.fasterxml.jackson.databind.node.ArrayNode)
+            raw.path("ordinaryProfiles").get(0).path("selfOperations"))
         .add("account.arbitrary");
     assertThrows(IllegalStateException.class, () -> read(raw, protectedPolicy()));
   }

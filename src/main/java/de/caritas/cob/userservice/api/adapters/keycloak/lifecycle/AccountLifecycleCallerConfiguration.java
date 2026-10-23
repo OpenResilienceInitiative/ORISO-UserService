@@ -95,7 +95,10 @@ public class AccountLifecycleCallerConfiguration {
     return ReviewedMaintenanceProfiles.read(
         required("ORISO_ACCOUNT_MAINTENANCE_CONFIG"),
         required("ORISO_PROTECTED_INVITATIONS_CONFIG"),
-        groups, initialIds, realmId, keycloak.getRealm());
+        groups,
+        initialIds,
+        realmId,
+        keycloak.getRealm());
   }
 
   @Bean
@@ -112,19 +115,36 @@ public class AccountLifecycleCallerConfiguration {
     String publicServer = keycloak.getAuthServerUrl();
     String internalServer =
         environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
-    if (publicServer == null || publicServer.isBlank()
-        || internalServer == null || internalServer.isBlank()) throw invalid();
-    var selectors = reviewed.profiles().entrySet().stream()
-        .collect(java.util.stream.Collectors.toUnmodifiableMap(
-            Map.Entry::getKey,
-            entry -> entry.getValue().stream()
-                .map(profile -> new ClaimedPasswordMaintenance.ProfileSelector(
-                    profile.family(), profile.id(), profile.version()))
-                .toList()));
+    if (publicServer == null
+        || publicServer.isBlank()
+        || internalServer == null
+        || internalServer.isBlank()) throw invalid();
+    var selectors =
+        reviewed.profiles().entrySet().stream()
+            .collect(
+                java.util.stream.Collectors.toUnmodifiableMap(
+                    Map.Entry::getKey,
+                    entry ->
+                        entry.getValue().stream()
+                            .map(
+                                profile ->
+                                    new ClaimedPasswordMaintenance.ProfileSelector(
+                                        profile.family(), profile.id(), profile.version()))
+                            .toList()));
     return new ClaimedPasswordMaintenance(
-        identities, jdbc, manager, actors, broker, codec, http, Clock.systemUTC(),
-        internalServer, publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm(),
-        keycloak.getRealm(), required("KEYCLOAK_REALM_INTERNAL_ID"), selectors);
+        identities,
+        jdbc,
+        manager,
+        actors,
+        broker,
+        codec,
+        http,
+        Clock.systemUTC(),
+        internalServer,
+        publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm(),
+        keycloak.getRealm(),
+        required("KEYCLOAK_REALM_INTERNAL_ID"),
+        selectors);
   }
 
   @Bean
@@ -452,8 +472,10 @@ public class AccountLifecycleCallerConfiguration {
 
   @Bean
   AccountLifecycleRetryScheduler accountLifecycleRetryScheduler(
-      JdbcAccountLifecycleJournal journal, AccountLifecycleDispatcher dispatcher,
-      ClaimedPasswordMaintenance claimed, SelfPasswordMaintenance self) {
+      JdbcAccountLifecycleJournal journal,
+      AccountLifecycleDispatcher dispatcher,
+      ClaimedPasswordMaintenance claimed,
+      SelfPasswordMaintenance self) {
     return new AccountLifecycleRetryScheduler(journal, dispatcher, claimed, self);
   }
 

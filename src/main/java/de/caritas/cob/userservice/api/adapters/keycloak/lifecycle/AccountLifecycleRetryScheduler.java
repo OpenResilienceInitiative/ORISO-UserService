@@ -18,8 +18,10 @@ public final class AccountLifecycleRetryScheduler {
   }
 
   public AccountLifecycleRetryScheduler(
-      JdbcAccountLifecycleJournal journal, AccountLifecycleDispatcher dispatcher,
-      ClaimedPasswordMaintenance claimed, SelfPasswordMaintenance self) {
+      JdbcAccountLifecycleJournal journal,
+      AccountLifecycleDispatcher dispatcher,
+      ClaimedPasswordMaintenance claimed,
+      SelfPasswordMaintenance self) {
     this.journal = java.util.Objects.requireNonNull(journal);
     this.dispatcher = java.util.Objects.requireNonNull(dispatcher);
     this.claimed = java.util.Objects.requireNonNull(claimed);

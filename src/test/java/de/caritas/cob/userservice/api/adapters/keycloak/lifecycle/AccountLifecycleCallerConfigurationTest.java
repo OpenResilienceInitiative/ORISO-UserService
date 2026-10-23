@@ -147,10 +147,16 @@ class AccountLifecycleCallerConfigurationTest {
                     factory.registerSingleton(
                         "fixtureTransactions", new DataSourceTransactionManager(source));
                     factory.registerSingleton("fixtureAdminScope", mock(AdminScope.class));
-                    factory.registerSingleton("fixtureDeletionClaims",
-                        mock(de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.class));
-                    factory.registerSingleton("fixtureDeletionLifecycle",
-                        mock(de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService.class));
+                    factory.registerSingleton(
+                        "fixtureDeletionClaims",
+                        mock(
+                            de.caritas.cob.userservice.api.workflow.scheduling
+                                .ScheduledTaskClaimService.class));
+                    factory.registerSingleton(
+                        "fixtureDeletionLifecycle",
+                        mock(
+                            de.caritas.cob.userservice.api.workflow.delete.service
+                                .DeletionLifecycleService.class));
                     factory.registerSingleton(
                         "fixtureProtectedProfiles",
                         new de.caritas.cob.userservice.api.service.accountinvite
@@ -286,10 +292,16 @@ class AccountLifecycleCallerConfigurationTest {
 
   @Test
   void enabledCallerInstallsTheExistingScopedScheduledDeletionOwner() {
-    withEnabledCallerGraph(context -> assertEquals(1,
-        context.getBeansOfType(
-            de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.class).size(),
-        "FIVE_ACTORS must install the existing deletion owner, not only refuse legacy deletion"));
+    withEnabledCallerGraph(
+        context ->
+            assertEquals(
+                1,
+                context
+                    .getBeansOfType(
+                        de.caritas.cob.userservice.api.workflow.delete.service
+                            .ScheduledAskerMaintenance.class)
+                    .size(),
+                "FIVE_ACTORS must install the existing deletion owner, not only refuse legacy deletion"));
   }
 
   @Test
