@@ -37,12 +37,15 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/** The actual public facade and committed JPA claim must never fall back to generic native rights. */
+/**
+ * The actual public facade and committed JPA claim must never fall back to generic native rights.
+ */
 @DataJpaTest
-@TestPropertySource(properties = {
-  "spring.profiles.active=testing,scenario-c-reactivation-jpa",
-  "TASK_IDENTITY_MODEL=FIVE_ACTORS"
-})
+@TestPropertySource(
+    properties = {
+      "spring.profiles.active=testing,scenario-c-reactivation-jpa",
+      "TASK_IDENTITY_MODEL=FIVE_ACTORS"
+    })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
   JpaAuditingConfiguration.class,
@@ -94,16 +97,19 @@ class ScopedAskerReactivationJpaTest {
     request.setTenantId(7L);
     request.setPassword("synthetic-chosen-password");
 
-    assertThrows(ScopedIdentityCommandRequiredException.class, () -> facade.reactivateAsker(request));
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class, () -> facade.reactivateAsker(request));
     assertEquals(
         "READ_ONLY_SAFEGUARD",
         jdbc.queryForObject(
             "select deletion_lifecycle_state from user where user_id=?", String.class, ACCOUNT),
         "An unavailable scoped owner must not allocate a generic reactivation claim");
-    assertNull(jdbc.queryForObject(
-        "select reactivation_operation_id from user where user_id=?", String.class, ACCOUNT));
-    assertNotNull(jdbc.queryForObject(
-        "select delete_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT));
+    assertNull(
+        jdbc.queryForObject(
+            "select reactivation_operation_id from user where user_id=?", String.class, ACCOUNT));
+    assertNotNull(
+        jdbc.queryForObject(
+            "select delete_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT));
     verifyNoInteractions(genericReactivator, genericRepair);
   }
 
