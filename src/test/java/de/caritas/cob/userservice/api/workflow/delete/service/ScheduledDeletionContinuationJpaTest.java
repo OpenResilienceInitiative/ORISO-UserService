@@ -250,6 +250,7 @@ class ScheduledDeletionContinuationJpaTest {
         jdbc.queryForObject(
                 "select create_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT)
             .toLocalDateTime()
+            .toInstant(ZoneOffset.UTC)
             .toString(),
         envelope.path("originalSql").path("create_date").textValue());
     assertEquals(
