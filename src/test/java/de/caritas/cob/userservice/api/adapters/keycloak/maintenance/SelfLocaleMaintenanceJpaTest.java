@@ -351,7 +351,8 @@ class SelfLocaleMaintenanceJpaTest {
         };
     RuntimeException refusal =
         assertThrows(RuntimeException.class, () -> maintenance.patch("de", patch, callback));
-    assertInstanceOf(status == 403 ? ForbiddenException.class : ConflictException.class, refusal);
+    if (status == 403) assertInstanceOf(ForbiddenException.class, refusal);
+    else assertInstanceOf(ConflictException.class, refusal);
     assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
     assertEquals("REFUSED", status());
     assertEquals(1, domainCalls.get());
