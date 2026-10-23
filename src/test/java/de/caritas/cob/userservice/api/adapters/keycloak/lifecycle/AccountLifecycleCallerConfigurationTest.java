@@ -149,8 +149,7 @@ class AccountLifecycleCallerConfigurationTest {
                     factory.registerSingleton("fixtureHuman", new AuthenticatedUser());
                     factory.registerSingleton("fixtureRequest", new MockHttpServletRequest());
                     factory.registerSingleton("fixtureJdbc", jdbc);
-                    factory.registerSingleton(
-                        "fixtureTransactions", transactions);
+                    factory.registerSingleton("fixtureTransactions", transactions);
                     factory.registerSingleton("fixtureEntities", entities);
                     factory.registerSingleton(
                         "fixtureDeletionConsumer",

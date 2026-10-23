@@ -1384,7 +1384,8 @@ class HumanAdminAccountMaintenanceTest {
           profile.putObject("clientRoles");
           profile.putArray("selfOperations").add("account.read").add("account.email");
         });
-    var protectedPolicy = json.createObjectNode().put("realmId", "realm-1").put("realmName", "test");
+    var protectedPolicy =
+        json.createObjectNode().put("realmId", "realm-1").put("realmName", "test");
     protectedPolicy.putArray("technicalRoles").add("technical");
     var protectedProfiles = protectedPolicy.putArray("profiles");
     Map.of(
@@ -1421,11 +1422,13 @@ class HumanAdminAccountMaintenanceTest {
             .withProperty("ORISO_ACCOUNT_LIFECYCLE_GROUPS", codec.canonical(groups))
             .withProperty("ORISO_IDENTITY_HUMAN_CLIENT_IDS", "[\"app\"]")
             .withProperty("KEYCLOAK_REALM_INTERNAL_ID", "realm-1")
-            .withProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", "https://internal-auth.example.test");
+            .withProperty(
+                "ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", "https://internal-auth.example.test");
     var configuration =
-        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCallerConfiguration(
-            environment);
-    var keycloak = mock(de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig.class);
+        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+            .AccountLifecycleCallerConfiguration(environment);
+    var keycloak =
+        mock(de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig.class);
     when(keycloak.getRealm()).thenReturn("test");
     when(keycloak.getAuthServerUrl()).thenReturn("https://public-auth.example.test");
     try (var context = new org.springframework.context.support.GenericApplicationContext()) {

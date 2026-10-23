@@ -294,10 +294,7 @@ public final class SelfLocaleMaintenance {
             if (!original.equals(current) || !"ACKNOWLEDGED".equals(current.status))
               throw unavailable();
             codec.verifyMaintenanceLocaleReceipt(
-                current.receipt,
-                realmId,
-                actor,
-                codec.read(current.body, JsonNode.class));
+                current.receipt, realmId, actor, codec.read(current.body, JsonNode.class));
             return null;
           });
       String reply = request("locale", self, original.body, actor);

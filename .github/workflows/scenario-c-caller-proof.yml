@@ -406,6 +406,7 @@ jobs:
             src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/AcknowledgedAskerActionsFixture.java
             src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/ScheduledDeletionContinuationJpaTest.java
             src/main/java/de/caritas/cob/userservice/api/workflow/delete/action/asker/DeleteDatabaseAskerAction.java
+            src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfMaintenanceNativePairProof.java
           )
           trap 'git restore --source=HEAD -- "${owned_sources[@]}"' EXIT
           spotless_files=

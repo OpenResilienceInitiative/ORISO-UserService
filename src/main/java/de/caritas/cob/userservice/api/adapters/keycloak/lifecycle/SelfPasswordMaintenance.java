@@ -282,8 +282,7 @@ public final class SelfPasswordMaintenance {
                 if (!original.equals(current) || !"ACKNOWLEDGED".equals(current.status))
                   throw unavailable();
                 var body = openChecked(self, current, digest, actor).path("body");
-                codec.verifyMaintenanceSelfPasswordReceipt(
-                    current.receipt, realmId, actor, body);
+                codec.verifyMaintenanceSelfPasswordReceipt(current.receipt, realmId, actor, body);
                 return body;
               });
       String verified =
