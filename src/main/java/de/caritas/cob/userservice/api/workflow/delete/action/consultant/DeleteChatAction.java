@@ -43,7 +43,8 @@ public class DeleteChatAction implements ActionCommand<ConsultantDeletionWorkflo
   public void execute(ConsultantDeletionWorkflowDTO actionTarget) {
     if (actionTarget.isAcknowledged()) {
       var chats = new java.util.concurrent.atomic.AtomicReference<List<Chat>>();
-      actionTarget.runOwnedLocal(() -> chats.set(chatRepository.findByChatOwner(actionTarget.getConsultant())));
+      actionTarget.runOwnedLocal(
+          () -> chats.set(chatRepository.findByChatOwner(actionTarget.getConsultant())));
       var errors = new ArrayList<DeletionWorkflowError>();
       for (var chat : chats.get()) {
         actionTarget.runOwnedExternal(() -> errors.addAll(purgeMatrixRoom(chat.getMatrixRoomId())));

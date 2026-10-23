@@ -35,36 +35,55 @@ public class DeleteMatrixConsultantAction extends DeleteMatrixUserAction
   @Override
   public void execute(ConsultantDeletionWorkflowDTO actionTarget) {
     if (actionTarget.isAcknowledged()) {
-      var sessions = new java.util.concurrent.atomic.AtomicReference<java.util.List<de.caritas.cob.userservice.api.model.Session>>();
+      var sessions =
+          new java.util.concurrent.atomic.AtomicReference<
+              java.util.List<de.caritas.cob.userservice.api.model.Session>>();
       var incomplete = new java.util.concurrent.atomic.AtomicBoolean();
-      actionTarget.runOwnedLocal(() -> {
-        try {
-          sessions.set(sessionRepository.findByConsultantId(actionTarget.getConsultant().getId(), Pageable.unpaged()).getContent());
-        } catch (Exception failure) {
-          incomplete.set(true);
-          appendErrorsForSourceType(actionTarget.getDeletionWorkflowErrors(), CONSULTANT,
-              actionTarget.getConsultant().getMatrixUserId(), failure);
-        }
-      });
+      actionTarget.runOwnedLocal(
+          () -> {
+            try {
+              sessions.set(
+                  sessionRepository
+                      .findByConsultantId(actionTarget.getConsultant().getId(), Pageable.unpaged())
+                      .getContent());
+            } catch (Exception failure) {
+              incomplete.set(true);
+              appendErrorsForSourceType(
+                  actionTarget.getDeletionWorkflowErrors(),
+                  CONSULTANT,
+                  actionTarget.getConsultant().getMatrixUserId(),
+                  failure);
+            }
+          });
       if (incomplete.get()) return;
       for (var session : sessions.get()) {
-        actionTarget.runOwnedExternal(() -> {
-          try { purgeMatrixRoom(session.getMatrixRoomId()); }
-          catch (Exception failure) {
-            incomplete.set(true);
-            appendErrorsForSourceType(actionTarget.getDeletionWorkflowErrors(), CONSULTANT,
-                actionTarget.getConsultant().getMatrixUserId(), failure);
-          }
-        });
+        actionTarget.runOwnedExternal(
+            () -> {
+              try {
+                purgeMatrixRoom(session.getMatrixRoomId());
+              } catch (Exception failure) {
+                incomplete.set(true);
+                appendErrorsForSourceType(
+                    actionTarget.getDeletionWorkflowErrors(),
+                    CONSULTANT,
+                    actionTarget.getConsultant().getMatrixUserId(),
+                    failure);
+              }
+            });
         if (incomplete.get()) return;
       }
-      actionTarget.runOwnedExternal(() -> {
-        try { deactivateMatrixUser(actionTarget.getConsultant().getMatrixUserId()); }
-        catch (Exception failure) {
-          appendErrorsForSourceType(actionTarget.getDeletionWorkflowErrors(), CONSULTANT,
-              actionTarget.getConsultant().getMatrixUserId(), failure);
-        }
-      });
+      actionTarget.runOwnedExternal(
+          () -> {
+            try {
+              deactivateMatrixUser(actionTarget.getConsultant().getMatrixUserId());
+            } catch (Exception failure) {
+              appendErrorsForSourceType(
+                  actionTarget.getDeletionWorkflowErrors(),
+                  CONSULTANT,
+                  actionTarget.getConsultant().getMatrixUserId(),
+                  failure);
+            }
+          });
       return;
     }
     try {

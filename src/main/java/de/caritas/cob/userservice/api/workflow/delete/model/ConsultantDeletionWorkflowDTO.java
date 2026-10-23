@@ -22,14 +22,17 @@ public class ConsultantDeletionWorkflowDTO {
   }
 
   public ConsultantDeletionWorkflowDTO(
-      Consultant consultant, List<DeletionWorkflowError> errors,
+      Consultant consultant,
+      List<DeletionWorkflowError> errors,
       AcknowledgedConsultantDeletion acknowledged) {
     this.consultant = Objects.requireNonNull(consultant);
     this.deletionWorkflowErrors = Objects.requireNonNull(errors);
     this.acknowledgedDeletion = Objects.requireNonNull(acknowledged);
   }
 
-  public boolean isAcknowledged() { return acknowledgedDeletion != null; }
+  public boolean isAcknowledged() {
+    return acknowledgedDeletion != null;
+  }
 
   /** Data alone cannot authorize cleanup; compare all53 through the same actual private owner. */
   public void requireOwnedConsultant() {
@@ -39,21 +42,28 @@ public class ConsultantDeletionWorkflowDTO {
 
   public void runOwnedLocal(Runnable action) {
     if (acknowledgedDeletion == null) throw new ScopedIdentityCommandRequiredException();
-    acknowledgedDeletion.runOwnedLocal(() -> {
-      requireOwnedConsultant(); action.run(); requireOwnedConsultant();
-    });
+    acknowledgedDeletion.runOwnedLocal(
+        () -> {
+          requireOwnedConsultant();
+          action.run();
+          requireOwnedConsultant();
+        });
   }
 
   public void runOwnedExternal(Runnable action) {
     if (TransactionSynchronizationManager.isActualTransactionActive())
       throw new ScopedIdentityCommandRequiredException();
-    requireOwnedConsultant(); action.run(); requireOwnedConsultant();
+    requireOwnedConsultant();
+    action.run();
+    requireOwnedConsultant();
   }
 
   public boolean completeOwnedLocalDeletion(Runnable action) {
     if (acknowledgedDeletion == null) throw new ScopedIdentityCommandRequiredException();
-    return acknowledgedDeletion.completeOwnedLocalDeletion(() -> {
-      requireOwnedConsultant(); action.run();
-    });
+    return acknowledgedDeletion.completeOwnedLocalDeletion(
+        () -> {
+          requireOwnedConsultant();
+          action.run();
+        });
   }
 }
