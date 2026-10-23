@@ -213,7 +213,11 @@ class InactivityDeletionContinuationJpaTest {
             manyTimes(),
             outbound ->
                 assertTrue(
-                    Set.of(ENDPOINT + "/read", ENDPOINT + "/delete", ENDPOINT + "/deactivate", ENDPOINT + "/reactivate")
+                    Set.of(
+                            ENDPOINT + "/read",
+                            ENDPOINT + "/delete",
+                            ENDPOINT + "/deactivate",
+                            ENDPOINT + "/reactivate")
                         .contains(outbound.getURI().toString())))
         .andRespond(
             outbound -> {
@@ -229,7 +233,11 @@ class InactivityDeletionContinuationJpaTest {
               String raw = ((MockClientHttpRequest) outbound).getBodyAsString();
               var body = codec.read(raw, JsonNode.class);
               assertEquals(
-                  enableSuspensionWorkflow && "HUMAN_ADMIN".equals(body.path("target").path("origin").path("kind").textValue()) ? "Bearer fixture-platform-human" : null,
+                  enableSuspensionWorkflow
+                          && "HUMAN_ADMIN"
+                              .equals(body.path("target").path("origin").path("kind").textValue())
+                      ? "Bearer fixture-platform-human"
+                      : null,
                   outbound.getHeaders().getFirst("X-ORISO-Human-Authorization"));
               verifyCapturedProof(
                   outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
@@ -244,16 +252,20 @@ class InactivityDeletionContinuationJpaTest {
                 response.getHeaders().setCacheControl("no-store");
                 return response;
               }
-              if (enableSuspensionWorkflow && Set.of("deactivate", "reactivate").contains(command)) {
+              if (enableSuspensionWorkflow
+                  && Set.of("deactivate", "reactivate").contains(command)) {
                 String operation = body.path("operationId").textValue();
-                if (workflowBodies.containsKey(operation)) assertEquals(workflowBodies.get(operation), raw);
+                if (workflowBodies.containsKey(operation))
+                  assertEquals(workflowBodies.get(operation), raw);
                 else {
                   workflowBodies.put(operation, raw);
                   workflowReplies.put(operation, receipt(body, command, "UPDATED"));
                   suspensionEffects++;
                   realmEnabled = "reactivate".equals(command);
                 }
-                var response = withSuccess(workflowReplies.get(operation), MediaType.APPLICATION_JSON).createResponse(outbound);
+                var response =
+                    withSuccess(workflowReplies.get(operation), MediaType.APPLICATION_JSON)
+                        .createResponse(outbound);
                 response.getHeaders().setCacheControl("no-store");
                 return response;
               }
@@ -562,20 +574,43 @@ class InactivityDeletionContinuationJpaTest {
     inactivityHuman.setTenantId(0L);
     inactivityHuman.setRoles(Set.of("agency-admin", "tenant-admin"));
     inactivityHuman.setAccessToken("fixture-platform-human");
-    var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture-platform-human")
-        .header("alg", "RS256").issuer("https://identity.test/realms/fixture")
-        .subject(humanId).claim("azp", "admin").claim("tenantId", 0)
-        .issuedAt(clock.instant().minusSeconds(5)).expiresAt(clock.instant().plusSeconds(300)).build();
-    inactivityRequest.setUserPrincipal(new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt, List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("user-admin"))));
+    var jwt =
+        org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture-platform-human")
+            .header("alg", "RS256")
+            .issuer("https://identity.test/realms/fixture")
+            .subject(humanId)
+            .claim("azp", "admin")
+            .claim("tenantId", 0)
+            .issuedAt(clock.instant().minusSeconds(5))
+            .expiresAt(clock.instant().plusSeconds(300))
+            .build();
+    inactivityRequest.setUserPrincipal(
+        new org.springframework.security.oauth2.server.resource.authentication
+            .JwtAuthenticationToken(
+            jwt,
+            List.of(
+                new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                    "user-admin"))));
     inactivityRequest.addHeader("Authorization", "Bearer fixture-platform-human");
     assertTrue(service.suspend(ACCOUNT));
     assertEquals(1, suspensionEffects);
-    String original = jdbc.queryForObject("select suspension_source_json from account_inactivity where identity_id=?", String.class, ACCOUNT);
-    assertNotNull(original, "The first actual held SUSPEND must retain source before its native effect");
-    String suspension = codec.read(original, JsonNode.class).path("originalRow").path("workId").textValue();
+    String original =
+        jdbc.queryForObject(
+            "select suspension_source_json from account_inactivity where identity_id=?",
+            String.class,
+            ACCOUNT);
+    assertNotNull(
+        original, "The first actual held SUSPEND must retain source before its native effect");
+    String suspension =
+        codec.read(original, JsonNode.class).path("originalRow").path("workId").textValue();
     assertTrue(service.reactivate(ACCOUNT));
     assertEquals(2, suspensionEffects);
-    assertEquals(original, jdbc.queryForObject("select suspension_source_json from account_inactivity where identity_id=?", String.class, ACCOUNT));
+    assertEquals(
+        original,
+        jdbc.queryForObject(
+            "select suspension_source_json from account_inactivity where identity_id=?",
+            String.class,
+            ACCOUNT));
     clock = Clock.offset(clock, Duration.ofDays(800));
     var future = inactivity(false, false);
     future.scan(false);
@@ -585,14 +620,25 @@ class InactivityDeletionContinuationJpaTest {
     assertEquals(1, preparations.get());
     assertEquals("APPLIED", status());
     assertTrue(users.findById(ACCOUNT).isEmpty());
-    assertEquals(de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status.DELETED, future.snapshot(ACCOUNT).orElseThrow().status());
-    var converted = codec.read(jdbc.queryForObject("select suspension_source_json from account_inactivity where identity_id=?", String.class, ACCOUNT), JsonNode.class);
+    assertEquals(
+        de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
+            .DELETED,
+        future.snapshot(ACCOUNT).orElseThrow().status());
+    var converted =
+        codec.read(
+            jdbc.queryForObject(
+                "select suspension_source_json from account_inactivity where identity_id=?",
+                String.class,
+                ACCOUNT),
+            JsonNode.class);
     assertEquals("CAPTURED", converted.path("phase").textValue());
     assertTrue(converted.path("nativeBody").isNull());
     assertTrue(converted.path("nativeReceipt").isNull());
     assertEquals(codec.read(original, JsonNode.class).path("source"), converted.path("source"));
     assertNotEquals(suspension, converted.path("originalRow").path("workId").textValue());
-    assertNotEquals(converted.path("originalRow").path("workId"), envelope().path("originalRow").path("workId"));
+    assertNotEquals(
+        converted.path("originalRow").path("workId"),
+        envelope().path("originalRow").path("workId"));
     assertNotEquals(suspension, envelope().path("originalRow").path("workId").textValue());
     assertEquals(List.of(List.of("@owned-cleanup:fixture.invalid")), forgotten);
     verifyNoInteractions(sdk);
@@ -605,8 +651,10 @@ class InactivityDeletionContinuationJpaTest {
   private int suspensionEffects;
   private final Map<String, String> workflowBodies = new HashMap<>();
   private final Map<String, String> workflowReplies = new HashMap<>();
-  private final de.caritas.cob.userservice.api.helper.AuthenticatedUser inactivityHuman = new de.caritas.cob.userservice.api.helper.AuthenticatedUser();
-  private final org.springframework.mock.web.MockHttpServletRequest inactivityRequest = new org.springframework.mock.web.MockHttpServletRequest();
+  private final de.caritas.cob.userservice.api.helper.AuthenticatedUser inactivityHuman =
+      new de.caritas.cob.userservice.api.helper.AuthenticatedUser();
+  private final org.springframework.mock.web.MockHttpServletRequest inactivityRequest =
+      new org.springframework.mock.web.MockHttpServletRequest();
   private boolean retainLocalUser;
   private boolean withMatrixIdentity;
   private boolean loseMediaReply;
