@@ -28,11 +28,17 @@ final class InactivitySuspensionSource {
     this.transport = Objects.requireNonNull(transport);
   }
 
-  InactivityClaimJournal.Saved capture(InactivityClaimJournal.Saved claimed) {
+  InactivitySuspensionRelease prepareRelease(AccountInactivityService.Snapshot row) {
+    return InactivitySuspensionRelease.prepare(jdbc, journal, transport, row);
+  }
+
+  InactivityClaimJournal.Saved capture(
+      InactivityClaimJournal.Saved claimed, InactivitySuspensionRelease release) {
     sql();
     if (!"CLAIMED".equals(claimed.phase())
         || !"SUSPEND".equals(journal.decode(claimed.claimed()).path("action").textValue())
-        || claimed.suspensionSource() != null) throw invalid();
+        || release == null) throw invalid();
+    release.requireCapture(claimed);
     var prefix = new TreeMap<String, Object>();
     prefix.put("representation", "CLAIMED_INACTIVITY_SUSPENSION_CUSTODY_V1");
     prefix.put("originalRow", journal.decode(claimed.claimed()));
@@ -44,10 +50,11 @@ final class InactivitySuspensionSource {
     if (sealed == null || sealed.isBlank()) throw invalid();
     transport.verifySuspensionCustody(sealed);
     if (jdbc.update(
-            "update account_inactivity set suspension_source_json=? where identity_id=? and work_id=? and native_phase='CLAIMED' and suspension_source_json is null",
-            sealed,
-            claimed.id(),
-            claimed.work())
+            "update account_inactivity set suspension_source_json=? where identity_id=? and work_id=? and native_phase='CLAIMED' and "
+                + (claimed.suspensionSource() == null ? "suspension_source_json is null" : "suspension_source_json=?"),
+            claimed.suspensionSource() == null
+                ? new Object[] {sealed, claimed.id(), claimed.work()}
+                : new Object[] {sealed, claimed.id(), claimed.work(), claimed.suspensionSource()})
         != 1) throw invalid();
     var saved = journal.saved(claimed.id(), true);
     requireBound(saved, saved);

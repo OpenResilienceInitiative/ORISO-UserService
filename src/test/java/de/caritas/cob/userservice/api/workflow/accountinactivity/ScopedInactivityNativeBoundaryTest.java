@@ -498,7 +498,8 @@ class ScopedInactivityNativeBoundaryTest {
             "forged-restore",
             "unfinished-wal",
             "wrong-access-owner",
-            "changed-original-lock")) {
+            "changed-original-lock",
+            "changed-attempts", "changed-last-error", "changed-initiator")) {
       var f = new Fixture(true, false);
       f.read(false);
       f.mutate("deactivate", false, false);
@@ -539,6 +540,14 @@ class ScopedInactivityNativeBoundaryTest {
               f.jdbc.update(
                   "update account_inactivity_matrix_state set original_locked=TRUE where identity_id=?",
                   ACCOUNT);
+          case "changed-attempts", "changed-last-error", "changed-initiator" -> {
+            var row = (com.fasterxml.jackson.databind.node.ObjectNode)
+                f.json.readTree(f.value("claimed_json"));
+            if ("changed-attempts".equals(changed)) row.put("attempts", row.path("attempts").intValue()+1);
+            else if ("changed-last-error".equals(changed)) row.put("lastError", "KEYCLOAK:UNCONFIRMED");
+            else row.putObject("initiator").put("kind", "SCHEDULED");
+            f.jdbc.update("update account_inactivity set claimed_json=? where identity_id=?", f.canonical(row), ACCOUNT);
+          }
           default -> throw new AssertionError(changed);
         }
       }

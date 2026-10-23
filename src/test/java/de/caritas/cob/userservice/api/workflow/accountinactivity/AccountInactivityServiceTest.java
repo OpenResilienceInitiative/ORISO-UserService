@@ -159,8 +159,7 @@ class AccountInactivityServiceTest {
                     "user-admin"))));
     request.addHeader("Authorization", "Bearer synthetic-platform-human");
     service.configureScopedInactivity(
-        org.mockito.Mockito.mock(
-            de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.class),
+        dataOnlyTransport(),
         human,
         request,
         issuer,
@@ -835,6 +834,12 @@ class AccountInactivityServiceTest {
             "restore_effects_json LONGTEXT",
             "suspension_source_json LONGTEXT"))
       jdbc.execute("ALTER TABLE account_inactivity ADD COLUMN " + column);
+    jdbc.execute("DROP TABLE IF EXISTS account_inactivity_matrix_state");
+    jdbc.execute("DROP TABLE IF EXISTS account_inactivity_access_state");
+    new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
+        new org.springframework.core.io.ClassPathResource(
+            "db/changelog/changeset/20260916_account_inactivity_access/migrate.sql"))
+        .execute(jdbc.getDataSource());
     for (String table : java.util.List.of("user", "consultant", "admin")) {
       jdbc.execute("DROP TABLE IF EXISTS `" + table + "`");
       String key = table.equals("user") ? "user_id" : table + "_id";
@@ -853,11 +858,27 @@ class AccountInactivityServiceTest {
 
   private AccountInactivityService createServiceWithoutReset(Effects effects) {
     var ds = new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", "");
-    return new AccountInactivityService(
+    var service = new AccountInactivityService(
         new JdbcTemplate(ds),
         new DataSourceTransactionManager(ds),
         Clock.fixed(Instant.parse("2026-02-01T00:00:00Z"), ZoneOffset.UTC),
         effects);
+    service.configureScopedInactivity(dataOnlyTransport(), new de.caritas.cob.userservice.api.helper.AuthenticatedUser(),
+        new org.springframework.mock.web.MockHttpServletRequest(), "https://auth.example.test/realms/test", Set.of("admin"));
+    return service;
+  }
+
+  /** Real fixed data binding only; original fake effects still model private-claim lifetime. */
+  private de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport dataOnlyTransport() {
+    var actors = org.mockito.Mockito.mock(de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration.class);
+    org.mockito.Mockito.when(actors.require(de.caritas.cob.userservice.api.config.auth.TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(
+        new de.caritas.cob.userservice.api.config.auth.TaskActorCredentials(de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN,
+            "backend-account-admin", "synthetic-only", "61000000-0000-4000-8000-000000000099"));
+    return new de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakInactivityMaintenance(
+        org.mockito.Mockito.mock(org.springframework.web.client.RestTemplate.class), actors,
+        org.mockito.Mockito.mock(de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker.class),
+        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec(new byte[32]),
+        "https://internal-auth.example.test", "test", "synthetic-realm", "https://auth.example.test/realms/test");
   }
 
   static class Effects implements AccountInactivityEffects {

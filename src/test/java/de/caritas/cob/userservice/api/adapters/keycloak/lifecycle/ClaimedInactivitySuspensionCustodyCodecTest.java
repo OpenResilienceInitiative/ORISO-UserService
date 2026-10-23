@@ -161,6 +161,8 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
         () ->
             transport.adapter.verifyCompletedInactivityRestoreReceipt(
                 codec.canonical(body), reply));
+    assertDoesNotThrow(() -> transport.adapter.verifyCompletedInactivityRestoreReceipt(
+        codec.canonical(body), reply, codec.canonical(completedRestoreRow())));
     verifyNoInteractions(transport.http, transport.broker);
   }
 
@@ -195,11 +197,13 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
     var fraction = body.deepCopy();
     ((ObjectNode) fraction.path("workflow")).put("revision", 0.5);
     String fractionReply = nativeReceipt(fraction, "reactivate", false);
+    String fractionRaw = independentCanonical(fraction);
+    assertTrue(fractionRaw.contains("0.5"));
     assertThrows(
         RuntimeException.class,
         () ->
             transport.adapter.verifyCompletedInactivityRestoreReceipt(
-                codec.canonical(fraction), fractionReply));
+                fractionRaw, fractionReply));
     var forged = codec.read(nativeReceipt(body, "reactivate", false), ObjectNode.class);
     String token = forged.path("receipt").textValue();
     forged.put("receipt", token.substring(0, token.indexOf('.') + 1) + "0".repeat(64));
@@ -208,7 +212,34 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
         () ->
             transport.adapter.verifyCompletedInactivityRestoreReceipt(
                 codec.canonical(body), codec.canonical(forged)));
+    String immutableReply = nativeReceipt(body, "reactivate", false);
+    for (String field : List.of("attempts", "lastError", "initiator")) {
+      var row = completedRestoreRow();
+      switch (field) {
+        case "attempts" -> row.put("attempts", 1);
+        case "lastError" -> row.put("lastError", "KEYCLOAK:UNCONFIRMED");
+        case "initiator" -> {
+          var initiator = row.putObject("initiator");
+          initiator.put("kind", "HUMAN_ADMIN");
+          initiator.put("subject", OWNER);
+          initiator.put("issuer", "https://public.example.test/realms/fixture");
+          initiator.put("client", "admin");
+        }
+        default -> throw new AssertionError(field);
+      }
+      assertThrows(RuntimeException.class, () -> transport.adapter.verifyCompletedInactivityRestoreReceipt(
+          codec.canonical(body), immutableReply, codec.canonical(row)), field);
+    }
     verifyNoInteractions(transport.http, transport.broker);
+  }
+
+  private ObjectNode completedRestoreRow() {
+    var row = (ObjectNode) custody("CAPTURED", true).path("originalRow").deepCopy();
+    row.put("workId", "61000000-0000-4000-8000-000000000005");
+    row.put("action", "RESTORE");
+    row.put("status", "REACTIVATING");
+    row.put("suspensionOperationId", WORK);
+    return row;
   }
 
   private ObjectNode completedRestore() {
@@ -220,6 +251,7 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
     workflow.put("workId", restore);
     workflow.put("action", "RESTORE");
     workflow.put("suspensionOperationId", WORK);
+    workflow.put("rowDigest", independent(completedRestoreRow(), "claimed-inactivity-row/v1"));
     ((ObjectNode) body.path("change")).put("restoreEnabled", true);
     return body;
   }
@@ -333,11 +365,11 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
     outcome.put("command", command);
     outcome.put("ownerClient", "backend-account-admin");
     outcome.put("ownerSubject", OWNER);
-    outcome.put("intentDigest", codec.digest("maintenance-intent", body));
+    outcome.put("intentDigest", independent(body, "maintenance-intent"));
     outcome.put("previousState", body.path("expectedState").textValue());
     outcome.put("tenantId", "7");
     outcome.put(
-        "originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
+        "originDigest", independent(body.path("target").path("origin"), "maintenance-origin"));
     outcome.put("result", refused ? "NO_EFFECT" : "UPDATED");
     if (refused) outcome.put("status", 409);
     String encoded =
@@ -356,7 +388,14 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
   }
 
   private String independent(JsonNode value, String domain) {
-    return mac(domain + "\n" + codec.canonical(value));
+    return mac(domain + "\n" + independentCanonical(value));
+  }
+
+  private String independentCanonical(JsonNode value) {
+    try {
+      var json = new com.fasterxml.jackson.databind.ObjectMapper().enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
+      return json.writeValueAsString(json.convertValue(value, Object.class));
+    } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) { throw new AssertionError(invalid); }
   }
 
   private String mac(String input) {

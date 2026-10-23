@@ -306,6 +306,75 @@ public final class KeycloakInactivityMaintenance implements AccountInactivityIde
     else if (!Set.of("CAPTURED", "FROZEN").contains(phase)) throw unavailable();
   }
 
+  /** Historical proof data only; current authority and actual SQL release remain independent. */
+  @Override
+  public void verifyCompletedInactivityRestoreReceipt(String frozenBody, String receipt) {
+    if (frozenBody == null || receipt == null
+        || frozenBody.getBytes(StandardCharsets.UTF_8).length > 32768
+        || receipt.getBytes(StandardCharsets.UTF_8).length > 32768) throw unavailable();
+    var body = codec.read(frozenBody, JsonNode.class);
+    fields(body, Set.of("target", "workflow", "operationId", "expectedState", "change"));
+    fields(body.path("target"), Set.of("accountId", "tenantId", "origin"));
+    fields(body.path("change"), Set.of("restoreEnabled"));
+    if (!body.path("change").path("restoreEnabled").isBoolean()
+        || !body.path("expectedState").isTextual()
+        || !body.path("expectedState").textValue().matches("[0-9a-f]{64}")) throw unavailable();
+    String operation = historicalUuid(body.path("operationId"));
+    historicalUuid(body.path("target").path("accountId"));
+    var tenant = body.path("target").path("tenantId");
+    if (!tenant.isNull()) {
+      if (!tenant.isTextual() || !tenant.textValue().matches("0|[1-9][0-9]{0,18}")) throw unavailable();
+      try { if (Long.parseLong(tenant.textValue()) < 0) throw unavailable(); }
+      catch (NumberFormatException invalid) { throw unavailable(); }
+    }
+    var workflow = body.path("workflow");
+    fields(workflow, Set.of("v", "kind", "workId", "action", "rowDigest", "revision", "assignedMonths", "lastActivity", "dueAt", "suspensionOperationId"));
+    if (historicalNumber(workflow.path("v"), true, true) != 1
+        || !"INACTIVITY".equals(workflow.path("kind").textValue())
+        || !"RESTORE".equals(workflow.path("action").textValue())
+        || !operation.equals(historicalUuid(workflow.path("workId")))
+        || operation.equals(historicalUuid(workflow.path("suspensionOperationId")))
+        || !workflow.path("rowDigest").isTextual()
+        || !workflow.path("rowDigest").textValue().matches("[0-9a-f]{64}")) throw unavailable();
+    historicalNumber(workflow.path("revision"), false, false);
+    historicalNumber(workflow.path("assignedMonths"), true, true);
+    if (historicalNumber(workflow.path("lastActivity"), true, false)
+        > historicalNumber(workflow.path("dueAt"), true, false)) throw unavailable();
+    var origin = body.path("target").path("origin");
+    fields(origin, Set.of("kind", "workflowId", "humanSubject", "humanIssuer", "humanClient", "humanAuthority"));
+    if (!operation.equals(historicalUuid(origin.path("workflowId")))) throw unavailable();
+    if ("INACTIVITY".equals(origin.path("kind").textValue())) {
+      for (String field : List.of("humanSubject", "humanIssuer", "humanClient", "humanAuthority"))
+        if (!origin.path(field).isNull()) throw unavailable();
+    } else {
+      if (!"HUMAN_ADMIN".equals(origin.path("kind").textValue())
+          || !issuer.equals(origin.path("humanIssuer").textValue())
+          || !origin.path("humanClient").isTextual()
+          || !origin.path("humanClient").textValue().matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,254}")
+          || !"PROTECTED_ACCOUNT_OPERATIONS_V1".equals(origin.path("humanAuthority").textValue())) throw unavailable();
+      historicalUuid(origin.path("humanSubject"));
+    }
+    if (!frozenBody.equals(codec.canonical(body))) throw unavailable();
+    codec.verifyMaintenanceInactivityRestoreReceipt(
+        receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
+  }
+
+  private static String historicalUuid(JsonNode value) {
+    if (!value.isTextual()) throw unavailable();
+    try {
+      if (!UUID.fromString(value.textValue()).toString().equals(value.textValue())) throw unavailable();
+      return value.textValue();
+    } catch (IllegalArgumentException invalid) { throw unavailable(); }
+  }
+
+  private static long historicalNumber(JsonNode value, boolean positive, boolean narrow) {
+    if (!value.isIntegralNumber() || !value.canConvertToLong()
+        || narrow && !value.canConvertToInt()
+        || positive && value.longValue() <= 0
+        || !positive && value.longValue() < 0) throw unavailable();
+    return value.longValue();
+  }
+
   private Map<String, Object> body(ClaimedWork work, String state, boolean restoreEnabled) {
     if (!Set.of("SUSPEND", "RESTORE").contains(work.action())) throw unavailable();
     return Map.of(
