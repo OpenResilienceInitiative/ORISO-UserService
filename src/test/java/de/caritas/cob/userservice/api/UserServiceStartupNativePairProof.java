@@ -34,6 +34,7 @@ class UserServiceStartupNativePairProof {
       "Five-actor production activation is gated until native account, lifecycle and coordinated receiver contracts are implemented";
   private static final Set<String> COMMON =
       Set.of(
+          "productionClasspath",
           "actualApplication",
           "testingProfile",
           "fiveActors",
@@ -70,6 +71,41 @@ class UserServiceStartupNativePairProof {
     var context = new AtomicReference<ConfigurableApplicationContext>();
     Throwable startupFailure = null;
     try {
+      String binary = UserServiceStartupNativePairProof.class.getName().replace('.', '/');
+      Path testClasses = Path.of(required("STARTUP_TEST_CLASSES"));
+      boolean onlyThisProof;
+      try (var files = Files.walk(testClasses)) {
+        var classes = files.filter(path -> path.toString().endsWith(".class")).toList();
+        onlyThisProof =
+            !classes.isEmpty()
+                && classes.stream()
+                    .allMatch(
+                        path -> {
+                          String name = testClasses.relativize(path).toString().replace('\\', '/');
+                          return name.equals(binary + ".class")
+                              || name.matches(
+                                  java.util.regex.Pattern.quote(binary) + "\\$[0-9]+\\.class");
+                        });
+      }
+      boolean actualProduction =
+          Path.of(
+                  UserServiceApplication.class
+                      .getProtectionDomain()
+                      .getCodeSource()
+                      .getLocation()
+                      .toURI())
+              .toRealPath()
+              .equals(Path.of(required("STARTUP_PRODUCTION_CLASSES")).toRealPath());
+      boolean noForeignTestConfig =
+          UserServiceStartupNativePairProof.class
+                  .getClassLoader()
+                  .getResource("de/caritas/cob/userservice/api/testConfig/KeycloakTestConfig.class")
+              == null;
+      witness.put("productionClasspath", onlyThisProof && actualProduction && noForeignTestConfig);
+      assertEquals(
+          true,
+          witness.get("productionClasspath"),
+          "Production classes plus only this diagnostic are required");
       var application = new SpringApplication(UserServiceApplication.class);
       application.setWebApplicationType(WebApplicationType.SERVLET);
       application.setAdditionalProfiles("testing");
@@ -215,14 +251,15 @@ class UserServiceStartupNativePairProof {
         port > 0 && ((ConfigurableWebApplicationContext) context).getServletContext() != null);
     assertFalse(context.getBeansOfType(SecurityFilterChain.class).isEmpty());
     assertTrue(context.containsBean("springSecurityFilterChain"));
-    var response =
-        HttpClient.newHttpClient()
-            .send(
+    try (var client = HttpClient.newHttpClient()) {
+      var response =
+          client.send(
                 HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/users/data"))
                     .GET()
                     .build(),
                 HttpResponse.BodyHandlers.discarding());
-    witness.put("securityReady", response.statusCode() == 401);
+      witness.put("securityReady", response.statusCode() == 401);
+    }
     var manager = context.getBean(org.springframework.transaction.PlatformTransactionManager.class);
     assertInstanceOf(JpaTransactionManager.class, manager);
     var jpa = (JpaTransactionManager) manager;

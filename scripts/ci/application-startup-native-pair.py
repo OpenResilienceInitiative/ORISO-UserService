@@ -3,6 +3,7 @@
 import argparse
 import base64
 import copy
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -10,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -19,7 +21,7 @@ KC_COMMIT = '5d4c58e8df6090451fa544481d7ef16e6fab4fc1'
 SUITE = 'de.caritas.cob.userservice.api.UserServiceStartupNativePairProof'
 CASE = 'actualServletApplicationReachesOnlyExpectedProductionStartupState'
 JAVA_SOURCE = 'src/test/java/' + SUITE.replace('.', '/') + '.java'
-COMMON_FLAGS = {'actualApplication', 'testingProfile', 'fiveActors', 'realPolicies', 'contextClosed', 'noUnexpectedFailure'}
+COMMON_FLAGS = {'productionClasspath', 'actualApplication', 'testingProfile', 'fiveActors', 'realPolicies', 'contextClosed', 'noUnexpectedFailure'}
 OPEN_FLAGS = {'contextStarted', 'servletReady', 'securityReady', 'jpaReady', 'scopedOwnersReady', 'bothSchedulersReady', 'noLegacyFallback', 'schemaReady'}
 
 IMAGE = 'quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992'
@@ -56,7 +58,9 @@ BEAN_TYPES = {
 FAILURE_TYPES = {'BeanCreationException', 'UnsatisfiedDependencyException', 'IllegalStateException',
     'BeanCurrentlyInCreationException', 'BeanDefinitionStoreException', 'IllegalArgumentException',
     'NoSuchBeanDefinitionException', 'BeanInstantiationException', 'ScriptStatementFailedException',
-    'JdbcSQLSyntaxErrorException', 'OTHER'}
+    'JdbcSQLSyntaxErrorException', 'NoUniqueBeanDefinitionException', 'BeanNotOfRequiredTypeException',
+    'AopConfigException', 'PlaceholderResolutionException', 'MissingRequiredPropertiesException',
+    'ApplicationContextException', 'ClassNotFoundException', 'NoClassDefFoundError', 'NoSuchMethodException', 'OTHER'}
 base_spec = importlib.util.spec_from_file_location('existing_self_pair', ROOT / 'scripts/ci/self-maintenance-native-pair.py')
 base = importlib.util.module_from_spec(base_spec)
 base_spec.loader.exec_module(base)
@@ -91,6 +95,57 @@ def safe_dependency_path(raw):
     for name in names:
         if name in known and (not result or result[-1] != name): result.append(name)
     return result[:30]
+
+
+def test_output_manifest(folder):
+    result = {}
+    for path in sorted(folder.rglob('*')):
+        if path.is_symlink(): raise ValueError('Compiled test symlink not supported')
+        if path.is_file(): result[str(path.relative_to(folder))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return result
+
+
+@contextlib.contextmanager
+def isolated_test_classes(root, observation):
+    folder = root / 'target/test-classes'
+    quarantine = root / 'target/application-startup-test-class-quarantine'
+    if not folder.is_dir() or folder.is_symlink() or quarantine.exists():
+        raise ValueError('Exact disposable compiled test output required')
+    prefix = SUITE.replace('.', '/')
+    original = test_output_manifest(folder)
+    retained = {name: digest for name, digest in original.items()
+        if not name.endswith('.class') or name == prefix + '.class'
+        or re.fullmatch(re.escape(prefix) + r'\$[0-9]+\.class', name)}
+    if prefix + '.class' not in retained: raise ValueError('Actual compiled proof required')
+    observation.update(originalTestManifest=original, retainedTestManifest=retained, restoredByteExact=False)
+    folder.rename(quarantine)
+    try:
+        folder.mkdir()
+        for name in retained:
+            target = folder / name; target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(quarantine / name, target)
+        if test_output_manifest(folder) != retained: raise ValueError('Isolated compiled subset mismatch')
+        yield
+    finally:
+        if folder.exists(): shutil.rmtree(folder)
+        quarantine.rename(folder)
+        restored = test_output_manifest(folder)
+        observation.update(restoredTestManifest=restored, restoredByteExact=restored == original)
+        if restored != original: raise ValueError('Exact original compiled test restoration failed')
+
+
+def safe_failure_types(raw):
+    # Fixed library types plus independently named production exception source files only.
+    families = ['org.springframework.beans.factory.', 'org.springframework.beans.',
+        'org.springframework.aop.framework.', 'org.springframework.util.', 'org.springframework.context.',
+        'org.springframework.core.env.', 'java.lang.', 'java.net.', 'org.h2.jdbc.']
+    known = {family + name for family in families for name in FAILURE_TYPES if name != 'OTHER'}
+    for path in (ROOT / 'src/main/java').rglob('*Exception.java'):
+        match = re.search(r'^package ([A-Za-z0-9_.]+);', path.read_text(), re.M)
+        if match: known.add(match.group(1) + '.' + path.stem)
+    text = raw.decode('utf-8', errors='replace')
+    values = re.findall(r'(?<![A-Za-z0-9_])(?:org|java)\.[A-Za-z0-9_.]+(?:Exception|Error)(?![A-Za-z0-9_])', text)
+    return list(dict.fromkeys(value for value in values if value in known))[:30]
 
 
 def checked_witness(value, state):
@@ -298,7 +353,9 @@ def native(kc, report):
             'STARTUP_JOURNAL_FIXTURE': str(schema.resolve()),
             'STARTUP_WITNESS': str(report.with_name('application-startup-native-witness.json').resolve()),
             'STARTUP_BEAN_CATALOG': json.dumps(BEAN_TYPES),
-            'STARTUP_FAILURE_TYPES': json.dumps(sorted(FAILURE_TYPES))})
+            'STARTUP_FAILURE_TYPES': json.dumps(sorted(FAILURE_TYPES)),
+            'STARTUP_TEST_CLASSES': str((ROOT / 'target/test-classes').resolve()),
+            'STARTUP_PRODUCTION_CLASSES': str((ROOT / 'target/classes').resolve())})
         for actor, (client, _) in lifecycle.ACTORS.items():
             environment.update({'IDENTITY_' + actor + '_CLIENT_ID': client,
                 'IDENTITY_' + actor + '_CLIENT_SECRET': 'synthetic-lifecycle-' + actor,
@@ -315,14 +372,17 @@ def native(kc, report):
         for path in reports.glob('TEST-*.xml'): path.unlink()
         require_active('before-full-user-startup')
         receipt['phase'] = 'actual-full-application-startup'
-        child = subprocess.run(['mvn', '-B', '-ntp', '-q', 'surefire:test', '-Dtest=' + SUITE + '#' + CASE,
+        receipt['test_classpath'] = {}
+        with isolated_test_classes(ROOT, receipt['test_classpath']):
+            child = subprocess.run(['mvn', '-B', '-ntp', '-q', 'surefire:test', '-Dtest=' + SUITE + '#' + CASE,
             '-DfailIfNoTests=true', '-Dsurefire.failIfNoSpecifiedTests=true',
             '-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2'],
             cwd=ROOT, env=environment, capture_output=True, timeout=180)
         inventory = sanitize(reports, report.with_suffix('.xml')); receipt.update(inventory)
         receipt['executed'] = inventory['tests']; receipt['child_exit'] = child.returncode
         receipt['sql_input'] = safe_child_input(child.stdout + b'\n' + child.stderr)
-        receipt['dependency_path'] = safe_dependency_path(child.stdout + b'\n' + child.stderr); child = None
+        receipt['dependency_path'] = safe_dependency_path(child.stdout + b'\n' + child.stderr)
+        receipt['failure_types'] = safe_failure_types(child.stdout + b'\n' + child.stderr); child = None
         witness_file = report.with_name('application-startup-native-witness.json')
         witness = json.loads(witness_file.read_text()) if witness_file.exists() else {}
         try: receipt['java_witness_complete'] = checked_witness(witness, state)
@@ -342,7 +402,8 @@ def native(kc, report):
             'actualSeedHumanChecks': [{key: entry[key] for key in ['stage', 'enabledNativeUser', 'enabledInteractiveClient', 'serviceAccountLinkAbsent', 'currentNativeSession', 'nativeUserinfoValidatedToken', 'actualCanonicalSubject']} for entry in StartupFixture.preconditions]}
         receipt['resource_observations'] = evidence()
         receipt['accepted'] = (inventory['accepted'] and receipt['child_exit'] == 0 and receipt['java_witness_complete']
-            and receipt['native_accounts_unchanged'] and receipt['native_admin_events_unchanged'])
+            and receipt['native_accounts_unchanged'] and receipt['native_admin_events_unchanged']
+            and receipt['test_classpath']['restoredByteExact'])
         receipt['phase'] = 'complete'
     except BaseException as error:
         receipt['exception_category'] = type(error).__name__; receipt['accepted'] = False

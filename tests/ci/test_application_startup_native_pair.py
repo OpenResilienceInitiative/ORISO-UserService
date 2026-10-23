@@ -70,6 +70,35 @@ class ApplicationStartupPairControls(unittest.TestCase):
         self.assertEqual({}, proof.safe_child_input(b'password=secret unknown resource and payload'))
         self.assertEqual({}, proof.safe_child_input(b'Failed to execute SQL script statement #2 of URL [file:/unknown/secret.sql]'))
 
+    def test_compiled_input_is_only_proof_and_unchanged_resources_and_always_restores(self):
+        for raises in [False, True]:
+            with tempfile.TemporaryDirectory() as folder:
+                root = Path(folder); output = root / 'target/test-classes'; output.mkdir(parents=True)
+                own = proof.SUITE.replace('.', '/')
+                values = {own + '.class': b'proof', own + '$1.class': b'own anonymous',
+                    'de/caritas/cob/userservice/api/ForeignTest$Config.class': b'test replacement',
+                    'application-testing-credentials.properties': b'unchanged testing resource'}
+                for name, value in values.items():
+                    path = output / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(value)
+                original = proof.test_output_manifest(output); observation = {}
+                try:
+                    with proof.isolated_test_classes(root, observation):
+                        self.assertFalse((output / 'de/caritas/cob/userservice/api/ForeignTest$Config.class').exists())
+                        self.assertEqual(b'own anonymous', (output / (own + '$1.class')).read_bytes())
+                        self.assertEqual(b'unchanged testing resource', (output / 'application-testing-credentials.properties').read_bytes())
+                        if raises: raise RuntimeError('child startup failed')
+                except RuntimeError:
+                    self.assertTrue(raises)
+                self.assertTrue(observation['restoredByteExact'])
+                self.assertEqual(original, proof.test_output_manifest(output))
+                self.assertEqual(original, observation['restoredTestManifest'])
+                self.assertFalse((root / 'target/application-startup-test-class-quarantine').exists())
+
+    def test_cause_capsule_exports_only_fixed_library_and_source_exception_types(self):
+        raw = b'org.springframework.beans.factory.NoUniqueBeanDefinitionException: secret password Bearer abc com.secret.UnknownException java.lang.IllegalStateException'
+        self.assertEqual(['org.springframework.beans.factory.NoUniqueBeanDefinitionException', 'java.lang.IllegalStateException'], proof.safe_failure_types(raw))
+        self.assertEqual([], proof.safe_failure_types(b'org.secret.PasswordSecretException password=secret'))
+
     def test_dependency_capsule_accepts_only_existing_production_identifiers(self):
         raw = b"bean with name 'keycloakService' password=secret Bearer abc bean with name 'selfPasswordMaintenance' bean with name 'SensitiveUnknownLabel'"
         self.assertEqual(['keycloakService', 'selfPasswordMaintenance'], proof.safe_dependency_path(raw))
