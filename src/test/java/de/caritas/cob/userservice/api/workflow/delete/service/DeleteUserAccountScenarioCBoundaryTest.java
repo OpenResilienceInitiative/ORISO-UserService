@@ -575,8 +575,23 @@ class DeleteUserAccountScenarioCBoundaryTest {
           1,
           jdbc.queryForObject(
               "select count(*) from identity_maintenance_intent where status='PREPARED'"
-                  + " and frozen_body is null and receipt_json is null",
+                  + " and frozen_body is not null and expected_state is null and receipt_json is null",
               Integer.class));
+      var prepared =
+          codec.read(
+              jdbc.queryForObject(
+                  "select frozen_body from identity_maintenance_intent", String.class),
+              com.fasterxml.jackson.databind.node.ObjectNode.class);
+      assertEquals(4, prepared.size());
+      assertEquals(
+          "CLAIMED_SCHEDULED_ASKER_DELETE_V1", prepared.path("representation").textValue());
+      assertTrue(prepared.path("body").isNull());
+      assertEquals(29, prepared.path("originalSql").size());
+      assertEquals(
+          AskerDeletionSqlSnapshot.capture(jdbc, codec, account, false),
+          prepared.path("originalSql"));
+      String binding = prepared.remove("bindingDigest").textValue();
+      assertEquals(binding, codec.claimedScheduledDeletionIntentDigest(prepared));
     }
     assertEquals(lostLease ? 1 : lostReply ? 3 : 2, requests.get());
     server.verify();
