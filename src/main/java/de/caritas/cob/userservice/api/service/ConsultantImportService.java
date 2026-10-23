@@ -507,10 +507,10 @@ public class ConsultantImportService {
     }
 
     public void requireLive() {
-      trigger.requireLive();
       if (!open || owner != Thread.currentThread())
         throw new org.springframework.security.access.AccessDeniedException(
             "Configured import owner is no longer live");
+      trigger.requireLive();
       try {
         if (!java.security.MessageDigest.isEqual(
             de.caritas.cob.userservice.api.service.accountpolicy.TaskContextProof.canonical(frozen),

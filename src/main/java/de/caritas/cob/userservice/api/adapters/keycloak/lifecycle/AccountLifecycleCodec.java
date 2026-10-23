@@ -1037,6 +1037,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
                 "profile",
                 "email",
                 "ordinary-profile",
+                "profile-transition",
                 "deactivate",
                 "reactivate")
             .contains(command)
@@ -1167,6 +1168,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
                   "profile",
                   "email",
                   "ordinary-profile",
+                  "profile-transition",
                   "deactivate",
                   "reactivate",
                   "self-password",
@@ -1290,7 +1292,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
 
   public String verifyMaintenanceProfileTransitionReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
-    throw new IllegalArgumentException("Profile transition receipt is unavailable");
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "profile-transition", "UPDATED");
   }
 
   public String verifyMaintenanceOrdinaryProfileReceipt(

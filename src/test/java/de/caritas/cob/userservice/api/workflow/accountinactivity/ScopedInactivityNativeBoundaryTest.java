@@ -311,6 +311,44 @@ class ScopedInactivityNativeBoundaryTest {
     f.server.verify();
   }
 
+  @Test
+  void unknownMatrixRestoreHasDurableStartedOwnershipAndRetriesBeforeAnyNativeWrite() throws Exception {
+    var f = new Fixture(true, false);
+    f.read(false);
+    f.mutate("deactivate", false, false);
+    f.read(true);
+    f.mutate("reactivate", false, false);
+    f.service.scan(false);
+    var attempts = new java.util.concurrent.atomic.AtomicInteger();
+    var started = new java.util.concurrent.atomic.AtomicReference<String>();
+    when(f.matrix.setAccountSuspended(MATRIX, false)).thenAnswer(inv -> {
+      f.outside();
+      f.order.add("matrix-false");
+      started.set((String) f.jdbc.queryForMap("select * from account_inactivity where identity_id=?", ACCOUNT).get("restore_effects_json"));
+      if (attempts.incrementAndGet() == 1) throw new ResourceAccessException("Synthetic unknown Matrix restore reply");
+      return true;
+    });
+    f.platformHuman();
+    assertThrows(RuntimeException.class, () -> f.service.reactivate(ACCOUNT));
+    assertNotNull(started.get(), "Owned STARTED must commit before the first external restore call");
+    var wal = f.json.readTree(started.get());
+    assertEquals("STARTED", wal.path("matrix").get(0).path("restorePhase").textValue());
+    assertEquals("NOT_STARTED", wal.path("media").path("restorePhase").textValue());
+    assertEquals(AccountInactivityService.Status.REACTIVATING, f.service.snapshot(ACCOUNT).orElseThrow().status());
+    String operation = f.value("work_id"), original = f.value("claimed_json");
+    assertNull(f.value("native_body"));
+    assertEquals(0, f.order.stream().filter("native-reactivate"::equals).count());
+    assertDoesNotThrow(() -> f.service.reactivate(ACCOUNT));
+    assertEquals(operation, f.value("work_id"));
+    assertEquals(original, f.value("claimed_json"));
+    assertEquals(2, attempts.get());
+    assertEquals(1, f.order.stream().filter("media-restore"::equals).count());
+    assertEquals(1, f.order.stream().filter("native-reactivate"::equals).count());
+    assertEquals(AccountInactivityService.Status.ACTIVE, f.service.snapshot(ACCOUNT).orElseThrow().status());
+    verifyNoInteractions(f.sdk);
+    f.server.verify();
+  }
+
   private static final class Fixture {
     final ObjectMapper json = new ObjectMapper();
     final AccountLifecycleCodec codec = new AccountLifecycleCodec(KEY);
