@@ -42,6 +42,7 @@ public class IdentityReactivationSagaStore {
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public IdentityReactivationOperation begin(
       String requestedUsername, String requestedEmail, Long tenantId) {
+    requireLegacy();
     String username = normalize(requestedUsername);
     String email = normalize(requestedEmail);
     List<User> candidates =
@@ -84,6 +85,7 @@ public class IdentityReactivationSagaStore {
       propagation = Propagation.REQUIRES_NEW,
       noRollbackFor = IdentityReactivationUnmutatedException.class)
   public void reactivateAndCommit(IdentityReactivationOperation operation, String password) {
+    requireLegacy();
     final User user;
     try {
       user = currentOperationForUpdate(operation);
@@ -135,6 +137,7 @@ public class IdentityReactivationSagaStore {
   /** Releases a claim after a proven pre-mutation validation failure. */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public boolean abortUnmutated(IdentityReactivationOperation operation) {
+    requireLegacy();
     return releaseCurrentClaimIfPresent(operation);
   }
 
@@ -192,6 +195,11 @@ public class IdentityReactivationSagaStore {
   static void clearOperation(User user) {
     user.setReactivationOperationId(null);
     user.setReactivationOperationStartedAt(null);
+  }
+
+  private void requireLegacy() {
+    if (identityMode != null && identityMode.isFiveActorMode())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
   }
 
   private static String normalize(String value) {

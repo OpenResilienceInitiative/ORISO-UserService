@@ -373,7 +373,7 @@ public final class ScopedAskerReactivation {
             || Objects.equals(authenticated.getTenantId(), tenant))) throw forbidden();
     scope.assertMay(AdminScope.Target.adviceSeeker(account));
     if (jdbc.queryForObject(
-            "select (select count(*) from admin where id=?)+(select count(*) from consultant where id=?)",
+            "select (select count(*) from admin where admin_id=?)+(select count(*) from consultant where consultant_id=?)",
             Long.class,
             account,
             account)

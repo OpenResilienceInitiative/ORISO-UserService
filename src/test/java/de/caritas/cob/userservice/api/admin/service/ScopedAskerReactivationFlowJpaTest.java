@@ -79,7 +79,9 @@ class ScopedAskerReactivationFlowJpaTest {
   private AdminScope scope;
   private IdentityReactivator generic;
   private IdentityReactivationRepairService repair;
+  private DeletionLifecycleService lifecycle;
   private String nativeUsername;
+  private boolean emptyNativeNames;
   private String firstBody;
   private String receipt;
   private final AtomicInteger effects = new AtomicInteger();
@@ -90,7 +92,8 @@ class ScopedAskerReactivationFlowJpaTest {
     assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
     TenantContext.setCurrentTenant(7L);
     jdbc = new JdbcTemplate(source);
-    jdbc.execute("alter table user add column if not exists reactivation_scoped_json clob null");
+    new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
+        new org.springframework.core.io.ClassPathResource("db/changelog/changeset/20261023_identity_asker_reactivation_367/migrate.sql")).execute(source);
     users.findById(ACCOUNT).ifPresent(users::delete);
     var transcoder = new UsernameTranscoder();
     nativeUsername = transcoder.encodeUsername(USERNAME).toLowerCase(Locale.ROOT);
@@ -105,7 +108,7 @@ class ScopedAskerReactivationFlowJpaTest {
     generic = mock(IdentityReactivator.class);
     repair = mock(IdentityReactivationRepairService.class);
     scope = mock(AdminScope.class);
-    var lifecycle = new DeletionLifecycleService();
+    lifecycle = spy(new DeletionLifecycleService());
     var saga = new IdentityReactivationSagaStore(users, transcoder, generic, lifecycle);
     facade =
         new AskerUserAdminFacade(
@@ -187,11 +190,35 @@ class ScopedAskerReactivationFlowJpaTest {
 
   @AfterEach
   void clearTenant() {
+    for (String extra : List.of("85000000-0000-4000-8000-000000000061", "85000000-0000-4000-8000-000000000062")) users.findById(extra).ifPresent(users::delete);
     TenantContext.clear();
   }
 
   @Test
   void chosenPasswordIsCipherOnlyBeforeNativeAndAcknowledgedBeforeOneLocalCancelWithExactReplay() {
+    completeAndReplay();
+  }
+
+  @Test
+  void historicalDuplicateUsernamesStillSelectTheOneExactEmailAndTenantIncarnation() {
+    for (int index = 1; index <= 2; index++) {
+      String id = "85000000-0000-4000-8000-00000000006" + index;
+      var duplicate = new User(id, null, new UsernameTranscoder().encodeUsername(USERNAME), "unrelated-" + index + "@fixture.invalid", false);
+      duplicate.setTenantId(7L);duplicate.setLanguageCode(LanguageCode.en);
+      duplicate.setDeleteDate(LocalDateTime.now(ZoneOffset.UTC).minusDays(3));
+      duplicate.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+      users.save(duplicate);
+    }
+    completeAndReplay();
+  }
+
+  @Test
+  void legacyAskerWithoutNativeDisplayNamesStillUsesTheExactUsernameEmailTenantAndState() {
+    emptyNativeNames = true;
+    completeAndReplay();
+  }
+
+  private void completeAndReplay() {
     server
         .expect(requestTo(URL + "/read"))
         .andExpect(method(HttpMethod.POST))
@@ -209,8 +236,8 @@ class ScopedAskerReactivationFlowJpaTest {
                               Map.entry("id", ACCOUNT),
                               Map.entry("username", nativeUsername),
                               Map.entry("email", EMAIL),
-                              Map.entry("firstName", "Actual"),
-                              Map.entry("lastName", "Asker"),
+                              Map.entry("firstName", emptyNativeNames ? "" : "Actual"),
+                              Map.entry("lastName", emptyNativeNames ? "" : "Asker"),
                               Map.entry("enabled", false),
                               Map.entry("emailVerified", true),
                               Map.entry("tenantId", "7"),
@@ -283,7 +310,103 @@ class ScopedAskerReactivationFlowJpaTest {
     assertEquals(1, effects.get());
     verify(scope, atLeast(2)).assertMay(AdminScope.Target.adviceSeeker(ACCOUNT));
     verifyNoInteractions(generic, repair);
+    verify(lifecycle, times(1)).cancelUserDeletion(any(User.class));
     server.verify();
+  }
+
+  @Test
+  void signedPolicyRejectionReleasesOnlyItsClaimAndCorrectedPasswordGetsANewOperation() {
+    expectRead();
+    var refusedBody = new java.util.concurrent.atomic.AtomicReference<String>();
+    for (int retry = 0; retry < 2; retry++)
+      server.expect(requestTo(URL + "/reactivate")).andRespond(outbound -> {
+        assertOutsideSql();
+        String raw = ((MockClientHttpRequest) outbound).getBodyAsString();
+        if (refusedBody.get() == null) refusedBody.set(raw);
+        else assertTrue(refusedBody.get().equals(raw), "Exact rejected request must retain original bytes");
+        return org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.BAD_REQUEST)
+            .contentType(MediaType.APPLICATION_JSON).body(signed(raw, 400)).createResponse(outbound);
+      });
+    expectRead();
+    server.expect(requestTo(URL + "/reactivate")).andRespond(outbound -> {
+      assertOutsideSql();
+      String raw = ((MockClientHttpRequest) outbound).getBodyAsString();
+      var body = codec.read(raw, JsonNode.class);
+      assertNotEquals(codec.read(refusedBody.get(), JsonNode.class).path("operationId"), body.path("operationId"));
+      assertEquals(PASSWORD, body.path("change").path("password").textValue());
+      return withSuccess(signed(raw), MediaType.APPLICATION_JSON).createResponse(outbound);
+    });
+    var rejected = input();
+    rejected.setPassword("weak");
+    assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class, () -> facade.reactivateAsker(rejected));
+    var original = codec.read(jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?", String.class, ACCOUNT), JsonNode.class);
+    assertEquals("NO_EFFECT", original.path("phase").textValue());
+    assertNull(jdbc.queryForObject("select reactivation_operation_id from user where user_id=?", String.class, ACCOUNT));
+    assertNotNull(jdbc.queryForObject("select delete_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT));
+    assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class, () -> facade.reactivateAsker(rejected));
+    assertEquals(codec.canonical(original), jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?", String.class, ACCOUNT));
+    assertDoesNotThrow(() -> facade.reactivateAsker(input()));
+    assertEquals("ACTIVE", jdbc.queryForObject("select deletion_lifecycle_state from user where user_id=?", String.class, ACCOUNT));
+    verify(lifecycle, times(1)).cancelUserDeletion(any(User.class));
+    verifyNoInteractions(generic, repair);
+    server.verify();
+  }
+
+  @Test
+  void unsignedRefusalKeepsCipherAndClaimAndRetriesOnlyTheOriginalCommand() {
+    expectRead();
+    var originalBody = new java.util.concurrent.atomic.AtomicReference<String>();
+    server.expect(requestTo(URL + "/reactivate")).andRespond(outbound -> {
+      assertOutsideSql();originalBody.set(((MockClientHttpRequest)outbound).getBodyAsString());
+      return org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.CONFLICT).contentType(MediaType.APPLICATION_JSON).body("{}").createResponse(outbound);
+    });
+    server.expect(requestTo(URL + "/reactivate")).andRespond(outbound -> {
+      assertOutsideSql();String raw=((MockClientHttpRequest)outbound).getBodyAsString();
+      assertTrue(originalBody.get().equals(raw),"Unknown outcome cannot rebind native body or operation");
+      return withSuccess(signed(raw),MediaType.APPLICATION_JSON).createResponse(outbound);
+    });
+    assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class, () -> facade.reactivateAsker(input()));
+    String frozen = jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?", String.class, ACCOUNT);
+    assertEquals("FROZEN",codec.read(frozen,JsonNode.class).path("phase").textValue());
+    assertNotNull(jdbc.queryForObject("select reactivation_operation_id from user where user_id=?", String.class, ACCOUNT));
+    verify(lifecycle,never()).cancelUserDeletion(any(User.class));
+    assertDoesNotThrow(() -> facade.reactivateAsker(input()));
+    var acknowledged=codec.read(jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?",String.class,ACCOUNT),JsonNode.class);
+    assertEquals(codec.read(frozen,JsonNode.class).path("envelope"),acknowledged.path("envelope"));
+    assertEquals(codec.read(frozen,JsonNode.class).path("metadata"),acknowledged.path("metadata"));
+    verify(lifecycle,times(1)).cancelUserDeletion(any(User.class));
+    verifyNoInteractions(generic,repair);server.verify();
+  }
+
+  @Test
+  void terminalPhaseReceiptAndPostSqlTamperingCannotAuthorizeReplayOrAnotherCallback() {
+    completeAndReplay();server.reset();
+    var original=codec.read(jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?",String.class,ACCOUNT),JsonNode.class);
+    var row=jdbc.queryForMap("select user_id,username,email,create_date,update_date,delete_date,deletion_lifecycle_state,reactivation_operation_id from user where user_id=?",ACCOUNT);
+    for (String scenario : List.of("phase","receipt","post-birth","post-email","post-language","metadata-owner","extra")) {
+      var changed=original.deepCopy();var object=(com.fasterxml.jackson.databind.node.ObjectNode)changed;
+      switch (scenario) {
+        case "phase" -> object.put("phase","FROZEN");
+        case "receipt" -> object.put("receipt","{}");
+        case "post-birth" -> ((com.fasterxml.jackson.databind.node.ObjectNode)changed.path("postSql")).put("create_date","2026-01-01T00:00:00Z");
+        case "post-email" -> ((com.fasterxml.jackson.databind.node.ObjectNode)changed.path("postSql")).put("email","unrelated@fixture.invalid");
+        case "post-language" -> ((com.fasterxml.jackson.databind.node.ObjectNode)changed.path("postSql")).put("language_code","de");
+        case "metadata-owner" -> ((com.fasterxml.jackson.databind.node.ObjectNode)changed.path("metadata")).put("ownerSubject",HUMAN);
+        case "extra" -> object.put("callerAuthority",true);
+      }
+      jdbc.update("update user set reactivation_scoped_json=? where user_id=?",codec.canonical(changed),ACCOUNT);
+      assertThrows(RuntimeException.class,()->facade.reactivateAsker(input()),scenario);
+      assertEquals(row,jdbc.queryForMap("select user_id,username,email,create_date,update_date,delete_date,deletion_lifecycle_state,reactivation_operation_id from user where user_id=?",ACCOUNT));
+      assertEquals(codec.canonical(changed),jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?",String.class,ACCOUNT));
+    }
+    verify(lifecycle,times(1)).cancelUserDeletion(any(User.class));verifyNoInteractions(generic,repair);server.verify();
+  }
+
+  private void expectRead() {
+    server.expect(requestTo(URL + "/read")).andRespond(outbound -> {
+      assertOutsideSql();
+      return withSuccess(codec.canonical(Map.ofEntries(Map.entry("id",ACCOUNT),Map.entry("username",nativeUsername),Map.entry("email",EMAIL),Map.entry("firstName",emptyNativeNames ? "" : "Actual"),Map.entry("lastName",emptyNativeNames ? "" : "Asker"),Map.entry("enabled",false),Map.entry("emailVerified",true),Map.entry("tenantId","7"),Map.entry("preferredLanguage","en"),Map.entry("effectiveRoles",List.of("user")),Map.entry("passwordChangeRequired",false),Map.entry("state","a".repeat(64)))),MediaType.APPLICATION_JSON).createResponse(outbound);
+    });
   }
 
   private AskerReactivationRequestDTO input() {
@@ -300,7 +423,9 @@ class ScopedAskerReactivationFlowJpaTest {
     assertFalse(TransactionSynchronizationManager.hasResource(source));
   }
 
-  private String signed(String raw) {
+  private String signed(String raw) { return signed(raw, null); }
+
+  private String signed(String raw, Integer status) {
     try {
       var body = codec.read(raw, JsonNode.class);
       var payload = new TreeMap<String, Object>();
@@ -315,29 +440,18 @@ class ScopedAskerReactivationFlowJpaTest {
       payload.put("tenantId", "7");
       payload.put(
           "originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
-      payload.put("result", "UPDATED");
+      payload.put("result", status == null ? "UPDATED" : "NO_EFFECT");
+      if (status != null) payload.put("status",status);
       var encoded =
           Base64.getUrlEncoder()
               .withoutPadding()
               .encodeToString(codec.canonical(payload).getBytes(StandardCharsets.UTF_8));
       var mac = Mac.getInstance("HmacSHA256");
       mac.init(new SecretKeySpec(KEY, "HmacSHA256"));
-      return codec.canonical(
-          Map.of(
-              "operationId",
-              body.path("operationId").textValue(),
-              "accountId",
-              ACCOUNT,
-              "result",
-              "UPDATED",
-              "receipt",
-              encoded
-                  + "."
-                  + HexFormat.of()
-                      .formatHex(
-                          mac.doFinal(
-                              ("maintenance-operation-receipt\n" + encoded)
-                                  .getBytes(StandardCharsets.UTF_8)))));
+      var outer=new TreeMap<String,Object>();
+      outer.put("operationId",body.path("operationId").textValue());outer.put("accountId",ACCOUNT);outer.put("result",status==null?"UPDATED":"NO_EFFECT");if(status!=null)outer.put("status",status);
+      outer.put("receipt",encoded+"."+HexFormat.of().formatHex(mac.doFinal(((status==null?"maintenance-operation-receipt\n":"maintenance-no-effect-receipt/v1\n")+encoded).getBytes(StandardCharsets.UTF_8))));
+      return codec.canonical(outer);
     } catch (Exception invalid) {
       throw new AssertionError(invalid);
     }
