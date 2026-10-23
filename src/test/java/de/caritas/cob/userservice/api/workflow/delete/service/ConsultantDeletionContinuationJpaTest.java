@@ -654,95 +654,212 @@ class ConsultantDeletionContinuationJpaTest {
     assertTrue(consultants.findById(ACCOUNT).isPresent());
   }
 
-  @Test void actualAcknowledgedConsultantRunsAllNineAndFlushesRealJpaFinal() {
+  @Test
+  void actualAcknowledgedConsultantRunsAllNineAndFlushesRealJpaFinal() {
     saveConsultantDraft();
-    try(var actual=actualActions()) {
-      TenantContext.setCurrentTenant(91L);runActual(actual);
-      assertEquals(1,nativeEffects.get());assertEquals(1,actual.serviceEntries.get());
-      actual.assertAllNine();assertTrue(consultants.findById(ACCOUNT).isEmpty());assertEquals("APPLIED",status());
-      assertEquals(0,consultantDrafts());assertEquals(91L,TenantContext.getCurrentTenant());
+    try (var actual = actualActions()) {
+      TenantContext.setCurrentTenant(91L);
+      runActual(actual);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(1, actual.serviceEntries.get());
+      actual.assertAllNine();
+      assertTrue(consultants.findById(ACCOUNT).isEmpty());
+      assertEquals("APPLIED", status());
+      assertEquals(0, consultantDrafts());
+      assertEquals(91L, TenantContext.getCurrentTenant());
     }
   }
 
-  @Test void actualUnknownNativeNeverRunsDownstreamUntilExactSavedAckOnRestart() {
-    try(var actual=actualActions()) {
-      loseReply=true;runActual(actual);assertEquals(1,nativeEffects.get());assertEquals(0,actual.serviceEntries.get());assertTrue(actual.events.isEmpty());
-      String original=envelopeRaw();runActual(actual);
-      assertEquals(1,nativeEffects.get());assertEquals(2,nativeCalls.get());assertEquals(original,envelopeRaw());actual.assertAllNine();assertEquals("APPLIED",status());
+  @Test
+  void actualUnknownNativeNeverRunsDownstreamUntilExactSavedAckOnRestart() {
+    try (var actual = actualActions()) {
+      loseReply = true;
+      runActual(actual);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(0, actual.serviceEntries.get());
+      assertTrue(actual.events.isEmpty());
+      String original = envelopeRaw();
+      runActual(actual);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(2, nativeCalls.get());
+      assertEquals(original, envelopeRaw());
+      actual.assertAllNine();
+      assertEquals("APPLIED", status());
     }
   }
 
-  @Test void actualDraftFailureRetainsConsultantAndSavedAckColdRestartRetriesWithoutNative() {
+  @Test
+  void actualDraftFailureRetainsConsultantAndSavedAckColdRestartRetriesWithoutNative() {
     saveConsultantDraft();
-    try(var actual=actualActions()) {
-      actual.failDrafts=true;runActual(actual);assertEquals(1,nativeEffects.get());assertEquals(1,actual.serviceEntries.get());
-      assertTrue(consultants.findById(ACCOUNT).isPresent());assertEquals(1,consultantDrafts());assertEquals("ACKNOWLEDGED",status());
+    try (var actual = actualActions()) {
+      actual.failDrafts = true;
+      runActual(actual);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(1, actual.serviceEntries.get());
+      assertTrue(consultants.findById(ACCOUNT).isPresent());
+      assertEquals(1, consultantDrafts());
+      assertEquals("ACKNOWLEDGED", status());
     }
-    try(var resumed=actualActions()) {runActual(resumed);resumed.assertAllNine();assertEquals(1,nativeCalls.get());assertEquals(1,nativeReads.get());assertEquals("APPLIED",status());}
+    try (var resumed = actualActions()) {
+      runActual(resumed);
+      resumed.assertAllNine();
+      assertEquals(1, nativeCalls.get());
+      assertEquals(1, nativeReads.get());
+      assertEquals("APPLIED", status());
+    }
   }
 
-  @Test void actualDurableDraftCleanupSurvivesLaterNotificationFailure() {
+  @Test
+  void actualDurableDraftCleanupSurvivesLaterNotificationFailure() {
     saveConsultantDraft();
-    try(var actual=actualActions()) {
-      actual.failNotifications=true;runActual(actual);assertEquals(1,nativeEffects.get());assertEquals(0,consultantDrafts());
-      assertTrue(consultants.findById(ACCOUNT).isPresent());assertTrue(actual.events.stream().noneMatch(e->e.equals("finalConsultantDelete")));
-      actual.failNotifications=false;runActual(actual);assertEquals("APPLIED",status());assertEquals(1,nativeCalls.get());
+    try (var actual = actualActions()) {
+      actual.failNotifications = true;
+      runActual(actual);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(0, consultantDrafts());
+      assertTrue(consultants.findById(ACCOUNT).isPresent());
+      assertTrue(actual.events.stream().noneMatch(e -> e.equals("finalConsultantDelete")));
+      actual.failNotifications = false;
+      runActual(actual);
+      assertEquals("APPLIED", status());
+      assertEquals(1, nativeCalls.get());
     }
   }
 
-  @Test void actualSessionOwnershipFailureRetainsTheExactConsultantAndCanRetry() {
-    try(var actual=actualActions()) {actual.failOwnership=true;assertFinalVetoThenRetry(actual,()->actual.failOwnership=false);}
-  }
-
-  @Test void actualSupervisionFailureRetainsTheExactConsultantAndCanRetry() {
-    try(var actual=actualActions()) {actual.failSupervision=true;assertFinalVetoThenRetry(actual,()->actual.failSupervision=false);}
-  }
-
-  @Test void actualMobileTokenFailureRetainsTheExactConsultantAndCanRetry() {
-    try(var actual=actualActions()) {actual.failMobile=true;assertFinalVetoThenRetry(actual,()->actual.failMobile=false);}
-  }
-
-  @Test void actualConsultantConsumerRejectsMutableDtoBeforeAnyMatrixEffect() {
-    try(var actual=actualActions()) {
-      actual.beforeMatrixAction=target->{var replacement=new Consultant();org.springframework.beans.BeanUtils.copyProperties(target.getConsultant(),replacement);replacement.setMatrixUserId("@foreign:fixture.invalid");target.setConsultant(replacement);};
-      runActual(actual);assertEquals(1,nativeEffects.get());assertEquals(1,actual.serviceEntries.get());assertTrue(actual.events.isEmpty());
-      assertTrue(consultants.findById(ACCOUNT).isPresent());assertEquals("ACKNOWLEDGED",status());
+  @Test
+  void actualSessionOwnershipFailureRetainsTheExactConsultantAndCanRetry() {
+    try (var actual = actualActions()) {
+      actual.failOwnership = true;
+      assertFinalVetoThenRetry(actual, () -> actual.failOwnership = false);
     }
   }
 
-  @Test void actualConsultantConsumerRechecksSqlAfterEachExternalRpc() {
-    try(var actual=actualActions()) {
-      actual.afterExternal=event->jdbc.update("update consultant set matrix_user_id=? where consultant_id=?","@recreated:fixture.invalid",ACCOUNT);
-      runActual(actual);assertEquals(1,nativeEffects.get());assertEquals(1,actual.serviceEntries.get());
-      assertEquals(1L,actual.events.stream().filter(e->e.startsWith("purgeRoom:")||e.startsWith("deactivateUser:")).count());
-      assertTrue(actual.events.stream().noneMatch(e->e.startsWith("agencies.")));assertTrue(consultants.findById(ACCOUNT).isPresent());
+  @Test
+  void actualSupervisionFailureRetainsTheExactConsultantAndCanRetry() {
+    try (var actual = actualActions()) {
+      actual.failSupervision = true;
+      assertFinalVetoThenRetry(actual, () -> actual.failSupervision = false);
     }
   }
 
-  @Test void actualConsultantFinalCommitLostReplyDoesNotRepeatEarlierCleanup() {
-    var uncertain=new LostCommitReplyJpaManager(entities.getEntityManagerFactory(),dataSource);ownerTransactions=uncertain;
-    try(var actual=actualActions()) {
-      actual.beforeFinalCommit=()->uncertain.loseNextCommit=true;runActual(actual);
-      assertEquals(1,nativeEffects.get());assertEquals("APPLIED",status());assertTrue(consultants.findById(ACCOUNT).isEmpty());int effects=actual.events.size();
-      runActual(actual);assertEquals(effects,actual.events.size());assertEquals(1,nativeCalls.get());
+  @Test
+  void actualMobileTokenFailureRetainsTheExactConsultantAndCanRetry() {
+    try (var actual = actualActions()) {
+      actual.failMobile = true;
+      assertFinalVetoThenRetry(actual, () -> actual.failMobile = false);
     }
   }
 
-  private void assertFinalVetoThenRetry(AcknowledgedConsultantActionsFixture actual,Runnable recover) {
-    runActual(actual);assertEquals(1,nativeEffects.get());assertEquals(1,actual.serviceEntries.get());
-    assertTrue(consultants.findById(ACCOUNT).isPresent());assertEquals("ACKNOWLEDGED",status());assertTrue(actual.events.stream().noneMatch(e->e.equals("finalConsultantDelete")));
-    recover.run();runActual(actual);assertTrue(consultants.findById(ACCOUNT).isEmpty());assertEquals("APPLIED",status());assertEquals(1,nativeCalls.get());
+  @Test
+  void actualConsultantConsumerRejectsMutableDtoBeforeAnyMatrixEffect() {
+    try (var actual = actualActions()) {
+      actual.beforeMatrixAction =
+          target -> {
+            var replacement = new Consultant();
+            org.springframework.beans.BeanUtils.copyProperties(target.getConsultant(), replacement);
+            replacement.setMatrixUserId("@foreign:fixture.invalid");
+            target.setConsultant(replacement);
+          };
+      runActual(actual);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(1, actual.serviceEntries.get());
+      assertTrue(actual.events.isEmpty());
+      assertTrue(consultants.findById(ACCOUNT).isPresent());
+      assertEquals("ACKNOWLEDGED", status());
+    }
   }
+
+  @Test
+  void actualConsultantConsumerRechecksSqlAfterEachExternalRpc() {
+    try (var actual = actualActions()) {
+      actual.afterExternal =
+          event ->
+              jdbc.update(
+                  "update consultant set matrix_user_id=? where consultant_id=?",
+                  "@recreated:fixture.invalid",
+                  ACCOUNT);
+      runActual(actual);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(1, actual.serviceEntries.get());
+      assertEquals(
+          1L,
+          actual.events.stream()
+              .filter(e -> e.startsWith("purgeRoom:") || e.startsWith("deactivateUser:"))
+              .count());
+      assertTrue(actual.events.stream().noneMatch(e -> e.startsWith("agencies.")));
+      assertTrue(consultants.findById(ACCOUNT).isPresent());
+    }
+  }
+
+  @Test
+  void actualConsultantFinalCommitLostReplyDoesNotRepeatEarlierCleanup() {
+    var uncertain = new LostCommitReplyJpaManager(entities.getEntityManagerFactory(), dataSource);
+    ownerTransactions = uncertain;
+    try (var actual = actualActions()) {
+      actual.beforeFinalCommit = () -> uncertain.loseNextCommit = true;
+      runActual(actual);
+      assertEquals(1, nativeEffects.get());
+      assertEquals("APPLIED", status());
+      assertTrue(consultants.findById(ACCOUNT).isEmpty());
+      int effects = actual.events.size();
+      runActual(actual);
+      assertEquals(effects, actual.events.size());
+      assertEquals(1, nativeCalls.get());
+    }
+  }
+
+  private void assertFinalVetoThenRetry(
+      AcknowledgedConsultantActionsFixture actual, Runnable recover) {
+    runActual(actual);
+    assertEquals(1, nativeEffects.get());
+    assertEquals(1, actual.serviceEntries.get());
+    assertTrue(consultants.findById(ACCOUNT).isPresent());
+    assertEquals("ACKNOWLEDGED", status());
+    assertTrue(actual.events.stream().noneMatch(e -> e.equals("finalConsultantDelete")));
+    recover.run();
+    runActual(actual);
+    assertTrue(consultants.findById(ACCOUNT).isEmpty());
+    assertEquals("APPLIED", status());
+    assertEquals(1, nativeCalls.get());
+  }
+
   private AcknowledgedConsultantActionsFixture actualActions() {
-    return new AcknowledgedConsultantActionsFixture(ACCOUNT,consultants,tombstones,drafts,ownerTransactions==null?transactions:ownerTransactions,entities);
+    return new AcknowledgedConsultantActionsFixture(
+        ACCOUNT,
+        consultants,
+        tombstones,
+        drafts,
+        ownerTransactions == null ? transactions : ownerTransactions,
+        entities);
   }
+
   private void runActual(AcknowledgedConsultantActionsFixture actual) {
-    owner(true,frame->{callbacks.incrementAndGet();actual.service.continueAcknowledgedConsultantDeletion(frame);}).performDeletionWorkflow();
+    owner(
+            true,
+            frame -> {
+              callbacks.incrementAndGet();
+              actual.service.continueAcknowledgedConsultantDeletion(frame);
+            })
+        .performDeletionWorkflow();
   }
+
   private void saveConsultantDraft() {
-    var now=LocalDateTime.now(ZoneOffset.UTC);drafts.save(de.caritas.cob.userservice.api.model.DraftMessage.builder().userId(ACCOUNT).scopeKey("consultant-owned-draft").text("fixture unencrypted draft").tenantId(7L).createDate(now).updateDate(now).build());
+    var now = LocalDateTime.now(ZoneOffset.UTC);
+    drafts.save(
+        de.caritas.cob.userservice.api.model.DraftMessage.builder()
+            .userId(ACCOUNT)
+            .scopeKey("consultant-owned-draft")
+            .text("fixture unencrypted draft")
+            .tenantId(7L)
+            .createDate(now)
+            .updateDate(now)
+            .build());
   }
-  private int consultantDrafts() {return jdbc.queryForObject("select count(*) from draft_message where user_id=?",Integer.class,ACCOUNT);}
+
+  private int consultantDrafts() {
+    return jdbc.queryForObject(
+        "select count(*) from draft_message where user_id=?", Integer.class, ACCOUNT);
+  }
 
   private void complete(AcknowledgedConsultantDeletion frame) {
     assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
