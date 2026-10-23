@@ -870,7 +870,8 @@ public class AccountInactivityService {
     private final Thread owner = Thread.currentThread();
     private final Instant deadline = clock.instant().plusSeconds(120);
     private boolean active = true;
-    private de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.AcknowledgedDeletion
+    private de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+            .AcknowledgedDeletion
         deletionCompletion;
 
     private ClaimedWork(InactivityClaimJournal.Saved saved, ManualHuman human) {
@@ -1037,7 +1038,9 @@ public class AccountInactivityService {
     }
 
     public void captureDeletionMedia(
-        de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.AcknowledgedDeletion frame) {
+        de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+                .AcknowledgedDeletion
+            frame) {
       requireCurrent();
       frame.requireCurrent();
       if (!frame.inactivityCause() || !identityId().equals(frame.accountId()))
@@ -1048,7 +1051,9 @@ public class AccountInactivityService {
     }
 
     public void forgetDeletionMedia(
-        de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.AcknowledgedDeletion frame) {
+        de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+                .AcknowledgedDeletion
+            frame) {
       requireCurrent();
       frame.requireCurrent();
       if (!frame.inactivityCause() || !identityId().equals(frame.accountId()))
@@ -1059,7 +1064,9 @@ public class AccountInactivityService {
     }
 
     public void requireDeletionCurrentSql(
-        de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.AcknowledgedDeletion frame) {
+        de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+                .AcknowledgedDeletion
+            frame) {
       frame.requireClaimedInactivitySql(this);
       String phase = deletionIntentPhase();
       if ("APPLIED".equals(phase)) {
@@ -1070,19 +1077,26 @@ public class AccountInactivityService {
     }
 
     public void requireDeletionRemovedSql(
-        de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.AcknowledgedDeletion frame) {
+        de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+                .AcknowledgedDeletion
+            frame) {
       frame.requireClaimedInactivitySql(this);
       if (!"ACKNOWLEDGED".equals(deletionIntentPhase())) throw InactivityClaimJournal.invalid();
       requireOwned(true, "DELETING", true);
     }
 
     public void completeDeletionOwnedSql(
-        de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.AcknowledgedDeletion frame) {
+        de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+                .AcknowledgedDeletion
+            frame) {
       frame.requireInactivityAppliedIntentSql(this);
       requireOwned(true, "DELETING", true);
       if (jdbc.update(
-          "update account_inactivity set status='DELETED',attempts=attempts+1,last_error=null,access_work_id=null where identity_id=? and work_id=? and status='DELETING' and access_work_id=?",
-          identityId(), workId(), workId()) != 1) throw InactivityClaimJournal.invalid();
+              "update account_inactivity set status='DELETED',attempts=attempts+1,last_error=null,access_work_id=null where identity_id=? and work_id=? and status='DELETING' and access_work_id=?",
+              identityId(),
+              workId(),
+              workId())
+          != 1) throw InactivityClaimJournal.invalid();
       jdbc.update("delete from account_inactivity_matrix_state where identity_id=?", identityId());
       jdbc.update("delete from account_inactivity_access_state where identity_id=?", identityId());
       requireOwned(true, "DELETED", true);
@@ -1094,19 +1108,27 @@ public class AccountInactivityService {
     private String deletionIntentPhase() {
       if (!"DELETE".equals(action()) || humanInitiated() || terminalOnly)
         throw InactivityClaimJournal.invalid();
-      var statuses = jdbc.queryForList(
-          "select status from identity_maintenance_intent where operation_id=? and subject_type='INACTIVITY_ASKER' and subject_id=? for update",
-          String.class, workId(), identityId());
+      var statuses =
+          jdbc.queryForList(
+              "select status from identity_maintenance_intent where operation_id=? and subject_type='INACTIVITY_ASKER' and subject_id=? for update",
+              String.class,
+              workId(),
+              identityId());
       if (statuses.size() != 1) throw InactivityClaimJournal.invalid();
       return statuses.getFirst();
     }
 
     private void requireDeletionAccessAbsent() {
-      for (String table : List.of("account_inactivity_matrix_state", "account_inactivity_access_state"))
-        if (jdbc.queryForObject("select count(*) from " + table + " where identity_id=?", Long.class, identityId()) != 0L)
-          throw InactivityClaimJournal.invalid();
-      if (jdbc.queryForObject("select access_work_id from account_inactivity where identity_id=?", String.class, identityId()) != null)
-        throw InactivityClaimJournal.invalid();
+      for (String table :
+          List.of("account_inactivity_matrix_state", "account_inactivity_access_state"))
+        if (jdbc.queryForObject(
+                "select count(*) from " + table + " where identity_id=?", Long.class, identityId())
+            != 0L) throw InactivityClaimJournal.invalid();
+      if (jdbc.queryForObject(
+              "select access_work_id from account_inactivity where identity_id=?",
+              String.class,
+              identityId())
+          != null) throw InactivityClaimJournal.invalid();
     }
 
     private void requireOwned(boolean lock) {
@@ -1147,15 +1169,18 @@ public class AccountInactivityService {
           || original.path("lastActivityMicros").longValue()
               != InactivityClaimJournal.micros(row.lastActivity())
           || original.path("dueAtMicros").longValue() != InactivityClaimJournal.micros(row.dueAt())
-          || !(deletionStatus != null ? deletionStatus : terminalOnly
-                  ? action().equals("RESTORE") ? "SUSPENDED" : "ACTIVE"
-                  : original.path("status").textValue())
+          || !(deletionStatus != null
+                  ? deletionStatus
+                  : terminalOnly
+                      ? action().equals("RESTORE") ? "SUSPENDED" : "ACTIVE"
+                      : original.path("status").textValue())
               .equals(row.status().name())
           || terminalOnly
               && (!"NO_EFFECT".equals(current.phase())
                   || current.receipt() == null
                   || current.body() == null)
-          || !deletionSource(removedUser).equals(claimJournal.source(identityId(), tenantId(), lock)))
+          || !deletionSource(removedUser)
+              .equals(claimJournal.source(identityId(), tenantId(), lock)))
         throw InactivityClaimJournal.invalid();
     }
 
@@ -1164,10 +1189,12 @@ public class AccountInactivityService {
       if (!"DELETE".equals(action()) || humanInitiated() || terminalOnly)
         throw InactivityClaimJournal.invalid();
       var source = claimJournal.decode(saved.source()).deepCopy();
-      if (!source.path("user").isArray() || source.path("user").size() > 1
-          || !source.path("consultant").isArray() || !source.path("consultant").isEmpty()
-          || !source.path("admin").isArray() || !source.path("admin").isEmpty())
-        throw InactivityClaimJournal.invalid();
+      if (!source.path("user").isArray()
+          || source.path("user").size() > 1
+          || !source.path("consultant").isArray()
+          || !source.path("consultant").isEmpty()
+          || !source.path("admin").isArray()
+          || !source.path("admin").isEmpty()) throw InactivityClaimJournal.invalid();
       ((com.fasterxml.jackson.databind.node.ObjectNode) source).putArray("user");
       return claimJournal.encode(source);
     }

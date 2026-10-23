@@ -90,8 +90,10 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
   @Override
   public boolean delete(AccountInactivityService.ClaimedWork work) {
     work.requireCurrent();
-    if (identityMode == null || !identityMode.isFiveActorMode()
-        || scopedDeletionMaintenance == null || !"DELETE".equals(work.action()))
+    if (identityMode == null
+        || !identityMode.isFiveActorMode()
+        || scopedDeletionMaintenance == null
+        || !"DELETE".equals(work.action()))
       throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
     return scopedDeletionMaintenance.performInactivityDeletion(work);
   }
@@ -99,7 +101,9 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
   @Override
   public void captureDeletionMedia(
       AccountInactivityService.ClaimedWork work,
-      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.AcknowledgedDeletion frame) {
+      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+              .AcknowledgedDeletion
+          frame) {
     work.requireCurrent();
     frame.requireCurrent();
     var expected = originalDeletionMatrixIds(work);
@@ -114,36 +118,49 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
         throw new AccountInactivityEffectException(DATABASE, UNCONFIRMED);
       for (String id : expected) {
         frame.requireCurrent();
-        captured.add(new MatrixAccess(id, matrix.getAccountLocked(id)
-            .orElseThrow(() -> new AccountInactivityEffectException(MATRIX, UNCONFIRMED))));
+        captured.add(
+            new MatrixAccess(
+                id,
+                matrix
+                    .getAccountLocked(id)
+                    .orElseThrow(() -> new AccountInactivityEffectException(MATRIX, UNCONFIRMED))));
         frame.requireCurrent();
       }
     } else captured.addAll(matrixStates(work.identityId()));
-    frame.runOwnedLocal(() -> {
-      work.requireOwnedSql();
-      if (!java.util.Objects.equals(prior, accessOwner(work.identityId())))
-        throw new AccountInactivityEffectException(DATABASE, FAILED);
-      if (prior != null) {
-        frame.requirePriorInactivityCustody();
-        requireDeletionMatrixSet(work, expected);
-      } else {
-        if (!matrixStates(work.identityId()).isEmpty() || state(work.identityId()).isPresent())
-          throw new AccountInactivityEffectException(DATABASE, FAILED);
-        for (var item : captured)
-          jdbc.update("insert into account_inactivity_matrix_state(identity_id,matrix_user_id,original_locked) values(?,?,?)",
-              work.identityId(), item.id(), item.locked());
-      }
-      if (jdbc.update("update account_inactivity set access_work_id=? where identity_id=? and work_id=?",
-          work.workId(), work.identityId(), work.workId()) != 1)
-        throw new AccountInactivityEffectException(DATABASE, FAILED);
-    });
+    frame.runOwnedLocal(
+        () -> {
+          work.requireOwnedSql();
+          if (!java.util.Objects.equals(prior, accessOwner(work.identityId())))
+            throw new AccountInactivityEffectException(DATABASE, FAILED);
+          if (prior != null) {
+            frame.requirePriorInactivityCustody();
+            requireDeletionMatrixSet(work, expected);
+          } else {
+            if (!matrixStates(work.identityId()).isEmpty() || state(work.identityId()).isPresent())
+              throw new AccountInactivityEffectException(DATABASE, FAILED);
+            for (var item : captured)
+              jdbc.update(
+                  "insert into account_inactivity_matrix_state(identity_id,matrix_user_id,original_locked) values(?,?,?)",
+                  work.identityId(),
+                  item.id(),
+                  item.locked());
+          }
+          if (jdbc.update(
+                  "update account_inactivity set access_work_id=? where identity_id=? and work_id=?",
+                  work.workId(),
+                  work.identityId(),
+                  work.workId())
+              != 1) throw new AccountInactivityEffectException(DATABASE, FAILED);
+        });
     frame.requireCurrent();
   }
 
   @Override
   public void forgetDeletionMedia(
       AccountInactivityService.ClaimedWork work,
-      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.AcknowledgedDeletion frame) {
+      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+              .AcknowledgedDeletion
+          frame) {
     work.requireCurrent();
     frame.requireCurrent();
     frame.requirePreparedInactivityMedia();
@@ -157,7 +174,8 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
     frame.requirePreparedInactivityMedia();
   }
 
-  private java.util.List<String> originalDeletionMatrixIds(AccountInactivityService.ClaimedWork work) {
+  private java.util.List<String> originalDeletionMatrixIds(
+      AccountInactivityService.ClaimedWork work) {
     var source = new com.fasterxml.jackson.databind.ObjectMapper();
     try {
       var rows = source.readTree(work.originalSourceJson());
@@ -168,8 +186,11 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
         for (var row : rows.path(kind)) {
           var value = row.path("matrix_user_id");
           if (value.isMissingNode() || value.isNull()) continue;
-          if (!value.isTextual() || value.textValue().isBlank() || value.textValue().length() > 255
-              || !ids.add(value.textValue())) throw new AccountInactivityEffectException(DATABASE, FAILED);
+          if (!value.isTextual()
+              || value.textValue().isBlank()
+              || value.textValue().length() > 255
+              || !ids.add(value.textValue()))
+            throw new AccountInactivityEffectException(DATABASE, FAILED);
         }
       }
       if (ids.size() > 2) throw new AccountInactivityEffectException(DATABASE, FAILED);

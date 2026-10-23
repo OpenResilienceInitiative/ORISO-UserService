@@ -184,22 +184,27 @@ class InactivityDeletionContinuationJpaTest {
     when(checked.validatedJwtExpiresAt())
         .thenReturn(Instant.now().plusSeconds(60).getEpochSecond());
     when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
-    when(matrix.getAccountLocked(anyString())).thenAnswer(call -> {
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      assertEquals(1, nativeEffects.get());
-      return Optional.of(false);
-    });
-    doAnswer(call -> {
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      assertEquals("ACKNOWLEDGED", status());
-      List<String> ids = call.getArgument(0);
-      forgotten.add(List.copyOf(ids));
-      if (loseMediaReply) {
-        loseMediaReply = false;
-        throw new ResourceAccessException("fixture loses owned media forget reply");
-      }
-      return null;
-    }).when(media).forget(anyList());
+    when(matrix.getAccountLocked(anyString()))
+        .thenAnswer(
+            call -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              assertEquals(1, nativeEffects.get());
+              return Optional.of(false);
+            });
+    doAnswer(
+            call -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              assertEquals("ACKNOWLEDGED", status());
+              List<String> ids = call.getArgument(0);
+              forgotten.add(List.copyOf(ids));
+              if (loseMediaReply) {
+                loseMediaReply = false;
+                throw new ResourceAccessException("fixture loses owned media forget reply");
+              }
+              return null;
+            })
+        .when(media)
+        .forget(anyList());
     http = new RestTemplate();
     server = MockRestServiceServer.bindTo(http).build();
     server
@@ -459,17 +464,27 @@ class InactivityDeletionContinuationJpaTest {
     assertEquals(1, nativeEffects.get());
     assertEquals("ACKNOWLEDGED", status());
     assertTrue(users.findById(ACCOUNT).isPresent());
-    assertEquals(de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status.DELETING,
+    assertEquals(
+        de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
+            .DELETING,
         service.snapshot(ACCOUNT).orElseThrow().status());
     assertEquals(List.of(List.of("@owned-cleanup:fixture.invalid")), forgotten);
     String saved = codec.canonical(envelope());
     inactivity(false, false).scan(false);
     assertEquals(1, nativeCalls.get(), "Durable ACK skips another native command");
-    assertEquals(List.of(List.of("@owned-cleanup:fixture.invalid"), List.of("@owned-cleanup:fixture.invalid")), forgotten);
+    assertEquals(
+        List.of(
+            List.of("@owned-cleanup:fixture.invalid"), List.of("@owned-cleanup:fixture.invalid")),
+        forgotten);
     assertEquals(saved, codec.canonical(envelope()));
     assertEquals("APPLIED", status());
     assertTrue(users.findById(ACCOUNT).isEmpty());
-    assertEquals(0, jdbc.queryForObject("select count(*) from account_inactivity_matrix_state where identity_id=?", Integer.class, ACCOUNT));
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from account_inactivity_matrix_state where identity_id=?",
+            Integer.class,
+            ACCOUNT));
     verifyNoInteractions(sdk);
   }
 
@@ -483,20 +498,30 @@ class InactivityDeletionContinuationJpaTest {
     assertEquals("ACKNOWLEDGED", status());
     assertTrue(forgotten.isEmpty());
     assertTrue(users.findById(ACCOUNT).isPresent());
-    assertEquals(1, jdbc.queryForObject("select count(*) from account_inactivity_matrix_state where identity_id=?", Integer.class, ACCOUNT));
-    assertEquals(de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status.DELETING,
+    assertEquals(
+        1,
+        jdbc.queryForObject(
+            "select count(*) from account_inactivity_matrix_state where identity_id=?",
+            Integer.class,
+            ACCOUNT));
+    assertEquals(
+        de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
+            .DELETING,
         service.snapshot(ACCOUNT).orElseThrow().status());
     verifyNoInteractions(sdk);
   }
 
   @Test
   void lostFinalJpaCommitReplyRejoinsTheSameTwoJournalCompletionAndNeverRepeatsCleanup() {
-    uncertainFinal = new LostCommitReplyJpaManager(
-        ((JpaTransactionManager) transactions).getEntityManagerFactory(), dataSource);
+    uncertainFinal =
+        new LostCommitReplyJpaManager(
+            ((JpaTransactionManager) transactions).getEntityManagerFactory(), dataSource);
     var service = inactivity(true, false);
     service.scan(false);
     assertEquals("APPLIED", status());
-    assertEquals(de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status.DELETED,
+    assertEquals(
+        de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
+            .DELETED,
         service.snapshot(ACCOUNT).orElseThrow().status());
     assertTrue(users.findById(ACCOUNT).isEmpty());
     assertEquals(1, callbacks.get());
@@ -515,8 +540,12 @@ class InactivityDeletionContinuationJpaTest {
   private final List<List<String>> forgotten = new ArrayList<>();
   private final de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrix =
       mock(de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.class);
-  private final de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityMediaClient media =
-      mock(de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityMediaClient.class);
+  private final de.caritas.cob.userservice.api.workflow.accountinactivity
+          .AccountInactivityMediaClient
+      media =
+          mock(
+              de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityMediaClient
+                  .class);
   private LostCommitReplyJpaManager uncertainFinal;
   private String completedIdentity;
   private List<String> projectedRoles = List.of("user");
@@ -629,21 +658,34 @@ class InactivityDeletionContinuationJpaTest {
               completedIdentity = frame.accountId();
               callbacks.incrementAndGet();
               if (frame.hasLocalUser()) {
-                var dto = new java.util.concurrent.atomic.AtomicReference<
-                    de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO>();
-                frame.runOwnedLocal(() -> dto.set(
-                    new de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO(
-                        users.findById(ACCOUNT).orElseThrow(), new ArrayList<>(), frame)));
+                var dto =
+                    new java.util.concurrent.atomic.AtomicReference<
+                        de.caritas.cob.userservice.api.workflow.delete.model
+                            .AskerDeletionWorkflowDTO>();
+                frame.runOwnedLocal(
+                    () ->
+                        dto.set(
+                            new de.caritas.cob.userservice.api.workflow.delete.model
+                                .AskerDeletionWorkflowDTO(
+                                users.findById(ACCOUNT).orElseThrow(), new ArrayList<>(), frame)));
                 if (retainLocalUser)
-                  dto.get().getDeletionWorkflowErrors().add(
-                      de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError.builder()
-                          .deletionTargetType(de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.USER_CONTENT)
-                          .build());
-                var finalAction = new de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction(
-                    users, userChats, mobileTokens, new IdentityTombstoneService(tombstones));
+                  dto.get()
+                      .getDeletionWorkflowErrors()
+                      .add(
+                          de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError
+                              .builder()
+                              .deletionTargetType(
+                                  de.caritas.cob.userservice.api.workflow.delete.model
+                                      .DeletionTargetType.USER_CONTENT)
+                              .build());
+                var finalAction =
+                    new de.caritas.cob.userservice.api.workflow.delete.action.asker
+                        .DeleteDatabaseAskerAction(
+                        users, userChats, mobileTokens, new IdentityTombstoneService(tombstones));
                 var prepared = finalAction.prepareAcknowledged(dto.get());
                 if (retainLocalUser) {
-                  assertTrue(prepared.isEmpty(), "A real content veto must precede media forgetting");
+                  assertTrue(
+                      prepared.isEmpty(), "A real content veto must precede media forgetting");
                   return;
                 }
                 frame.beforeFinalLocalDeletion(prepared.orElseThrow());
@@ -709,12 +751,16 @@ class InactivityDeletionContinuationJpaTest {
 
   private static final class LostCommitReplyJpaManager extends JpaTransactionManager {
     private boolean loseNextCommit;
-    private LostCommitReplyJpaManager(jakarta.persistence.EntityManagerFactory factory, DataSource source) {
+
+    private LostCommitReplyJpaManager(
+        jakarta.persistence.EntityManagerFactory factory, DataSource source) {
       super(Objects.requireNonNull(factory));
       setDataSource(source);
     }
+
     @Override
-    protected void doCommit(org.springframework.transaction.support.DefaultTransactionStatus status) {
+    protected void doCommit(
+        org.springframework.transaction.support.DefaultTransactionStatus status) {
       super.doCommit(status);
       if (loseNextCommit) {
         loseNextCommit = false;
