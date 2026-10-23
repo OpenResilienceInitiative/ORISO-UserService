@@ -335,11 +335,12 @@ public final class ClaimedPasswordMaintenance {
     if ("PREPARED".equals(row.status())) {
       fresh.get();
       final Intent pending = row;
-      transaction(() -> {
-        requireSetupHandle(b, handle);
-        requireSetupOriginal(b, handle, requireSameLocal(b, pending));
-        return null;
-      });
+      transaction(
+          () -> {
+            requireSetupHandle(b, handle);
+            requireSetupOriginal(b, handle, requireSameLocal(b, pending));
+            return null;
+          });
       var selected = select(b, actor, row, fresh);
       final Intent prepared = row;
       row = transaction(() -> freeze(b, actor, prepared, selected, password, handle));
@@ -533,7 +534,11 @@ public final class ClaimedPasswordMaintenance {
   }
 
   private Intent freeze(
-      Bound b, TaskActorCredentials actor, Intent prepared, Selected selected, String password,
+      Bound b,
+      TaskActorCredentials actor,
+      Intent prepared,
+      Selected selected,
+      String password,
       Object handle) {
     requireSetupHandle(b, handle);
     var row = find(b, actor);
@@ -834,7 +839,8 @@ public final class ClaimedPasswordMaintenance {
         || !b.equals(existingSetupBinding(claim.checkedClaim()))) throw unavailable();
   }
 
-  private void requireSetupOriginal(Bound b, Object handle, ClaimedPasswordLocalAccounts.Owned local) {
+  private void requireSetupOriginal(
+      Bound b, Object handle, ClaimedPasswordLocalAccounts.Owned local) {
     if (!"EXISTING_SETUP".equals(b.kind())) return;
     requireSetupHandle(b, handle);
     ((ExistingAccountSetupService.ClaimedSetup) handle)

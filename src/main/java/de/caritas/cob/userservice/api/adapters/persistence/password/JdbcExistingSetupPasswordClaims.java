@@ -31,9 +31,10 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
   private static final String PENDING_ORIGINAL = "{\"state\":\"PENDING\",\"v\":1}";
   private static final Set<String> ORIGINAL_FIELDS =
       Set.of("v", "accountId", "kind", "tenantId", "username", "recipient", "createDate");
-  private static final ObjectMapper JSON = new ObjectMapper()
-      .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
-      .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+  private static final ObjectMapper JSON =
+      new ObjectMapper()
+          .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
   private final JdbcTemplate jdbc;
   private final Clock clock;
 
@@ -121,22 +122,29 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
 
   @Override
   public void requireOriginalSqlWithinOwner(Claim claim, OriginalSql actual) {
-    owned(() -> {
-      active(claim, "EMAIL_SENT", "IN_PROGRESS");
-      require(claim.binding().expiresAt().isAfter(LocalDateTime.now(clock)));
-      Saved saved = lockSaved(claim.binding().inviteId()).getFirst();
-      String original = originalJson(actual, claim.binding());
-      if (PENDING_ORIGINAL.equals(saved.originalSql())) {
-        require(jdbc.update(
-            "update identity_setup_password_claim set original_sql_json=? where invite_id=? and claim_id=? and claim_version=? and request_digest=? and status in ('FROZEN','UNKNOWN') and original_sql_json=?",
-            original, claim.binding().inviteId(), claim.id().toString(), claim.version(),
-            claim.requestDigest(), PENDING_ORIGINAL) == 1);
-      } else {
-        boundOriginal(saved.originalSql(), claim.binding());
-        require(original.equals(saved.originalSql()));
-      }
-      return null;
-    });
+    owned(
+        () -> {
+          active(claim, "EMAIL_SENT", "IN_PROGRESS");
+          require(claim.binding().expiresAt().isAfter(LocalDateTime.now(clock)));
+          Saved saved = lockSaved(claim.binding().inviteId()).getFirst();
+          String original = originalJson(actual, claim.binding());
+          if (PENDING_ORIGINAL.equals(saved.originalSql())) {
+            require(
+                jdbc.update(
+                        "update identity_setup_password_claim set original_sql_json=? where invite_id=? and claim_id=? and claim_version=? and request_digest=? and status in ('FROZEN','UNKNOWN') and original_sql_json=?",
+                        original,
+                        claim.binding().inviteId(),
+                        claim.id().toString(),
+                        claim.version(),
+                        claim.requestDigest(),
+                        PENDING_ORIGINAL)
+                    == 1);
+          } else {
+            boundOriginal(saved.originalSql(), claim.binding());
+            require(original.equals(saved.originalSql()));
+          }
+          return null;
+        });
   }
 
   @Override
@@ -353,20 +361,22 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
 
   private static String originalJson(OriginalSql original, Binding binding) {
     require(original != null && binding != null);
-    String kind = switch (binding.role()) {
-      case COUNSELLOR -> "CONSULTANT";
-      case AGENCY_ADMIN -> "AGENCY_ADMIN";
-      case TENANT_ADMIN -> "TENANT_ADMIN";
-      default -> throw unavailable();
-    };
-    require(binding.accountId().equals(original.accountId())
-        && UUID.fromString(original.accountId()).toString().equals(original.accountId())
-        && kind.equals(original.kind())
-        && Objects.equals(binding.tenantId(), original.tenantId())
-        && binding.username().equals(original.username())
-        && binding.email().equals(original.recipient())
-        && text(original.createDate(), 64)
-        && LocalDateTime.parse(original.createDate()).toString().equals(original.createDate()));
+    String kind =
+        switch (binding.role()) {
+          case COUNSELLOR -> "CONSULTANT";
+          case AGENCY_ADMIN -> "AGENCY_ADMIN";
+          case TENANT_ADMIN -> "TENANT_ADMIN";
+          default -> throw unavailable();
+        };
+    require(
+        binding.accountId().equals(original.accountId())
+            && UUID.fromString(original.accountId()).toString().equals(original.accountId())
+            && kind.equals(original.kind())
+            && Objects.equals(binding.tenantId(), original.tenantId())
+            && binding.username().equals(original.username())
+            && binding.email().equals(original.recipient())
+            && text(original.createDate(), 64)
+            && LocalDateTime.parse(original.createDate()).toString().equals(original.createDate()));
     var fields = new TreeMap<String, Object>();
     fields.put("v", 1);
     fields.put("accountId", original.accountId());
@@ -389,16 +399,23 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
       require(value != null && value.isObject() && value.size() == ORIGINAL_FIELDS.size());
       var names = new java.util.HashSet<String>();
       value.fieldNames().forEachRemaining(names::add);
-      require(names.equals(ORIGINAL_FIELDS)
-          && value.path("v").isIntegralNumber() && value.path("v").canConvertToInt()
-          && value.path("v").intValue() == 1);
+      require(
+          names.equals(ORIGINAL_FIELDS)
+              && value.path("v").isIntegralNumber()
+              && value.path("v").canConvertToInt()
+              && value.path("v").intValue() == 1);
       for (String field : Set.of("accountId", "kind", "username", "recipient", "createDate"))
         require(value.path(field).isTextual() && text(value.path(field).textValue(), 512));
       var tenant = value.path("tenantId");
       require(tenant.isNull() || (tenant.isIntegralNumber() && tenant.canConvertToLong()));
-      var original = new OriginalSql(value.path("accountId").textValue(), value.path("kind").textValue(),
-          tenant.isNull() ? null : tenant.longValue(), value.path("username").textValue(),
-          value.path("recipient").textValue(), value.path("createDate").textValue());
+      var original =
+          new OriginalSql(
+              value.path("accountId").textValue(),
+              value.path("kind").textValue(),
+              tenant.isNull() ? null : tenant.longValue(),
+              value.path("username").textValue(),
+              value.path("recipient").textValue(),
+              value.path("createDate").textValue());
       require(saved.equals(originalJson(original, binding)));
     } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
       throw unavailable();
@@ -412,7 +429,9 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
             && !TransactionSynchronizationManager.isCurrentTransactionReadOnly());
     try {
       return work.get();
-    } catch (DataAccessException | IllegalArgumentException | ArithmeticException
+    } catch (DataAccessException
+        | IllegalArgumentException
+        | ArithmeticException
         | java.time.DateTimeException invalid) {
       throw unavailable();
     }
