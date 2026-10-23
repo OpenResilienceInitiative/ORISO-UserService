@@ -42,8 +42,8 @@ import java.util.concurrent.atomic.*;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.*;
@@ -103,12 +103,25 @@ class UserSelfMaintenanceNativePairProof {
     assertEquals("Linux", System.getProperty("os.name"));
     var facts = new TreeMap<String, Object>();
     facts.put("kind", kind);
-    for (String flag : List.of("actualJpa", "actualCurrentSelf", "canonicalAdmin", "firstNative200",
-        "savedBeforeWithdrawal200", "sameFrozenCommand", "sameHumanAfterRestart", "readAfterWithdrawal200",
-        "savedAfterWithdrawal403", "sqlAcknowledgementUnchanged", "oneLocalCallback",
-        "freshHumanAfterRestoration", "restoredReplay200", "originalReceiptRestored",
-        "nativeLogicalEffectVerified")) facts.put(flag, false);
-    var codec = new AccountLifecycleCodec(Base64.getDecoder().decode(required("PAIR_CONTEXT_KEY_B64")));
+    for (String flag :
+        List.of(
+            "actualJpa",
+            "actualCurrentSelf",
+            "canonicalAdmin",
+            "firstNative200",
+            "savedBeforeWithdrawal200",
+            "sameFrozenCommand",
+            "sameHumanAfterRestart",
+            "readAfterWithdrawal200",
+            "savedAfterWithdrawal403",
+            "sqlAcknowledgementUnchanged",
+            "oneLocalCallback",
+            "freshHumanAfterRestoration",
+            "restoredReplay200",
+            "originalReceiptRestored",
+            "nativeLogicalEffectVerified")) facts.put(flag, false);
+    var codec =
+        new AccountLifecycleCodec(Base64.getDecoder().decode(required("PAIR_CONTEXT_KEY_B64")));
     try {
       assertInstanceOf(JpaTransactionManager.class, transactions);
       assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
@@ -116,10 +129,14 @@ class UserSelfMaintenanceNativePairProof {
       jdbc.execute("drop table if exists identity_self_password_intent");
       jdbc.execute("drop table if exists identity_account_operation_intent");
       new ResourceDatabasePopulator(
-          new ClassPathResource("db/changelog/changeset/20261022_identity_self_password_367/migrate.sql"),
-          new ClassPathResource("db/changelog/changeset/20261023_identity_self_password_retention_367/migrate.sql"),
-          new ClassPathResource("db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"),
-          new ClassPathResource("db/changelog/changeset/20261023_existing_import_intent_367/migrate.sql"))
+              new ClassPathResource(
+                  "db/changelog/changeset/20261022_identity_self_password_367/migrate.sql"),
+              new ClassPathResource(
+                  "db/changelog/changeset/20261023_identity_self_password_retention_367/migrate.sql"),
+              new ClassPathResource(
+                  "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"),
+              new ClassPathResource(
+                  "db/changelog/changeset/20261023_existing_import_intent_367/migrate.sql"))
           .execute(source);
       String account = required("PAIR_ACCOUNT_ID");
       String username = required("PAIR_USERNAME");
@@ -166,133 +183,271 @@ class UserSelfMaintenanceNativePairProof {
       var lastMutation = new AtomicInteger();
       var mutationCalls = new AtomicInteger();
       String command = kind.equals("password") ? "self-password" : "locale";
-      String table = kind.equals("password") ? "identity_self_password_intent" : "identity_account_operation_intent";
-      http.getInterceptors().add((request, bytes, execution) -> {
-        URI uri = request.getURI();
-        assertEquals("maintenance-human-fixture.invalid", uri.getHost());
-        var physical = URI.create(base.get() + uri.getRawPath()
-            + (uri.getRawQuery() == null ? "" : "?" + uri.getRawQuery()));
-        var mapped = new HttpRequestWrapper(request) {
-          @Override public URI getURI() { return physical; }
-        };
-        boolean mutation = uri.getPath().endsWith("/" + command);
-        if (mutation) {
-          assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-          String body = new String(bytes, StandardCharsets.UTF_8);
-          if (frozenBody.get() == null) frozenBody.set(body);
-          else assertEquals(frozenBody.get(), body, "Original native command must remain frozen");
-          mutationCalls.incrementAndGet();
-          assertTrue(Set.of("FROZEN", "ACKNOWLEDGED").contains(
-              jdbc.queryForObject("select status from " + table + " where operation_id=?", String.class, operation)));
-        }
-        var response = execution.execute(mapped, bytes);
-        if (mutation) {
-          lastMutation.set(response.getStatusCode().value());
-          if (response.getStatusCode().value() == 200) {
-            var reply = codec.read(new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8), JsonNode.class);
-            assertEquals("UPDATED", reply.path("result").textValue());
-            if (firstReceipt.get() == null) firstReceipt.set(codec.canonical(reply));
-            else assertEquals(firstReceipt.get(), codec.canonical(reply));
-          }
-        }
-        return response;
-      });
+      String table =
+          kind.equals("password")
+              ? "identity_self_password_intent"
+              : "identity_account_operation_intent";
+      http.getInterceptors()
+          .add(
+              (request, bytes, execution) -> {
+                URI uri = request.getURI();
+                assertEquals("maintenance-human-fixture.invalid", uri.getHost());
+                var physical =
+                    URI.create(
+                        base.get()
+                            + uri.getRawPath()
+                            + (uri.getRawQuery() == null ? "" : "?" + uri.getRawQuery()));
+                var mapped =
+                    new HttpRequestWrapper(request) {
+                      @Override
+                      public URI getURI() {
+                        return physical;
+                      }
+                    };
+                boolean mutation = uri.getPath().endsWith("/" + command);
+                if (mutation) {
+                  assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                  String body = new String(bytes, StandardCharsets.UTF_8);
+                  if (frozenBody.get() == null) frozenBody.set(body);
+                  else
+                    assertEquals(
+                        frozenBody.get(), body, "Original native command must remain frozen");
+                  mutationCalls.incrementAndGet();
+                  assertTrue(
+                      Set.of("FROZEN", "ACKNOWLEDGED")
+                          .contains(
+                              jdbc.queryForObject(
+                                  "select status from " + table + " where operation_id=?",
+                                  String.class,
+                                  operation)));
+                }
+                var response = execution.execute(mapped, bytes);
+                if (mutation) {
+                  lastMutation.set(response.getStatusCode().value());
+                  if (response.getStatusCode().value() == 200) {
+                    var reply =
+                        codec.read(
+                            new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8),
+                            JsonNode.class);
+                    assertEquals("UPDATED", reply.path("result").textValue());
+                    if (firstReceipt.get() == null) firstReceipt.set(codec.canonical(reply));
+                    else assertEquals(firstReceipt.get(), codec.canonical(reply));
+                  }
+                }
+                return response;
+              });
       var identity = new IdentityConfig();
       identity.setOpenidConnectUrl(issuer + "/protocol/openid-connect");
       var environment = new MockEnvironment().withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS");
       for (var actor : TaskActor.values()) {
         String prefix = "IDENTITY_" + actor.name();
-        environment.setProperty(prefix + "_CLIENT_ID", required("PAIR_" + actor.name() + "_CLIENT"));
-        environment.setProperty(prefix + "_CLIENT_SECRET", required("PAIR_" + actor.name() + "_SECRET"));
-        environment.setProperty(prefix + "_SERVICE_SUBJECT", required("PAIR_" + actor.name() + "_SUBJECT"));
+        environment.setProperty(
+            prefix + "_CLIENT_ID", required("PAIR_" + actor.name() + "_CLIENT"));
+        environment.setProperty(
+            prefix + "_CLIENT_SECRET", required("PAIR_" + actor.name() + "_SECRET"));
+        environment.setProperty(
+            prefix + "_SERVICE_SUBJECT", required("PAIR_" + actor.name() + "_SUBJECT"));
       }
       var actors = new TaskActorConfiguration(environment, new KeycloakCustomConfig(), identity);
       var keycloak = new KeycloakConfig();
       keycloak.setAuthServerUrl(logical);
       keycloak.setRealm(realm);
-      var decoder = NimbusJwtDecoder.withJwkSetUri(base.get() + "/realms/" + realm + "/protocol/openid-connect/certs").build();
+      var decoder =
+          NimbusJwtDecoder.withJwkSetUri(
+                  base.get() + "/realms/" + realm + "/protocol/openid-connect/certs")
+              .build();
       decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
-      var consultantService = spy(new ConsultantService(consultants, mock(ConsultantMobileTokenRepository.class)));
+      var consultantService =
+          spy(new ConsultantService(consultants, mock(ConsultantMobileTokenRepository.class)));
       var accounts = new AtomicReference<AccountManager>();
       var legacy = mock(IdentityManaging.class);
       var mode = mock(IdentityClientConfig.class);
       when(mode.isFiveActorMode()).thenReturn(true);
       String initial = login(http, logical, realm, username, oldPassword);
-      var current = context(kind, initial, operation, account, username, realm, realmId, logical,
-          issuer, http, decoder, identity, actors, keycloak, mode, codec, jdbc,
-          consultantService, accounts, legacy);
+      var current =
+          context(
+              kind,
+              initial,
+              operation,
+              account,
+              username,
+              realm,
+              realmId,
+              logical,
+              issuer,
+              http,
+              decoder,
+              identity,
+              actors,
+              keycloak,
+              mode,
+              codec,
+              jdbc,
+              consultantService,
+              accounts,
+              legacy);
       facts.put("actualCurrentSelf", true);
       var checked = current.broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
-      assertEquals(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE).serviceSubject(), checked.subject());
-      assertEquals(Set.of("userservice", "oriso-account-lifecycle", "oriso-otp"),
+      assertEquals(
+          actors.require(TaskPurpose.ACCOUNT_MAINTENANCE).serviceSubject(), checked.subject());
+      assertEquals(
+          Set.of("userservice", "oriso-account-lifecycle", "oriso-otp"),
           Set.copyOf(decoder.decode(checked.accessToken()).getAudience()));
       try {
-        http.exchange(logical + "/admin/realms/" + realm + "/users/" + account, HttpMethod.GET,
-            new HttpEntity<>(bearer(checked.accessToken())), String.class);
+        http.exchange(
+            logical + "/admin/realms/" + realm + "/users/" + account,
+            HttpMethod.GET,
+            new HttpEntity<>(bearer(checked.accessToken())),
+            String.class);
         fail("Canonical ADMIN must not have native user query powers");
-      } catch (HttpClientErrorException denied) { assertEquals(403, denied.getStatusCode().value()); }
+      } catch (HttpClientErrorException denied) {
+        assertEquals(403, denied.getStatusCode().value());
+      }
       facts.put("canonicalAdmin", true);
       invoke(current.controller, kind, oldPassword, newPassword);
       assertEquals(200, lastMutation.get());
       assertEquals(1, mutationCalls.get());
-      assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from " + table + " where operation_id=?", String.class, operation));
-      assertEquals(firstReceipt.get(), jdbc.queryForObject("select receipt from " + table + " where operation_id=?", String.class, operation));
+      assertEquals(
+          "ACKNOWLEDGED",
+          jdbc.queryForObject(
+              "select status from " + table + " where operation_id=?", String.class, operation));
+      assertEquals(
+          firstReceipt.get(),
+          jdbc.queryForObject(
+              "select receipt from " + table + " where operation_id=?", String.class, operation));
       facts.put("firstNative200", true);
       String effectivePassword = kind.equals("password") ? newPassword : oldPassword;
       String actual = login(http, logical, realm, username, effectivePassword);
       if (kind.equals("password")) {
-        try { login(http, logical, realm, username, oldPassword); fail("Old password remained valid"); }
-        catch (HttpClientErrorException rejected) { assertEquals(400, rejected.getStatusCode().value()); }
+        try {
+          login(http, logical, realm, username, oldPassword);
+          fail("Old password remained valid");
+        } catch (HttpClientErrorException rejected) {
+          assertEquals(400, rejected.getStatusCode().value());
+        }
         assertFalse(consultants.findById(account).orElseThrow().getPasswordChangeRequired());
       } else {
         assertEquals(LanguageCode.de, users.findById(account).orElseThrow().getLanguageCode());
-        assertEquals("de", readOriginalTarget(http, logical, realm, realmId, account, actors,
-            current.broker, codec, frozenBody.get(), actual).path("preferredLanguage").textValue());
+        assertEquals(
+            "de",
+            readOriginalTarget(
+                    http,
+                    logical,
+                    realm,
+                    realmId,
+                    account,
+                    actors,
+                    current.broker,
+                    codec,
+                    frozenBody.get(),
+                    actual)
+                .path("preferredLanguage")
+                .textValue());
       }
       facts.put("nativeLogicalEffectVerified", true);
-      current = context(kind, actual, operation, account, username, realm, realmId, logical,
-          issuer, http, decoder, identity, actors, keycloak, mode, codec, jdbc,
-          consultantService, accounts, legacy);
-      var originalSql = snapshotRow(jdbc, "select * from " + table + " where operation_id=?", operation);
+      current =
+          context(
+              kind,
+              actual,
+              operation,
+              account,
+              username,
+              realm,
+              realmId,
+              logical,
+              issuer,
+              http,
+              decoder,
+              identity,
+              actors,
+              keycloak,
+              mode,
+              codec,
+              jdbc,
+              consultantService,
+              accounts,
+              legacy);
+      var originalSql =
+          snapshotRow(jdbc, "select * from " + table + " where operation_id=?", operation);
       var originalDomain = domain(jdbc, kind, account);
       invoke(current.controller, kind, oldPassword, newPassword);
       assertEquals(2, mutationCalls.get());
       assertEquals(200, lastMutation.get());
       facts.put("savedBeforeWithdrawal200", true);
-      assertEquals(originalSql, snapshotRow(jdbc, "select * from " + table + " where operation_id=?", operation));
+      assertEquals(
+          originalSql,
+          snapshotRow(jdbc, "select * from " + table + " where operation_id=?", operation));
       control(base, "withdraw");
       var sameHuman = decoder.decode(actual);
       assertEquals(account, sameHuman.getSubject());
       assertEquals(required("PAIR_HUMAN_CLIENT"), sameHuman.getClaimAsString("azp"));
       facts.put("sameHumanAfterRestart", true);
-      readOriginalTarget(http, logical, realm, realmId, account, actors, current.broker, codec, frozenBody.get(), actual);
+      readOriginalTarget(
+          http,
+          logical,
+          realm,
+          realmId,
+          account,
+          actors,
+          current.broker,
+          codec,
+          frozenBody.get(),
+          actual);
       facts.put("readAfterWithdrawal200", true);
       var deniedContext = current;
-      assertThrows(ServiceUnavailableException.class,
+      assertThrows(
+          ServiceUnavailableException.class,
           () -> invoke(deniedContext.controller, kind, oldPassword, newPassword));
       assertEquals(3, mutationCalls.get());
       assertEquals(403, lastMutation.get());
       facts.put("savedAfterWithdrawal403", true);
-      assertEquals(originalSql, snapshotRow(jdbc, "select * from " + table + " where operation_id=?", operation));
+      assertEquals(
+          originalSql,
+          snapshotRow(jdbc, "select * from " + table + " where operation_id=?", operation));
       assertEquals(originalDomain, domain(jdbc, kind, account));
       facts.put("sqlAcknowledgementUnchanged", true);
       control(base, "restore");
       String fresh = login(http, logical, realm, username, effectivePassword);
       assertNotEquals(actual, fresh);
-      current = context(kind, fresh, operation, account, username, realm, realmId, logical,
-          issuer, http, decoder, identity, actors, keycloak, mode, codec, jdbc,
-          consultantService, accounts, legacy);
+      current =
+          context(
+              kind,
+              fresh,
+              operation,
+              account,
+              username,
+              realm,
+              realmId,
+              logical,
+              issuer,
+              http,
+              decoder,
+              identity,
+              actors,
+              keycloak,
+              mode,
+              codec,
+              jdbc,
+              consultantService,
+              accounts,
+              legacy);
       facts.put("freshHumanAfterRestoration", true);
       invoke(current.controller, kind, oldPassword, newPassword);
       assertEquals(4, mutationCalls.get());
       assertEquals(200, lastMutation.get());
       facts.put("restoredReplay200", true);
-      assertEquals(originalSql, snapshotRow(jdbc, "select * from " + table + " where operation_id=?", operation));
+      assertEquals(
+          originalSql,
+          snapshotRow(jdbc, "select * from " + table + " where operation_id=?", operation));
       assertEquals(originalDomain, domain(jdbc, kind, account));
-      assertEquals(firstReceipt.get(), jdbc.queryForObject("select receipt from " + table + " where operation_id=?", String.class, operation));
+      assertEquals(
+          firstReceipt.get(),
+          jdbc.queryForObject(
+              "select receipt from " + table + " where operation_id=?", String.class, operation));
       facts.put("originalReceiptRestored", true);
       facts.put("sameFrozenCommand", true);
-      if (kind.equals("password")) verify(consultantService, times(1)).saveConsultant(any(Consultant.class));
+      if (kind.equals("password"))
+        verify(consultantService, times(1)).saveConsultant(any(Consultant.class));
       else verify(accounts.get(), times(1)).patchUser(anyMap());
       facts.put("oneLocalCallback", true);
       verifyNoInteractions(legacy);
@@ -305,54 +460,144 @@ class UserSelfMaintenanceNativePairProof {
     }
   }
 
-  private PairContext context(String kind, String bearer, String operation, String account,
-      String username, String realm, String realmId, String logical, String issuer, RestTemplate http,
-      JwtDecoder decoder, IdentityConfig identity, TaskActorConfiguration actors, KeycloakConfig keycloak,
-      IdentityClientConfig mode, AccountLifecycleCodec codec, JdbcTemplate jdbc,
-      ConsultantService consultantService, AtomicReference<AccountManager> accounts,
+  private PairContext context(
+      String kind,
+      String bearer,
+      String operation,
+      String account,
+      String username,
+      String realm,
+      String realmId,
+      String logical,
+      String issuer,
+      RestTemplate http,
+      JwtDecoder decoder,
+      IdentityConfig identity,
+      TaskActorConfiguration actors,
+      KeycloakConfig keycloak,
+      IdentityClientConfig mode,
+      AccountLifecycleCodec codec,
+      JdbcTemplate jdbc,
+      ConsultantService consultantService,
+      AtomicReference<AccountManager> accounts,
       IdentityManaging legacy) {
     var jwt = decoder.decode(bearer);
     assertEquals(account, jwt.getSubject());
     assertEquals(required("PAIR_HUMAN_CLIENT"), jwt.getClaimAsString("azp"));
     assertEquals("11", jwt.getClaimAsString("tenantId"));
     assertEquals(Set.of("userservice"), Set.copyOf(jwt.getAudience()));
-    var roles = new TreeSet<String>((List<String>) ((Map<?, ?>) jwt.getClaims().get("realm_access")).get("roles"));
-    assertEquals(kind.equals("password") ? Set.of("consultant", "group-chat-consultant") : Set.of("user"), roles);
-    var human = new AuthenticatedUser(account, username, roles, bearer, Set.of(kind.equals("password") ? "ROLE_CONSULTANT" : "ROLE_USER"));
+    var roles =
+        new TreeSet<String>(
+            (List<String>) ((Map<?, ?>) jwt.getClaims().get("realm_access")).get("roles"));
+    assertEquals(
+        kind.equals("password") ? Set.of("consultant", "group-chat-consultant") : Set.of("user"),
+        roles);
+    var human =
+        new AuthenticatedUser(
+            account,
+            username,
+            roles,
+            bearer,
+            Set.of(kind.equals("password") ? "ROLE_CONSULTANT" : "ROLE_USER"));
     human.setTenantId(11L);
-    var request = new MockHttpServletRequest(kind.equals("password") ? "PUT" : "PATCH",
-        kind.equals("password") ? "/service/users/password/change" : "/service/users/data");
-    var auth = new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority(kind.equals("password") ? "ROLE_CONSULTANT" : "ROLE_USER")));
+    var request =
+        new MockHttpServletRequest(
+            kind.equals("password") ? "PUT" : "PATCH",
+            kind.equals("password") ? "/service/users/password/change" : "/service/users/data");
+    var auth =
+        new JwtAuthenticationToken(
+            jwt,
+            List.of(
+                new SimpleGrantedAuthority(
+                    kind.equals("password") ? "ROLE_CONSULTANT" : "ROLE_USER")));
     request.setUserPrincipal(auth);
     request.addHeader("Authorization", "Bearer " + bearer);
     request.addHeader("Idempotency-Key", operation);
     SecurityContextHolder.getContext().setAuthentication(auth);
-    var broker = new TaskActorTokenBroker(actors, new KeycloakAuthClient(http, human, identity), decoder, keycloak);
+    var broker =
+        new TaskActorTokenBroker(
+            actors, new KeycloakAuthClient(http, human, identity), decoder, keycloak);
     if (accounts.get() == null) {
       var transcoder = new UsernameTranscoder();
-      accounts.set(spy(new AccountManager(consultants, mock(AdminRepository.class), users,
-          new UserServiceMapper(transcoder), transcoder, mock(AgencyService.class), mock(TenantService.class),
-          mock(ConsultantAgencyRepository.class), human, mock(SessionRepository.class),
-          mock(AppointmentService.class), mock(PatchConsultantSaga.class))));
+      accounts.set(
+          spy(
+              new AccountManager(
+                  consultants,
+                  mock(AdminRepository.class),
+                  users,
+                  new UserServiceMapper(transcoder),
+                  transcoder,
+                  mock(AgencyService.class),
+                  mock(TenantService.class),
+                  mock(ConsultantAgencyRepository.class),
+                  human,
+                  mock(SessionRepository.class),
+                  mock(AppointmentService.class),
+                  mock(PatchConsultantSaga.class))));
     }
-    var delegate = new UserAccountControllerDelegate(mock(UserAccountService.class), human,
-        mock(DecryptionService.class), mock(ConsultantDataFacade.class), identity, legacy, accounts.get(),
-        mock(Messaging.class), mock(ConsultantDtoMapper.class), new UserDtoMapper(identity), consultantService,
-        mock(ConsultantUpdateService.class), mock(ConsultantDataProvider.class), mock(AskerDataProvider.class),
-        mock(VideoChatConfig.class), mock(KeycloakUserDataProvider.class), mock(AgencyAdminDataProvider.class), new UsernameTranscoder());
+    var delegate =
+        new UserAccountControllerDelegate(
+            mock(UserAccountService.class),
+            human,
+            mock(DecryptionService.class),
+            mock(ConsultantDataFacade.class),
+            identity,
+            legacy,
+            accounts.get(),
+            mock(Messaging.class),
+            mock(ConsultantDtoMapper.class),
+            new UserDtoMapper(identity),
+            consultantService,
+            mock(ConsultantUpdateService.class),
+            mock(ConsultantDataProvider.class),
+            mock(AskerDataProvider.class),
+            mock(VideoChatConfig.class),
+            mock(KeycloakUserDataProvider.class),
+            mock(AgencyAdminDataProvider.class),
+            new UsernameTranscoder());
     delegate.setPasswordIdentityConfig(mode);
-    delegate.setSelfPasswordMaintenance(new SelfPasswordMaintenance(mode, human, request, jdbc,
-        transactions, actors, broker, codec, http, Clock.systemUTC(), logical, issuer, realm, realmId));
-    delegate.setSelfLocaleMaintenance(new SelfLocaleMaintenance(mode, human, request, jdbc,
-        transactions, actors, broker, codec, http, Clock.systemUTC(), logical, realm, realmId));
+    delegate.setSelfPasswordMaintenance(
+        new SelfPasswordMaintenance(
+            mode,
+            human,
+            request,
+            jdbc,
+            transactions,
+            actors,
+            broker,
+            codec,
+            http,
+            Clock.systemUTC(),
+            logical,
+            issuer,
+            realm,
+            realmId));
+    delegate.setSelfLocaleMaintenance(
+        new SelfLocaleMaintenance(
+            mode,
+            human,
+            request,
+            jdbc,
+            transactions,
+            actors,
+            broker,
+            codec,
+            http,
+            Clock.systemUTC(),
+            logical,
+            realm,
+            realmId));
     var controller = mock(UserController.class, CALLS_REAL_METHODS);
     ReflectionTestUtils.setField(controller, "userAccountControllerDelegate", delegate);
     return new PairContext(controller, broker);
   }
 
-  private static void invoke(UserController controller, String kind, String oldPassword, String chosen) {
+  private static void invoke(
+      UserController controller, String kind, String oldPassword, String chosen) {
     if (kind.equals("password")) {
-      var password = new PasswordDTO(); password.setOldPassword(oldPassword); password.setNewPassword(chosen);
+      var password = new PasswordDTO();
+      password.setOldPassword(oldPassword);
+      password.setNewPassword(chosen);
       assertEquals(200, controller.updatePassword(password).getStatusCode().value());
     } else {
       var patch = new PatchUserDTO();
@@ -361,44 +606,82 @@ class UserSelfMaintenanceNativePairProof {
     }
   }
 
-  private static String login(RestTemplate http, String logical, String realm, String username, String password) {
+  private static String login(
+      RestTemplate http, String logical, String realm, String username, String password) {
     var form = new LinkedMultiValueMap<String, String>();
-    form.add("client_id", required("PAIR_HUMAN_CLIENT")); form.add("grant_type", "password");
-    form.add("username", username); form.add("password", password); form.add("scope", "openid");
-    var headers = new HttpHeaders(); headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-    var reply = http.postForEntity(logical + "/realms/" + realm + "/protocol/openid-connect/token", new HttpEntity<>(form, headers), Map.class);
+    form.add("client_id", required("PAIR_HUMAN_CLIENT"));
+    form.add("grant_type", "password");
+    form.add("username", username);
+    form.add("password", password);
+    form.add("scope", "openid");
+    var headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+    var reply =
+        http.postForEntity(
+            logical + "/realms/" + realm + "/protocol/openid-connect/token",
+            new HttpEntity<>(form, headers),
+            Map.class);
     assertEquals(200, reply.getStatusCode().value());
     return (String) Objects.requireNonNull(reply.getBody()).get("access_token");
   }
 
   private static HttpHeaders bearer(String value) {
-    var headers = new HttpHeaders(); headers.setBearerAuth(value); return headers;
+    var headers = new HttpHeaders();
+    headers.setBearerAuth(value);
+    return headers;
   }
 
   private static void control(AtomicReference<String> base, String action) {
     String control = required("PAIR_CONTROL_BASE");
     assertTrue(control.matches("http://127\\.0\\.0\\.1:[0-9]+"));
-    var result = new RestTemplate().postForEntity(control + "/" + action, HttpEntity.EMPTY, Map.class);
+    var result =
+        new RestTemplate().postForEntity(control + "/" + action, HttpEntity.EMPTY, Map.class);
     assertEquals(200, result.getStatusCode().value());
     var body = Objects.requireNonNull(result.getBody());
     assertEquals(Set.of("nativeBase", "stage"), body.keySet());
     assertEquals(action.equals("withdraw") ? "WITHDRAWN" : "RESTORED", body.get("stage"));
     String next = (String) body.get("nativeBase");
-    assertTrue(next.matches("http://127\\.0\\.0\\.1:[0-9]+")); base.set(next);
+    assertTrue(next.matches("http://127\\.0\\.0\\.1:[0-9]+"));
+    base.set(next);
   }
 
-  private static JsonNode readOriginalTarget(RestTemplate http, String logical, String realm, String realmId,
-      String account, TaskActorConfiguration actors, TaskActorTokenBroker broker, AccountLifecycleCodec codec,
-      String frozen, String human) {
-    // Probe only the target captured from the actual production command, using actual checked ADMIN.
+  private static JsonNode readOriginalTarget(
+      RestTemplate http,
+      String logical,
+      String realm,
+      String realmId,
+      String account,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      String frozen,
+      String human) {
+    // Probe only the target captured from the actual production command, using actual checked
+    // ADMIN.
     var body = Map.of("target", codec.read(frozen, JsonNode.class).path("target"));
     var checked = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
-    var headers = bearer(checked.accessToken()); headers.setContentType(MediaType.APPLICATION_JSON);
+    var headers = bearer(checked.accessToken());
+    headers.setContentType(MediaType.APPLICATION_JSON);
     headers.set("X-ORISO-Human-Authorization", "Bearer " + human);
-    headers.set("X-ORISO-Task-Context", codec.maintenanceProof("read", realm, realmId, account,
-        actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body));
-    var reply = http.postForEntity(logical + "/realms/" + realm + "/oriso-account-maintenance/v1/accounts/" + account + "/read",
-        new HttpEntity<>(codec.canonical(body), headers), String.class);
+    headers.set(
+        "X-ORISO-Task-Context",
+        codec.maintenanceProof(
+            "read",
+            realm,
+            realmId,
+            account,
+            actors.require(TaskPurpose.ACCOUNT_MAINTENANCE),
+            body));
+    var reply =
+        http.postForEntity(
+            logical
+                + "/realms/"
+                + realm
+                + "/oriso-account-maintenance/v1/accounts/"
+                + account
+                + "/read",
+            new HttpEntity<>(codec.canonical(body), headers),
+            String.class);
     assertEquals(200, reply.getStatusCode().value());
     var projection = codec.read(reply.getBody(), JsonNode.class);
     assertEquals(account, projection.path("id").textValue());
@@ -406,19 +689,25 @@ class UserSelfMaintenanceNativePairProof {
   }
 
   private static Map<String, Object> domain(JdbcTemplate jdbc, String kind, String account) {
-    return snapshotRow(jdbc, kind.equals("password")
-        ? "select * from consultant where consultant_id=?"
-        : "select * from user where user_id=?", account);
+    return snapshotRow(
+        jdbc,
+        kind.equals("password")
+            ? "select * from consultant where consultant_id=?"
+            : "select * from user where user_id=?",
+        account);
   }
 
   private static Map<String, Object> snapshotRow(JdbcTemplate jdbc, String sql, String key) {
-    return jdbc.queryForObject(sql, (row, index) -> {
-      var result = new TreeMap<String, Object>();
-      for (int column = 1; column <= row.getMetaData().getColumnCount(); column++) {
-        result.put(row.getMetaData().getColumnLabel(column), row.getString(column));
-      }
-      return result;
-    }, key);
+    return jdbc.queryForObject(
+        sql,
+        (row, index) -> {
+          var result = new TreeMap<String, Object>();
+          for (int column = 1; column <= row.getMetaData().getColumnCount(); column++) {
+            result.put(row.getMetaData().getColumnLabel(column), row.getString(column));
+          }
+          return result;
+        },
+        key);
   }
 
   private record PairContext(UserController controller, TaskActorTokenBroker broker) {}
