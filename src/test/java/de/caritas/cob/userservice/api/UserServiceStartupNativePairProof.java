@@ -254,10 +254,10 @@ class UserServiceStartupNativePairProof {
     try (var client = HttpClient.newHttpClient()) {
       var response =
           client.send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/users/data"))
-                    .GET()
-                    .build(),
-                HttpResponse.BodyHandlers.discarding());
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/users/data"))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.discarding());
       witness.put("securityReady", response.statusCode() == 401);
     }
     var manager = context.getBean(org.springframework.transaction.PlatformTransactionManager.class);
