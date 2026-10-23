@@ -589,7 +589,9 @@ class UserSelfLocaleScenarioCBoundaryTest {
                         "select count(*) from identity_account_operation_intent where operation_id=? and status=? and domain_applied=true",
                         Integer.class,
                         operation,
-                        dispatches.incrementAndGet() <= (lostReply ? 2 : 1) ? "FROZEN" : "ACKNOWLEDGED"));
+                        dispatches.incrementAndGet() <= (lostReply ? 2 : 1)
+                            ? "FROZEN"
+                            : "ACKNOWLEDGED"));
                 String wire = ((MockClientHttpRequest) outbound).getBodyAsString();
                 if (frozen.get() == null) {
                   frozen.set(wire);

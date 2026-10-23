@@ -210,6 +210,7 @@ def select_slice(name):
             "failedTerminalSqlCommitPreservesTheFrozenIntentWithoutDefiniteOutcomeHeaders",
             "acknowledgedLocaleReplayRechecksTheOriginalNativeCommandWithoutRepeatingLocalChanges",
             "revokedNativeLocaleGrantCannotReplayLocalAcknowledgementAsSuccess",
+            "tamperedSavedLocaleAcknowledgementRefusesBeforeAnyNativeReplay",
         }
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance",
