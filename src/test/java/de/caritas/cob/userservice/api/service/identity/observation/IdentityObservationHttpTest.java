@@ -89,6 +89,9 @@ class IdentityObservationHttpTest {
   @MockitoBean IdentityOccupancyRawReader reader;
 
   @MockitoBean
+  de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService accountStatus;
+
+  @MockitoBean
   de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService lifecycle;
 
   MockMvc mvc;
