@@ -427,8 +427,7 @@ class UserSelfLocaleScenarioCBoundaryTest {
                             ACCOUNT)));
                 return Optional.of(consultant);
               });
-      var consultantPatch = mock(PatchConsultantSaga.class);
-      when(consultantPatch.executeTransactional(any(), anyMap()))
+      when(consultants.save(any(de.caritas.cob.userservice.api.model.Consultant.class)))
           .thenAnswer(
               invocation -> {
                 assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
@@ -438,9 +437,11 @@ class UserSelfLocaleScenarioCBoundaryTest {
                     changed.getLanguageCode().toString(),
                     changed.getEncourage2fa(),
                     ACCOUNT);
-                return Map.<String, Object>of("id", ACCOUNT);
+                return changed;
               });
       var transcoder = new UsernameTranscoder();
+      var consultantPatch = new PatchConsultantSaga(
+          consultants, new UserServiceMapper(transcoder), mock(AppointmentService.class));
       var accounts =
           new AccountManager(
               consultants,

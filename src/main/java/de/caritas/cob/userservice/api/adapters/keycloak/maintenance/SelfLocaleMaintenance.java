@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.keycloak.maintenance;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAccountOwner;
 import de.caritas.cob.userservice.api.config.auth.TaskActorConfiguration;
 import de.caritas.cob.userservice.api.config.auth.TaskActorCredentials;
 import de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker;
@@ -150,16 +151,24 @@ public final class SelfLocaleMaintenance {
     if ("ACKNOWLEDGED".equals(intent.status)) return acknowledged(self);
     if (!"FROZEN".equals(intent.status) || !intent.domainApplied || intent.body == null)
       throw unavailable();
-    String reply = request("locale", self, intent.body, actor);
+    final Intent original = intent;
+    Intent ready = transaction(() -> {
+      var current = findChecked(self, operation, digest, actor);
+      if (current == null || !current.domainApplied || !Objects.equals(original.body, current.body)
+          || !Set.of("FROZEN", "ACKNOWLEDGED").contains(current.status)) throw unavailable();
+      return current;
+    });
+    if ("ACKNOWLEDGED".equals(ready.status)) return acknowledged(self);
+    final Intent frozen = ready;
+    String reply = request("locale", self, frozen.body, actor);
     String verified;
     try {
       verified =
           codec.verifyMaintenanceLocaleReceipt(
-              reply, realmId, actor, codec.read(intent.body, JsonNode.class));
+              reply, realmId, actor, codec.read(frozen.body, JsonNode.class));
     } catch (RuntimeException rejected) {
       throw unavailable();
     }
-    final Intent frozen = intent;
     transaction(
         () -> {
           var current = findChecked(self, operation, digest, actor);
@@ -185,12 +194,12 @@ public final class SelfLocaleMaintenance {
 
   private Intent prepare(
       CheckedSelf self, String operation, String digest, TaskActorCredentials actor) {
-    lockedDomain(self);
+    var owner = lockedDomain(self);
     var prior = findIntent(operation);
-    if (prior != null) return checked(self, prior, digest, actor);
-    String target = codec.canonical(target(self, operation));
+    if (prior != null) return checked(self, prior, digest, actor, owner);
+    String target = codec.canonical(target(self, operation, owner));
     jdbc.update(
-        "insert into identity_account_operation_intent(operation_id,operation_kind,realm_id,realm_name,account_id,tenant_id,owner_client,owner_subject,request_digest,target_json,status,domain_applied,updated_at) values(?,'SELF_LOCALE',?,?,?,?,?,?,?,?,'PREPARED',false,?)",
+        "insert into identity_account_operation_intent(operation_id,operation_kind,realm_id,realm_name,account_id,tenant_id,owner_client,owner_subject,request_digest,target_json,source_json,status,domain_applied,updated_at) values(?,'SELF_LOCALE',?,?,?,?,?,?,?,?,?,'PREPARED',false,?)",
         operation,
         realmId,
         realmName,
@@ -200,8 +209,9 @@ public final class SelfLocaleMaintenance {
         actor.serviceSubject(),
         digest,
         target,
+        owner.source,
         java.sql.Timestamp.from(clock.instant()));
-    return checked(self, Objects.requireNonNull(findIntent(operation)), digest, actor);
+    return checked(self, Objects.requireNonNull(findIntent(operation)), digest, actor, owner);
   }
 
   private Intent applyDomainAndFreeze(
@@ -226,18 +236,18 @@ public final class SelfLocaleMaintenance {
             java.sql.Timestamp.from(clock.instant()),
             operation)
         != 1) throw unavailable();
-    return checked(self, Objects.requireNonNull(findIntent(operation)), digest, actor);
+    return findChecked(self, operation, digest, actor);
   }
 
   private Intent findChecked(
       CheckedSelf self, String operation, String digest, TaskActorCredentials actor) {
-    lockedDomain(self);
+    var owner = lockedDomain(self);
     var intent = findIntent(operation);
-    return intent == null ? null : checked(self, intent, digest, actor);
+    return intent == null ? null : checked(self, intent, digest, actor, owner);
   }
 
   private Intent checked(
-      CheckedSelf self, Intent intent, String digest, TaskActorCredentials actor) {
+      CheckedSelf self, Intent intent, String digest, TaskActorCredentials actor, LocalOwner owner) {
     if (!realmId.equals(intent.realm)
         || !realmName.equals(intent.realmName)
         || !self.account.equals(intent.account)
@@ -245,7 +255,8 @@ public final class SelfLocaleMaintenance {
         || !actor.clientId().equals(intent.ownerClient)
         || !actor.serviceSubject().equals(intent.ownerSubject)
         || !digest.equals(intent.requestDigest)
-        || !codec.canonical(target(self, intent.operation)).equals(intent.target))
+        || !owner.source.equals(intent.source)
+        || !codec.canonical(target(self, intent.operation, owner)).equals(intent.target))
       throw new ConflictException("The account operation does not match its original request");
     if (!Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED").contains(intent.status)
         || "PREPARED".equals(intent.status) && (intent.domainApplied || intent.body != null)
@@ -277,27 +288,48 @@ public final class SelfLocaleMaintenance {
         row.getString("owner_subject"),
         row.getString("request_digest"),
         row.getString("target_json"),
+        row.getString("source_json"),
         row.getString("intent_body"),
         row.getString("status"),
         row.getBoolean("domain_applied"),
         row.getString("receipt"));
   }
 
-  private void lockedDomain(CheckedSelf self) {
-    var rows =
-        jdbc.queryForList(
-            "select tenant_id,delete_date from user where user_id=? for update", self.account);
-    if (rows.isEmpty())
-      rows =
-          jdbc.queryForList(
-              "select tenant_id,delete_date from consultant where consultant_id=? for update",
-              self.account);
-    if (rows.size() != 1) throw forbidden();
-    var row = rows.get(0);
-    Object tenant = row.get("tenant_id");
-    Long actualTenant = tenant == null ? null : ((Number) tenant).longValue();
-    if (row.get("delete_date") != null || !Objects.equals(self.tenant, actualTenant))
+  /** Fixed local DATA only; native policy still checks the actual current human and profile. */
+  private LocalOwner lockedDomain(CheckedSelf self) {
+    var owner = SelfAccountOwner.inspect(jdbc, self.account, self.tenant);
+    if (owner.kind().admin() && !owner.consultant()) throw forbidden();
+    if (self.tenant != null && self.tenant == 0
+        && (owner.kind() != SelfAccountOwner.Kind.PLATFORM_ADMIN || !owner.consultant()))
       throw forbidden();
+    var source = codec.read("{}", ObjectNode.class);
+    source.put("v", 1).put("kind", owner.kind().name()).put("consultant", owner.consultant());
+    if (self.tenant == null) source.putNull("tenantId");
+    else source.put("tenantId", self.tenant);
+    source.put("primaryCreateDate", birth(owner.kind(), self.account));
+    if (owner.consultant())
+      source.put("consultantCreateDate", birth(SelfAccountOwner.Kind.CONSULTANT, self.account));
+    else source.putNull("consultantCreateDate");
+    return new LocalOwner(owner, codec.canonical(source));
+  }
+
+  private String birth(SelfAccountOwner.Kind kind, String account) {
+    String sql = switch (kind) {
+      case USER -> "select create_date from user where user_id=? for update";
+      case CONSULTANT -> "select create_date from consultant where consultant_id=? for update";
+      case AGENCY_ADMIN, TENANT_ADMIN, PLATFORM_ADMIN ->
+          "select create_date from admin where admin_id=? for update";
+    };
+    var date = jdbc.queryForObject(sql, java.sql.Timestamp.class, account);
+    if (date == null) throw forbidden();
+    return date.toLocalDateTime().toString();
+  }
+
+  private record LocalOwner(SelfAccountOwner.Owner identity, String source) {
+    @Override
+    public String toString() {
+      return "LocaleOwner[redacted]";
+    }
   }
 
   private CheckedSelf actualSelf() {
@@ -328,7 +360,7 @@ public final class SelfLocaleMaintenance {
     Object tenant = jwt.getClaims().get("tenantId");
     Long actualTenant;
     if (tenant == null && !jwt.getClaims().containsKey("tenantId")) actualTenant = null;
-    else if (tenant instanceof String value && value.matches("[1-9][0-9]{0,18}")) {
+    else if (tenant instanceof String value && value.matches("0|[1-9][0-9]{0,18}")) {
       try {
         actualTenant = Long.valueOf(value);
       } catch (NumberFormatException invalid) {
@@ -362,7 +394,7 @@ public final class SelfLocaleMaintenance {
     }
   }
 
-  private ObjectNode target(CheckedSelf self, String operation) {
+  private ObjectNode target(CheckedSelf self, String operation, LocalOwner owner) {
     var target = codec.read("{}", ObjectNode.class);
     target.put("accountId", self.account);
     if (self.tenant == null) target.putNull("tenantId");
@@ -373,7 +405,9 @@ public final class SelfLocaleMaintenance {
     origin.put("humanSubject", self.account);
     origin.put("humanIssuer", self.issuer);
     origin.put("humanClient", self.client);
-    origin.putNull("humanAuthority");
+    if (owner.identity.kind().protectedTarget())
+      origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
+    else origin.putNull("humanAuthority");
     return target;
   }
 
@@ -463,7 +497,13 @@ public final class SelfLocaleMaintenance {
     var transaction = new TransactionTemplate(transactions);
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     transaction.setTimeout(15);
-    return transaction.execute(status -> operation.get());
+    return transaction.execute(status -> {
+      if (!TransactionSynchronizationManager.isActualTransactionActive()
+          || jdbc.getDataSource() == null
+          || !TransactionSynchronizationManager.hasResource(jdbc.getDataSource())
+          || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) throw unavailable();
+      return operation.get();
+    });
   }
 
   private static Optional<Map<String, Object>> acknowledged(CheckedSelf self) {
@@ -471,7 +511,7 @@ public final class SelfLocaleMaintenance {
   }
 
   private static ForbiddenException forbidden() {
-    return new ForbiddenException("Current ordinary self account is required");
+    return new ForbiddenException("Current self account with language data is required");
   }
 
   private static ServiceUnavailableException unavailable() {
@@ -501,6 +541,7 @@ public final class SelfLocaleMaintenance {
       String ownerSubject,
       String requestDigest,
       String target,
+      String source,
       String body,
       String status,
       boolean domainApplied,
