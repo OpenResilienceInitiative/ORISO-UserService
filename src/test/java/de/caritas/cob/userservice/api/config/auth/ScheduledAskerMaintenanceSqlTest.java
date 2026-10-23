@@ -10,30 +10,18 @@ import com.fasterxml.jackson.databind.JsonNode;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
+import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
-import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
-import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimWriter;
-import jakarta.persistence.EntityManager;
-import javax.sql.DataSource;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
-import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
-import org.springframework.test.context.TestPropertySource;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimWriter;
+import jakarta.persistence.EntityManager;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,22 +29,39 @@ import java.time.*;
 import java.util.*;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.RestTemplate;
 
 /** Same five fairness/receipt oracles with the real JPA owner prerequisites. */
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({JpaAuditingConfiguration.class, ScheduledTaskClaimWriter.class, ScheduledTaskClaimService.class, ScheduledAskerMaintenanceSqlTest.TimeConfiguration.class})
+@Import({
+  JpaAuditingConfiguration.class,
+  ScheduledTaskClaimWriter.class,
+  ScheduledTaskClaimService.class,
+  ScheduledAskerMaintenanceSqlTest.TimeConfiguration.class
+})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ScheduledAskerMaintenanceSqlTest {
   @Autowired private DataSource dataSource;
@@ -68,10 +73,13 @@ class ScheduledAskerMaintenanceSqlTest {
 
   @TestConfiguration(proxyBeanMethods = false)
   static class TimeConfiguration {
-    @Bean Clock clock() {
-      return Clock.fixed(Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS), ZoneOffset.UTC);
+    @Bean
+    Clock clock() {
+      return Clock.fixed(
+          Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS), ZoneOffset.UTC);
     }
   }
+
   private static final String FIRST = "00000000-0000-4000-8000-000000000001";
   private static final String SECOND = "00000000-0000-4000-8000-000000000002";
   private static final String SUBJECT = "091b8cef-09a8-4e5b-a244-6be3db4b7bee";
@@ -131,7 +139,9 @@ class ScheduledAskerMaintenanceSqlTest {
       f.server.reset();
       f.server
           .expect(requestTo(f.url(FIRST, "delete")))
-          .andExpect(content().string(f.codec.canonical(f.codec.read(frozen, JsonNode.class).path("body"))))
+          .andExpect(
+              content()
+                  .string(f.codec.canonical(f.codec.read(frozen, JsonNode.class).path("body"))))
           .andRespond(request -> f.reply((MockClientHttpRequest) request));
       assertDoesNotThrow(() -> f.scheduler().performDeletionWorkflow());
       assertEquals("ACKNOWLEDGED", f.status(FIRST));
@@ -236,38 +246,46 @@ class ScheduledAskerMaintenanceSqlTest {
                         "src/main/resources/db/changelog/changeset/" + migration + "/migrate.sql"))
                 .split(";")) if (!sql.isBlank()) jdbc.execute(sql);
       }
-
     }
 
     ScheduledAskerMaintenance scheduler() {
-      var owner = new ScheduledAskerMaintenance(
-          jdbc,
-          transactions,
-          claims,
-          clock,
-          new DeletionLifecycleService(),
-          actors,
-          broker,
-          codec,
-          http,
-          "https://identity.example.test",
-          "synthetic",
-          "synthetic-realm");
+      var owner =
+          new ScheduledAskerMaintenance(
+              jdbc,
+              transactions,
+              claims,
+              clock,
+              new DeletionLifecycleService(),
+              actors,
+              broker,
+              codec,
+              http,
+              "https://identity.example.test",
+              "synthetic",
+              "synthetic-realm");
       owner.configureJpaCleanupOwner(entities);
-      owner.configureAcknowledgedCleanup(frame -> {
-        frame.requireCurrent();
-        assertTrue(frame.hasLocalUser());
-        frame.runOwnedLocal(() -> {
-          assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-          var actual = users.findById(frame.accountId()).orElseThrow();
-          frame.requireCurrentUser(actual);
-        });
-      });
+      owner.configureAcknowledgedCleanup(
+          frame -> {
+            frame.requireCurrent();
+            assertTrue(frame.hasLocalUser());
+            frame.runOwnedLocal(
+                () -> {
+                  assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+                  var actual = users.findById(frame.accountId()).orElseThrow();
+                  frame.requireCurrentUser(actual);
+                });
+          });
       return owner;
     }
 
     void user(String account) {
-      var user = new User(account, null, new UsernameTranscoder().encodeUsername("synthetic-" + account), "synthetic@fixture.invalid", false);
+      var user =
+          new User(
+              account,
+              null,
+              new UsernameTranscoder().encodeUsername("synthetic-" + account),
+              "synthetic@fixture.invalid",
+              false);
       user.setTenantId(7L);
       user.setDeleteDate(DELETION);
       user.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);

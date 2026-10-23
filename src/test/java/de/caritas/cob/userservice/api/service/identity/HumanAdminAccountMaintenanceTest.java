@@ -994,12 +994,16 @@ class HumanAdminAccountMaintenanceTest {
     if (successfulReplay)
       server
           .expect(requestTo(URL + "/" + command))
-          .andExpect(r -> {
-            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
-            assertEquals(frozen.get(), ((MockClientHttpRequest) r).getBodyAsString());
-            authorityChecks.incrementAndGet();
-          })
-          .andRespond(profileReceipt(command, roleEdit ? "/human-roles/test-consultant-chat" : null, null));
+          .andExpect(
+              r -> {
+                assertFalse(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive());
+                assertEquals(frozen.get(), ((MockClientHttpRequest) r).getBodyAsString());
+                authorityChecks.incrementAndGet();
+              })
+          .andRespond(
+              profileReceipt(command, roleEdit ? "/human-roles/test-consultant-chat" : null, null));
     if (revokedReplay)
       server
           .expect(requestTo(URL + "/" + command))
