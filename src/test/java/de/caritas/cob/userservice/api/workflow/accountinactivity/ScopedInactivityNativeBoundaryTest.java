@@ -318,7 +318,7 @@ class ScopedInactivityNativeBoundaryTest {
     f.read(false);
     f.mutate("deactivate", false, false);
     f.read(true);
-    f.mutate("reactivate", false, false);
+    f.mutate("reactivate", true, false);
     f.service.scan(false);
     var attempts = new java.util.concurrent.atomic.AtomicInteger();
     var started = new java.util.concurrent.atomic.AtomicReference<String>();

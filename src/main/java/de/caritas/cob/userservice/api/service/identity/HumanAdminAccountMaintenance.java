@@ -38,6 +38,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 public final class HumanAdminAccountMaintenance {
   private final IdentityClientConfig mode;
   private ReviewedOrdinaryGroups reviewedGroups = new ReviewedOrdinaryGroups(java.util.Map.of());
+  private java.util.Map<String, List<Set<String>>> reviewedSelfProfiles = java.util.Map.of();
   private final AuthenticatedUser actor;
   private final AdminScope scope;
   private final JdbcTemplate jdbc;
@@ -58,7 +59,24 @@ public final class HumanAdminAccountMaintenance {
 
   /** Data-only installed profile projection. Receiving authority remains independent. */
   public void configureReviewedSelfProfileRoles(java.util.Map<String, List<Set<String>>> profiles) {
-    // Closed test-first wiring seam; exact current SQL/native coherence is not enabled yet.
+    Objects.requireNonNull(profiles);
+    var kinds = Set.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN");
+    if (!kinds.containsAll(profiles.keySet())) throw new IllegalArgumentException("Unknown SELF SQL kind");
+    var immutable = new java.util.TreeMap<String, List<Set<String>>>();
+    profiles.forEach((kind, configured) -> {
+      if (configured == null || configured.size() > 20) throw new IllegalArgumentException("Invalid SELF profile catalog");
+      var copies = new java.util.ArrayList<Set<String>>();
+      for (Set<String> roles : configured) {
+        if (roles == null || roles.isEmpty() || roles.size() > 32
+            || roles.stream().anyMatch(role -> role == null || !role.matches("[a-z][a-z0-9-]{0,63}")))
+          throw new IllegalArgumentException("Invalid SELF full role set");
+        var copy = Set.copyOf(roles);
+        if (copies.contains(copy)) throw new IllegalArgumentException("Duplicate SELF full role set");
+        copies.add(copy);
+      }
+      immutable.put(kind, List.copyOf(copies));
+    });
+    reviewedSelfProfiles = java.util.Map.copyOf(immutable);
   }
 
   /** Root supplies only the already validated immutable lifecycle group map. */
@@ -144,10 +162,12 @@ public final class HumanAdminAccountMaintenance {
     Objects.requireNonNull(edit);
     requireOutsideSql();
     if (!edit.selfService()
+        || !actor.isConsultant()
         || !"PUT".equals(request.getMethod())
         || !Set.of("/users/data", "/service/users/data").contains(request.getRequestURI())
         || !currentHuman().subject.equals(edit.accountId())) throw forbidden();
-    authorizedRow(edit.accountId(), false, true);
+    var owner = authorizedRow(edit.accountId(), false, true);
+    if (reviewedSelfProfiles.getOrDefault(selfKind(owner), List.of()).isEmpty()) throw forbidden();
     edit.requireSelfInput();
     return (de.caritas.cob.userservice.api.model.Consultant)
         updateProfile(edit.accountId(), edit.profile(), edit, true);
@@ -259,7 +279,7 @@ public final class HumanAdminAccountMaintenance {
       }
       if ("PREPARED".equals(intent.status)) {
         var state = initialRoleState == null ? transport.read(checked) : initialRoleState;
-        requireProjection(current, state);
+        requireProjection(checked, state);
         if (checked.role != null
             && !java.util.Set.copyOf(checked.role.original())
                 .equals(java.util.Set.copyOf(state.effectiveRoles()))) throw conflict();
@@ -343,7 +363,7 @@ public final class HumanAdminAccountMaintenance {
       // Confirm that the actual native fields still describe this acknowledged request.
       transport.verifyProfileReceipt(checked, frozen, receipt);
       var currentNative = transport.read(checked);
-      requireProjection(checked.actual, currentNative);
+      requireProjection(checked, currentNative);
       if (checked.role != null
           && !java.util.Set.copyOf(checked.role.desired())
               .equals(java.util.Set.copyOf(currentNative.effectiveRoles()))) throw conflict();
@@ -930,6 +950,26 @@ public final class HumanAdminAccountMaintenance {
         || !row.account.equals(projection.id())
         || !Objects.equals(row.tenant, projection.tenantId())
         || !decodedUsername(row.username).equals(projection.username())) throw unavailable();
+  }
+
+  private void requireProjection(CheckedAccount checked, HumanAdminMaintenanceTransport.Projection projection) {
+    requireProjection(checked.actual, projection);
+    if (!checked.self) return;
+    var roles = projection.effectiveRoles();
+    if (roles == null || roles.isEmpty() || Set.copyOf(roles).size() != roles.size()
+        || !roles.contains("consultant")
+        || !reviewedSelfProfiles.getOrDefault(selfKind(checked.actual), List.of()).contains(Set.copyOf(roles)))
+      throw forbidden();
+  }
+
+  private static String selfKind(AdminRow row) {
+    return switch (row.type) {
+      case "CONSULTANT" -> "CONSULTANT";
+      case "AGENCY" -> "AGENCY_ADMIN";
+      case "TENANT" -> "TENANT_ADMIN";
+      case "SUPER" -> "PLATFORM_ADMIN";
+      default -> throw forbidden();
+    };
   }
 
   private static void validateProfile(AdminRow row, IdentityProfileUpdate profile) {
