@@ -51,6 +51,12 @@ public class DeleteUserAccountService {
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull UserHardDeleteClaimService userHardDeleteClaimService;
 
+  /** Continues only an acknowledgement issued by the held scheduled-deletion owner. */
+  public void continueAcknowledgedDeletion(
+      ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
   /** Deletes all user accounts marked as deleted in database. */
   public void deleteUserAccounts() {
     var workflowErrors = deleteAskersAndCollectPossibleErrors();

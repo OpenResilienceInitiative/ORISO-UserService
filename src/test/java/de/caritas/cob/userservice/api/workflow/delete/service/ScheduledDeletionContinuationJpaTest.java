@@ -12,7 +12,10 @@ import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.config.auth.*;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.model.DraftMessage;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityTombstoneRepository;
+import de.caritas.cob.userservice.api.port.out.DraftMessageRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.AcknowledgedDeletion;
@@ -106,6 +109,8 @@ class ScheduledDeletionContinuationJpaTest {
           "avatar_id");
   @Autowired private DataSource dataSource;
   @Autowired private UserRepository users;
+  @Autowired private IdentityTombstoneRepository tombstones;
+  @Autowired private DraftMessageRepository drafts;
   @Autowired private PlatformTransactionManager transactions;
   @Autowired private EntityManager entities;
   @Autowired private ScheduledTaskClaimService claims;
@@ -140,6 +145,7 @@ class ScheduledDeletionContinuationJpaTest {
                 "db/changelog/changeset/20261022_identity_maintenance_retry_367/migrate.sql"))
         .execute(dataSource);
     jdbc.update("delete from scheduled_task_claim where task_name='account-deletion'");
+    drafts.deleteByUserId(ACCOUNT);
     users.findById(ACCOUNT).ifPresent(users::delete);
     var user =
         new User(
@@ -157,6 +163,9 @@ class ScheduledDeletionContinuationJpaTest {
     user.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
     user.setDeletionReadOnlyUntil(now.minusDays(1));
     users.save(user);
+    drafts.save(DraftMessage.builder().userId(ACCOUNT).scopeKey("owned-draft")
+        .text("fixture unencrypted counselling draft").createDate(now).updateDate(now)
+        .tenantId(7L).build());
     assertNotNull(
         jdbc.queryForObject(
             "select create_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT));
@@ -555,6 +564,161 @@ class ScheduledDeletionContinuationJpaTest {
     assertEquals(0, localEffects.get());
     assertEquals("ACKNOWLEDGED", status());
     assertEquals(1, nativeCalls.get());
+  }
+
+  @Test
+  void acknowledgedOwnerContinuesAllNineActualActionsAndFinalJpaDeleteUnderHeldTenant() {
+    try (var actions = actions()) {
+      TenantContext.setCurrentTenant(99L);
+      TenantContext.setCurrentSubdomain("original-caller");
+      var caller = TenantContext.getCurrentTenantData();
+      owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      actions.assertAllNineActionBoundaries();
+      assertEquals(0, jdbc.queryForObject("select count(*) from user where user_id=?", Integer.class, ACCOUNT));
+      assertEquals("APPLIED", status());
+      assertEquals(0, draftCount());
+      assertTrue(jdbc.queryForObject("select count(*) from identity_tombstone where subject_id=? and tenant_id=7", Integer.class, ACCOUNT) > 0);
+      assertSame(caller, TenantContext.getCurrentTenantData());
+      assertEquals(99L, TenantContext.getCurrentTenant());
+      assertEquals("original-caller", TenantContext.getCurrentTenantData().getSubdomain());
+      assertEquals(1, nativeCalls.get());
+      assertEquals(1, nativeEffects.get());
+      actions.events.clear();
+      owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      assertEquals(List.of(), actions.events, "Applied absence must not repeat remote cleanup");
+      assertEquals(1, nativeCalls.get());
+      verifyNoInteractions(actions.forbiddenNative);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void draftContentFailureRetainsOriginalUserAndColdRestartCompletesWithoutNativeReinvoke() {
+    try (var actions = actions()) {
+      actions.failDrafts = true;
+      owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      assertTrue(actions.events.contains("drafts.deleteByUserId"));
+      assertEquals(1, draftCount());
+      assertFalse(actions.events.contains("finalUserDelete"));
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals("ACKNOWLEDGED", status());
+      assertEquals(1, nativeCalls.get());
+    }
+    try (var restarted = actions()) {
+      owner(true, restarted.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      restarted.assertAllNineActionBoundaries();
+      assertTrue(users.findById(ACCOUNT).isEmpty());
+      assertEquals("APPLIED", status());
+      assertEquals(0, draftCount());
+      assertEquals(1, nativeCalls.get());
+      assertEquals(1, nativeEffects.get());
+    }
+  }
+
+  @Test
+  void membershipFailureRetainsRealUserAndNativeAckForRetry() {
+    try (var actions = actions()) {
+      actions.failMemberships = true;
+      owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      assertTrue(actions.events.contains("memberships.findByUser"));
+      assertFalse(actions.events.contains("finalUserDelete"));
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals(0, draftCount(), "Earlier draft cleanup must commit while the real User remains retryable");
+      assertEquals("ACKNOWLEDGED", status());
+      actions.failMemberships = false;
+      actions.events.clear();
+      owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      assertTrue(actions.events.contains("finalUserDelete"));
+      assertTrue(users.findById(ACCOUNT).isEmpty());
+      assertEquals("APPLIED", status());
+      assertEquals(1, nativeCalls.get());
+      verifyNoInteractions(actions.forbiddenNative);
+    }
+  }
+
+  @Test
+  void leaseReplacementAfterFirstMatrixRoomStopsNextRpcAndAllLaterActions() {
+    try (var actions = actions()) {
+      actions.afterExternal = ignored -> jdbc.update(
+          "update scheduled_task_claim set claimed_until=dateadd('SECOND',1,claimed_until) where task_name='account-deletion'");
+      owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      assertEquals(1, actions.events.stream().filter(event -> event.startsWith("purgeRoom:")).count());
+      assertFalse(actions.events.stream().anyMatch(event -> event.startsWith("deactivateUser:")));
+      assertFalse(actions.events.contains("sessions.delete"));
+      assertFalse(actions.events.contains("appointment"));
+      assertFalse(actions.events.contains("finalUserDelete"));
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals(1, jdbc.queryForObject(
+          "select count(*) from scheduled_task_claim where task_name='account-deletion'", Integer.class));
+      assertEquals("ACKNOWLEDGED", status());
+      verifyNoInteractions(actions.forbiddenNative);
+    }
+  }
+
+  @Test
+  void changedActualMatrixOwnershipAfterFirstRpcStopsNextRoomAndSqlCleanup() {
+    try (var actions = actions()) {
+      actions.afterExternal = ignored -> jdbc.update(
+          "update user set matrix_user_id=? where user_id=?", "@replacement:fixture.invalid", ACCOUNT);
+      owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      assertEquals(1, actions.events.stream().filter(event -> event.startsWith("purgeRoom:")).count());
+      assertFalse(actions.events.contains("sessions.delete"));
+      assertFalse(actions.events.contains("finalUserDelete"));
+      assertEquals("@replacement:fixture.invalid", users.findById(ACCOUNT).orElseThrow().getMatrixUserId());
+      assertEquals("ACKNOWLEDGED", status());
+      verifyNoInteractions(actions.forbiddenNative);
+    }
+  }
+
+  @Test
+  void unknownNativeReplyCannotReachAnyConcreteDownstreamAction() {
+    loseReply = true;
+    try (var actions = actions()) {
+      owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      assertEquals(List.of(), actions.events);
+      assertEquals("FROZEN", status());
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals(1, nativeEffects.get());
+      owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      actions.assertAllNineActionBoundaries();
+      assertEquals("APPLIED", status());
+      assertEquals(1, nativeEffects.get());
+      verifyNoInteractions(actions.forbiddenNative);
+    }
+  }
+
+  @Test
+  void savedNativeAckCannotRunConcreteActionsForRecreatedSqlIncarnation() {
+    owner(true, frame -> { throw new IllegalStateException("fixture keeps original ACK pending"); })
+        .performDeletionWorkflow();
+    assertEquals("ACKNOWLEDGED", status());
+    jdbc.update("update user set create_date=dateadd('DAY',1,create_date) where user_id=?", ACCOUNT);
+    try (var actions = actions()) {
+      owner(true, actions.service::continueAcknowledgedDeletion).performDeletionWorkflow();
+      assertEquals(List.of(), actions.events);
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals(1, nativeCalls.get());
+      verifyNoInteractions(actions.forbiddenNative);
+    }
+  }
+
+  @Test
+  void absentPrivateFrameRefusesConcreteContinuationWithoutAnyAction() {
+    try (var actions = actions()) {
+      assertThrows(RuntimeException.class, () -> actions.service.continueAcknowledgedDeletion(null));
+      assertEquals(List.of(), actions.events);
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      verifyNoInteractions(actions.forbiddenNative);
+    }
+  }
+
+  private AcknowledgedAskerActionsFixture actions() {
+    return new AcknowledgedAskerActionsFixture(ACCOUNT, users, tombstones, drafts, transactions, entities);
+  }
+
+  private int draftCount() {
+    return jdbc.queryForObject("select count(*) from draft_message where user_id=?", Integer.class, ACCOUNT);
   }
 
   private ScheduledAskerMaintenance owner(
