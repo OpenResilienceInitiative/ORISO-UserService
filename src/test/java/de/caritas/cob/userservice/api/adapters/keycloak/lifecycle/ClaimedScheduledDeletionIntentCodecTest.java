@@ -156,16 +156,21 @@ class ClaimedScheduledDeletionIntentCodecTest {
     assertNotEquals(digest, codec.claimedScheduledDeletionIntentDigest(changed));
     var missing = prepared.deepCopy();
     missing.remove("body");
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(missing));
+    assertThrows(
+        IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(missing));
     var invalid = prepared.deepCopy();
     invalid.putObject("body");
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(invalid));
+    assertThrows(
+        IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(invalid));
     var foreign = prepared.deepCopy();
     foreign.put("representation", "CLAIMED_INACTIVITY_DELETE_V1");
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(foreign));
+    assertThrows(
+        IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(foreign));
     var noOriginal = prepared.deepCopy();
     noOriginal.putNull("originalSql");
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledDeletionIntentDigest(noOriginal));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.claimedScheduledDeletionIntentDigest(noOriginal));
   }
 
   private ObjectNode inactivityEnvelope(boolean local) throws Exception {

@@ -565,7 +565,8 @@ class ScheduledDeletionContinuationJpaTest {
   @Test
   void firstReadLossDurablyRetainsOriginalUserBeforeAnyNativeSnapshotAndColdRestartReusesIt() {
     loseReadReply = true;
-    owner(true, frame -> fail("Unknown native read cannot issue cleanup")).performDeletionWorkflow();
+    owner(true, frame -> fail("Unknown native read cannot issue cleanup"))
+        .performDeletionWorkflow();
     assertEquals("PREPARED", status());
     assertEquals(1, nativeReads.get());
     assertEquals(0, nativeCalls.get());
@@ -573,20 +574,30 @@ class ScheduledDeletionContinuationJpaTest {
     String operation = intentValue("operation_id"), before = intentValue("frozen_body");
     assertNotNull(before, "The original SQL incarnation must commit before the first native read");
     var prepared = codec.read(before, com.fasterxml.jackson.databind.node.ObjectNode.class);
-    assertEquals(Set.of("representation", "originalSql", "body", "bindingDigest"), fields(prepared));
+    assertEquals(
+        Set.of("representation", "originalSql", "body", "bindingDigest"), fields(prepared));
     assertTrue(prepared.path("body").isNull());
     assertEquals(USER_FIELDS, fields(prepared.path("originalSql")));
-    assertEquals("HARD_DELETE_IN_PROGRESS", prepared.path("originalSql").path("deletion_lifecycle_state").textValue());
+    assertEquals(
+        "HARD_DELETE_IN_PROGRESS",
+        prepared.path("originalSql").path("deletion_lifecycle_state").textValue());
     String binding = prepared.remove("bindingDigest").textValue();
-    assertEquals(HexFormat.of().formatHex(hmac("claimed-scheduled-deletion-intent/v1\n" + codec.canonical(prepared))), binding);
+    assertEquals(
+        HexFormat.of()
+            .formatHex(hmac("claimed-scheduled-deletion-intent/v1\n" + codec.canonical(prepared))),
+        binding);
     var original = prepared.path("originalSql").deepCopy();
-    owner(true, frame -> {
-      inspectActualPrivateFrame(frame);
-      assertTrue(frame.completeOwnedLocalDeletion(() -> users.deleteById(ACCOUNT)));
-    }).performDeletionWorkflow();
+    owner(
+            true,
+            frame -> {
+              inspectActualPrivateFrame(frame);
+              assertTrue(frame.completeOwnedLocalDeletion(() -> users.deleteById(ACCOUNT)));
+            })
+        .performDeletionWorkflow();
     assertEquals("APPLIED", status());
     assertEquals(operation, intentValue("operation_id"));
-    assertEquals(original, codec.read(intentValue("frozen_body"), JsonNode.class).path("originalSql"));
+    assertEquals(
+        original, codec.read(intentValue("frozen_body"), JsonNode.class).path("originalSql"));
     assertEquals(2, nativeReads.get());
     assertEquals(1, nativeEffects.get());
     assertEquals(1, callbacks.get());
@@ -595,7 +606,8 @@ class ScheduledDeletionContinuationJpaTest {
   @Test
   void lostFirstReadNeverRecapturesARecreatedUserWithSameUuidAndDeletionDate() {
     loseReadReply = true;
-    owner(true, frame -> fail("Unknown native read cannot issue cleanup")).performDeletionWorkflow();
+    owner(true, frame -> fail("Unknown native read cannot issue cleanup"))
+        .performDeletionWorkflow();
     assertEquals("PREPARED", status());
     assertEquals(1, nativeReads.get());
     String operation = intentValue("operation_id"), envelope = intentValue("frozen_body");
@@ -603,7 +615,13 @@ class ScheduledDeletionContinuationJpaTest {
     var deletionStarted = original.getDeleteDate();
     var originalBirth = original.getCreateDate();
     users.delete(original);
-    var replacement = new User(ACCOUNT, null, new UsernameTranscoder().encodeUsername("owned-cleanup"), "replacement@fixture.invalid", false);
+    var replacement =
+        new User(
+            ACCOUNT,
+            null,
+            new UsernameTranscoder().encodeUsername("owned-cleanup"),
+            "replacement@fixture.invalid",
+            false);
     replacement.setTenantId(7L);
     replacement.setDeleteDate(deletionStarted);
     replacement.setCreateDate(originalBirth.plusDays(1));
@@ -613,8 +631,10 @@ class ScheduledDeletionContinuationJpaTest {
     replacement.setEncourage2fa(false);
     replacement.setMatrixUserId("@replacement:fixture.invalid");
     users.save(replacement);
-    owner(true, frame -> fail("A recreated SQL incarnation cannot adopt an unknown first read")).performDeletionWorkflow();
-    assertEquals(1, nativeReads.get(), "Refuse before ANY second native read, not after remote effects");
+    owner(true, frame -> fail("A recreated SQL incarnation cannot adopt an unknown first read"))
+        .performDeletionWorkflow();
+    assertEquals(
+        1, nativeReads.get(), "Refuse before ANY second native read, not after remote effects");
     assertEquals(0, nativeCalls.get());
     assertEquals(0, nativeEffects.get());
     assertEquals(0, callbacks.get());
@@ -626,12 +646,15 @@ class ScheduledDeletionContinuationJpaTest {
   @Test
   void historicalNullPreparedSourceStaysHeldInsteadOfBackfillingFromCurrentUser() {
     loseReadReply = true;
-    owner(true, frame -> fail("Unknown native read cannot issue cleanup")).performDeletionWorkflow();
+    owner(true, frame -> fail("Unknown native read cannot issue cleanup"))
+        .performDeletionWorkflow();
     assertEquals("PREPARED", status());
     assertEquals(1, nativeReads.get());
     String operation = intentValue("operation_id");
-    jdbc.update("update identity_maintenance_intent set frozen_body=null where operation_id=?", operation);
-    owner(true, frame -> fail("Historical absent custody cannot issue cleanup")).performDeletionWorkflow();
+    jdbc.update(
+        "update identity_maintenance_intent set frozen_body=null where operation_id=?", operation);
+    owner(true, frame -> fail("Historical absent custody cannot issue cleanup"))
+        .performDeletionWorkflow();
     assertEquals(1, nativeReads.get());
     assertEquals(0, nativeEffects.get());
     assertEquals(0, callbacks.get());
@@ -641,7 +664,10 @@ class ScheduledDeletionContinuationJpaTest {
   }
 
   private String intentValue(String column) {
-    return jdbc.queryForObject("select " + column + " from identity_maintenance_intent where subject_id=?", String.class, ACCOUNT);
+    return jdbc.queryForObject(
+        "select " + column + " from identity_maintenance_intent where subject_id=?",
+        String.class,
+        ACCOUNT);
   }
 
   private ScheduledAskerMaintenance owner(
