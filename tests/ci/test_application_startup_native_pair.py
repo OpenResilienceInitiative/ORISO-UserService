@@ -13,7 +13,7 @@ spec.loader.exec_module(proof)
 
 class ApplicationStartupPairControls(unittest.TestCase):
     def witness(self, state):
-        return {'state': state, 'observedBeans': [], 'failureTypes': [],
+        return {'state': state, 'observedBeans': [], 'failureTypes': ['BeanCreationException', 'IllegalStateException'] if state == 'FENCED' else [],
                 **{key: True for key in proof.COMMON_FLAGS},
                 **{key: state == 'OPEN' for key in proof.OPEN_FLAGS},
                 'exactFence': state == 'FENCED'}
@@ -59,6 +59,22 @@ class ApplicationStartupPairControls(unittest.TestCase):
             self.assertFalse(proof.sanitize(reports, output)['accepted'])
             for word in ['Bearer', 'secret', 'password', 'OTP123']:
                 self.assertNotIn(word, output.read_text())
+
+    def test_sql_input_capsule_exports_only_fixed_resource_number_and_vendor_code(self):
+        raw = b'Failed to execute SQL script statement #17 of URL [file:/private/runner/application-startup-native-journals.sql]: secret password Bearer otp123 [42101-240]'
+        value = proof.safe_child_input(raw)
+        self.assertEqual({'resource': 'C_JOURNAL_FIXTURE', 'statement': 17, 'vendorErrorCodes': [42101]}, value)
+        exported = json.dumps(value)
+        for secret in ['private', 'password', 'Bearer', 'otp123', 'runner']:
+            self.assertNotIn(secret, exported)
+        self.assertEqual({}, proof.safe_child_input(b'password=secret unknown resource and payload'))
+        self.assertEqual({}, proof.safe_child_input(b'Failed to execute SQL script statement #2 of URL [file:/unknown/secret.sql]'))
+
+    def test_fenced_witness_requires_actual_closed_cause_chain(self):
+        value = self.witness('FENCED'); value['failureTypes'] = []
+        self.assertFalse(proof.checked_witness(value, 'FENCED'))
+        value['failureTypes'] = ['BeanCreationException', 'OTHER', 'IllegalStateException']
+        self.assertFalse(proof.checked_witness(value, 'FENCED'))
 
     def test_h2_fixture_reads_only_actual_master_sql_and_preserves_new_custody_column(self):
         with tempfile.TemporaryDirectory() as folder:

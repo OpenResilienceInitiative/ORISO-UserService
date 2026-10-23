@@ -62,6 +62,22 @@ base = importlib.util.module_from_spec(base_spec)
 base_spec.loader.exec_module(base)
 
 
+def safe_child_input(raw):
+    # Read captured child text only in memory; never export SQL, exception text, paths or values.
+    text = raw.decode('utf-8', errors='replace')
+    resources = {'database/UserServiceDatabase.sql': 'USER_FIXTURE',
+        'database/AccountInactivityDatabase.sql': 'INACTIVITY_FIXTURE',
+        'application-startup-native-journals.sql': 'C_JOURNAL_FIXTURE'}
+    matches = []
+    for number, location in re.findall(r'statement #([1-9][0-9]{0,4}) of (?:URL|class path resource) \[([^\]]+)\]', text):
+        for name, kind in resources.items():
+            if location.endswith(name): matches.append((kind, int(number)))
+    if not matches or len(set(matches)) != 1: return {}
+    kind, number = matches[0]
+    codes = sorted({int(value) for value in re.findall(r'\[([0-9]{4,6})-[0-9]{3}\]', text)})
+    return {'resource': kind, 'statement': number, 'vendorErrorCodes': codes[:10]}
+
+
 def checked_witness(value, state):
     flags = COMMON_FLAGS | OPEN_FLAGS | {'exactFence'}
     if (state not in {'FENCED', 'OPEN'} or not isinstance(value, dict)
@@ -76,7 +92,10 @@ def checked_witness(value, state):
     return (all(value[key] for key in COMMON_FLAGS)
             and value['exactFence'] == (state == 'FENCED')
             and all(value[key] == (state == 'OPEN') for key in OPEN_FLAGS)
-            and (state != 'OPEN' or not value['failureTypes']))
+            and (state != 'OPEN' or not value['failureTypes'])
+            and (state != 'FENCED' or (len(value['failureTypes']) >= 2
+                and value['failureTypes'][-1] == 'IllegalStateException'
+                and all(kind in {'BeanCreationException', 'UnsatisfiedDependencyException', 'IllegalStateException'} for kind in value['failureTypes']))))
 
 
 def sanitize(reports, output):
@@ -269,7 +288,8 @@ def native(kc, report):
             '-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2'],
             cwd=ROOT, env=environment, capture_output=True, timeout=180)
         inventory = sanitize(reports, report.with_suffix('.xml')); receipt.update(inventory)
-        receipt['executed'] = inventory['tests']; receipt['child_exit'] = child.returncode; child = None
+        receipt['executed'] = inventory['tests']; receipt['child_exit'] = child.returncode
+        receipt['sql_input'] = safe_child_input(child.stdout + b'\n' + child.stderr); child = None
         witness_file = report.with_name('application-startup-native-witness.json')
         witness = json.loads(witness_file.read_text()) if witness_file.exists() else {}
         try: receipt['java_witness_complete'] = checked_witness(witness, state)
@@ -277,7 +297,10 @@ def native(kc, report):
             if witness_file.exists(): base.save(witness_file, {'witnessSchemaRejected': True})
             raise
         require_active('after-full-user-startup')
-        receipt['native_accounts_unchanged'] = original_accounts == native_accounts()
+        receipt['native_account_count_before'] = len(original_accounts)
+        after_accounts = native_accounts()
+        receipt['native_account_count_after'] = len(after_accounts)
+        receipt['native_accounts_unchanged'] = original_accounts == after_accounts
         receipt['native_admin_events_unchanged'] = original_events == fixture.admin('GET', '/admin-events?max=500')
         receipt['installer_identity_checks'] = ProtectedOperationRead.observation.get('installerIdentityChecks', [])
         receipt['native_startup_telemetry'] = {

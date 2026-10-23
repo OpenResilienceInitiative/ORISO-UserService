@@ -93,7 +93,7 @@ class UserServiceStartupNativePairProof {
             witness.put("actualApplication", prepared instanceof ConfigurableWebApplicationContext);
             witness.put(
                 "testingProfile",
-                Arrays.asList(prepared.getEnvironment().getActiveProfiles()).contains("testing"));
+                Arrays.asList(prepared.getEnvironment().getActiveProfiles()).equals(List.of("testing")));
             var environment = prepared.getEnvironment();
             var clients = new HashSet<String>();
             var secrets = new HashSet<String>();
@@ -141,6 +141,7 @@ class UserServiceStartupNativePairProof {
         var started =
             application.run(
                 "--server.port=0",
+                "--spring.profiles.active=testing",
                 "--spring.sql.init.data-locations=classpath:database/UserServiceDatabase.sql,classpath:database/AccountInactivityDatabase.sql,file:"
                     + required("STARTUP_JOURNAL_FIXTURE"));
         witness.put("contextStarted", started.isActive());
