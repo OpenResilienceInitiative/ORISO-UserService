@@ -6,6 +6,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 /** Backend technical, admin and human clients must remain separate identities. */
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component;
 public class ServiceIdentitySeparationCheck {
   private final @NonNull KeycloakCustomConfig keycloakCustomConfig;
   private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull Environment environment;
 
   @Value("${TASK_IDENTITY_MODEL:LEGACY}")
   private String taskIdentityModel = "LEGACY";
@@ -21,8 +23,14 @@ public class ServiceIdentitySeparationCheck {
   @PostConstruct
   public void verifyBackendClients() {
     if ("FIVE_ACTORS".equals(taskIdentityModel)) {
-      throw new IllegalStateException(
-          "Five-actor production activation is gated until native account, lifecycle and coordinated receiver contracts are implemented");
+      // Routine callers may use the staged actors only after every actor binding is present.
+      // Account lifecycle commands retain their own receiver-level gate in TaskActorTokenBroker.
+      var taskActors =
+          new TaskActorConfiguration(environment, keycloakCustomConfig, identityClientConfig);
+      for (TaskPurpose purpose : TaskPurpose.values()) {
+        taskActors.require(purpose);
+      }
+      return;
     }
     if (!"LEGACY".equals(taskIdentityModel)) {
       throw new IllegalStateException("Unsupported task identity model");
