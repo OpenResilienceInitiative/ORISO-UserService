@@ -383,8 +383,8 @@ public final class KeycloakInactivityMaintenance implements AccountInactivityIde
   @Override
   public void verifyCompletedInactivityRestoreReceipt(
       String frozenBody, String receipt, String originalRowJson) {
-    if (originalRowJson == null
-        || originalRowJson.getBytes(StandardCharsets.UTF_8).length > 8192) throw unavailable();
+    if (originalRowJson == null || originalRowJson.getBytes(StandardCharsets.UTF_8).length > 8192)
+      throw unavailable();
     verifyCompletedInactivityRestoreReceipt(frozenBody, receipt);
     var row = codec.read(originalRowJson, JsonNode.class);
     String digest = codec.claimedInactivityRowDigest(row);
@@ -402,8 +402,10 @@ public final class KeycloakInactivityMaintenance implements AccountInactivityIde
         || !row.path("suspensionOperationId").equals(workflow.path("suspensionOperationId"))
         || row.path("revision").longValue() != workflow.path("revision").longValue()
         || row.path("assignedMonths").intValue() != workflow.path("assignedMonths").intValue()
-        || row.path("lastActivityMicros").longValue() / 1_000_000L != workflow.path("lastActivity").longValue()
-        || row.path("dueAtMicros").longValue() / 1_000_000L != workflow.path("dueAt").longValue()) throw unavailable();
+        || row.path("lastActivityMicros").longValue() / 1_000_000L
+            != workflow.path("lastActivity").longValue()
+        || row.path("dueAtMicros").longValue() / 1_000_000L != workflow.path("dueAt").longValue())
+      throw unavailable();
     var initiator = row.path("initiator");
     var origin = body.path("target").path("origin");
     if ("SCHEDULED".equals(initiator.path("kind").textValue())) {
