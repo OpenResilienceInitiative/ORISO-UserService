@@ -108,13 +108,22 @@ public class IdentityReactivationSagaStore {
     userRepository.save(user);
   }
 
-  /** The scoped owner has already recorded a strict native ACK in this same short JPA transaction. */
+  /**
+   * The scoped owner has already recorded a strict native ACK in this same short JPA transaction.
+   */
   public void acknowledgeScoped(
-      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation.VerifiedUpdate proof,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+              .VerifiedUpdate
+          proof,
       jakarta.persistence.EntityManager entities) {
-    if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive() || !entities.isJoinedToTransaction())
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+            .isActualTransactionActive()
+        || !entities.isJoinedToTransaction())
       throw new IllegalStateException("Owned reactivation transaction required");
-    User user = userRepository.findByUserIdForUpdate(proof.accountId()).orElseThrow(() -> new ConflictException("Asker incarnation is absent"));
+    User user =
+        userRepository
+            .findByUserIdForUpdate(proof.accountId())
+            .orElseThrow(() -> new ConflictException("Asker incarnation is absent"));
     entities.refresh(user);
     proof.requireCurrent(user);
     deletionLifecycleService.cancelUserDeletion(user);

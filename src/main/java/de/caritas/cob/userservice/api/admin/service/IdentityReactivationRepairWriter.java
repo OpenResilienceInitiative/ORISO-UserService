@@ -84,9 +84,9 @@ public class IdentityReactivationRepairWriter {
     return user.getDeletionLifecycleState() == DeletionLifecycleState.REACTIVATION_IN_PROGRESS
         || user.getDeletionLifecycleState() == DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED;
   }
+
   private void requireLegacy() {
     if (identityMode != null && identityMode.isFiveActorMode())
       throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
   }
-
 }

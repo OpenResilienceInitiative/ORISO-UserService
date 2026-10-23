@@ -142,9 +142,9 @@ public class IdentityReactivationRepairService {
   private void metric(String outcome) {
     meterRegistry.counter(REPAIR_METRIC, "outcome", outcome).increment();
   }
+
   private void requireLegacy() {
     if (identityMode != null && identityMode.isFiveActorMode())
       throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
   }
-
 }

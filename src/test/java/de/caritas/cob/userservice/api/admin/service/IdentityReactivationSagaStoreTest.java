@@ -54,7 +54,12 @@ class IdentityReactivationSagaStoreTest {
         org.mockito.Mockito.mock(
             de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
     lenient().when(mode.isFiveActorMode()).thenReturn(true);
-    var scopedStore = new IdentityReactivationSagaStore(userRepository, new UsernameTranscoder(), identityReactivator, deletionLifecycleService);
+    var scopedStore =
+        new IdentityReactivationSagaStore(
+            userRepository,
+            new UsernameTranscoder(),
+            identityReactivator,
+            deletionLifecycleService);
     scopedStore.setIdentityMode(mode);
     var operation =
         new IdentityReactivationOperation(
