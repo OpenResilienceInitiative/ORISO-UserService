@@ -1,9 +1,10 @@
 package de.caritas.cob.userservice.api.service.dpa;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.DpaGateStatusDTO;
 import lombok.RequiredArgsConstructor;
@@ -25,15 +26,12 @@ public class TenantDpaGateReadClient {
   }
 
   private DpaGateStatusDTO readAsService(Long tenantId) {
-    var technical = identityClientConfig.getTechnicalUser();
-    IdentityLogin login =
-        identityAuthentication.loginService(technical.getClientId(), technical.getClientSecret());
-    if (login == null || login.accessToken() == null || login.accessToken().isBlank()) {
-      throw new IllegalStateException("Service authentication unavailable");
-    }
+    String token =
+        RoutineTaskAuthentication.accessToken(
+            TaskPurpose.RUNTIME_POLICY, identityClientConfig, identityAuthentication);
     var api = tenantFactory.createControllerApi();
     securityHeaderSupplier
-        .getKeycloakAndCsrfHttpHeaders(login.accessToken())
+        .getKeycloakAndCsrfHttpHeaders(token)
         .forEach(
             (name, values) ->
                 values.forEach(value -> api.getApiClient().addDefaultHeader(name, value)));

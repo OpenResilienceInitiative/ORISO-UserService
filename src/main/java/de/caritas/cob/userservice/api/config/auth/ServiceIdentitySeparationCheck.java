@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import jakarta.annotation.PostConstruct;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /** Backend technical, admin and human clients must remain separate identities. */
@@ -14,8 +15,18 @@ public class ServiceIdentitySeparationCheck {
   private final @NonNull KeycloakCustomConfig keycloakCustomConfig;
   private final @NonNull IdentityClientConfig identityClientConfig;
 
+  @Value("${TASK_IDENTITY_MODEL:LEGACY}")
+  private String taskIdentityModel = "LEGACY";
+
   @PostConstruct
   public void verifyBackendClients() {
+    if ("FIVE_ACTORS".equals(taskIdentityModel)) {
+      throw new IllegalStateException(
+          "Five-actor production activation is gated until native account, lifecycle and coordinated receiver contracts are implemented");
+    }
+    if (!"LEGACY".equals(taskIdentityModel)) {
+      throw new IllegalStateException("Unsupported task identity model");
+    }
     var technical = identityClientConfig.getTechnicalUser();
     if (technical == null
         || blank(technical.getClientId())
