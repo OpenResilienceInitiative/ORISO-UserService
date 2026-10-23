@@ -74,7 +74,7 @@ public final class ScheduledAskerMaintenance {
     public boolean hasLocalUser() { throw unavailable(); }
     public boolean inactivityCause() { throw unavailable(); }
     public void runOwnedLocal(Runnable action) { throw unavailable(); }
-    public void completeOwnedLocalDeletion(Runnable finalDelete) { throw unavailable(); }
+    public boolean completeOwnedLocalDeletion(Runnable finalDelete) { throw unavailable(); }
   }
 
   public void performDeletionWorkflow() {
