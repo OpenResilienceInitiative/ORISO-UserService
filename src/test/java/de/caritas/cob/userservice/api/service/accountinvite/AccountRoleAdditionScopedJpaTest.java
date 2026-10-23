@@ -80,8 +80,10 @@ class AccountRoleAdditionScopedJpaTest {
   private static final String OPERATION = "71000000-0000-4000-8000-000000000003";
   private static final String SUBJECT = "71000000-0000-4000-8000-000000000004";
   private static final String ISSUER = "https://identity.test/realms/fixture";
-  private static final String ENDPOINT = ISSUER + "/oriso-account-maintenance/v1/accounts/" + ACCOUNT;
-  private static final byte[] KEY = "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
+  private static final String ENDPOINT =
+      ISSUER + "/oriso-account-maintenance/v1/accounts/" + ACCOUNT;
+  private static final byte[] KEY =
+      "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
   private static final Set<String> ORIGINAL = Set.of("consultant", "group-chat-consultant");
   private static final Set<String> DESIRED =
       Set.of("consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin");
@@ -119,41 +121,72 @@ class AccountRoleAdditionScopedJpaTest {
     jdbc = new JdbcTemplate(dataSource);
     jdbc.execute("drop table if exists general_admin_identity_intent");
     new ResourceDatabasePopulator(
-            new ClassPathResource("db/changelog/changeset/20261022_general_admin_identity_367/migrate.sql"),
+            new ClassPathResource(
+                "db/changelog/changeset/20261022_general_admin_identity_367/migrate.sql"),
             new ClassPathResource("db/changelog/changeset/20260916_account_inactivity/migrate.sql"))
         .execute(dataSource);
     jdbc.update("delete from admin_agency where admin_id=?", ACCOUNT);
     jdbc.update("delete from admin where admin_id=?", ACCOUNT);
     jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT);
     consultants.findById(ACCOUNT).ifPresent(consultants::delete);
-    Consultant consultant = Consultant.builder().id(ACCOUNT).tenantId(7L)
-        .username(new UsernameTranscoder().encodeUsername("owned-counsellor"))
-        .firstName("Ada").lastName("Lovelace").email("ada@fixture.invalid")
-        .encourage2fa(true).magicLinkLoginEnabled(false).notifyEnquiriesRepeating(true)
-        .notifyNewChatMessageFromAdviceSeeker(true).languageCode(LanguageCode.en)
-        .status(ConsultantStatus.IN_PROGRESS).build();
+    Consultant consultant =
+        Consultant.builder()
+            .id(ACCOUNT)
+            .tenantId(7L)
+            .username(new UsernameTranscoder().encodeUsername("owned-counsellor"))
+            .firstName("Ada")
+            .lastName("Lovelace")
+            .email("ada@fixture.invalid")
+            .encourage2fa(true)
+            .magicLinkLoginEnabled(false)
+            .notifyEnquiriesRepeating(true)
+            .notifyNewChatMessageFromAdviceSeeker(true)
+            .languageCode(LanguageCode.en)
+            .status(ConsultantStatus.IN_PROGRESS)
+            .build();
     consultants.save(consultant);
-    consultantAgencies.save(ConsultantAgency.builder().consultant(consultant).agencyId(71L)
-        .tenantId(7L).createDate(LocalDateTime.now(ZoneOffset.UTC)).build());
+    consultantAgencies.save(
+        ConsultantAgency.builder()
+            .consultant(consultant)
+            .agencyId(71L)
+            .tenantId(7L)
+            .createDate(LocalDateTime.now(ZoneOffset.UTC))
+            .build());
     human.setUserId(HUMAN);
     human.setTenantId(7L);
     human.setAccessToken("fixture-human");
-    human.setGrantedAuthorities(Set.of(Authority.AuthorityValue.USER_ADMIN, Authority.AuthorityValue.TENANT_ADMIN));
+    human.setGrantedAuthorities(
+        Set.of(Authority.AuthorityValue.USER_ADMIN, Authority.AuthorityValue.TENANT_ADMIN));
     request.setMethod("POST");
     request.setRequestURI("/useradmin/consultants/" + ACCOUNT + "/roles");
     request.removeHeader("Idempotency-Key");
     request.addHeader("Idempotency-Key", OPERATION);
     request.removeHeader("Authorization");
     request.addHeader("Authorization", "Bearer fixture-human");
-    var jwt = Jwt.withTokenValue("fixture-human").header("alg", "RS256").subject(HUMAN)
-        .issuer(ISSUER).issuedAt(Instant.now().minusSeconds(2)).expiresAt(Instant.now().plusSeconds(300))
-        .claim("azp", "admin").claim("tenantId", "7").build();
+    var jwt =
+        Jwt.withTokenValue("fixture-human")
+            .header("alg", "RS256")
+            .subject(HUMAN)
+            .issuer(ISSUER)
+            .issuedAt(Instant.now().minusSeconds(2))
+            .expiresAt(Instant.now().plusSeconds(300))
+            .claim("azp", "admin")
+            .claim("tenantId", "7")
+            .build();
     request.setUserPrincipal(new JwtAuthenticationToken(jwt, List.of()));
     assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
-    maintenance.configureReviewedOrdinaryGroups(Map.of("/human-roles/consultant-chat", ORIGINAL,
-        "/human-roles/consultant-agency-admin-chat", DESIRED));
-    doThrow(new ScopedIdentityCommandRequiredException()).when(generic).updateRole(anyString(), any());
-    var actor = new TaskActorCredentials(TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "fixture-secret", SUBJECT);
+    maintenance.configureReviewedOrdinaryGroups(
+        Map.of(
+            "/human-roles/consultant-chat",
+            ORIGINAL,
+            "/human-roles/consultant-agency-admin-chat",
+            DESIRED));
+    doThrow(new ScopedIdentityCommandRequiredException())
+        .when(generic)
+        .updateRole(anyString(), any());
+    var actor =
+        new TaskActorCredentials(
+            TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "fixture-secret", SUBJECT);
     when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(actor);
     var checked = mock(TaskActorTokenBroker.VerifiedMaintenanceToken.class);
     when(checked.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
@@ -163,43 +196,80 @@ class AccountRoleAdditionScopedJpaTest {
     when(checked.issuer()).thenReturn(ISSUER);
     when(checked.accessToken()).thenReturn("fixture-machine");
     when(checked.validatedJwtIssuedAt()).thenReturn(Instant.now().minusSeconds(2).getEpochSecond());
-    when(checked.validatedJwtExpiresAt()).thenReturn(Instant.now().plusSeconds(300).getEpochSecond());
+    when(checked.validatedJwtExpiresAt())
+        .thenReturn(Instant.now().plusSeconds(300).getEpochSecond());
     when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(checked);
     server = MockRestServiceServer.bindTo(http).build();
-    server.expect(manyTimes(), outbound -> assertTrue(Set.of(ENDPOINT + "/read", ENDPOINT + "/profile-transition")
-        .contains(outbound.getURI().toString()))).andRespond(outbound -> {
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      assertEquals(HttpMethod.POST, outbound.getMethod());
-      assertEquals("Bearer fixture-machine", outbound.getHeaders().getFirst("Authorization"));
-      assertEquals("Bearer fixture-human", outbound.getHeaders().getFirst("X-ORISO-Human-Authorization"));
-      JsonNode body = codec.read(((MockClientHttpRequest) outbound).getBodyAsString(), JsonNode.class);
-      String command = outbound.getURI().getPath().endsWith("/read") ? "read" : "profile-transition";
-      verifyProof(outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
-      if ("read".equals(command)) {
-        reads.incrementAndGet();
-        var projection = new TreeMap<String, Object>();
-        projection.put("id", ACCOUNT); projection.put("username", "owned-counsellor");
-        projection.put("firstName", "Ada"); projection.put("lastName", "Lovelace");
-        projection.put("email", "ada@fixture.invalid"); projection.put("enabled", true);
-        projection.put("emailVerified", true); projection.put("tenantId", "7");
-        projection.put("preferredLanguage", "en"); projection.put("effectiveRoles", nativeRoles.stream().sorted().toList());
-        projection.put("passwordChangeRequired", false); projection.put("state", "a".repeat(64));
-        var response = withSuccess(codec.canonical(projection), MediaType.APPLICATION_JSON).createResponse(outbound);
-        response.getHeaders().setCacheControl("no-store"); return response;
-      }
-      calls.incrementAndGet();
-      assertEquals(OPERATION, body.path("operationId").textValue());
-      assertEquals(Map.of("transition", "ADD_AGENCY_ADMIN_IDENTITY", "group", "/human-roles/consultant-agency-admin-chat"),
-          codec.read(codec.canonical(body.path("change")), Map.class));
-      if (revoked) return org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.FORBIDDEN).createResponse(outbound);
-      if (nativeBody == null) {
-        nativeBody = codec.canonical(body); nativeRoles = DESIRED; effects.incrementAndGet();
-        nativeReply = receipt(body);
-      } else assertEquals(nativeBody, codec.canonical(body));
-      if (lostReply) { lostReply = false; throw new ResourceAccessException("Synthetic lost native reply"); }
-      var response = withSuccess(nativeReply, MediaType.APPLICATION_JSON).createResponse(outbound);
-      response.getHeaders().setCacheControl("no-store"); return response;
-    });
+    server
+        .expect(
+            manyTimes(),
+            outbound ->
+                assertTrue(
+                    Set.of(ENDPOINT + "/read", ENDPOINT + "/profile-transition")
+                        .contains(outbound.getURI().toString())))
+        .andRespond(
+            outbound -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              assertEquals(HttpMethod.POST, outbound.getMethod());
+              assertEquals(
+                  "Bearer fixture-machine", outbound.getHeaders().getFirst("Authorization"));
+              assertEquals(
+                  "Bearer fixture-human",
+                  outbound.getHeaders().getFirst("X-ORISO-Human-Authorization"));
+              JsonNode body =
+                  codec.read(((MockClientHttpRequest) outbound).getBodyAsString(), JsonNode.class);
+              String command =
+                  outbound.getURI().getPath().endsWith("/read") ? "read" : "profile-transition";
+              verifyProof(outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
+              if ("read".equals(command)) {
+                reads.incrementAndGet();
+                var projection = new TreeMap<String, Object>();
+                projection.put("id", ACCOUNT);
+                projection.put("username", "owned-counsellor");
+                projection.put("firstName", "Ada");
+                projection.put("lastName", "Lovelace");
+                projection.put("email", "ada@fixture.invalid");
+                projection.put("enabled", true);
+                projection.put("emailVerified", true);
+                projection.put("tenantId", "7");
+                projection.put("preferredLanguage", "en");
+                projection.put("effectiveRoles", nativeRoles.stream().sorted().toList());
+                projection.put("passwordChangeRequired", false);
+                projection.put("state", "a".repeat(64));
+                var response =
+                    withSuccess(codec.canonical(projection), MediaType.APPLICATION_JSON)
+                        .createResponse(outbound);
+                response.getHeaders().setCacheControl("no-store");
+                return response;
+              }
+              calls.incrementAndGet();
+              assertEquals(OPERATION, body.path("operationId").textValue());
+              assertEquals(
+                  Map.of(
+                      "transition",
+                      "ADD_AGENCY_ADMIN_IDENTITY",
+                      "group",
+                      "/human-roles/consultant-agency-admin-chat"),
+                  codec.read(codec.canonical(body.path("change")), Map.class));
+              if (revoked)
+                return org.springframework.test.web.client.response.MockRestResponseCreators
+                    .withStatus(org.springframework.http.HttpStatus.FORBIDDEN)
+                    .createResponse(outbound);
+              if (nativeBody == null) {
+                nativeBody = codec.canonical(body);
+                nativeRoles = DESIRED;
+                effects.incrementAndGet();
+                nativeReply = receipt(body);
+              } else assertEquals(nativeBody, codec.canonical(body));
+              if (lostReply) {
+                lostReply = false;
+                throw new ResourceAccessException("Synthetic lost native reply");
+              }
+              var response =
+                  withSuccess(nativeReply, MediaType.APPLICATION_JSON).createResponse(outbound);
+              response.getHeaders().setCacheControl("no-store");
+              return response;
+            });
   }
 
   @Test
@@ -210,9 +280,14 @@ class AccountRoleAdditionScopedJpaTest {
     assertEquals(1, effects.get());
     assertEquals("APPLIED", phase());
     assertEquals(original, consultantSql());
-    assertEquals("AGENCY", jdbc.queryForObject("select type from admin where admin_id=?", String.class, ACCOUNT));
+    assertEquals(
+        "AGENCY",
+        jdbc.queryForObject("select type from admin where admin_id=?", String.class, ACCOUNT));
     assertEquals("owned-counsellor", admins.findById(ACCOUNT).orElseThrow().getUsername());
-    assertEquals(List.of(71L), jdbc.queryForList("select agency_id from admin_agency where admin_id=?", Long.class, ACCOUNT));
+    assertEquals(
+        List.of(71L),
+        jdbc.queryForList(
+            "select agency_id from admin_agency where admin_id=?", Long.class, ACCOUNT));
     verifyNoInteractions(generic);
   }
 
@@ -234,17 +309,29 @@ class AccountRoleAdditionScopedJpaTest {
   @Test
   void appliedReplayRechecksTheOriginalCurrentNativeGrantWithoutRepeatingTheLocalRelation() {
     assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
-    String applied = jdbc.queryForObject("select applied_json from general_admin_identity_intent where operation_id=?", String.class, OPERATION);
+    String applied =
+        jdbc.queryForObject(
+            "select applied_json from general_admin_identity_intent where operation_id=?",
+            String.class,
+            OPERATION);
     int priorCalls = calls.get();
     revoked = true;
     assertThrows(ForbiddenException.class, () -> service.add(ACCOUNT, COMMAND));
     assertEquals(priorCalls + 1, calls.get());
     assertEquals("APPLIED", phase());
-    assertEquals(applied, jdbc.queryForObject("select applied_json from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+    assertEquals(
+        applied,
+        jdbc.queryForObject(
+            "select applied_json from general_admin_identity_intent where operation_id=?",
+            String.class,
+            OPERATION));
     revoked = false;
     assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
     assertEquals(1, effects.get());
-    assertEquals(1, jdbc.queryForObject("select count(*) from admin_agency where admin_id=?", Integer.class, ACCOUNT));
+    assertEquals(
+        1,
+        jdbc.queryForObject(
+            "select count(*) from admin_agency where admin_id=?", Integer.class, ACCOUNT));
   }
 
   @Test
@@ -252,13 +339,19 @@ class AccountRoleAdditionScopedJpaTest {
     lostReply = true;
     assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
     assertEquals(1, effects.get());
-    new TransactionTemplate(transactions).executeWithoutResult(ignored -> {
-      jdbc.update("update consultant set create_date=? where consultant_id=?", java.sql.Timestamp.from(Instant.now().plusSeconds(10)), ACCOUNT);
-      entities.clear();
-    });
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            ignored -> {
+              jdbc.update(
+                  "update consultant set create_date=? where consultant_id=?",
+                  java.sql.Timestamp.from(Instant.now().plusSeconds(10)),
+                  ACCOUNT);
+              entities.clear();
+            });
     int priorCalls = calls.get(), priorReads = reads.get();
     assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
-    assertEquals(priorCalls, calls.get()); assertEquals(priorReads, reads.get());
+    assertEquals(priorCalls, calls.get());
+    assertEquals(priorReads, reads.get());
     assertFalse(admins.existsById(ACCOUNT));
   }
 
@@ -266,35 +359,63 @@ class AccountRoleAdditionScopedJpaTest {
   void actualCurrentScopeRefusesForeignTenantBeforeNativeOrLocalGrant() {
     human.setTenantId(8L);
     assertThrows(ForbiddenException.class, () -> service.add(ACCOUNT, COMMAND));
-    assertEquals(0, reads.get()); assertEquals(0, effects.get());
-    assertFalse(admins.existsById(ACCOUNT)); verifyNoInteractions(generic);
+    assertEquals(0, reads.get());
+    assertEquals(0, effects.get());
+    assertFalse(admins.existsById(ACCOUNT));
+    verifyNoInteractions(generic);
   }
 
   private String phase() {
-    return jdbc.queryForObject("select status from general_admin_identity_intent where operation_id=?", String.class, OPERATION);
+    return jdbc.queryForObject(
+        "select status from general_admin_identity_intent where operation_id=?",
+        String.class,
+        OPERATION);
   }
 
   private Map<String, Object> consultantSql() {
-    return new TreeMap<>(jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT));
+    return new TreeMap<>(
+        jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT));
   }
 
   private String receipt(JsonNode body) {
     var value = new TreeMap<String, Object>();
-    value.put("realmId", "fixture-realm"); value.put("accountId", ACCOUNT);
-    value.put("operationId", OPERATION); value.put("command", "profile-transition");
-    value.put("ownerClient", "backend-account-admin"); value.put("ownerSubject", SUBJECT);
-    value.put("intentDigest", digest("maintenance-intent", body)); value.put("previousState", "a".repeat(64));
-    value.put("tenantId", "7"); value.put("originDigest", digest("maintenance-origin", body.path("target").path("origin")));
+    value.put("realmId", "fixture-realm");
+    value.put("accountId", ACCOUNT);
+    value.put("operationId", OPERATION);
+    value.put("command", "profile-transition");
+    value.put("ownerClient", "backend-account-admin");
+    value.put("ownerSubject", SUBJECT);
+    value.put("intentDigest", digest("maintenance-intent", body));
+    value.put("previousState", "a".repeat(64));
+    value.put("tenantId", "7");
+    value.put("originDigest", digest("maintenance-origin", body.path("target").path("origin")));
     value.put("result", "UPDATED");
-    String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(codec.canonical(value).getBytes(StandardCharsets.UTF_8));
-    return codec.canonical(Map.of("operationId", OPERATION, "accountId", ACCOUNT, "result", "UPDATED", "receipt", encoded + "." + mac("maintenance-operation-receipt\n" + encoded)));
+    String encoded =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(codec.canonical(value).getBytes(StandardCharsets.UTF_8));
+    return codec.canonical(
+        Map.of(
+            "operationId",
+            OPERATION,
+            "accountId",
+            ACCOUNT,
+            "result",
+            "UPDATED",
+            "receipt",
+            encoded + "." + mac("maintenance-operation-receipt\n" + encoded)));
   }
 
   private void verifyProof(String proof, String command, JsonNode body) {
-    String[] parts = proof.split("\\.", -1); assertEquals(2, parts.length);
+    String[] parts = proof.split("\\.", -1);
+    assertEquals(2, parts.length);
     assertEquals(mac("proof\n" + parts[0]), parts[1]);
-    var claims = codec.read(new String(Base64.getUrlDecoder().decode(parts[0]), StandardCharsets.UTF_8), JsonNode.class);
-    assertEquals(15, claims.size()); assertEquals("account." + command, claims.path("operation").textValue());
+    var claims =
+        codec.read(
+            new String(Base64.getUrlDecoder().decode(parts[0]), StandardCharsets.UTF_8),
+            JsonNode.class);
+    assertEquals(15, claims.size());
+    assertEquals("account." + command, claims.path("operation").textValue());
     assertEquals("ACCOUNT_ADMIN", claims.path("actor").textValue());
     assertEquals("ACCOUNT_MAINTENANCE", claims.path("purpose").textValue());
     assertEquals("backend-account-admin", claims.path("taskClient").textValue());
@@ -304,28 +425,83 @@ class AccountRoleAdditionScopedJpaTest {
     assertTrue(claims.path("nonce").textValue().matches("[0-9a-f]{32}"));
   }
 
-  private String digest(String domain, Object value) { return mac(domain + "\n" + codec.canonical(value)); }
+  private String digest(String domain, Object value) {
+    return mac(domain + "\n" + codec.canonical(value));
+  }
+
   private String mac(String value) {
-    try { var hmac = Mac.getInstance("HmacSHA256"); hmac.init(new SecretKeySpec(KEY, "HmacSHA256"));
+    try {
+      var hmac = Mac.getInstance("HmacSHA256");
+      hmac.init(new SecretKeySpec(KEY, "HmacSHA256"));
       return HexFormat.of().formatHex(hmac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
-    } catch (Exception invalid) { throw new AssertionError(invalid); }
+    } catch (Exception invalid) {
+      throw new AssertionError(invalid);
+    }
   }
 
   @TestConfiguration(proxyBeanMethods = false)
   @Profile("scenario-c-role-addition-jpa")
   static class Configuration {
-    @Bean AuthenticatedUser authenticatedUser() { return new AuthenticatedUser(); }
-    @Bean MockHttpServletRequest currentRoleRequest() { return new MockHttpServletRequest(); }
-    @Bean RestTemplate roleHttp() { return new RestTemplate(); }
-    @Bean AccountLifecycleCodec roleCodec() { return new AccountLifecycleCodec(KEY); }
-    @Bean TaskActorConfiguration roleActors() { return mock(TaskActorConfiguration.class); }
-    @Bean TaskActorTokenBroker roleBroker() { return mock(TaskActorTokenBroker.class); }
-    @Bean IdentityClientConfig roleMode() { var mode = mock(IdentityClientConfig.class); when(mode.isFiveActorMode()).thenReturn(true); return mode; }
-    @Bean HumanAdminAccountMaintenance roleMaintenance(IdentityClientConfig mode, AuthenticatedUser actor,
-        AdminScope scope, DataSource source, PlatformTransactionManager manager, MockHttpServletRequest request,
-        RestTemplate http, TaskActorConfiguration actors, TaskActorTokenBroker broker, AccountLifecycleCodec codec) {
-      return new HumanAdminAccountMaintenance(mode, actor, scope, new JdbcTemplate(source), manager, request,
-          new KeycloakHumanAdminMaintenance(http, actors, broker, codec, "https://identity.test", "fixture", "fixture-realm"), Clock.systemUTC(), ISSUER);
+    @Bean
+    AuthenticatedUser authenticatedUser() {
+      return new AuthenticatedUser();
+    }
+
+    @Bean
+    MockHttpServletRequest currentRoleRequest() {
+      return new MockHttpServletRequest();
+    }
+
+    @Bean
+    RestTemplate roleHttp() {
+      return new RestTemplate();
+    }
+
+    @Bean
+    AccountLifecycleCodec roleCodec() {
+      return new AccountLifecycleCodec(KEY);
+    }
+
+    @Bean
+    TaskActorConfiguration roleActors() {
+      return mock(TaskActorConfiguration.class);
+    }
+
+    @Bean
+    TaskActorTokenBroker roleBroker() {
+      return mock(TaskActorTokenBroker.class);
+    }
+
+    @Bean
+    IdentityClientConfig roleMode() {
+      var mode = mock(IdentityClientConfig.class);
+      when(mode.isFiveActorMode()).thenReturn(true);
+      return mode;
+    }
+
+    @Bean
+    HumanAdminAccountMaintenance roleMaintenance(
+        IdentityClientConfig mode,
+        AuthenticatedUser actor,
+        AdminScope scope,
+        DataSource source,
+        PlatformTransactionManager manager,
+        MockHttpServletRequest request,
+        RestTemplate http,
+        TaskActorConfiguration actors,
+        TaskActorTokenBroker broker,
+        AccountLifecycleCodec codec) {
+      return new HumanAdminAccountMaintenance(
+          mode,
+          actor,
+          scope,
+          new JdbcTemplate(source),
+          manager,
+          request,
+          new KeycloakHumanAdminMaintenance(
+              http, actors, broker, codec, "https://identity.test", "fixture", "fixture-realm"),
+          Clock.systemUTC(),
+          ISSUER);
     }
   }
 }
