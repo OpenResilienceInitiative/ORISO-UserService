@@ -997,7 +997,9 @@ public final class AccountLifecycleCodec {
                 "locale",
                 "self-password",
                 "password-reset.read",
-                "password-reset")
+                "password-reset",
+                "deactivate",
+                "reactivate")
             .contains(command)
         || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
       throw new IllegalArgumentException("Invalid maintenance proof binding");
