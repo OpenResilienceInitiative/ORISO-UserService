@@ -151,16 +151,17 @@ public class AccountLifecycleCallerConfiguration {
             internalServer,
             keycloak.getRealm(),
             required("KEYCLOAK_REALM_INTERNAL_ID"));
-    var maintenance = new de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance(
-        identities,
-        user,
-        scope,
-        jdbc,
-        manager,
-        request,
-        transport,
-        Clock.systemUTC(),
-        publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm());
+    var maintenance =
+        new de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance(
+            identities,
+            user,
+            scope,
+            jdbc,
+            manager,
+            request,
+            transport,
+            Clock.systemUTC(),
+            publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm());
     maintenance.configureReviewedOrdinaryGroups(groups);
     return maintenance;
   }
@@ -170,7 +171,8 @@ public class AccountLifecycleCallerConfiguration {
       accountInactivityIdentityTransport(
           AuthenticatedUser user,
           jakarta.servlet.http.HttpServletRequest request,
-          de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService existing,
+          de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+              existing,
           TaskActorConfiguration actors,
           TaskActorTokenBroker broker,
           AccountLifecycleCodec codec,
@@ -179,12 +181,22 @@ public class AccountLifecycleCallerConfiguration {
     String publicServer = keycloak.getAuthServerUrl();
     String internalServer =
         environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
-    if (publicServer == null || publicServer.isBlank()
-        || internalServer == null || internalServer.isBlank()) throw invalid();
+    if (publicServer == null
+        || publicServer.isBlank()
+        || internalServer == null
+        || internalServer.isBlank()) throw invalid();
     String issuer = publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm();
-    var transport = new de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakInactivityMaintenance(
-        http, actors, broker, codec, internalServer, keycloak.getRealm(),
-        required("KEYCLOAK_REALM_INTERNAL_ID"), issuer);
+    var transport =
+        new de.caritas.cob.userservice.api.adapters.keycloak.maintenance
+            .KeycloakInactivityMaintenance(
+            http,
+            actors,
+            broker,
+            codec,
+            internalServer,
+            keycloak.getRealm(),
+            required("KEYCLOAK_REALM_INTERNAL_ID"),
+            issuer);
     existing.configureScopedInactivity(transport, user, request, issuer, humanClients);
     return transport;
   }

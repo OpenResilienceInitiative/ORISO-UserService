@@ -12,10 +12,13 @@ class AccountLifecycleRetrySchedulerTest {
   private final SelfPasswordMaintenance self = mock(SelfPasswordMaintenance.class);
 
   private AccountLifecycleRetryScheduler withRetention() {
-    var constructor = assertDoesNotThrow(() -> AccountLifecycleRetryScheduler.class.getConstructor(
-        JdbcAccountLifecycleJournal.class, AccountLifecycleDispatcher.class,
-        ClaimedPasswordMaintenance.class, SelfPasswordMaintenance.class),
-        "The existing retry scheduler must own both bounded secret-retention sweeps");
+    var constructor =
+        assertDoesNotThrow(
+            () ->
+                AccountLifecycleRetryScheduler.class.getConstructor(
+                    JdbcAccountLifecycleJournal.class, AccountLifecycleDispatcher.class,
+                    ClaimedPasswordMaintenance.class, SelfPasswordMaintenance.class),
+            "The existing retry scheduler must own both bounded secret-retention sweeps");
     return assertDoesNotThrow(() -> constructor.newInstance(journal, dispatcher, claimed, self));
   }
 
@@ -43,14 +46,16 @@ class AccountLifecycleRetrySchedulerTest {
   void retryAndOneSecretStoreFailuresDoNotStarveTheOtherSecretStore() {
     doThrow(new IllegalStateException("fixture claim failure")).when(journal).claimExpired();
     doThrow(new IllegalStateException("fixture dispatch failure")).when(dispatcher).retryPending();
-    when(claimed.expireSecretCustody()).thenThrow(new IllegalStateException("fixture retention failure"));
+    when(claimed.expireSecretCustody())
+        .thenThrow(new IllegalStateException("fixture retention failure"));
     assertDoesNotThrow(() -> withRetention().retry());
     verify(self).expireSecretCustody();
   }
 
   @Test
   void selfSecretStoreFailureDoesNotPreventTheNextRetryCycle() {
-    when(self.expireSecretCustody()).thenThrow(new IllegalStateException("fixture retention failure"));
+    when(self.expireSecretCustody())
+        .thenThrow(new IllegalStateException("fixture retention failure"));
     var scheduler = withRetention();
     assertDoesNotThrow(scheduler::retry);
     assertDoesNotThrow(scheduler::retry);
