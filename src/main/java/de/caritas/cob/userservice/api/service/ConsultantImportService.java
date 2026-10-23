@@ -82,8 +82,12 @@ public class ConsultantImportService {
   }
 
   /** Fixed verified HTTP trigger only; configured records supply all import authority. */
-  public void startImport(de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker.VerifiedConsultantImportTrigger trigger) {
-    throw new org.springframework.security.access.AccessDeniedException("Verified import trigger is unavailable");
+  public void startImport(
+      de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker
+              .VerifiedConsultantImportTrigger
+          trigger) {
+    throw new org.springframework.security.access.AccessDeniedException(
+        "Verified import trigger is unavailable");
   }
 
   public void startImport() {

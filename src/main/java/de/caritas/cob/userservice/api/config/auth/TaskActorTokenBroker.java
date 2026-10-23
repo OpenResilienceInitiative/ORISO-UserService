@@ -46,7 +46,9 @@ public class TaskActorTokenBroker {
     public void close() {}
 
     @Override
-    public String toString() { return "VerifiedConsultantImportTrigger[redacted]"; }
+    public String toString() {
+      return "VerifiedConsultantImportTrigger[redacted]";
+    }
   }
 
   public TaskToken issue(TaskPurpose purpose) {
