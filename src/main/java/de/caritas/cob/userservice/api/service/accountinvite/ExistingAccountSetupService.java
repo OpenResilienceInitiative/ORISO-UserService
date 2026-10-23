@@ -271,72 +271,71 @@ public class ExistingAccountSetupService {
 
     ClaimedSetup handle = new ClaimedSetup(this, target);
     try {
-      // Resolve this exact saved command before mutable provider checks on retries. The checked
-      // adapter verifies current identity/roles/required action when no saved outcome exists.
-      passwords.updateExistingSetupPassword(handle, chosenPassword);
-    } catch (
-        de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ClaimedPasswordMaintenance
-                .Refusal
-            refused) {
-      if (!refused.matches(handle)) throw new ScopedIdentityCommandRequiredException();
-      inTransaction(
-          () -> {
-            setupPasswordClaims.refuseWithinOwner(target.claim());
-            return null;
-          });
-      throw refused.publicResponse();
-    } catch (CustomValidationHttpStatusException rejected) {
-      inTransaction(
-          () -> {
-            setupPasswordClaims.rejectPolicyWithinOwner(target.claim());
-            return null;
-          });
-      throw rejected;
-    } catch (RuntimeException uncertain) {
-      recordIndeterminate(target);
-      throw new IllegalStateException(
-          "Password setup outcome is indeterminate; operator review is required");
+      try {
+        // Resolve this exact saved command before mutable provider checks on retries. The checked
+        // adapter verifies current identity/roles/required action when no saved outcome exists.
+        passwords.updateExistingSetupPassword(handle, chosenPassword);
+      } catch (
+          de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ClaimedPasswordMaintenance
+                  .Refusal
+              refused) {
+        if (!refused.matches(handle)) throw new ScopedIdentityCommandRequiredException();
+        inTransaction(
+            () -> {
+              setupPasswordClaims.refuseWithinOwner(target.claim());
+              return null;
+            });
+        throw refused.publicResponse();
+      } catch (CustomValidationHttpStatusException rejected) {
+        inTransaction(
+            () -> {
+              setupPasswordClaims.rejectPolicyWithinOwner(target.claim());
+              return null;
+            });
+        throw rejected;
+      } catch (RuntimeException uncertain) {
+        recordIndeterminate(target);
+        throw new IllegalStateException(
+            "Password setup outcome is indeterminate; operator review is required");
+      }
+
+      try {
+        inTransaction(
+            () -> {
+              requireSameSavedIdentity(target.saved());
+              boolean consultantOwned = passwords.requireExistingSetupCompletionWithinOwner(handle);
+              if (consultantOwned) {
+                inTenantOf(target.saved(), () -> {
+                  var current = consultants.findByIdAndDeleteDateIsNull(target.saved().identityId())
+                      .orElseThrow(ScopedIdentityCommandRequiredException::new);
+                  current.setPasswordChangeRequired(false);
+                  consultants.save(current);
+                });
+              }
+              int completed =
+                  invites.completeExistingAccountSetup(
+                      target.saved().inviteId(),
+                      SETUP,
+                      SENT,
+                      IN_PROGRESS,
+                      AccountInviteStatus.ACCEPTED,
+                      AccountInviteProvisioningStatus.COMPLETED,
+                      EmailVerificationStatus.VERIFIED,
+                      target.saved().identityId(),
+                      LocalDateTime.now(clock));
+              if (completed != 1) {
+                throw new IllegalStateException(
+                    "Existing-account setup claim could not be finalized");
+              }
+              setupPasswordClaims.acknowledgeWithinOwner(target.claim());
+              return null;
+            });
+      } catch (RuntimeException finalizationFailure) {
+        recordIndeterminate(target);
+        throw new IllegalStateException("Password changed but setup needs operator review");
+      }
     } finally {
       handle.active = false;
-    }
-
-    try {
-      inTransaction(
-          () -> {
-            requireSameSavedIdentity(target.saved());
-            if (target.saved().role() == AccountInviteTargetRole.COUNSELLOR) {
-              inTenantOf(
-                  target.saved(),
-                  () ->
-                      consultants
-                          .findByIdAndDeleteDateIsNull(target.saved().identityId())
-                          .ifPresent(
-                              c -> {
-                                c.setPasswordChangeRequired(false);
-                                consultants.save(c);
-                              }));
-            }
-            int completed =
-                invites.completeExistingAccountSetup(
-                    target.saved().inviteId(),
-                    SETUP,
-                    SENT,
-                    IN_PROGRESS,
-                    AccountInviteStatus.ACCEPTED,
-                    AccountInviteProvisioningStatus.COMPLETED,
-                    EmailVerificationStatus.VERIFIED,
-                    target.saved().identityId(),
-                    LocalDateTime.now(clock));
-            if (completed != 1) {
-              throw new IllegalStateException(
-                  "Existing-account setup claim could not be finalized");
-            }
-            setupPasswordClaims.acknowledgeWithinOwner(target.claim());
-            return null;
-          });
-    } catch (RuntimeException finalizationFailure) {
-      recordIndeterminate(target);
-      throw new IllegalStateException("Password changed but setup needs operator review");
     }
   }
 

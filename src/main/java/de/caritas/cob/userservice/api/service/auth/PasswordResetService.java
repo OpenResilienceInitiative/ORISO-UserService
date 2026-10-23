@@ -443,7 +443,10 @@ public class PasswordResetService {
           || !workflow.equals(issuance.workflowId())
           || !target.getKeycloakUserId().equals(issuance.subjectId())
           || !java.util.Objects.equals(target.getTenantId(), issuance.tenantId())
-          || !target.getAccountKind().equals(issuance.accountKind())
+          || (!target.getAccountKind().equals(issuance.accountKind())
+              && !("CONSULTANT".equals(target.getAccountKind())
+                  && java.util.Set.of("AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")
+                      .contains(issuance.accountKind())))
           || !expiry.equals(issuance.expiresAt()))
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
       oneTimeToken = newResetToken();

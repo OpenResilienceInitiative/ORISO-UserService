@@ -216,30 +216,41 @@ public final class ClaimedPasswordMaintenance {
   public void setup(ExistingAccountSetupService.ClaimedSetup claim, String password) {
     requireSupport();
     var checked = claim.checkedRecoveryClaim();
-    var b = checked.binding();
-    String kind =
-        switch (b.role()) {
-          case COUNSELLOR -> "CONSULTANT";
-          case AGENCY_ADMIN -> "AGENCY_ADMIN";
-          case TENANT_ADMIN -> "TENANT_ADMIN";
-          default -> throw unavailable();
-        };
-    String digest = codec.existingSetupPasswordRequestDigest(b, password);
+    String digest = codec.existingSetupPasswordRequestDigest(checked.binding(), password);
     if (!digest.equals(checked.requestDigest())) throw unavailable();
-    var binding =
-        new Bound(
-            "EXISTING_SETUP",
-            checked.id(),
-            checked.version(),
-            b.accountId(),
-            b.tenantId(),
-            ClaimedPasswordLocalAccounts.canonicalUsername(b.username()),
-            codec.passwordResetRecipientDigest(b.email()),
-            kind,
-            null,
-            b.expiresAt().atZone(ZoneId.systemDefault()).toInstant().getEpochSecond(),
-            digest);
+    var binding = existingSetupBinding(checked);
     execute(binding, password, claim::checkedClaim, claim::checkedRecoveryClaim, claim);
+  }
+
+  /** Same owned SQL transaction only; a verified old effect cannot complete a newer incarnation. */
+  public boolean requireSetupCompletionWithinOwner(ExistingAccountSetupService.ClaimedSetup claim) {
+    requireSupport();
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || jdbc.getDataSource() == null
+        || !TransactionSynchronizationManager.hasResource(jdbc.getDataSource())) throw unavailable();
+    var b = existingSetupBinding(claim.checkedRecoveryClaim());
+    var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
+    var row = find(b, actor);
+    if (row == null || !"VERIFIED".equals(row.status()) || row.receipt() == null) throw unavailable();
+    var body = open(b, actor, row).path("body");
+    if (!row.receipt().equals(codec.verifyMaintenancePasswordResetReceipt(row.receipt(), realmId, actor, body))) throw unavailable();
+    var local = localAccounts().lock(b.account());
+    checkLocal(b, local);
+    if (!codec.canonical(local.state()).equals(row.local())) throw unavailable();
+    return local.consultantVersion() != null;
+  }
+
+  private Bound existingSetupBinding(ExistingSetupPasswordClaims.Claim checked) {
+    var b = checked.binding();
+    String kind = switch (b.role()) {
+      case COUNSELLOR -> "CONSULTANT";
+      case AGENCY_ADMIN -> "AGENCY_ADMIN";
+      case TENANT_ADMIN -> "TENANT_ADMIN";
+      default -> throw unavailable();
+    };
+    return new Bound("EXISTING_SETUP", checked.id(), checked.version(), b.accountId(), b.tenantId(),
+        ClaimedPasswordLocalAccounts.canonicalUsername(b.username()), codec.passwordResetRecipientDigest(b.email()),
+        kind, null, b.expiresAt().atZone(ZoneId.systemDefault()).toInstant().getEpochSecond(), checked.requestDigest());
   }
 
   public void reset(PasswordResetService.ClaimedReset claim, String password) {

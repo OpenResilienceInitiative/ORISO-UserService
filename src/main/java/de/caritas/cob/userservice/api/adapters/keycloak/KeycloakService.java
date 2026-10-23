@@ -915,6 +915,12 @@ public class KeycloakService
   }
 
   @Override
+  public boolean requireExistingSetupCompletionWithinOwner(
+      de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupService.ClaimedSetup claim) {
+    return checkedClaimedPasswords().requireSetupCompletionWithinOwner(claim);
+  }
+
+  @Override
   public void requirePasswordResetSupport() {
     checkedClaimedPasswords();
   }
