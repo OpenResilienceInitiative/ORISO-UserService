@@ -154,6 +154,10 @@ class AccountRoleAdditionScopedJpaTest {
               consultants.findById(ACCOUNT).ifPresent(consultants::delete);
               entities.flush();
               entities.clear();
+            });
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            ignored -> {
               Consultant consultant =
                   Consultant.builder()
                       .id(ACCOUNT)
@@ -169,7 +173,8 @@ class AccountRoleAdditionScopedJpaTest {
                       .languageCode(LanguageCode.en)
                       .status(ConsultantStatus.IN_PROGRESS)
                       .build();
-              consultants.saveAndFlush(consultant);
+              entities.persist(consultant);
+              entities.flush();
               consultantAgencies.save(
                   ConsultantAgency.builder()
                       .consultant(consultant)
@@ -573,12 +578,47 @@ class AccountRoleAdditionScopedJpaTest {
   private void verifyProof(String proof, String command, JsonNode body) {
     String[] parts = proof.split("\\.", -1);
     assertEquals(2, parts.length);
-    assertEquals(mac("proof\n" + parts[0]), parts[1]);
+    byte[] signature = Base64.getUrlDecoder().decode(parts[1]);
+    assertEquals(32, signature.length);
+    assertEquals(parts[1], Base64.getUrlEncoder().withoutPadding().encodeToString(signature));
+    assertArrayEquals(HexFormat.of().parseHex(mac("proof\n" + parts[0])), signature);
     var claims =
         codec.read(
             new String(Base64.getUrlDecoder().decode(parts[0]), StandardCharsets.UTF_8),
             JsonNode.class);
-    assertEquals(15, claims.size());
+    var fields = new java.util.HashSet<String>();
+    claims.fieldNames().forEachRemaining(fields::add);
+    assertEquals(
+        Set.of(
+            "iss",
+            "aud",
+            "purpose",
+            "operation",
+            "method",
+            "actor",
+            "realm",
+            "target",
+            "taskClient",
+            "taskSubject",
+            "payloadDigest",
+            "jti",
+            "nonce",
+            "iat",
+            "exp"),
+        fields);
+    assertEquals("userservice", claims.path("iss").textValue());
+    assertEquals("oriso-account-maintenance", claims.path("aud").textValue());
+    assertEquals("POST", claims.path("method").textValue());
+    assertEquals("fixture", claims.path("realm").textValue());
+    assertEquals(
+        claims.path("jti").textValue(),
+        java.util.UUID.fromString(claims.path("jti").textValue()).toString());
+    assertTrue(claims.path("iat").isIntegralNumber());
+    assertTrue(claims.path("exp").isIntegralNumber());
+    assertTrue(claims.path("iat").longValue() > 0);
+    assertTrue(claims.path("iat").longValue() <= Instant.now().getEpochSecond() + 5);
+    assertTrue(claims.path("exp").longValue() > Instant.now().getEpochSecond());
+    assertEquals(claims.path("iat").longValue() + 60, claims.path("exp").longValue());
     assertEquals("account." + command, claims.path("operation").textValue());
     assertEquals("ACCOUNT_ADMIN", claims.path("actor").textValue());
     assertEquals("ACCOUNT_MAINTENANCE", claims.path("purpose").textValue());
