@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance;
+import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledConsultantMaintenance;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Clock;
 import java.util.*;
@@ -320,6 +321,45 @@ public class AccountLifecycleCallerConfiguration {
             required("KEYCLOAK_REALM_INTERNAL_ID"));
     maintenance.configureJpaCleanupOwner(entities);
     maintenance.configureAcknowledgedCleanup(deletion::continueAcknowledgedDeletion);
+    return maintenance;
+  }
+
+  @Bean
+  ScheduledConsultantMaintenance scheduledConsultantMaintenance(
+      JdbcTemplate jdbc,
+      PlatformTransactionManager manager,
+      ScheduledTaskClaimService claims,
+      DeletionLifecycleService lifecycle,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      @Qualifier("keycloakRestTemplate") RestTemplate http,
+      KeycloakConfig keycloak,
+      jakarta.persistence.EntityManager entities,
+      de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService deletion) {
+    String publicServer = keycloak.getAuthServerUrl();
+    String internalServer =
+        environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
+    if (publicServer == null
+        || publicServer.isBlank()
+        || internalServer == null
+        || internalServer.isBlank()) throw invalid();
+    var maintenance =
+        new ScheduledConsultantMaintenance(
+            jdbc,
+            manager,
+            claims,
+            Clock.systemUTC(),
+            lifecycle,
+            actors,
+            broker,
+            codec,
+            http,
+            internalServer,
+            keycloak.getRealm(),
+            required("KEYCLOAK_REALM_INTERNAL_ID"));
+    maintenance.configureJpaCleanupOwner(entities);
+    maintenance.configureAcknowledgedCleanup(deletion::continueAcknowledgedConsultantDeletion);
     return maintenance;
   }
 

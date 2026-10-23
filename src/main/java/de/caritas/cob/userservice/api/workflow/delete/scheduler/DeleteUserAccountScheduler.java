@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairSe
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
 import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance;
+import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledConsultantMaintenance;
 import de.caritas.cob.userservice.api.workflow.delete.service.UserHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import jakarta.annotation.PostConstruct;
@@ -31,6 +32,9 @@ public class DeleteUserAccountScheduler {
   @Autowired(required = false)
   private ScheduledAskerMaintenance scopedMaintenance;
 
+  @Autowired(required = false)
+  private ScheduledConsultantMaintenance scopedConsultants;
+
   @Value("${TASK_IDENTITY_MODEL:LEGACY}")
   private String taskIdentityModel = "LEGACY";
 
@@ -39,7 +43,8 @@ public class DeleteUserAccountScheduler {
 
   @PostConstruct
   public void verifyScopedMaintenanceAvailability() {
-    if ("FIVE_ACTORS".equals(taskIdentityModel) && scopedMaintenance == null) {
+    if ("FIVE_ACTORS".equals(taskIdentityModel)
+        && (scopedMaintenance == null || scopedConsultants == null)) {
       throw new IllegalStateException("Five-actor deletion requires the complete scoped scheduler");
     }
   }
@@ -49,6 +54,9 @@ public class DeleteUserAccountScheduler {
   public void performDeletionWorkflow() {
     if (scopedMaintenance != null) {
       scopedMaintenance.performDeletionWorkflow();
+      if (scopedConsultants != null) {
+        scopedConsultants.performDeletionWorkflow();
+      }
       return;
     }
     if (!taskClaimService.tryClaim(TASK_NAME, claimDuration)) {
