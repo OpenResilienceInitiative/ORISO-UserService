@@ -15,6 +15,8 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /** Durable evidence for a tracked native account creation attempt. */
 @Entity
@@ -34,7 +36,13 @@ public class AccountCreationAttempt {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
-  @Column(name = "operation_key", nullable = false, updatable = false, unique = true, length = 36)
+  @JdbcTypeCode(SqlTypes.CHAR)
+  @Column(
+      name = "operation_key",
+      columnDefinition = "char(36)",
+      nullable = false,
+      updatable = false,
+      unique = true)
   private UUID operationKey;
 
   @Column(name = "owner_id", nullable = false, updatable = false, length = 36)
