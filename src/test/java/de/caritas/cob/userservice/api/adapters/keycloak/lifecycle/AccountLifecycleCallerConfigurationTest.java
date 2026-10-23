@@ -16,7 +16,6 @@ import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintena
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.client.RestTemplate;
@@ -130,6 +129,12 @@ class AccountLifecycleCallerConfigurationTest {
     var jdbc = mock(JdbcTemplate.class);
     var source = mock(javax.sql.DataSource.class);
     when(jdbc.getDataSource()).thenReturn(source);
+    var entities = mock(jakarta.persistence.EntityManager.class);
+    var entityFactory = mock(jakarta.persistence.EntityManagerFactory.class);
+    when(entities.isOpen()).thenReturn(true);
+    when(entities.getEntityManagerFactory()).thenReturn(entityFactory);
+    var transactions = new org.springframework.orm.jpa.JpaTransactionManager(entityFactory);
+    transactions.setDataSource(source);
     new ApplicationContextRunner()
         .withInitializer(
             context -> {
@@ -145,7 +150,13 @@ class AccountLifecycleCallerConfigurationTest {
                     factory.registerSingleton("fixtureRequest", new MockHttpServletRequest());
                     factory.registerSingleton("fixtureJdbc", jdbc);
                     factory.registerSingleton(
-                        "fixtureTransactions", new DataSourceTransactionManager(source));
+                        "fixtureTransactions", transactions);
+                    factory.registerSingleton("fixtureEntities", entities);
+                    factory.registerSingleton(
+                        "fixtureDeletionConsumer",
+                        mock(
+                            de.caritas.cob.userservice.api.workflow.delete.service
+                                .DeleteUserAccountService.class));
                     factory.registerSingleton("fixtureAdminScope", mock(AdminScope.class));
                     factory.registerSingleton(
                         "fixtureDeletionClaims",

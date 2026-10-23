@@ -294,12 +294,7 @@ public final class SelfLocaleMaintenance {
             if (!original.equals(current) || !"ACKNOWLEDGED".equals(current.status))
               throw unavailable();
             codec.verifyMaintenanceLocaleReceipt(
-                codec.canonical(
-                    Map.of(
-                        "operationId", current.operation,
-                        "accountId", current.account,
-                        "result", "UPDATED",
-                        "receipt", current.receipt)),
+                current.receipt,
                 realmId,
                 actor,
                 codec.read(current.body, JsonNode.class));

@@ -608,6 +608,11 @@ class HumanAdminAccountMaintenanceTest {
   }
 
   @Test
+  void productionFactoryUsesTheParsedSharedProfileCatalogForTheWholeSelfCallback() {
+    assertDoesNotThrow(() -> runActualConsultantEdit("self-factory"));
+  }
+
+  @Test
   void actualSelfConsultantProfileCannotChangeAnotherIdentityOrRoles() {
     for (String scenario : List.of("self-foreign", "self-roles")) {
       server.reset();
@@ -724,7 +729,22 @@ class HumanAdminAccountMaintenanceTest {
                 "realm-1"),
             CLOCK,
             ISSUER);
-    if (self && !"self-missing-catalog".equals(scenario))
+    if ("self-factory".equals(scenario)) {
+      var now = Instant.now();
+      request.setUserPrincipal(
+          new JwtAuthenticationToken(
+              Jwt.withTokenValue("synthetic-current-human")
+                  .header("alg", "RS256")
+                  .issuer(ISSUER)
+                  .subject(ACCOUNT)
+                  .issuedAt(now.minusSeconds(30))
+                  .expiresAt(now.plusSeconds(300))
+                  .claim("azp", "app")
+                  .claim("tenantId", "7")
+                  .build(),
+              List.of()));
+      service = productionSelfProfileOwner();
+    } else if (self && !"self-missing-catalog".equals(scenario))
       service.configureReviewedSelfProfileRoles(
           Map.of(
               "CONSULTANT",
@@ -1342,6 +1362,99 @@ class HumanAdminAccountMaintenanceTest {
     @org.springframework.web.bind.annotation.PatchMapping("/profile-outcome")
     void fail() {
       throw failure;
+    }
+  }
+
+  private HumanAdminAccountMaintenance productionSelfProfileOwner() {
+    var groups =
+        Map.of(
+            "/human-roles/user", Set.of("user"),
+            "/human-roles/consultant", Set.of("consultant"),
+            "/human-roles/agency", Set.of("restricted-agency-admin", "user-admin"));
+    var ordinary = json.createObjectNode().put("version", 1);
+    ordinary.putObject("native");
+    var ordinaryProfiles = ordinary.putArray("ordinaryProfiles");
+    groups.forEach(
+        (path, roles) -> {
+          String id = path.substring("/human-roles/".length());
+          var profile = ordinaryProfiles.addObject().put("id", id).put("version", 1);
+          profile.put("groupId", "group-" + id).put("groupParentId", "human-root");
+          profile.put("groupPath", path).put("allowUnassignedTenant", false);
+          profile.set("realmRoles", json.valueToTree(new TreeSet<>(roles)));
+          profile.putObject("clientRoles");
+          profile.putArray("selfOperations").add("account.read").add("account.email");
+        });
+    var protectedPolicy = json.createObjectNode().put("realmId", "realm-1").put("realmName", "test");
+    protectedPolicy.putArray("technicalRoles").add("technical");
+    var protectedProfiles = protectedPolicy.putArray("profiles");
+    Map.of(
+            "tenant", Set.of("tenant-admin"),
+            "tenant-secondary", Set.of("tenant-admin"),
+            "platform", Set.of("agency-admin", "tenant-admin"))
+        .forEach(
+            (id, roles) -> {
+              var profile = protectedProfiles.addObject().put("id", id).put("version", 1);
+              profile.put("kind", id.startsWith("tenant") ? "TENANT_ADMIN" : "PLATFORM_ADMIN");
+              profile.putArray("tenantModes").add("EXISTING");
+              profile.put("groupId", "group-" + id).put("groupPath", "/human-roles/" + id);
+              profile.set("realmRoles", json.valueToTree(new TreeSet<>(roles)));
+              profile.putObject("clientRoles");
+              profile.put("usernamePolicy", "USERNAME_TRANSCODER_V1");
+              profile.put("firstNamePolicy", "INVITE_WITH_EMAIL_LOCAL_PART_FALLBACK");
+              profile.put("lastNamePolicy", "INVITE_WITH_ADMIN_FALLBACK");
+            });
+    var catalog =
+        de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ReviewedMaintenanceProfiles.read(
+            ordinary.toString(),
+            protectedPolicy.toString(),
+            groups,
+            Map.of("TENANT_ADMIN", "tenant", "PLATFORM_ADMIN", "platform"),
+            "realm-1",
+            "test");
+    assertEquals(
+        Set.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN"),
+        catalog.profiles().keySet());
+    assertEquals(2, catalog.profiles().get("TENANT_ADMIN").size());
+    var environment =
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS")
+            .withProperty("ORISO_ACCOUNT_LIFECYCLE_GROUPS", codec.canonical(groups))
+            .withProperty("ORISO_IDENTITY_HUMAN_CLIENT_IDS", "[\"app\"]")
+            .withProperty("KEYCLOAK_REALM_INTERNAL_ID", "realm-1")
+            .withProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", "https://internal-auth.example.test");
+    var configuration =
+        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCallerConfiguration(
+            environment);
+    var keycloak = mock(de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig.class);
+    when(keycloak.getRealm()).thenReturn("test");
+    when(keycloak.getAuthServerUrl()).thenReturn("https://public-auth.example.test");
+    try (var context = new org.springframework.context.support.GenericApplicationContext()) {
+      var factory = context.getDefaultListableBeanFactory();
+      Map.ofEntries(
+              Map.entry("productionConfiguration", configuration),
+              Map.entry("identities", mode),
+              Map.entry("human", human),
+              Map.entry("scope", scope),
+              Map.entry("jdbc", jdbc),
+              Map.entry("transactions", transactions),
+              Map.entry("request", request),
+              Map.entry("actors", actors),
+              Map.entry("broker", broker),
+              Map.entry("codec", codec),
+              Map.entry("keycloakRestTemplate", http),
+              Map.entry("keycloak", keycloak),
+              Map.entry("reviewed", catalog))
+          .forEach(factory::registerSingleton);
+      var definition =
+          new org.springframework.beans.factory.support.RootBeanDefinition(
+              HumanAdminAccountMaintenance.class);
+      definition.setFactoryBeanName("productionConfiguration");
+      definition.setFactoryMethodName("humanAdminAccountMaintenance");
+      definition.setAutowireMode(
+          org.springframework.beans.factory.support.AbstractBeanDefinition.AUTOWIRE_CONSTRUCTOR);
+      factory.registerBeanDefinition("productionSelfProfileOwner", definition);
+      context.refresh();
+      return context.getBean(HumanAdminAccountMaintenance.class);
     }
   }
 

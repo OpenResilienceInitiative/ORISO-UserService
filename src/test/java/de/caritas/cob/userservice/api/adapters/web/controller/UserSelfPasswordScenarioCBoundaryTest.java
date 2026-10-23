@@ -691,19 +691,7 @@ class UserSelfPasswordScenarioCBoundaryTest {
                     body,
                     codec.read(((MockClientHttpRequest) out).getBodyAsString(), JsonNode.class));
                 return withStatus(HttpStatus.valueOf(status))
-                    .body(
-                        status == 200
-                            ? codec.canonical(
-                                Map.of(
-                                    "operationId",
-                                    operation,
-                                    "accountId",
-                                    ACCOUNT,
-                                    "result",
-                                    "UPDATED",
-                                    "receipt",
-                                    receipt))
-                            : "{}")
+                    .body(status == 200 ? receipt : "{}")
                     .contentType(MediaType.APPLICATION_JSON)
                     .createResponse(out);
               });

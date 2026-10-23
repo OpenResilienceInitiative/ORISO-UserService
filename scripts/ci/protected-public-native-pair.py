@@ -19,7 +19,7 @@ import uuid
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-KC_COMMIT = "a9483e4b44578f10badf70c5265a37a2c1d3d26e"
+KC_COMMIT = "e1b2baae5c8509f2a28a2de306761a14c5840faa"
 SUITE = "de.caritas.cob.userservice.api.service.accountinvite.ProtectedAdminPublicNativePairProof"
 CASE = "realPublicPlatformInvitationStagesJpaAndCompletesNativeAppBeforeAcknowledgingActivation"
 TENANT_CASE = "realPublicTenantInvitationStagesJpaAndCompletesNativeAppBeforeAcknowledgingActivation"

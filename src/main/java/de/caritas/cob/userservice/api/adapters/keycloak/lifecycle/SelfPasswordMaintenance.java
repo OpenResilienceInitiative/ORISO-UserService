@@ -283,15 +283,7 @@ public final class SelfPasswordMaintenance {
                   throw unavailable();
                 var body = openChecked(self, current, digest, actor).path("body");
                 codec.verifyMaintenanceSelfPasswordReceipt(
-                    codec.canonical(
-                        Map.of(
-                            "operationId", current.operation,
-                            "accountId", current.account,
-                            "result", "UPDATED",
-                            "receipt", current.receipt)),
-                    realmId,
-                    actor,
-                    body);
+                    current.receipt, realmId, actor, body);
                 return body;
               });
       String verified =

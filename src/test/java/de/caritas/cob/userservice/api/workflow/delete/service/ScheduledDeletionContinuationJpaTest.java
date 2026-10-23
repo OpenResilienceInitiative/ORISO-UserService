@@ -17,7 +17,11 @@ import de.caritas.cob.userservice.api.port.out.DraftMessageRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityTombstoneRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction.PreparedUserDeletion;
+import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance.AcknowledgedDeletion;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimWriter;
@@ -795,9 +799,328 @@ class ScheduledDeletionContinuationJpaTest {
     }
   }
 
+  @Test
+  void privatePreparationRunsActualOwnedPrerequisitesBeforeFinalJpaDeletion() {
+    var preparations = new AtomicInteger();
+    try (var actions = actions()) {
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var target = preparationTarget(frame);
+                        frame.runOwnedLocal(() -> drafts.deleteByUserId(ACCOUNT));
+                        var prepared =
+                            actions.finalAction.prepareAcknowledged(target).orElseThrow();
+                        preparations.incrementAndGet();
+                        prepared.requireFor(frame);
+                        assertTrue(
+                            users.findById(ACCOUNT).isPresent(),
+                            "Preparation must retain the real User");
+                        assertFalse(actions.events.contains("finalUserDelete"));
+                        assertTrue(actions.events.contains("memberships.deleteAll"));
+                        assertTrue(actions.events.contains("mobileTokens.deleteAll"));
+                        assertTrue(actions.finalAction.completeAcknowledged(prepared));
+                        assertTrue(frame.completed());
+                      }))
+          .performDeletionWorkflow();
+      assertEquals(1, preparations.get(), "Actual private ACK must reach successful preparation");
+      assertTrue(users.findById(ACCOUNT).isEmpty());
+      assertEquals("APPLIED", status());
+      assertEquals(1, nativeEffects.get());
+    }
+  }
+
+  @Test
+  void userContentVetoCannotMintFinalPreparationOrDeleteMemberships() {
+    var refusals = new AtomicInteger();
+    try (var actions = actions()) {
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var target = preparationTarget(frame);
+                        target.getDeletionWorkflowErrors().add(contentFailure());
+                        assertTrue(actions.finalAction.prepareAcknowledged(target).isEmpty());
+                        refusals.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
+      assertEquals(1, refusals.get());
+      assertFalse(actions.events.contains("memberships.findByUser"));
+      assertFalse(actions.events.contains("finalUserDelete"));
+      assertEquals(1, draftCount());
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals("ACKNOWLEDGED", status());
+    }
+  }
+
+  @Test
+  void membershipFailureCannotMintPreparationForMediaOrFinalDeletion() {
+    var refusals = new AtomicInteger();
+    try (var actions = actions()) {
+      actions.failMemberships = true;
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var target = preparationTarget(frame);
+                        assertTrue(actions.finalAction.prepareAcknowledged(target).isEmpty());
+                        assertFalse(target.getDeletionWorkflowErrors().isEmpty());
+                        refusals.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
+      assertEquals(1, refusals.get());
+      assertFalse(actions.events.contains("mobileTokens.findByUser"));
+      assertFalse(actions.events.contains("finalUserDelete"));
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals("ACKNOWLEDGED", status());
+    }
+  }
+
+  @Test
+  void mobileTokenFailureRetainsUserWithoutMintingFinalPreparation() {
+    var refusals = new AtomicInteger();
+    try (var actions = actions()) {
+      actions.failMobileTokens = true;
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var target = preparationTarget(frame);
+                        assertTrue(actions.finalAction.prepareAcknowledged(target).isEmpty());
+                        assertFalse(target.getDeletionWorkflowErrors().isEmpty());
+                        refusals.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
+      assertEquals(1, refusals.get());
+      assertTrue(actions.events.contains("memberships.deleteAll"));
+      assertFalse(actions.events.contains("finalUserDelete"));
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals("ACKNOWLEDGED", status());
+    }
+  }
+
+  @Test
+  void preparationRejectsAnEqualButSubstitutedUserReferenceInTheSameDto() {
+    var checked = new AtomicInteger();
+    try (var actions = actions()) {
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var target = preparationTarget(frame);
+                        var prepared =
+                            actions.finalAction.prepareAcknowledged(target).orElseThrow();
+                        var original = target.getUser();
+                        var replacement = users.findById(ACCOUNT).orElseThrow();
+                        assertNotSame(original, replacement);
+                        target.setUser(replacement);
+                        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
+                        assertThrows(
+                            RuntimeException.class,
+                            () -> actions.finalAction.completeAcknowledged(prepared));
+                        checked.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
+      assertEquals(1, checked.get());
+      assertFalse(actions.events.contains("finalUserDelete"));
+      assertTrue(users.findById(ACCOUNT).isPresent());
+    }
+  }
+
+  @Test
+  void preparationRechecksCurrentContentVetoBeforeEveryFinalUse() {
+    var checked = new AtomicInteger();
+    try (var actions = actions()) {
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var target = preparationTarget(frame);
+                        var prepared =
+                            actions.finalAction.prepareAcknowledged(target).orElseThrow();
+                        actions.failMemberships = true;
+                        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
+                        actions.failMemberships = false;
+                        prepared.requireFor(frame);
+                        var originalErrors = target.getDeletionWorkflowErrors();
+                        target.setDeletionWorkflowErrors(new ArrayList<>());
+                        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
+                        target.setDeletionWorkflowErrors(originalErrors);
+                        target.getDeletionWorkflowErrors().add(contentFailure());
+                        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
+                        assertThrows(
+                            RuntimeException.class,
+                            () -> actions.finalAction.completeAcknowledged(prepared));
+                        checked.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
+      assertEquals(1, checked.get());
+      assertFalse(actions.events.contains("finalUserDelete"));
+      assertTrue(users.findById(ACCOUNT).isPresent());
+    }
+  }
+
+  @Test
+  void preparationCannotAuthorizeAChangedActualSqlIncarnation() {
+    var checked = new AtomicInteger();
+    try (var actions = actions()) {
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var prepared =
+                            actions
+                                .finalAction
+                                .prepareAcknowledged(preparationTarget(frame))
+                                .orElseThrow();
+                        jdbc.update(
+                            "update user set create_date=dateadd('DAY',1,create_date) where user_id=?",
+                            ACCOUNT);
+                        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
+                        assertThrows(
+                            RuntimeException.class,
+                            () -> actions.finalAction.completeAcknowledged(prepared));
+                        checked.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
+      assertEquals(1, checked.get());
+      assertFalse(actions.events.contains("finalUserDelete"));
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals("ACKNOWLEDGED", status());
+    }
+  }
+
+  @Test
+  void preparationIsBoundToItsActualActionIssuerAndCannotSurviveAColdFrame() {
+    var original = new AtomicReference<PreparedUserDeletion>();
+    var first = new AtomicInteger();
+    try (var actions = actions();
+        var otherAction = actions()) {
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var prepared =
+                            actions
+                                .finalAction
+                                .prepareAcknowledged(preparationTarget(frame))
+                                .orElseThrow();
+                        original.set(prepared);
+                        assertThrows(
+                            RuntimeException.class,
+                            () -> otherAction.finalAction.completeAcknowledged(prepared));
+                        first.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
+      assertEquals(1, first.get());
+      var second = new AtomicInteger();
+      owner(
+              true,
+              frame -> {
+                assertThrows(RuntimeException.class, () -> original.get().requireFor(frame));
+                second.incrementAndGet();
+              })
+          .performDeletionWorkflow();
+      assertEquals(1, second.get());
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals("ACKNOWLEDGED", status());
+      assertEquals(1, nativeCalls.get());
+      assertFalse(actions.events.contains("finalUserDelete"));
+      assertFalse(otherAction.events.contains("finalUserDelete"));
+    }
+  }
+
+  private AskerDeletionWorkflowDTO preparationTarget(AcknowledgedDeletion frame) {
+    var original = new AtomicReference<User>();
+    frame.runOwnedLocal(() -> original.set(users.findById(ACCOUNT).orElseThrow()));
+    frame.requireCurrentUser(original.get());
+    return new AskerDeletionWorkflowDTO(original.get(), new ArrayList<>(), frame);
+  }
+
+  private static DeletionWorkflowError contentFailure() {
+    return DeletionWorkflowError.builder()
+        .deletionTargetType(DeletionTargetType.USER_CONTENT)
+        .reason("fixture retained unencrypted content")
+        .build();
+  }
+
   private AcknowledgedAskerActionsFixture actions() {
     return new AcknowledgedAskerActionsFixture(
         ACCOUNT, users, tombstones, drafts, transactions, entities);
+  }
+
+  @Test
+  void productionSchedulerFactoryBindsTheSameJpaOwnerAndActualNineActionConsumer() {
+    try (var actions = actions();
+        var context = new org.springframework.context.support.GenericApplicationContext()) {
+      var environment =
+          new org.springframework.mock.env.MockEnvironment()
+              .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS")
+              .withProperty("ORISO_ACCOUNT_LIFECYCLE_GROUPS", "{\"/human-roles/user\":[\"user\"]}")
+              .withProperty("ORISO_IDENTITY_HUMAN_CLIENT_IDS", "[\"human-app\"]")
+              .withProperty("KEYCLOAK_REALM_INTERNAL_ID", REALM);
+      var configuration =
+          new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+              .AccountLifecycleCallerConfiguration(environment);
+      var keycloak =
+          mock(de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig.class);
+      when(keycloak.getRealm()).thenReturn("fixture");
+      when(keycloak.getAuthServerUrl()).thenReturn("https://identity.test");
+      var factory = context.getDefaultListableBeanFactory();
+      Map.ofEntries(
+              Map.entry("productionConfiguration", configuration),
+              Map.entry("jdbc", jdbc),
+              Map.entry("transactions", transactions),
+              Map.entry("claims", claims),
+              Map.entry("lifecycle", new DeletionLifecycleService()),
+              Map.entry("actors", actors),
+              Map.entry("broker", broker),
+              Map.entry("codec", codec),
+              Map.entry("keycloakRestTemplate", http),
+              Map.entry("keycloak", keycloak),
+              Map.entry("entities", entities),
+              Map.entry("deletionService", actions.service))
+          .forEach(factory::registerSingleton);
+      var definition =
+          new org.springframework.beans.factory.support.RootBeanDefinition(
+              ScheduledAskerMaintenance.class);
+      definition.setFactoryBeanName("productionConfiguration");
+      definition.setFactoryMethodName("scheduledAskerMaintenance");
+      definition.setAutowireMode(
+          org.springframework.beans.factory.support.AbstractBeanDefinition.AUTOWIRE_CONSTRUCTOR);
+      factory.registerBeanDefinition("productionScheduledOwner", definition);
+      context.refresh();
+      var owner = context.getBean(ScheduledAskerMaintenance.class);
+      owner.performDeletionWorkflow();
+      assertEquals(1, actions.serviceEntries.get(), "The production bean must reach its consumer");
+      actions.assertAllNineActionBoundaries();
+      assertEquals("APPLIED", status());
+      assertTrue(users.findById(ACCOUNT).isEmpty());
+      assertEquals(0, draftCount());
+      assertEquals(1, nativeEffects.get());
+      actions.events.clear();
+      owner.performDeletionWorkflow();
+      assertEquals(List.of(), actions.events);
+      assertEquals(1, nativeEffects.get());
+      verifyNoInteractions(actions.forbiddenNative);
+      server.verify();
+    }
   }
 
   private int draftCount() {
