@@ -1004,7 +1004,11 @@ public class AccountInactivityService {
           || !java.util.Objects.equals(saved.claimedAt(), current.claimedAt())
           || original.path("claimedAtMicros").longValue()
               != InactivityClaimJournal.micros(current.claimedAt())
-          || !java.util.Objects.equals(saved.suspension(), current.suspension())
+          || !java.util.Objects.equals(
+              "SUSPEND".equals(action()) && "ACKNOWLEDGED".equals(current.phase())
+                  ? saved.work()
+                  : saved.suspension(),
+              current.suspension())
           || !java.util.Objects.equals(tenantId(), row.tenantId())
           || original.path("assignedMonths").intValue() != row.assignedMonths()
           || original.path("revision").longValue() != row.revision()
