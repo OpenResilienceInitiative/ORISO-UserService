@@ -43,6 +43,10 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
   Consumer<AskerDeletionWorkflowDTO> beforeMatrixAction = target -> {};
   final AtomicInteger serviceEntries = new AtomicInteger();
   final AtomicInteger matrixEntries = new AtomicInteger();
+  boolean failMatrix;
+  boolean failAppointment;
+  boolean failNotifications;
+  Runnable beforeFinalCommit = () -> {};
   boolean failDrafts;
   boolean failMemberships;
   boolean failMobileTokens;
@@ -59,6 +63,17 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
       DraftMessageRepository actualDrafts,
       PlatformTransactionManager transactions,
       EntityManager entities) {
+    this(accountId, users, tombstones, actualDrafts, transactions, entities, false);
+  }
+
+  AcknowledgedAskerActionsFixture(
+      String accountId,
+      UserRepository users,
+      IdentityTombstoneRepository tombstones,
+      DraftMessageRepository actualDrafts,
+      PlatformTransactionManager transactions,
+      EntityManager entities,
+      boolean completeConstructor) {
     this.entities = entities;
     this.accountId = accountId;
     for (long id : List.of(11L, 12L)) {
@@ -76,7 +91,7 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
                 return Answers.RETURNS_DEFAULTS.answer(invocation);
               String id = invocation.getArgument(0);
               external(method + ":" + id);
-              return true;
+              return !failMatrix;
             });
     var sessionRepository =
         local(
@@ -147,6 +162,7 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
               if ("deleteAsker".equals(invocation.getMethod().getName())) {
                 assertEquals(accountId, invocation.getArgument(0));
                 external("appointment");
+                if (failAppointment) throw new IllegalStateException("fixture appointment refused");
               }
               return Answers.RETURNS_DEFAULTS.answer(invocation);
             });
@@ -160,7 +176,15 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
               actualDrafts.deleteByUserId(accountId);
               return Answers.RETURNS_DEFAULTS.answer(invocation);
             });
-    var notifications = local(EventNotificationRepository.class, "notifications");
+    var notifications =
+        local(
+            EventNotificationRepository.class,
+            "notifications",
+            invocation -> {
+              if (failNotifications)
+                throw new IllegalStateException("fixture notification refused");
+              return Answers.RETURNS_DEFAULTS.answer(invocation);
+            });
     var replies = local(ReplyEmailDeliveryRepository.class, "replies");
     var chats =
         local(
@@ -190,6 +214,7 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
     doAnswer(
             invocation -> {
               localBoundary("finalUserDelete");
+              beforeFinalCommit.run();
               requireAccount(invocation.getArgument(0));
               return invocation.callRealMethod();
             })
@@ -211,22 +236,37 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
             sessionRepository, sessionData, handovers, supervisors, topics, teams, teamPurge));
     register(new DeleteDatabaseAskerAgencyAction(agencies));
     register(new DeleteAnonymousRegistryIdAction(anonymous));
-    register(new DeleteAppointmentServiceAskerAction(appointments));
-    register(new DeleteAskerDraftMessagesAction(drafts));
-    register(new DeleteAskerEventNotificationsAction(notifications));
+    var appointmentsAction = new DeleteAppointmentServiceAskerAction(appointments);
+    var draftsAction = new DeleteAskerDraftMessagesAction(drafts);
+    var notificationsAction = new DeleteAskerEventNotificationsAction(notifications);
+    register(appointmentsAction);
+    register(draftsAction);
+    register(notificationsAction);
     register(new DeleteAskerReplyEmailDeliveriesAction(replies));
     finalAction = new DeleteDatabaseAskerAction(users, chats, tokens, tombstoneService);
     register(finalAction);
     context.refresh();
     service =
         spy(
-            new DeleteUserAccountService(
-                users,
-                mock(ConsultantRepository.class),
-                new ActionsRegistry(context),
-                errorMail,
-                new DeletionLifecycleService(),
-                mock(UserHardDeleteClaimService.class)));
+            completeConstructor
+                ? new DeleteUserAccountService(
+                    users,
+                    mock(ConsultantRepository.class),
+                    new ActionsRegistry(context),
+                    errorMail,
+                    new DeletionLifecycleService(),
+                    mock(UserHardDeleteClaimService.class),
+                    finalAction,
+                    appointmentsAction,
+                    draftsAction,
+                    notificationsAction)
+                : new DeleteUserAccountService(
+                    users,
+                    mock(ConsultantRepository.class),
+                    new ActionsRegistry(context),
+                    errorMail,
+                    new DeletionLifecycleService(),
+                    mock(UserHardDeleteClaimService.class)));
     doAnswer(
             invocation -> {
               serviceEntries.incrementAndGet();

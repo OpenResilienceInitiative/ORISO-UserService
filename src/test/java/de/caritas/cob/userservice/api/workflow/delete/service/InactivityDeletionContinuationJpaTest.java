@@ -109,6 +109,8 @@ class InactivityDeletionContinuationJpaTest {
           "avatar_id");
   @Autowired private DataSource dataSource;
   @Autowired private UserRepository users;
+  @Autowired private de.caritas.cob.userservice.api.port.out.DraftMessageRepository drafts;
+  private Consumer<AcknowledgedDeletion> actualContinuation;
   @Autowired private de.caritas.cob.userservice.api.port.out.UserChatRepository userChats;
   @Autowired private de.caritas.cob.userservice.api.port.out.UserMobileTokenRepository mobileTokens;
   @Autowired private de.caritas.cob.userservice.api.port.out.IdentityTombstoneRepository tombstones;
@@ -139,6 +141,7 @@ class InactivityDeletionContinuationJpaTest {
     assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
     TenantContext.clear();
     jdbc = new JdbcTemplate(dataSource);
+    drafts.deleteByUserId(ACCOUNT);
     jdbc.execute("drop table if exists identity_maintenance_intent");
     new ResourceDatabasePopulator(
             new ClassPathResource(
@@ -549,6 +552,243 @@ class InactivityDeletionContinuationJpaTest {
     verifyNoInteractions(sdk);
   }
 
+  @Test
+  void actualConsumerRunsOnlySevenThenOwnedMediaAndAtomicFinal() {
+    try (var actual = actualConsumer(true)) {
+      TenantContext.setCurrentTenant(91L);
+      var service = inactivity(true, false);
+      service.scan(false);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(1, actual.serviceEntries.get());
+      assertSeven(actual.events);
+      assertTrue(users.findById(ACCOUNT).isEmpty());
+      assertEquals("APPLIED", status());
+      assertEquals(List.of(List.of("@owned-cleanup:fixture.invalid")), forgotten);
+      assertEquals(91L, TenantContext.getCurrentTenant());
+    }
+  }
+
+  @Test
+  void actualConsumerStopsAfterFirstMatrixErrorAndRetriesSavedAck() {
+    try (var actual = actualConsumer(true)) {
+      actual.failMatrix = true;
+      var service = inactivity(true, false);
+      service.scan(false);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(1, actual.serviceEntries.get());
+      assertTrue(actual.events.stream().noneMatch(e -> e.equals("sessions.delete")));
+      assertTrue(actual.events.stream().noneMatch(e -> e.startsWith("agencies.")));
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals("ACKNOWLEDGED", status());
+      assertTrue(forgotten.isEmpty());
+      actual.failMatrix = false;
+      inactivity(false, false).scan(false);
+      assertEquals(1, nativeCalls.get());
+      assertEquals("APPLIED", status());
+    }
+  }
+
+  @Test
+  void actualConsumerRetainsDurableDraftCleanupWhenNextContentActionFails() {
+    saveOrphanDraft();
+    try (var actual = actualConsumer(true)) {
+      actual.failNotifications = true;
+      inactivity(true, false).scan(false);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(0, draftCount());
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertTrue(forgotten.isEmpty());
+      assertTrue(actual.events.stream().noneMatch(e -> e.startsWith("replies.")));
+      actual.failNotifications = false;
+      inactivity(false, false).scan(false);
+      assertEquals(1, nativeCalls.get());
+      assertEquals("APPLIED", status());
+      assertEquals(0, draftCount());
+    }
+  }
+
+  @Test
+  void actualMembershipPreparationFailurePreventsMediaAndKeepsOriginalUser() {
+    try (var actual = actualConsumer(true)) {
+      actual.failMemberships = true;
+      inactivity(true, false).scan(false);
+      assertEquals(1, nativeEffects.get());
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertTrue(forgotten.isEmpty());
+      assertEquals("ACKNOWLEDGED", status());
+      actual.failMemberships = false;
+      inactivity(false, false).scan(false);
+      assertEquals("APPLIED", status());
+      assertEquals(1, nativeCalls.get());
+    }
+  }
+
+  @Test
+  void actualMediaUnknownKeepsUserAndRetriesTheSameCapturedIds() {
+    try (var actual = actualConsumer(true)) {
+      loseMediaReply = true;
+      inactivity(true, false).scan(false);
+      assertEquals(1, nativeEffects.get());
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals("ACKNOWLEDGED", status());
+      String original = envelope().toString();
+      inactivity(false, false).scan(false);
+      assertEquals(1, nativeCalls.get());
+      assertEquals(original, envelope().toString());
+      assertEquals(
+          List.of(
+              List.of("@owned-cleanup:fixture.invalid"), List.of("@owned-cleanup:fixture.invalid")),
+          forgotten);
+      assertEquals("APPLIED", status());
+    }
+  }
+
+  @Test
+  void actualFinalCommitLostReplyNeverRepeatsMediaOrEarlierActions() {
+    uncertainFinal = new LostCommitReplyJpaManager(entities.getEntityManagerFactory(), dataSource);
+    try (var actual = actualConsumer(true)) {
+      actual.beforeFinalCommit = () -> uncertainFinal.loseNextCommit = true;
+      inactivity(true, false).scan(false);
+      assertEquals(1, nativeEffects.get());
+      assertEquals("APPLIED", status());
+      assertTrue(users.findById(ACCOUNT).isEmpty());
+      int effects = actual.events.size();
+      inactivity(false, false).scan(false);
+      assertEquals(effects, actual.events.size());
+      assertEquals(1, forgotten.size());
+      assertEquals(1, nativeCalls.get());
+    }
+  }
+
+  @Test
+  void originallyAbsentActualConsumerRunsExactlyThreeWithoutAnyUserDto() {
+    users.deleteById(ACCOUNT);
+    saveOrphanDraft();
+    try (var actual = actualConsumer(true)) {
+      inactivity(true, false).scan(false);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(1, actual.serviceEntries.get());
+      assertEquals(
+          List.of("appointment", "drafts.deleteByUserId", "notifications.deleteByRecipientUserId"),
+          actual.events);
+      assertEquals(0, draftCount());
+      assertTrue(users.findById(ACCOUNT).isEmpty());
+      assertTrue(forgotten.stream().allMatch(List::isEmpty));
+      assertEquals("APPLIED", status());
+    }
+  }
+
+  @Test
+  void originallyAbsentAppointmentErrorStopsContentAndSavedAckRetries() {
+    users.deleteById(ACCOUNT);
+    saveOrphanDraft();
+    try (var actual = actualConsumer(true)) {
+      actual.failAppointment = true;
+      inactivity(true, false).scan(false);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(List.of("appointment"), actual.events);
+      assertEquals(1, draftCount());
+      assertEquals("ACKNOWLEDGED", status());
+      actual.failAppointment = false;
+      inactivity(false, false).scan(false);
+      assertEquals(1, nativeCalls.get());
+      assertEquals(0, draftCount());
+      assertEquals("APPLIED", status());
+    }
+  }
+
+  @Test
+  void actualConsumerChecksOriginalSqlAgainAfterEachExternalBoundary() {
+    try (var actual = actualConsumer(true)) {
+      actual.afterExternal =
+          event ->
+              jdbc.update(
+                  "update user set matrix_user_id=? where user_id=?",
+                  "@replaced:fixture.invalid",
+                  ACCOUNT);
+      inactivity(true, false).scan(false);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(1, actual.serviceEntries.get());
+      assertEquals(
+          1L,
+          actual.events.stream()
+              .filter(
+                  event -> event.startsWith("purgeRoom:") || event.startsWith("deactivateUser:"))
+              .count());
+      assertTrue(actual.events.stream().noneMatch(event -> event.equals("sessions.delete")));
+      assertTrue(forgotten.isEmpty());
+      assertTrue(users.findById(ACCOUNT).isPresent());
+      assertEquals("ACKNOWLEDGED", status());
+    }
+  }
+
+  @Test
+  void legacySixArgumentServiceRefusesScopedAbsenceBeforeAllThreeEffects() {
+    users.deleteById(ACCOUNT);
+    saveOrphanDraft();
+    try (var actual = actualConsumer(false)) {
+      inactivity(true, false).scan(false);
+      assertEquals(1, nativeEffects.get());
+      assertEquals(1, actual.serviceEntries.get());
+      assertTrue(actual.events.isEmpty());
+      assertEquals(1, draftCount());
+      assertEquals("ACKNOWLEDGED", status());
+    }
+  }
+
+  private AcknowledgedAskerActionsFixture actualConsumer(boolean configured) {
+    withMatrixIdentity = true;
+    var actual =
+        new AcknowledgedAskerActionsFixture(
+            ACCOUNT,
+            users,
+            tombstones,
+            drafts,
+            uncertainFinal == null ? transactions : uncertainFinal,
+            entities,
+            configured);
+    actualContinuation = actual.service::continueAcknowledgedDeletion;
+    return actual;
+  }
+
+  private void saveOrphanDraft() {
+    var now = LocalDateTime.now(ZoneOffset.UTC);
+    drafts.save(
+        de.caritas.cob.userservice.api.model.DraftMessage.builder()
+            .userId(ACCOUNT)
+            .scopeKey("inactivity-owned-draft")
+            .text("fixture unencrypted draft")
+            .createDate(now)
+            .updateDate(now)
+            .tenantId(7L)
+            .build());
+  }
+
+  private int draftCount() {
+    return jdbc.queryForObject(
+        "select count(*) from draft_message where user_id=?", Integer.class, ACCOUNT);
+  }
+
+  private static void assertSeven(List<String> events) {
+    assertTrue(
+        events.stream().noneMatch(e -> e.startsWith("replies.")),
+        "Inactivity old seven never included reply email");
+    int previous = -1;
+    for (String marker :
+        List.of(
+            "purgeRoom:!owned-room-11:fixture.invalid",
+            "sessions.delete",
+            "agencies.deleteAll",
+            "anonymous.removeRegistryIdByUsername",
+            "appointment",
+            "drafts.deleteByUserId",
+            "notifications.deleteByRecipientUserId")) {
+      int index = events.indexOf(marker);
+      assertTrue(index > previous, "Missing or out of order " + marker + " in " + events);
+      previous = index;
+    }
+  }
+
   private final de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient sdk =
       mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient.class);
   private boolean productionFactory;
@@ -675,6 +915,10 @@ class InactivityDeletionContinuationJpaTest {
               assertFalse(frame.completed());
               completedIdentity = frame.accountId();
               callbacks.incrementAndGet();
+              if (actualContinuation != null) {
+                actualContinuation.accept(frame);
+                return;
+              }
               if (frame.hasLocalUser()) {
                 var dto =
                     new java.util.concurrent.atomic.AtomicReference<

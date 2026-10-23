@@ -252,6 +252,9 @@ public class AccountLifecycleCallerConfiguration {
           jakarta.servlet.http.HttpServletRequest request,
           de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
               existing,
+          de.caritas.cob.userservice.api.workflow.accountinactivity.DefaultAccountInactivityEffects
+              effects,
+          ScheduledAskerMaintenance deletion,
           TaskActorConfiguration actors,
           TaskActorTokenBroker broker,
           AccountLifecycleCodec codec,
@@ -277,6 +280,7 @@ public class AccountLifecycleCallerConfiguration {
             required("KEYCLOAK_REALM_INTERNAL_ID"),
             issuer);
     existing.configureScopedInactivity(transport, user, request, issuer, humanClients);
+    effects.setScopedDeletionMaintenance(deletion);
     return transport;
   }
 

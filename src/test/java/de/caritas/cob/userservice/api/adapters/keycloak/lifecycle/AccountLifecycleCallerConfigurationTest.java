@@ -184,6 +184,11 @@ class AccountLifecycleCallerConfigurationTest {
                         mock(
                             de.caritas.cob.userservice.api.workflow.accountinactivity
                                 .AccountInactivityService.class));
+                    factory.registerSingleton(
+                        "fixtureAccountInactivityEffects",
+                        mock(
+                            de.caritas.cob.userservice.api.workflow.accountinactivity
+                                .DefaultAccountInactivityEffects.class));
                     factory.registerSingleton("fixtureMatrix", mock(MatrixSynapseService.class));
                     factory.registerSingleton(
                         "fixtureMatrixConfiguration", mock(MatrixConfig.class));

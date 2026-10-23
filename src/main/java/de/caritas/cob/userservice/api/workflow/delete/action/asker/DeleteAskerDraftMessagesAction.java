@@ -28,6 +28,45 @@ public class DeleteAskerDraftMessagesAction implements ActionCommand<AskerDeleti
 
   private final @NonNull DraftMessageRepository draftMessageRepository;
 
+  /** Only the actual original-absence inactivity acknowledgement can name this identity. */
+  public java.util.List<DeletionWorkflowError> executeOriginallyAbsent(
+      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+              .AcknowledgedDeletion
+          acknowledged) {
+    java.util.Objects.requireNonNull(acknowledged);
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+        .isActualTransactionActive())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    acknowledged.requireCurrent();
+    if (!acknowledged.inactivityCause() || acknowledged.hasLocalUser())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    String account = acknowledged.accountId();
+    var errors = new java.util.ArrayList<DeletionWorkflowError>();
+    acknowledged.runOwnedLocal(
+        () -> {
+          acknowledged.requireCurrent();
+          if (!acknowledged.inactivityCause()
+              || acknowledged.hasLocalUser()
+              || !account.equals(acknowledged.accountId()))
+            throw new de.caritas.cob.userservice.api.port.out
+                .ScopedIdentityCommandRequiredException();
+          try {
+            this.draftMessageRepository.deleteByUserId(account);
+          } catch (Exception unavailable) {
+            errors.add(
+                DeletionWorkflowError.builder()
+                    .deletionSourceType(ASKER)
+                    .deletionTargetType(DeletionTargetType.USER_CONTENT)
+                    .identifier(account)
+                    .reason("Could not delete draft messages")
+                    .timestamp(nowInUtc())
+                    .build());
+          }
+        });
+    acknowledged.requireCurrent();
+    return java.util.List.copyOf(errors);
+  }
+
   /**
    * Deletes all {@link DraftMessage}s belonging to the {@link User} being deleted.
    *

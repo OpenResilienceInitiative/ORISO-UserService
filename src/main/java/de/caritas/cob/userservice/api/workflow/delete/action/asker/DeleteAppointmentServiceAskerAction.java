@@ -21,6 +21,36 @@ public class DeleteAppointmentServiceAskerAction
 
   private final @NonNull AppointmentService appointmentService;
 
+  /** Only the actual original-absence inactivity acknowledgement can name this identity. */
+  public java.util.List<DeletionWorkflowError> executeOriginallyAbsent(
+      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+              .AcknowledgedDeletion
+          acknowledged) {
+    java.util.Objects.requireNonNull(acknowledged);
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+        .isActualTransactionActive())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    acknowledged.requireCurrent();
+    if (!acknowledged.inactivityCause() || acknowledged.hasLocalUser())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    String account = acknowledged.accountId();
+    var errors = new java.util.ArrayList<DeletionWorkflowError>();
+    try {
+      this.appointmentService.deleteAsker(account);
+    } catch (Exception unavailable) {
+      errors.add(
+          DeletionWorkflowError.builder()
+              .deletionSourceType(ASKER)
+              .deletionTargetType(DeletionTargetType.APPOINTMENT_SERVICE)
+              .identifier(account)
+              .reason("Unable to delete asker")
+              .timestamp(nowInUtc())
+              .build());
+    }
+    acknowledged.requireCurrent();
+    return java.util.List.copyOf(errors);
+  }
+
   @Override
   public void execute(AskerDeletionWorkflowDTO actionTarget) {
     try {
