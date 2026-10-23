@@ -30,8 +30,6 @@ import de.caritas.cob.userservice.api.workflow.delete.scheduler.DeleteUserAccoun
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
@@ -52,7 +50,6 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.test.util.ReflectionTestUtils;
