@@ -18,15 +18,23 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.EventNotification;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.TeamDiscussion;
+import de.caritas.cob.userservice.api.model.TeamDiscussionParticipant;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
+import de.caritas.cob.userservice.api.port.out.NotificationRoomLevelRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository;
+import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -38,6 +46,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -2124,5 +2133,341 @@ class EventNotificationServiceTest {
                 "user-1", new java.util.HashSet<>(java.util.Arrays.asList(null, "  "))))
         .isZero();
     verify(eventNotificationRepository, never()).markReadByEventTypes(any(), any(), any());
+  }
+
+  // ---------------------------------------------------------------------------
+  // ORISO-Frontend#1824 slice S6: backend proof for the writable Timeline preview.
+  //
+  // The preview never PATCHes /active-view, so a counsellor whose only "view" is the preview must
+  // keep receiving Timeline entries. Suppression is a property of the recipient's own active view
+  // and is scoped to that exact room (and, for thread replies, that exact thread). The supervision
+  // side room and the team discussion are documented in docs/timeline-active-view-suppression.md.
+  // ---------------------------------------------------------------------------
+
+  private static final String S6_ROOM_A = "!room-a:matrix.example";
+  private static final String S6_ROOM_B = "!room-b:matrix.example";
+  private static final String S6_SIDE_ROOM = "!supervision-side:matrix.example";
+  private static final String S6_TEAM_ROOM = "!team-discussion:matrix.example";
+  private static final String S6_ASKER = "asker-1";
+  private static final String S6_COUNSELLOR = "consultant-1";
+  private static final String S6_SUPERVISOR = "supervisor-1";
+
+  /** A 1:1 session between {@link #S6_ASKER} and {@link #S6_COUNSELLOR} on the given room. */
+  private Session s6OneToOneSession(long sessionId, String roomId) {
+    Session session = new Session();
+    session.setId(sessionId);
+    session.setTenantId(7L);
+    session.setMatrixRoomId(roomId);
+    User asker = new User();
+    asker.setUserId(S6_ASKER);
+    session.setUser(asker);
+    Consultant counsellor = new Consultant();
+    counsellor.setId(S6_COUNSELLOR);
+    session.setConsultant(counsellor);
+    when(sessionRepository.findByMatrixRoomId(roomId)).thenReturn(Optional.of(session));
+    return session;
+  }
+
+  private static PrivacyEnvelope s6Message(String matrixEventId) {
+    return PrivacyEnvelope.builder().messageId(matrixEventId).contentClass("TEXT").build();
+  }
+
+  /** Every Timeline row persisted so far, through either the deduplicated or the plain path. */
+  private List<EventNotification> s6PersistedRows() {
+    List<EventNotification> rows = new ArrayList<>();
+    for (var invocation : Mockito.mockingDetails(deduplicationWriter).getInvocations()) {
+      if ("persistInNewTransaction".equals(invocation.getMethod().getName())) {
+        rows.add(invocation.getArgument(0));
+      }
+    }
+    for (var invocation : Mockito.mockingDetails(eventNotificationRepository).getInvocations()) {
+      if ("save".equals(invocation.getMethod().getName())) {
+        rows.add(invocation.getArgument(0));
+      }
+    }
+    return rows;
+  }
+
+  private List<EventNotification> s6RowsFor(String recipientUserId) {
+    return s6PersistedRows().stream()
+        .filter(row -> recipientUserId.equals(row.getRecipientUserId()))
+        .toList();
+  }
+
+  @Test
+  void s6_noActiveView_eachMessageCreatesItsOwnMessageNewForTheCounsellor() {
+    s6OneToOneSession(100L, S6_ROOM_A);
+
+    // The counsellor only has the Timeline preview open: no active-view PATCH was ever sent.
+    eventNotificationService.createMessageNotificationFromRoom(
+        S6_ROOM_A, S6_ASKER, s6Message("$m1"));
+    eventNotificationService.createMessageNotificationFromRoom(
+        S6_ROOM_A, S6_ASKER, s6Message("$m2"));
+    eventNotificationService.createMessageNotificationFromRoom(
+        S6_ROOM_A, S6_ASKER, s6Message("$m3"));
+
+    assertThat(s6RowsFor(S6_COUNSELLOR))
+        .extracting(EventNotification::getEventType, EventNotification::getDeduplicationKey)
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple("message.new", "message.new:$m1"),
+            org.assertj.core.groups.Tuple.tuple("message.new", "message.new:$m2"),
+            org.assertj.core.groups.Tuple.tuple("message.new", "message.new:$m3"));
+    // The sender never gets an entry for their own message.
+    assertThat(s6RowsFor(S6_ASKER)).isEmpty();
+  }
+
+  @Test
+  void s6_activeViewOnAnotherRoom_suppressesNeitherMessageNewNorThreadReplyNew() {
+    s6OneToOneSession(100L, S6_ROOM_A);
+    // The counsellor reads room B in the real chat (main timeline and a thread of it).
+    eventNotificationService.updateActiveView(S6_COUNSELLOR, S6_ROOM_B, "$root-b", true);
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        S6_ROOM_A, S6_ASKER, s6Message("$m1"));
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        S6_ROOM_A, S6_ASKER, "$root-b", s6Message("$r1"));
+
+    assertThat(s6RowsFor(S6_COUNSELLOR))
+        .extracting(EventNotification::getEventType)
+        .containsExactly("message.new", "thread.reply.new");
+  }
+
+  @Test
+  void s6_activeViewOnSameRoomButAnotherThread_doesNotSuppressThreadReplyNew() {
+    s6OneToOneSession(100L, S6_ROOM_A);
+    eventNotificationService.updateActiveView(S6_COUNSELLOR, S6_ROOM_A, "$root-1", true);
+
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        S6_ROOM_A, S6_ASKER, "$root-2", s6Message("$r1"));
+
+    assertThat(s6RowsFor(S6_COUNSELLOR))
+        .singleElement()
+        .satisfies(
+            row -> {
+              assertThat(row.getEventType()).isEqualTo("thread.reply.new");
+              assertThat(row.getParams()).contains("\"threadRootId\":\"$root-2\"");
+            });
+  }
+
+  @Test
+  void s6_activeViewOnMainTimelineOfSameRoom_suppressesMessageNewButNotThreadReplyNew() {
+    s6OneToOneSession(100L, S6_ROOM_A);
+    eventNotificationService.updateActiveView(S6_COUNSELLOR, S6_ROOM_A, null, true);
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        S6_ROOM_A, S6_ASKER, s6Message("$m1"));
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        S6_ROOM_A, S6_ASKER, "$root-1", s6Message("$r1"));
+
+    assertThat(s6RowsFor(S6_COUNSELLOR))
+        .extracting(EventNotification::getEventType)
+        .containsExactly("thread.reply.new");
+  }
+
+  /** Positive control: the only combination that silences a thread reply. */
+  @Test
+  void s6_activeViewOnSameRoomAndSameThread_suppressesForThatRecipientOnly() {
+    s6OneToOneSession(100L, S6_ROOM_A);
+    eventNotificationService.updateActiveView(S6_COUNSELLOR, S6_ROOM_A, "$root-1", true);
+
+    // A third party (e.g. a supervisor posting without the supervisor flag) writes in the thread
+    // and on the main timeline: the counsellor reading that thread gets nothing for room A, the
+    // advice seeker, who has no active view, gets both entries.
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        S6_ROOM_A, S6_SUPERVISOR, "$root-1", s6Message("$r1"));
+    eventNotificationService.createMessageNotificationFromRoom(
+        S6_ROOM_A, S6_SUPERVISOR, s6Message("$m1"));
+
+    assertThat(s6RowsFor(S6_COUNSELLOR)).isEmpty();
+    assertThat(s6RowsFor(S6_ASKER))
+        .extracting(EventNotification::getEventType)
+        .containsExactly("thread.reply.new", "message.new");
+  }
+
+  /**
+   * The supervision side room (ADR-008) is stored on {@code session_supervisor.matrix_room_id}
+   * (SessionSupervisorFacade#ensureSupervisionSideRoom), never on {@code session.matrix_room_id},
+   * so the session lookup the message producers use does not resolve it: a side-room message
+   * produces no Timeline entry for anybody, whether or not anyone has an active view.
+   */
+  @Test
+  void s6_supervisionSideRoom_messagesAndThreadRepliesProduceNoTimelineEntry() {
+    s6OneToOneSession(100L, S6_ROOM_A);
+    when(sessionRepository.findByMatrixRoomId(S6_SIDE_ROOM)).thenReturn(Optional.empty());
+
+    // Without any active view.
+    eventNotificationService.createMessageNotificationFromRoom(
+        S6_SIDE_ROOM, S6_SUPERVISOR, null, true, s6Message("$s1"));
+    eventNotificationService.createMessageNotificationFromRoom(
+        S6_SIDE_ROOM, S6_COUNSELLOR, null, false, s6Message("$s2"));
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        S6_SIDE_ROOM, S6_SUPERVISOR, null, "$s1", true, null, s6Message("$s3"));
+    // And with the counsellor actively reading the main room.
+    eventNotificationService.updateActiveView(S6_COUNSELLOR, S6_ROOM_A, null, true);
+    eventNotificationService.createMessageNotificationFromRoom(
+        S6_SIDE_ROOM, S6_SUPERVISOR, null, true, s6Message("$s4"));
+
+    verify(sessionRepository, times(4)).findByMatrixRoomId(S6_SIDE_ROOM);
+    assertThat(s6PersistedRows()).isEmpty();
+  }
+
+  @Test
+  void s6_activeViewOnSupervisionSideRoom_doesNotSuppressMainRoomEntries() {
+    s6OneToOneSession(100L, S6_ROOM_A);
+    eventNotificationService.updateActiveView(S6_COUNSELLOR, S6_SIDE_ROOM, null, true);
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        S6_ROOM_A, S6_ASKER, s6Message("$m1"));
+
+    assertThat(s6RowsFor(S6_COUNSELLOR))
+        .extracting(EventNotification::getEventType)
+        .containsExactly("message.new");
+  }
+
+  /**
+   * Legacy supervision without a side room: the supervisor writes in the main room with {@code
+   * supervisorMessage=true}. The counsellor gets {@code message.new}, the advice seeker never does,
+   * and only the counsellor's own view of that same room suppresses it.
+   */
+  @Test
+  void s6_supervisorMessageInMainRoom_reachesCounsellorOnly_andIsSuppressedOnlyByThatRoom() {
+    s6OneToOneSession(100L, S6_ROOM_A);
+
+    eventNotificationService.updateActiveView(S6_COUNSELLOR, S6_ROOM_B, null, true);
+    eventNotificationService.createMessageNotificationFromRoom(
+        S6_ROOM_A, S6_SUPERVISOR, null, true, s6Message("$sv1"));
+    eventNotificationService.updateActiveView(S6_COUNSELLOR, S6_ROOM_A, null, true);
+    eventNotificationService.createMessageNotificationFromRoom(
+        S6_ROOM_A, S6_SUPERVISOR, null, true, s6Message("$sv2"));
+
+    assertThat(s6RowsFor(S6_COUNSELLOR))
+        .extracting(EventNotification::getDeduplicationKey)
+        .containsExactly("message.new:$sv1");
+    assertThat(s6RowsFor(S6_ASKER)).isEmpty();
+  }
+
+  // --- team discussion (internal counsellor chat about an enquiry, US#473) ---
+
+  private static final String S6_TEAM_SENDER = "consultant-sender";
+  private static final String S6_COLLEAGUE_A = "consultant-a";
+  private static final String S6_COLLEAGUE_B = "consultant-b";
+
+  private TeamDiscussion s6Discussion;
+  private TeamDiscussionParticipantRepository s6ParticipantRepository;
+
+  /**
+   * The real team-discussion fan-out wired to the real {@link EventNotificationService}, so the
+   * active-view map under test is the one that gates {@code team.discussion.new}.
+   */
+  private TeamDiscussionNotificationService s6TeamDiscussionService(boolean firstNotified) {
+    s6Discussion =
+        TeamDiscussion.builder()
+            .id(99L)
+            .sessionId(200L)
+            .matrixRoomId(S6_TEAM_ROOM)
+            .status(TeamDiscussion.Status.OPEN)
+            .firstNotified(firstNotified)
+            .build();
+    // The enquiry the team discusses: not yet accepted, with its own (main) room A.
+    Session enquiry = new Session();
+    enquiry.setId(200L);
+    enquiry.setTenantId(7L);
+    enquiry.setAgencyId(42L);
+    enquiry.setMatrixRoomId(S6_ROOM_A);
+    when(sessionRepository.findById(200L)).thenReturn(Optional.of(enquiry));
+
+    TeamDiscussionRepository discussions = mock(TeamDiscussionRepository.class);
+    when(discussions.findByMatrixRoomId(S6_TEAM_ROOM)).thenReturn(Optional.of(s6Discussion));
+    s6ParticipantRepository = mock(TeamDiscussionParticipantRepository.class);
+    NotificationRoomLevelRepository levels = mock(NotificationRoomLevelRepository.class);
+    ConsultantAgencyRepository agencies = mock(ConsultantAgencyRepository.class);
+    List<ConsultantAgency> circle = new ArrayList<>();
+    for (String id : List.of(S6_TEAM_SENDER, S6_COLLEAGUE_A, S6_COLLEAGUE_B)) {
+      Consultant consultant = new Consultant();
+      consultant.setId(id);
+      ConsultantAgency membership = new ConsultantAgency();
+      membership.setConsultant(consultant);
+      membership.setAgencyId(42L);
+      circle.add(membership);
+    }
+    when(agencies.findByAgencyIdAndDeleteDateIsNull(42L)).thenReturn(circle);
+    return new TeamDiscussionNotificationService(
+        discussions,
+        s6ParticipantRepository,
+        levels,
+        agencies,
+        sessionRepository,
+        eventNotificationService);
+  }
+
+  @Test
+  void s6_teamDiscussion_postCreatesTeamDiscussionNewForTheCircle_withoutAnyActiveView() {
+    var teamService = s6TeamDiscussionService(false);
+
+    teamService.createTeamDiscussionNotification(S6_TEAM_ROOM, S6_TEAM_SENDER, "Kim", null);
+
+    assertThat(s6PersistedRows())
+        .extracting(EventNotification::getRecipientUserId, EventNotification::getEventType)
+        .containsExactlyInAnyOrder(
+            org.assertj.core.groups.Tuple.tuple(S6_COLLEAGUE_A, "team.discussion.new"),
+            org.assertj.core.groups.Tuple.tuple(S6_COLLEAGUE_B, "team.discussion.new"));
+  }
+
+  @Test
+  void s6_teamDiscussion_activeViewOnEnquiryRoomOrAnotherRoom_doesNotSuppress() {
+    var teamService = s6TeamDiscussionService(false);
+    eventNotificationService.updateActiveView(S6_COLLEAGUE_A, S6_ROOM_A, null, true);
+    eventNotificationService.updateActiveView(S6_COLLEAGUE_B, S6_ROOM_B, "$root", true);
+
+    teamService.createTeamDiscussionNotification(S6_TEAM_ROOM, S6_TEAM_SENDER, "Kim", null);
+
+    assertThat(s6PersistedRows())
+        .extracting(EventNotification::getRecipientUserId)
+        .containsExactlyInAnyOrder(S6_COLLEAGUE_A, S6_COLLEAGUE_B);
+  }
+
+  /**
+   * Positive control. Team-discussion suppression is room-level: a view of the team room, on its
+   * main timeline or on any of its threads, suppresses {@code team.discussion.new} for that
+   * colleague.
+   */
+  @Test
+  void s6_teamDiscussion_activeViewOnTheTeamRoomItself_suppressesOnlyThatColleague() {
+    var teamService = s6TeamDiscussionService(false);
+    eventNotificationService.updateActiveView(S6_COLLEAGUE_A, S6_TEAM_ROOM, "$any-thread", true);
+
+    teamService.createTeamDiscussionNotification(S6_TEAM_ROOM, S6_TEAM_SENDER, "Kim", null);
+
+    assertThat(s6PersistedRows())
+        .extracting(EventNotification::getRecipientUserId)
+        .containsExactly(S6_COLLEAGUE_B);
+  }
+
+  @Test
+  void s6_teamDiscussion_mentionCreatesAnEntryForTheMentionedColleague() {
+    var teamService = s6TeamDiscussionService(true);
+    // Later post: only participants (here just the sender) and mentioned colleagues are notified.
+    when(s6ParticipantRepository.findByTeamDiscussionId(99L))
+        .thenReturn(
+            List.of(
+                TeamDiscussionParticipant.builder()
+                    .teamDiscussionId(99L)
+                    .consultantId(S6_TEAM_SENDER)
+                    .joinDate(LocalDateTime.now())
+                    .build()));
+    // The mentioned colleague is reading the enquiry's main room: not the team room.
+    eventNotificationService.updateActiveView(S6_COLLEAGUE_B, S6_ROOM_A, null, true);
+
+    teamService.createTeamDiscussionNotification(
+        S6_TEAM_ROOM, S6_TEAM_SENDER, "Kim", List.of(S6_COLLEAGUE_B));
+
+    assertThat(s6PersistedRows())
+        .singleElement()
+        .satisfies(
+            row -> {
+              assertThat(row.getRecipientUserId()).isEqualTo(S6_COLLEAGUE_B);
+              assertThat(row.getEventType()).isEqualTo("team.discussion.new");
+              assertThat(row.getParams()).contains("\"mentioned\":true");
+            });
   }
 }
