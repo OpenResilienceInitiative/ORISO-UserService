@@ -332,8 +332,10 @@ public final class ScheduledConsultantMaintenance {
         new ClaimedConsultantDeletion(
             lease, account, consultant.getDeleteDate(), generation, intent, actual);
     if (intent.frozen != null) {
-      var original = "PREPARED".equals(intent.status)
-          ? preparedOriginal(intent.frozen) : frozen(claim, intent.frozen).originalSql;
+      var original =
+          "PREPARED".equals(intent.status)
+              ? preparedOriginal(intent.frozen)
+              : frozen(claim, intent.frozen).originalSql;
       if (!sameSnapshot(original, actual)) throw unavailable();
       claim =
           new ClaimedConsultantDeletion(
@@ -394,8 +396,10 @@ public final class ScheduledConsultantMaintenance {
     if (!current(claim)) return null;
     var intent = requireIntent(claim);
     if (!claim.generation.equals(intent.generation)) return null;
-    if (!"PREPARED".equals(intent.status) || intent.frozen == null
-        || intent.expectedState != null || intent.receipt != null
+    if (!"PREPARED".equals(intent.status)
+        || intent.frozen == null
+        || intent.expectedState != null
+        || intent.receipt != null
         || !sameSnapshot(claim.originalSql, preparedOriginal(intent.frozen))) throw unavailable();
     String prepared = intent.frozen;
     String body =
@@ -693,8 +697,10 @@ public final class ScheduledConsultantMaintenance {
           if (!current(claim)) throw unavailable();
           var intent = requireIntent(claim);
           if ("read".equals(command)) {
-            if (!"PREPARED".equals(intent.status) || intent.frozen == null
-                || intent.expectedState != null || intent.receipt != null
+            if (!"PREPARED".equals(intent.status)
+                || intent.frozen == null
+                || intent.expectedState != null
+                || intent.receipt != null
                 || !sameSnapshot(claim.originalSql, preparedOriginal(intent.frozen)))
               throw unavailable();
           } else if (!"delete".equals(command)
