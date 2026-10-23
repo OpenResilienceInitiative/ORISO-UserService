@@ -149,7 +149,9 @@ public final class ScheduledAskerMaintenance {
           });
     }
 
-    /** The final action must issue its real preparation before owned inactivity media is forgotten. */
+    /**
+     * The final action must issue its real preparation before owned inactivity media is forgotten.
+     */
     public void beforeFinalLocalDeletion(
         de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction
                 .PreparedUserDeletion
