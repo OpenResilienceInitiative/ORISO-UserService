@@ -61,21 +61,28 @@ public final class HumanAdminAccountMaintenance {
   public void configureReviewedSelfProfileRoles(java.util.Map<String, List<Set<String>>> profiles) {
     Objects.requireNonNull(profiles);
     var kinds = Set.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN");
-    if (!kinds.containsAll(profiles.keySet())) throw new IllegalArgumentException("Unknown SELF SQL kind");
+    if (!kinds.containsAll(profiles.keySet()))
+      throw new IllegalArgumentException("Unknown SELF SQL kind");
     var immutable = new java.util.TreeMap<String, List<Set<String>>>();
-    profiles.forEach((kind, configured) -> {
-      if (configured == null || configured.size() > 20) throw new IllegalArgumentException("Invalid SELF profile catalog");
-      var copies = new java.util.ArrayList<Set<String>>();
-      for (Set<String> roles : configured) {
-        if (roles == null || roles.isEmpty() || roles.size() > 32
-            || roles.stream().anyMatch(role -> role == null || !role.matches("[a-z][a-z0-9-]{0,63}")))
-          throw new IllegalArgumentException("Invalid SELF full role set");
-        var copy = Set.copyOf(roles);
-        if (copies.contains(copy)) throw new IllegalArgumentException("Duplicate SELF full role set");
-        copies.add(copy);
-      }
-      immutable.put(kind, List.copyOf(copies));
-    });
+    profiles.forEach(
+        (kind, configured) -> {
+          if (configured == null || configured.size() > 20)
+            throw new IllegalArgumentException("Invalid SELF profile catalog");
+          var copies = new java.util.ArrayList<Set<String>>();
+          for (Set<String> roles : configured) {
+            if (roles == null
+                || roles.isEmpty()
+                || roles.size() > 32
+                || roles.stream()
+                    .anyMatch(role -> role == null || !role.matches("[a-z][a-z0-9-]{0,63}")))
+              throw new IllegalArgumentException("Invalid SELF full role set");
+            var copy = Set.copyOf(roles);
+            if (copies.contains(copy))
+              throw new IllegalArgumentException("Duplicate SELF full role set");
+            copies.add(copy);
+          }
+          immutable.put(kind, List.copyOf(copies));
+        });
     reviewedSelfProfiles = java.util.Map.copyOf(immutable);
   }
 
@@ -952,14 +959,18 @@ public final class HumanAdminAccountMaintenance {
         || !decodedUsername(row.username).equals(projection.username())) throw unavailable();
   }
 
-  private void requireProjection(CheckedAccount checked, HumanAdminMaintenanceTransport.Projection projection) {
+  private void requireProjection(
+      CheckedAccount checked, HumanAdminMaintenanceTransport.Projection projection) {
     requireProjection(checked.actual, projection);
     if (!checked.self) return;
     var roles = projection.effectiveRoles();
-    if (roles == null || roles.isEmpty() || Set.copyOf(roles).size() != roles.size()
+    if (roles == null
+        || roles.isEmpty()
+        || Set.copyOf(roles).size() != roles.size()
         || !roles.contains("consultant")
-        || !reviewedSelfProfiles.getOrDefault(selfKind(checked.actual), List.of()).contains(Set.copyOf(roles)))
-      throw forbidden();
+        || !reviewedSelfProfiles
+            .getOrDefault(selfKind(checked.actual), List.of())
+            .contains(Set.copyOf(roles))) throw forbidden();
   }
 
   private static String selfKind(AdminRow row) {
