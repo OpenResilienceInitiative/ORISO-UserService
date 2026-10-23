@@ -157,15 +157,40 @@ public final class ScheduledAskerMaintenance {
           });
     }
 
-    /** Requires the actual prepared final-action proof; closed for the next causal owner tests. */
-    public void beforeFinalLocalDeletion(PreparedUserDeletion prepared) {
+    /**
+     * The final action must issue its real preparation before owned inactivity media is forgotten.
+     */
+    public void beforeFinalLocalDeletion(
+        de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction
+                .PreparedUserDeletion
+            prepared) {
       Objects.requireNonNull(prepared);
-      throw unavailable();
+      outsideSql();
+      if (frozen.claim.inactivity == null || frozen.originalSql.isNull()) throw unavailable();
+      prepared.requireFor(this);
+      mediaPreparation = prepared;
+      try {
+        frozen.claim.inactivity.forgetDeletionMedia(this);
+      } finally {
+        mediaPreparation = null;
+      }
+      prepared.requireFor(this);
+      finalPreparation = prepared;
     }
 
-    /** Requires original realm-only absence after its three owned cleanup actions. */
+    /** Only original realm-only absence can use the fixed three-action inactivity continuation. */
     public void beforeFinalLocalAbsence() {
-      throw unavailable();
+      outsideSql();
+      if (frozen.claim.inactivity == null || !frozen.originalSql.isNull()) throw unavailable();
+      requireCurrent();
+      absenceMediaPreparation = true;
+      try {
+        frozen.claim.inactivity.forgetDeletionMedia(this);
+      } finally {
+        absenceMediaPreparation = false;
+      }
+      requireCurrent();
+      finalAbsencePrepared = true;
     }
 
     public boolean completeOwnedLocalDeletion(Runnable finalDelete) {
@@ -803,6 +828,8 @@ public final class ScheduledAskerMaintenance {
         || !entities.isJoinedToTransaction()
         || frame.frozen.claim.inactivity == null && !held(frame.frozen.claim.lease))
       throw unavailable();
+    if (frame.frozen.claim.inactivity != null)
+      frame.validateInactivity(() -> frame.frozen.claim.inactivity.lockDeletionOwnerSql(frame));
     var intent = requireIntent(frame.frozen.claim);
     if (!Set.of("ACKNOWLEDGED", "APPLIED").contains(intent.status)
         || !frame.frozen.envelope.equals(intent.frozen)
