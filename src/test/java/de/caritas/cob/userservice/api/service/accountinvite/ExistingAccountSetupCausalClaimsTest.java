@@ -170,7 +170,7 @@ class ExistingAccountSetupCausalClaimsTest {
             new ClassPathResource(
                 "db/changelog/changeset/20261022_identity_setup_password_claim_367/migrate.sql"));
         ScriptUtils.executeSqlScript(
-            c,
+            connection,
             new ClassPathResource(
                 "db/changelog/changeset/20261023_identity_setup_password_original_sql_367/migrate.sql"));
       }

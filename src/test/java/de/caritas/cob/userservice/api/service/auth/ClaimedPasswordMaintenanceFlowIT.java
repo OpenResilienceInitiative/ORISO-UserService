@@ -215,6 +215,8 @@ class ClaimedPasswordMaintenanceFlowIT {
           .isInstanceOf(RuntimeException.class);
       assertThat(f.effects).isEqualTo(1);
       String envelope = f.envelope();
+      // A preexisting row may recover an independently verified exact same-version outcome.
+      f.jdbc.update("update identity_setup_password_claim set original_sql_json=null");
       f.now.set(f.now.get().plusSeconds(3 * 3600));
       assertThatCode(() -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
           .doesNotThrowAnyException();
@@ -370,8 +372,10 @@ class ClaimedPasswordMaintenanceFlowIT {
           .isInstanceOf(
               de.caritas.cob.userservice.api.exception.httpresponses
                   .CustomValidationHttpStatusException.class);
-      f.jdbc.update("update consultant set create_date=? where consultant_id=?",
-          Timestamp.valueOf(LocalDateTime.now(f.clock).plusSeconds(1)), ACCOUNT);
+      f.jdbc.update(
+          "update consultant set create_date=? where consultant_id=?",
+          Timestamp.valueOf(LocalDateTime.now(f.clock).plusSeconds(1)),
+          ACCOUNT);
       f.savedReply = null;
       f.savedStatus = 200;
       f.policyRefusal = false;
@@ -395,11 +399,14 @@ class ClaimedPasswordMaintenanceFlowIT {
           .isInstanceOf(
               de.caritas.cob.userservice.api.exception.httpresponses
                   .CustomValidationHttpStatusException.class);
-      String original = f.jdbc.queryForObject(
-          "select original_sql_json from identity_setup_password_claim", String.class);
+      String original =
+          f.jdbc.queryForObject(
+              "select original_sql_json from identity_setup_password_claim", String.class);
       assertThat(original).isNotNull().contains("createDate").doesNotContain("updateDate");
-      f.jdbc.update("update consultant set update_date=? where consultant_id=?",
-          Timestamp.valueOf(LocalDateTime.now(f.clock).plusSeconds(1)), ACCOUNT);
+      f.jdbc.update(
+          "update consultant set update_date=? where consultant_id=?",
+          Timestamp.valueOf(LocalDateTime.now(f.clock).plusSeconds(1)),
+          ACCOUNT);
       f.savedReply = null;
       f.savedStatus = 200;
       f.policyRefusal = false;
@@ -408,11 +415,14 @@ class ClaimedPasswordMaintenanceFlowIT {
           .doesNotThrowAnyException();
       assertThat(f.effects).isEqualTo(1);
       assertThat(f.required()).isFalse();
-      assertThat(f.jdbc.queryForObject(
-          "select original_sql_json from identity_setup_password_claim", String.class))
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select original_sql_json from identity_setup_password_claim", String.class))
           .isEqualTo(original);
-      assertThat(f.jdbc.queryForObject(
-          "select claim_version from identity_setup_password_claim", Long.class)).isEqualTo(2L);
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select claim_version from identity_setup_password_claim", Long.class))
+          .isEqualTo(2L);
     }
   }
 
@@ -435,10 +445,37 @@ class ClaimedPasswordMaintenanceFlowIT {
           .isInstanceOf(RuntimeException.class);
       assertThat(f.effects).isZero();
       assertThat(f.required()).isTrue();
-      assertThat(f.jdbc.queryForObject(
-          "select claim_version from identity_setup_password_claim", Long.class)).isEqualTo(1L);
-      assertThat(f.jdbc.queryForObject(
-          "select original_sql_json from identity_setup_password_claim", String.class)).isNull();
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select claim_version from identity_setup_password_claim", Long.class))
+          .isEqualTo(1L);
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select original_sql_json from identity_setup_password_claim", String.class))
+          .isNull();
+    }
+  }
+
+  @Test
+  void legacyNullPreparedSetupCannotDispatchAFreshNativePassword() throws Exception {
+    try (var f = new Fixture()) {
+      var setup = f.setupService();
+      f.expiredAbsent = true;
+      assertThatThrownBy(
+              () -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(f.phase()).isEqualTo("PREPARED");
+      f.jdbc.update("update identity_setup_password_claim set original_sql_json=null");
+      f.expiredAbsent = false;
+      assertThatThrownBy(
+              () -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(f.effects).isZero();
+      assertThat(f.required()).isTrue();
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select original_sql_json from identity_setup_password_claim", String.class))
+          .isNull();
     }
   }
 
