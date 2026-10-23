@@ -76,90 +76,91 @@ class ConsultantDeletionContinuationJpaTest {
   private static final byte[] KEY =
       "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
   private static final String STATE = "a".repeat(64);
-  private static final List<String> CONSULTANT_COLUMNS = List.of(
-      "managed_paused",
-      "consultant_id",
-      "matrix_user_id",
-      "chat_recovery_mode",
-      "chat_recovery_policy_revision",
-      "username",
-      "first_name",
-      "last_name",
-      "email",
-      "is_absent",
-      "is_team_consultant",
-      "is_supervisor",
-      "assigned_supervisor_id",
-      "display_name",
-      "internal_display_name",
-      "salutation",
-      "position",
-      "title",
-      "admin_remarks",
-      "avatar_id",
-      "avatar_kind",
-      "public_slug",
-      "pending_public_slug",
-      "public_slug_status",
-      "public_slug_reviewed_at",
-      "absence_message",
-      "language_formal",
-      "id_old",
-      "create_date",
-      "update_date",
-      "delete_date",
-      "deletion_lifecycle_state",
-      "deletion_read_only_until",
-      "deletion_paused_until",
-      "deletion_pause_reason",
-      "deletion_paused_by",
-      "deletion_pause_created_at",
-      "encourage_2fa",
-      "two_factor_required",
-      "topic_permission",
-      "password_change_required",
-      "live_chat_via_sidebar",
-      "magic_link_login_enabled",
-      "notify_enquiries_repeating",
-      "notify_new_chat_message_from_advice_seeker",
-      "tenant_id",
-      "status",
-      "walk_through_enabled",
-      "language_code",
-      "terms_and_conditions_confirmation",
-      "data_privacy_confirmation",
-      "notifications_enabled",
-      "notifications_settings");
-  private static final Set<String> SQL_BOOLEAN_COLUMNS = Set.of(
-      "managed_paused",
-      "is_absent",
-      "is_team_consultant",
-      "is_supervisor",
-      "language_formal",
-      "encourage_2fa",
-      "two_factor_required",
-      "password_change_required",
-      "live_chat_via_sidebar",
-      "magic_link_login_enabled",
-      "notify_enquiries_repeating",
-      "notify_new_chat_message_from_advice_seeker",
-      "walk_through_enabled",
-      "notifications_enabled");
-  private static final Set<String> SQL_TIMESTAMP_COLUMNS = Set.of(
-      "public_slug_reviewed_at",
-      "create_date",
-      "update_date",
-      "delete_date",
-      "deletion_read_only_until",
-      "deletion_paused_until",
-      "deletion_pause_created_at",
-      "terms_and_conditions_confirmation",
-      "data_privacy_confirmation");
-  private static final Set<String> SQL_LONG_COLUMNS = Set.of(
-      "chat_recovery_policy_revision",
-      "id_old",
-      "tenant_id");
-  private Map<String,Object> expectedOriginalSql53;
+  private static final List<String> CONSULTANT_COLUMNS =
+      List.of(
+          "managed_paused",
+          "consultant_id",
+          "matrix_user_id",
+          "chat_recovery_mode",
+          "chat_recovery_policy_revision",
+          "username",
+          "first_name",
+          "last_name",
+          "email",
+          "is_absent",
+          "is_team_consultant",
+          "is_supervisor",
+          "assigned_supervisor_id",
+          "display_name",
+          "internal_display_name",
+          "salutation",
+          "position",
+          "title",
+          "admin_remarks",
+          "avatar_id",
+          "avatar_kind",
+          "public_slug",
+          "pending_public_slug",
+          "public_slug_status",
+          "public_slug_reviewed_at",
+          "absence_message",
+          "language_formal",
+          "id_old",
+          "create_date",
+          "update_date",
+          "delete_date",
+          "deletion_lifecycle_state",
+          "deletion_read_only_until",
+          "deletion_paused_until",
+          "deletion_pause_reason",
+          "deletion_paused_by",
+          "deletion_pause_created_at",
+          "encourage_2fa",
+          "two_factor_required",
+          "topic_permission",
+          "password_change_required",
+          "live_chat_via_sidebar",
+          "magic_link_login_enabled",
+          "notify_enquiries_repeating",
+          "notify_new_chat_message_from_advice_seeker",
+          "tenant_id",
+          "status",
+          "walk_through_enabled",
+          "language_code",
+          "terms_and_conditions_confirmation",
+          "data_privacy_confirmation",
+          "notifications_enabled",
+          "notifications_settings");
+  private static final Set<String> SQL_BOOLEAN_COLUMNS =
+      Set.of(
+          "managed_paused",
+          "is_absent",
+          "is_team_consultant",
+          "is_supervisor",
+          "language_formal",
+          "encourage_2fa",
+          "two_factor_required",
+          "password_change_required",
+          "live_chat_via_sidebar",
+          "magic_link_login_enabled",
+          "notify_enquiries_repeating",
+          "notify_new_chat_message_from_advice_seeker",
+          "walk_through_enabled",
+          "notifications_enabled");
+  private static final Set<String> SQL_TIMESTAMP_COLUMNS =
+      Set.of(
+          "public_slug_reviewed_at",
+          "create_date",
+          "update_date",
+          "delete_date",
+          "deletion_read_only_until",
+          "deletion_paused_until",
+          "deletion_pause_created_at",
+          "terms_and_conditions_confirmation",
+          "data_privacy_confirmation");
+  private static final Set<String> SQL_LONG_COLUMNS =
+      Set.of("chat_recovery_policy_revision", "id_old", "tenant_id");
+  private Map<String, Object> expectedOriginalSql53;
   @Autowired private DataSource dataSource;
   @Autowired private ConsultantRepository consultants;
   @Autowired private UserRepository users;
@@ -273,7 +274,7 @@ class ConsultantDeletionContinuationJpaTest {
                   outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
               if ("read".equals(command)) {
                 nativeReads.incrementAndGet();
-              if (expectedOriginalSql53 == null) expectedOriginalSql53 = independentlyRead53();
+                if (expectedOriginalSql53 == null) expectedOriginalSql53 = independentlyRead53();
                 var response =
                     withSuccess(projection(), MediaType.APPLICATION_JSON).createResponse(outbound);
                 response.getHeaders().setCacheControl("no-store");
@@ -472,67 +473,154 @@ class ConsultantDeletionContinuationJpaTest {
     assertFalse(envelopeRaw().contains("🦉"));
   }
 
-  @Test void pendingLegacyConsultantGetsTheRealSafeguardWindowBeforeDispatch() {
-    jdbc.update("update consultant set deletion_lifecycle_state='PENDING_DELETION',deletion_read_only_until=null where consultant_id=?",ACCOUNT);
-    var deletion=jdbc.queryForObject("select delete_date from consultant where consultant_id=?",java.sql.Timestamp.class,ACCOUNT);
-    owner(true,this::complete).performDeletionWorkflow();
-    assertEquals("READ_ONLY_SAFEGUARD",jdbc.queryForObject("select deletion_lifecycle_state from consultant where consultant_id=?",String.class,ACCOUNT));
-    assertTrue(jdbc.queryForObject("select deletion_read_only_until from consultant where consultant_id=?",java.sql.Timestamp.class,ACCOUNT).toLocalDateTime().isAfter(LocalDateTime.now(ZoneOffset.UTC)));
-    assertEquals(deletion,jdbc.queryForObject("select delete_date from consultant where consultant_id=?",java.sql.Timestamp.class,ACCOUNT));
-    assertEquals(0,nativeReads.get()); assertEquals(0,intentCount());
+  @Test
+  void pendingLegacyConsultantGetsTheRealSafeguardWindowBeforeDispatch() {
+    jdbc.update(
+        "update consultant set deletion_lifecycle_state='PENDING_DELETION',deletion_read_only_until=null where consultant_id=?",
+        ACCOUNT);
+    var deletion =
+        jdbc.queryForObject(
+            "select delete_date from consultant where consultant_id=?",
+            java.sql.Timestamp.class,
+            ACCOUNT);
+    owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(
+        "READ_ONLY_SAFEGUARD",
+        jdbc.queryForObject(
+            "select deletion_lifecycle_state from consultant where consultant_id=?",
+            String.class,
+            ACCOUNT));
+    assertTrue(
+        jdbc.queryForObject(
+                "select deletion_read_only_until from consultant where consultant_id=?",
+                java.sql.Timestamp.class,
+                ACCOUNT)
+            .toLocalDateTime()
+            .isAfter(LocalDateTime.now(ZoneOffset.UTC)));
+    assertEquals(
+        deletion,
+        jdbc.queryForObject(
+            "select delete_date from consultant where consultant_id=?",
+            java.sql.Timestamp.class,
+            ACCOUNT));
+    assertEquals(0, nativeReads.get());
+    assertEquals(0, intentCount());
   }
 
-  @Test void expiredPauseRemainsActualDataAndDoesNotBlockTheDueConsultant() {
-    var expired=LocalDateTime.now(ZoneOffset.UTC).minusDays(2).truncatedTo(ChronoUnit.MICROS);
-    jdbc.update("update consultant set deletion_paused_until=?,deletion_pause_reason='original pause' where consultant_id=?",expired,ACCOUNT);
-    retain=true; owner(true,this::complete).performDeletionWorkflow();
-    assertEquals(1,nativeEffects.get()); assertEquals("ACKNOWLEDGED",status());
-    assertEquals(expired,jdbc.queryForObject("select deletion_paused_until from consultant where consultant_id=?",java.sql.Timestamp.class,ACCOUNT).toLocalDateTime());
+  @Test
+  void expiredPauseRemainsActualDataAndDoesNotBlockTheDueConsultant() {
+    var expired = LocalDateTime.now(ZoneOffset.UTC).minusDays(2).truncatedTo(ChronoUnit.MICROS);
+    jdbc.update(
+        "update consultant set deletion_paused_until=?,deletion_pause_reason='original pause' where consultant_id=?",
+        expired,
+        ACCOUNT);
+    retain = true;
+    owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeEffects.get());
+    assertEquals("ACKNOWLEDGED", status());
+    assertEquals(
+        expired,
+        jdbc.queryForObject(
+                "select deletion_paused_until from consultant where consultant_id=?",
+                java.sql.Timestamp.class,
+                ACCOUNT)
+            .toLocalDateTime());
     assertEnvelope();
   }
 
-  @Test void aMixedPoisonCandidateCannotPreventAnotherExclusiveConsultant() {
-    String poison="00000000-0000-4000-8000-000000000000";
-    var other=new Consultant(); org.springframework.beans.BeanUtils.copyProperties(originalEntity,other);
-    other.setId(poison); other.setUsername(new UsernameTranscoder().encodeUsername("mixed-poison")); other.setEmail("poison@fixture.invalid"); consultants.save(other);
-    var mixed=new User(poison,null,new UsernameTranscoder().encodeUsername("mixed-poison"),"poison@fixture.invalid",false);
-    mixed.setTenantId(7L); mixed.setLanguageCode(LanguageCode.en); mixed.setEncourage2fa(false); users.save(mixed);
-    owner(true,this::complete).performDeletionWorkflow();
-    assertEquals(1,nativeEffects.get()); assertEquals(1,callbacks.get()); assertEquals("APPLIED",status());
+  @Test
+  void aMixedPoisonCandidateCannotPreventAnotherExclusiveConsultant() {
+    String poison = "00000000-0000-4000-8000-000000000000";
+    var other = new Consultant();
+    org.springframework.beans.BeanUtils.copyProperties(originalEntity, other);
+    other.setId(poison);
+    other.setUsername(new UsernameTranscoder().encodeUsername("mixed-poison"));
+    other.setEmail("poison@fixture.invalid");
+    consultants.save(other);
+    var mixed =
+        new User(
+            poison,
+            null,
+            new UsernameTranscoder().encodeUsername("mixed-poison"),
+            "poison@fixture.invalid",
+            false);
+    mixed.setTenantId(7L);
+    mixed.setLanguageCode(LanguageCode.en);
+    mixed.setEncourage2fa(false);
+    users.save(mixed);
+    owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeEffects.get());
+    assertEquals(1, callbacks.get());
+    assertEquals("APPLIED", status());
     assertTrue(consultants.findById(poison).isPresent());
-    consultants.deleteById(poison); users.deleteById(poison);
+    consultants.deleteById(poison);
+    users.deleteById(poison);
   }
 
-  @Test void appliedReceiptCannotAdoptARecreatedConsultantWithTheSameUuid() {
-    owner(true,this::complete).performDeletionWorkflow(); assertEquals(1,nativeEffects.get()); assertEquals("APPLIED",status());
-    var replacement=new Consultant(); org.springframework.beans.BeanUtils.copyProperties(originalEntity,replacement);
-    replacement.setCreateDate(LocalDateTime.now(ZoneOffset.UTC)); replacement.setDeleteDate(LocalDateTime.now(ZoneOffset.UTC).minusDays(2)); consultants.save(replacement);
-    owner(true,this::complete).performDeletionWorkflow();
-    assertEquals(1,nativeCalls.get()); assertEquals(1,callbacks.get()); assertEquals(1,intentCount()); assertTrue(consultants.findById(ACCOUNT).isPresent());
+  @Test
+  void appliedReceiptCannotAdoptARecreatedConsultantWithTheSameUuid() {
+    owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeEffects.get());
+    assertEquals("APPLIED", status());
+    var replacement = new Consultant();
+    org.springframework.beans.BeanUtils.copyProperties(originalEntity, replacement);
+    replacement.setCreateDate(LocalDateTime.now(ZoneOffset.UTC));
+    replacement.setDeleteDate(LocalDateTime.now(ZoneOffset.UTC).minusDays(2));
+    consultants.save(replacement);
+    owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeCalls.get());
+    assertEquals(1, callbacks.get());
+    assertEquals(1, intentCount());
+    assertTrue(consultants.findById(ACCOUNT).isPresent());
   }
 
-  @Test void actualFinalCommitLostReplyResolvesOnlyAppliedAndNeverRepeatsNative() {
-    var uncertain=new LostCommitReplyJpaManager(entities.getEntityManagerFactory(),dataSource); ownerTransactions=uncertain;
-    owner(true,frame->{
-      callbacks.incrementAndGet();
-      assertThrows(IllegalStateException.class,()->frame.completeOwnedLocalDeletion(()->{
-        var actual=consultants.findById(ACCOUNT).orElseThrow(); frame.requireCurrentConsultant(actual);
-        consultants.delete(actual); uncertain.loseNextCommit=true;
-      }));
-      assertTrue(frame.completed());
-    }).performDeletionWorkflow();
-    assertEquals(1,nativeEffects.get()); assertEquals(1,callbacks.get()); assertEquals("APPLIED",status());
-    assertTrue(consultants.findById(ACCOUNT).isEmpty()); owner(true,this::complete).performDeletionWorkflow();
-    assertEquals(1,nativeCalls.get()); assertEquals(1,callbacks.get());
+  @Test
+  void actualFinalCommitLostReplyResolvesOnlyAppliedAndNeverRepeatsNative() {
+    var uncertain = new LostCommitReplyJpaManager(entities.getEntityManagerFactory(), dataSource);
+    ownerTransactions = uncertain;
+    owner(
+            true,
+            frame -> {
+              callbacks.incrementAndGet();
+              assertThrows(
+                  IllegalStateException.class,
+                  () ->
+                      frame.completeOwnedLocalDeletion(
+                          () -> {
+                            var actual = consultants.findById(ACCOUNT).orElseThrow();
+                            frame.requireCurrentConsultant(actual);
+                            consultants.delete(actual);
+                            uncertain.loseNextCommit = true;
+                          }));
+              assertTrue(frame.completed());
+            })
+        .performDeletionWorkflow();
+    assertEquals(1, nativeEffects.get());
+    assertEquals(1, callbacks.get());
+    assertEquals("APPLIED", status());
+    assertTrue(consultants.findById(ACCOUNT).isEmpty());
+    owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeCalls.get());
+    assertEquals(1, callbacks.get());
   }
 
   private static final class LostCommitReplyJpaManager extends JpaTransactionManager {
     private boolean loseNextCommit;
-    private LostCommitReplyJpaManager(jakarta.persistence.EntityManagerFactory factory,DataSource source) {
-      super(Objects.requireNonNull(factory)); setDataSource(source);
+
+    private LostCommitReplyJpaManager(
+        jakarta.persistence.EntityManagerFactory factory, DataSource source) {
+      super(Objects.requireNonNull(factory));
+      setDataSource(source);
     }
-    @Override protected void doCommit(org.springframework.transaction.support.DefaultTransactionStatus status) {
-      super.doCommit(status); if(loseNextCommit) {loseNextCommit=false; throw new IllegalStateException("fixture loses reply after actual Consultant final commit");}
+
+    @Override
+    protected void doCommit(
+        org.springframework.transaction.support.DefaultTransactionStatus status) {
+      super.doCommit(status);
+      if (loseNextCommit) {
+        loseNextCommit = false;
+        throw new IllegalStateException("fixture loses reply after actual Consultant final commit");
+      }
     }
   }
 
@@ -561,9 +649,11 @@ class ConsultantDeletionContinuationJpaTest {
 
   private ScheduledConsultantMaintenance owner(
       boolean jpa, Consumer<AcknowledgedConsultantDeletion> cleanup) {
-    var lifecycle=new DeletionLifecycleService();
-    org.springframework.test.util.ReflectionTestUtils.setField(lifecycle,"globalReadOnlyHours",48L);
-    org.springframework.test.util.ReflectionTestUtils.setField(lifecycle,"tenantOverrideConfig","");
+    var lifecycle = new DeletionLifecycleService();
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        lifecycle, "globalReadOnlyHours", 48L);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        lifecycle, "tenantOverrideConfig", "");
     var owner =
         new ScheduledConsultantMaintenance(
             jdbc,
@@ -622,32 +712,52 @@ class ConsultantDeletionContinuationJpaTest {
     assertEquals(ACCOUNT, envelope.path("originalSql").path("consultantId").textValue());
     assertTrue(envelope.path("originalSql").path("rowDigest").textValue().matches("[0-9a-f]{64}"));
     assertEquals(53, expectedOriginalSql53.size());
-    assertEquals(HexFormat.of().formatHex(hmac("claimed-scheduled-consultant-deletion-row/v1\n" + codec.canonical(expectedOriginalSql53))), envelope.path("originalSql").path("rowDigest").textValue());
+    assertEquals(
+        HexFormat.of()
+            .formatHex(
+                hmac(
+                    "claimed-scheduled-consultant-deletion-row/v1\n"
+                        + codec.canonical(expectedOriginalSql53))),
+        envelope.path("originalSql").path("rowDigest").textValue());
     var unsigned = envelope.deepCopy();
     ((com.fasterxml.jackson.databind.node.ObjectNode) unsigned).remove("bindingDigest");
-    assertEquals(HexFormat.of().formatHex(hmac("claimed-scheduled-consultant-deletion-intent/v1\n" + codec.canonical(unsigned))), envelope.path("bindingDigest").textValue());
-    assertEquals(expectedOriginalSql53.get("create_date"), envelope.path("originalSql").path("createDate").textValue());
+    assertEquals(
+        HexFormat.of()
+            .formatHex(
+                hmac(
+                    "claimed-scheduled-consultant-deletion-intent/v1\n"
+                        + codec.canonical(unsigned))),
+        envelope.path("bindingDigest").textValue());
+    assertEquals(
+        expectedOriginalSql53.get("create_date"),
+        envelope.path("originalSql").path("createDate").textValue());
     assertEquals(
         Set.of("target", "operationId", "expectedState", "change"), fields(envelope.path("body")));
   }
 
-  private Map<String,Object> independentlyRead53() {
-    return jdbc.queryForObject("select " + String.join(",", CONSULTANT_COLUMNS) + " from consultant where consultant_id=?", (rs,index)-> {
-      Map<String,Object> row = new TreeMap<>();
-      for (String name : CONSULTANT_COLUMNS) {
-        Object value;
-        if (SQL_TIMESTAMP_COLUMNS.contains(name)) {
-          var time = rs.getTimestamp(name);
-          value = time == null ? null : time.toLocalDateTime().toInstant(ZoneOffset.UTC).toString();
-        } else if (SQL_BOOLEAN_COLUMNS.contains(name)) {
-          boolean flag = rs.getBoolean(name); value = rs.wasNull() ? null : flag;
-        } else if (SQL_LONG_COLUMNS.contains(name)) {
-          long number = rs.getLong(name); value = rs.wasNull() ? null : number;
-        } else value = rs.getString(name);
-        row.put(name,value);
-      }
-      return row;
-    },ACCOUNT);
+  private Map<String, Object> independentlyRead53() {
+    return jdbc.queryForObject(
+        "select " + String.join(",", CONSULTANT_COLUMNS) + " from consultant where consultant_id=?",
+        (rs, index) -> {
+          Map<String, Object> row = new TreeMap<>();
+          for (String name : CONSULTANT_COLUMNS) {
+            Object value;
+            if (SQL_TIMESTAMP_COLUMNS.contains(name)) {
+              var time = rs.getTimestamp(name);
+              value =
+                  time == null ? null : time.toLocalDateTime().toInstant(ZoneOffset.UTC).toString();
+            } else if (SQL_BOOLEAN_COLUMNS.contains(name)) {
+              boolean flag = rs.getBoolean(name);
+              value = rs.wasNull() ? null : flag;
+            } else if (SQL_LONG_COLUMNS.contains(name)) {
+              long number = rs.getLong(name);
+              value = rs.wasNull() ? null : number;
+            } else value = rs.getString(name);
+            row.put(name, value);
+          }
+          return row;
+        },
+        ACCOUNT);
   }
 
   private static Set<String> fields(JsonNode value) {

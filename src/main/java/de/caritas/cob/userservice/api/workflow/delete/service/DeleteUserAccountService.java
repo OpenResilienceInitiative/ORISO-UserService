@@ -60,10 +60,16 @@ public class DeleteUserAccountService {
 
   /** Existing action beans only; the old six-argument compatibility constructor remains. */
   @org.springframework.beans.factory.annotation.Autowired
-  public DeleteUserAccountService(UserRepository users, ConsultantRepository consultants,
-      ActionsRegistry registry, WorkflowErrorMailService errors, DeletionLifecycleService lifecycle,
-      UserHardDeleteClaimService hardDelete, DeleteDatabaseAskerAction finalAction,
-      DeleteAppointmentServiceAskerAction appointments, DeleteAskerDraftMessagesAction drafts,
+  public DeleteUserAccountService(
+      UserRepository users,
+      ConsultantRepository consultants,
+      ActionsRegistry registry,
+      WorkflowErrorMailService errors,
+      DeletionLifecycleService lifecycle,
+      UserHardDeleteClaimService hardDelete,
+      DeleteDatabaseAskerAction finalAction,
+      DeleteAppointmentServiceAskerAction appointments,
+      DeleteAskerDraftMessagesAction drafts,
       DeleteAskerEventNotificationsAction notifications) {
     this(users, consultants, registry, errors, lifecycle, hardDelete);
     this.acknowledgedFinalAction = finalAction;

@@ -66,9 +66,14 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
     this(accountId, users, tombstones, actualDrafts, transactions, entities, false);
   }
 
-  AcknowledgedAskerActionsFixture(String accountId, UserRepository users,
-      IdentityTombstoneRepository tombstones, DraftMessageRepository actualDrafts,
-      PlatformTransactionManager transactions, EntityManager entities, boolean completeConstructor) {
+  AcknowledgedAskerActionsFixture(
+      String accountId,
+      UserRepository users,
+      IdentityTombstoneRepository tombstones,
+      DraftMessageRepository actualDrafts,
+      PlatformTransactionManager transactions,
+      EntityManager entities,
+      boolean completeConstructor) {
     this.entities = entities;
     this.accountId = accountId;
     for (long id : List.of(11L, 12L)) {
@@ -171,10 +176,15 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
               actualDrafts.deleteByUserId(accountId);
               return Answers.RETURNS_DEFAULTS.answer(invocation);
             });
-    var notifications = local(EventNotificationRepository.class, "notifications", invocation -> {
-      if (failNotifications) throw new IllegalStateException("fixture notification refused");
-      return Answers.RETURNS_DEFAULTS.answer(invocation);
-    });
+    var notifications =
+        local(
+            EventNotificationRepository.class,
+            "notifications",
+            invocation -> {
+              if (failNotifications)
+                throw new IllegalStateException("fixture notification refused");
+              return Answers.RETURNS_DEFAULTS.answer(invocation);
+            });
     var replies = local(ReplyEmailDeliveryRepository.class, "replies");
     var chats =
         local(
@@ -229,7 +239,9 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
     var appointmentsAction = new DeleteAppointmentServiceAskerAction(appointments);
     var draftsAction = new DeleteAskerDraftMessagesAction(drafts);
     var notificationsAction = new DeleteAskerEventNotificationsAction(notifications);
-    register(appointmentsAction); register(draftsAction); register(notificationsAction);
+    register(appointmentsAction);
+    register(draftsAction);
+    register(notificationsAction);
     register(new DeleteAskerReplyEmailDeliveriesAction(replies));
     finalAction = new DeleteDatabaseAskerAction(users, chats, tokens, tombstoneService);
     register(finalAction);
@@ -237,11 +249,24 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
     service =
         spy(
             completeConstructor
-              ? new DeleteUserAccountService(users, mock(ConsultantRepository.class), new ActionsRegistry(context),
-                  errorMail, new DeletionLifecycleService(), mock(UserHardDeleteClaimService.class),
-                  finalAction, appointmentsAction, draftsAction, notificationsAction)
-              : new DeleteUserAccountService(users, mock(ConsultantRepository.class), new ActionsRegistry(context),
-                  errorMail, new DeletionLifecycleService(), mock(UserHardDeleteClaimService.class)));
+                ? new DeleteUserAccountService(
+                    users,
+                    mock(ConsultantRepository.class),
+                    new ActionsRegistry(context),
+                    errorMail,
+                    new DeletionLifecycleService(),
+                    mock(UserHardDeleteClaimService.class),
+                    finalAction,
+                    appointmentsAction,
+                    draftsAction,
+                    notificationsAction)
+                : new DeleteUserAccountService(
+                    users,
+                    mock(ConsultantRepository.class),
+                    new ActionsRegistry(context),
+                    errorMail,
+                    new DeletionLifecycleService(),
+                    mock(UserHardDeleteClaimService.class)));
     doAnswer(
             invocation -> {
               serviceEntries.incrementAndGet();
