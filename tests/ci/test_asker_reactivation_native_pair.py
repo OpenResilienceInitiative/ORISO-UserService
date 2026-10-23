@@ -48,6 +48,19 @@ class AskerReactivationPairControls(unittest.TestCase):
             self.assertEqual(["AskerReactivationNativePairProof.java:17"], result["failure_locations"])
             for value in ["Bearer", "SYNTHETIC_JWT", "SYNTHETIC_PASSWORD", "654321"]: self.assertNotIn(value, output.read_text())
 
+    def test_java_failure_category_is_closed_and_never_exports_type_or_message(self):
+        with tempfile.TemporaryDirectory() as folder:
+            reports = Path(folder); output = reports / "safe.xml"
+            for java_type, expected in [
+                ("org.springframework.web.client.HttpClientErrorException$Forbidden", "HTTP_403"),
+                ("org.springframework.web.client.HttpClientErrorException$Unauthorized", "HTTP_401"),
+                ("java.lang.RuntimeException.SYNTHETIC_JWT", "OTHER_JAVA_ERROR")]:
+                (reports / ("TEST-" + proof.SUITE + ".xml")).write_text('<testsuite name="' + proof.SUITE + '"><testcase classname="' + proof.SUITE + '" name="' + proof.CASE + '"><error type="' + java_type + '" message="Bearer SYNTHETIC_JWT password=SYNTHETIC_PASSWORD OTP=654321">Bearer SYNTHETIC_JWT</error></testcase></testsuite>')
+                result = proof.sanitize(reports, output)
+                self.assertEqual([expected], result["failure_categories"])
+                for secret in [java_type, "SYNTHETIC_JWT", "SYNTHETIC_PASSWORD", "654321"]:
+                    self.assertNotIn(secret, output.read_text() + json.dumps(result))
+
     def test_only_repository_known_setup_frames_can_be_exported(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "protected_account_operations.py"; source.write_text('def source_frontier():\n    raise RuntimeError("Bearer SYNTHETIC_JWT password=SYNTHETIC_PASSWORD OTP=654321")\n')

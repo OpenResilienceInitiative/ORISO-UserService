@@ -188,11 +188,15 @@ class ReactivationIntentCodecTest {
     ((ObjectNode) nativeEmailCase.path("body").path("change"))
         .put("expectedEmail", "mixed@example.test");
     byte[] nativeFrozen = bytes(nativeEmailCase);
-    String nativeSealed = assertDoesNotThrow(() -> codec.sealReactivationIntent(metadata, nativeFrozen));
+    String nativeSealed =
+        assertDoesNotThrow(() -> codec.sealReactivationIntent(metadata, nativeFrozen));
     assertArrayEquals(nativeFrozen, codec.openReactivationIntent(metadata, nativeSealed));
     assertArrayEquals(nativeFrozen, independent(metadata, json.readTree(nativeSealed)));
-    assertEquals("MiXeD@example.test", nativeEmailCase.path("originalSql").path("email").textValue());
-    assertEquals("mixed@example.test", nativeEmailCase.path("body").path("change").path("expectedEmail").textValue());
+    assertEquals(
+        "MiXeD@example.test", nativeEmailCase.path("originalSql").path("email").textValue());
+    assertEquals(
+        "mixed@example.test",
+        nativeEmailCase.path("body").path("change").path("expectedEmail").textValue());
     var wrongEmail = original.deepCopy();
     ((ObjectNode) wrongEmail.path("body").path("change"))
         .put("expectedEmail", "unrelated@example.test");

@@ -60,7 +60,7 @@ def snapshot(kc):
 
 def sanitize(reports, output):
     clean = ET.Element("testsuite", name=SUITE); counts = dict(tests=0, failures=0, errors=0, skipped=0)
-    files = list(reports.glob("TEST-*.xml")); names = []; valid = len(files) == 1; locations = []
+    files = list(reports.glob("TEST-*.xml")); names = []; valid = len(files) == 1; locations = []; categories = []
     for path in files:
         suite = ET.parse(path).getroot(); valid &= suite.get("name") == SUITE
         for case in suite.findall("testcase"):
@@ -70,12 +70,25 @@ def sanitize(reports, output):
                 problem = case.find(tag)
                 if problem is not None:
                     counts[key] += 1; ET.SubElement(child, tag, message="Sensitive native diagnostic omitted")
+                    if tag != "skipped":
+                        # Fixed diagnostic enum only: never serialize Java type/message/representation.
+                        categories.append({
+                            "org.springframework.web.client.HttpClientErrorException$BadRequest": "HTTP_400",
+                            "org.springframework.web.client.HttpClientErrorException$Unauthorized": "HTTP_401",
+                            "org.springframework.web.client.HttpClientErrorException$Forbidden": "HTTP_403",
+                            "org.springframework.web.client.HttpClientErrorException$NotFound": "HTTP_404",
+                            "org.springframework.web.client.HttpClientErrorException$Conflict": "HTTP_409",
+                            "org.springframework.web.client.HttpServerErrorException$InternalServerError": "HTTP_500",
+                            "org.springframework.web.client.HttpServerErrorException$ServiceUnavailable": "HTTP_503",
+                            "org.springframework.web.client.ResourceAccessException": "TRANSPORT_ERROR",
+                            "org.opentest4j.AssertionFailedError": "ASSERTION_FAILURE",
+                        }.get(problem.get("type"), "OTHER_JAVA_ERROR"))
                     locations += shared.re.findall(r"AskerReactivationNativePairProof\.java:[0-9]+", problem.text or "")
         for key, count in counts.items(): valid &= suite.get(key) is None or int(suite.get(key)) == count
     valid &= names == [CASE]
     for key, value in counts.items(): clean.set(key, str(value))
     output.parent.mkdir(parents=True, exist_ok=True); ET.ElementTree(clean).write(output, encoding="utf-8", xml_declaration=True)
-    return {**counts, "exact_method_inventory": valid, "failure_locations": sorted(set(locations)),
+    return {**counts, "exact_method_inventory": valid, "failure_locations": sorted(set(locations)), "failure_categories": sorted(set(categories)),
         "accepted": valid and counts == dict(tests=1, failures=0, errors=0, skipped=0)}
 
 
