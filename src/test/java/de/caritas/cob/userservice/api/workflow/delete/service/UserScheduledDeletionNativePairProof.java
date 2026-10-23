@@ -5,7 +5,6 @@ import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.IdentityConfig;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.*;
