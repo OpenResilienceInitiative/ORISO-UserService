@@ -74,8 +74,23 @@ def safe_child_input(raw):
             if location.endswith(name): matches.append((kind, int(number)))
     if not matches or len(set(matches)) != 1: return {}
     kind, number = matches[0]
-    codes = sorted({int(value) for value in re.findall(r'\[([0-9]{4,6})-[0-9]{3}\]', text)})
+    codes = sorted({int(value) for value in re.findall(r'\[([0-9]{4,6})-[0-9]{3}\]', text)
+        if int(value) in {23505, 42000, 42001, 42101, 42102, 42111, 42121, 42122, 42142, 42151, 90079}})
     return {'resource': kind, 'statement': number, 'vendorErrorCodes': codes[:10]}
+
+
+def safe_dependency_path(raw):
+    # Only identifiers independently present in tracked production Java, never arbitrary bean labels.
+    known = set()
+    for source in (ROOT / 'src/main/java').rglob('*.java'):
+        text = source.read_text()
+        known.update(name[0].lower() + name[1:] for name in re.findall(r'\bclass\s+([A-Z][A-Za-z0-9_]*)', text))
+        known.update(re.findall(r'\b([a-z][A-Za-z0-9_]*)\s*\(', text))
+    names = re.findall(r"bean with name '([A-Za-z][A-Za-z0-9_]*)'", raw.decode('utf-8', errors='replace'))
+    result = []
+    for name in names:
+        if name in known and (not result or result[-1] != name): result.append(name)
+    return result[:30]
 
 
 def checked_witness(value, state):
@@ -139,9 +154,23 @@ def journal_fixture(report):
                     source = (resources / name).parent / path if child.get('relativeToChangelogFile') == 'true' else resources / path
                     paths.append(source)
     if not paths: raise ValueError('Actual C migrations required')
-    result = []
+    result = []; split_sources = {}
     for path in paths:
         sql = path.read_text()
+        plain = re.sub(r'--[^\n]*', '', sql)
+        if re.search(r'\b(?:ENGINE|CHARSET|COLLATE|UNSIGNED|ON UPDATE|DELIMITER|MODIFY|CHANGE)\b', plain, re.I):
+            raise ValueError('Unreviewed H2 fixture dialect pattern')
+        if re.search(r',\s*ADD COLUMN', sql, re.I):
+            # Same exact source/type-preserving H2 adaptation as the qualified real JPA fixture.
+            if path.parent.name != '20261023_inactivity_claimed_work_367' or path.name != 'migrate.sql':
+                raise ValueError('Unreviewed multi-column migration shape')
+            columns = re.sub(r'(?s)^.*?ALTER TABLE account_inactivity\s+ADD COLUMN\s+', '', sql)
+            columns = re.sub(r';\s*$', '', columns)
+            columns = re.split(r',\s*ADD COLUMN\s+', columns)
+            if len(columns) != 13 or not columns[-1].strip().startswith('suspension_source_json LONGTEXT NULL'):
+                raise ValueError('Exact thirteen existing custody columns required')
+            split_sources[str(path.relative_to(ROOT))] = len(columns)
+            sql = '\n'.join('ALTER TABLE account_inactivity ADD COLUMN ' + column.strip() + ';' for column in columns)
         # Fixture compatibility only: JPA may already own some tables/columns.
         sql = re.sub(r'CREATE TABLE (?!IF NOT EXISTS)', 'CREATE TABLE IF NOT EXISTS ', sql, flags=re.I)
         sql = re.sub(r'CREATE INDEX (?!IF NOT EXISTS)', 'CREATE INDEX IF NOT EXISTS ', sql, flags=re.I)
@@ -154,7 +183,10 @@ def journal_fixture(report):
         'mode': 'H2_TESTING_ONLY_NOT_MARIADB_REPLAY',
         'sources': {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths},
         'fixtureHash': hashlib.sha256(output.read_bytes()).hexdigest(),
-        'adaptations': ['CREATE_TABLE_IF_ABSENT', 'CREATE_INDEX_IF_ABSENT', 'ADD_COLUMN_IF_ABSENT', 'ADD_CONSTRAINT_IF_ABSENT']})
+        'exactSourceMultiAddSplit': split_sources,
+        'sourceOrder': [str(path.relative_to(ROOT)) for path in paths],
+        'preflight': {'inputs': len(paths), 'staticPatternScanOnly': True, 'otherDialectPatternsAbsent': True},
+        'adaptations': ['CREATE_TABLE_IF_ABSENT', 'CREATE_INDEX_IF_ABSENT', 'ADD_COLUMN_IF_ABSENT', 'ADD_CONSTRAINT_IF_ABSENT', 'EXACT_SOURCE_THIRTEEN_COLUMN_H2_SPLIT']})
     return output
 
 
@@ -289,7 +321,8 @@ def native(kc, report):
             cwd=ROOT, env=environment, capture_output=True, timeout=180)
         inventory = sanitize(reports, report.with_suffix('.xml')); receipt.update(inventory)
         receipt['executed'] = inventory['tests']; receipt['child_exit'] = child.returncode
-        receipt['sql_input'] = safe_child_input(child.stdout + b'\n' + child.stderr); child = None
+        receipt['sql_input'] = safe_child_input(child.stdout + b'\n' + child.stderr)
+        receipt['dependency_path'] = safe_dependency_path(child.stdout + b'\n' + child.stderr); child = None
         witness_file = report.with_name('application-startup-native-witness.json')
         witness = json.loads(witness_file.read_text()) if witness_file.exists() else {}
         try: receipt['java_witness_complete'] = checked_witness(witness, state)

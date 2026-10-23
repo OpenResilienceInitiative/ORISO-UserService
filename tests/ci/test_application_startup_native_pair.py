@@ -70,6 +70,11 @@ class ApplicationStartupPairControls(unittest.TestCase):
         self.assertEqual({}, proof.safe_child_input(b'password=secret unknown resource and payload'))
         self.assertEqual({}, proof.safe_child_input(b'Failed to execute SQL script statement #2 of URL [file:/unknown/secret.sql]'))
 
+    def test_dependency_capsule_accepts_only_existing_production_identifiers(self):
+        raw = b"bean with name 'keycloakService' password=secret Bearer abc bean with name 'selfPasswordMaintenance' bean with name 'SensitiveUnknownLabel'"
+        self.assertEqual(['keycloakService', 'selfPasswordMaintenance'], proof.safe_dependency_path(raw))
+        self.assertEqual([], proof.safe_dependency_path(b"bean with name 'unknown-secret-label'"))
+
     def test_fenced_witness_requires_actual_closed_cause_chain(self):
         value = self.witness('FENCED'); value['failureTypes'] = []
         self.assertFalse(proof.checked_witness(value, 'FENCED'))
@@ -82,6 +87,9 @@ class ApplicationStartupPairControls(unittest.TestCase):
             source = json.loads(path.with_name('application-startup-native-schema-source.json').read_text())
             self.assertEqual(26, len(source['sources']))
             self.assertIn('suspension_source_json LONGTEXT NULL', path.read_text())
+            self.assertEqual(13, path.read_text().count('ALTER TABLE account_inactivity ADD COLUMN IF NOT EXISTS'))
+            self.assertNotRegex(path.read_text(), r',\s*ADD COLUMN')
+            self.assertEqual([13], list(source['exactSourceMultiAddSplit'].values()))
             self.assertNotIn('DROP TABLE', path.read_text())
             self.assertNotIn('DELETE FROM', path.read_text())
             for name in source['sources']:
