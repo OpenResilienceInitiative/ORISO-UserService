@@ -714,10 +714,12 @@ public class AccountInactivityService {
     if (!"FROZEN".equals(current.phase()) || current.receipt() != null)
       throw InactivityClaimJournal.invalid();
     if ("RESTORE".equals(checked.action()))
-      work.executeWithoutResult(ignored -> {
-        checked.requireOwned(true);
-        InactivityRestoreEffectsJournal.requireRestoredOwned(jdbc, checked, checked.saved.source());
-      });
+      work.executeWithoutResult(
+          ignored -> {
+            checked.requireOwned(true);
+            InactivityRestoreEffectsJournal.requireRestoredOwned(
+                jdbc, checked, checked.saved.source());
+          });
     var result = scopedTransport.apply(checked, frozen);
     if (result
         instanceof
@@ -985,7 +987,9 @@ public class AccountInactivityService {
         throw InactivityClaimJournal.invalid();
       var current = claimJournal.saved(identityId(), false);
       if (!"NO_EFFECT".equals(current.phase())) return false;
-      var frozen = new de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Frozen(current.body());
+      var frozen =
+          new de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Frozen(
+              current.body());
       scopedTransport.verifyFrozen(this, frozen, originalEnabled);
       scopedTransport.verifyNoEffect(this, frozen, current.receipt());
       requireCurrent();
@@ -995,16 +999,25 @@ public class AccountInactivityService {
     public void finishRefusedRestore(boolean originalEnabled) {
       if (!restoreWasRefused(originalEnabled)) throw InactivityClaimJournal.invalid();
       var authenticated = claimJournal.saved(identityId(), false);
-      var frozen = new de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Frozen(authenticated.body());
+      var frozen =
+          new de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Frozen(
+              authenticated.body());
       var refused = scopedTransport.verifyNoEffect(this, frozen, authenticated.receipt());
-      work.executeWithoutResult(ignored -> {
-        requireOwned(true);
-        if (!authenticated.equals(claimJournal.saved(identityId(), true))) throw InactivityClaimJournal.invalid();
-        InactivityRestoreEffectsJournal.requireCompensatedOwned(jdbc, this, saved.source());
-        if (jdbc.update("update account_inactivity set status='SUSPENDED' where identity_id=? and work_id=? and status='REACTIVATING' and native_phase='NO_EFFECT' and native_body=? and native_receipt=?", identityId(), workId(), authenticated.body(), authenticated.receipt()) != 1)
-          throw InactivityClaimJournal.invalid();
-        audit(identityId(), "SUSPENDED", "ALL", "NO_EFFECT_COMPENSATED");
-      });
+      work.executeWithoutResult(
+          ignored -> {
+            requireOwned(true);
+            if (!authenticated.equals(claimJournal.saved(identityId(), true)))
+              throw InactivityClaimJournal.invalid();
+            InactivityRestoreEffectsJournal.requireCompensatedOwned(jdbc, this, saved.source());
+            if (jdbc.update(
+                    "update account_inactivity set status='SUSPENDED' where identity_id=? and work_id=? and status='REACTIVATING' and native_phase='NO_EFFECT' and native_body=? and native_receipt=?",
+                    identityId(),
+                    workId(),
+                    authenticated.body(),
+                    authenticated.receipt())
+                != 1) throw InactivityClaimJournal.invalid();
+            audit(identityId(), "SUSPENDED", "ALL", "NO_EFFECT_COMPENSATED");
+          });
       throw definiteRefusal(refused.status());
     }
 
