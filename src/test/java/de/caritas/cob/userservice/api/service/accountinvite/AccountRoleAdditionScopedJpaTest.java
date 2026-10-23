@@ -183,7 +183,7 @@ class AccountRoleAdditionScopedJpaTest {
             DESIRED));
     doThrow(new ScopedIdentityCommandRequiredException())
         .when(generic)
-        .updateRole(anyString(), any());
+        .updateRole(anyString(), any(UserRole.class));
     var actor =
         new TaskActorCredentials(
             TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "fixture-secret", SUBJECT);
