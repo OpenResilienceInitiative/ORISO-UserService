@@ -17,6 +17,7 @@ import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -520,12 +521,10 @@ public final class ScheduledAskerMaintenance {
     ClaimedDeletion checked = transaction(() -> prepare(lease, account));
     if (checked == null) return;
     FrozenDeletion frozen;
-    if (checked.intent.frozen != null) {
-      frozen = frozen(checked, checked.intent.frozen);
-    } else {
+    if ("PREPARED".equals(checked.intent.status)) {
       String state = read(checked);
       frozen = transaction(() -> freeze(checked, state));
-    }
+    } else frozen = frozen(checked, checked.intent.frozen);
     if (frozen == null) return;
     if (!"ACKNOWLEDGED".equals(checked.intent.status)) {
       String response = request("delete", frozen.claim, frozen.body);
@@ -574,11 +573,16 @@ public final class ScheduledAskerMaintenance {
     }
     var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
     if (intent == null) {
+      user.setDeletionLifecycleState(DeletionLifecycleState.HARD_DELETE_IN_PROGRESS);
+      saveLifecycle(user);
+      var original = AskerDeletionSqlSnapshot.capture(jdbc, codec, account, true);
+      if (original == null) throw unavailable();
+      String prepared = preparedEnvelope(original);
       String operation = UUID.randomUUID().toString();
       jdbc.update(
           "insert into identity_maintenance_intent(operation_id,realm_id,realm_name,subject_type,"
               + "subject_id,deletion_started_at,tenant_id,claim_token,claim_until,status,"
-              + "owner_client,owner_subject) values(?,?,?,'ASKER',?,?,?,?,?,'PREPARED',?,?)",
+              + "owner_client,owner_subject,frozen_body) values(?,?,?,'ASKER',?,?,?,?,?,'PREPARED',?,?,?)",
           operation,
           realmId,
           realmName,
@@ -588,7 +592,8 @@ public final class ScheduledAskerMaintenance {
           UUID.randomUUID().toString(),
           lease.claimedUntil(),
           actor.clientId(),
-          actor.serviceSubject());
+          actor.serviceSubject(),
+          prepared);
       intent =
           jdbc.queryForObject(
               "select * from identity_maintenance_intent where operation_id=? for update",
@@ -606,10 +611,17 @@ public final class ScheduledAskerMaintenance {
         || !user.getDeleteDate().equals(intent.deletionStarted)
         || !Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED").contains(intent.status))
       throw unavailable();
-    if ("PREPARED".equals(intent.status) && (intent.frozen != null || intent.receipt != null)
+    if ("PREPARED".equals(intent.status)
+            && (intent.frozen == null || intent.receipt != null || intent.expectedState != null)
         || "FROZEN".equals(intent.status) && (intent.frozen == null || intent.receipt != null)
         || "ACKNOWLEDGED".equals(intent.status)
             && (intent.frozen == null || intent.receipt == null)) throw unavailable();
+    JsonNode preparedOriginal = null;
+    if ("PREPARED".equals(intent.status)) {
+      preparedOriginal = preparedSource(intent.frozen);
+      var before = AskerDeletionSqlSnapshot.capture(jdbc, codec, account, true);
+      if (!sameSnapshot(preparedOriginal, before, false)) throw unavailable();
+    }
     String generation = UUID.randomUUID().toString();
     if (jdbc.update(
             "update identity_maintenance_intent set claim_token=?,claim_until=?,last_attempt_at=? where operation_id=?",
@@ -625,7 +637,9 @@ public final class ScheduledAskerMaintenance {
     var actual = AskerDeletionSqlSnapshot.capture(jdbc, codec, account, true);
     var claimed =
         new ClaimedDeletion(lease, account, user.getDeleteDate(), generation, intent, actual);
-    if (intent.frozen != null) {
+    if ("PREPARED".equals(intent.status)) {
+      claimed = new ClaimedDeletion(lease, account, user.getDeleteDate(), generation, intent, preparedOriginal);
+    } else if (intent.frozen != null) {
       var original = frozen(claimed, intent.frozen).originalSql;
       if (!sameSnapshot(original, actual, "ACKNOWLEDGED".equals(intent.status)))
         throw unavailable();
@@ -686,8 +700,14 @@ public final class ScheduledAskerMaintenance {
     if (!current(claim)) return null;
     var intent = requireIntent(claim);
     if (!claim.generation.equals(intent.generation)) return null;
-    if (intent.frozen != null) return frozen(claim, intent.frozen);
-    if (!"PREPARED".equals(intent.status)) throw unavailable();
+    if (!"PREPARED".equals(intent.status)) {
+      if (intent.frozen == null) throw unavailable();
+      return frozen(claim, intent.frozen);
+    }
+    String previous = intent.frozen;
+    if (claim.inactivity == null) {
+      if (!claim.originalSql.equals(preparedSource(previous))) throw unavailable();
+    } else if (previous != null) throw unavailable();
     String body =
         codec.canonical(
             Map.of(
@@ -700,13 +720,13 @@ public final class ScheduledAskerMaintenance {
                 "change",
                 Map.of()));
     String envelope = envelope(claim, codec.read(body, JsonNode.class));
+    var parameters = new java.util.ArrayList<Object>(List.of(state, envelope, intent.operation, claim.generation));
+    if (previous != null) parameters.add(previous);
     if (jdbc.update(
             "update identity_maintenance_intent set expected_state=?,frozen_body=?,status='FROZEN'"
-                + " where operation_id=? and claim_token=? and status='PREPARED' and frozen_body is null and receipt_json is null",
-            state,
-            envelope,
-            intent.operation,
-            claim.generation)
+                + " where operation_id=? and claim_token=? and status='PREPARED' and receipt_json is null and "
+                + (previous == null ? "frozen_body is null" : "frozen_body=?"),
+            parameters.toArray())
         != 1) throw unavailable();
     var saved = requireIntent(claim);
     if (!"FROZEN".equals(saved.status) || !envelope.equals(saved.frozen) || saved.receipt != null)
@@ -1023,6 +1043,33 @@ public final class ScheduledAskerMaintenance {
     return new FrozenDeletion(claim, body, envelope, saved.path("originalSql"));
   }
 
+  /** Fixed source data only; an explicit null body cannot dispatch a native command. */
+  private String preparedEnvelope(JsonNode original) {
+    var value = codec.read(codec.canonical(Map.of(
+        "representation", "CLAIMED_SCHEDULED_ASKER_DELETE_V1",
+        "originalSql", original,
+        "body", com.fasterxml.jackson.databind.node.NullNode.getInstance())),
+        com.fasterxml.jackson.databind.node.ObjectNode.class);
+    value.put("bindingDigest", codec.claimedScheduledDeletionIntentDigest(value));
+    return codec.canonical(value);
+  }
+
+  private JsonNode preparedSource(String envelope) {
+    if (envelope == null) throw unavailable();
+    var value = codec.read(envelope, com.fasterxml.jackson.databind.node.ObjectNode.class);
+    var fields = new java.util.HashSet<String>();
+    value.fieldNames().forEachRemaining(fields::add);
+    if (!fields.equals(Set.of("representation", "originalSql", "body", "bindingDigest"))
+        || !envelope.equals(codec.canonical(value))
+        || !value.path("body").isNull()
+        || !value.path("bindingDigest").isTextual()) throw unavailable();
+    String binding = value.remove("bindingDigest").textValue();
+    String expected = codec.claimedScheduledDeletionIntentDigest(value);
+    if (!java.security.MessageDigest.isEqual(binding.getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+        expected.getBytes(java.nio.charset.StandardCharsets.US_ASCII))) throw unavailable();
+    return value.path("originalSql");
+  }
+
   private String envelope(ClaimedDeletion claim, JsonNode body) {
     if (claim.inactivity != null) {
       var value =
@@ -1087,7 +1134,10 @@ public final class ScheduledAskerMaintenance {
           if (!current(claim)) throw unavailable();
           var intent = requireIntent(claim);
           if ("read".equals(command)) {
-            if (!"PREPARED".equals(intent.status) || intent.frozen != null) throw unavailable();
+            if (!"PREPARED".equals(intent.status) || intent.expectedState != null || intent.receipt != null) throw unavailable();
+            if (claim.inactivity == null) {
+              if (!claim.originalSql.equals(preparedSource(intent.frozen))) throw unavailable();
+            } else if (intent.frozen != null) throw unavailable();
           } else if (!"delete".equals(command)
               || !"FROZEN".equals(intent.status)
               || !body.equals(frozen(claim, intent.frozen).body)
