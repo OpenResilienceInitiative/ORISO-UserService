@@ -44,6 +44,9 @@ public class CounsellorInviteProvisioningService {
   @org.springframework.beans.factory.annotation.Autowired
   private org.springframework.core.env.Environment lifecycleEnvironment;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.transaction.PlatformTransactionManager lifecycleTransactions;
+
   @org.springframework.beans.factory.annotation.Autowired(required = false)
   private de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads
       checkedPolicyReads;
@@ -108,6 +111,7 @@ public class CounsellorInviteProvisioningService {
     }
     validate(command, invite);
     acceptTimeAgencyCheck.requireOperationalTenant(invite);
+    FailedInviteOwner failureOwner = fiveActors() ? FailedInviteOwner.capture(invite) : null;
     InviteRowHold.hold(accountInviteRepository, invite, LocalDateTime.now());
     wizard.createUnit().run();
 
@@ -200,6 +204,12 @@ public class CounsellorInviteProvisioningService {
       accepted.setUpdateDate(LocalDateTime.now());
       return accountInviteRepository.save(accepted);
     } catch (RuntimeException failure) {
+      if (failureOwner != null
+          && org.springframework.transaction.support.TransactionSynchronizationManager
+              .isActualTransactionActive()) {
+        preserveFailureAfterRollback(failureOwner);
+        throw failure;
+      }
       rollbackPartiallyCreatedConsultant(consultantId, technicalAccessToken, failure);
       invite.setProvisionedUserId(null);
       invite.setProvisioningStatus(AccountInviteProvisioningStatus.FAILED);
@@ -209,6 +219,66 @@ public class CounsellorInviteProvisioningService {
       throw failure;
     } finally {
       restoreTenantContext(requestTenant);
+    }
+  }
+
+  private void preserveFailureAfterRollback(FailedInviteOwner original) {
+    // An inner REQUIRED failure already marked the transaction rollback-only. Mark our local
+    // owner too, preserving the typed failure rather than attempting an impossible commit.
+    org.springframework.transaction.interceptor.TransactionAspectSupport
+        .currentTransactionStatus().setRollbackOnly();
+    org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+        new org.springframework.transaction.support.TransactionSynchronization() {
+          @Override
+          public void afterCompletion(int status) {
+            if (status != STATUS_ROLLED_BACK) return;
+            var independent =
+                new org.springframework.transaction.support.TransactionTemplate(lifecycleTransactions);
+            independent.setPropagationBehavior(
+                org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            independent.executeWithoutResult(
+                ignored ->
+                    InviteRowHold.lock(accountInviteRepository, original.id()).ifPresent(
+                        current -> {
+                          // The outer row lock is gone. A revoke, resend or newer attempt may
+                          // already own this invite; only the unchanged original may be marked.
+                          if (!original.equals(FailedInviteOwner.capture(current))) return;
+                          current.setProvisioningStatus(AccountInviteProvisioningStatus.FAILED);
+                          current.setProvisioningFailureReason("Scoped account provisioning failed");
+                          current.setUpdateDate(LocalDateTime.now());
+                          accountInviteRepository.save(current);
+                        }));
+          }
+        });
+  }
+
+  private record FailedInviteOwner(
+      Long id,
+      String tokenHash,
+      AccountInvitePurpose purpose,
+      AccountInviteTargetRole role,
+      Long tenantId,
+      Long agencyId,
+      Long departmentId,
+      String recipient,
+      AccountInviteStatus status,
+      AccountInviteProvisioningStatus provisioning,
+      String provisionedUserId,
+      LocalDateTime createdAt,
+      LocalDateTime updatedAt,
+      LocalDateTime expiresAt) {
+    private static FailedInviteOwner capture(AccountInvite invite) {
+      return new FailedInviteOwner(
+          invite.getId(), invite.getTokenHash(), invite.getPurpose(), invite.getTargetRole(),
+          invite.getTenantId(), invite.getAgencyId(), invite.getDepartmentId(),
+          invite.getRecipientEmail(), invite.getStatus(), invite.getProvisioningStatus(),
+          invite.getProvisionedUserId(), invite.getCreateDate(), invite.getUpdateDate(),
+          invite.getExpiresAt());
+    }
+
+    @Override
+    public String toString() {
+      return "FailedInviteOwner[redacted]";
     }
   }
 
