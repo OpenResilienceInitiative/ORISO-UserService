@@ -53,6 +53,25 @@ public class DeleteUserAccountService {
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull UserHardDeleteClaimService userHardDeleteClaimService;
 
+  private DeleteDatabaseAskerAction acknowledgedFinalAction;
+  private DeleteAppointmentServiceAskerAction absentAppointments;
+  private DeleteAskerDraftMessagesAction absentDrafts;
+  private DeleteAskerEventNotificationsAction absentNotifications;
+
+  /** Existing action beans only; the old six-argument compatibility constructor remains. */
+  @org.springframework.beans.factory.annotation.Autowired
+  public DeleteUserAccountService(UserRepository users, ConsultantRepository consultants,
+      ActionsRegistry registry, WorkflowErrorMailService errors, DeletionLifecycleService lifecycle,
+      UserHardDeleteClaimService hardDelete, DeleteDatabaseAskerAction finalAction,
+      DeleteAppointmentServiceAskerAction appointments, DeleteAskerDraftMessagesAction drafts,
+      DeleteAskerEventNotificationsAction notifications) {
+    this(users, consultants, registry, errors, lifecycle, hardDelete);
+    this.acknowledgedFinalAction = finalAction;
+    this.absentAppointments = appointments;
+    this.absentDrafts = drafts;
+    this.absentNotifications = notifications;
+  }
+
   /** Continues only an acknowledgement issued by the held scheduled-deletion owner. */
   public void continueAcknowledgedDeletion(
       ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
