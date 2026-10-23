@@ -118,7 +118,7 @@ jobs:
       env:
         MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2
       run: mvn -B -ntp -q test-compile -DskipTests "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/UserScheduledDeletionNativePairProof.java,$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/NativePairAskerActionsFixture.java,$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/NativePairConsultantActionsFixture.java"
-    - name: Run one bounded real public JPA and native Keycloak saved-authority pair
+    - name: Run one bounded real private creator and owned deletion native pair
       timeout-minutes: 10
       env:
         MAVEN_OPTS: -Xmx384m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2

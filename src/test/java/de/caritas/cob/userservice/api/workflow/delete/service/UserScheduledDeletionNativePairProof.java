@@ -253,6 +253,7 @@ class UserScheduledDeletionNativePairProof {
       decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
       String rawHuman = required("PAIR_HUMAN_TOKEN");
       var jwt = decoder.decode(rawHuman);
+      assertEquals(issuer, jwt.getIssuer().toString());
       assertEquals(required("PAIR_HUMAN_ID"), jwt.getSubject());
       assertEquals(required("PAIR_HUMAN_CLIENT"), jwt.getClaimAsString("azp"));
       assertEquals("11", jwt.getClaimAsString("tenantId"));
@@ -269,7 +270,9 @@ class UserScheduledDeletionNativePairProof {
               rawHuman,
               Set.of("ROLE_USER_ADMIN"));
       human.setTenantId(TENANT);
-      SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
+      var authentication = new JwtAuthenticationToken(jwt, List.of());
+      assertTrue(authentication.isAuthenticated());
+      SecurityContextHolder.getContext().setAuthentication(authentication);
       var broker =
           new TaskActorTokenBroker(
               actors, new KeycloakAuthClient(http, human, identity), decoder, keycloak);
