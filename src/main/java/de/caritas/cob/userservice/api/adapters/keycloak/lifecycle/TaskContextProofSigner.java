@@ -18,6 +18,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
@@ -31,6 +32,7 @@ public class TaskContextProofSigner {
   private final KeycloakConfig keycloak;
   private final Clock clock;
 
+  @Autowired
   public TaskContextProofSigner(Environment environment, KeycloakConfig keycloak) {
     this(environment, keycloak, Clock.systemUTC());
   }

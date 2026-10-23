@@ -18,6 +18,7 @@ import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.mock.env.MockEnvironment;
 
 class TaskContextProofSignerTest {
@@ -96,6 +97,17 @@ class TaskContextProofSignerTest {
                         JSON.readTree("{}")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Missing lifecycle configuration: ORISO_ACCOUNT_LIFECYCLE_REALM_ID");
+  }
+
+  @Test
+  void isConstructedBySpringUsingTheProductionConstructor() {
+    try (var context = new AnnotationConfigApplicationContext()) {
+      context.getBeanFactory().registerSingleton("keycloakConfig", new KeycloakConfig());
+      context.registerBean(TaskContextProofSigner.class);
+      context.refresh();
+
+      assertThat(context.getBean(TaskContextProofSigner.class)).isNotNull();
+    }
   }
 
   private static TaskContextProofSigner signer() {
