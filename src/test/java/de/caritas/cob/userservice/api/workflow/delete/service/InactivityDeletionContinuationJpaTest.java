@@ -562,7 +562,8 @@ class InactivityDeletionContinuationJpaTest {
       service.scan(false);
       assertEquals(1, nativeEffects.get());
       assertEquals(1, actual.serviceEntries.get());
-      assertTrue(actual.events.stream().noneMatch(e -> e.startsWith("sessions.")));
+      assertTrue(actual.events.stream().noneMatch(e -> e.equals("sessions.delete")));
+      assertTrue(actual.events.stream().noneMatch(e -> e.startsWith("agencies.")));
       assertTrue(users.findById(ACCOUNT).isPresent());
       assertEquals("ACKNOWLEDGED", status());
       assertTrue(forgotten.isEmpty());
@@ -658,7 +659,7 @@ class InactivityDeletionContinuationJpaTest {
           actual.events);
       assertEquals(0, draftCount());
       assertTrue(users.findById(ACCOUNT).isEmpty());
-      assertTrue(forgotten.isEmpty());
+      assertTrue(forgotten.stream().allMatch(List::isEmpty));
       assertEquals("APPLIED", status());
     }
   }

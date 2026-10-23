@@ -266,7 +266,8 @@ final class ConsultantDeletionSqlSnapshot {
     original.put("username", row.get("username"));
     original.put("matrixUserId", row.get("matrix_user_id"));
     original.put("rowDigest", digest);
-    return JSON.valueToTree(original);
+    // Only the bounded eight-field core is parsed; the full SQL/LOB object above never is.
+    return codec.read(codec.canonical(original), JsonNode.class);
   }
 
   private static Object flag(ResultSet rs, String column) throws SQLException {

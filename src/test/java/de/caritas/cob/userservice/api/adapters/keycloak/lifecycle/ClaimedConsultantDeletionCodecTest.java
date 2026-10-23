@@ -173,6 +173,10 @@ class ClaimedConsultantDeletionCodecTest {
   void fixedEnvelopeBindsTheOriginalCoreAndOnlyTheDeleteBody() {
     var value = envelope();
     String digest = codec.claimedScheduledConsultantDeletionIntentDigest(value);
+    assertEquals(
+        digest,
+        codec.claimedScheduledConsultantDeletionIntentDigest(
+            codec.read(codec.canonical(value), com.fasterxml.jackson.databind.JsonNode.class)));
     assertEquals(expected("claimed-scheduled-consultant-deletion-intent/v1", value), digest);
     var other = value.deepCopy();
     ((ObjectNode) other.path("originalSql")).put("matrixUserId", "@other:fixture.invalid");
