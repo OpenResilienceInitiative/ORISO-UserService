@@ -29,6 +29,25 @@ public interface ExistingSetupPasswordClaims {
     }
   }
 
+  /** Immutable primary SQL incarnation data, supplied only by the actual locked-row owner. */
+  record OriginalSql(
+      String accountId,
+      String kind,
+      Long tenantId,
+      String username,
+      String recipient,
+      String createDate) {
+    @Override
+    public String toString() {
+      return "SetupOriginalSql[redacted]";
+    }
+  }
+
+  /** Capture once from fresh PENDING, then compare; never backfills legacy NULL custody. */
+  default void requireOriginalSqlWithinOwner(Claim claim, OriginalSql actual) {
+    throw new IllegalStateException("Existing setup original SQL custody unavailable");
+  }
+
   /**
    * Joins the caller's exact owning SQL transaction. An exact acknowledged outcome is returned as
    * historical data only; it cannot pass requireCurrentWithinOwner or authorize another effect.

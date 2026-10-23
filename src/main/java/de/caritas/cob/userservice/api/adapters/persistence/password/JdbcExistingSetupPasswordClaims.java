@@ -1,5 +1,9 @@
 package de.caritas.cob.userservice.api.adapters.persistence.password;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import java.sql.ResultSet;
@@ -10,6 +14,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.function.Supplier;
 import org.springframework.dao.DataAccessException;
@@ -23,6 +28,13 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
           AccountInviteTargetRole.TENANT_ADMIN,
           AccountInviteTargetRole.AGENCY_ADMIN,
           AccountInviteTargetRole.COUNSELLOR);
+  private static final String PENDING_ORIGINAL = "{\"state\":\"PENDING\",\"v\":1}";
+  private static final Set<String> ORIGINAL_FIELDS =
+      Set.of("v", "accountId", "kind", "tenantId", "username", "recipient", "createDate");
+  private static final ObjectMapper JSON =
+      new ObjectMapper()
+          .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
   private final JdbcTemplate jdbc;
   private final Clock clock;
 
@@ -61,6 +73,8 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
               return saved.claim(binding);
             }
             require(Set.of("REJECTED", "POLICY_REJECTED").contains(saved.status()));
+            if (!"REJECTED".equals(saved.status()) || !PENDING_ORIGINAL.equals(saved.originalSql()))
+              boundOriginal(saved.originalSql(), binding);
             require(Set.of("PENDING", "FAILED").contains(invite.phase()));
             Claim next =
                 new Claim(
@@ -90,8 +104,8 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
           require(
               jdbc.update(
                       "insert into identity_setup_password_claim(invite_id,claim_id,claim_version,"
-                          + "account_id,token_hash,authority_valid_until,request_digest,status,updated_at)"
-                          + " values(?,?,?,?,?,?,?,'FROZEN',?)",
+                          + "account_id,token_hash,authority_valid_until,request_digest,status,updated_at,original_sql_json)"
+                          + " values(?,?,?,?,?,?,?,'FROZEN',?,?)",
                       binding.inviteId(),
                       first.id().toString(),
                       first.version(),
@@ -99,9 +113,37 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
                       binding.tokenHash(),
                       Timestamp.valueOf(binding.expiresAt()),
                       first.requestDigest(),
-                      now())
+                      now(),
+                      PENDING_ORIGINAL)
                   == 1);
           return first;
+        });
+  }
+
+  @Override
+  public void requireOriginalSqlWithinOwner(Claim claim, OriginalSql actual) {
+    owned(
+        () -> {
+          active(claim, "EMAIL_SENT", "IN_PROGRESS");
+          require(claim.binding().expiresAt().isAfter(LocalDateTime.now(clock)));
+          Saved saved = lockSaved(claim.binding().inviteId()).getFirst();
+          String original = originalJson(actual, claim.binding());
+          if (PENDING_ORIGINAL.equals(saved.originalSql())) {
+            require(
+                jdbc.update(
+                        "update identity_setup_password_claim set original_sql_json=? where invite_id=? and claim_id=? and claim_version=? and request_digest=? and status in ('FROZEN','UNKNOWN') and original_sql_json=?",
+                        original,
+                        claim.binding().inviteId(),
+                        claim.id().toString(),
+                        claim.version(),
+                        claim.requestDigest(),
+                        PENDING_ORIGINAL)
+                    == 1);
+          } else {
+            boundOriginal(saved.originalSql(), claim.binding());
+            require(original.equals(saved.originalSql()));
+          }
+          return null;
         });
   }
 
@@ -271,7 +313,7 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
     List<Saved> rows =
         jdbc.query(
             "select claim_id,claim_version,account_id,token_hash,authority_valid_until,"
-                + "request_digest,status from identity_setup_password_claim where invite_id=? for update",
+                + "request_digest,status,original_sql_json from identity_setup_password_claim where invite_id=? for update",
             (rs, n) -> saved(rs),
             inviteId);
     require(rows.size() <= 1);
@@ -286,7 +328,8 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
         rs.getString("token_hash"),
         rs.getTimestamp("authority_valid_until").toLocalDateTime(),
         rs.getString("request_digest"),
-        rs.getString("status"));
+        rs.getString("status"),
+        rs.getString("original_sql_json"));
   }
 
   private void claimInvite(long inviteId, String phase) {
@@ -316,6 +359,69 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
             == 1);
   }
 
+  private static String originalJson(OriginalSql original, Binding binding) {
+    require(original != null && binding != null);
+    String kind =
+        switch (binding.role()) {
+          case COUNSELLOR -> "CONSULTANT";
+          case AGENCY_ADMIN -> "AGENCY_ADMIN";
+          case TENANT_ADMIN -> "TENANT_ADMIN";
+          default -> throw unavailable();
+        };
+    require(
+        binding.accountId().equals(original.accountId())
+            && UUID.fromString(original.accountId()).toString().equals(original.accountId())
+            && kind.equals(original.kind())
+            && Objects.equals(binding.tenantId(), original.tenantId())
+            && binding.username().equals(original.username())
+            && binding.email().equals(original.recipient())
+            && text(original.createDate(), 64)
+            && LocalDateTime.parse(original.createDate()).toString().equals(original.createDate()));
+    var fields = new TreeMap<String, Object>();
+    fields.put("v", 1);
+    fields.put("accountId", original.accountId());
+    fields.put("kind", original.kind());
+    fields.put("tenantId", original.tenantId());
+    fields.put("username", original.username());
+    fields.put("recipient", original.recipient());
+    fields.put("createDate", original.createDate());
+    try {
+      return JSON.writeValueAsString(fields);
+    } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
+      throw unavailable();
+    }
+  }
+
+  private static void boundOriginal(String saved, Binding binding) {
+    require(text(saved, 4096));
+    try {
+      JsonNode value = JSON.readTree(saved);
+      require(value != null && value.isObject() && value.size() == ORIGINAL_FIELDS.size());
+      var names = new java.util.HashSet<String>();
+      value.fieldNames().forEachRemaining(names::add);
+      require(
+          names.equals(ORIGINAL_FIELDS)
+              && value.path("v").isIntegralNumber()
+              && value.path("v").canConvertToInt()
+              && value.path("v").intValue() == 1);
+      for (String field : Set.of("accountId", "kind", "username", "recipient", "createDate"))
+        require(value.path(field).isTextual() && text(value.path(field).textValue(), 512));
+      var tenant = value.path("tenantId");
+      require(tenant.isNull() || (tenant.isIntegralNumber() && tenant.canConvertToLong()));
+      var original =
+          new OriginalSql(
+              value.path("accountId").textValue(),
+              value.path("kind").textValue(),
+              tenant.isNull() ? null : tenant.longValue(),
+              value.path("username").textValue(),
+              value.path("recipient").textValue(),
+              value.path("createDate").textValue());
+      require(saved.equals(originalJson(original, binding)));
+    } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
+      throw unavailable();
+    }
+  }
+
   private <T> T owned(Supplier<T> work) {
     require(
         TransactionSynchronizationManager.isActualTransactionActive()
@@ -323,7 +429,10 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
             && !TransactionSynchronizationManager.isCurrentTransactionReadOnly());
     try {
       return work.get();
-    } catch (DataAccessException | IllegalArgumentException | ArithmeticException invalid) {
+    } catch (DataAccessException
+        | IllegalArgumentException
+        | ArithmeticException
+        | java.time.DateTimeException invalid) {
       throw unavailable();
     }
   }
@@ -370,7 +479,8 @@ public final class JdbcExistingSetupPasswordClaims implements ExistingSetupPassw
       String tokenHash,
       LocalDateTime expiry,
       String requestDigest,
-      String status) {
+      String status,
+      String originalSql) {
     boolean bindingMatches(Binding binding) {
       return version > 0
           && accountId.equals(binding.accountId())

@@ -27,10 +27,55 @@ class AccountLifecycleCallerConfigurationTest {
         .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS")
         .withProperty(
             "ORISO_ACCOUNT_LIFECYCLE_GROUPS",
-            "{\"/human-roles/user\":[\"user\"],\"/human-roles/consultant\":[\"consultant\"]}")
+            "{\"/human-roles/user\":[\"user\"],\"/human-roles/consultant\":[\"consultant\"],\"/human-roles/agency\":[\"restricted-agency-admin\",\"user-admin\"]}")
+        .withProperty("ORISO_ACCOUNT_MAINTENANCE_CONFIG", ordinaryPolicy())
+        .withProperty("ORISO_PROTECTED_INVITATIONS_CONFIG", protectedPolicy())
         .withProperty("ORISO_IDENTITY_HUMAN_CLIENT_IDS", "[\"human-admin\"]")
         .withProperty(
             "ORISO_TASK_CONTEXT_KEY", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+  }
+
+  private String ordinaryPolicy() {
+    var json = new com.fasterxml.jackson.databind.ObjectMapper();
+    var root = json.createObjectNode().put("version", 1);
+    root.putObject("native");
+    var profiles = root.putArray("ordinaryProfiles");
+    java.util.Map.of(
+            "user", java.util.Set.of("user"),
+            "consultant", java.util.Set.of("consultant"),
+            "agency", java.util.Set.of("restricted-agency-admin", "user-admin"))
+        .forEach((id, roles) -> {
+          var profile = profiles.addObject().put("id", id).put("version", 3);
+          profile.put("groupId", "group-" + id).put("groupParentId", "human-root");
+          profile.put("groupPath", "/human-roles/" + id).put("allowUnassignedTenant", false);
+          profile.set("realmRoles", json.valueToTree(new java.util.TreeSet<>(roles)));
+          profile.putObject("clientRoles");
+          profile.putArray("selfOperations").add("account.read").add("account.password");
+        });
+    return root.toString();
+  }
+
+  private String protectedPolicy() {
+    var json = new com.fasterxml.jackson.databind.ObjectMapper();
+    var root = json.createObjectNode()
+        .put("realmId", "22222222-2222-4222-8222-222222222222").put("realmName", "fixture");
+    root.putArray("technicalRoles").add("technical");
+    var profiles = root.putArray("profiles");
+    java.util.Map.of(
+            "tenant", java.util.Set.of("tenant-admin"),
+            "platform", java.util.Set.of("agency-admin", "tenant-admin"))
+        .forEach((id, roles) -> {
+          var profile = profiles.addObject().put("id", id).put("version", 7);
+          profile.put("kind", id.equals("tenant") ? "TENANT_ADMIN" : "PLATFORM_ADMIN");
+          profile.putArray("tenantModes").add("EXISTING");
+          profile.put("groupId", "group-" + id).put("groupPath", "/human-roles/" + id);
+          profile.set("realmRoles", json.valueToTree(new java.util.TreeSet<>(roles)));
+          profile.putObject("clientRoles");
+          profile.put("usernamePolicy", "USERNAME_TRANSCODER_V1");
+          profile.put("firstNamePolicy", "INVITE_WITH_EMAIL_LOCAL_PART_FALLBACK");
+          profile.put("lastNamePolicy", "INVITE_WITH_ADMIN_FALLBACK");
+        });
+    return root.toString();
   }
 
   @Test
@@ -98,6 +143,12 @@ class AccountLifecycleCallerConfigurationTest {
                     factory.registerSingleton(
                         "fixtureTransactions", new DataSourceTransactionManager(source));
                     factory.registerSingleton("fixtureAdminScope", mock(AdminScope.class));
+                    factory.registerSingleton("fixtureProtectedProfiles",
+                        new de.caritas.cob.userservice.api.service.accountinvite.ProtectedInvitationProfiles(
+                            "22222222-2222-4222-8222-222222222222",
+                            java.util.Map.of(
+                                de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole.TENANT_ADMIN, "tenant",
+                                de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole.PLATFORM_ADMIN, "platform")));
                     factory.registerSingleton(
                         "fixtureAccountInactivity",
                         mock(
@@ -200,6 +251,19 @@ class AccountLifecycleCallerConfigurationTest {
                   eq("https://identity.fixture.invalid/realms/fixture"),
                   eq(java.util.Set.of("human-admin")));
         });
+  }
+
+  @Test
+  void enabledCallerUsesTheSameReviewedCatalogForAllFivePasswordKinds() {
+    withEnabledCallerGraph(context -> {
+      assertEquals(1, context.getBeansOfType(ReviewedMaintenanceProfiles.class).size());
+      var catalog = context.getBean(ReviewedMaintenanceProfiles.class).profiles();
+      assertEquals(java.util.Set.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN"), catalog.keySet());
+      assertEquals(3, catalog.get("USER").get(0).version());
+      assertEquals(7, catalog.get("PLATFORM_ADMIN").get(0).version());
+      assertEquals(1, context.getBeansOfType(ClaimedPasswordMaintenance.class).size());
+      context.getBean(ClaimedPasswordMaintenance.class).requireSupport();
+    });
   }
 
   @Test

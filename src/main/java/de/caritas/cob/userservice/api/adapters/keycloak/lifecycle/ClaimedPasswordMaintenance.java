@@ -321,7 +321,7 @@ public final class ClaimedPasswordMaintenance {
     Intent row = transaction(() -> find(b, actor));
     if (row == null) {
       fresh.get();
-      row = transaction(() -> prepare(b, actor));
+      row = transaction(() -> prepare(b, actor, handle));
     }
     if (Set.of("ACKNOWLEDGED", "VERIFIED").contains(row.status())) {
       verifySaved(b, actor, row);
@@ -334,9 +334,16 @@ public final class ClaimedPasswordMaintenance {
     }
     if ("PREPARED".equals(row.status())) {
       fresh.get();
+      final Intent pending = row;
+      transaction(
+          () -> {
+            requireSetupHandle(b, handle);
+            requireSetupOriginal(b, handle, requireSameLocal(b, pending));
+            return null;
+          });
       var selected = select(b, actor, row, fresh);
       final Intent prepared = row;
-      row = transaction(() -> freeze(b, actor, prepared, selected, password));
+      row = transaction(() -> freeze(b, actor, prepared, selected, password, handle));
     }
     if (!"FROZEN".equals(row.status())) throw unavailable();
     final Intent frozen = row;
@@ -356,7 +363,8 @@ public final class ClaimedPasswordMaintenance {
       if (!body.path("expectedState").textValue().equals(state)) throw unavailable();
       transaction(
           () -> {
-            requireSameLocal(b, frozen);
+            requireSetupHandle(b, handle);
+            requireSetupOriginal(b, handle, requireSameLocal(b, frozen));
             return null;
           });
       String reply = call(b, actor, body, false);
@@ -443,12 +451,14 @@ public final class ClaimedPasswordMaintenance {
             .HttpStatusExceptionReason.PASSWORD_NOT_VALID);
   }
 
-  private Intent prepare(Bound b, TaskActorCredentials actor) {
+  private Intent prepare(Bound b, TaskActorCredentials actor, Object handle) {
+    requireSetupHandle(b, handle);
     var existing = find(b, actor);
     if (existing != null) return existing;
     if (b.expires() <= clock.instant().getEpochSecond()) throw unavailable();
     var local = localAccounts().lock(b.account());
     checkLocal(b, local);
+    requireSetupOriginal(b, handle, local);
     String operation = UUID.randomUUID().toString();
     var target = target(b);
     jdbc.update(
@@ -524,11 +534,17 @@ public final class ClaimedPasswordMaintenance {
   }
 
   private Intent freeze(
-      Bound b, TaskActorCredentials actor, Intent prepared, Selected selected, String password) {
+      Bound b,
+      TaskActorCredentials actor,
+      Intent prepared,
+      Selected selected,
+      String password,
+      Object handle) {
+    requireSetupHandle(b, handle);
     var row = find(b, actor);
     if (row == null) throw unavailable();
     if (!"PREPARED".equals(row.status())) return row;
-    requireSameLocal(b, row);
+    requireSetupOriginal(b, handle, requireSameLocal(b, row));
     if (!row.operation().equals(prepared.operation()) || row.workflow() != null)
       throw unavailable();
     var checked =
@@ -817,11 +833,26 @@ public final class ClaimedPasswordMaintenance {
       throw unavailable();
   }
 
-  private void requireSameLocal(Bound b, Intent row) {
+  private void requireSetupHandle(Bound b, Object handle) {
+    if (!"EXISTING_SETUP".equals(b.kind())) return;
+    if (!(handle instanceof ExistingAccountSetupService.ClaimedSetup claim)
+        || !b.equals(existingSetupBinding(claim.checkedClaim()))) throw unavailable();
+  }
+
+  private void requireSetupOriginal(
+      Bound b, Object handle, ClaimedPasswordLocalAccounts.Owned local) {
+    if (!"EXISTING_SETUP".equals(b.kind())) return;
+    requireSetupHandle(b, handle);
+    ((ExistingAccountSetupService.ClaimedSetup) handle)
+        .requireOriginalSqlWithinOwner(local.originalSql());
+  }
+
+  private ClaimedPasswordLocalAccounts.Owned requireSameLocal(Bound b, Intent row) {
     if (b.expires() <= clock.instant().getEpochSecond()) throw unavailable();
     var current = localAccounts().lock(b.account());
     checkLocal(b, current);
     if (!codec.canonical(current.state()).equals(row.local())) throw unavailable();
+    return current;
   }
 
   private ClaimedPasswordLocalAccounts localAccounts() {

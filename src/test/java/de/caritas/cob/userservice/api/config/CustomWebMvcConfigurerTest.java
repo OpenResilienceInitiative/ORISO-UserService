@@ -55,8 +55,8 @@ class CustomWebMvcConfigurerTest {
         java.util.List.of(
             java.util.List.of("/service/users/password/change", "https://foreign.fixture.invalid"),
             java.util.List.of("/service/users/another-operation", "https://app.fixture.invalid"))) {
-      // An unconfigured actual request may reach the application without CORS permission;
-      // the browser must first pass this preflight before sending its idempotency header.
+      // Spring 7 finishes an unconfigured preflight with 200 and no CORS grants;
+      // the browser still cannot send its idempotency header or read the result.
       boolean preflight = input.get(0).equals("/service/users/another-operation");
       var request =
           new org.springframework.mock.web.MockHttpServletRequest(
@@ -70,7 +70,8 @@ class CustomWebMvcConfigurerTest {
       var reached = new java.util.concurrent.atomic.AtomicBoolean();
       accountCorsFilter().doFilter(request, response, (incoming, outgoing) -> reached.set(true));
       assertThat(reached.get()).isFalse();
-      assertThat(response.getStatus()).isEqualTo(403);
+      assertThat(response.getStatus()).isEqualTo(preflight ? 200 : 403);
+      assertThat(response.getHeader("Access-Control-Allow-Methods")).isNull();
       assertThat(response.getHeader("Access-Control-Allow-Origin")).isNull();
       assertThat(response.getHeader("Access-Control-Expose-Headers")).isNull();
     }

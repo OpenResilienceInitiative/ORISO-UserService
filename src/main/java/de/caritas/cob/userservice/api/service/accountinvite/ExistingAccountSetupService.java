@@ -91,6 +91,14 @@ public class ExistingAccountSetupService {
       return currentClaim(false);
     }
 
+    /** The provider supplies actual locked-row data inside this same owner's SQL transaction. */
+    public void requireOriginalSqlWithinOwner(ExistingSetupPasswordClaims.OriginalSql actual) {
+      if (!TransactionSynchronizationManager.isActualTransactionActive())
+        throw new ScopedIdentityCommandRequiredException();
+      Claim checked = currentClaim(true);
+      owner.setupPasswordClaims.requireOriginalSqlWithinOwner(checked, actual);
+    }
+
     private Claim currentClaim(boolean fresh) {
       if (!active || Thread.currentThread() != requestThread)
         throw new ScopedIdentityCommandRequiredException();

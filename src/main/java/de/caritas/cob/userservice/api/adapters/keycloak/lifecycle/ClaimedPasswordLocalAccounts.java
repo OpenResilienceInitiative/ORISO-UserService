@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.port.out.ExistingSetupPasswordClaims;
 import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -26,7 +27,8 @@ final class ClaimedPasswordLocalAccounts {
       String email,
       String version,
       String consultantVersion,
-      ObjectNode state) {}
+      ObjectNode state,
+      ExistingSetupPasswordClaims.OriginalSql originalSql) {}
 
   Owned lock(String account) {
     if (!UUID.fromString(account).toString().equals(account)) throw unavailable();
@@ -96,7 +98,14 @@ final class ClaimedPasswordLocalAccounts {
         primary.path("email").textValue(),
         version,
         consultantVersion,
-        state);
+        state,
+        new ExistingSetupPasswordClaims.OriginalSql(
+            account,
+            kind,
+            tenant,
+            primary.path("username").textValue(),
+            primary.path("email").textValue(),
+            primary.path("createDate").textValue()));
   }
 
   private ObjectNode row(ResultSet rs, String table, String id) throws SQLException {

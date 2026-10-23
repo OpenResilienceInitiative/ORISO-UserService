@@ -151,7 +151,7 @@ public class AccountLifecycleCallerConfiguration {
             internalServer,
             keycloak.getRealm(),
             required("KEYCLOAK_REALM_INTERNAL_ID"));
-    return new de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance(
+    var maintenance = new de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance(
         identities,
         user,
         scope,
@@ -161,6 +161,32 @@ public class AccountLifecycleCallerConfiguration {
         transport,
         Clock.systemUTC(),
         publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm());
+    maintenance.configureReviewedOrdinaryGroups(groups);
+    return maintenance;
+  }
+
+  @Bean
+  de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport
+      accountInactivityIdentityTransport(
+          AuthenticatedUser user,
+          jakarta.servlet.http.HttpServletRequest request,
+          de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService existing,
+          TaskActorConfiguration actors,
+          TaskActorTokenBroker broker,
+          AccountLifecycleCodec codec,
+          @Qualifier("keycloakRestTemplate") RestTemplate http,
+          KeycloakConfig keycloak) {
+    String publicServer = keycloak.getAuthServerUrl();
+    String internalServer =
+        environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
+    if (publicServer == null || publicServer.isBlank()
+        || internalServer == null || internalServer.isBlank()) throw invalid();
+    String issuer = publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm();
+    var transport = new de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakInactivityMaintenance(
+        http, actors, broker, codec, internalServer, keycloak.getRealm(),
+        required("KEYCLOAK_REALM_INTERNAL_ID"), issuer);
+    existing.configureScopedInactivity(transport, user, request, issuer, humanClients);
+    return transport;
   }
 
   @Bean
