@@ -130,7 +130,8 @@ class ScheduledAskerMaintenanceSqlTest {
       assertDoesNotThrow(() -> f.scheduler().performDeletionWorkflow());
       assertEquals("ACKNOWLEDGED", f.status(SECOND));
       assertEquals("PREPARED", f.status(FIRST));
-      assertEquals(original, f.frozen(FIRST), "A refused read retry cannot replace original SQL custody");
+      assertEquals(
+          original, f.frozen(FIRST), "A refused read retry cannot replace original SQL custody");
       verify(f.claims, times(2)).release(f.lease);
       f.server.verify();
     }
