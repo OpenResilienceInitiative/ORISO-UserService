@@ -271,7 +271,11 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
             .orElseGet(HttpHeaders::new);
 
     return handleExceptionInternal(
-        null, null, definiteProfileHeaders(ex, headers, HttpStatus.CONFLICT, request), HttpStatus.CONFLICT, request);
+        null,
+        null,
+        definiteProfileHeaders(ex, headers, HttpStatus.CONFLICT, request),
+        HttpStatus.CONFLICT,
+        request);
   }
 
   /**
@@ -369,10 +373,15 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     ex.executeLogging();
 
     return handleExceptionInternal(
-        null, null, definiteProfileHeaders(ex, new HttpHeaders(), HttpStatus.FORBIDDEN, request), HttpStatus.FORBIDDEN, request);
+        null,
+        null,
+        definiteProfileHeaders(ex, new HttpHeaders(), HttpStatus.FORBIDDEN, request),
+        HttpStatus.FORBIDDEN,
+        request);
   }
 
-  private HttpHeaders definiteProfileHeaders(RuntimeException exception, HttpHeaders headers, HttpStatus status, WebRequest request) {
+  private HttpHeaders definiteProfileHeaders(
+      RuntimeException exception, HttpHeaders headers, HttpStatus status, WebRequest request) {
     if (exception instanceof DefiniteProfileNoEffect outcome
         && (status == HttpStatus.FORBIDDEN && exception instanceof ForbiddenException
             || status == HttpStatus.CONFLICT && exception instanceof ConflictException)

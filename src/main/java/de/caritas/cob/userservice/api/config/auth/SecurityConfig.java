@@ -485,8 +485,10 @@ public class SecurityConfig {
                 .requestMatchers("/users/consultants")
                 .hasAuthority(VIEW_AGENCY_CONSULTANTS)
                 .requestMatchers("/users/consultants/import")
-                .access((authentication, context) -> new AuthorizationDecision(
-                    consultantImportAllowed(authentication.get(), context)))
+                .access(
+                    (authentication, context) ->
+                        new AuthorizationDecision(
+                            consultantImportAllowed(authentication.get(), context)))
                 .requestMatchers("/users/messages/key")
                 .hasAuthority(TECHNICAL_DEFAULT)
                 .requestMatchers(
@@ -650,19 +652,28 @@ public class SecurityConfig {
     return http.build();
   }
 
-  private boolean consultantImportAllowed(Authentication authentication, RequestAuthorizationContext context) {
+  private boolean consultantImportAllowed(
+      Authentication authentication, RequestAuthorizationContext context) {
     String model = importEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY");
     if ("LEGACY".equals(model))
-      return authentication != null && authentication.getAuthorities().stream()
-          .anyMatch(authority -> TECHNICAL_DEFAULT.equals(authority.getAuthority()));
-    if (!"FIVE_ACTORS".equals(model) || !(authentication instanceof JwtAuthenticationToken checked)
-        || !checked.isAuthenticated() || !"POST".equals(context.getRequest().getMethod())) return false;
+      return authentication != null
+          && authentication.getAuthorities().stream()
+              .anyMatch(authority -> TECHNICAL_DEFAULT.equals(authority.getAuthority()));
+    if (!"FIVE_ACTORS".equals(model)
+        || !(authentication instanceof JwtAuthenticationToken checked)
+        || !checked.isAuthenticated()
+        || !"POST".equals(context.getRequest().getMethod())) return false;
     String raw = context.getRequest().getHeader("Authorization");
     if (raw == null || !raw.equals("Bearer " + checked.getToken().getTokenValue())) return false;
-    try (var verified = importBrokers.getObject().verifyConsultantImportTrigger(checked.getToken().getTokenValue())) {
+    try (var verified =
+        importBrokers
+            .getObject()
+            .verifyConsultantImportTrigger(checked.getToken().getTokenValue())) {
       verified.requireLive();
       return true;
-    } catch (RuntimeException unavailable) { return false; }
+    } catch (RuntimeException unavailable) {
+      return false;
+    }
   }
 
   @Bean

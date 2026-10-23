@@ -312,7 +312,8 @@ class ScopedInactivityNativeBoundaryTest {
   }
 
   @Test
-  void unknownMatrixRestoreHasDurableStartedOwnershipAndRetriesBeforeAnyNativeWrite() throws Exception {
+  void unknownMatrixRestoreHasDurableStartedOwnershipAndRetriesBeforeAnyNativeWrite()
+      throws Exception {
     var f = new Fixture(true, false);
     f.read(false);
     f.mutate("deactivate", false, false);
@@ -321,20 +322,31 @@ class ScopedInactivityNativeBoundaryTest {
     f.service.scan(false);
     var attempts = new java.util.concurrent.atomic.AtomicInteger();
     var started = new java.util.concurrent.atomic.AtomicReference<String>();
-    when(f.matrix.setAccountSuspended(MATRIX, false)).thenAnswer(inv -> {
-      f.outside();
-      f.order.add("matrix-false");
-      started.set((String) f.jdbc.queryForMap("select * from account_inactivity where identity_id=?", ACCOUNT).get("restore_effects_json"));
-      if (attempts.incrementAndGet() == 1) throw new ResourceAccessException("Synthetic unknown Matrix restore reply");
-      return true;
-    });
+    when(f.matrix.setAccountSuspended(MATRIX, false))
+        .thenAnswer(
+            inv -> {
+              f.outside();
+              f.order.add("matrix-false");
+              started.set(
+                  (String)
+                      f.jdbc
+                          .queryForMap(
+                              "select * from account_inactivity where identity_id=?", ACCOUNT)
+                          .get("restore_effects_json"));
+              if (attempts.incrementAndGet() == 1)
+                throw new ResourceAccessException("Synthetic unknown Matrix restore reply");
+              return true;
+            });
     f.platformHuman();
     assertThrows(RuntimeException.class, () -> f.service.reactivate(ACCOUNT));
-    assertNotNull(started.get(), "Owned STARTED must commit before the first external restore call");
+    assertNotNull(
+        started.get(), "Owned STARTED must commit before the first external restore call");
     var wal = f.json.readTree(started.get());
     assertEquals("STARTED", wal.path("matrix").get(0).path("restorePhase").textValue());
     assertEquals("NOT_STARTED", wal.path("media").path("restorePhase").textValue());
-    assertEquals(AccountInactivityService.Status.REACTIVATING, f.service.snapshot(ACCOUNT).orElseThrow().status());
+    assertEquals(
+        AccountInactivityService.Status.REACTIVATING,
+        f.service.snapshot(ACCOUNT).orElseThrow().status());
     String operation = f.value("work_id"), original = f.value("claimed_json");
     assertNull(f.value("native_body"));
     assertEquals(0, f.order.stream().filter("native-reactivate"::equals).count());
@@ -344,7 +356,8 @@ class ScopedInactivityNativeBoundaryTest {
     assertEquals(2, attempts.get());
     assertEquals(1, f.order.stream().filter("media-restore"::equals).count());
     assertEquals(1, f.order.stream().filter("native-reactivate"::equals).count());
-    assertEquals(AccountInactivityService.Status.ACTIVE, f.service.snapshot(ACCOUNT).orElseThrow().status());
+    assertEquals(
+        AccountInactivityService.Status.ACTIVE, f.service.snapshot(ACCOUNT).orElseThrow().status());
     verifyNoInteractions(f.sdk);
     f.server.verify();
   }

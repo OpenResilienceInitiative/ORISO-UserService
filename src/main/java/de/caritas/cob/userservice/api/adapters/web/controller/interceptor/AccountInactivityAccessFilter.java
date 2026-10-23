@@ -18,15 +18,20 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class AccountInactivityAccessFilter extends OncePerRequestFilter {
   private final AccountInactivityService lifecycle;
   private final org.springframework.core.env.Environment importEnvironment;
-  private final org.springframework.beans.factory.ObjectProvider<de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker> importBrokers;
+  private final org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker>
+      importBrokers;
 
   public AccountInactivityAccessFilter(AccountInactivityService lifecycle) {
     this(lifecycle, null, null);
   }
 
-  public AccountInactivityAccessFilter(AccountInactivityService lifecycle,
+  public AccountInactivityAccessFilter(
+      AccountInactivityService lifecycle,
       org.springframework.core.env.Environment importEnvironment,
-      org.springframework.beans.factory.ObjectProvider<de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker> importBrokers) {
+      org.springframework.beans.factory.ObjectProvider<
+              de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker>
+          importBrokers) {
     this.lifecycle = lifecycle;
     this.importEnvironment = importEnvironment;
     this.importBrokers = importBrokers;
@@ -65,17 +70,27 @@ public class AccountInactivityAccessFilter extends OncePerRequestFilter {
     chain.doFilter(request, response);
   }
 
-  private boolean verifiedConfiguredImport(HttpServletRequest request, JwtAuthenticationToken authentication) {
-    if (importEnvironment == null || importBrokers == null
+  private boolean verifiedConfiguredImport(
+      HttpServletRequest request, JwtAuthenticationToken authentication) {
+    if (importEnvironment == null
+        || importBrokers == null
         || !"FIVE_ACTORS".equals(importEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"))
-        || !authentication.isAuthenticated() || !"POST".equals(request.getMethod())
-        || !(request.getContextPath() + "/users/consultants/import").equals(request.getRequestURI())) return false;
+        || !authentication.isAuthenticated()
+        || !"POST".equals(request.getMethod())
+        || !(request.getContextPath() + "/users/consultants/import")
+            .equals(request.getRequestURI())) return false;
     String raw = request.getHeader("Authorization");
-    if (raw == null || !raw.equals("Bearer " + authentication.getToken().getTokenValue())) return false;
-    try (var verified = importBrokers.getObject().verifyConsultantImportTrigger(authentication.getToken().getTokenValue())) {
+    if (raw == null || !raw.equals("Bearer " + authentication.getToken().getTokenValue()))
+      return false;
+    try (var verified =
+        importBrokers
+            .getObject()
+            .verifyConsultantImportTrigger(authentication.getToken().getTokenValue())) {
       verified.requireLive();
       return true;
-    } catch (RuntimeException unavailable) { return false; }
+    } catch (RuntimeException unavailable) {
+      return false;
+    }
   }
 
   private static void addRoles(java.util.Set<String> result, Object access) {
