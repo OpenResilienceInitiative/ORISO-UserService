@@ -166,8 +166,7 @@ class AccountRoleAdditionScopedJpaTest {
         0,
         jdbc.queryForObject(
             "select count(*) from consultant where consultant_id=?", Integer.class, ACCOUNT));
-    var born =
-        LocalDateTime.now(ZoneOffset.UTC).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+    var born = LocalDateTime.now(ZoneOffset.UTC).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
     new TransactionTemplate(transactions)
         .executeWithoutResult(
             ignored -> {
