@@ -310,7 +310,7 @@ def native(kc, report):
             receipt['protocol_counts'] = protocol
         except (OSError, ValueError, TypeError):
             save(protocol_file, {'protocolSchemaRejected': True}); raise ValueError('Protocol count witness rejected')
-        if kind == 'inactivity':
+        if kind == 'inactivity' and report.with_name('scheduled-deletion-native-time-fixture.json').exists():
             time_file = report.with_name('scheduled-deletion-native-time-fixture.json')
             value = json.loads(time_file.read_text())
             if (set(value) != {'mode', 'userCreateDateBefore', 'userCreateDateAfter', 'lastActivity', 'dueAt'}
@@ -330,6 +330,7 @@ def native(kc, report):
             check.get('sameActualEnabledMasterInstallerAndNativeSessionVerified') is True for check in receipt['installer_identity_checks'])
         receipt['accepted'] = (inventory['accepted'] and receipt['child_exit'] == 0 and receipt['java_witness_complete']
             and receipt['protocol_counts_complete']
+            and (kind != 'inactivity' or 'explicit_time_fixture' in receipt)
             and receipt['one_actual_native_effect_event'] and receipt['installer_identity_verified'])
         receipt['phase'] = 'complete'
     except BaseException as error:

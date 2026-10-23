@@ -798,6 +798,12 @@ class UserScheduledDeletionNativePairProof {
             new ClassPathResource(
                 "db/changelog/changeset/20261022_identity_maintenance_retry_367/migrate.sql"))
         .execute(source);
+    // The testing profile preloads AccountInactivityDatabase.sql; reset only this H2 fixture.
+    jdbc.execute("drop table if exists account_inactivity");
+    jdbc.execute("drop table if exists account_inactivity_journal");
+    jdbc.execute("drop table if exists account_inactivity_access_state");
+    jdbc.execute("drop table if exists account_inactivity_matrix_state");
+    jdbc.update("delete from scheduled_task_claim where task_name='account-deletion'");
     jdbc.execute(
         "create table account_inactivity(identity_id varchar(36) primary key,tenant_id bigint,assigned_months int not null,revision bigint not null,last_activity timestamp(6) not null,due_at timestamp(6) not null,status varchar(20) not null,last_error varchar(1000),attempts int default 0 not null)");
     jdbc.execute(
@@ -812,9 +818,14 @@ class UserScheduledDeletionNativePairProof {
               .replaceFirst("(?s)^.*?ALTER TABLE account_inactivity\\s+ADD COLUMN\\s+", "")
               .replaceFirst(";\\s*$", "")
               .split(",\\s*ADD COLUMN\\s+");
-      assertEquals(12, columns.length);
+      assertTrue(columns.length == 12 || columns.length == 13);
+      if (columns.length == 13)
+        assertEquals("suspension_source_json LONGTEXT NULL", columns[12].trim());
       for (String column : columns)
         jdbc.execute("ALTER TABLE account_inactivity ADD COLUMN " + column);
+      if (columns.length == 12)
+        jdbc.execute(
+            "ALTER TABLE account_inactivity ADD COLUMN suspension_source_json LONGTEXT NULL");
     }
     new ResourceDatabasePopulator(
             new ClassPathResource(
