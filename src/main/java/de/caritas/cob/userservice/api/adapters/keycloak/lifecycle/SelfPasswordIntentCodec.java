@@ -21,8 +21,16 @@ final class SelfPasswordIntentCodec {
   }
 
   String seal(JsonNode checkedMetadata, byte[] command) {
+    return seal(checkedMetadata, command, false);
+  }
+
+  String sealReactivation(JsonNode checkedMetadata, byte[] command) {
+    return seal(checkedMetadata, command, true);
+  }
+
+  private String seal(JsonNode checkedMetadata, byte[] command, boolean reactivation) {
     try {
-      var metadata = metadata(checkedMetadata);
+      var metadata = metadata(checkedMetadata, reactivation);
       byte[] plaintext = command(metadata, command);
       byte[] nonce = new byte[12];
       random.nextBytes(nonce);
@@ -40,8 +48,16 @@ final class SelfPasswordIntentCodec {
   }
 
   byte[] open(JsonNode checkedMetadata, String envelope) {
+    return open(checkedMetadata, envelope, false);
+  }
+
+  byte[] openReactivation(JsonNode checkedMetadata, String envelope) {
+    return open(checkedMetadata, envelope, true);
+  }
+
+  private byte[] open(JsonNode checkedMetadata, String envelope, boolean reactivation) {
     try {
-      var metadata = metadata(checkedMetadata);
+      var metadata = metadata(checkedMetadata, reactivation);
       if (envelope == null || envelope.length() > 87500) throw invalid();
       var value = codec.read(envelope, JsonNode.class);
       fields(value, Set.of("v", "nonce", "ciphertext"));
@@ -80,7 +96,7 @@ final class SelfPasswordIntentCodec {
     }
   }
 
-  private Metadata metadata(JsonNode value) {
+  private Metadata metadata(JsonNode value, boolean reactivation) {
     fields(
         value,
         Set.of(
@@ -103,10 +119,15 @@ final class SelfPasswordIntentCodec {
     if (!value.path("v").isIntegralNumber()
         || !value.path("v").canConvertToInt()
         || value.path("v").intValue() != 1
-        || !"account.self-password".equals(text(value, "command", 64))
+        || !(reactivation ? "account.reactivate" : "account.self-password")
+            .equals(text(value, "command", 64))
         || !"POST".equals(text(value, "method", 16))
-        || !"oriso-account-maintenance/v1/accounts/self-password".equals(text(value, "route", 128))
-        || !"FROZEN_PASSWORD_HTTP_V1".equals(text(value, "representation", 64))) throw invalid();
+        || !(reactivation
+                ? "oriso-account-maintenance/v1/accounts/reactivate"
+                : "oriso-account-maintenance/v1/accounts/self-password")
+            .equals(text(value, "route", 128))
+        || !(reactivation ? "FROZEN_REACTIVATION_HTTP_V1" : "FROZEN_PASSWORD_HTTP_V1")
+            .equals(text(value, "representation", 64))) throw invalid();
     String operation = uuid(value, "operationId");
     if (!operation.equals(uuid(value, "workflowId"))) throw invalid();
     var tenant = value.get("tenantId");
@@ -123,9 +144,11 @@ final class SelfPasswordIntentCodec {
         1,
         text(value, "realmId", 512),
         operation,
-        "account.self-password",
+        reactivation ? "account.reactivate" : "account.self-password",
         "POST",
-        "oriso-account-maintenance/v1/accounts/self-password",
+        reactivation
+            ? "oriso-account-maintenance/v1/accounts/reactivate"
+            : "oriso-account-maintenance/v1/accounts/self-password",
         uuid(value, "accountId"),
         tenantId,
         text(value, "ownerClient", 255),
@@ -135,7 +158,7 @@ final class SelfPasswordIntentCodec {
         digest(value, "requestDigest"),
         digest(value, "expectedState"),
         expiry.longValue(),
-        "FROZEN_PASSWORD_HTTP_V1");
+        reactivation ? "FROZEN_REACTIVATION_HTTP_V1" : "FROZEN_PASSWORD_HTTP_V1");
   }
 
   private byte[] command(Metadata metadata, byte[] bytes) {
@@ -143,6 +166,8 @@ final class SelfPasswordIntentCodec {
     byte[] snapshot = bytes.clone();
     String raw = codec.utf8(snapshot);
     var wrapper = codec.read(raw, JsonNode.class);
+    if ("account.reactivate".equals(metadata.command()))
+      return reactivationCommand(metadata, wrapper, raw, snapshot);
     fields(wrapper, Set.of("body", "localSetup"));
     var local = wrapper.path("localSetup");
     boolean owned = local.has("consultant");
@@ -218,6 +243,70 @@ final class SelfPasswordIntentCodec {
         || change.path("temporary").booleanValue()
         || current.equals(chosen)) throw invalid();
     if (!raw.equals(codec.canonical(wrapper))) throw invalid();
+    return snapshot;
+  }
+
+  private byte[] reactivationCommand(
+      Metadata metadata, JsonNode wrapper, String raw, byte[] snapshot) {
+    fields(wrapper, Set.of("body", "originalSql"));
+    ReactivationUserSnapshotSchema.require(
+        wrapper.path("originalSql"),
+        metadata.accountId(),
+        metadata.tenantId(),
+        metadata.operationId());
+    var body = wrapper.path("body");
+    fields(body, Set.of("target", "operationId", "expectedState", "change"));
+    if (!metadata.operationId().equals(uuid(body, "operationId"))
+        || !metadata.expectedState().equals(digest(body, "expectedState"))) throw invalid();
+    var target = body.path("target");
+    fields(target, Set.of("accountId", "tenantId", "origin"));
+    if (!metadata.accountId().equals(uuid(target, "accountId"))
+        || metadata.tenantId() == null
+        || !target.path("tenantId").isTextual()
+        || !metadata.tenantId().toString().equals(target.path("tenantId").textValue()))
+      throw invalid();
+    var origin = target.path("origin");
+    fields(
+        origin,
+        Set.of(
+            "kind", "workflowId", "humanSubject", "humanIssuer", "humanClient", "humanAuthority"));
+    if (!"HUMAN_ADMIN".equals(text(origin, "kind", 16))
+        || !"PROTECTED_ACCOUNT_OPERATIONS_V1".equals(text(origin, "humanAuthority", 64))
+        || !metadata.workflowId().equals(uuid(origin, "workflowId"))
+        || !metadata.originDigest().equals(codec.digest("maintenance-origin", origin)))
+      throw invalid();
+    uuid(origin, "humanSubject");
+    String rawIssuer = text(origin, "humanIssuer", 2048);
+    try {
+      var issuer = java.net.URI.create(rawIssuer);
+      if (!Set.of("http", "https").contains(issuer.getScheme())
+          || issuer.getHost() == null
+          || issuer.getRawUserInfo() != null
+          || issuer.getRawQuery() != null
+          || issuer.getRawFragment() != null) throw invalid();
+    } catch (IllegalArgumentException invalid) {
+      throw invalid();
+    }
+    if (!text(origin, "humanClient", 255).matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,254}"))
+      throw invalid();
+    var change = body.path("change");
+    fields(change, Set.of("expectedUsername", "expectedEmail", "password"));
+    text(change, "password", 4096);
+    String originalUsername =
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+            .decodeUsername(wrapper.path("originalSql").path("username").textValue());
+    if (!originalUsername
+            .trim()
+            .toLowerCase(Locale.ROOT)
+            .equals(text(change, "expectedUsername", 255))
+        || !wrapper
+            .path("originalSql")
+            .path("email")
+            .textValue()
+            .trim()
+            .toLowerCase(Locale.ROOT)
+            .equals(text(change, "expectedEmail", 255))
+        || !raw.equals(codec.canonical(wrapper))) throw invalid();
     return snapshot;
   }
 

@@ -6,11 +6,24 @@ package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 public final class AccountLifecycleRetryScheduler {
   private final JdbcAccountLifecycleJournal journal;
   private final AccountLifecycleDispatcher dispatcher;
+  private final ClaimedPasswordMaintenance claimed;
+  private final SelfPasswordMaintenance self;
 
   public AccountLifecycleRetryScheduler(
       JdbcAccountLifecycleJournal journal, AccountLifecycleDispatcher dispatcher) {
     this.journal = journal;
     this.dispatcher = dispatcher;
+    this.claimed = null;
+    this.self = null;
+  }
+
+  public AccountLifecycleRetryScheduler(
+      JdbcAccountLifecycleJournal journal, AccountLifecycleDispatcher dispatcher,
+      ClaimedPasswordMaintenance claimed, SelfPasswordMaintenance self) {
+    this.journal = java.util.Objects.requireNonNull(journal);
+    this.dispatcher = java.util.Objects.requireNonNull(dispatcher);
+    this.claimed = java.util.Objects.requireNonNull(claimed);
+    this.self = java.util.Objects.requireNonNull(self);
   }
 
   @org.springframework.scheduling.annotation.Scheduled(
@@ -22,6 +35,24 @@ public final class AccountLifecycleRetryScheduler {
     } catch (RuntimeException failure) {
       /* durable attempt remains retryable; no sensitive diagnostics */
     }
-    dispatcher.retryPending();
+    if (claimed == null) {
+      dispatcher.retryPending();
+      return;
+    }
+    try {
+      dispatcher.retryPending();
+    } catch (RuntimeException failure) {
+      /* Each owned retention queue still gets its bounded turn. */
+    }
+    try {
+      claimed.expireSecretCustody();
+    } catch (RuntimeException failure) {
+      /* Keep custody untouched if its independent owner checks fail. */
+    }
+    try {
+      self.expireSecretCustody();
+    } catch (RuntimeException failure) {
+      /* A later retry uses the same deadline and immutable intent metadata. */
+    }
   }
 }

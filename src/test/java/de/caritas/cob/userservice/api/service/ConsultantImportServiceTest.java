@@ -73,6 +73,32 @@ class ConsultantImportServiceTest {
     ReflectionTestUtils.setField(consultantImportService, "checkedPolicyReads", checkedPolicyReads);
   }
 
+  @Test
+  void fiveActorNoArgumentEntryRejectsBeforeReadingAnyConfiguredFile() {
+    ReflectionTestUtils.setField(
+        consultantImportService,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    ReflectionTestUtils.setField(
+        consultantImportService,
+        "importFilename",
+        tempDir.resolve("must-not-be-opened.csv").toString());
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        consultantImportService::startImport);
+    org.mockito.Mockito.verifyNoInteractions(
+        identityUsernameAvailability,
+        consultantService,
+        consultingTypeManager,
+        agencyService,
+        userHelper,
+        createConsultantSaga,
+        consultantAgencyRelationCreatorService,
+        lifecycleIdentities,
+        checkedPolicyReads);
+  }
+
   // ---------------------------------------------------------------------------
   // startImport — file read
   // ---------------------------------------------------------------------------
@@ -322,7 +348,10 @@ class ConsultantImportServiceTest {
               return created;
             });
 
-    consultantImportService.startImport();
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+      consultantImportService.startImport(trigger);
+    }
 
     org.junit.jupiter.api.Assertions.assertNotNull(capturedOrigin.get());
     org.junit.jupiter.api.Assertions.assertThrows(
@@ -359,7 +388,10 @@ class ConsultantImportServiceTest {
   @Test
   void fiveActorExistingImportRefusesForeignConsultantBeforeAnyRelationMutation() throws Exception {
     configuredExistingImport(7L);
-    consultantImportService.startImport();
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+      consultantImportService.startImport(trigger);
+    }
     verify(consultantAgencyRelationCreatorService, never())
         .createConsultantAgencyRelations(anyString(), any(), any(), any());
     verify(createConsultantSaga, never()).createNewConsultant(any(), any());
@@ -370,7 +402,10 @@ class ConsultantImportServiceTest {
   void fiveActorExistingImportRefusesUnassignedConsultantBeforeAnyRelationMutation()
       throws Exception {
     configuredExistingImport(null);
-    consultantImportService.startImport();
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+      consultantImportService.startImport(trigger);
+    }
     verify(consultantAgencyRelationCreatorService, never())
         .createConsultantAgencyRelations(anyString(), any(), any(), any());
     verify(createConsultantSaga, never()).createNewConsultant(any(), any());
@@ -380,7 +415,10 @@ class ConsultantImportServiceTest {
   @Test
   void fiveActorExistingImportKeepsExactConsultantRowAndAgencyTenantBinding() throws Exception {
     configuredExistingImport(5L);
-    consultantImportService.startImport();
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+      consultantImportService.startImport(trigger);
+    }
     verify(consultantAgencyRelationCreatorService)
         .createConsultantAgencyRelations(
             eq("3057c2a7-635f-4bb9-a976-48ac82ec3dda"),

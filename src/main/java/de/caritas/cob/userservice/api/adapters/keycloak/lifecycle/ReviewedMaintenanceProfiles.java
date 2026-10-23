@@ -85,7 +85,7 @@ public final class ReviewedMaintenanceProfiles {
             || !java.util.Collections.disjoint(roles, technical)
             || !profile.path("allowUnassignedTenant").isBoolean()) throw invalid();
         clientRoles(profile.path("clientRoles"));
-        var operations = array(profile.path("selfOperations"), 9);
+        var operations = array(profile.path("selfOperations"), 10);
         var uniqueOperations = new HashSet<String>();
         for (var operation : operations) {
           if (!operation.isTextual()
@@ -93,6 +93,7 @@ public final class ReviewedMaintenanceProfiles {
                       "account.read",
                       "account.locale",
                       "account.profile",
+                      "account.email",
                       "account.password",
                       "otp.read",
                       "otp.app-setup",

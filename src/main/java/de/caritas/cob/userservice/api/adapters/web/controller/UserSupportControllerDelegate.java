@@ -24,7 +24,51 @@ class UserSupportControllerDelegate {
   private final @NonNull EmailNotificationFacade emailNotificationFacade;
   private final @NonNull SessionDataService sessionDataService;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment importEnvironment;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker>
+      importBrokers;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private jakarta.servlet.http.HttpServletRequest importRequest;
+
   ResponseEntity<Void> importConsultants() {
+    if (importEnvironment != null
+        && "FIVE_ACTORS".equals(importEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"))) {
+      if (!(importRequest.getUserPrincipal()
+              instanceof
+              org.springframework.security.oauth2.server.resource.authentication
+                          .JwtAuthenticationToken
+                      authentication)
+          || !authentication.isAuthenticated()
+          || !"POST".equals(importRequest.getMethod())
+          || !(importRequest.getContextPath() + "/users/consultants/import")
+              .equals(importRequest.getRequestURI())
+          || !java.util.Objects.equals(
+              importRequest.getHeader("Authorization"),
+              "Bearer " + authentication.getToken().getTokenValue()))
+        throw new org.springframework.security.access.AccessDeniedException(
+            "Configured import trigger is unavailable");
+      final de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker
+              .VerifiedConsultantImportTrigger
+          verified;
+      try {
+        verified =
+            importBrokers
+                .getObject()
+                .verifyConsultantImportTrigger(authentication.getToken().getTokenValue());
+      } catch (RuntimeException unavailable) {
+        throw new org.springframework.security.access.AccessDeniedException(
+            "Configured import trigger is unavailable");
+      }
+      try (verified) {
+        consultantImportService.startImport(verified);
+      }
+      return new ResponseEntity<>(HttpStatus.OK);
+    }
     consultantImportService.startImport();
     return new ResponseEntity<>(HttpStatus.OK);
   }

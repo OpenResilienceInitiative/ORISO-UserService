@@ -186,12 +186,12 @@ class LocaleBoundaryEvidenceTest(unittest.TestCase):
             ET.ElementTree(suite).write(root / "TEST-locale.xml")
             return proof.sanitize(root, root / "clean.xml")
 
-    def test_nine_public_cases_require_both_domain_and_legacy_controls(self):
+    def test_eleven_public_cases_require_both_domain_and_legacy_controls(self):
         result = self.result()
-        self.assertEqual(9, result["floor"])
+        self.assertEqual(11, result["floor"])
         self.assertTrue(result["adapter_behavior_red"])
         self.assertTrue(result["all_required_controls_passed"])
-        self.assertEqual(7, result["failures"])
+        self.assertEqual(9, result["failures"])
 
     def test_failing_domain_only_control_cannot_be_locale_red(self):
         result = self.result({"domainOnlyPublicPatchKeepsItsWorkingNoHeaderContract"})
@@ -223,7 +223,7 @@ class JpaBoundaryEvidenceTest(unittest.TestCase):
             path = root / "TEST-jpa.xml"
             ET.ElementTree(suite).write(path)
             result = proof.sanitize(root, root / "clean.xml")
-            self.assertEqual(2, result["floor"])
+            self.assertEqual(3, result["floor"])
             self.assertTrue(result["adapter_behavior_red"])
             self.assertFalse(result["legacy_control_passed"])
             ET.SubElement(control, "failure", type="org.opentest4j.AssertionFailedError")

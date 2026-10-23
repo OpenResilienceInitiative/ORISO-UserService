@@ -81,8 +81,29 @@ public class ConsultantImportService {
         && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
   }
 
-  public void startImport() {
+  /** Fixed verified HTTP trigger only; configured records supply all import authority. */
+  public void startImport(
+      de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker
+              .VerifiedConsultantImportTrigger
+          trigger) {
+    if (!fiveActors() || trigger == null)
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Verified import trigger is unavailable");
+    trigger.requireLive();
+    importConfiguredFile(trigger);
+  }
 
+  public void startImport() {
+    if (fiveActors())
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Verified import trigger is required");
+    importConfiguredFile(null);
+  }
+
+  private void importConfiguredFile(
+      de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker
+              .VerifiedConsultantImportTrigger
+          trigger) {
     this.protocolFile = protocolFilename + "." + System.currentTimeMillis();
 
     Reader in;
@@ -110,7 +131,12 @@ public class ConsultantImportService {
     }
 
     for (CSVRecord record : records) {
-
+      if (fiveActors()) {
+        if (trigger == null)
+          throw new org.springframework.security.access.AccessDeniedException(
+              "Verified import trigger is required");
+        trigger.requireLive();
+      }
       try {
 
         ImportRecord importRecord = getImportRecord(record);
@@ -291,7 +317,12 @@ public class ConsultantImportService {
               throw new ImportException("Checked import policy is unavailable");
             var checkedOrigin =
                 new CheckedPolicyOrigin(
-                    importRecord, roles, agencyIds, sourceDigest, record.getRecordNumber());
+                    importRecord,
+                    roles,
+                    agencyIds,
+                    sourceDigest,
+                    record.getRecordNumber(),
+                    trigger);
             try {
               consultant =
                   checkedPolicyReads.withConfiguredImport(
@@ -432,6 +463,9 @@ public class ConsultantImportService {
    * Constructed only here, after this configured source's exact row and current agencies passed.
    */
   public static final class CheckedPolicyOrigin {
+    private final de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker
+            .VerifiedConsultantImportTrigger
+        trigger;
     private final ImportRecord row;
     private final Long tenantId;
     private final List<Long> agencies;
@@ -447,7 +481,12 @@ public class ConsultantImportService {
         java.util.Set<String> roles,
         java.util.Set<Long> agencies,
         String source,
-        long number) {
+        long number,
+        de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker
+                .VerifiedConsultantImportTrigger
+            trigger) {
+      this.trigger = java.util.Objects.requireNonNull(trigger);
+      trigger.requireLive();
       this.row = row;
       this.tenantId = row.getTenantId();
       this.agencies = agencies.stream().sorted().toList();
@@ -471,6 +510,7 @@ public class ConsultantImportService {
       if (!open || owner != Thread.currentThread())
         throw new org.springframework.security.access.AccessDeniedException(
             "Configured import owner is no longer live");
+      trigger.requireLive();
       try {
         if (!java.security.MessageDigest.isEqual(
             de.caritas.cob.userservice.api.service.accountpolicy.TaskContextProof.canonical(frozen),

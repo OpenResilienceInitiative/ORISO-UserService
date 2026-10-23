@@ -85,6 +85,49 @@ public class AccountLifecycleCallerConfiguration {
   }
 
   @Bean
+  ReviewedMaintenanceProfiles reviewedMaintenanceProfiles(
+      de.caritas.cob.userservice.api.service.accountinvite.ProtectedInvitationProfiles initial,
+      KeycloakConfig keycloak) {
+    String realmId = required("KEYCLOAK_REALM_INTERNAL_ID");
+    if (!realmId.equals(initial.realmId())) throw invalid();
+    var initialIds = new TreeMap<String, String>();
+    initial.profileIds().forEach((kind, id) -> initialIds.put(kind.name(), id));
+    return ReviewedMaintenanceProfiles.read(
+        required("ORISO_ACCOUNT_MAINTENANCE_CONFIG"),
+        required("ORISO_PROTECTED_INVITATIONS_CONFIG"),
+        groups, initialIds, realmId, keycloak.getRealm());
+  }
+
+  @Bean
+  ClaimedPasswordMaintenance claimedPasswordMaintenance(
+      IdentityClientConfig identities,
+      JdbcTemplate jdbc,
+      PlatformTransactionManager manager,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      @Qualifier("keycloakRestTemplate") RestTemplate http,
+      KeycloakConfig keycloak,
+      ReviewedMaintenanceProfiles reviewed) {
+    String publicServer = keycloak.getAuthServerUrl();
+    String internalServer =
+        environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
+    if (publicServer == null || publicServer.isBlank()
+        || internalServer == null || internalServer.isBlank()) throw invalid();
+    var selectors = reviewed.profiles().entrySet().stream()
+        .collect(java.util.stream.Collectors.toUnmodifiableMap(
+            Map.Entry::getKey,
+            entry -> entry.getValue().stream()
+                .map(profile -> new ClaimedPasswordMaintenance.ProfileSelector(
+                    profile.family(), profile.id(), profile.version()))
+                .toList()));
+    return new ClaimedPasswordMaintenance(
+        identities, jdbc, manager, actors, broker, codec, http, Clock.systemUTC(),
+        internalServer, publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm(),
+        keycloak.getRealm(), required("KEYCLOAK_REALM_INTERNAL_ID"), selectors);
+  }
+
+  @Bean
   SelfAppOtpMaintenance selfAppOtpMaintenance(
       de.caritas.cob.userservice.api.port.out.IdentityClientConfig identities,
       AuthenticatedUser user,
@@ -409,8 +452,9 @@ public class AccountLifecycleCallerConfiguration {
 
   @Bean
   AccountLifecycleRetryScheduler accountLifecycleRetryScheduler(
-      JdbcAccountLifecycleJournal journal, AccountLifecycleDispatcher dispatcher) {
-    return new AccountLifecycleRetryScheduler(journal, dispatcher);
+      JdbcAccountLifecycleJournal journal, AccountLifecycleDispatcher dispatcher,
+      ClaimedPasswordMaintenance claimed, SelfPasswordMaintenance self) {
+    return new AccountLifecycleRetryScheduler(journal, dispatcher, claimed, self);
   }
 
   private String required(String name) {

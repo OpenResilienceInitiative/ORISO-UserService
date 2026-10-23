@@ -30,6 +30,78 @@ public class TaskActorTokenBroker {
     this.keycloak = keycloak;
   }
 
+  /** Only the fixed configured-import HTTP trigger may obtain this live result. */
+  public VerifiedConsultantImportTrigger verifyConsultantImportTrigger(String rawToken) {
+    try {
+      var binding = configuration.require(TaskPurpose.CONSULTANT_IMPORT);
+      if (binding.actor() != TaskActor.SETUP
+          || !java.util
+              .UUID
+              .fromString(binding.serviceSubject())
+              .toString()
+              .equals(binding.serviceSubject())
+          || rawToken == null
+          || rawToken.isBlank()
+          || rawToken.length() > 32768
+          || rawToken.chars().anyMatch(c -> Character.isWhitespace(c) || c < 32 || c == 127))
+        throw importUnavailable();
+      Jwt token = decodeBoundNativeToken(binding, rawToken);
+      requireOriginalBounds(token);
+      var roles = (Collection<?>) ((Map<?, ?>) token.getClaims().get("realm_access")).get("roles");
+      if (roles.size() != TaskActor.SETUP.roles().size()
+          || token.getAudience().size() != TaskActor.SETUP.audiences().size())
+        throw importUnavailable();
+      return new VerifiedConsultantImportTrigger(this, token);
+    } catch (RuntimeException invalid) {
+      throw importUnavailable();
+    }
+  }
+
+  public static final class VerifiedConsultantImportTrigger implements AutoCloseable {
+    private final TaskActorTokenBroker broker;
+    private final Thread owner = Thread.currentThread();
+    private final String client, subject;
+    private final Instant issuedAt, expiresAt;
+    private boolean live = true;
+
+    private VerifiedConsultantImportTrigger(TaskActorTokenBroker broker, Jwt token) {
+      this.broker = broker;
+      this.client = token.getClaimAsString("azp");
+      this.subject = token.getSubject();
+      this.issuedAt = token.getIssuedAt();
+      this.expiresAt = token.getExpiresAt();
+    }
+
+    public void requireLive() {
+      try {
+        if (!live
+            || owner != Thread.currentThread()
+            || issuedAt.isAfter(Instant.now())
+            || !expiresAt.isAfter(Instant.now())) throw importUnavailable();
+        var binding = broker.configuration.require(TaskPurpose.CONSULTANT_IMPORT);
+        if (binding.actor() != TaskActor.SETUP
+            || !client.equals(binding.clientId())
+            || !subject.equals(binding.serviceSubject())) throw importUnavailable();
+      } catch (RuntimeException invalid) {
+        throw importUnavailable();
+      }
+    }
+
+    @Override
+    public void close() {
+      live = false;
+    }
+
+    @Override
+    public String toString() {
+      return "VerifiedConsultantImportTrigger[redacted]";
+    }
+  }
+
+  private static IllegalStateException importUnavailable() {
+    return new IllegalStateException("Consultant import trigger unavailable");
+  }
+
   public TaskToken issue(TaskPurpose purpose) {
     var binding = configuration.require(purpose);
     if (binding.actor() == TaskActor.ACCOUNT_CREATE || binding.actor() == TaskActor.ACCOUNT_ADMIN) {
@@ -124,8 +196,13 @@ public class TaskActorTokenBroker {
 
   private NativeToken requestBoundNativeToken(TaskActorCredentials binding) {
     var issued = requestNativeToken(binding);
-    var issuedAt = issued.token.getIssuedAt();
-    var expiresAt = issued.token.getExpiresAt();
+    requireOriginalBounds(issued.token);
+    return issued;
+  }
+
+  private void requireOriginalBounds(Jwt token) {
+    var issuedAt = token.getIssuedAt();
+    var expiresAt = token.getExpiresAt();
     var now = Instant.now();
     if (issuedAt == null
         || expiresAt == null
@@ -133,33 +210,37 @@ public class TaskActorTokenBroker {
         || expiresAt.getEpochSecond() <= issuedAt.getEpochSecond()
         || issuedAt.isAfter(now)
         || expiresAt.getEpochSecond() <= now.getEpochSecond()) throw checkedUnavailable();
-    return issued;
   }
 
   private NativeToken requestNativeToken(TaskActorCredentials binding) {
     try {
       var response = authentication.loginService(binding.clientId(), binding.clientSecret());
-      Jwt token = decoder.decode(response.getAccessToken());
-      String issuer =
-          keycloak.getAuthServerUrl().replaceAll("/+$", "") + "/realms/" + keycloak.getRealm();
-      Object clientRoles = token.getClaims().get("resource_access");
-      if (token.getIssuer() == null
-          || !issuer.equals(token.getIssuer().toString())
-          || !binding.clientId().equals(token.getClaimAsString("azp"))
-          || !binding.serviceSubject().equals(token.getSubject())
-          || token.getExpiresAt() == null
-          || !token.getExpiresAt().isAfter(Instant.now())
-          || !binding.actor().audiences().equals(new HashSet<>(token.getAudience()))
-          || !binding.actor().roles().equals(realmRoles(token))
-          || (clientRoles != null
-              && (!(clientRoles instanceof Map<?, ?> roles) || !roles.isEmpty()))) {
-        throw new IllegalStateException();
-      }
+      Jwt token = decodeBoundNativeToken(binding, response.getAccessToken());
       return new NativeToken(token, response.getAccessToken(), response.getExpiresIn());
     } catch (RuntimeException failure) {
       // Neither tokens, credentials nor provider/decoder diagnostic bodies cross this boundary.
       throw new IllegalStateException("Task actor authentication unavailable");
     }
+  }
+
+  private Jwt decodeBoundNativeToken(TaskActorCredentials binding, String rawToken) {
+    Jwt token = decoder.decode(rawToken);
+    String issuer =
+        keycloak.getAuthServerUrl().replaceAll("/+$", "") + "/realms/" + keycloak.getRealm();
+    Object clientRoles = token.getClaims().get("resource_access");
+    if (token.getIssuer() == null
+        || !issuer.equals(token.getIssuer().toString())
+        || !binding.clientId().equals(token.getClaimAsString("azp"))
+        || !binding.serviceSubject().equals(token.getSubject())
+        || token.getExpiresAt() == null
+        || !token.getExpiresAt().isAfter(Instant.now())
+        || !binding.actor().audiences().equals(new HashSet<>(token.getAudience()))
+        || !binding.actor().roles().equals(realmRoles(token))
+        || (clientRoles != null
+            && (!(clientRoles instanceof Map<?, ?> roles) || !roles.isEmpty()))) {
+      throw new IllegalStateException();
+    }
+    return token;
   }
 
   private static IllegalStateException checkedUnavailable() {

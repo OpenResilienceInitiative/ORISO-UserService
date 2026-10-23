@@ -123,6 +123,16 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     }
   }
 
+  String sealReactivationIntent(JsonNode independentlyCheckedOwnedMetadata, byte[] frozenCommand) {
+    return new SelfPasswordIntentCodec(this, this::mac)
+        .sealReactivation(independentlyCheckedOwnedMetadata, frozenCommand);
+  }
+
+  byte[] openReactivationIntent(JsonNode independentlyCheckedOwnedMetadata, String envelope) {
+    return new SelfPasswordIntentCodec(this, this::mac)
+        .openReactivation(independentlyCheckedOwnedMetadata, envelope);
+  }
+
   String sealSelfPasswordIntent(JsonNode independentlyCheckedOwnedMetadata, byte[] frozenCommand) {
     return new SelfPasswordIntentCodec(this, this::mac)
         .seal(independentlyCheckedOwnedMetadata, frozenCommand);
@@ -1105,6 +1115,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
                 "profile",
                 "email",
                 "ordinary-profile",
+                "profile-transition",
                 "deactivate",
                 "reactivate",
                 "self-password",
@@ -1220,6 +1231,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
                   "profile",
                   "email",
                   "ordinary-profile",
+                  "profile-transition",
                   "deactivate",
                   "reactivate",
                   "self-password",
@@ -1355,6 +1367,11 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
   public String claimedInactivityRowDigest(JsonNode exactOwnedRow) {
     return digest(
         "claimed-inactivity-row/v1", ClaimedInactivityRowSchema.require(exactOwnedRow, false));
+  }
+
+  public String verifyMaintenanceProfileTransitionReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "profile-transition", "UPDATED");
   }
 
   public String verifyMaintenanceOrdinaryProfileReceipt(
