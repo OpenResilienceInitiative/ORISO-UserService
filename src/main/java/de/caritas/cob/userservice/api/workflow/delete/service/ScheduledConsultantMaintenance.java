@@ -46,13 +46,34 @@ public final class ScheduledConsultantMaintenance {
 
   public static final class AcknowledgedConsultantDeletion {
     private AcknowledgedConsultantDeletion() {}
-    public void requireCurrent() { throw unavailable(); }
-    public void requireCurrentConsultant(Consultant original) { throw unavailable(); }
-    public String accountId() { throw unavailable(); }
-    public Long tenantId() { throw unavailable(); }
-    public boolean completed() { throw unavailable(); }
-    public void runOwnedLocal(Runnable action) { throw unavailable(); }
-    public boolean completeOwnedLocalDeletion(Runnable finalDelete) { throw unavailable(); }
+
+    public void requireCurrent() {
+      throw unavailable();
+    }
+
+    public void requireCurrentConsultant(Consultant original) {
+      throw unavailable();
+    }
+
+    public String accountId() {
+      throw unavailable();
+    }
+
+    public Long tenantId() {
+      throw unavailable();
+    }
+
+    public boolean completed() {
+      throw unavailable();
+    }
+
+    public void runOwnedLocal(Runnable action) {
+      throw unavailable();
+    }
+
+    public boolean completeOwnedLocalDeletion(Runnable finalDelete) {
+      throw unavailable();
+    }
   }
 
   private static ScopedIdentityCommandRequiredException unavailable() {
