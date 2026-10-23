@@ -11,6 +11,9 @@ import de.caritas.cob.userservice.api.config.auth.*;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
+import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Clock;
 import java.util.*;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -262,6 +265,39 @@ public class AccountLifecycleCallerConfiguration {
             issuer);
     existing.configureScopedInactivity(transport, user, request, issuer, humanClients);
     return transport;
+  }
+
+  @Bean
+  ScheduledAskerMaintenance scheduledAskerMaintenance(
+      JdbcTemplate jdbc,
+      PlatformTransactionManager manager,
+      ScheduledTaskClaimService claims,
+      DeletionLifecycleService lifecycle,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      @Qualifier("keycloakRestTemplate") RestTemplate http,
+      KeycloakConfig keycloak) {
+    String publicServer = keycloak.getAuthServerUrl();
+    String internalServer =
+        environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
+    if (publicServer == null
+        || publicServer.isBlank()
+        || internalServer == null
+        || internalServer.isBlank()) throw invalid();
+    return new ScheduledAskerMaintenance(
+        jdbc,
+        manager,
+        claims,
+        Clock.systemUTC(),
+        lifecycle,
+        actors,
+        broker,
+        codec,
+        http,
+        internalServer,
+        keycloak.getRealm(),
+        required("KEYCLOAK_REALM_INTERNAL_ID"));
   }
 
   @Bean
