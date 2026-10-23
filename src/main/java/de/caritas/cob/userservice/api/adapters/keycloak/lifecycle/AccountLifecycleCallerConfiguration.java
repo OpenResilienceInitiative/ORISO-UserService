@@ -199,7 +199,8 @@ public class AccountLifecycleCallerConfiguration {
           TaskActorTokenBroker broker,
           AccountLifecycleCodec codec,
           @Qualifier("keycloakRestTemplate") RestTemplate http,
-          KeycloakConfig keycloak) {
+          KeycloakConfig keycloak,
+          ReviewedMaintenanceProfiles profiles) {
     String publicServer = keycloak.getAuthServerUrl();
     String internalServer =
         environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
@@ -229,6 +230,18 @@ public class AccountLifecycleCallerConfiguration {
             Clock.systemUTC(),
             publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm());
     maintenance.configureReviewedOrdinaryGroups(groups);
+    var selfRoles = new TreeMap<String, List<Set<String>>>();
+    profiles
+        .profiles()
+        .forEach(
+            (kind, configured) ->
+                selfRoles.put(
+                    kind,
+                    configured.stream()
+                        .map(ReviewedMaintenanceProfiles.Profile::realmRoles)
+                        .distinct()
+                        .toList()));
+    maintenance.configureReviewedSelfProfileRoles(selfRoles);
     return maintenance;
   }
 
@@ -277,7 +290,9 @@ public class AccountLifecycleCallerConfiguration {
       TaskActorTokenBroker broker,
       AccountLifecycleCodec codec,
       @Qualifier("keycloakRestTemplate") RestTemplate http,
-      KeycloakConfig keycloak) {
+      KeycloakConfig keycloak,
+      jakarta.persistence.EntityManager entities,
+      de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService deletion) {
     String publicServer = keycloak.getAuthServerUrl();
     String internalServer =
         environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
@@ -285,19 +300,23 @@ public class AccountLifecycleCallerConfiguration {
         || publicServer.isBlank()
         || internalServer == null
         || internalServer.isBlank()) throw invalid();
-    return new ScheduledAskerMaintenance(
-        jdbc,
-        manager,
-        claims,
-        Clock.systemUTC(),
-        lifecycle,
-        actors,
-        broker,
-        codec,
-        http,
-        internalServer,
-        keycloak.getRealm(),
-        required("KEYCLOAK_REALM_INTERNAL_ID"));
+    var maintenance =
+        new ScheduledAskerMaintenance(
+            jdbc,
+            manager,
+            claims,
+            Clock.systemUTC(),
+            lifecycle,
+            actors,
+            broker,
+            codec,
+            http,
+            internalServer,
+            keycloak.getRealm(),
+            required("KEYCLOAK_REALM_INTERNAL_ID"));
+    maintenance.configureJpaCleanupOwner(entities);
+    maintenance.configureAcknowledgedCleanup(deletion::continueAcknowledgedDeletion);
+    return maintenance;
   }
 
   @Bean

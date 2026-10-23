@@ -1,5 +1,6 @@
 """Offline acceptance/privacy controls; never starts a JVM or native fixture."""
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -50,6 +51,22 @@ class SelfMaintenancePairControls(unittest.TestCase):
         self.assertEqual(["account.read", "account.password"], proof.reviewed_operations("password"))
         self.assertEqual(["account.read", "account.locale"], proof.reviewed_operations("locale"))
         with self.assertRaises(ValueError): proof.reviewed_operations("other")
+
+    def test_setup_frames_identify_known_source_line_without_exception_secrets(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "maintenance_human_fixture.py"
+            source.write_text('def fixture_frontier():\n    raise RuntimeError("Bearer synthetic-bearer password=synthetic-password OTP=654321")\n')
+            namespace = {}
+            exec(compile(source.read_text(), str(source), "exec"), namespace)
+            try:
+                namespace["fixture_frontier"]()
+            except RuntimeError as error:
+                frames = proof.sanitized_failure_frames(error, proof.source_frame_catalog([source]))
+                self.assertEqual([{"file": "maintenance_human_fixture.py", "function": "fixture_frontier", "line": 2}], frames)
+                exported = json.dumps(frames)
+                for sensitive in ["Bearer", "synthetic-bearer", "synthetic-password", "654321", folder]:
+                    self.assertNotIn(sensitive, exported)
+                self.assertEqual([], proof.sanitized_failure_frames(error, {}))
 
     def test_workflow_uses_same_exact_common_source_and_two_finite_cases(self):
         import yaml

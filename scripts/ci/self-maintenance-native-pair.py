@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Two real JPA/public SELF/native replay cases; no credentials or raw output retained."""
 import argparse
+import ast
 import base64
 import copy
 import hashlib
@@ -41,6 +42,33 @@ def checked_witness(value, kind):
             or value["kind"] != kind or any(type(value[key]) is not bool for key in WITNESS_FLAGS)):
         raise ValueError("Exact nonsecret finite witness required")
     return all(value[key] for key in WITNESS_FLAGS)
+
+
+def source_frame_catalog(paths):
+    """Known source definitions only; the native caller supplies four fixed repository files."""
+    result = {}
+    for path in paths:
+        path = Path(path).resolve()
+        tree = ast.parse(path.read_text(), filename=str(path))
+        result[str(path)] = [(node.name, node.lineno, node.end_lineno)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+    return result
+
+
+def sanitized_failure_frames(error, catalog):
+    """Never inspect exception text, source lines, frame locals, or arbitrary filenames."""
+    frames = []
+    cursor = error.__traceback__
+    while cursor is not None:
+        filename = str(Path(cursor.tb_frame.f_code.co_filename).resolve())
+        function = cursor.tb_frame.f_code.co_name
+        line = cursor.tb_lineno
+        if any(name == function and first <= line <= last
+                for name, first, last in catalog.get(filename, [])):
+            frames.append({"file": Path(filename).name, "function": function, "line": line})
+        cursor = cursor.tb_next
+    return frames[-20:]
 
 
 def manifest(root):
@@ -119,6 +147,9 @@ def native(kc, report):
     from maintenance_human_fixture import CLIENT, ISSUER, HumanMaintenanceFixture
     from protected_account_operations import OperationFixture, ProtectedOperationRead
     if lifecycle.IMAGE != IMAGE: raise ValueError("Exact native image required")
+    frame_catalog = source_frame_catalog([Path(__file__), *[
+        module / "tests" / name for name in ["lifecycle_fixture.py",
+            "maintenance_human_fixture.py", "protected_account_operations.py"]]])
 
     class UserPair(HumanMaintenanceFixture, unittest.TestCase):
         native_issuer = ISSUER
@@ -198,7 +229,9 @@ def native(kc, report):
                     self.send_response(400); self.end_headers(); return
                 try: value = restart(self.path[1:]); status = 200
                 except BaseException as error:
-                    receipt["control_failure_category"] = type(error).__name__; value = {}; status = 503
+                    receipt["control_failure_category"] = type(error).__name__
+                    receipt["control_failure_frames"] = sanitized_failure_frames(error, frame_catalog)
+                    value = {}; status = 503
                 raw = json.dumps(value).encode(); self.send_response(status)
                 self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(raw)))
                 self.end_headers(); self.wfile.write(raw)
@@ -251,6 +284,7 @@ def native(kc, report):
         receipt["phase"] = "complete"
     except BaseException as error:
         receipt["exception_category"] = type(error).__name__; receipt["accepted"] = False
+        receipt["failure_frames"] = sanitized_failure_frames(error, frame_catalog)
         if isinstance(error, KeyboardInterrupt): raise
     finally:
         if control is not None: control.shutdown(); control.server_close()
