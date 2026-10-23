@@ -116,13 +116,22 @@ class ScheduledAskerMaintenanceSqlTest {
   void unattemptedAccountRunsBeforePersistentlyRefusedEarlierId() throws Exception {
     try (var f = new Fixture()) {
       f.user(FIRST);
+      f.readFailure(FIRST, HttpStatus.FORBIDDEN);
+      assertDoesNotThrow(() -> f.scheduler().performDeletionWorkflow());
+      assertEquals("PREPARED", f.status(FIRST));
+      String original = f.frozen(FIRST);
+      assertNotNull(original, "The refused actual first read retains original SQL custody");
+      assertTrue(f.codec.read(original, JsonNode.class).path("body").isNull());
+      f.server.verify();
+      f.server.reset();
       f.user(SECOND);
-      f.previousAttempt(FIRST);
       f.success(SECOND);
       f.readFailure(FIRST, HttpStatus.FORBIDDEN);
       assertDoesNotThrow(() -> f.scheduler().performDeletionWorkflow());
       assertEquals("ACKNOWLEDGED", f.status(SECOND));
       assertEquals("PREPARED", f.status(FIRST));
+      assertEquals(original, f.frozen(FIRST), "A refused read retry cannot replace original SQL custody");
+      verify(f.claims, times(2)).release(f.lease);
       f.server.verify();
     }
   }
@@ -301,27 +310,6 @@ class ScheduledAskerMaintenanceSqlTest {
       user.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
       user.setDeletionReadOnlyUntil(DELETION.plusHours(48));
       users.save(user);
-    }
-
-    void previousAttempt(String account) {
-      var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
-      jdbc.update(
-          "INSERT INTO identity_maintenance_intent(operation_id,realm_id,realm_name,subject_type,"
-              + "subject_id,deletion_started_at,tenant_id,claim_token,claim_until,status,"
-              + "owner_client,owner_subject,last_attempt_at) VALUES(?,?,?,'ASKER',?,?,7,?,?,'PREPARED',?,?,?)",
-          UUID.randomUUID().toString(),
-          "synthetic-realm",
-          "synthetic",
-          account,
-          DELETION,
-          UUID.randomUUID().toString(),
-          lease.claimedUntil(),
-          actor.clientId(),
-          actor.serviceSubject(),
-          LocalDateTime.now(clock).minusMinutes(1));
-      jdbc.update(
-          "UPDATE user SET deletion_lifecycle_state='HARD_DELETE_IN_PROGRESS' WHERE user_id=?",
-          account);
     }
 
     String url(String account, String command) {
