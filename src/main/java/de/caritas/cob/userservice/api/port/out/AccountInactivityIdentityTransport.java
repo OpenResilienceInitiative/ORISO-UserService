@@ -68,6 +68,7 @@ public interface AccountInactivityIdentityTransport {
   default void verifyCompletedInactivityRestoreReceipt(String frozenBody, String receipt) {
     throw new IllegalStateException("Completed inactivity restore proof unavailable");
   }
+
   /** Same fixed historical proof, additionally bound to the exact saved original RESTORE row. */
   default void verifyCompletedInactivityRestoreReceipt(
       String frozenBody, String receipt, String originalRowJson) {

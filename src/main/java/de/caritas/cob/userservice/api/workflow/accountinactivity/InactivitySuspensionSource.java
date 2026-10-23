@@ -51,7 +51,9 @@ final class InactivitySuspensionSource {
     transport.verifySuspensionCustody(sealed);
     if (jdbc.update(
             "update account_inactivity set suspension_source_json=? where identity_id=? and work_id=? and native_phase='CLAIMED' and "
-                + (claimed.suspensionSource() == null ? "suspension_source_json is null" : "suspension_source_json=?"),
+                + (claimed.suspensionSource() == null
+                    ? "suspension_source_json is null"
+                    : "suspension_source_json=?"),
             claimed.suspensionSource() == null
                 ? new Object[] {sealed, claimed.id(), claimed.work()}
                 : new Object[] {sealed, claimed.id(), claimed.work(), claimed.suspensionSource()})

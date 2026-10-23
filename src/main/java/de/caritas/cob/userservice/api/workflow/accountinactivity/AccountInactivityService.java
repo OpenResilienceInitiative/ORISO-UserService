@@ -491,8 +491,10 @@ public class AccountInactivityService {
       for (var candidate : page) {
         ClaimedWork checked = null;
         try {
-          var release = candidate.status() == Status.ACTIVE
-              ? suspensionSource().prepareRelease(candidate) : null;
+          var release =
+              candidate.status() == Status.ACTIVE
+                  ? suspensionSource().prepareRelease(candidate)
+                  : null;
           checked = work.execute(ignored -> scheduledClaim(candidate.identityId(), release));
           if (checked == null) continue;
           if (checked.action().equals("SUSPEND") && checked.saved.phase().equals("CLAIMED")) {
@@ -571,8 +573,10 @@ public class AccountInactivityService {
     ManualHuman human = currentPlatformHuman();
     InactivityClaimJournal.Saved verifiedTerminal = null;
     var existingRow = snapshot(id).orElseThrow();
-    var release = !restoring && existingRow.status() == Status.ACTIVE
-        ? suspensionSource().prepareRelease(existingRow) : null;
+    var release =
+        !restoring && existingRow.status() == Status.ACTIVE
+            ? suspensionSource().prepareRelease(existingRow)
+            : null;
     if (restoring && existingRow.status() == Status.SUSPENDED) {
       var prior = claimJournal.saved(id, false);
       if (prior.work() != null && "NO_EFFECT".equals(prior.phase())) {
@@ -594,7 +598,8 @@ public class AccountInactivityService {
             ignored -> {
               var row = locked(id).orElseThrow();
               var before = claimJournal.saved(id, true);
-              if (restoring && before.work() != null
+              if (restoring
+                  && before.work() != null
                   && "NO_EFFECT".equals(before.phase())
                   && row.status() == Status.SUSPENDED
                   && !before.equals(terminalProof)) throw InactivityClaimJournal.invalid();

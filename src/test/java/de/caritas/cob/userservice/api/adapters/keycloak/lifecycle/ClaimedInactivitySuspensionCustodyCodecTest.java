@@ -161,8 +161,10 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
         () ->
             transport.adapter.verifyCompletedInactivityRestoreReceipt(
                 codec.canonical(body), reply));
-    assertDoesNotThrow(() -> transport.adapter.verifyCompletedInactivityRestoreReceipt(
-        codec.canonical(body), reply, codec.canonical(completedRestoreRow())));
+    assertDoesNotThrow(
+        () ->
+            transport.adapter.verifyCompletedInactivityRestoreReceipt(
+                codec.canonical(body), reply, codec.canonical(completedRestoreRow())));
     verifyNoInteractions(transport.http, transport.broker);
   }
 
@@ -202,8 +204,7 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
     assertThrows(
         RuntimeException.class,
         () ->
-            transport.adapter.verifyCompletedInactivityRestoreReceipt(
-                fractionRaw, fractionReply));
+            transport.adapter.verifyCompletedInactivityRestoreReceipt(fractionRaw, fractionReply));
     var forged = codec.read(nativeReceipt(body, "reactivate", false), ObjectNode.class);
     String token = forged.path("receipt").textValue();
     forged.put("receipt", token.substring(0, token.indexOf('.') + 1) + "0".repeat(64));
@@ -227,8 +228,12 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
         }
         default -> throw new AssertionError(field);
       }
-      assertThrows(RuntimeException.class, () -> transport.adapter.verifyCompletedInactivityRestoreReceipt(
-          codec.canonical(body), immutableReply, codec.canonical(row)), field);
+      assertThrows(
+          RuntimeException.class,
+          () ->
+              transport.adapter.verifyCompletedInactivityRestoreReceipt(
+                  codec.canonical(body), immutableReply, codec.canonical(row)),
+          field);
     }
     verifyNoInteractions(transport.http, transport.broker);
   }
@@ -393,9 +398,14 @@ class ClaimedInactivitySuspensionCustodyCodecTest {
 
   private String independentCanonical(JsonNode value) {
     try {
-      var json = new com.fasterxml.jackson.databind.ObjectMapper().enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
+      var json =
+          new com.fasterxml.jackson.databind.ObjectMapper()
+              .enable(
+                  com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
       return json.writeValueAsString(json.convertValue(value, Object.class));
-    } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) { throw new AssertionError(invalid); }
+    } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
+      throw new AssertionError(invalid);
+    }
   }
 
   private String mac(String input) {
