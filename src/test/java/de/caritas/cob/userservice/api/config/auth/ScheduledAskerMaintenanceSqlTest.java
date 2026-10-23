@@ -63,7 +63,8 @@ import org.springframework.web.client.RestTemplate;
   ScheduledAskerMaintenanceSqlTest.TimeConfiguration.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@org.springframework.test.annotation.DirtiesContext(classMode = org.springframework.test.annotation.DirtiesContext.ClassMode.AFTER_CLASS)
+@org.springframework.test.annotation.DirtiesContext(
+    classMode = org.springframework.test.annotation.DirtiesContext.ClassMode.AFTER_CLASS)
 class ScheduledAskerMaintenanceSqlTest {
   @Autowired private DataSource dataSource;
   @Autowired private PlatformTransactionManager manager;
@@ -97,8 +98,13 @@ class ScheduledAskerMaintenanceSqlTest {
       assertDoesNotThrow(() -> f.scheduler().performDeletionWorkflow());
       assertEquals("PREPARED", f.status(FIRST));
       assertEquals("ACKNOWLEDGED", f.status(SECOND));
-      assertEquals(f.initialUserCount + 2, f.jdbc.queryForObject("SELECT COUNT(*) FROM user", Integer.class));
-      assertEquals(2, f.jdbc.queryForObject("SELECT COUNT(*) FROM user WHERE user_id IN (?,?)", Integer.class, FIRST, SECOND));
+      assertEquals(
+          f.initialUserCount + 2,
+          f.jdbc.queryForObject("SELECT COUNT(*) FROM user", Integer.class));
+      assertEquals(
+          2,
+          f.jdbc.queryForObject(
+              "SELECT COUNT(*) FROM user WHERE user_id IN (?,?)", Integer.class, FIRST, SECOND));
       assertNotNull(f.lastAttempt(FIRST));
       assertNotNull(f.lastAttempt(SECOND));
       verify(f.claims).release(f.lease);

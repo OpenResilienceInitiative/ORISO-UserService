@@ -237,6 +237,7 @@ class InactivityDeletionContinuationJpaTest {
     assertEquals("ACTIVE", jdbc.queryForObject("select deletion_lifecycle_state from user where user_id=?", String.class, ACCOUNT));
     assertNull(jdbc.queryForObject("select delete_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT));
     service.scan(false);
+    assertActualDeletionClaim();
     assertEquals(1, nativeEffects.get(), "The actual due private cause must reach scoped native deletion");
     assertEquals(1, callbacks.get());
     assertTrue(users.findById(ACCOUNT).isEmpty());
@@ -261,6 +262,7 @@ class InactivityDeletionContinuationJpaTest {
     users.deleteById(ACCOUNT);
     var service = inactivity(true, false);
     service.scan(false);
+    assertActualDeletionClaim();
     assertEquals(1, nativeEffects.get());
     assertEquals(1, callbacks.get());
     assertEquals(ACCOUNT, completedIdentity);
@@ -276,6 +278,7 @@ class InactivityDeletionContinuationJpaTest {
     var service = inactivity(true, false);
     loseReply = true;
     service.scan(false);
+    assertActualDeletionClaim();
     assertEquals(1, nativeEffects.get());
     assertEquals(0, callbacks.get());
     assertEquals("FROZEN", status());
@@ -299,6 +302,7 @@ class InactivityDeletionContinuationJpaTest {
     retainLocalUser = true;
     var service = inactivity(true, false);
     service.scan(false);
+    assertActualDeletionClaim();
     assertEquals(1, nativeEffects.get());
     assertEquals(1, callbacks.get());
     assertEquals("ACKNOWLEDGED", status());
@@ -336,6 +340,7 @@ class InactivityDeletionContinuationJpaTest {
     var service = inactivity(true, false);
     loseReply = true;
     service.scan(false);
+    assertActualDeletionClaim();
     assertEquals(1, nativeEffects.get());
     assertEquals("FROZEN", status());
     String original = jdbc.queryForObject("select frozen_body from identity_maintenance_intent where subject_id=?", String.class, ACCOUNT);
@@ -353,6 +358,18 @@ class InactivityDeletionContinuationJpaTest {
   private String completedIdentity;
   private List<String> projectedRoles = List.of("user");
   private Instant enrolledAt;
+
+  private void assertActualDeletionClaim() {
+    assertTrue(nativeReads.get() >= 1, "Actual checked role classification precedes deletion");
+    var row = codec.read(jdbc.queryForObject("select claimed_json from account_inactivity where identity_id=?", String.class, ACCOUNT), JsonNode.class);
+    assertEquals("DELETE", row.path("action").textValue());
+    assertEquals("DELETING", row.path("status").textValue());
+    assertEquals("SCHEDULED", row.path("initiator").path("kind").textValue());
+    assertEquals(UUID.fromString(row.path("workId").textValue()).toString(), row.path("workId").textValue());
+    assertEquals(row.path("workId").textValue(), jdbc.queryForObject("select work_id from account_inactivity where identity_id=?", String.class, ACCOUNT));
+    assertNotNull(jdbc.queryForObject("select claimed_at from account_inactivity where identity_id=?", java.sql.Timestamp.class, ACCOUNT));
+    assertTrue(codec.claimedInactivityDeletionRowDigest(row).matches("[0-9a-f]{64}"));
+  }
 
   private JsonNode envelope() {
     return codec.read(jdbc.queryForObject("select frozen_body from identity_maintenance_intent where subject_id=?", String.class, ACCOUNT), JsonNode.class);

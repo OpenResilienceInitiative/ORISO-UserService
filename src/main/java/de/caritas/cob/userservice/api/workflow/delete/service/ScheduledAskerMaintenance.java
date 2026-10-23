@@ -205,7 +205,8 @@ public final class ScheduledAskerMaintenance {
 
   /** Only an actual held inactivity deletion claim may enter this separate existing cause. */
   public boolean performInactivityDeletion(
-      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.ClaimedWork work) {
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.ClaimedWork
+          work) {
     Objects.requireNonNull(work);
     throw unavailable();
   }

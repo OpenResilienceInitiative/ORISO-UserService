@@ -34,7 +34,8 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
 
   /** Finite optional wiring; the private claimed deletion path remains closed until owned proof. */
   public void setScopedDeletionMaintenance(
-      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance maintenance) {
+      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+          maintenance) {
     java.util.Objects.requireNonNull(maintenance);
   }
 
